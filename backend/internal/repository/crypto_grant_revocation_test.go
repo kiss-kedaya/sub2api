@@ -66,7 +66,7 @@ func TestCryptoGrantRevocationReaderRejectsCorruptionAndRedisFailure(t *testing.
 	store := &TotpCache{rdb: rdb}
 	ctx := t.Context()
 	for _, corrupted := range []string{"0", "-1", "not-a-timestamp", "12 trailing", "0123"} {
-		mini.Set(service.CryptoGrantUserRevocationKey(7), corrupted)
+		require.NoError(t, mini.Set(service.CryptoGrantUserRevocationKey(7), corrupted))
 		_, _, err := store.CryptoGrantRevocationTimes(ctx, 7, "session")
 		require.Error(t, err)
 	}

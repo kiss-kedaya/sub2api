@@ -22,10 +22,6 @@ func (w *Worker) replayRecentRange(ctx context.Context, scanner *EVMScanner, poo
 		w.replayMu.Unlock()
 		return nil
 	}
-	if w.replayedAt == nil {
-		w.replayedAt = make(map[string]time.Time)
-	}
-	w.replayedAt[chain.Chain] = time.Now()
 	w.replayMu.Unlock()
 	span := min(through, min(maxRange, uint64(2000)))
 	replayCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -33,5 +29,11 @@ func (w *Worker) replayRecentRange(ctx context.Context, scanner *EVMScanner, poo
 	if err := w.processScanRange(replayCtx, scanner, pool, chain, through-span+1, through, recipients); err != nil {
 		return fmt.Errorf("recent deposit replay %s: %w", chain.Chain, err)
 	}
+	w.replayMu.Lock()
+	if w.replayedAt == nil {
+		w.replayedAt = make(map[string]time.Time)
+	}
+	w.replayedAt[chain.Chain] = time.Now()
+	w.replayMu.Unlock()
 	return nil
 }
