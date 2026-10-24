@@ -366,7 +366,11 @@ func cachedChainlistRegistry(ctx context.Context) ([]chainlistRecord, error) {
 		if out.Err != nil {
 			return nil, out.Err
 		}
-		return out.Val.([]chainlistRecord), nil
+		registry, ok := out.Val.([]chainlistRecord)
+		if !ok {
+			return nil, fmt.Errorf("chainlist response is invalid")
+		}
+		return registry, nil
 	}
 }
 

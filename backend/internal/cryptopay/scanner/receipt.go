@@ -192,25 +192,28 @@ func verifiedChainPool(ctx context.Context, pool *rpc.Pool, chain string) (*rpc.
 	configured := pool.Endpoints()
 	verified := make([]bool, len(configured))
 	errs := make([]error, len(configured))
+	probe, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	var checks sync.WaitGroup
-	sem := make(chan struct{}, 4)
-	for index, endpoint := range configured {
+	jobs := make(chan int)
+	for range min(4, len(configured)) {
 		checks.Add(1)
 		go func() {
 			defer checks.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				errs[index] = ctx.Err()
-				return
+			for index := range jobs {
+				errs[index] = verifyChain(probe, pool.WithEndpoints(configured[index]), chain)
+				verified[index] = errs[index] == nil
 			}
-			probe, cancel := context.WithTimeout(ctx, 3*time.Second)
-			defer cancel()
-			errs[index] = verifyChain(probe, pool.WithEndpoints(endpoint), chain)
-			verified[index] = errs[index] == nil
 		}()
 	}
+	for index := range configured {
+		select {
+		case jobs <- index:
+		case <-probe.Done():
+			errs[index] = probe.Err()
+		}
+	}
+	close(jobs)
 	checks.Wait()
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -147,6 +147,7 @@ func (w *Worker) Start() {
 	if w == nil || w.cancel != nil || mode.ReadOnly() {
 		return
 	}
+	w.recentReplay = true
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	go w.run(ctx)
@@ -449,7 +450,11 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 	}
 	var liveErr error
 	if w.recentReplay && manualFromBlock == 0 && hadCursor && w.handler != nil {
-		liveErr = w.replayRecentRange(ctx, scanner, pool, chain, min(last, confirmed), maxRange, recipients)
+		if err := w.replayRecentRange(ctx, scanner, pool, chain, min(last, confirmed), maxRange, recipients); err != nil {
+			// Moving the cursor would also move the next overlap window and
+			// could strand a late transfer whose persistence just failed.
+			return err
+		}
 	}
 	if last >= confirmed {
 		return liveErr

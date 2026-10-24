@@ -123,7 +123,11 @@ func (d *rpcDiscovery) resolve(ctx context.Context, chain string) ([]string, err
 		if result.Err != nil {
 			return nil, result.Err
 		}
-		return slices.Clone(result.Val.([]string)), nil
+		endpoints, ok := result.Val.([]string)
+		if !ok {
+			return nil, errors.New("automatic RPC discovery response is invalid")
+		}
+		return slices.Clone(endpoints), nil
 	}
 }
 
