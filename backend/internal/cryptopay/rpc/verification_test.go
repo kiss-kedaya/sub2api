@@ -143,12 +143,20 @@ func uppercaseEvidence(value string) string {
 	return "0x" + strings.ToUpper(value[2:])
 }
 
-func equivalentVerificationLog(index int, amount int64) map[string]any {
+func equivalentVerificationLog(t *testing.T, index int, amount int64) map[string]any {
+	t.Helper()
 	log := verificationLog(index, amount)
 	for _, key := range []string{"address", "data", "blockHash", "transactionHash"} {
-		log[key] = uppercaseEvidence(log[key].(string))
+		value, ok := log[key].(string)
+		if !ok {
+			t.Fatalf("invalid synthetic log field %s", key)
+		}
+		log[key] = uppercaseEvidence(value)
 	}
-	topics := log["topics"].([]string)
+	topics, ok := log["topics"].([]string)
+	if !ok {
+		t.Fatal("invalid synthetic log topics")
+	}
 	for i := range topics {
 		topics[i] = uppercaseEvidence(topics[i])
 	}
@@ -167,9 +175,13 @@ func TestIndependentReferencesRejectForgedFundsOrHiddenLogs(t *testing.T) {
 			case "inflated receipt amount":
 				primary = verificationReceipt(verificationLog(7, 999999999))
 			case "fabricated transaction":
-				primary.(map[string]any)["transactionHash"] = "0x" + strings.Repeat("ff", 32)
+				receipt := verificationReceipt(verificationLog(7, 1234567))
+				receipt["transactionHash"] = "0x" + strings.Repeat("ff", 32)
+				primary = receipt
 			case "receipt status changed":
-				honest.(map[string]any)["status"] = "0x0"
+				receipt := verificationReceipt(verificationLog(7, 1234567))
+				receipt["status"] = "0x0"
+				honest = receipt
 			case "hidden logs":
 				method, primary, honest = "eth_getLogs", []any{}, []any{verificationLog(7, 1234567)}
 			case "fabricated logs":
@@ -192,14 +204,14 @@ func TestIndependentReferencesAllowEquivalentEvidenceAcrossOrderingAndMetadata(t
 		t.Run(method, func(t *testing.T) {
 			fixture := newVerificationFixture(t, 2)
 			var primary any = []map[string]any{verificationLog(7, 1234567), verificationLog(9, 7654321)}
-			var equivalent any = []map[string]any{equivalentVerificationLog(9, 7654321), equivalentVerificationLog(7, 1234567)}
+			var equivalent any = []map[string]any{equivalentVerificationLog(t, 9, 7654321), equivalentVerificationLog(t, 7, 1234567)}
 			if method == "eth_getTransactionReceipt" {
 				primary = verificationReceipt(verificationLog(7, 1234567), verificationLog(9, 7654321))
-				equivalent = verificationReceipt(equivalentVerificationLog(9, 7654321), equivalentVerificationLog(7, 1234567))
-				fields := equivalent.(map[string]any)
-				fields["blockHash"] = uppercaseEvidence(fields["blockHash"].(string))
-				fields["transactionHash"] = uppercaseEvidence(fields["transactionHash"].(string))
+				fields := verificationReceipt(equivalentVerificationLog(t, 9, 7654321), equivalentVerificationLog(t, 7, 1234567))
+				fields["blockHash"] = "0x" + strings.Repeat("BC", 32)
+				fields["transactionHash"] = "0x" + strings.Repeat("DE", 32)
 				fields["gasUsed"] = "0x1234"
+				equivalent = fields
 			}
 			fixture.setAll(method, equivalent)
 			fixture.transport.nodes[fixture.primary].results[method] = primary
