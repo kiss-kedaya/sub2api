@@ -104,7 +104,7 @@ func (j *sweepJob) outcome() SweepEntry {
 	if j.Status == "swept" || j.Status == "manual_review" {
 		status = j.Status
 	}
-	return SweepEntry{Chain: j.Chain, Address: j.Address, Amount: amount,
+	return SweepEntry{JobID: j.ID, Chain: j.Chain, Token: j.Token, Address: j.Address, Amount: amount,
 		GasTxHash: j.GasHash, SweepTxHash: j.SweepHash, Status: status, Error: rpc.SafeRecordedError(j.Error)}
 }
 

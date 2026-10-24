@@ -12,6 +12,7 @@ import (
 // ForChain verifies EACH endpoint before it may serve a money-moving job.
 // A successful probe on one rotating endpoint cannot authorize the others.
 func (p *Pool) ForChain(ctx context.Context, chainID uint64) (*Pool, error) {
+	p = p.Snapshot()
 	if chainID == 0 {
 		return nil, fmt.Errorf("missing expected RPC chain id")
 	}

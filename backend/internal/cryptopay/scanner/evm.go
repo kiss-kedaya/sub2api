@@ -114,6 +114,9 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 		if err := json.Unmarshal(raw, &logs); err != nil {
 			return nil, fmt.Errorf("getLogs decode: %w", err)
 		}
+		if logs == nil {
+			return nil, &rpc.Failure{Kind: "response"}
+		}
 		for _, log := range logs {
 			if log.Removed || len(log.Topics) < 3 {
 				continue
