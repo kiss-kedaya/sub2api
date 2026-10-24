@@ -35,6 +35,9 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.10'
+      - name: Wallet security concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
       - name: Unit tests
         working-directory: backend
         run: make test-unit
@@ -53,9 +56,6 @@ jobs:
       - name: Billing and media concurrency regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/handler ./internal/service ./internal/repository -run 'Test(CNBalancePushNotifierConcurrent|GrokVideoDurable|MediaBilling|AsyncImage|ImageTask|OpenAIResponsesWebSocket.*(Balance|Subscription|Settlement)|SmartBilling|.*Refund.*Pending)' -count=1
-      - name: Wallet security concurrency regression
-        working-directory: backend
-        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
       - name: Payment verification grant security regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository ./internal/server/routes ./internal/server/middleware -run 'Test(CryptoGrant|CryptoVerificationGrant|.*Crypto.*Grant)' -count=1
