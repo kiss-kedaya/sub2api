@@ -147,7 +147,7 @@ func convertChatMessagesToResponsesInputWithCache(msgs []ChatMessage, anthropic 
 		}
 		// Message-level extensions describe the end of this message, including
 		// its tool calls. Do not move a marker from a discarded/empty message.
-		if anthropic && m.CacheControl != nil && len(items) > 0 && items[len(items)-1].Type != "reasoning" {
+		if anthropic && m.CacheControl != nil && len(items) > 0 && items[len(items)-1].Type != "reasoning" && items[len(items)-1].CacheControl == nil {
 			items[len(items)-1].CacheControl = m.CacheControl
 		}
 		out = append(out, items...)

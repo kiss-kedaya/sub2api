@@ -166,3 +166,17 @@ func TestChatAnthropicCacheControlAbsentDoesNotCreateMarkers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(body), `"cache_control"`)
 }
+
+func TestChatAnthropicCacheControlSpecificToolCallTakesPrecedence(t *testing.T) {
+	t.Parallel()
+	var req ChatCompletionsRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"claude-opus-4-8","functions":[{"name":"read","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"assistant","cache_control":{"type":"ephemeral","ttl":"1h"},"tool_calls":[{"id":"call_1","cache_control":{"type":"ephemeral","ttl":"5m"},"function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`), &req))
+	out, err := ChatCompletionsToAnthropicRequest(&req)
+	require.NoError(t, err)
+	require.Len(t, out.Tools, 1)
+	require.Equal(t, "1h", out.Tools[0].CacheControl.TTL)
+	require.Len(t, out.Messages, 2)
+	blocks := parseContentBlocks(out.Messages[0].Content)
+	require.Len(t, blocks, 1)
+	require.Equal(t, "5m", blocks[0].CacheControl.TTL)
+}

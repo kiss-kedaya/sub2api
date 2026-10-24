@@ -1164,6 +1164,17 @@ func normalizeCacheControlTTLOrder(body []byte) []byte {
 	if len(body) == 0 || !bytes.Contains(body, []byte(`"`+cacheTTLTarget1h+`"`)) {
 		return body
 	}
+	// Automatic caching targets the final eligible block. A final explicit 1h
+	// marker and a top-level default/5m marker conflict even though their order
+	// is valid. Preserve the requested 1h duration instead of sending a 400.
+	if automatic := gjson.GetBytes(body, "cache_control"); automatic.Get("type").String() == "ephemeral" && automatic.Get("ttl").String() != cacheTTLTarget1h {
+		last := lastAnthropicCacheableBlock(body).Get("cache_control")
+		if last.Get("type").String() == "ephemeral" && last.Get("ttl").String() == cacheTTLTarget1h {
+			if next, err := sjson.SetBytes(body, "cache_control.ttl", cacheTTLTarget1h); err == nil {
+				body = next
+			}
+		}
+	}
 
 	type cacheControlEntry struct {
 		path      string
@@ -1254,6 +1265,41 @@ func normalizeCacheControlTTLOrder(body []byte) []byte {
 		}
 	}
 	return out
+}
+
+// lastAnthropicCacheableBlock resolves the target of top-level automatic
+// caching. A non-empty string message is a target without a block-level marker;
+// do not accidentally substitute an earlier system/tool marker in that case.
+func lastAnthropicCacheableBlock(body []byte) gjson.Result {
+	find := func(content gjson.Result) (gjson.Result, bool) {
+		if content.Type == gjson.String {
+			return content, strings.TrimSpace(content.String()) != ""
+		}
+		blocks := content.Array()
+		for i := len(blocks) - 1; i >= 0; i-- {
+			switch blocks[i].Get("type").String() {
+			case "text", "image", "document", "tool_use", "tool_result", "server_tool_use", "web_search_tool_result":
+				if blocks[i].Get("type").String() != "text" || strings.TrimSpace(blocks[i].Get("text").String()) != "" {
+					return blocks[i], true
+				}
+			}
+		}
+		return gjson.Result{}, false
+	}
+	messages := gjson.GetBytes(body, "messages").Array()
+	for i := len(messages) - 1; i >= 0; i-- {
+		if block, ok := find(messages[i].Get("content")); ok {
+			return block
+		}
+	}
+	if block, ok := find(gjson.GetBytes(body, "system")); ok {
+		return block
+	}
+	tools := gjson.GetBytes(body, "tools").Array()
+	if len(tools) > 0 {
+		return tools[len(tools)-1]
+	}
+	return gjson.Result{}
 }
 
 // injectAnthropicCacheControlTTL1h 将已有 ephemeral cache_control 块的 ttl 强制写为 1h。
