@@ -2218,6 +2218,8 @@ func isKnownOpsErrorType(t string) bool {
 		"overloaded_error",
 		"service_unavailable_error",
 		"api_error",
+		"video_task_unavailable",
+		"video_task_lookup_unavailable",
 		"not_found_error",
 		"forbidden_error":
 		return true
@@ -2253,6 +2255,10 @@ func classifyOpsPhase(errType, message, code string) string {
 	switch errType {
 	case "authentication_error":
 		return "auth"
+	case "video_task_unavailable":
+		return "routing"
+	case "video_task_lookup_unavailable":
+		return "internal"
 	case "billing_error", "subscription_error":
 		return "request"
 	case "rate_limit_error":
