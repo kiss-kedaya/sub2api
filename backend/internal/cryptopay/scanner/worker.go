@@ -534,6 +534,11 @@ type recordedTransferHandler interface {
 }
 
 func (w *Worker) processTransfer(ctx context.Context, pool *rpc.Pool, chain ChainConfig, transfer Transfer, decimals int) error {
+	if transfer.Amount == nil || transfer.Amount.Sign() <= 0 {
+		// ERC20 permits zero-value events. They cannot create a deposit and
+		// must not turn inexpensive dust into repeated receipt/finality RPCs.
+		return nil
+	}
 	if recorded, ok := w.handler.(recordedTransferHandler); ok {
 		known, err := recorded.HasRecordedTransfer(ctx, transfer, decimals)
 		if err != nil {
