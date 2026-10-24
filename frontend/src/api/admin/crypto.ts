@@ -1,4 +1,5 @@
 import { apiClient } from '@/api/client'
+import type { CryptoGrant } from '@/composables/cryptoGrant'
 
 // Crypto deposit channel admin API. The channel is additive and gated by
 // the server-side config; the UI simply reflects what the API returns.
@@ -99,9 +100,9 @@ export async function getCryptoConfig(): Promise<CryptoConfig> {
   return data.data
 }
 
-// RPC credentials are read only after an explicit, fresh operator verification.
-export async function getCryptoConfigPrivate(totpCode: string): Promise<CryptoConfig> {
-  const { data } = await apiClient.get('/admin/crypto/config/private', cryptoRequestOptions({ totpCode }))
+// Private RPC settings require a current server-verified payment credential.
+export async function getCryptoConfigPrivate(verification: CryptoVerification): Promise<CryptoConfig> {
+  const { data } = await apiClient.get('/admin/crypto/config/private', cryptoRequestOptions(verification))
   return data.data
 }
 
@@ -248,7 +249,7 @@ export async function getWalletSecurity(): Promise<WalletSecurityStatus> {
 }
 
 // Recovery validates the full trusted snapshot server-side. It never changes
-// the channel's configured enabled flag, and the TOTP is per request only.
+// the channel's configured enabled flag; payment authorization remains mandatory.
 export async function recoverWalletSecurity(verification: CryptoVerification): Promise<WalletSecurityStatus> {
   const request = cryptoRequestOptions(verification)
   const { data } = await apiClient.post<WalletSecurityStatus>('/admin/crypto/wallet/security/recover', {
@@ -289,6 +290,9 @@ export interface HotWalletStatus {
   symbol: string
   enough: boolean
   error?: string
+  rpc_source?: 'configured' | 'chainlist'
+  rpc_ready?: boolean
+  error_code?: 'RPC_DISCOVERY_PENDING' | 'RPC_UNAVAILABLE'
 }
 
 export interface HotWalletAddress {
@@ -392,14 +396,22 @@ export async function exportDepositsCSV(chain = '', status = '', verification?: 
   return checkedDownload(response)
 }
 
-export interface CryptoVerification {
-  totpCode: string
+export type CryptoVerification = { totpCode: string; credential?: never } | { credential: string; totpCode?: never }
+
+// Attach one proof to one request. _retry prevents automatic authentication
+// refresh from replaying payment mutations or consuming the same TOTP twice.
+function cryptoRequestOptions(verification?: CryptoVerification) {
+  const headers: Record<string, string> = {}
+  if (verification?.credential) headers['X-Crypto-Grant'] = verification.credential
+  else if (verification?.totpCode) headers['X-Crypto-TOTP'] = verification.totpCode
+  return { headers, _retry: true }
 }
 
-// Per-request only. Never put a code in client defaults, interceptors or storage.
-// _retry also prevents the shared client's 401 refresh path replaying this code.
-function cryptoRequestOptions(verification?: CryptoVerification) {
-  return { headers: verification ? { 'X-Crypto-TOTP': verification.totpCode } : {}, _retry: true }
+export async function verifyCryptoSecurity(totpCode: string): Promise<CryptoGrant> {
+  const { data } = await apiClient.post('/admin/crypto/security/verify', { totp_code: totpCode }, {
+    ...cryptoRequestOptions(), headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+  })
+  return data.data
 }
 
 export interface CryptoSecurityStatus {
@@ -447,7 +459,7 @@ async function checkedDownload(response: { data: Blob; status: number }): Promis
 
 export type WalletOperationAction = 'sweep' | 'destination_change' | 'export_mnemonics'
 
-// Intent notification precedes the fresh TOTP prompt. The server sends the
+// Intent notification precedes payment verification. The server sends the
 // separate verified notification itself; the client cannot assert verification.
 export async function reportWalletOperationIntent(action: WalletOperationAction): Promise<void> {
   const { data } = await apiClient.post<{ accepted: boolean }>('/admin/crypto/security/operation-intent', { action }, {
@@ -483,6 +495,7 @@ export function cryptoSecurityErrorKey(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined
   const e = error as { reason?: string; code?: string | number; status?: number; message?: string }
   const reason = `${e.reason ?? ''} ${e.code ?? ''} ${e.message ?? ''}`.toLowerCase()
+  if (/crypto_grant_required/.test(reason)) return 'securityExpired'
   if (/crypto_operator_required|configured payment administrator/.test(reason)) return 'securityOperatorRequired'
   if (e.status === 429 || /rate.limit|too.many/.test(reason)) return 'securityRateLimit'
   if (/replay|already.used|code.used/.test(reason)) return 'securityReplay'

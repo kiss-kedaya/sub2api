@@ -71,6 +71,9 @@ func (c *refreshTokenCache) DeleteRefreshToken(ctx context.Context, tokenHash st
 }
 
 func (c *refreshTokenCache) DeleteUserRefreshTokens(ctx context.Context, userID int64) error {
+	if err := c.revokeCryptoGrants(ctx, service.CryptoGrantUserRevocationKey(userID)); err != nil {
+		return err
+	}
 	// Get all token hashes for this user
 	tokenHashes, err := c.GetUserTokenHashes(ctx, userID)
 	if err != nil && err != redis.Nil {
@@ -98,6 +101,9 @@ func (c *refreshTokenCache) DeleteUserRefreshTokens(ctx context.Context, userID 
 }
 
 func (c *refreshTokenCache) DeleteTokenFamily(ctx context.Context, familyID string) error {
+	if err := c.revokeCryptoGrants(ctx, service.CryptoGrantSessionRevocationKey(familyID)); err != nil {
+		return err
+	}
 	// Get all token hashes in this family
 	tokenHashes, err := c.GetFamilyTokenHashes(ctx, familyID)
 	if err != nil && err != redis.Nil {
@@ -122,6 +128,18 @@ func (c *refreshTokenCache) DeleteTokenFamily(ctx context.Context, familyID stri
 	}
 	_, err = pipe.Exec(ctx)
 	return err
+}
+
+// These short-lived tombstones revoke payment grants only. Ordinary refresh
+// rotation calls DeleteRefreshToken and intentionally does not write one.
+func (c *refreshTokenCache) revokeCryptoGrants(ctx context.Context, key string) error {
+	return redis.NewScript(`
+local previous = redis.call('GET', KEYS[1])
+local current = ARGV[1]
+if previous and tonumber(previous) > tonumber(current) then current = previous end
+redis.call('SET', KEYS[1], current, 'PX', ARGV[2])
+return 1
+`).Run(ctx, c.rdb, []string{key}, time.Now().UnixMilli(), (5 * time.Minute).Milliseconds()).Err()
 }
 
 func (c *refreshTokenCache) AddToUserTokenSet(ctx context.Context, userID int64, tokenHash string, ttl time.Duration) error {

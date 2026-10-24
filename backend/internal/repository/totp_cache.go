@@ -197,6 +197,33 @@ func (c *TotpCache) CryptoValueExists(ctx context.Context, key string) (bool, er
 	return count != 0, err
 }
 
+// CryptoGrantRevocationTimes returns the latest logout timestamps. Missing
+// tombstones are zero; malformed values and Redis failures deny grant use.
+func (c *TotpCache) CryptoGrantRevocationTimes(ctx context.Context, userID int64, sessionID string) (int64, int64, error) {
+	keys := []string{service.CryptoGrantUserRevocationKey(userID), service.CryptoGrantSessionRevocationKey(sessionID)}
+	values, err := c.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return 0, 0, fmt.Errorf("read payment grant revocations: %w", err)
+	}
+	if len(values) != 2 {
+		return 0, 0, fmt.Errorf("invalid payment grant revocation response")
+	}
+	var times [2]int64
+	for index, value := range values {
+		if value == nil {
+			continue
+		}
+		raw, ok := value.(string)
+		if !ok {
+			return 0, 0, fmt.Errorf("invalid payment grant revocation")
+		}
+		if _, err := fmt.Sscan(raw, &times[index]); err != nil || times[index] <= 0 || fmt.Sprint(times[index]) != raw {
+			return 0, 0, fmt.Errorf("invalid payment grant revocation")
+		}
+	}
+	return times[0], times[1], nil
+}
+
 func (c *TotpCache) ReleaseCryptoValue(ctx context.Context, key, value string) error {
 	return cryptoTotpReleaseScript.Run(ctx, c.rdb, []string{key}, value).Err()
 }

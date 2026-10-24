@@ -56,6 +56,9 @@ jobs:
       - name: Wallet security concurrency regression
         working-directory: backend
         run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: Payment verification grant security regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository ./internal/server/routes ./internal/server/middleware -run 'Test(CryptoGrant|CryptoVerificationGrant|.*Crypto.*Grant)' -count=1
 
   crypto-sweep-integration:
     runs-on: ubuntu-latest

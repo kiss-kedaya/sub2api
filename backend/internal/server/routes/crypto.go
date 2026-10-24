@@ -48,6 +48,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 	crypto.Use(cryptoHandler.CryptoAdminSecurity)
 	{
 		crypto.GET("/security/status", cryptoHandler.AdminCryptoSecurityStatus)
+		crypto.POST("/security/verify", cryptoHandler.AdminCryptoSecurityVerify)
 		crypto.POST("/security/operation-intent", cryptoHandler.AdminWalletOperationIntent)
 		crypto.POST("/security/setup", cryptoHandler.AdminCryptoSecuritySetup)
 		crypto.POST("/security/enable", cryptoHandler.AdminCryptoSecurityEnable)

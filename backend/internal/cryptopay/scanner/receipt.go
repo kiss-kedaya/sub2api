@@ -10,6 +10,8 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
@@ -187,17 +189,37 @@ func verifyChain(ctx context.Context, pool *rpc.Pool, chain string) error {
 // Build an isolated pool containing only endpoints verified for this chain;
 // never mutate the shared configured pool.
 func verifiedChainPool(ctx context.Context, pool *rpc.Pool, chain string) (*rpc.Pool, error) {
+	configured := pool.Endpoints()
+	verified := make([]bool, len(configured))
+	errs := make([]error, len(configured))
+	var checks sync.WaitGroup
+	sem := make(chan struct{}, 4)
+	for index, endpoint := range configured {
+		checks.Add(1)
+		go func() {
+			defer checks.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				errs[index] = ctx.Err()
+				return
+			}
+			probe, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			errs[index] = verifyChain(probe, pool.WithEndpoints(endpoint), chain)
+			verified[index] = errs[index] == nil
+		}()
+	}
+	checks.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var endpoints []string
-	var errs []error
-	for _, endpoint := range pool.Endpoints() {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	for index, endpoint := range configured {
+		if verified[index] {
+			endpoints = append(endpoints, endpoint)
 		}
-		if err := verifyChain(ctx, pool.WithEndpoints(endpoint), chain); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		endpoints = append(endpoints, endpoint)
 	}
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("no verified RPC endpoints for %s: %w", chain, errors.Join(append(errs, errors.New("chain verification failed"))...))

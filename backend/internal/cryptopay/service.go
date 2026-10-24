@@ -200,9 +200,10 @@ type Service struct {
 	addresses *addresses.Service
 
 	// maintCancel stops the pool top-up / scheduled sweep loop.
-	maintCancel    context.CancelFunc
-	securityCancel context.CancelFunc
-	securityPaused atomic.Bool
+	maintCancel     context.CancelFunc
+	securityCancel  context.CancelFunc
+	discoveryCancel context.CancelFunc
+	securityPaused  atomic.Bool
 	// push delivers operator alerts (unmatched deposits). Optional.
 	// Keep its lock separate: reload holds mu while waiting for worker.Stop,
 	// and the worker can still deliver an alert before it exits.
@@ -273,6 +274,10 @@ func (s *Service) reload(ctx context.Context) {
 	defer s.sweepMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.discoveryCancel != nil {
+		s.discoveryCancel()
+		s.discoveryCancel = nil
+	}
 	s.config = cfg
 	if cfg.Enabled {
 		s.securityPaused.Store(false)
@@ -288,6 +293,10 @@ func (s *Service) reload(ctx context.Context) {
 	if s.addresses != nil {
 		s.addresses.SetDeriver(s.wallet)
 	}
+	// Keep the selected chains' RPC pools available for the independent
+	// outflow guard even while new deposits and sweeps are disabled.
+	s.pools = poolsForConfig(cfg, s.pools)
+	s.startRPCDiscoveryLocked()
 
 	if !cfg.Enabled {
 		if s.worker != nil {
@@ -303,29 +312,9 @@ func (s *Service) reload(ctx context.Context) {
 		return
 	}
 
-	// Immutable snapshot: workers and the executor keep the map they were
-	// built with, so a config save can never race a scan or a sweep.
-	poolChains := make(map[string]struct{}, len(cfg.Chains)+len(cfg.RPC))
-	for _, chain := range cfg.Chains {
-		poolChains[chain] = struct{}{}
-	}
-	// Removing a chain from new deposits must not discard the RPC needed
-	// to reconcile an already-signed sweep. Only new work uses cfg.Chains.
-	for chain, endpoints := range cfg.RPC {
-		if IsEVMChain(chain) && strings.TrimSpace(endpoints) != "" {
-			poolChains[chain] = struct{}{}
-		}
-	}
-	pools := make(map[string]*rpc.Pool, len(poolChains))
-	for chain := range poolChains {
-		if existing, ok := s.pools[chain]; ok {
-			existing.SetEndpoints(cfg.RPC[chain])
-			pools[chain] = existing
-			continue
-		}
-		pools[chain] = rpc.NewPool(cfg.RPC[chain])
-	}
-	s.pools = pools
+	// The map is immutable per worker; only each Pool's synchronized endpoint
+	// list can change when verified automatic candidates become available.
+	pools := s.pools
 
 	// EVM networks use the same ledger and shared scan lock.
 	var chainConfigs []scanner.ChainConfig
@@ -596,6 +585,9 @@ type HotWalletStatus struct {
 	Symbol    string `json:"symbol"`
 	Enough    bool   `json:"enough"`
 	Error     string `json:"error,omitempty"`
+	RPCSource string `json:"rpc_source"`
+	RPCReady  bool   `json:"rpc_ready"`
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 // nativeSymbol is the gas coin of each supported chain.
@@ -647,20 +639,27 @@ func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, err
 		st := HotWalletStatus{
 			Address: gasWallet, Receiving: receiving,
 			Chain: chain, Symbol: nativeSymbol(chain),
+			RPCSource: "configured",
 		}
-		if pool == nil {
-			st.Error = "no rpc endpoint configured"
+		if strings.TrimSpace(cfg.RPC[chain]) == "" {
+			st.RPCSource = "chainlist"
+		}
+		if pool == nil || len(pool.Endpoints()) == 0 {
+			st.Error = "RPC endpoints are being discovered from Chainlist"
+			st.ErrorCode = "RPC_DISCOVERY_PENDING"
 			out = append(out, st)
 			continue
 		}
 		raw, err := pool.Balance(ctx, gasWallet)
 		if err != nil {
 			st.Error = "RPC request failed; check endpoint configuration and server logs"
+			st.ErrorCode = "RPC_UNAVAILABLE"
 			out = append(out, st)
 			continue
 		}
 		// Native coins on these chains are 18-decimal.
 		st.Balance = toDisplayAmount(raw, 18)
+		st.RPCReady = true
 		need := cfg.GasTopUp[chain]
 		if need <= 0 {
 			need = 0.002

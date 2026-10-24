@@ -263,7 +263,7 @@ func TestScannerScanAllHoldsDedicatedSessionThroughCursor(t *testing.T) {
 	pg := &scannerMockPG{}
 	w, f := scannerLockFixture(t, pg)
 	w.scanAll(t.Context())
-	scannerAssertSteps(t, pg, "acquire", "pending", "recheck", "load cursor", "save cursor", "release")
+	scannerAssertSteps(t, pg, "acquire", "load cursor", "save cursor", "pending", "recheck", "release")
 	scannerAssertIdle(t, w, pg, false)
 	_, _, events, _ := pg.snapshot()
 	if events[0].session != events[len(events)-1].session || w.db.Stats().OpenConnections != 2 {
@@ -326,7 +326,7 @@ func TestScannerScanAllDiscardsFailedReleaseSession(t *testing.T) {
 			pg := &scannerMockPG{release: &tt.reply}
 			w, _ := scannerLockFixture(t, pg)
 			w.scanAll(t.Context())
-			scannerAssertSteps(t, pg, "acquire", "pending", "recheck", "load cursor", "save cursor", "release")
+			scannerAssertSteps(t, pg, "acquire", "load cursor", "save cursor", "pending", "recheck", "release")
 			scannerAssertIdle(t, w, pg, true)
 			if w.db.Stats().OpenConnections != 1 {
 				t.Fatal("lock session survived or business session was discarded")
@@ -346,7 +346,7 @@ func TestScannerScanAllCancellationStillUnlocksWithFiveSecondContext(t *testing.
 	}}
 	w, _ := scannerLockFixture(t, pg)
 	w.scanAll(ctx)
-	scannerAssertSteps(t, pg, "acquire", "pending", "release")
+	scannerAssertSteps(t, pg, "acquire", "load cursor", "save cursor", "pending", "release")
 	scannerAssertIdle(t, w, pg, false)
 	_, _, events, _ := pg.snapshot()
 	release := events[len(events)-1]

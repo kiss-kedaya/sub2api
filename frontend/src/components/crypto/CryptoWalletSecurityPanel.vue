@@ -138,8 +138,8 @@ async function confirmRecovery() {
   confirmation.value = ''
   recovering.value = true
   try {
-    const completed = await securityDialog.value?.verify(t('admin.crypto.walletSecurityRecoveryTitle'), async (code) => {
-      const recovered = validatedStatus(await recoverWalletSecurity({ totpCode: code }))
+    const completed = await securityDialog.value?.verify(t('admin.crypto.walletSecurityRecoveryTitle'), async (verification) => {
+      const recovered = validatedStatus(await recoverWalletSecurity(verification))
       if (disposed) return
       updateStatus(recovered)
       if (recovered.locked || recovered.deposits_paused) throw new Error(t('admin.crypto.walletSecurityRecoveryStillLocked'))

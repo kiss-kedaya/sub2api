@@ -1883,7 +1883,30 @@ func (s *AuthService) RevokeRefreshToken(ctx context.Context, refreshToken strin
 	}
 
 	tokenHash := hashToken(refreshToken)
+	data, err := s.refreshTokenCache.GetRefreshToken(ctx, tokenHash)
+	if err != nil && !errors.Is(err, ErrRefreshTokenNotFound) {
+		return err
+	}
+	if data != nil && data.FamilyID != "" {
+		if err := s.RevokeSessionFamily(ctx, data.FamilyID); err != nil {
+			return err
+		}
+	}
 	return s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+}
+
+// RevokeCryptoGrantSessionForAccessToken authenticates logout's optional access
+// token before revoking its payment capability. It never changes JWT validity.
+func (s *AuthService) RevokeCryptoGrantSessionForAccessToken(ctx context.Context, tokenString string) error {
+	claims, err := s.ValidateToken(tokenString)
+	if err != nil {
+		return err
+	}
+	sessionID := claims.SessionID
+	if sessionID == "" {
+		sessionID = "jwt:" + hashToken(tokenString)
+	}
+	return s.RevokeSessionFamily(ctx, sessionID)
 }
 
 // RevokeSessionFamily 撤销单个会话家族（该会话的所有 refresh token）。
@@ -1918,6 +1941,7 @@ func (s *AuthService) RevokeAllUserTokens(ctx context.Context, userID int64) err
 
 	if err := s.RevokeAllUserSessions(ctx, userID); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke refresh sessions after token invalidation for user %d: %v", userID, err)
+		return fmt.Errorf("revoke user sessions: %w", err)
 	}
 	return nil
 }

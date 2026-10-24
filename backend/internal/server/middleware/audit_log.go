@@ -133,6 +133,7 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/admin/crypto/wallet/export-mnemonics":       "admin.crypto.wallet.mnemonics.export",
 	"POST /api/v1/admin/crypto/security/setup":                "admin.crypto.security.setup",
 	"POST /api/v1/admin/crypto/security/enable":               "admin.crypto.security.enable",
+	"POST /api/v1/admin/crypto/security/verify":               "admin.crypto.security.verify",
 	"POST /api/v1/admin/crypto/rpc/test":                      "admin.crypto.rpc.test",
 	"POST /api/v1/admin/crypto/rpc/auto-pick":                 "admin.crypto.rpc.auto_pick",
 	"POST /api/v1/auth/login":                                 service.AuditActionLogin,
@@ -168,6 +169,7 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	"POST /api/v1/admin/crypto/wallet/hot-mnemonic":     {},
 	"POST /api/v1/admin/crypto/security/setup":          {},
 	"POST /api/v1/admin/crypto/security/enable":         {},
+	"POST /api/v1/admin/crypto/security/verify":         {},
 	// Device keys are push credentials; omit the entire update body.
 	"PUT /api/v1/user/bark":                                     {},
 	"POST /api/v1/user/totp/disable":                            {},
@@ -338,6 +340,9 @@ func (b *restoredBody) Close() error { return b.closer.Close() }
 
 // MaskedRequestCredential 提取请求头中的凭证并做首尾掩码。
 func MaskedRequestCredential(c *gin.Context) string {
+	if len(c.Request.Header.Values("X-Crypto-Grant")) > 0 {
+		return "x-crypto-grant <redacted>"
+	}
 	if len(c.Request.Header.Values("X-Bark-TOTP")) > 0 {
 		return "x-bark-totp <redacted>"
 	}

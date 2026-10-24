@@ -59,7 +59,7 @@ func TestManualScanRunsFullPassUnderSharedLock(t *testing.T) {
 	if err := w.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	scannerAssertSteps(t, pg, "acquire", "pending", "recheck", "load cursor", "save cursor", "release")
+	scannerAssertSteps(t, pg, "acquire", "load cursor", "save cursor", "pending", "recheck", "release")
 	scannerAssertIdle(t, w, pg, false)
 }
 
@@ -87,7 +87,7 @@ func TestManualScanReturnsFailuresAndAlwaysUnlocks(t *testing.T) {
 	if err := w.RunOnce(t.Context()); !errors.Is(err, problem) {
 		t.Fatalf("pending error hidden: %v", err)
 	}
-	scannerAssertSteps(t, pg, "acquire", "pending", "recheck", "load cursor", "save cursor", "release")
+	scannerAssertSteps(t, pg, "acquire", "load cursor", "save cursor", "pending", "recheck", "release")
 	scannerAssertIdle(t, w, pg, false)
 }
 

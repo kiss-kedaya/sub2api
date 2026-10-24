@@ -40,7 +40,7 @@
       <p v-else-if="stage === 'done'" role="status">{{ t('admin.crypto.securityBound') }}</p>
       <p v-else-if="stage === 'read-only'" role="alert">{{ t('admin.crypto.securityReadOnly') }}</p>
       <p v-else-if="stage === 'expired'" role="alert">{{ t('admin.crypto.securitySetupExpired') }}</p>
-      <p v-else-if="stage === 'unavailable'" role="alert">{{ t('admin.crypto.securityUnavailable') }}</p>
+      <p v-else-if="stage === 'unavailable' && !errorMessage" role="alert">{{ t('admin.crypto.securityUnavailable') }}</p>
       <p v-if="errorMessage" role="alert" class="crypto-security__error">{{ errorMessage }}</p>
     </div>
     <template #footer>
@@ -63,7 +63,8 @@ import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpCodeInput from '@/components/common/TotpCodeInput.vue'
-import { cryptoSecurityErrorKey, enableCryptoSecurity, getCryptoSecurityStatus, setupCryptoSecurity } from '@/api/admin/crypto'
+import { cryptoSecurityErrorKey, enableCryptoSecurity, getCryptoSecurityStatus, setupCryptoSecurity, verifyCryptoSecurity, type CryptoVerification } from '@/api/admin/crypto'
+import { clearCryptoGrant, currentCryptoSession, getCryptoGrant, isCryptoGrantRejected, retainCryptoGrant } from '@/composables/cryptoGrant'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const { t } = useI18n()
@@ -80,7 +81,7 @@ const code = ref('')
 const codeInput = ref<InstanceType<typeof TotpCodeInput> | null>(null)
 const errorMessage = ref('')
 const validCode = computed(() => /^[0-9]{6}$/.test(code.value))
-let callback: ((code: string) => Promise<unknown>) | undefined
+let callback: ((verification: CryptoVerification) => Promise<unknown>) | undefined
 let resolveVerification: ((completed: boolean) => void) | undefined
 let timer: ReturnType<typeof setInterval> | undefined
 let generation = 0
@@ -126,8 +127,32 @@ function reportError(error: unknown) {
   errorMessage.value = key ? t(`admin.crypto.${key}`) : extractApiErrorMessage(error, t('common.error'))
 }
 
-async function verify(operation: string, action: (code: string) => Promise<unknown>): Promise<boolean> {
-  if (show.value) return false
+async function verify(operation: string, action: (verification: CryptoVerification) => Promise<unknown>): Promise<boolean> {
+  if (show.value || busy.value) return false
+  const grant = getCryptoGrant()
+  if (grant) {
+    busy.value = true
+    const activeGeneration = ++generation
+    try {
+      await action({ credential: grant })
+      return activeGeneration === generation
+    } catch (error) {
+      if (!isCryptoGrantRejected(error)) {
+        if (activeGeneration === generation) {
+          clearSecrets()
+          label.value = operation
+          reportError(error)
+          stage.value = 'unavailable'
+          show.value = true
+        }
+        return false
+      }
+      clearCryptoGrant()
+      if (activeGeneration !== generation) return false
+    } finally {
+      if (activeGeneration === generation) busy.value = false
+    }
+  }
   clearSecrets()
   errorMessage.value = ''
   qrFailed.value = false
@@ -210,6 +235,7 @@ async function submitCode() {
   let submittedCode = code.value
   code.value = ''
   const current = generation
+  let operationStarted = false
   try {
     if (stage.value === 'setup') {
       const result = await enableCryptoSecurity(submittedCode, setupToken.value)
@@ -221,14 +247,34 @@ async function submitCode() {
       // was a sweep/import. The user must start it again with a NEW code.
       settle(false)
     } else {
-      await callback?.(submittedCode)
+      const session = currentCryptoSession()
+      const startedAt = Date.now()
+      const result = await verifyCryptoSecurity(submittedCode)
+      if (current !== generation) { result.credential = ''; return }
+      let credential = ''
+      try {
+        credential = retainCryptoGrant(result, session, startedAt)
+      } finally {
+        result.credential = ''
+      }
+      operationStarted = true
+      await callback?.({ credential })
       if (current !== generation) return
       clearSecrets()
       show.value = false
       settle(true)
     }
   } catch (error) {
-    if (current === generation) reportError(error)
+    if (current === generation) {
+      reportError(error)
+      if (isCryptoGrantRejected(error)) clearCryptoGrant()
+      else if (operationStarted) {
+        // A failed network response does not prove a transfer/config mutation
+        // failed. End this attempt; never offer to replay it as a code retry.
+        stage.value = 'unavailable'
+        settle(false)
+      }
+    }
   } finally {
     submittedCode = ''
     code.value = ''

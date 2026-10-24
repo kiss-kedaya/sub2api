@@ -171,6 +171,21 @@ func (c *cryptoRouteTotpCache) CryptoValueExists(ctx context.Context, key string
 	return count != 0, err
 }
 
+func (c *cryptoRouteTotpCache) CryptoGrantRevocationTimes(ctx context.Context, userID int64, sessionID string) (int64, int64, error) {
+	var times [2]int64
+	for index, key := range []string{service.CryptoGrantUserRevocationKey(userID), service.CryptoGrantSessionRevocationKey(sessionID)} {
+		value, err := c.rdb.Get(ctx, key).Int64()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
+			return 0, 0, err
+		}
+		times[index] = value
+	}
+	return times[0], times[1], nil
+}
+
 func (c *cryptoRouteTotpCache) ReleaseCryptoValue(ctx context.Context, key, value string) error {
 	return redis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end

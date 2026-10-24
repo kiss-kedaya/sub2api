@@ -211,9 +211,9 @@ func TestBackloggedChainsYieldBeforeReleasingSharedScanLock(t *testing.T) {
 		t.Fatal("catch-up was unbounded or starved another configured chain")
 	}
 	scannerAssertIdle(t, worker, pg, false)
-	scannerAssertSteps(t, pg, "acquire", "pending", "recheck", "load cursor",
+	scannerAssertSteps(t, pg, "acquire", "load cursor",
 		"save cursor", "save cursor", "save cursor", "save cursor", "load cursor",
-		"save cursor", "save cursor", "save cursor", "save cursor", "release")
+		"save cursor", "save cursor", "save cursor", "save cursor", "pending", "recheck", "release")
 }
 
 func TestScanInstallsPerChainDeadline(t *testing.T) {

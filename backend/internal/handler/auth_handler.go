@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -732,12 +733,22 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	var req LogoutRequest
 	// 允许空请求体（向后兼容）
 	_ = c.ShouldBindJSON(&req)
+	if fields := strings.Fields(c.GetHeader("Authorization")); len(fields) == 2 && strings.EqualFold(fields[0], "Bearer") {
+		if err := h.authService.RevokeCryptoGrantSessionForAccessToken(c.Request.Context(), fields[1]); err != nil &&
+			!errors.Is(err, service.ErrInvalidToken) && !errors.Is(err, service.ErrTokenExpired) && !errors.Is(err, service.ErrTokenTooLarge) {
+			response.ErrorFrom(c, service.ErrServiceUnavailable)
+			return
+		}
+	}
 
 	// 如果提供了Refresh Token，撤销它
 	if req.RefreshToken != "" {
 		if err := h.authService.RevokeRefreshToken(c.Request.Context(), req.RefreshToken); err != nil {
 			slog.Debug("failed to revoke refresh token", "error", err)
-			// 不影响登出流程
+			if !errors.Is(err, service.ErrRefreshTokenInvalid) && !errors.Is(err, service.ErrRefreshTokenNotFound) {
+				response.ErrorFrom(c, service.ErrServiceUnavailable)
+				return
+			}
 		}
 	}
 	h.consumePendingOAuthSessionOnLogout(c)
