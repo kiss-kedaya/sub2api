@@ -84,3 +84,43 @@ func (a *recoveringLiveBalanceAdjustmentApplier) ApplyExternalBalanceOutboxAdjus
 	}
 	return nil
 }
+
+func (a *recoveringLiveBalanceAdjustmentApplier) ApplyExternalBalanceOutboxAdjustments(
+	ctx context.Context, events []LiveBalanceAdjustmentEvent,
+) error {
+	if len(events) == 0 {
+		return nil
+	}
+	if a == nil || a.cache == nil {
+		return errors.New("live balance adjustment applier is unavailable")
+	}
+	applyBatch := func() error {
+		return a.cache.ApplyExternalBalanceOutboxAdjustments(ctx, events)
+	}
+	if err := applyBatch(); !errors.Is(err, errLiveBalanceWalletNotInitialized) {
+		return err
+	}
+	if a.snapshotReader == nil || a.initializer == nil {
+		return fmt.Errorf("recover missing live balance wallet: recovery dependencies are unavailable: %w", errLiveBalanceWalletNotInitialized)
+	}
+	snapshot, err := a.snapshotReader.LoadLiveBalanceInitializationSnapshot(ctx, events[0].UserID)
+	if err != nil {
+		return fmt.Errorf("load live balance recovery snapshot: %w", err)
+	}
+	if snapshot.HasUnsettled {
+		return fmt.Errorf("recover missing live balance wallet: user_id=%d has unsettled billing", events[0].UserID)
+	}
+	result, err := a.initializer.InitializeLiveBalanceAtWatermark(ctx, events[0].UserID, snapshot.Balance, snapshot.Watermark)
+	if err != nil {
+		return fmt.Errorf("initialize live balance recovery snapshot: %w", err)
+	}
+	switch result.Outcome {
+	case LiveBalanceOutcomeApplied, LiveBalanceOutcomeIdempotent:
+	default:
+		return fmt.Errorf("initialize live balance recovery snapshot conflict: user_id=%d", events[0].UserID)
+	}
+	if err := applyBatch(); err != nil {
+		return fmt.Errorf("replay live balance adjustment batch after recovery: %w", err)
+	}
+	return nil
+}

@@ -39,6 +39,7 @@ type stubConcurrencyCacheForTest struct {
 	// 记录调用
 	releasedAccountIDs       []int64
 	releasedRequestIDs       []string
+	acquiredUserLimits       []int
 	loadBatchCalls           atomic.Int64
 	trackedAPIKeyIDs         []int64
 	trackedAPIKeyRequestIDs  []string
@@ -118,7 +119,8 @@ func (c *stubConcurrencyCacheForTest) DecrementAccountWaitCount(_ context.Contex
 func (c *stubConcurrencyCacheForTest) GetAccountWaitingCount(_ context.Context, _ int64) (int, error) {
 	return c.waitCount, c.waitCountErr
 }
-func (c *stubConcurrencyCacheForTest) AcquireUserSlot(_ context.Context, _ int64, _ int, _ string) (bool, error) {
+func (c *stubConcurrencyCacheForTest) AcquireUserSlot(_ context.Context, _ int64, maxConcurrency int, _ string) (bool, error) {
+	c.acquiredUserLimits = append(c.acquiredUserLimits, maxConcurrency)
 	return c.acquireResult, c.acquireErr
 }
 func (c *stubConcurrencyCacheForTest) ReleaseUserSlot(_ context.Context, _ int64, _ string) error {
@@ -262,15 +264,26 @@ func TestAcquireUserSlot_IndependentFromAccount(t *testing.T) {
 	require.NotNil(t, result.ReleaseFunc)
 }
 
-func TestAcquireUserSlot_MinimumConcurrency(t *testing.T) {
-	cache := &stubConcurrencyCacheForTest{acquireResult: true}
-	svc := NewConcurrencyService(cache)
-
-	for _, maxConcurrency := range []int{0, -1} {
-		result, err := svc.AcquireUserSlot(context.Background(), 1, maxConcurrency)
-		require.NoError(t, err)
-		require.True(t, result.Acquired, "maxConcurrency=%d should retain one slot", maxConcurrency)
-		require.NotNil(t, result.ReleaseFunc)
+func TestAcquireUserSlot_ConcurrencyLimits(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		limit    int
+		expected int
+	}{
+		{name: "zero remains unlimited", limit: 0, expected: 0},
+		{name: "positive limit is preserved", limit: 3, expected: 3},
+		{name: "negative legacy limit retains one slot", limit: -1, expected: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := &stubConcurrencyCacheForTest{acquireResult: true}
+			svc := NewConcurrencyService(cache)
+			result, err := svc.AcquireUserSlot(context.Background(), 1, tt.limit)
+			require.NoError(t, err)
+			require.True(t, result.Acquired)
+			require.NotNil(t, result.ReleaseFunc)
+			require.Equal(t, []int{tt.expected}, cache.acquiredUserLimits)
+			result.ReleaseFunc()
+		})
 	}
 }
 
@@ -641,7 +654,7 @@ func TestCalculateMaxWait(t *testing.T) {
 	}{
 		{5, 25},  // 5 + 20
 		{1, 21},  // 1 + 20
-		{0, 21},  // min(1) + 20
+		{0, 21},  // queue capacity keeps its minimum; user admission remains unlimited
 		{-1, 21}, // min(1) + 20
 		{10, 30}, // 10 + 20
 	}

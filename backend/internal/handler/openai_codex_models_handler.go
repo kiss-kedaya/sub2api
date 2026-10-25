@@ -62,7 +62,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			// 回退开启：跌入下方调度器循环。
 		} else {
 			// 让 ops 错误日志携带实际拉取成功的首个固定账号。
-			setOpsSelectedAccount(c, pinnedAccount.ID, pinnedAccount.Platform)
+			setOpsSelectedAccount(c, pinnedAccount.ID, pinnedAccount.Platform, pinnedAccount.Name)
 			if err := h.gatewayService.MergeGroupConfiguredCodexModels(c.Request.Context(), apiKey.Group, pinnedManifest, ifNoneMatch); err != nil {
 				h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
 				return
@@ -116,7 +116,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			return
 		}
 		// 让 ops 错误日志携带实际选中的上游账号，便于定位失效账号（#4544）。
-		setOpsSelectedAccount(c, account.ID, account.Platform)
+		setOpsSelectedAccount(c, account.ID, account.Platform, account.Name)
 
 		// The client ETag represents the final group-specific body, so fetch the
 		// source manifest before applying local filtering and alias metadata.

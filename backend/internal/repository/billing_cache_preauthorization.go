@@ -306,6 +306,62 @@ redis.call('EXPIRE', KEYS[3], ARGV[2])
 return {1, 0, tostring(wallet), '0', ARGV[1]}
 `)
 
+// A batch is encoded as ID / predecessor / fixed-point delta triples. Apply
+// the whole ordered chain atomically so per-user throughput is one network
+// round trip per contiguous prefix, without weakening watermark checks.
+var adjustLiveBalanceAtWatermarkBatchScript = redis.NewScript(`
+local wallet = redis.call('GET', KEYS[1])
+local watermark = redis.call('GET', KEYS[2])
+if wallet == false then
+  if watermark ~= false then return {3, 0, '0', '0', '0'} end
+  return {4, 0, '0', '0', '0'}
+end
+if watermark == false then return {3, 0, wallet, '0', '0'} end
+redis.call('PERSIST', KEYS[1])
+redis.call('PERSIST', KEYS[2])
+local current = tonumber(watermark)
+local walletNumber = tonumber(wallet)
+local maxExact = 9007199254740991
+if current == nil or walletNumber == nil or current < 0 or current > maxExact or current % 1 ~= 0
+    or walletNumber % 1 ~= 0 or math.abs(walletNumber) > maxExact then
+  return {3, 0, wallet, '0', '0'}
+end
+local applied = 0
+local deltaSum = 0
+local finalWatermark = watermark
+local count = tonumber(ARGV[2])
+-- Validate the entire chain before writing. Redis Lua is atomic with respect to
+-- other clients but does not roll back earlier writes after a later return.
+for i = 0, count - 1 do
+  local offset = 3 + i * 3
+  local eventID = tonumber(ARGV[offset])
+  local predecessorID = tonumber(ARGV[offset + 1])
+  local delta = tonumber(ARGV[offset + 2])
+  if eventID <= current then
+    -- Snapshot/replay already includes this event.
+  elseif predecessorID ~= current then
+    return {3, 0, wallet, '0', tostring(eventID)}
+  else
+    deltaSum = deltaSum + delta
+    if math.abs(deltaSum) > maxExact or math.abs(walletNumber + deltaSum) > maxExact then
+      return {3, 0, wallet, '0', '0'}
+    end
+    current = eventID
+    finalWatermark = ARGV[offset]
+    applied = applied + 1
+  end
+end
+if deltaSum ~= 0 then
+  redis.call('INCRBY', KEYS[1], string.format('%.0f', deltaSum))
+  wallet = redis.call('GET', KEYS[1])
+end
+if applied > 0 then redis.call('SET', KEYS[2], finalWatermark) end
+redis.call('PERSIST', KEYS[2])
+local outcome = 1
+if applied == 0 then outcome = 2 end
+return {outcome, 0, wallet, '0', '0'}
+`)
+
 // Missing wallets are initialized from one authoritative PostgreSQL snapshot.
 // Existing wallet state is never overwritten because it may already include
 // an active hold or a newer outbox event from another instance.
@@ -524,6 +580,38 @@ func (c *billingCache) AdjustLiveBalanceAtWatermark(
 	).Result()
 	if err != nil {
 		return service.LiveBalanceResult{}, fmt.Errorf("adjust live balance at watermark: %w", err)
+	}
+	return parseLiveBalanceResult(raw)
+}
+
+func (c *billingCache) AdjustLiveBalanceAtWatermarkBatch(
+	ctx context.Context, userID int64, events []service.LiveBalanceAdjustmentEvent,
+) (service.LiveBalanceResult, error) {
+	if userID <= 0 || len(events) == 0 || len(events) > service.LiveBalanceOutboxMaxBatchSize {
+		return service.LiveBalanceResult{}, errors.New("live balance outbox batch is invalid")
+	}
+	args := make([]any, 2, 2+len(events)*3)
+	args[0] = events[0].ID
+	args[1] = len(events)
+	for i, event := range events {
+		if event.UserID != userID || event.ID <= event.PredecessorID || event.PredecessorID < 0 ||
+			event.ID > maxExactLuaInteger || event.DeltaUnits == 0 ||
+			event.DeltaUnits > maxExactLuaInteger || event.DeltaUnits < -maxExactLuaInteger {
+			return service.LiveBalanceResult{}, fmt.Errorf("live balance outbox batch event %d is invalid", i)
+		}
+		if i > 0 && (event.ID <= events[i-1].ID || event.PredecessorID != events[i-1].ID) {
+			return service.LiveBalanceResult{}, fmt.Errorf("live balance outbox batch is not contiguous at event %d", i)
+		}
+		args = append(args, event.ID, event.PredecessorID, event.DeltaUnits)
+	}
+	if err := validateLiveBalanceIdentity(userID, events[0].RedisEventID()); err != nil {
+		return service.LiveBalanceResult{}, err
+	}
+	raw, err := adjustLiveBalanceAtWatermarkBatchScript.Run(ctx, c.rdb, []string{
+		liveBalanceWalletKey(userID), liveBalanceWatermarkKey(userID),
+	}, args...).Result()
+	if err != nil {
+		return service.LiveBalanceResult{}, fmt.Errorf("adjust live balance at watermark batch: %w", err)
 	}
 	return parseLiveBalanceResult(raw)
 }
