@@ -111,6 +111,122 @@ func TestAdjustLiveBalanceAtWatermarkAppliesOnlyExactSuccessor(t *testing.T) {
 	require.Equal(t, "23", client.Get(ctx, liveBalanceWatermarkKey(51)).Val())
 }
 
+func TestAdjustLiveBalanceAtWatermarkBatchIsAtomicIdempotentAndRejectsGap(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	_, err := cache.AuthorizeLiveBalanceAtWatermark(ctx, 61, "request", 10, 0, 1)
+	require.NoError(t, err)
+	events := []service.LiveBalanceAdjustmentEvent{
+		{ID: 7, UserID: 61, PredecessorID: 0, DeltaUnits: 500000000},
+		{ID: 11, UserID: 61, PredecessorID: 7, DeltaUnits: -200000000},
+	}
+	result, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 61, events)
+	require.NoError(t, err)
+	require.Equal(t, service.LiveBalanceOutcomeApplied, result.Outcome)
+	require.Equal(t, 12.0, result.AvailableBalance)
+	require.Equal(t, "11", client.Get(ctx, liveBalanceWatermarkKey(61)).Val())
+
+	replay, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 61, events)
+	require.NoError(t, err)
+	require.Equal(t, service.LiveBalanceOutcomeIdempotent, replay.Outcome)
+	require.Equal(t, 12.0, replay.AvailableBalance)
+
+	gap := []service.LiveBalanceAdjustmentEvent{
+		{ID: 13, UserID: 61, PredecessorID: 10, DeltaUnits: 100000000},
+		{ID: 19, UserID: 61, PredecessorID: 13, DeltaUnits: 100000000},
+	}
+	conflict, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 61, gap)
+	require.NoError(t, err)
+	require.Equal(t, service.LiveBalanceOutcomeConflict, conflict.Outcome)
+	require.Equal(t, 12.0, conflict.AvailableBalance)
+	require.Equal(t, "11", client.Get(ctx, liveBalanceWatermarkKey(61)).Val())
+}
+
+func TestAdjustLiveBalanceBatchReplaysPartialPrefixAndPreservesHold(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	_, err := cache.AuthorizeLiveBalanceAtWatermark(ctx, 62, "request", 15, 7, 2)
+	require.NoError(t, err)
+	events := []service.LiveBalanceAdjustmentEvent{
+		{ID: 7, UserID: 62, PredecessorID: 0, DeltaUnits: 500000000},
+		{ID: 11, UserID: 62, PredecessorID: 7, DeltaUnits: -200000000},
+		{ID: 19, UserID: 62, PredecessorID: 11, DeltaUnits: 50000000},
+	}
+	result, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 62, events)
+	require.NoError(t, err)
+	require.Equal(t, 11.5, result.AvailableBalance)
+	require.Equal(t, "19", client.Get(ctx, liveBalanceWatermarkKey(62)).Val())
+	finalized, err := cache.FinalizeLiveBalance(ctx, 62, "request", 1)
+	require.NoError(t, err)
+	require.Equal(t, 12.5, finalized.AvailableBalance, "external adjustments must preserve the request hold")
+	replay, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 62, events[:2])
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeIdempotent, replay.Outcome)
+	require.Equal(t, 12.5, replay.AvailableBalance)
+}
+
+func TestAdjustLiveBalanceBatchZeroNetStillAdvancesWatermark(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	_, err := cache.InitializeLiveBalanceAtWatermark(ctx, 63, 10, 0)
+	require.NoError(t, err)
+	events := []service.LiveBalanceAdjustmentEvent{
+		{ID: 7, UserID: 63, PredecessorID: 0, DeltaUnits: 100000000},
+		{ID: 11, UserID: 63, PredecessorID: 7, DeltaUnits: -100000000},
+	}
+	result, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 63, events)
+	require.NoError(t, err)
+	require.Equal(t, 10.0, result.AvailableBalance)
+	require.Equal(t, "11", client.Get(ctx, liveBalanceWatermarkKey(63)).Val())
+	replay, err := cache.AdjustLiveBalanceAtWatermark(ctx, 63, events[0].RedisEventID(), 7, 0, 100000000)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeIdempotent, replay.Outcome, "an old-version worker must not replay a batch event twice")
+	require.Equal(t, 10.0, replay.AvailableBalance)
+}
+
+func TestAdjustLiveBalanceBatchOverflowDoesNotPartiallyMutateWallet(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	require.NoError(t, client.Set(ctx, liveBalanceWalletKey(64), "9007199254740980", 0).Err())
+	require.NoError(t, client.Set(ctx, liveBalanceWatermarkKey(64), "0", 0).Err())
+	result, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 64, []service.LiveBalanceAdjustmentEvent{
+		{ID: 7, UserID: 64, PredecessorID: 0, DeltaUnits: 5},
+		{ID: 11, UserID: 64, PredecessorID: 7, DeltaUnits: 10},
+	})
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeConflict, result.Outcome)
+	require.Equal(t, "9007199254740980", client.Get(ctx, liveBalanceWalletKey(64)).Val())
+	require.Equal(t, "0", client.Get(ctx, liveBalanceWatermarkKey(64)).Val())
+}
+
+func TestAdjustLiveBalanceBatchConcurrentLegacyReplayDoesNotDoubleDebit(t *testing.T) {
+	cache, _ := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	for userID := int64(65); userID < 75; userID++ {
+		_, err := cache.InitializeLiveBalanceAtWatermark(ctx, userID, 10, 0)
+		require.NoError(t, err)
+		events := []service.LiveBalanceAdjustmentEvent{
+			{ID: 7, UserID: userID, PredecessorID: 0, DeltaUnits: -100000000},
+			{ID: 11, UserID: userID, PredecessorID: 7, DeltaUnits: -25000000},
+		}
+		results := make(chan error, 2)
+		go func() {
+			_, err := cache.AdjustLiveBalanceAtWatermark(ctx, userID, events[0].RedisEventID(), 7, 0, -100000000)
+			results <- err
+		}()
+		go func() {
+			_, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, userID, events)
+			results <- err
+		}()
+		require.NoError(t, <-results)
+		require.NoError(t, <-results)
+		balance, exists, err := cache.GetLiveBalance(ctx, userID)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Equal(t, 8.75, balance)
+	}
+}
+
 func TestAdjustLiveBalanceAtWatermarkSkipsSnapshotIncludedEvent(t *testing.T) {
 	cache, client := newLiveBalanceTestCache(t)
 	ctx := context.Background()
