@@ -133,26 +133,30 @@
 
         <p v-if="activeTab === 'usage' && !isObserver" class="mb-3 text-xs text-gray-500 dark:text-gray-400">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
         <div v-show="activeTab === 'usage'" class="usage-detail-content">
-          <button type="button" class="mb-3 flex w-full items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-gray-800 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-100 dark:hover:bg-dark-700" @click="toggleInflight">
-            <Icon name="chevronDown" size="sm" :class="['text-gray-400 transition-transform', inflightOpen ? '' : '-rotate-90']" />
-            <span>{{ t('usage.inflightFold') }}</span>
-            <span v-if="inflightTotal" class="ml-auto text-xs font-normal text-gray-400">{{ inflightRows.length }}/{{ inflightTotal }}</span>
-          </button>
-          <UsageTable
-            v-if="inflightOpen"
-            :observer="isObserver"
-            flat
-            class="mb-3"
-            :data="inflightRows"
+          <InflightUsagePanel
+            :open="inflightOpen"
+            :total="inflightTotal"
+            :shown="inflightRows.length"
             :loading="inflightLoading"
-            :columns="visibleColumns"
-            @requestIdClick="handleRequestIdClick"
-            :show-account-billing="true"
-            :show-upstream-endpoint="true"
-          />
-          <button v-if="inflightOpen && inflightHasMore" type="button" class="btn btn-secondary mb-4 w-full" :disabled="inflightLoading" @click="loadMoreInflight">
-            {{ inflightLoading ? t('common.loading') : t('usage.inflightMore') }}
-          </button>
+            :loaded="inflightLoaded"
+            :has-more="inflightHasMore"
+            :error="inflightError"
+            @toggle="toggleInflight"
+            @refresh="loadInflight(false)"
+            @more="loadMoreInflight"
+          >
+            <UsageTable
+              :observer="isObserver"
+              flat
+              :data="inflightRows"
+              :loading="inflightLoading"
+              :columns="inflightColumns"
+              @requestIdClick="handleRequestIdClick"
+              @userClick="handleUserClick"
+              :show-account-billing="true"
+              :show-upstream-endpoint="true"
+            />
+          </InflightUsagePanel>
           <UsageTable
             :observer="isObserver"
             flat
@@ -231,6 +235,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination fro
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
 import UserTokenRanking from '@/components/admin/usage/UserTokenRanking.vue'
+import InflightUsagePanel from '@/components/admin/usage/InflightUsagePanel.vue'
 import UsageCleanupDialog from '@/components/admin/usage/UsageCleanupDialog.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
 import OpsErrorLogTable from '@/views/admin/ops/components/OpsErrorLogTable.vue'
@@ -439,12 +444,17 @@ let logsGeneration = 0
 const inflightOpen = ref(false)
 const inflightRows = ref<AdminUsageLog[]>([])
 const inflightLoading = ref(false)
+const inflightLoaded = ref(false)
+const inflightError = ref('')
 const inflightPage = ref(1)
 const inflightTotal = ref(0)
 const inflightHasMore = computed(() => inflightRows.value.length < inflightTotal.value)
+let inflightGeneration = 0
 const loadInflight = async (append = false) => {
+  const generation = ++inflightGeneration
   const page = append ? inflightPage.value + 1 : 1
   inflightLoading.value = true
+  inflightError.value = ''
   try {
     const res = await adminAPI.usage.list({
       ...buildUsageListParams(page, 10, false, true),
@@ -452,14 +462,18 @@ const loadInflight = async (append = false) => {
       page_size: 10,
       inflight_only: true,
     })
+    if (generation !== inflightGeneration) return
     const items = res.items || []
     inflightRows.value = append ? inflightRows.value.concat(items) : items
     inflightTotal.value = res.total || 0
     inflightPage.value = page
+    inflightLoaded.value = true
   } catch (error) {
+    if (generation !== inflightGeneration) return
+    inflightError.value = t('usage.inflightLoadFailed')
     console.error('Failed to load inflight usage:', error)
   } finally {
-    inflightLoading.value = false
+    if (generation === inflightGeneration) inflightLoading.value = false
   }
 }
 const loadMoreInflight = () => {
@@ -780,6 +794,12 @@ const allColumns = computed(() => [
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
   { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }
 ].filter(column => !isObserver.value || !observerHiddenColumns.has(column.key)))
+
+// 在途信息独立于已完成记录的隐藏列设置，账户和分组始终可见。
+const inflightColumnKeys = new Set(['user', 'account', 'model', 'group', 'stream', 'cost', 'latency', 'created_at', 'request_id'])
+const inflightColumns = computed(() => allColumns.value
+  .filter(column => inflightColumnKeys.has(column.key))
+  .map(column => ({ ...column, sortable: false })))
 
 const hiddenColumns = reactive<Set<string>>(new Set())
 

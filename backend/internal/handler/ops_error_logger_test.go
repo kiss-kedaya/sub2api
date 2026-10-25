@@ -21,6 +21,25 @@ type ingressRejectSettingRepo struct {
 	getValueCalls int
 }
 
+func TestSetOpsSelectedAccountPublishesDisplayIdentity(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	setOpsSelectedAccount(c, 11, service.PlatformOpenAI, "first-account")
+	first, ok := c.Get(service.UsageInflightRequestContextKey)
+	require.True(t, ok)
+	firstCtx := first.(context.Context)
+	require.Equal(t, "first-account", firstCtx.Value(ctxkey.AccountName))
+	setOpsSelectedAccount(c, 12, service.PlatformGrok)
+	current, ok := c.Get(service.UsageInflightRequestContextKey)
+	require.True(t, ok)
+	ctx := current.(context.Context)
+	require.Equal(t, int64(12), ctx.Value(ctxkey.AccountID))
+	require.Equal(t, "", ctx.Value(ctxkey.AccountName))
+	require.Equal(t, service.PlatformGrok, ctx.Value(ctxkey.Platform))
+	require.Equal(t, int64(11), firstCtx.Value(ctxkey.AccountID))
+	require.Equal(t, "first-account", firstCtx.Value(ctxkey.AccountName))
+}
+
 func (r *ingressRejectSettingRepo) GetValue(context.Context, string) (string, error) {
 	r.getValueCalls++
 	return "", service.ErrSettingNotFound

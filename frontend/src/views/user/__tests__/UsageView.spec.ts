@@ -112,6 +112,11 @@ vi.mock('vue-i18n', async () => {
 
 const simpleStub = { template: '<div><slot /></div>' }
 const chartStub = { template: '<div />' }
+const usageTableStub = {
+  props: ['data', 'columns', 'showAccountBilling', 'showUpstreamEndpoint'],
+  emits: ['sort', 'ipGeoBatchFailed'],
+  template: '<div />',
+}
 
 const usageLog = {
   id: 1,
@@ -155,7 +160,7 @@ function mountUsageView() {
         DateRangePicker: true,
         Icon: true,
         UsageStatsCards: chartStub,
-        UsageTable: chartStub,
+        UsageTable: usageTableStub,
         UserErrorRequestsTable: chartStub,
         ModelDistributionChart: chartStub,
         GroupDistributionChart: chartStub,
@@ -226,6 +231,29 @@ describe('user UsageView', () => {
     expect(query).toHaveBeenCalled()
     expect(wrapper.get('button[aria-label="Reset"]').attributes('title')).toBe('Reset')
     expect(wrapper.findAll('button').some(button => button.text().includes('Export CSV'))).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps the in-flight group visible without adding upstream account columns', async () => {
+    query.mockImplementation((params: { inflight_only?: boolean }) => Promise.resolve({
+      items: params.inflight_only ? [{ ...usageLog, inflight: true, group: { id: 7, name: 'group-demo' } }] : [usageLog],
+      total: 1,
+    }))
+    const wrapper = mountUsageView()
+    await flushPromises()
+    ;(wrapper.vm as any).toggleColumn('group')
+    await wrapper.get('[data-testid="inflight-toggle"]').trigger('click')
+    await flushPromises()
+    const activeTable = wrapper.findAllComponents(UsageTable).at(0)!
+    expect(activeTable.props('columns')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'group', sortable: false }),
+    ]))
+    expect(activeTable.props('columns').map((column: { key: string }) => column.key)).not.toContain('account')
+    expect(activeTable.props('showAccountBilling')).toBe(false)
+    expect(activeTable.props('showUpstreamEndpoint')).toBe(false)
+    expect(wrapper.findAllComponents(UsageTable).at(-1)!.props('columns')).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'group' })]),
+    )
     wrapper.unmount()
   })
 

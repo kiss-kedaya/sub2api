@@ -236,6 +236,49 @@ describe('admin UsageView route filters', () => {
     wrapper.unmount()
   })
 
+  it('keeps account and group visible in flight even when completed-record columns hide them', async () => {
+    const inflight = { id: -1, request_id: 'client:inflight-ui', inflight: true, account: { id: 19, name: 'upstream-demo' }, group: { id: 7, name: 'group-demo' } }
+    list.mockImplementation((params: { inflight_only?: boolean }) => Promise.resolve({
+      items: params.inflight_only ? [inflight] : [], total: params.inflight_only ? 1 : 0,
+    }))
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.toggleColumn('account')
+    vm.toggleColumn('group')
+    await wrapper.get('[data-testid="inflight-toggle"]').trigger('click')
+    await flushPromises()
+
+    const tables = wrapper.findAllComponents({ name: 'UsageTable' })
+    const activeTable = tables.find(table => (table.props('data') as any[])?.some(row => row.inflight))!
+    expect(activeTable).toBeDefined()
+    expect(activeTable.props('columns')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'account', sortable: false }),
+      expect.objectContaining({ key: 'group', sortable: false }),
+    ]))
+    expect(tables.at(-1)!.props('columns')).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'account' }), expect.objectContaining({ key: 'group' }),
+    ]))
+    expect(activeTable.props('data')).toEqual([inflight])
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ inflight_only: true, page: 1, page_size: 10 }))
+    wrapper.unmount()
+  })
+
+  it('preserves the observer column boundary when opening in-flight requests', async () => {
+    observerAuth.isAdminObserver = true
+    list.mockResolvedValue({ items: [{ id: -1, inflight: true, account: { id: 19, name: 'Account #19' } }], total: 1 })
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    await wrapper.get('[data-testid="inflight-toggle"]').trigger('click')
+    await flushPromises()
+    const activeTable = wrapper.findAllComponents({ name: 'UsageTable' }).at(0)!
+    expect(activeTable.props('observer')).toBe(true)
+    expect(activeTable.props('columns').map((column: { key: string }) => column.key)).not.toEqual(
+      expect.arrayContaining(['endpoint', 'request_id', 'upstream_request_id', 'user_agent', 'ip_address']),
+    )
+    wrapper.unmount()
+  })
+
   it.each([
     ['  =550e8400-e29b-41d4-a716-446655440000  ', '=550e8400-e29b-41d4-a716-446655440000'],
     ['  ^client:abc  ', '^client:abc'],
