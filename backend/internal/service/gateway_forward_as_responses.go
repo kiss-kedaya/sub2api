@@ -325,21 +325,52 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 		dst.CacheReadInputTokens = cacheReadTokens
 		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
 	} else {
-		if src.InputTokens > 0 {
+		if src.HasInputTokens() {
 			dst.InputTokens = src.InputTokens
 		}
-		if src.CacheReadInputTokens > 0 {
+		if src.HasCacheReadInputTokens() {
 			dst.CacheReadInputTokens = src.CacheReadInputTokens
-		} else if src.CachedTokens > 0 {
+		}
+		if src.CacheReadInputTokens == 0 && src.CachedTokens > 0 {
 			dst.CacheReadInputTokens = src.CachedTokens
 		}
-		if src.CacheCreationInputTokens > 0 {
+		if src.HasCacheCreationInputTokens() {
 			dst.CacheCreationInputTokens = src.CacheCreationInputTokens
 		}
 	}
-	if src.OutputTokens > 0 {
+	if src.CacheCreation != nil {
+		if value := src.CacheCreation.Ephemeral5mInputTokens; value != nil {
+			dst.CacheCreation5mTokens = max(*value, 0)
+		}
+		if value := src.CacheCreation.Ephemeral1hInputTokens; value != nil {
+			dst.CacheCreation1hTokens = max(*value, 0)
+		}
+		if !src.HasCacheCreationInputTokens() {
+			dst.CacheCreationInputTokens = dst.CacheCreation5mTokens + dst.CacheCreation1hTokens
+		}
+	} else if src.HasCacheCreationInputTokens() && src.CacheCreationInputTokens == 0 {
+		dst.CacheCreation5mTokens = 0
+		dst.CacheCreation1hTokens = 0
+	}
+	if src.HasOutputTokens() {
 		dst.OutputTokens = src.OutputTokens
 	}
+}
+
+func claudeUsageToAnthropicUsage(usage ClaudeUsage) apicompat.AnthropicUsage {
+	out := apicompat.AnthropicUsage{
+		InputTokens:              usage.InputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+	}
+	if usage.CacheCreation5mTokens > 0 || usage.CacheCreation1hTokens > 0 {
+		out.CacheCreation = &apicompat.AnthropicCacheCreation{
+			Ephemeral5mInputTokens: &usage.CacheCreation5mTokens,
+			Ephemeral1hInputTokens: &usage.CacheCreation1hTokens,
+		}
+	}
+	return out
 }
 
 // parseAnthropicSSEField parses an SSE field line in the form "field:value" or "field: value".
@@ -459,14 +490,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	}
 
 	// Update usage from accumulated delta
-	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = apicompat.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
-		}
-	}
+	finalResp.Usage = claudeUsageToAnthropicUsage(usage)
 
 	// Convert to Responses format
 	responsesResp := apicompat.AnthropicToResponsesResponse(finalResp)
@@ -534,6 +558,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
+	clientDisconnected := false
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
@@ -541,18 +566,26 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	attachSSEScannerBuffer(scanner, nil, maxLineSize)
+	interval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		interval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	pump := newAnthropicNativeLinePump(scanner, interval)
+	defer pump.stop()
+	defer func() { _ = resp.Body.Close() }()
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
-			RequestID:       requestID,
-			UpstreamHeaders: resp.Header,
-			Usage:           usage,
-			Model:           originalModel,
-			UpstreamModel:   mappedModel,
-			ReasoningEffort: reasoningEffort,
-			Stream:          true,
-			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
+			RequestID:        requestID,
+			UpstreamHeaders:  resp.Header,
+			Usage:            usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           true,
+			Duration:         time.Since(startTime),
+			FirstTokenMs:     firstTokenMs,
+			ClientDisconnect: clientDisconnected,
 		}
 	}
 
@@ -571,6 +604,10 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		// Also capture usage from message_start
 		if event.Type == "message_start" && event.Message != nil {
 			mergeAnthropicUsage(&usage, event.Message.Usage)
+		}
+
+		if clientDisconnected {
+			return false
 		}
 
 		// Convert to Responses events
@@ -599,18 +636,19 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 					logger.L().Info("forward_as_responses stream: client disconnected",
 						zap.String("request_id", requestID),
 					)
-					return true // client disconnected
+					clientDisconnected = true
+					return false // continue observing the existing upstream for final usage
 				}
 			}
 		}
-		if len(events) > 0 {
+		if len(events) > 0 && !clientDisconnected {
 			c.Writer.Flush()
 		}
 		return false
 	}
 
 	finalizeStream := func() (*ForwardResult, error) {
-		if finalEvents := apicompat.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 {
+		if finalEvents := apicompat.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 && !clientDisconnected {
 			for _, evt := range finalEvents {
 				sse, err := apicompat.ResponsesEventToSSE(evt)
 				if err != nil {
@@ -625,24 +663,30 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	}
 
 	// Read Anthropic SSE events
-	for scanner.Scan() {
-		line := scanner.Text()
+	var readErr error
+	for {
+		line, err := pump.next()
+		if err != nil {
+			readErr = err
+			break
+		}
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
 			continue
 		}
 
 		// Read data line
-		if !scanner.Scan() {
+		dataLine, err := pump.next()
+		if err != nil {
+			readErr = err
 			break
 		}
-		dataLine := scanner.Text()
 		payload, ok := parseAnthropicSSEField(dataLine, "data")
 		if !ok {
 			continue
 		}
 
-		if upstreamFinancialFailureEnvelope([]byte(payload)) && WriteUpstreamFinancialError(c, 0, []byte(payload)) {
+		if upstreamFinancialFailureEnvelope([]byte(payload)) && (clientDisconnected || WriteUpstreamFinancialError(c, 0, []byte(payload))) {
 			return resultWithUsage(), fmt.Errorf("anthropic upstream financial error")
 		}
 
@@ -659,15 +703,19 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		if processEvent(&event) {
 			return resultWithUsage(), nil
 		}
+		if event.Type == "message_stop" {
+			break
+		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := readErr; err != nil && !errors.Is(err, io.EOF) {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_responses stream: read error",
 				zap.Error(err),
 				zap.String("request_id", requestID),
 			)
 		}
+		return resultWithUsage(), err
 	}
 
 	return finalizeStream()
