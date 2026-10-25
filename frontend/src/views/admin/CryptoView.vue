@@ -970,6 +970,7 @@ function statusLabel(status: string): string {
     ignored: 'deposit.statusIgnored', reverted: 'deposit.statusReverted',
     swept: 'admin.crypto.statusSwept', failed: 'admin.crypto.failed',
     planned: 'admin.crypto.planned', gas_pending: 'admin.crypto.statusGasPending',
+    gas_confirmed: 'admin.crypto.statusGasConfirmed', sweep_pending: 'admin.crypto.statusTokenPending',
     token_pending: 'admin.crypto.statusTokenPending', manual_review: 'admin.crypto.statusManualReview'
   }
   return labels[status] ? t(labels[status]) : status

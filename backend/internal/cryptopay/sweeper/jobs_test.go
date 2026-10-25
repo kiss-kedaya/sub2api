@@ -721,7 +721,7 @@ func TestSweepUnresolvedHotNonceBlocksNewFunding(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	expectWrite(m, "planned", nil, nil)
 	out, err := e.sweepOne(t.Context(), entry, false)
-	if err == nil || out.Status != "pending" || len(c.nonceReads) != 0 || len(c.signs) != 0 || len(c.raws) != 0 {
+	if err != nil || out.Status != "pending" || out.Error != "awaiting gas payer transaction confirmation" || len(c.nonceReads) != 0 || len(c.signs) != 0 || len(c.raws) != 0 {
 		t.Fatalf("unresolved nonce was reused: %+v %v", out, err)
 	}
 }

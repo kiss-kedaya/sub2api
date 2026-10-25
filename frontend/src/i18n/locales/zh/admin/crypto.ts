@@ -38,6 +38,7 @@ export default {
     statusDisabled: '已停用',
     statusSwept: '已归集',
     statusGasPending: 'Gas 待确认',
+    statusGasConfirmed: 'Gas 已确认，等待归集',
     statusTokenPending: '转账待确认',
     statusManualReview: '需人工核查',
     title: '链上直充',

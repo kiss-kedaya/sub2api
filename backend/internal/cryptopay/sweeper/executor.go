@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/ethereum/go-ethereum/common"
@@ -46,6 +47,10 @@ type Executor struct {
 	reader   BalanceReader
 	hotIndex uint32 // constructor compatibility; the local wallet supplies its gas index
 	store    jobDB  // Run's exclusive autocommit connection
+	// Only an explicitly authorized RunAndWait opts into bounded receipt
+	// polling. The nonblocking Run contract remains available to observers.
+	confirmationDeadline time.Time
+	confirmationInterval time.Duration
 }
 
 func NewExecutor(db *sql.DB, pools map[string]*rpc.Pool, wallet TransactionWallet,
@@ -315,6 +320,15 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			return e.jobError(ctx, job, fmt.Errorf("confirmed gas top-up is insufficient; automatic repeat funding refused"))
 		}
 		if err := e.prepareGas(ctx, pool, job, e.gasTopUpAmount(job.Chain, transferGasBudget(price), native), price); err != nil {
+			if errors.Is(err, errGasPayerPending) {
+				// Another job still owns the gas nonce. This is a deferral,
+				// not a failed transfer, and must not hide partial progress.
+				job.Error = "awaiting gas payer transaction confirmation"
+				if saveErr := e.saveJob(ctx, job); saveErr != nil {
+					return pendingError(job, saveErr)
+				}
+				return job.outcome(), nil
+			}
 			return e.jobError(ctx, job, err)
 		}
 		confirmed, err := e.settle(ctx, pool, job, true, required)

@@ -38,6 +38,7 @@ export default {
     statusDisabled: 'Disabled',
     statusSwept: 'Swept',
     statusGasPending: 'Gas confirmation pending',
+    statusGasConfirmed: 'Gas confirmed, awaiting sweep',
     statusTokenPending: 'Transfer confirmation pending',
     statusManualReview: 'Manual review required',
     title: 'Crypto Deposits',
