@@ -20,7 +20,7 @@ describe('Crypto request contract (not backend authorization)', () => {
     })
     await api.runSweep(false, { credential: grant.credential })
     expect(client.post).toHaveBeenLastCalledWith('/admin/crypto/sweep/run', null, {
-      _retry: true, headers: { 'X-Crypto-Grant': grant.credential }, params: { dry_run: '0' }
+      _retry: true, headers: { 'X-Crypto-Grant': grant.credential }, timeout: 180000, params: { dry_run: '0' }
     })
   })
 

@@ -106,6 +106,9 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/security/verify'))).toHaveLength(1)
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/operation-intent'))).toHaveLength(2)
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(2)
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))[0][2]).toEqual(expect.objectContaining({
+      timeout: 180000, params: { dry_run: '0' }
+    }))
   })
 
   it('keeps the channel paused after security recovery without discarding edits or opening another TOTP prompt', async () => {

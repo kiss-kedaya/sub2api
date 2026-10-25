@@ -125,6 +125,42 @@ func TestPostgresSweepPersistsExactAmountBeforeBroadcast(t *testing.T) {
 	}
 }
 
+func TestPostgresManualSweepWaitCompletesAfterDelayedGasAndTokenReceipts(t *testing.T) {
+	db := isolatedSweepPostgres(t)
+	e, _, chain, entry := setupExecutor(t)
+	e.db = db
+	e.config.MinPerAddress = map[string]float64{"bsc": 1}
+	e.reader = &fakeReader{balances: map[string][]AddressBalance{"bsc": {{
+		Chain: entry.Chain, Address: entry.Address, DerivationIndex: entry.DerivationIndex,
+		Token: entry.Token, Raw: entry.RawAmount, Decimals: entry.Decimals,
+	}}}}
+	chain.native, chain.mined = 0, false
+	chain.beforeSend = func() {
+		chain.mined = false
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			chain.mu.Lock()
+			defer chain.mu.Unlock()
+			chain.mined, chain.native = true, 1_000_000_000
+		}()
+	}
+	summary, err := e.RunAndWait(t.Context(), false)
+	if err != nil || summary.Swept != 1 || summary.Pending != 0 || summary.Failed != 0 {
+		t.Fatalf("manual operation stopped before confirming gas/token: %+v %v", summary, err)
+	}
+	var count int
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM sweep_records
+		WHERE status='swept' AND gas_confirmed AND gas_raw_tx<>'' AND sweep_raw_tx<>''
+		AND raw_amount='10000000' AND amount=10`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("missing exact confirmed sweep: count=%d err=%v", count, err)
+	}
+	chain.mu.Lock()
+	defer chain.mu.Unlock()
+	if len(chain.signs) != 2 || len(chain.raws) != 2 {
+		t.Fatalf("duplicate spending: signatures=%d broadcasts=%d", len(chain.signs), len(chain.raws))
+	}
+}
+
 func TestPostgresUnknownBroadcastResumesIdenticalTransaction(t *testing.T) {
 	db := isolatedSweepPostgres(t)
 	e, _, chain, entry := setupExecutor(t)

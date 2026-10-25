@@ -120,8 +120,8 @@ func TestPlannerEstimatesGasTopUp(t *testing.T) {
 	if !plan.Entries[0].NeedsGasTopUp || plan.Entries[0].GasTopUpAmount == nil {
 		t.Fatalf("empty address should need gas: %+v", plan.Entries[0])
 	}
-	// Configured 0.0002 BNB is above the shortfall, so that is what we send.
-	want := decimalToRawUnits(0.0002, 18)
+	// The preview and execution both fund only this transfer's buffered cost.
+	want := transferGasBudget(price)
 	if plan.Entries[0].GasTopUpAmount.Cmp(want) != 0 {
 		t.Fatalf("top-up = %s, want %s", plan.Entries[0].GasTopUpAmount, want)
 	}
