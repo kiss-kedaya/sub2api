@@ -10,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -106,4 +108,61 @@ func convertedAnthropicResponseUsage(body string, stream bool, protocol string) 
 		}
 	}
 	return usage
+}
+
+func TestConvertedAnthropicUsageAfterDisconnect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, protocol := range []string{"chat", "responses"} {
+		t.Run(protocol, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+protocol, nil)
+			c.Writer = &failWriteResponseWriter{ResponseWriter: c.Writer}
+			svc := newMinimalGatewayService()
+			sse := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_disconnect\",\"model\":\"claude-test\",\"usage\":{\"input_tokens\":2,\"output_tokens\":8,\"cache_creation_input_tokens\":600}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":19,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":600}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+			response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(sse))}
+			var result *ForwardResult
+			var err error
+			if protocol == "chat" {
+				result, err = svc.handleCCStreamingFromAnthropic(response, c, "claude-test", "claude-test", nil, time.Now(), true)
+			} else {
+				result, err = svc.handleResponsesStreamingResponse(response, c, "claude-test", "claude-test", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+			}
+			require.NoError(t, err)
+			require.True(t, result.ClientDisconnect)
+			require.Equal(t, ClaudeUsage{OutputTokens: 19, CacheReadInputTokens: 600}, result.Usage, "client write failure must not settle provisional message_start usage")
+		})
+	}
+}
+
+func TestConvertedAnthropicUsageDrainHasIdleLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, protocol := range []string{"chat", "responses"} {
+		t.Run(protocol, func(t *testing.T) {
+			reader, writer := io.Pipe()
+			t.Cleanup(func() { _ = writer.Close() })
+			writeDone := make(chan struct{})
+			go func() {
+				defer close(writeDone)
+				_, _ = io.WriteString(writer, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_idle\",\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":600}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n")
+			}()
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+protocol, nil)
+			c.Writer = &failWriteResponseWriter{ResponseWriter: c.Writer}
+			svc := newMinimalGatewayService()
+			svc.cfg.Gateway.StreamDataIntervalTimeout = 1
+			response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
+			var result *ForwardResult
+			var err error
+			if protocol == "chat" {
+				result, err = svc.handleCCStreamingFromAnthropic(response, c, "claude-test", "claude-test", nil, time.Now(), true)
+			} else {
+				result, err = svc.handleResponsesStreamingResponse(response, c, "claude-test", "claude-test", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+			}
+			require.ErrorIs(t, err, errAnthropicNativeStreamIdle)
+			require.True(t, result.ClientDisconnect)
+			_, err = writer.Write([]byte("late"))
+			require.ErrorIs(t, err, io.ErrClosedPipe, "idle drain must release the original upstream body")
+			<-writeDone
+		})
+	}
 }
