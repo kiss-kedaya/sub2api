@@ -54,7 +54,7 @@ func sweepFailureEvents(summary *sweeper.Summary, runErr error) []sweepFailureEv
 			// an RPC/signing/persistence error still require an operator alert.
 			reason := rpc.SafeRecordedError(entry.Error)
 			if entry.Status != "failed" && entry.Status != "manual_review" &&
-				(entry.Status != "pending" || reason == "" || reason == "awaiting canonical receipt and required confirmations") {
+				(entry.Status != "pending" || reason == "" || reason == "awaiting canonical receipt and required confirmations" || reason == "awaiting gas payer transaction confirmation") {
 				continue
 			}
 			if reason == "" {

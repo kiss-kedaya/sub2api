@@ -398,13 +398,22 @@ func transferGasBudget(gasPrice *big.Int) *big.Int {
 	return budget.Div(budget.Mul(budget, big.NewInt(3)), big.NewInt(2))
 }
 
+// GasWalletRequirement estimates one unfunded child's buffered token fee
+// plus the gas wallet's own native transfer fee. The configured funding cap
+// is not a minimum balance requirement.
+func GasWalletRequirement(gasPrice *big.Int) *big.Int {
+	return new(big.Int).Add(transferGasBudget(gasPrice), new(big.Int).Mul(gasPrice, big.NewInt(21000)))
+}
+
 func gasTopUpAmount(config Config, chain string, gasBudget, native *big.Int) *big.Int {
 	need := new(big.Int).Sub(gasBudget, native)
 	configured := configuredGasBudget(config, chain)
 	if need.Sign() <= 0 || configured.Sign() <= 0 || need.Cmp(configured) > 0 {
 		return new(big.Int) // no automatic funding above the configured budget
 	}
-	return configured
+	// GasTopUp is a ceiling, not a fixed payment. The budget already includes
+	// the transfer's 50% fee margin; subtract native coin left from prior runs.
+	return need
 }
 
 func configuredGasBudget(config Config, chain string) *big.Int {

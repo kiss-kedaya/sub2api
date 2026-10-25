@@ -25,6 +25,7 @@ func TestSweepFailureAlertsCoverFailedPendingAndManualReviewWithoutReportingNorm
 		{name: "manual review without error", status: "manual_review", want: 1},
 		{name: "pending rpc error", status: "pending", reason: "RPC connection failed", want: 1},
 		{name: "pending confirmation", status: "pending", reason: "awaiting canonical receipt and required confirmations"},
+		{name: "pending gas payer confirmation", status: "pending", reason: "awaiting gas payer transaction confirmation"},
 		{name: "pending no error", status: "pending"},
 		{name: "success", status: "swept"},
 		{name: "dry run failure", status: "failed", dryRun: true},
