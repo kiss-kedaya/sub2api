@@ -143,11 +143,11 @@ var (
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
-	// Claude Sonnet 5.5: $2/MTok input, $10/MTok output; 5m cache write $2.5/MTok, 1h cache write $4/MTok; cache read $0.2/MTok.
+	// Claude Sonnet 5.5: $2/MTok input, $10/MTok output; 5m cache write $2.5/MTok, 1h cache write $4/MTok; cache read $0.1/MTok.
 	claudeSonnet55FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6,
 		CacheCreationInputTokenCost: 2.5e-6, CacheCreationInputTokenCostAbove1hr: 4e-6,
-		CacheReadInputTokenCost: 0.2e-6,
+		CacheReadInputTokenCost: 0.1e-6,
 		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
 	}
 	openAIGPT56SolFallbackPricing = &LiteLLMModelPricing{
