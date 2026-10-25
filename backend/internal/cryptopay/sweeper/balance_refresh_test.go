@@ -96,7 +96,7 @@ func TestSweepRefreshIncludesDepositCreditedWhileGasWasConfirming(t *testing.T) 
 }
 
 func TestSweepCurrentBalanceCannotChangeAddressAssignment(t *testing.T) {
-	for _, field := range []string{"address", "token", "index", "decimals"} {
+	for _, field := range []string{"address", "token", "index", "decimals", "below_minimum"} {
 		t.Run(field, func(t *testing.T) {
 			e, mock, chain, entry := setupExecutor(t)
 			reader := currentReaderFor(entry, 12_000_000)
@@ -109,6 +109,9 @@ func TestSweepCurrentBalanceCannotChangeAddressAssignment(t *testing.T) {
 				reader.current.DerivationIndex++
 			case "decimals":
 				reader.current.Decimals++
+			case "below_minimum":
+				e.config.MinPerAddress = map[string]float64{"bsc": 1}
+				reader.current.Raw = big.NewInt(500_000)
 			}
 			e.reader = reader
 			expectCreate(mock, entry, nil, nil)
