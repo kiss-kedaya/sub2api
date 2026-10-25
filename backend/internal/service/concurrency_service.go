@@ -562,7 +562,9 @@ func (s *ConcurrencyService) GetAccountWaitingCount(ctx context.Context, account
 // CalculateMaxWait calculates the maximum wait queue size for a user
 // maxWait = userConcurrency + defaultExtraWaitSlots
 func CalculateMaxWait(userConcurrency int) int {
-	return NormalizeUserConcurrency(userConcurrency) + defaultExtraWaitSlots
+	// Preserve the queue's minimum capacity independently of admission limits.
+	// Unlimited users acquire immediately and never enter this wait queue.
+	return max(1, NormalizeUserConcurrency(userConcurrency)) + defaultExtraWaitSlots
 }
 
 // NormalizeUserConcurrency preserves zero as unlimited concurrency. Invalid
