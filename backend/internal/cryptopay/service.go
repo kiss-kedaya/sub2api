@@ -614,8 +614,8 @@ func nativeSymbol(chain string) string {
 }
 
 // HotWalletStatuses reads the hot wallet balance on each enabled EVM chain.
-// The threshold is the per-chain gas top-up setting: below it a sweep would
-// have to fund gas first, which is what the operator wants to know.
+// Readiness uses the estimated cost to fund one child, rather than requiring
+// the full configured per-address funding limit to be held in this wallet.
 func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, error) {
 	cfg := s.Config()
 	receiving := strings.TrimSpace(cfg.HotWalletEVM)
@@ -659,14 +659,15 @@ func (s *Service) HotWalletStatuses(ctx context.Context) ([]HotWalletStatus, err
 		}
 		// Native coins on these chains are 18-decimal.
 		st.Balance = toDisplayAmount(raw, 18)
-		st.RPCReady = true
-		need := cfg.GasTopUp[chain]
-		if need <= 0 {
-			need = 0.002
+		price, err := pool.GasPrice(ctx)
+		if err != nil {
+			st.Error = "RPC request failed; check endpoint configuration and server logs"
+			st.ErrorCode = "RPC_UNAVAILABLE"
+			out = append(out, st)
+			continue
 		}
-		var have float64
-		_, _ = fmt.Sscanf(st.Balance, "%f", &have)
-		st.Enough = have >= need
+		st.RPCReady = true
+		st.Enough = raw.Cmp(sweeper.GasWalletRequirement(price)) >= 0
 		out = append(out, st)
 	}
 	return out, nil
@@ -726,7 +727,7 @@ func (s *Service) RunSweep(ctx context.Context, dryRun bool) (summary *sweeper.S
 		defer revoke()
 		ctx = authorized
 	}
-	return exec.Run(ctx, dryRun)
+	return exec.RunAndWait(ctx, dryRun)
 }
 
 // SweepRecord is one sweep_records row for the admin UI.

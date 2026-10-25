@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/ethereum/go-ethereum/common"
@@ -46,6 +47,10 @@ type Executor struct {
 	reader   BalanceReader
 	hotIndex uint32 // constructor compatibility; the local wallet supplies its gas index
 	store    jobDB  // Run's exclusive autocommit connection
+	// Only an explicitly authorized RunAndWait opts into bounded receipt
+	// polling. The nonblocking Run contract remains available to observers.
+	confirmationDeadline time.Time
+	confirmationInterval time.Duration
 }
 
 func NewExecutor(db *sql.DB, pools map[string]*rpc.Pool, wallet TransactionWallet,
@@ -315,6 +320,15 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			return e.jobError(ctx, job, fmt.Errorf("confirmed gas top-up is insufficient; automatic repeat funding refused"))
 		}
 		if err := e.prepareGas(ctx, pool, job, e.gasTopUpAmount(job.Chain, transferGasBudget(price), native), price); err != nil {
+			if errors.Is(err, errGasPayerPending) {
+				// Another job still owns the gas nonce. This is a deferral,
+				// not a failed transfer, and must not hide partial progress.
+				job.Error = "awaiting gas payer transaction confirmation"
+				if saveErr := e.saveJob(ctx, job); saveErr != nil {
+					return pendingError(job, saveErr)
+				}
+				return job.outcome(), nil
+			}
 			return e.jobError(ctx, job, err)
 		}
 		confirmed, err := e.settle(ctx, pool, job, true, required)
@@ -384,13 +398,22 @@ func transferGasBudget(gasPrice *big.Int) *big.Int {
 	return budget.Div(budget.Mul(budget, big.NewInt(3)), big.NewInt(2))
 }
 
+// GasWalletRequirement estimates one unfunded child's buffered token fee
+// plus the gas wallet's own native transfer fee. The configured funding cap
+// is not a minimum balance requirement.
+func GasWalletRequirement(gasPrice *big.Int) *big.Int {
+	return new(big.Int).Add(transferGasBudget(gasPrice), new(big.Int).Mul(gasPrice, big.NewInt(21000)))
+}
+
 func gasTopUpAmount(config Config, chain string, gasBudget, native *big.Int) *big.Int {
 	need := new(big.Int).Sub(gasBudget, native)
 	configured := configuredGasBudget(config, chain)
 	if need.Sign() <= 0 || configured.Sign() <= 0 || need.Cmp(configured) > 0 {
 		return new(big.Int) // no automatic funding above the configured budget
 	}
-	return configured
+	// GasTopUp is a ceiling, not a fixed payment. The budget already includes
+	// the transfer's 50% fee margin; subtract native coin left from prior runs.
+	return need
 }
 
 func configuredGasBudget(config Config, chain string) *big.Int {
