@@ -65,6 +65,9 @@ jobs:
       - name: Ordered wallet outbox concurrency regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository -run '^Test(LiveBalanceAdjustmentOutbox|AdjustLiveBalance.*Batch|ApplyExternalBalanceOutbox|RecoveringLiveBalanceAdjustment)' -count=1
+      - name: Inflight display and unlimited user concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository ./internal/handler ./internal/handler/dto ./internal/handler/admin ./internal/server/middleware -run '^Test(UsageInflight|TrackUsageInflight|UsageLogFromInflight|SetOpsSelectedAccount|IndependentInflight|AcquireUserSlot_ConcurrencyLimits|UserConcurrency|LiveLease)' -count=1
 
   crypto-sweep-integration:
     runs-on: ubuntu-latest

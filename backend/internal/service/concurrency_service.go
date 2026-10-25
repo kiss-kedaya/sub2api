@@ -377,16 +377,12 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 }
 
 // AcquireUserSlot attempts to acquire a concurrency slot for a user.
-// If the user is at max concurrency, it waits until a slot is available or timeout.
+// A limit of zero is unlimited, but requests still acquire tracked slots.
 // Returns a release function that MUST be called when the request completes.
 func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (*AcquireResult, error) {
-	// A user must always retain one request slot. Treat legacy zero/negative
-	// values as the minimum rather than as unlimited concurrency; account-level
-	// limits keep their existing zero = unlimited semantics.
 	maxConcurrency = NormalizeUserConcurrency(maxConcurrency)
 	// Keep the existing fail-open behavior for lightweight/test deployments
-	// without a configured concurrency cache. A configured cache still receives
-	// the normalized minimum of one above.
+	// without a configured concurrency cache.
 	if s == nil || s.cache == nil {
 		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
 	}
@@ -569,11 +565,10 @@ func CalculateMaxWait(userConcurrency int) int {
 	return NormalizeUserConcurrency(userConcurrency) + defaultExtraWaitSlots
 }
 
-// NormalizeUserConcurrency returns the effective user request limit. User
-// concurrency is intentionally bounded at one so an invalid or legacy zero
-// value cannot disable admission control entirely.
+// NormalizeUserConcurrency preserves zero as unlimited concurrency. Invalid
+// negative legacy values retain the minimum limit of one request.
 func NormalizeUserConcurrency(userConcurrency int) int {
-	if userConcurrency < 1 {
+	if userConcurrency < 0 {
 		return 1
 	}
 	return userConcurrency

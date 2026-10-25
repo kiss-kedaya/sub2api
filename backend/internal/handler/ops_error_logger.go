@@ -488,7 +488,7 @@ func setOpsEndpointContext(c *gin.Context, upstreamModel string, requestType int
 	c.Set(opsRequestTypeKey, requestType)
 }
 
-func setOpsSelectedAccount(c *gin.Context, accountID int64, platform ...string) {
+func setOpsSelectedAccount(c *gin.Context, accountID int64, platform string, accountName ...string) {
 	if c == nil || accountID <= 0 {
 		return
 	}
@@ -496,11 +496,15 @@ func setOpsSelectedAccount(c *gin.Context, accountID int64, platform ...string) 
 	c.Set(opsAccountIDKey, accountID)
 	if c.Request != nil {
 		ctx := context.WithValue(c.Request.Context(), ctxkey.AccountID, accountID)
-		if len(platform) > 0 {
-			p := strings.TrimSpace(platform[0])
-			if p != "" {
-				ctx = context.WithValue(ctx, ctxkey.Platform, p)
-			}
+		name := ""
+		if len(accountName) > 0 {
+			name = strings.TrimSpace(accountName[0])
+		}
+		// Publish strings with the selected ID, never a mutable account object.
+		// An ID-only selection must also clear the previous account's name.
+		ctx = context.WithValue(ctx, ctxkey.AccountName, name)
+		if p := strings.TrimSpace(platform); p != "" {
+			ctx = context.WithValue(ctx, ctxkey.Platform, p)
 		}
 		c.Request = c.Request.WithContext(ctx)
 		c.Set(service.UsageInflightRequestContextKey, ctx)

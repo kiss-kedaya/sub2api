@@ -466,7 +466,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 			account := selection.Account
-			setOpsSelectedAccount(c, account.ID, account.Platform)
+			setOpsSelectedAccount(c, account.ID, account.Platform, account.Name)
 
 			// 检查请求拦截（预热请求、SUGGESTION MODE等）
 			if account.IsInterceptWarmupEnabled() {
@@ -824,7 +824,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 			account := selection.Account
-			setOpsSelectedAccount(c, account.ID, account.Platform)
+			setOpsSelectedAccount(c, account.ID, account.Platform, account.Name)
 
 			// [DEBUG-STICKY] 打印账号选择结果
 			reqLog.Debug("sticky.account_selected",
