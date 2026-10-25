@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 
@@ -108,7 +109,9 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		        WHERE pending.chain = $1
 		          AND lower(pending.from_address) = lower(c.to_address)
 		          AND lower(pending.token) = lower(c.token)
-		          AND ((pending.job_version = 1 AND pending.status NOT IN ('swept', 'failed'))
+		          AND ((pending.job_version = 1 AND pending.status NOT IN ('swept', 'failed')
+		                AND (pending.sweep_raw_tx <> '' OR pending.sweep_tx_hash <> ''
+		                     OR pending.status = 'manual_review'))
 		               OR (pending.job_version = 0 AND pending.status <> 'swept'
 		                   AND (pending.status IN ('manual_review', 'gas_sent')
 		                        OR pending.gas_tx_hash <> '' OR pending.sweep_tx_hash <> '')))
@@ -155,6 +158,39 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		})
 	}
 	return out, rows.Err()
+}
+
+// CurrentBalance also reads addresses reserved by unsigned token jobs. A gas
+// payment does not freeze the later ERC-20 amount. The ledger remains the limit;
+// ignored deposits and arbitrary extra balance are never swept by this query.
+func (b *balanceReader) CurrentBalance(ctx context.Context, chain, address, token string) (*sweeper.AddressBalance, error) {
+	var amount string
+	var index sql.NullInt64
+	err := b.db.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT SUM(d.amount) FROM deposit_transactions d
+		 WHERE d.chain=$1 AND d.to_address=$2 AND lower(d.token)=lower($3)
+		 AND d.status='credited'), 0)
+		- COALESCE((SELECT SUM(s.amount) FROM sweep_records s
+		 WHERE s.chain=$1 AND lower(s.from_address)=lower($2)
+		 AND lower(s.token)=lower($3) AND s.status='swept' AND s.amount>0), 0),
+		MAX(a.derivation_index) FROM deposit_addresses a
+		WHERE a.chain='evm' AND lower(a.address)=lower($2)`, chain, address, token).Scan(&amount, &index)
+	if err != nil {
+		return nil, fmt.Errorf("read current sweep balance: %w", err)
+	}
+	if !index.Valid || index.Int64 < 0 || index.Int64 > math.MaxUint32 {
+		return nil, fmt.Errorf("sweep address assignment is missing or invalid")
+	}
+	decimals := b.decimals[tokenDecimalsKey(chain, token)]
+	if decimals == 0 {
+		decimals = 6
+	}
+	raw, err := decimalToRaw(amount, decimals)
+	if err != nil {
+		return nil, fmt.Errorf("decode current sweep balance: %w", err)
+	}
+	return &sweeper.AddressBalance{Chain: chain, Address: address, Token: token,
+		DerivationIndex: uint32(index.Int64), Raw: raw, Decimals: decimals}, nil
 }
 
 // decimalToRaw converts a NUMERIC string ("12.345678") into raw units for
