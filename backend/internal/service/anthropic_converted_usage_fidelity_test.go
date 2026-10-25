@@ -42,6 +42,10 @@ func TestConvertedAnthropicUsageFidelity(t *testing.T) {
 					parseSSEUsagePassthrough(start, &nativeUsage)
 					parseSSEUsagePassthrough(delta, &nativeUsage)
 					require.Equal(t, tc.want, nativeUsage, "native stream billing is the comparison baseline")
+					var generalUsage ClaudeUsage
+					newMinimalGatewayService().parseSSEUsage(start, &generalUsage)
+					newMinimalGatewayService().parseSSEUsage(delta, &generalUsage)
+					require.Equal(t, tc.want, generalUsage, "the general Messages path must use the same final usage")
 					upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(sse))}}
 					cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
 					svc := &GatewayService{cfg: cfg, httpUpstream: upstream, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
