@@ -29,6 +29,9 @@ func (e *Executor) refreshUnsignedAmount(ctx context.Context, job *sweepJob) err
 		balance.Raw == nil || balance.Raw.Sign() <= 0 || balance.Raw.BitLen() > 256 {
 		return fmt.Errorf("current credited sweep balance or address assignment is invalid")
 	}
+	if toDecimal(balance.Raw, job.Decimals) < e.config.MinPerAddress[job.Chain] {
+		return fmt.Errorf("current credited balance is below the per-address sweep minimum")
+	}
 	if balance.Raw.Cmp(job.RawAmount) == 0 {
 		return nil
 	}
