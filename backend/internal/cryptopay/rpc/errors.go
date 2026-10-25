@@ -88,6 +88,7 @@ func SafeRecordedError(message string) string {
 		return message
 	case "RPC request is invalid", "RPC response is invalid", "RPC connection failed", "RPC request failed",
 		"awaiting canonical receipt and required confirmations",
+		"awaiting gas payer transaction confirmation",
 		"confirmed transaction reverted; automatic replacement/funding refused",
 		"legacy or ambiguous transaction; reconcile hashes manually before releasing address",
 		"Payment operation canceled; reconcile transaction status before retrying",

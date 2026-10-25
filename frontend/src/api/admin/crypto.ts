@@ -180,6 +180,8 @@ export async function getSweepPlan(): Promise<SweepPlan> {
 export async function runSweep(dryRun: boolean, verification?: CryptoVerification): Promise<SweepSummary> {
   const { data } = await apiClient.post('/admin/crypto/sweep/run', null, {
     ...cryptoRequestOptions(verification),
+    // The server waits up to 90s for this operation's gas/token receipts.
+    timeout: dryRun ? 30000 : 180000,
     params: { dry_run: dryRun ? '1' : '0' }
   })
   return data.data

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -14,6 +15,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
+
+var errGasPayerPending = errors.New("gas payer has an unresolved transaction; funding deferred")
 
 func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, amount, price *big.Int) error {
 	if e.wallet == nil {
@@ -31,7 +34,7 @@ func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, 
 		return &persistenceError{err}
 	}
 	if busy {
-		return fmt.Errorf("gas payer has an unresolved transaction; funding deferred")
+		return errGasPayerPending
 	}
 	// The receiving address may be a cold wallet. Its nonce is irrelevant.
 	nonce, err := pool.Nonce(ctx, hot.EVM)
@@ -228,6 +231,9 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		if err == nil {
 			state, err = checkReceipt(ctx, pool, hash, required)
 		}
+	}
+	if err == nil {
+		state, err = e.waitForReceipt(ctx, pool, hash, required, state)
 	}
 	if err != nil {
 		j.Error = rpc.SafeError(err)

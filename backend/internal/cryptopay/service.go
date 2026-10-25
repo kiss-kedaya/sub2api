@@ -726,7 +726,7 @@ func (s *Service) RunSweep(ctx context.Context, dryRun bool) (summary *sweeper.S
 		defer revoke()
 		ctx = authorized
 	}
-	return exec.Run(ctx, dryRun)
+	return exec.RunAndWait(ctx, dryRun)
 }
 
 // SweepRecord is one sweep_records row for the admin UI.
