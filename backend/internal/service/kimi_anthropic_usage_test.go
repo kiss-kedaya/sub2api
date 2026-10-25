@@ -155,6 +155,15 @@ func TestMergeAnthropicUsageNormalizesGLMAndDeepSeekAliases(t *testing.T) {
 	}
 }
 
+func TestMergeAnthropicUsagePreservesCachedTokensAliasWithCanonicalZero(t *testing.T) {
+	var src apicompat.AnthropicUsage
+	require.NoError(t, json.Unmarshal([]byte(`{"input_tokens":2,"cache_read_input_tokens":0,"cached_tokens":128}`), &src))
+	var usage ClaudeUsage
+	mergeAnthropicUsage(&usage, src)
+	require.Equal(t, 128, usage.CacheReadInputTokens)
+	require.Equal(t, 2, usage.InputTokens)
+}
+
 func TestClaudeUsageToOpenAIUsagePreservesCNProviderNativeAnthropicBuckets(t *testing.T) {
 	tests := []struct {
 		name         string
