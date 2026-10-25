@@ -330,7 +330,8 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 		}
 		if src.HasCacheReadInputTokens() {
 			dst.CacheReadInputTokens = src.CacheReadInputTokens
-		} else if src.CachedTokens > 0 {
+		}
+		if src.CacheReadInputTokens == 0 && src.CachedTokens > 0 {
 			dst.CacheReadInputTokens = src.CachedTokens
 		}
 		if src.HasCacheCreationInputTokens() {
