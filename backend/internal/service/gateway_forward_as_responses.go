@@ -490,9 +490,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	}
 
 	// Update usage from accumulated delta
-	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = claudeUsageToAnthropicUsage(usage)
-	}
+	finalResp.Usage = claudeUsageToAnthropicUsage(usage)
 
 	// Convert to Responses format
 	responsesResp := apicompat.AnthropicToResponsesResponse(finalResp)
