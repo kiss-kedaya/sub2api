@@ -668,6 +668,18 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 	if err := json.Unmarshal(body, &rawData); err != nil {
 		return nil, fmt.Errorf("parse raw JSON: %w", err)
 	}
+	// The remote catalog can retain the older Sonnet 5.5 cache-read rate.
+	// Correct its base card before explicit local overrides are merged so both
+	// exact catalog matches and family fallbacks use the current base price.
+	for modelName, rawEntry := range rawData {
+		if !claude.IsSonnet55(modelName) {
+			continue
+		}
+		patch := json.RawMessage(`{"cache_read_input_token_cost": 1e-7}`)
+		if corrected, ok := mergePricingOverrideEntry(rawEntry, patch); ok {
+			rawData[modelName] = corrected
+		}
+	}
 	rawData = s.applyPricingOverrides(rawData)
 
 	result := make(map[string]*LiteLLMModelPricing)
