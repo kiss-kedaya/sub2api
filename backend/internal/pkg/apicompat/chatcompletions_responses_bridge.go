@@ -1651,9 +1651,10 @@ func ChatUsageToResponsesUsage(usage *ChatUsage) *ResponsesUsage {
 		return nil
 	}
 	out := &ResponsesUsage{
-		InputTokens:  usage.PromptTokens,
-		OutputTokens: usage.CompletionTokens,
-		TotalTokens:  usage.TotalTokens,
+		InputTokens:   usage.PromptTokens,
+		OutputTokens:  usage.CompletionTokens,
+		TotalTokens:   usage.TotalTokens,
+		CacheCreation: usage.CacheCreation,
 	}
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.InputTokens + out.OutputTokens
