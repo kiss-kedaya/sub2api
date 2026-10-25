@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -131,14 +132,34 @@ func (w *LiveBalanceAdjustmentOutboxWorker) processBatch(ctx context.Context) er
 }
 
 func (w *LiveBalanceAdjustmentOutboxWorker) processBatchWithResult(ctx context.Context) (int, error) {
-	events, err := w.repo.Claim(ctx, w.workerID, liveBalanceOutboxBatchSize, liveBalanceOutboxLease)
+	return w.processBatchLimit(ctx, liveBalanceOutboxBatchSize)
+}
+
+func (w *LiveBalanceAdjustmentOutboxWorker) processBatchLimit(ctx context.Context, batchSize int) (int, error) {
+	if batchSize <= 0 {
+		batchSize = liveBalanceOutboxBatchSize
+	}
+	claimCtx, cancelClaim := context.WithTimeout(ctx, liveBalanceOutboxClaimTimeout)
+	events, err := w.repo.Claim(claimCtx, w.workerID, batchSize, liveBalanceOutboxLease)
+	cancelClaim()
 	if err != nil {
 		return 0, fmt.Errorf("claim live balance adjustments: %w", err)
 	}
 
+	groups := make(map[int64][]LiveBalanceAdjustmentEvent)
+	for _, event := range events {
+		groups[event.UserID] = append(groups[event.UserID], event)
+	}
+	userIDs := make([]int64, 0, len(groups))
+	for userID := range groups {
+		userIDs = append(userIDs, userID)
+	}
+	sort.Slice(userIDs, func(i, j int) bool { return userIDs[i] < userIDs[j] })
 	semaphore := make(chan struct{}, liveBalanceOutboxConcurrency)
 	var wg sync.WaitGroup
-	for i := range events {
+	for _, userID := range userIDs {
+		userEvents := groups[userID]
+		sort.Slice(userEvents, func(i, j int) bool { return userEvents[i].ID < userEvents[j].ID })
 		select {
 		case <-ctx.Done():
 			wg.Wait()
@@ -146,14 +167,70 @@ func (w *LiveBalanceAdjustmentOutboxWorker) processBatchWithResult(ctx context.C
 		case semaphore <- struct{}{}:
 		}
 		wg.Add(1)
-		go func(event LiveBalanceAdjustmentEvent) {
+		go func() {
 			defer wg.Done()
 			defer func() { <-semaphore }()
-			w.processEvent(ctx, event)
-		}(events[i])
+			w.processEventBatch(ctx, userEvents)
+		}()
 	}
 	wg.Wait()
 	return len(events), nil
+}
+
+func (w *LiveBalanceAdjustmentOutboxWorker) processEventBatch(parent context.Context, events []LiveBalanceAdjustmentEvent) {
+	if len(events) == 0 {
+		return
+	}
+	batchApplier, ok := w.applier.(interface {
+		ApplyExternalBalanceOutboxAdjustments(context.Context, []LiveBalanceAdjustmentEvent) error
+	})
+	if !ok {
+		for _, event := range events {
+			w.processEvent(parent, event)
+		}
+		return
+	}
+	ids := make([]int64, len(events))
+	for i := range events {
+		ids[i] = events[i].ID
+	}
+	ctx, cancel := context.WithTimeout(parent, liveBalanceOutboxRedisTimeout)
+	err := batchApplier.ApplyExternalBalanceOutboxAdjustments(ctx, events)
+	cancel()
+	if err != nil {
+		w.retryEventBatch(events, err)
+		return
+	}
+	ackCtx, ackCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	err = w.repo.MarkDeliveredBatch(ackCtx, ids, w.workerID)
+	ackCancel()
+	if err != nil {
+		w.recordFailure("ack_batch", events[len(events)-1].ID, err)
+		return
+	}
+	w.processed.Add(uint64(len(events)))
+	w.lastError.Store("")
+}
+
+func (w *LiveBalanceAdjustmentOutboxWorker) retryEventBatch(events []LiveBalanceAdjustmentEvent, cause error) {
+	if len(events) == 0 {
+		return
+	}
+	last := events[len(events)-1]
+	w.recordFailure("apply_batch", last.ID, cause)
+	retryAt := time.Now().UTC().Add(liveBalanceOutboxRetryDelay(last.Attempts + 1))
+	ids := make([]int64, len(events))
+	for i := range events {
+		ids[i] = events[i].ID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	err := w.repo.RetryClaimedBatch(ctx, ids, w.workerID, retryAt, boundedLiveBalanceOutboxError(cause))
+	cancel()
+	if err != nil {
+		w.recordFailure("release_batch", last.ID, err)
+		return
+	}
+	w.retries.Add(uint64(len(events)))
 }
 
 func (w *LiveBalanceAdjustmentOutboxWorker) processEvent(parent context.Context, event LiveBalanceAdjustmentEvent) {
