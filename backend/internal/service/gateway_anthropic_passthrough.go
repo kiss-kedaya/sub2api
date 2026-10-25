@@ -761,6 +761,7 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 		msgUsage := parsed.Get("message.usage")
 		if msgUsage.Exists() {
 			usage.InputTokens = int(msgUsage.Get("input_tokens").Int())
+			usage.OutputTokens = int(msgUsage.Get("output_tokens").Int())
 			usage.CacheCreationInputTokens = int(msgUsage.Get("cache_creation_input_tokens").Int())
 			usage.CacheReadInputTokens = int(msgUsage.Get("cache_read_input_tokens").Int())
 
@@ -775,17 +776,21 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	case "message_delta":
 		deltaUsage := parsed.Get("usage")
 		if deltaUsage.Exists() {
-			if v := deltaUsage.Get("input_tokens").Int(); v > 0 {
-				usage.InputTokens = int(v)
+			if v := deltaUsage.Get("input_tokens"); v.Exists() && v.Type != gjson.Null {
+				usage.InputTokens = int(v.Int())
 			}
-			if v := deltaUsage.Get("output_tokens").Int(); v > 0 {
-				usage.OutputTokens = int(v)
+			if v := deltaUsage.Get("output_tokens"); v.Exists() && v.Type != gjson.Null {
+				usage.OutputTokens = int(v.Int())
 			}
-			if v := deltaUsage.Get("cache_creation_input_tokens").Int(); v > 0 {
-				usage.CacheCreationInputTokens = int(v)
+			if v := deltaUsage.Get("cache_creation_input_tokens"); v.Exists() && v.Type != gjson.Null {
+				usage.CacheCreationInputTokens = int(v.Int())
+				if v.Int() == 0 && !deltaUsage.Get("cache_creation").IsObject() {
+					usage.CacheCreation5mTokens = 0
+					usage.CacheCreation1hTokens = 0
+				}
 			}
-			if v := deltaUsage.Get("cache_read_input_tokens").Int(); v > 0 {
-				usage.CacheReadInputTokens = int(v)
+			if v := deltaUsage.Get("cache_read_input_tokens"); v.Exists() && v.Type != gjson.Null {
+				usage.CacheReadInputTokens = int(v.Int())
 			}
 
 			cc5m := deltaUsage.Get("cache_creation.ephemeral_5m_input_tokens")

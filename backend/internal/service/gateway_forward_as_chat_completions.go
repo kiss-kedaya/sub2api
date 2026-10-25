@@ -328,12 +328,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 
 	// Update usage from accumulated delta
 	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = apicompat.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
-		}
+		finalResp.Usage = claudeUsageToAnthropicUsage(usage)
 	}
 
 	// Chain: Anthropic → Responses → Chat Completions

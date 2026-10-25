@@ -166,10 +166,15 @@ type AnthropicPromptTokensDetails struct {
 
 // AnthropicUsage holds token counts in Anthropic format.
 type AnthropicUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	InputTokens                     int                     `json:"input_tokens"`
+	OutputTokens                    int                     `json:"output_tokens"`
+	CacheCreationInputTokens        int                     `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens            int                     `json:"cache_read_input_tokens"`
+	CacheCreation                   *AnthropicCacheCreation `json:"cache_creation,omitempty"`
+	inputTokensPresent              bool
+	outputTokensPresent             bool
+	cacheCreationInputTokensPresent bool
+	cacheReadInputTokensPresent     bool
 	// Anthropic-compatible providers can also expose their native OpenAI-style
 	// total/cache fields. Preserve them so callers can normalize provider totals
 	// into Anthropic's mutually-exclusive billing buckets.
@@ -178,6 +183,103 @@ type AnthropicUsage struct {
 	PromptTokensDetails   *AnthropicPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
 	PromptCacheHitTokens  *int                          `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens *int                          `json:"prompt_cache_miss_tokens,omitempty"`
+}
+
+// AnthropicCacheCreation retains the upstream TTL buckets. Pointers distinguish
+// omitted streaming fields from explicit zeroes that replace an earlier value.
+type AnthropicCacheCreation struct {
+	Ephemeral5mInputTokens *int `json:"ephemeral_5m_input_tokens,omitempty"`
+	Ephemeral1hInputTokens *int `json:"ephemeral_1h_input_tokens,omitempty"`
+}
+
+func (u *AnthropicUsage) UnmarshalJSON(data []byte) error {
+	type usageAlias AnthropicUsage
+	var wire struct {
+		usageAlias
+		InputTokens              *int `json:"input_tokens"`
+		OutputTokens             *int `json:"output_tokens"`
+		CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*u = AnthropicUsage(wire.usageAlias)
+	if wire.InputTokens != nil {
+		u.InputTokens = *wire.InputTokens
+		u.inputTokensPresent = true
+	}
+	if wire.OutputTokens != nil {
+		u.OutputTokens = *wire.OutputTokens
+		u.outputTokensPresent = true
+	}
+	if wire.CacheCreationInputTokens != nil {
+		u.CacheCreationInputTokens = *wire.CacheCreationInputTokens
+		u.cacheCreationInputTokensPresent = true
+	}
+	if wire.CacheReadInputTokens != nil {
+		u.CacheReadInputTokens = *wire.CacheReadInputTokens
+		u.cacheReadInputTokensPresent = true
+	}
+	return nil
+}
+
+func (u AnthropicUsage) HasInputTokens() bool {
+	return u.inputTokensPresent || u.InputTokens != 0
+}
+
+func (u AnthropicUsage) HasOutputTokens() bool {
+	return u.outputTokensPresent || u.OutputTokens != 0
+}
+
+func (u AnthropicUsage) HasCacheCreationInputTokens() bool {
+	return u.cacheCreationInputTokensPresent || u.CacheCreationInputTokens != 0
+}
+
+func (u AnthropicUsage) HasCacheReadInputTokens() bool {
+	return u.cacheReadInputTokensPresent || u.CacheReadInputTokens != 0
+}
+
+// Merge applies cumulative usage from a streaming event. Missing fields retain
+// their preceding values; explicit zeroes clear them rather than double billing.
+func (u *AnthropicUsage) Merge(src AnthropicUsage) {
+	if src.HasInputTokens() {
+		u.InputTokens, u.inputTokensPresent = src.InputTokens, true
+	}
+	if src.HasOutputTokens() {
+		u.OutputTokens, u.outputTokensPresent = src.OutputTokens, true
+	}
+	if src.HasCacheCreationInputTokens() {
+		u.CacheCreationInputTokens, u.cacheCreationInputTokensPresent = src.CacheCreationInputTokens, true
+		if src.CacheCreationInputTokens == 0 && src.CacheCreation == nil {
+			u.CacheCreation = nil
+		}
+	}
+	if src.HasCacheReadInputTokens() {
+		u.CacheReadInputTokens, u.cacheReadInputTokensPresent = src.CacheReadInputTokens, true
+	}
+	if src.CacheCreation != nil {
+		var detail AnthropicCacheCreation
+		if u.CacheCreation != nil {
+			detail = *u.CacheCreation
+		}
+		if src.CacheCreation.Ephemeral5mInputTokens != nil {
+			detail.Ephemeral5mInputTokens = src.CacheCreation.Ephemeral5mInputTokens
+		}
+		if src.CacheCreation.Ephemeral1hInputTokens != nil {
+			detail.Ephemeral1hInputTokens = src.CacheCreation.Ephemeral1hInputTokens
+		}
+		u.CacheCreation = &detail
+		if !src.HasCacheCreationInputTokens() {
+			u.CacheCreationInputTokens = 0
+			if detail.Ephemeral5mInputTokens != nil {
+				u.CacheCreationInputTokens += max(*detail.Ephemeral5mInputTokens, 0)
+			}
+			if detail.Ephemeral1hInputTokens != nil {
+				u.CacheCreationInputTokens += max(*detail.Ephemeral1hInputTokens, 0)
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -611,10 +713,11 @@ type ResponsesSummary struct {
 
 // ResponsesUsage holds token counts in Responses API format.
 type ResponsesUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	TotalTokens              int `json:"total_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	InputTokens              int                     `json:"input_tokens"`
+	OutputTokens             int                     `json:"output_tokens"`
+	TotalTokens              int                     `json:"total_tokens"`
+	CacheCreationInputTokens int                     `json:"cache_creation_input_tokens,omitempty"`
+	CacheCreation            *AnthropicCacheCreation `json:"cache_creation,omitempty"`
 
 	// Optional detailed breakdown
 	InputTokensDetails  *ResponsesInputTokensDetails  `json:"input_tokens_details,omitempty"`
@@ -928,11 +1031,12 @@ type ChatChoice struct {
 
 // ChatUsage holds token counts in Chat Completions format.
 type ChatUsage struct {
-	PromptTokens            int               `json:"prompt_tokens"`
-	CompletionTokens        int               `json:"completion_tokens"`
-	TotalTokens             int               `json:"total_tokens"`
-	PromptTokensDetails     *ChatTokenDetails `json:"prompt_tokens_details,omitempty"`
-	CompletionTokensDetails *ChatTokenDetails `json:"completion_tokens_details,omitempty"`
+	PromptTokens            int                     `json:"prompt_tokens"`
+	CompletionTokens        int                     `json:"completion_tokens"`
+	TotalTokens             int                     `json:"total_tokens"`
+	PromptTokensDetails     *ChatTokenDetails       `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *ChatTokenDetails       `json:"completion_tokens_details,omitempty"`
+	CacheCreation           *AnthropicCacheCreation `json:"cache_creation,omitempty"`
 }
 
 func (u *ChatUsage) UnmarshalJSON(data []byte) error {

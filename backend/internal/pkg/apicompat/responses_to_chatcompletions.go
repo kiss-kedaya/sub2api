@@ -487,6 +487,7 @@ func chatUsageFromResponsesUsage(u *ResponsesUsage) *ChatUsage {
 		PromptTokens:     u.InputTokens,
 		CompletionTokens: u.OutputTokens,
 		TotalTokens:      u.InputTokens + u.OutputTokens,
+		CacheCreation:    u.CacheCreation,
 	}
 	usage.PromptTokensDetails = promptDetailsFromResponses(u.InputTokensDetails)
 	if u.CacheCreationInputTokens > 0 {

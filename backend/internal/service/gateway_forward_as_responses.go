@@ -325,21 +325,51 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 		dst.CacheReadInputTokens = cacheReadTokens
 		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
 	} else {
-		if src.InputTokens > 0 {
+		if src.HasInputTokens() {
 			dst.InputTokens = src.InputTokens
 		}
-		if src.CacheReadInputTokens > 0 {
+		if src.HasCacheReadInputTokens() {
 			dst.CacheReadInputTokens = src.CacheReadInputTokens
 		} else if src.CachedTokens > 0 {
 			dst.CacheReadInputTokens = src.CachedTokens
 		}
-		if src.CacheCreationInputTokens > 0 {
+		if src.HasCacheCreationInputTokens() {
 			dst.CacheCreationInputTokens = src.CacheCreationInputTokens
 		}
 	}
-	if src.OutputTokens > 0 {
+	if src.CacheCreation != nil {
+		if value := src.CacheCreation.Ephemeral5mInputTokens; value != nil {
+			dst.CacheCreation5mTokens = max(*value, 0)
+		}
+		if value := src.CacheCreation.Ephemeral1hInputTokens; value != nil {
+			dst.CacheCreation1hTokens = max(*value, 0)
+		}
+		if !src.HasCacheCreationInputTokens() {
+			dst.CacheCreationInputTokens = dst.CacheCreation5mTokens + dst.CacheCreation1hTokens
+		}
+	} else if src.HasCacheCreationInputTokens() && src.CacheCreationInputTokens == 0 {
+		dst.CacheCreation5mTokens = 0
+		dst.CacheCreation1hTokens = 0
+	}
+	if src.HasOutputTokens() {
 		dst.OutputTokens = src.OutputTokens
 	}
+}
+
+func claudeUsageToAnthropicUsage(usage ClaudeUsage) apicompat.AnthropicUsage {
+	out := apicompat.AnthropicUsage{
+		InputTokens:              usage.InputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+	}
+	if usage.CacheCreation5mTokens > 0 || usage.CacheCreation1hTokens > 0 {
+		out.CacheCreation = &apicompat.AnthropicCacheCreation{
+			Ephemeral5mInputTokens: &usage.CacheCreation5mTokens,
+			Ephemeral1hInputTokens: &usage.CacheCreation1hTokens,
+		}
+	}
+	return out
 }
 
 // parseAnthropicSSEField parses an SSE field line in the form "field:value" or "field: value".
@@ -460,12 +490,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 
 	// Update usage from accumulated delta
 	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		finalResp.Usage = apicompat.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
-		}
+		finalResp.Usage = claudeUsageToAnthropicUsage(usage)
 	}
 
 	// Convert to Responses format

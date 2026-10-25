@@ -543,6 +543,7 @@ func chatUsageToAnthropicUsage(usage *ChatUsage) AnthropicUsage {
 		OutputTokens:             usage.CompletionTokens,
 		CacheReadInputTokens:     cachedTokens,
 		CacheCreationInputTokens: cacheCreationTokens,
+		CacheCreation:            usage.CacheCreation,
 	}
 }
 
