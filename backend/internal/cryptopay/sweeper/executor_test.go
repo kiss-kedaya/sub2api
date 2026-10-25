@@ -41,11 +41,14 @@ func TestDecimalToRawUnits(t *testing.T) {
 
 func TestGasTopUpAmountCoversShortfall(t *testing.T) {
 	exec := &Executor{config: Config{GasTopUp: map[string]float64{"bsc": 0.002}}}
-	// Shortfall of 1000 wei, configured 0.002 BNB is far larger: use config.
+	// Only the missing 1000 wei is funded, despite the much higher limit.
 	got := exec.gasTopUpAmount("bsc", big.NewInt(5000), big.NewInt(4000))
-	want := decimalToRawUnits(0.002, 18)
+	want := big.NewInt(1000)
 	if got.Cmp(want) != 0 {
-		t.Fatalf("expected configured top-up %s, got %s", want, got)
+		t.Fatalf("expected only the missing gas %s, got %s", want, got)
+	}
+	if got := exec.gasTopUpAmount("bsc", big.NewInt(5000), big.NewInt(6000)); got.Sign() != 0 {
+		t.Fatalf("funded child must not receive more native coin: %s", got)
 	}
 	// An RPC quote cannot authorize funding above the configured budget.
 	hugeBudget := new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil) // 100 BNB
