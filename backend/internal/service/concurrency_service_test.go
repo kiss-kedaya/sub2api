@@ -654,7 +654,7 @@ func TestCalculateMaxWait(t *testing.T) {
 	}{
 		{5, 25},  // 5 + 20
 		{1, 21},  // 1 + 20
-		{0, 20},  // unlimited requests do not enter the wait queue
+		{0, 21},  // queue capacity keeps its minimum; user admission remains unlimited
 		{-1, 21}, // min(1) + 20
 		{10, 30}, // 10 + 20
 	}
