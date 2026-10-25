@@ -285,13 +285,8 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	if _, _, err := e.validateEntry(job.PlanEntry); err != nil {
 		return e.jobError(ctx, job, err)
 	}
-	// Extra uncredited balance never changes the immutable amount.
-	balance, err := e.tokenBalance(ctx, pool, job.Token, job.Address)
-	if err != nil {
+	if err := e.checkCurrentSweepBalance(ctx, pool, job); err != nil {
 		return e.jobError(ctx, job, err)
-	}
-	if balance.Cmp(job.RawAmount) < 0 {
-		return e.jobError(ctx, job, fmt.Errorf("live balance %s is below planned amount %s", balance, job.RawAmount))
 	}
 	busy, err := e.addressBusy(ctx, job)
 	if err != nil {
@@ -338,6 +333,11 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		if !confirmed {
 			return job.outcome(), nil
 		}
+	}
+	// Gas confirmation can take time. Include newly credited deposits before
+	// signing the token transaction, while preserving a signed token verbatim.
+	if err := e.checkCurrentSweepBalance(ctx, pool, job); err != nil {
+		return e.jobError(ctx, job, err)
 	}
 	if err := e.prepareSweep(ctx, pool, job, price); err != nil {
 		return e.jobError(ctx, job, err)

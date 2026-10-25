@@ -10,6 +10,14 @@ import (
 
 const sweepConfirmationWait = 90 * time.Second
 
+// RunManualAndWait uses the current balances even below the automatic trigger.
+// Copy the executor so concurrent or later scheduled runs keep their threshold.
+func (e *Executor) RunManualAndWait(ctx context.Context, dryRun bool) (*Summary, error) {
+	manual := *e
+	manual.config.GlobalThreshold = 0
+	return manual.RunAndWait(ctx, dryRun)
+}
+
 // RunAndWait keeps the same operation, database lock and signing authorization
 // alive while its persisted gas/token transactions reach confirmation. A
 // pending receipt is a normal stage, not the end of a manual sweep. There is
