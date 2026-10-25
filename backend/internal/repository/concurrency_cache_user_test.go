@@ -113,7 +113,8 @@ func TestUserConcurrencyZeroCombinesRegularAndLiveSlots(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	cache := NewConcurrencyCache(client, 15, 900)
-	live := cache.(service.LiveConcurrencyCache)
+	live, ok := cache.(service.LiveConcurrencyCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	for _, requestID := range []string{"regular-first", "regular-second"} {
 		acquired, err := cache.AcquireUserSlot(ctx, 20, 0, requestID)
@@ -132,7 +133,9 @@ func TestUserConcurrencyZeroCombinesRegularAndLiveSlots(t *testing.T) {
 	count, err := cache.GetUserConcurrency(ctx, 20)
 	require.NoError(t, err)
 	require.Equal(t, 4, count)
-	apiCounts, err := cache.(service.APIKeyConcurrencyCache).GetAPIKeyConcurrencyBatch(ctx, []int64{30})
+	apiCache, ok := cache.(service.APIKeyConcurrencyCache)
+	require.True(t, ok)
+	apiCounts, err := apiCache.GetAPIKeyConcurrencyBatch(ctx, []int64{30})
 	require.NoError(t, err)
 	require.Equal(t, 2, apiCounts[30])
 
