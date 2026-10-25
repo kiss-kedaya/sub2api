@@ -478,7 +478,7 @@ func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
 				continue
 			}
 			maintCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-			summary, err := s.RunSweep(maintCtx, false)
+			summary, err := s.runSweep(maintCtx, false, false)
 			cancel()
 			if err != nil {
 				slog.Warn("[cryptopay] scheduled sweep failed", "error", err)
@@ -538,7 +538,7 @@ func (s *Service) BuildSweepPlan(ctx context.Context) (*sweeper.Plan, error) {
 	if planner == nil {
 		return nil, fmt.Errorf("cryptopay is disabled")
 	}
-	return planner.BuildPlan(ctx)
+	return planner.BuildManualPlan(ctx)
 }
 
 // SweepReadiness reports whether a real sweep has everything it needs.
@@ -693,6 +693,10 @@ func (s *Service) InitializeWallet(ctx context.Context, depositMnemonic, hotMnem
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
 // Serialised by the caller via the admin route; sweeps are operator-driven.
 func (s *Service) RunSweep(ctx context.Context, dryRun bool) (summary *sweeper.Summary, err error) {
+	return s.runSweep(ctx, dryRun, true)
+}
+
+func (s *Service) runSweep(ctx context.Context, dryRun, manual bool) (summary *sweeper.Summary, err error) {
 	if !dryRun {
 		// Notify on the common result path: manual runs, scheduled sweeps and
 		// resumption of already-signed jobs must report the same failures.
@@ -726,6 +730,9 @@ func (s *Service) RunSweep(ctx context.Context, dryRun bool) (summary *sweeper.S
 		}
 		defer revoke()
 		ctx = authorized
+	}
+	if manual {
+		return exec.RunManualAndWait(ctx, dryRun)
 	}
 	return exec.RunAndWait(ctx, dryRun)
 }

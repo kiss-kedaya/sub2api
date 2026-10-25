@@ -169,7 +169,7 @@ func (e *Executor) createJob(ctx context.Context, entry PlanEntry) (*sweepJob, e
 }
 
 // Every state change checks its revision, including the final ledger write.
-// Immutable plan fields and amount are never rewritten.
+// Amount refreshes have a separate CAS that refuses an existing token signature.
 func (e *Executor) saveJob(ctx context.Context, j *sweepJob) error {
 	j.Error = rpc.SafeRecordedError(j.Error)
 	result, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET

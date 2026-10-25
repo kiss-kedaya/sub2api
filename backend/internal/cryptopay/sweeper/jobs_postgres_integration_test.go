@@ -261,3 +261,67 @@ func TestPostgresSweepConstraintsAndLegacyUpgrade(t *testing.T) {
 		t.Fatal("zero immutable amount accepted")
 	}
 }
+
+func TestPostgresUnsignedTokenRefreshPreservesConfirmedGasTransaction(t *testing.T) {
+	db := isolatedSweepPostgres(t)
+	e, _, chain, entry := setupExecutor(t)
+	e.db = db
+	e.reader = currentReaderFor(entry, 12_000_000)
+	created, err := e.createJob(t.Context(), entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := signedJob(chain, entry, true)
+	job.ID, job.Revision = created.ID, created.Revision
+	if err := e.saveJob(t.Context(), job); err != nil {
+		t.Fatal(err)
+	}
+	chain.txs[job.GasHash] = true // the previously authorized gas payment is mined
+	originalGas := job.GasRaw
+	summary, err := e.Run(t.Context(), false)
+	if err != nil || summary.Swept != 1 || summary.Pending != 0 {
+		t.Fatalf("could not resume the latest credited amount: %+v %v", summary, err)
+	}
+	var raw, amount, gasRaw, gasNonce string
+	if err := db.QueryRowContext(t.Context(), `SELECT raw_amount,amount::text,gas_raw_tx,gas_nonce
+		FROM sweep_records WHERE id=$1`, job.ID).Scan(&raw, &amount, &gasRaw, &gasNonce); err != nil {
+		t.Fatal(err)
+	}
+	if raw != "12000000" || amount != "12.000000000000000000" || gasRaw != originalGas || gasNonce != "7" {
+		t.Fatalf("amount/gas mismatch: raw=%s amount=%s gas unchanged=%v nonce=%s", raw, amount, gasRaw == originalGas, gasNonce)
+	}
+	if len(chain.signs) != 1 || chain.signs[0].Kind != "sweep" || chain.signs[0].Amount != "12000000" {
+		t.Fatalf("old gas was repaid or token amount stayed stale: %+v", chain.signs)
+	}
+}
+
+func TestPostgresAmountRefreshCannotOverwriteAConcurrentTokenSignature(t *testing.T) {
+	db := isolatedSweepPostgres(t)
+	e, _, chain, entry := setupExecutor(t)
+	e.db = db
+	e.reader = currentReaderFor(entry, 12_000_000)
+	job, err := e.createJob(t.Context(), entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := signedJob(chain, entry, false)
+	// Leave the revision equal to the stale reader's value to exercise the
+	// signed-payload guard independently of the ordinary revision check.
+	_, err = db.ExecContext(t.Context(), `UPDATE sweep_records SET
+		status='sweep_pending',sweep_raw_tx=$2,sweep_tx_hash=$3,sweep_nonce=$4 WHERE id=$1`,
+		job.ID, signed.SweepRaw, signed.SweepHash, signed.SweepNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.refreshUnsignedAmount(t.Context(), job); err == nil {
+		t.Fatal("a concurrent token signature did not block the amount rewrite")
+	}
+	var raw, signedRaw string
+	if err := db.QueryRowContext(t.Context(), `SELECT raw_amount,sweep_raw_tx FROM sweep_records WHERE id=$1`, job.ID).
+		Scan(&raw, &signedRaw); err != nil {
+		t.Fatal(err)
+	}
+	if raw != "10000000" || signedRaw != signed.SweepRaw || len(chain.signs) != 0 || len(chain.raws) != 0 {
+		t.Fatal("amount refresh modified signed intent or sent a transaction")
+	}
+}
