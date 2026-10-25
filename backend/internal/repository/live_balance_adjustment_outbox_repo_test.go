@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/migrations"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,8 +22,8 @@ func TestLiveBalanceAdjustmentOutboxClaimUsesLeasedOrderedSkipLockedBatch(t *tes
 	mock.ExpectQuery(`SELECT pg_try_advisory_xact_lock\(\$1::bigint\)`).
 		WithArgs(liveBalanceOutboxClaimLockKey).
 		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(true))
-	mock.ExpectQuery(`(?s)WITH candidates AS .*live_balance_adjustment_heads AS h.*CROSS JOIN LATERAL.*o\.user_id = h\.user_id.*ORDER BY o\.id.*next_event\.predecessor_id = 0.*predecessor\.id = next_event\.predecessor_id.*predecessor\.delivered_at IS NULL.*LIMIT \$2.*FOR UPDATE SKIP LOCKED.*UPDATE live_balance_adjustment_outbox`).
-		WithArgs("worker-1", 200, int64(30)).
+	mock.ExpectQuery(`(?s)WITH active_users AS .*live_balance_adjustment_heads AS h.*first_event\.predecessor_id = 0.*user_pages AS .*row_number\(\) OVER.*lag\(page\.id\).*page\.predecessor_id = page\.previous_id.*LIMIT \$2.*FOR UPDATE OF o.*UPDATE live_balance_adjustment_outbox`).
+		WithArgs("worker-1", 1024, int64(30), service.LiveBalanceOutboxPerUserMaxBatchSize).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "predecessor_id", "delta", "attempts", "created_at"}).
 			AddRow(17, 42, 11, "-1.25000000", 2, createdAt))
 	mock.ExpectCommit()
@@ -48,12 +50,20 @@ func TestLiveBalanceAdjustmentOutboxAckRetryAndCleanupAreClaimSafe(t *testing.T)
 		WithArgs(int64(7), "worker-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	require.NoError(t, repo.MarkDelivered(context.Background(), 7, "worker-1"))
+	mock.ExpectExec(`(?s)UPDATE live_balance_adjustment_outbox.*delivered_at = NOW.*id = ANY\(\$1::bigint\[\]\).*claimed_by = \$2`).
+		WithArgs(pq.Array([]int64{7, 8}), "worker-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	require.NoError(t, repo.MarkDeliveredBatch(context.Background(), []int64{7, 8}, "worker-1"))
 
 	retryAt := time.Now().UTC().Add(time.Minute)
 	mock.ExpectExec(`(?s)UPDATE live_balance_adjustment_outbox.*attempts = attempts \+ 1.*available_at = \$3`).
 		WithArgs(int64(8), "worker-1", retryAt, "redis down").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	require.NoError(t, repo.RetryClaimed(context.Background(), 8, "worker-1", retryAt, "redis down"))
+	mock.ExpectExec(`(?s)UPDATE live_balance_adjustment_outbox.*attempts = attempts \+ 1.*id = ANY\(\$1::bigint\[\]\).*claimed_by = \$2`).
+		WithArgs(pq.Array([]int64{8, 9}), "worker-1", retryAt, "redis down").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	require.NoError(t, repo.RetryClaimedBatch(context.Background(), []int64{8, 9}, "worker-1", retryAt, "redis down"))
 
 	before := time.Now().UTC().Add(-24 * time.Hour)
 	mock.ExpectExec(`(?s)WITH doomed AS .*delivered_at < \$1.*FOR UPDATE SKIP LOCKED.*DELETE FROM live_balance_adjustment_outbox`).

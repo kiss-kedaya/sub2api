@@ -101,6 +101,23 @@ func (s *liveBalanceAdjustmentCacheStub) AdjustLiveBalanceAtWatermark(
 	return s.result, s.adjustErr
 }
 
+func (s *liveBalanceAdjustmentCacheStub) AdjustLiveBalanceAtWatermarkBatch(
+	_ context.Context, userID int64, events []LiveBalanceAdjustmentEvent,
+) (LiveBalanceResult, error) {
+	s.watermarkCalls++
+	s.userID = userID
+	if len(events) > 0 {
+		s.watermark = events[len(events)-1].ID
+		s.predecessor = events[0].PredecessorID
+	}
+	if len(s.watermarkResults) > 0 {
+		result := s.watermarkResults[0]
+		s.watermarkResults = s.watermarkResults[1:]
+		return result, s.adjustErr
+	}
+	return s.result, s.adjustErr
+}
+
 func (s *liveBalanceAdjustmentCacheStub) InitializeLiveBalanceAtWatermark(
 	_ context.Context,
 	_ int64,
@@ -171,6 +188,22 @@ func TestApplyExternalBalanceOutboxAdjustmentFailsClosedOnWatermarkConflict(t *t
 	})
 
 	require.ErrorContains(t, err, "watermark conflict")
+}
+
+func TestApplyExternalBalanceOutboxAdjustmentsRequiresOneContiguousUserChain(t *testing.T) {
+	cache := &liveBalanceAdjustmentCacheStub{result: LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied}}
+	service := &BillingCacheService{cache: cache}
+	events := []LiveBalanceAdjustmentEvent{
+		{ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: 100},
+		{ID: 19, UserID: 42, PredecessorID: 17, DeltaUnits: -25},
+	}
+	require.NoError(t, service.ApplyExternalBalanceOutboxAdjustments(context.Background(), events))
+	require.Equal(t, 1, cache.invalidateCalls)
+	require.Equal(t, 1, cache.watermarkCalls)
+	require.Equal(t, int64(42), cache.userID)
+	require.Equal(t, int64(19), cache.watermark)
+	require.ErrorContains(t, service.ApplyExternalBalanceOutboxAdjustments(context.Background(), []LiveBalanceAdjustmentEvent{events[0], {ID: 20, UserID: 42, PredecessorID: 18, DeltaUnits: 1}}), "non-contiguous")
+	require.ErrorContains(t, service.ApplyExternalBalanceOutboxAdjustments(context.Background(), []LiveBalanceAdjustmentEvent{events[0], {ID: 21, UserID: 7, PredecessorID: 17, DeltaUnits: 1}}), "invalid")
 }
 
 func TestRecoveringLiveBalanceAdjustmentInitializesFromSnapshotAndReplays(t *testing.T) {

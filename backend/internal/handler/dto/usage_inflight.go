@@ -50,6 +50,9 @@ func UsageLogFromInflight(row service.UsageInflightSnapshot, now time.Time) Usag
 	if row.APIKeyID > 0 || row.APIKeyName != "" {
 		log.APIKey = &APIKey{ID: row.APIKeyID, Name: row.APIKeyName}
 	}
+	if groupID != nil {
+		log.Group = &Group{ID: row.GroupID, Name: row.GroupName}
+	}
 	if row.ReasoningEffort != "" {
 		effort := row.ReasoningEffort
 		log.ReasoningEffort = &effort
@@ -68,6 +71,9 @@ func UsageLogFromInflight(row service.UsageInflightSnapshot, now time.Time) Usag
 // AdminUsageLogFromInflight 管理员看到同一条在途记录，并带上用户邮箱。
 func AdminUsageLogFromInflight(row service.UsageInflightSnapshot, now time.Time) AdminUsageLog {
 	log := AdminUsageLog{UsageLog: UsageLogFromInflight(row, now)}
+	if row.AccountID > 0 {
+		log.Account = &AccountSummary{ID: row.AccountID, Name: row.AccountName}
+	}
 	if row.UpstreamEndpoint != "" {
 		endpoint := row.UpstreamEndpoint
 		log.UpstreamEndpoint = &endpoint

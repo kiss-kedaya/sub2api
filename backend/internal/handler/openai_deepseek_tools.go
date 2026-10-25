@@ -211,7 +211,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		}
 
 		account := selection.Account
-		setOpsSelectedAccount(c, account.ID, account.Platform)
+		setOpsSelectedAccount(c, account.ID, account.Platform, account.Name)
 		accountRelease, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
 		switch h.openAISlotLoopAction(c, slotResult, account.ID, apiKey.GroupID, sessionHash, failedAccountIDs, &profitVetoCount, streamStarted, reqLog, &accountSlotBusySeen) {
 		case openAISlotLoopStop:

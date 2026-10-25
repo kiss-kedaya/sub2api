@@ -356,6 +356,15 @@ func refreshUsageInflightDisplay(c *gin.Context, snap *service.UsageInflightSnap
 		}
 	}
 	if ctx != nil {
+		if group, ok := ctx.Value(ctxkey.Group).(*service.Group); ok && group != nil {
+			snap.GroupID = group.ID
+			snap.GroupName = strings.TrimSpace(group.Name)
+		}
+		if accountID, ok := ctx.Value(ctxkey.AccountID).(int64); ok && accountID > 0 {
+			// Clear the old name on an ID-only failover selection.
+			snap.AccountID = accountID
+			snap.AccountName, _ = ctx.Value(ctxkey.AccountName).(string)
+		}
 		if effort := service.RequestedReasoningEffortFromContext(ctx); effort != nil {
 			snap.ReasoningEffort = *effort
 		}

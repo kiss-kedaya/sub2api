@@ -8,16 +8,21 @@ import (
 )
 
 const (
-	liveBalanceOutboxBatchSize       = 200
-	liveBalanceOutboxPollInterval    = 250 * time.Millisecond
-	liveBalanceOutboxPollMaxInterval = 5 * time.Second
-	liveBalanceOutboxLease           = 30 * time.Second
-	liveBalanceOutboxRedisTimeout    = 2 * time.Second
-	liveBalanceOutboxConcurrency     = 16
-	liveBalanceOutboxRetention       = 24 * time.Hour
-	liveBalanceOutboxCleanupInterval = time.Hour
-	liveBalanceOutboxCleanupBatch    = 10000
+	liveBalanceOutboxBatchSize        = 1024
+	liveBalanceOutboxPerUserBatchSize = 256
+	liveBalanceOutboxPollInterval     = 250 * time.Millisecond
+	liveBalanceOutboxPollMaxInterval  = 5 * time.Second
+	liveBalanceOutboxLease            = 30 * time.Second
+	liveBalanceOutboxClaimTimeout     = 5 * time.Second
+	liveBalanceOutboxRedisTimeout     = 2 * time.Second
+	liveBalanceOutboxConcurrency      = 16
+	liveBalanceOutboxRetention        = 24 * time.Hour
+	liveBalanceOutboxCleanupInterval  = time.Hour
+	liveBalanceOutboxCleanupBatch     = 10000
 )
+
+const LiveBalanceOutboxMaxBatchSize = liveBalanceOutboxBatchSize
+const LiveBalanceOutboxPerUserMaxBatchSize = liveBalanceOutboxPerUserBatchSize
 
 type LiveBalanceAdjustmentEvent struct {
 	ID            int64
@@ -49,7 +54,9 @@ type LiveBalanceAdjustmentOutboxStats struct {
 type LiveBalanceAdjustmentOutboxRepository interface {
 	Claim(ctx context.Context, workerID string, limit int, lease time.Duration) ([]LiveBalanceAdjustmentEvent, error)
 	MarkDelivered(ctx context.Context, id int64, workerID string) error
+	MarkDeliveredBatch(ctx context.Context, ids []int64, workerID string) error
 	RetryClaimed(ctx context.Context, id int64, workerID string, availableAt time.Time, lastError string) error
+	RetryClaimedBatch(ctx context.Context, ids []int64, workerID string, availableAt time.Time, lastError string) error
 	DeleteDelivered(ctx context.Context, before time.Time, limit int) (int64, error)
 	Stats(ctx context.Context) (LiveBalanceAdjustmentOutboxStats, error)
 }

@@ -48,6 +48,14 @@ type liveBalanceWatermarkedAdjustmentCache interface {
 	) (LiveBalanceResult, error)
 }
 
+type liveBalanceWatermarkedAdjustmentBatchCache interface {
+	AdjustLiveBalanceAtWatermarkBatch(
+		ctx context.Context,
+		userID int64,
+		events []LiveBalanceAdjustmentEvent,
+	) (LiveBalanceResult, error)
+}
+
 func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustment(
 	ctx context.Context,
 	event LiveBalanceAdjustmentEvent,
@@ -87,6 +95,55 @@ func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustment(
 		)
 	default:
 		return fmt.Errorf("unexpected live balance outbox outcome: %d", result.Outcome)
+	}
+}
+
+// ApplyExternalBalanceOutboxAdjustments applies one user's contiguous outbox
+// chain in a single Redis script. Database acknowledgements remain separate;
+// a crash between Redis and PostgreSQL is safe because the wallet watermark
+// makes replay idempotent.
+func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustments(
+	ctx context.Context,
+	events []LiveBalanceAdjustmentEvent,
+) error {
+	if len(events) == 0 {
+		return nil
+	}
+	if s == nil || s.cache == nil {
+		return errors.New("live balance cache is unavailable")
+	}
+	userID := events[0].UserID
+	if userID <= 0 {
+		return errors.New("invalid live balance outbox batch user")
+	}
+	for i, event := range events {
+		if event.UserID != userID || event.ID <= 0 || event.PredecessorID < 0 || event.DeltaUnits == 0 {
+			return fmt.Errorf("invalid live balance outbox batch at index %d", i)
+		}
+		if i > 0 && (event.ID <= events[i-1].ID || event.PredecessorID != events[i-1].ID) {
+			return fmt.Errorf("non-contiguous live balance outbox batch at index %d", i)
+		}
+	}
+	cache, ok := s.cache.(liveBalanceWatermarkedAdjustmentBatchCache)
+	if !ok {
+		return errors.New("live balance cache does not support batched outbox watermarks")
+	}
+	if err := s.cache.InvalidateUserBalance(ctx, userID); err != nil {
+		return fmt.Errorf("invalidate legacy balance cache: %w", err)
+	}
+	result, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, userID, events)
+	if err != nil {
+		return err
+	}
+	switch result.Outcome {
+	case LiveBalanceOutcomeApplied, LiveBalanceOutcomeIdempotent:
+		return nil
+	case LiveBalanceOutcomeNotFound:
+		return fmt.Errorf("%w: user_id=%d", errLiveBalanceWalletNotInitialized, userID)
+	case LiveBalanceOutcomeConflict:
+		return fmt.Errorf("live balance outbox batch watermark conflict: user_id=%d first_event_id=%d last_event_id=%d", userID, events[0].ID, events[len(events)-1].ID)
+	default:
+		return fmt.Errorf("unexpected live balance batch outcome: %d", result.Outcome)
 	}
 }
 

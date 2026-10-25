@@ -256,3 +256,28 @@ func TestTrackUsageInflightCancellationStopsRefresh(t *testing.T) {
 		t.Fatal("cancelled request left the refresh worker running")
 	}
 }
+
+func TestUsageInflightSnapshotFollowsSelectedAccountAndGroup(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/messages", nil)
+	state := &usageInflightWriteState{ginCtx: c, requestCtx: c.Request.Context()}
+	for _, selected := range []struct {
+		accountID, groupID     int64
+		accountName, groupName string
+	}{
+		{11, 21, "first-account", "first-group"},
+		{12, 22, "fallback-account", "fallback-group"},
+		{13, 23, "", ""},
+	} {
+		ctx := context.WithValue(c.Request.Context(), ctxkey.Group, &service.Group{ID: selected.groupID, Name: selected.groupName})
+		ctx = context.WithValue(ctx, ctxkey.AccountID, selected.accountID)
+		ctx = context.WithValue(ctx, ctxkey.AccountName, selected.accountName)
+		c.Set(service.UsageInflightRequestContextKey, ctx)
+		state.mu.Lock()
+		snap := state.snapshotLocked()
+		state.mu.Unlock()
+		if snap.AccountID != selected.accountID || snap.AccountName != selected.accountName || snap.GroupID != selected.groupID || snap.GroupName != selected.groupName {
+			t.Fatalf("selected routing identity stale: %+v", snap)
+		}
+	}
+}
