@@ -1423,11 +1423,13 @@ async function doSweep(dryRun: boolean) {
   try {
     if (!dryRun && !await notifyOperationIntent('sweep')) return
     if (activeTab.value !== operationTab) return
+    if (!dryRun) await loadSweepPlan()
+    if (activeTab.value !== operationTab) return
     const label = dryRun ? t('admin.crypto.sweepDryRun') : sweepConfirmMessage.value
     const completed = await withCryptoVerification(label, async (verification) => {
       sweepSummary.value = await runSweep(dryRun, verification)
     })
-    if (completed) await loadSweepRecords()
+    if (completed) await Promise.all([loadSweepRecords(), loadSweepPlan()])
   } finally {
     sweeping.value = false
   }

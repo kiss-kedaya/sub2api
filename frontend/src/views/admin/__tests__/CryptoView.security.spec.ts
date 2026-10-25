@@ -93,6 +93,27 @@ async function manageRPC(wrapper: VueWrapper) {
 }
 
 describe('Crypto page operation wiring (mocked UI contract only)', () => {
+  it('refreshes an old sweep preview before asking for execution verification', async () => {
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+    let amount = 10
+    const normalGet = mocks.get.getMockImplementation()!
+    mocks.get.mockImplementation((path: string, ...args: unknown[]) => path.endsWith('/sweep/plan')
+      ? Promise.resolve({ data: { data: { Entries: [{ Chain: 'bsc', Address: '0xDEPOSIT', Token: 'USDT', AmountDecimal: amount }], TotalUSD: amount, DryRun: true } } })
+      : normalGet(path, ...args))
+    const wrapper = await render()
+    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'admin.crypto.loadPlan').trigger('click')
+    await flushPromises()
+    amount = 12 // a deposit arrives after the operator's previous preview
+    await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('"total":"12.00"')
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(0)
+    await verify(wrapper)
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ params: { dry_run: '0' } }))
+  })
+
   it('keeps a confirmation and Bark intent for every sweep even while verification is cached', async () => {
     walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     const wrapper = await render()

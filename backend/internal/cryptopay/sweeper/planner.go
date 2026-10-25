@@ -64,6 +64,13 @@ type BalanceReader interface {
 	UnsweptBalances(ctx context.Context, chain string) ([]AddressBalance, error)
 }
 
+// CurrentBalanceReader supplies a fresh credited-minus-swept ledger balance,
+// including an address reserved by an unfinished job. It never treats extra
+// on-chain funds as authorization to sweep uncredited deposits.
+type CurrentBalanceReader interface {
+	CurrentBalance(ctx context.Context, chain, address, token string) (*AddressBalance, error)
+}
+
 // Planner builds sweep plans from balances and thresholds.
 type Planner struct {
 	db     *sql.DB
@@ -78,6 +85,14 @@ func NewPlanner(db *sql.DB, reader BalanceReader, config Config, pools map[strin
 		readers[chain] = pool
 	}
 	return &Planner{db: db, reader: reader, config: config, pools: readers}
+}
+
+// BuildManualPlan previews an operator-requested sweep. The global threshold
+// controls automatic scheduling; per-address minimums still apply.
+func (p *Planner) BuildManualPlan(ctx context.Context) (*Plan, error) {
+	manual := *p
+	manual.config.GlobalThreshold = 0
+	return manual.BuildPlan(ctx)
 }
 
 // BuildPlan evaluates thresholds and returns the sweep plan for one run.
