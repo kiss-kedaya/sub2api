@@ -260,6 +260,9 @@ func TestDeepSeekHostedSearchLive(t *testing.T) {
 					t.Logf("safe upstream protocol observations: %s", observationJSON)
 				}
 				diagnostic := forwardErr.Error()
+				if reason := c.GetString(OpsUpstreamErrorDetailKey); reason != "" {
+					diagnostic += "; internal reason: " + reason
+				}
 				for _, secret := range []string{modelURL, modelKey, searchURL, searchKey} {
 					diagnostic = strings.ReplaceAll(diagnostic, secret, "[redacted]")
 				}

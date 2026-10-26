@@ -17,8 +17,8 @@ import (
 )
 
 // DeepSeek Search/Fetch are raw JSON endpoints: the client body must reach the
-// upstream unchanged, the Bearer key must come from the account, and a 2xx
-// response bills exactly one web search call.
+// upstream unchanged, the Bearer key must come from the account, and HTTP 200
+// with results bills exactly one web search call.
 func TestForwardDeepSeekToolsSearchPassesThrough(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"query":"DeepSeek V4 发布","count":5,"need_content":true,"future_field":1}`)

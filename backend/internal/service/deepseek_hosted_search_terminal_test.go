@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,4 +129,20 @@ func TestDeepSeekHostedSearchMarksDownstreamAndCancellation(t *testing.T) {
 		require.True(t, result.ClientDisconnect)
 		require.Empty(t, strings.TrimSpace(recorder.Body.String()))
 	})
+}
+
+func TestDeepSeekHostedSearchProtocolWriteErrorIsNotClientDisconnect(t *testing.T) {
+	upstream := &hostedSearchUpstream{modelResponses: [][]byte{hostedSearchResponse("resp_invalid", 10, 2, hostedSearchAnswer())},
+		modelBody: func(_ int, response string) io.ReadCloser {
+			response = strings.Replace(response, "event: response.completed\n", "data: {\"choices\":[{\"delta\":{\"content\":\"wrong protocol\"}}]}\n\nevent: response.completed\n", 1)
+			return io.NopCloser(strings.NewReader(response))
+		},
+	}
+	svc, c, recorder, account, body := hostedSearchFixture(t, upstream, true, "auto", false)
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.ClientDisconnect, "internal protocol rejection must not be attributed to a canceled user")
+	require.Contains(t, recorder.Body.String(), `"type":"response.failed"`)
+	require.Empty(t, upstream.searchRequests)
 }
