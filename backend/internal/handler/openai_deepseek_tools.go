@@ -21,8 +21,8 @@ import (
 // DeepSeekToolsSearch / DeepSeekToolsFetch proxy DeepSeek's standalone tool
 // endpoints (/v1/tools/search, /v1/tools/fetch). They are raw JSON endpoints
 // with Bearer auth, so the client body is forwarded as-is and the upstream
-// response is passed through. A 2xx call is billed once via WebSearchCalls,
-// which uses the group's per-call web search price.
+// response is passed through. HTTP 200 with actual results is billed once via
+// WebSearchCalls, using the group's per-1k search price when configured.
 func (h *OpenAIGatewayHandler) DeepSeekToolsSearch(c *gin.Context) {
 	h.deepSeekTools(c, service.DeepSeekToolsPathSearch, service.DeepSeekToolsLabelSearch)
 }
@@ -273,7 +273,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 }
 
 // recordDeepSeekToolsUsage 为一次成功的 Search/Fetch 落按次计费用量行。
-// 上游不返回 usage/token 字段，WebSearchCalls=1 会命中分组「每次网页搜索单价」。
+// 上游不返回 usage/token 字段，WebSearchCalls=1 按分组搜索单价计费。
 func (h *OpenAIGatewayHandler) recordDeepSeekToolsUsage(
 	c *gin.Context,
 	reqLog *zap.Logger,

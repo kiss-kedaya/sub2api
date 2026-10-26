@@ -68,6 +68,8 @@ type deepSeekHostedRoundWriter struct {
 	indices      map[int]int
 	calls        []*deepSeekHostedCall
 	owned        map[string]*deepSeekHostedCall
+	ownedIndices map[int]*deepSeekHostedCall
+	canonicalIDs map[int]string
 	done         bool
 }
 
@@ -110,6 +112,14 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		if ctx.Err() != nil {
 			state.clientDisconnected = true
 		}
+		if cause != nil && !state.clientDisconnected {
+			status := c.GetInt(OpsUpstreamStatusCodeKey)
+			if status <= 0 {
+				status = http.StatusBadGateway
+			}
+			detail := truncateString(sanitizeUpstreamErrorMessage(cause.Error()), 512)
+			setOpsUpstreamError(c, status, "DeepSeek hosted search failed", detail)
+		}
 		if state.stream && c.Writer.Written() && !state.clientDisconnected && (state.result == nil || !state.result.ClientDisconnect) {
 			_ = state.writeFailure()
 		}
@@ -140,6 +150,14 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		shadow.Writer = writer
 		result, forwardErr := s.Forward(innerCtx, shadow, account, request)
 		writer.finish()
+		if writer.err != nil && !state.clientDisconnected && ctx.Err() == nil && result != nil && result.ClientDisconnect {
+			// The ordinary streaming forwarder sees a Write error for both a
+			// closed socket and this writer's protocol validation. Only the former
+			// is a client disconnect; retain the provider failure attribution.
+			partial := *result
+			partial.ClientDisconnect = false
+			result = &partial
+		}
 		state.addResult(result)
 		if len(writer.response) > 0 {
 			state.mergeUsage(gjson.GetBytes(writer.response, "usage"))
@@ -444,16 +462,36 @@ func (w *deepSeekHostedRoundWriter) index(original int) int {
 
 func (w *deepSeekHostedRoundWriter) ownedCall(item gjson.Result, original int) *deepSeekHostedCall {
 	id := item.Get("id").String()
-	if call := w.owned[id]; call != nil {
+	callID := item.Get("call_id").String()
+	index := w.index(original)
+	call := w.owned[id]
+	if call == nil {
+		call = w.ownedIndices[original]
+	}
+	if call != nil {
+		if call.index != index || call.callID != "" && callID != "" && call.callID != callID {
+			w.err = errors.New("deepseek hosted search changed a tool call identity within one output slot")
+			return call
+		}
+		// Native DeepSeek changes item.id in the terminal snapshot. The output
+		// slot and call_id remain the same logical operation; retain live ids as
+		// aliases while keeping the original upstream snapshot for continuation.
+		if id != "" {
+			w.owned[id] = call
+		}
 		if args := item.Get("arguments"); args.Exists() {
 			call.arguments = args.String()
 		}
-		if callID := item.Get("call_id").String(); callID != "" {
+		if callID != "" {
 			call.callID = callID
 		}
 		return call
 	}
-	call := &deepSeekHostedCall{itemID: id, callID: item.Get("call_id").String(), arguments: item.Get("arguments").String(), index: w.index(original), searchID: "ws_" + strings.ReplaceAll(uuid.NewString(), "-", ""), status: "in_progress"}
+	call = &deepSeekHostedCall{itemID: id, callID: callID, arguments: item.Get("arguments").String(), index: index, searchID: "ws_" + strings.ReplaceAll(uuid.NewString(), "-", ""), status: "in_progress"}
+	if w.ownedIndices == nil {
+		w.ownedIndices = make(map[int]*deepSeekHostedCall)
+	}
+	w.ownedIndices[original] = call
 	w.owned[id] = call
 	w.calls = append(w.calls, call)
 	if w.state.stream {
@@ -516,7 +554,17 @@ func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
 		w.ownedCall(item, int(gjson.GetBytes(raw, "output_index").Int()))
 		return w.err
 	}
-	if call := w.owned[gjson.GetBytes(raw, "item_id").String()]; call != nil {
+	itemID := gjson.GetBytes(raw, "item_id").String()
+	call := w.owned[itemID]
+	if call == nil && (kind == "response.function_call_arguments.delta" || kind == "response.function_call_arguments.done") {
+		if original := gjson.GetBytes(raw, "output_index"); original.Exists() {
+			call = w.ownedIndices[int(original.Int())]
+		}
+		if call != nil && itemID != "" {
+			w.owned[itemID] = call
+		}
+	}
+	if call != nil {
 		if kind == "response.function_call_arguments.delta" {
 			call.arguments += gjson.GetBytes(raw, "delta").String()
 		}
@@ -526,7 +574,30 @@ func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
 		return nil
 	}
 	if oi := gjson.GetBytes(raw, "output_index"); oi.Exists() {
-		index := w.index(int(oi.Int()))
+		original := int(oi.Int())
+		index := w.index(original)
+		if w.canonicalIDs == nil {
+			w.canonicalIDs = make(map[int]string)
+		}
+		if id := item.Get("id").String(); id != "" && w.canonicalIDs[original] == "" {
+			w.canonicalIDs[original] = id
+		}
+		if canonical := w.canonicalIDs[original]; canonical != "" {
+			var err error
+			if item.Get("id").Exists() {
+				raw, err = sjson.SetBytes(raw, "item.id", canonical)
+				if err != nil {
+					return err
+				}
+			}
+			if gjson.GetBytes(raw, "item_id").Exists() {
+				raw, err = sjson.SetBytes(raw, "item_id", canonical)
+				if err != nil {
+					return err
+				}
+			}
+			item = gjson.GetBytes(raw, "item")
+		}
 		if kind == "response.output_item.done" && item.IsObject() {
 			w.state.outputs[index] = json.RawMessage(item.Raw)
 		}
@@ -561,7 +632,13 @@ func (w *deepSeekHostedRoundWriter) captureOutput() {
 			continue
 		}
 		index := w.index(i)
-		w.state.outputs[index] = json.RawMessage(item.Raw)
+		raw := []byte(item.Raw)
+		if canonical := w.canonicalIDs[i]; canonical != "" {
+			if updated, err := sjson.SetBytes(raw, "id", canonical); err == nil {
+				raw = updated
+			}
+		}
+		w.state.outputs[index] = json.RawMessage(raw)
 	}
 	if w.state.responseID == "" {
 		w.state.responseID = gjson.GetBytes(w.response, "id").String()
