@@ -148,7 +148,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	nativeCNResponses := account.usesNativeResponsesUpstream()
 	nativeDeepSeekResponses := account.Platform == PlatformDeepseek && nativeCNResponses
-	if nativeDeepSeekResponses && !compactPath {
+	// Own hosted search before any protocol fallback can discard server tools.
+	// Recursive turns keep the selected account's protocol; Chat Completions
+	// carries the bridge's function tool through the existing conversion path.
+	if account.Platform == PlatformDeepseek && !compactPath {
 		if result, handled, searchErr := s.forwardDeepSeekHostedSearch(ctx, c, account, body); handled {
 			return result, searchErr
 		}
