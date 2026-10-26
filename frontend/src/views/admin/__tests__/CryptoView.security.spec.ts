@@ -355,6 +355,38 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(mocks.put).toHaveBeenLastCalledWith('/admin/crypto/config', { rpc: { bsc: 'https://changed.example,https://two.example' } }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
   })
 
+  it.each([
+    { family: 'evm', status: 'active', toggle: 'disable', key: 'a'.repeat(64), format: 'hex' },
+    { family: 'evm', status: 'disabled', toggle: 'enable', key: 'a'.repeat(64), format: 'hex' },
+    { family: 'solana', status: 'disabled', toggle: 'enable', key: '2'.repeat(88), format: 'base58' }
+  ])('exports the selected $status $family address with its button before $toggle', async ({ family, status, toggle, key, format }) => {
+    const normalGet = mocks.get.getMockImplementation()!
+    mocks.get.mockImplementation((path: string, ...args: unknown[]) => path.endsWith('/addresses')
+      ? Promise.resolve({ data: { data: { items: [{ id: 28, user_id: 2, address: 'SELECTED_ADDRESS', family, status }], total: 1 } } })
+      : normalGet(path, ...args))
+    const normalPost = mocks.post.getMockImplementation()!
+    mocks.post.mockImplementation((path: string, ...args: unknown[]) => path.endsWith('/export-private-key')
+      ? Promise.resolve({ data: { address_id: 28, address: 'SELECTED_ADDRESS', family, derivation_index: 3, private_key: key, format } })
+      : normalPost(path, ...args))
+    const wrapper = await render()
+    const actions = wrapper.get('#crypto-panel-addresses tbody tr').findAll('td').at(-1)!.findAll('button')
+    expect(actions.map(action => action.text())).toEqual(['admin.crypto.privateKeyExportAction', `admin.crypto.${toggle}`])
+    await actions[0].trigger('click')
+    await flushPromises()
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/export-private-key'))).toHaveLength(0)
+    await verify(wrapper)
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/addresses/28/export-private-key', {}, expect.objectContaining({
+      headers: { 'X-Crypto-Grant': grantCredential, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+    }))
+    expect(wrapper.get('[data-testid="private-key-address"]').text()).toBe('SELECTED_ADDRESS')
+    expect(wrapper.get('[data-testid="private-key-value"]').text()).not.toContain(key)
+    await wrapper.get('button[aria-pressed]').trigger('click')
+    expect(wrapper.get('[data-testid="private-key-value"]').text()).toBe(key)
+    await configTab(wrapper)
+    expect(wrapper.find('[data-testid="private-key-value"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain(key)
+  })
+
   it('protects disabling and enabling an address', async () => {
     const wrapper = await render()
     await button(wrapper, 'admin.crypto.disable').trigger('click')
