@@ -418,6 +418,7 @@ func (s *Service) reload(ctx context.Context) {
 		sweepConfirmations[chain] = uint64(depth)
 	}
 	s.planner = sweeper.NewPlanner(s.db, newBalanceReader(s.db, sweepDecimals), sweeper.Config{
+		Provider: cfg.SweepProvider, BitgetMaxFee: cfg.BitgetMaxFee, BitgetMaxFeeBPS: cfg.BitgetMaxFeeBPS,
 		GlobalThreshold: cfg.SweepGlobalThreshold,
 		MinPerAddress:   sweepMin,
 		GasTopUp:        cfg.GasTopUp,
@@ -437,6 +438,7 @@ func (s *Service) reload(ctx context.Context) {
 		}
 	}
 	s.executor = sweeper.NewExecutor(s.db, pools, s.wallet, sweeper.Config{
+		Provider: cfg.SweepProvider, BitgetMaxFee: cfg.BitgetMaxFee, BitgetMaxFeeBPS: cfg.BitgetMaxFeeBPS,
 		Confirmations:   sweepConfirmations,
 		GlobalThreshold: cfg.SweepGlobalThreshold,
 		MinPerAddress:   sweepMin,
@@ -538,7 +540,17 @@ func (s *Service) BuildSweepPlan(ctx context.Context) (*sweeper.Plan, error) {
 	if planner == nil {
 		return nil, fmt.Errorf("cryptopay is disabled")
 	}
-	return planner.BuildManualPlan(ctx)
+	plan, err := planner.BuildManualPlan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	executor := s.executor
+	s.mu.RUnlock()
+	if executor != nil {
+		executor.EnrichGaslessPlan(ctx, plan)
+	}
+	return plan, nil
 }
 
 // SweepReadiness reports whether a real sweep has everything it needs.
@@ -739,17 +751,21 @@ func (s *Service) runSweep(ctx context.Context, dryRun, manual bool) (summary *s
 
 // SweepRecord is one sweep_records row for the admin UI.
 type SweepRecord struct {
-	ID          int64  `json:"id"`
-	Chain       string `json:"chain"`
-	FromAddress string `json:"from_address"`
-	ToAddress   string `json:"to_address"`
-	Token       string `json:"token"`
-	Amount      string `json:"amount"`
-	GasTxHash   string `json:"gas_tx_hash"`
-	SweepTxHash string `json:"sweep_tx_hash"`
-	Status      string `json:"status"`
-	Error       string `json:"error"`
-	CreatedAt   string `json:"created_at"`
+	Provider        string `json:"provider,omitempty"`
+	ProviderOrderID string `json:"provider_order_id,omitempty"`
+	FeeAmount       string `json:"fee_amount,omitempty"`
+	NetAmount       string `json:"net_amount,omitempty"`
+	ID              int64  `json:"id"`
+	Chain           string `json:"chain"`
+	FromAddress     string `json:"from_address"`
+	ToAddress       string `json:"to_address"`
+	Token           string `json:"token"`
+	Amount          string `json:"amount"`
+	GasTxHash       string `json:"gas_tx_hash"`
+	SweepTxHash     string `json:"sweep_tx_hash"`
+	Status          string `json:"status"`
+	Error           string `json:"error"`
+	CreatedAt       string `json:"created_at"`
 }
 
 // ListSweepRecords returns recent sweep records, optionally filtered.
@@ -784,7 +800,16 @@ func (s *Service) ListSweepRecords(ctx context.Context, chain string, limit int)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	if err = s.enrichBitgetRecords(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // DepositRecord is one deposit_transactions row for reconciliation.

@@ -50,7 +50,8 @@
             </div>
           </div>
           <template v-else>
-            <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
+            <p v-if="savedBitgetMode" class="crypto-view__approval-notice" role="status">{{ t('admin.crypto.bitgetGasNotNeeded') }}</p>
+            <CryptoGasWalletPanel v-else class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
             <details class="crypto-view__group" open>
               <summary class="crypto-view__group-summary">
                 <span class="crypto-view__group-title">{{ t('admin.crypto.groupChannel') }}</span>
@@ -69,15 +70,17 @@
                   <legend class="crypto-view__label mb-2">{{ t('admin.crypto.chains') }}</legend>
                   <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                     <label v-for="network in depositNetworks" :key="network.id" class="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-                      <input v-model="config.chains" type="checkbox" :value="network.id" :data-testid="`crypto-chain-${network.id}`" class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" @change="syncRPCRows" />
+                      <input v-model="config.chains" type="checkbox" :value="network.id" :disabled="bitgetMode && !bitgetChains.has(network.id)" :data-testid="`crypto-chain-${network.id}`" class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-40" @change="syncRPCRows" />
                       <span class="min-w-0">
                         <span class="block text-sm font-medium">{{ network.label }}</span>
                         <span class="block text-xs text-gray-500 dark:text-gray-400">{{ network.tokens }}</span>
+                        <span v-if="bitgetMode && !bitgetChains.has(network.id)" class="block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.crypto.bitgetNetworkUnsupported') }}</span>
                       </span>
                     </label>
                   </div>
                 </fieldset>
                 <p class="crypto-view__hint">{{ t('admin.crypto.chainsHint') }}</p>
+                <p v-if="removedBitgetChains.length" class="crypto-view__approval-notice" role="status" data-testid="crypto-bitget-removed">{{ t('admin.crypto.bitgetRemovedNetworks', { chains: removedBitgetChains.join(', ') }) }}</p>
               </div>
             </details>
 
@@ -270,6 +273,25 @@
                 <p class="crypto-view__hint">{{ t('admin.crypto.creditMaxHint') }}</p>
               </div>
               </div>
+              <div class="crypto-view__field">
+                <label for="crypto-sweep-provider" class="crypto-view__label">{{ t('admin.crypto.sweepProvider') }}</label>
+                <select id="crypto-sweep-provider" v-model="config.sweep_provider" data-testid="crypto-sweep-provider" class="input" @change="changeSweepProvider">
+                  <option value="native">{{ t('admin.crypto.sweepProviderNative') }}</option>
+                  <option value="bitget">{{ t('admin.crypto.sweepProviderBitget') }}</option>
+                </select>
+                <p class="crypto-view__hint">{{ t(bitgetMode ? 'admin.crypto.bitgetModeHint' : 'admin.crypto.nativeModeHint') }}</p>
+              </div>
+              <div v-if="bitgetMode" class="crypto-view__network-limits" data-testid="crypto-bitget-fees">
+                <label>
+                  <span class="crypto-view__label">{{ t('admin.crypto.bitgetMaxFee') }}</span>
+                  <input v-model="config.bitget_max_fee" data-testid="crypto-bitget-max-fee" type="text" inputmode="decimal" class="input" />
+                </label>
+                <label>
+                  <span class="crypto-view__label">{{ t('admin.crypto.bitgetMaxFeeBps') }}</span>
+                  <input v-model.number="config.bitget_max_fee_bps" data-testid="crypto-bitget-max-fee-bps" type="number" min="1" max="1000" step="1" class="input" />
+                </label>
+                <p class="crypto-view__hint">{{ t('admin.crypto.bitgetFeeCapHint') }}</p>
+              </div>
               <div v-for="chain in config.chains" :key="`scan-limits-${chain}`" class="crypto-view__network-limits">
                 <label>
                   <span class="crypto-view__label">{{ chain }} · {{ t('admin.crypto.sweepMinPerAddress') }}</span>
@@ -346,7 +368,7 @@
                   v-for="hw in hotWallets"
                   :key="`hw-${hw.chain}`"
                   class="crypto-view__stat"
-                  :class="{ 'crypto-view__stat--warn': !hw.enough || hw.error }"
+                  :class="{ 'crypto-view__stat--warn': !savedBitgetMode && (!hw.enough || hw.error) }"
                 >
                   <span class="crypto-view__stat-label">
                     {{ hw.symbol }} · {{ hw.chain }}
@@ -354,6 +376,7 @@
                   <span class="crypto-view__stat-sub">
                     {{ t('admin.crypto.hotGasWallet') }} · {{ short(hw.address) }}
                   </span>
+                  <span v-if="savedBitgetMode" class="crypto-view__stat-sub">{{ t('admin.crypto.bitgetGasNotNeeded') }}</span>
                   <span class="crypto-view__stat-value">
                     {{ hw.error ? t(hw.error_code === 'RPC_DISCOVERY_PENDING' ? 'admin.crypto.rpcDiscovering' : 'admin.crypto.hotWalletUnreachable') : hw.balance }}
                   </span>
@@ -493,7 +516,9 @@
 
         <!-- Sweep -->
         <div v-if="activeTab === 'sweep'" id="crypto-panel-sweep" role="tabpanel" aria-labelledby="crypto-tab-sweep" class="crypto-view__panel">
-          <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
+          <p v-if="savedBitgetMode" class="crypto-view__approval-notice" role="status">{{ t('admin.crypto.bitgetGasNotNeeded') }}</p>
+          <CryptoGasWalletPanel v-else class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
+          <p v-if="sweepPlanError" class="crypto-view__warn" role="alert">{{ sweepPlanError }}</p>
           <div class="crypto-view__filters">
             <button class="btn btn-secondary" @click="loadSweepPlan">
               {{ t('admin.crypto.loadPlan') }}
@@ -542,6 +567,8 @@
                       {{ statusLabel(e.status) }}
                     </span>
                     <span v-if="e.error" class="crypto-view__hint">{{ e.error }}</span>
+                    <span v-if="e.provider === 'bitget'" class="crypto-view__hint">Bitget · {{ t('admin.crypto.bitgetNet') }} {{ e.net_amount || '—' }} · {{ t('admin.crypto.bitgetFee') }} {{ e.fee_amount || '—' }}</span>
+                    <span v-if="e.provider_order_id" class="crypto-view__hint crypto-view__mono" :title="e.provider_order_id">{{ t('admin.crypto.bitgetOrder') }}: {{ short(e.provider_order_id) }}</span>
                   </td>
                   <td class="crypto-view__mono">{{ short(e.sweep_tx_hash || e.gas_tx_hash) }}</td>
                 </tr>
@@ -563,6 +590,7 @@
                   <th>{{ t('admin.crypto.chain') }}</th>
                   <th>{{ t('admin.crypto.address') }}</th>
                   <th>{{ t('admin.crypto.amount') }}</th>
+                  <th v-if="savedBitgetMode">{{ t('admin.crypto.bitgetNetAndFee') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -570,6 +598,13 @@
                   <td>{{ e.Chain }}</td>
                   <td class="crypto-view__mono">{{ e.Address }}</td>
                   <td>{{ e.AmountDecimal.toFixed(2) }}</td>
+                  <td v-if="savedBitgetMode">
+                    <span v-if="e.QuoteError" class="crypto-view__warn">{{ e.QuoteError }}</span>
+                    <template v-else>
+                      <span class="block">{{ t('admin.crypto.bitgetNet') }}: {{ e.NetAmount || '—' }}</span>
+                      <span class="crypto-view__hint">{{ t('admin.crypto.bitgetFee') }}: {{ e.FeeAmount || '—' }}</span>
+                    </template>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -591,11 +626,15 @@
               <tr v-for="row in sweepRecords" :key="row.id">
                 <td>{{ row.chain }}</td>
                 <td class="crypto-view__mono">{{ short(row.from_address) }}</td>
-                <td>{{ row.amount }}</td>
+                <td>
+                  {{ row.amount }}
+                  <span v-if="row.provider === 'bitget'" class="crypto-view__hint">{{ t('admin.crypto.bitgetNet') }} {{ row.net_amount || '—' }} · {{ t('admin.crypto.bitgetFee') }} {{ row.fee_amount || '—' }}</span>
+                </td>
                 <td>
                   <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
                     {{ statusLabel(row.status) }}
                   </span>
+                  <span v-if="row.provider_order_id" class="crypto-view__hint crypto-view__mono" :title="row.provider_order_id">{{ t('admin.crypto.bitgetOrder') }}: {{ short(row.provider_order_id) }}</span>
                 </td>
                 <td class="crypto-view__mono">{{ short(row.sweep_tx_hash) }}</td>
               </tr>
@@ -843,6 +882,10 @@ const config = ref<CryptoConfig | null>(null)
 // Snapshot of the last loaded/saved config: the save confirmation diffs
 // against it to name exactly which dangerous fields are changing.
 const loadedSnapshot = ref<CryptoConfig | null>(null)
+const bitgetChains = new Set(['bsc', 'ethereum', 'polygon', 'arbitrum', 'base'])
+const bitgetMode = computed(() => config.value?.sweep_provider === 'bitget')
+const savedBitgetMode = computed(() => loadedSnapshot.value?.sweep_provider === 'bitget')
+const removedBitgetChains = ref<string[]>([])
 const loadingConfig = ref(false)
 const savingConfig = ref(false)
 const configSaved = ref(false)
@@ -885,6 +928,7 @@ const addressTotalPages = computed(() =>
 )
 
 const sweepPlan = ref<SweepPlan | null>(null)
+const sweepPlanError = ref('')
 const sweepRecords = ref<SweepRecord[]>([])
 const sweepSummary = ref<SweepSummary | null>(null)
 const sweeping = ref(false)
@@ -1172,12 +1216,16 @@ async function loadConfig() {
       hot_index: 0,
       credit_min_amount: loaded.credit_min_amount ?? 0.001,
       credit_max_amount: loaded.credit_max_amount ?? 10000,
-      sweep_auto: loaded.sweep_auto ?? false
+      sweep_auto: loaded.sweep_auto ?? false,
+      sweep_provider: loaded.sweep_provider ?? 'native',
+      bitget_max_fee: loaded.bitget_max_fee ?? '0.5',
+      bitget_max_fee_bps: loaded.bitget_max_fee_bps ?? 100
     }
     configuredRPCChains.value = [...(loaded.rpc_configured ?? [])]
     rpcUnlocked.value = false
     rpcError.value = ''
     loadedSnapshot.value = JSON.parse(JSON.stringify(config.value))
+    removedBitgetChains.value = []
     syncRPCRows()
   } catch (err) {
     configError.value = extractApiErrorMessage(err, t('admin.crypto.configLoadFailed'))
@@ -1226,7 +1274,10 @@ const RISKY_FIELDS: Array<{ key: keyof CryptoConfig; label: string }> = [
   { key: 'chains', label: 'admin.crypto.chains' },
   { key: 'rpc', label: 'admin.crypto.rpc' },
   { key: 'gas_topup', label: 'admin.crypto.gasTopup' },
-  { key: 'confirmations', label: 'admin.crypto.confirmations' }
+  { key: 'confirmations', label: 'admin.crypto.confirmations' },
+  { key: 'sweep_provider', label: 'admin.crypto.sweepProvider' },
+  { key: 'bitget_max_fee', label: 'admin.crypto.bitgetMaxFee' },
+  { key: 'bitget_max_fee_bps', label: 'admin.crypto.bitgetMaxFeeBps' }
 ]
 
 // riskyChanges lists the dangerous edits between the loaded snapshot and the
@@ -1412,8 +1463,27 @@ function commitSweepAutoToggle() {
   sweepAutoConfirmOpen.value = false
 }
 
+function changeSweepProvider() {
+  if (!config.value) return
+  removedBitgetChains.value = bitgetMode.value
+    ? config.value.chains.filter(chain => !bitgetChains.has(chain))
+    : []
+  if (bitgetMode.value) config.value.chains = config.value.chains.filter(chain => bitgetChains.has(chain))
+  // Endpoints for removed chains remain in the map, including hidden RPC data.
+  // Choosing another sweep method must not erase credentials or re-enable a chain.
+  syncRPCRows()
+}
+
 async function loadSweepPlan() {
-  sweepPlan.value = await getSweepPlan()
+  sweepPlanError.value = ''
+  try {
+    sweepPlan.value = await getSweepPlan()
+    return true
+  } catch (err) {
+    sweepPlan.value = null
+    sweepPlanError.value = extractApiErrorMessage(err, t('admin.crypto.bitgetQuoteFailed'))
+    return false
+  }
 }
 
 async function doSweep(dryRun: boolean) {
@@ -1423,7 +1493,7 @@ async function doSweep(dryRun: boolean) {
   try {
     if (!dryRun && !await notifyOperationIntent('sweep')) return
     if (activeTab.value !== operationTab) return
-    if (!dryRun) await loadSweepPlan()
+    if (!dryRun && !await loadSweepPlan()) return
     if (activeTab.value !== operationTab) return
     const label = dryRun ? t('admin.crypto.sweepDryRun') : sweepConfirmMessage.value
     const completed = await withCryptoVerification(label, async (verification) => {

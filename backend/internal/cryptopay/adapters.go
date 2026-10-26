@@ -130,7 +130,7 @@ func (b *balanceReader) UnsweptBalances(ctx context.Context, chain string) ([]sw
 		        WHERE pending.chain = $1
 		          AND lower(pending.from_address) = lower(c.to_address)
 		          AND lower(pending.token) = lower(c.token)
-		          AND ((pending.job_version = 1 AND pending.status NOT IN ('swept', 'failed')
+		          AND ((pending.job_version IN (1,2) AND pending.status NOT IN ('swept', 'failed')
 		                AND (pending.sweep_raw_tx <> '' OR pending.sweep_tx_hash <> ''
 		                     OR pending.status = 'manual_review'))
 		               OR (pending.job_version = 0 AND pending.status <> 'swept'

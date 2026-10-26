@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/bitget"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
+	"github.com/shopspring/decimal"
 	"maps"
 	"slices"
 	"strings"
@@ -87,13 +89,19 @@ type CryptoConfig struct {
 	HotIndex uint32 `json:"hot_index"`
 
 	// SweepAuto enables the scheduled sweep run (still manual by default).
-	SweepAuto bool `json:"sweep_auto"`
+	SweepAuto       bool   `json:"sweep_auto"`
+	SweepProvider   string `json:"sweep_provider"`
+	BitgetMaxFee    string `json:"bitget_max_fee"`
+	BitgetMaxFeeBPS int    `json:"bitget_max_fee_bps"`
 }
 
 // DefaultCryptoConfig returns the disabled default with sane thresholds.
 func DefaultCryptoConfig() CryptoConfig {
 	return CryptoConfig{
 		Enabled:              false,
+		SweepProvider:        "native",
+		BitgetMaxFee:         "0.5",
+		BitgetMaxFeeBPS:      100,
 		Chains:               []string{ChainBSC},
 		RPC:                  map[string]string{},
 		SweepGlobalThreshold: 1000,
@@ -138,6 +146,23 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	cfg.SweepMinPerAddress = maps.Clone(cfg.SweepMinPerAddress)
 	cfg.GasTopUp = maps.Clone(cfg.GasTopUp)
 	def := DefaultCryptoConfig()
+	if cfg.SweepProvider == "" {
+		cfg.SweepProvider = def.SweepProvider
+	}
+	if cfg.BitgetMaxFee == "" {
+		cfg.BitgetMaxFee = def.BitgetMaxFee
+	}
+	if cfg.BitgetMaxFeeBPS == 0 {
+		cfg.BitgetMaxFeeBPS = def.BitgetMaxFeeBPS
+	}
+	if cfg.SweepProvider != "native" && cfg.SweepProvider != bitget.Provider {
+		return cfg, fmt.Errorf("invalid sweep provider")
+	}
+	fee, err := decimal.NewFromString(cfg.BitgetMaxFee)
+	if err != nil || !fee.IsPositive() || fee.Exponent() > 1 || fee.Exponent() < -6 || fee.GreaterThan(decimal.NewFromInt(10)) || cfg.BitgetMaxFeeBPS < 1 || cfg.BitgetMaxFeeBPS > 1000 {
+		return cfg, fmt.Errorf("invalid Bitget fee cap")
+	}
+	cfg.BitgetMaxFee = fee.String()
 	if cfg.Chains == nil {
 		cfg.Chains = def.Chains
 	}
@@ -151,6 +176,11 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	for _, chain := range cfg.Chains {
 		if !IsEVMChain(chain) {
 			return cfg, fmt.Errorf("crypto config: deposits are not implemented for chain %q", chain)
+		}
+		if cfg.SweepProvider == bitget.Provider {
+			if _, id := bitget.Chain(chain); id == 0 {
+				return cfg, fmt.Errorf("selected chain is not supported by Bitget gasless transfer")
+			}
 		}
 		if !seen[chain] {
 			chains = append(chains, chain)
@@ -357,11 +387,23 @@ type CryptoConfigPatch struct {
 	CreditMultiplier     *float64            `json:"credit_multiplier"`
 	HotIndex             *uint32             `json:"hot_index"`
 	SweepAuto            *bool               `json:"sweep_auto"`
+	SweepProvider        *string             `json:"sweep_provider"`
+	BitgetMaxFee         *string             `json:"bitget_max_fee"`
+	BitgetMaxFeeBPS      *int                `json:"bitget_max_fee_bps"`
 }
 
 // Apply overlays the patch onto base, leaving omitted fields untouched.
 func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	out := base
+	if p.SweepProvider != nil {
+		out.SweepProvider = *p.SweepProvider
+	}
+	if p.BitgetMaxFee != nil {
+		out.BitgetMaxFee = *p.BitgetMaxFee
+	}
+	if p.BitgetMaxFeeBPS != nil {
+		out.BitgetMaxFeeBPS = *p.BitgetMaxFeeBPS
+	}
 	if p.Enabled != nil {
 		out.Enabled = *p.Enabled
 	}
