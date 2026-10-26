@@ -117,6 +117,7 @@ type APIKeyAuthGroupSnapshot struct {
 	// 不靠升 apiKeyAuthSnapshotVersion 来区分：缓存键不含版本，升版会让新旧进程在
 	// 灰度期互相把对方的条目判失效，每次 L1 未命中都打到数据库认证查询上。
 	CrossProtocolConversionEnabled *bool                             `json:"cross_protocol_conversion_enabled,omitempty"`
+	ReturnRequestedModel           bool                              `json:"return_requested_model"`
 	AllowLive                      bool                              `json:"allow_live"`
 	ForceOpenAIFast                bool                              `json:"force_openai_fast"`
 	FreeOpenAIFast                 bool                              `json:"free_openai_fast"`

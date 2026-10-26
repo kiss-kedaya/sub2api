@@ -185,6 +185,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	setOpsRequestContext(c, "", false)
 
+	clientRequestModel := clientRequestedModel(c, gjson.GetBytes(body, "model").String())
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
 	if err != nil {
@@ -194,6 +195,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 	body = parsedReq.Body.Bytes()
 	reqModel := parsedReq.Model
+	finishModelResponse := service.InstallRequestedModelResponse(c, "anthropic", clientRequestModel, func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	reqStream := parsedReq.Stream
 	if service.IsChatUnsupportedMediaModel(reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Messages endpoint")

@@ -127,6 +127,8 @@ type Group struct {
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch,omitempty"`
 	// 是否允许本分组做 Anthropic 协议族 <-> OpenAI 协议族 的跨协议转换（默认关闭）
 	CrossProtocolConversionEnabled bool `json:"cross_protocol_conversion_enabled,omitempty"`
+	// 响应模型字段返回请求中的模型名，不改变请求路由、计费或正文
+	ReturnRequestedModel bool `json:"return_requested_model,omitempty"`
 	// 是否允许此 OpenAI 分组访问 Live 接口
 	AllowLive bool `json:"allow_live,omitempty"`
 	// 是否强制此 OpenAI/Composite 分组请求使用 service_tier=priority
@@ -267,7 +269,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelAllowlist, group.FieldCodexModelsManifestConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
-		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldCrossProtocolConversionEnabled, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
+		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldCrossProtocolConversionEnabled, group.FieldReturnRequestedModel, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
 		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldGrokModerationRefusalPrice, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
 			values[i] = new(sql.NullFloat64)
@@ -652,6 +654,12 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.CrossProtocolConversionEnabled = value.Bool
 			}
+		case group.FieldReturnRequestedModel:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field return_requested_model", values[i])
+			} else if value.Valid {
+				_m.ReturnRequestedModel = value.Bool
+			}
 		case group.FieldAllowLive:
 			if value, ok := values[i].(*sql.NullBool); !ok {
 				return fmt.Errorf("unexpected type %T for field allow_live", values[i])
@@ -1034,6 +1042,9 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("cross_protocol_conversion_enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CrossProtocolConversionEnabled))
+	builder.WriteString(", ")
+	builder.WriteString("return_requested_model=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ReturnRequestedModel))
 	builder.WriteString(", ")
 	builder.WriteString("allow_live=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AllowLive))

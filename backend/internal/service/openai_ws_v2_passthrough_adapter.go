@@ -140,6 +140,7 @@ type openAIWSPassthroughUsageMeta struct {
 	requestedReasoningEffort atomic.Pointer[string]
 	requestModel             atomic.Pointer[string]
 	upstreamModel            atomic.Pointer[string]
+	responseSessionModel     atomic.Pointer[string]
 
 	// 仅在 client->upstream filter goroutine 中读写；Load 侧通过上方原子指针同步。
 	sessionRequestModel string
@@ -152,6 +153,7 @@ func newOpenAIWSPassthroughUsageMeta(initialRequestModel string, firstFrame []by
 	if meta.sessionRequestModel == "" {
 		meta.sessionRequestModel = openAIWSPassthroughRequestModelForFrame(firstFrame)
 	}
+	meta.responseSessionModel.Store(openAIWSTrimmedStringPtr(meta.sessionRequestModel))
 	return meta
 }
 
@@ -178,7 +180,19 @@ func (m *openAIWSPassthroughUsageMeta) updateSessionRequestModel(payload []byte)
 	}
 	if model := openAIWSPassthroughRequestModelFromSessionFrame(payload); model != "" {
 		m.sessionRequestModel = model
+		m.responseSessionModel.Store(openAIWSTrimmedStringPtr(model))
 	}
+}
+
+func (m *openAIWSPassthroughUsageMeta) clientResponseModel(payload []byte) string {
+	eventType := gjson.GetBytes(payload, "type").Str
+	if m != nil && (eventType == "session.created" || eventType == "session.updated") {
+		if model := m.responseSessionModel.Load(); model != nil {
+			return *model
+		}
+	}
+	model, _ := m.turnModels("")
+	return model
 }
 
 func (m *openAIWSPassthroughUsageMeta) requestModelForFrame(payload []byte) string {
@@ -998,6 +1012,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 
+	// The group is fixed for this connection. Capture its presentation policy
+	// before relay goroutines start; BeforeTurn may replace c.Request later.
+	returnRequestedModel := ContextShouldReturnRequestedModel(c)
 	completedTurns := atomic.Int32{}
 	var activeResponseID atomic.Value
 	turnLifecycle := newOpenAIWSPassthroughTurnLifecycle(true)
@@ -1008,11 +1025,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		interTurnIdleTimeout: s.openAIWSIngressInterTurnIdleTimeout(),
 		interTurnStarted:     make(chan struct{}, 1),
 		restoreResponseModel: func(payload []byte) []byte {
+			requestModel, upstreamModel := usageMeta.turnModels("")
+			if returnRequestedModel {
+				return RewriteRequestedModelResponse(payload, "realtime", usageMeta.clientResponseModel(payload))
+			}
 			eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 			if !openAIWSEventMayContainModel(eventType) {
 				return payload
 			}
-			requestModel, upstreamModel := usageMeta.turnModels("")
 			return replaceOpenAIWSMessageModel(payload, upstreamModel, requestModel)
 		},
 		restoreToolNames: func(payload []byte) []byte {

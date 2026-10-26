@@ -377,6 +377,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	responseID := ""
 	var finalResponse []byte
 	wroteDownstream := false
+	returnRequestedModel := ContextShouldReturnRequestedModel(c)
 	needModelReplace := originalModel != mappedModel
 	var mappedModelBytes []byte
 	if needModelReplace && mappedModel != "" {
@@ -658,7 +659,9 @@ readLoop:
 		}
 
 		if !clientDisconnected {
-			if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && bytes.Contains(message, mappedModelBytes) {
+			if returnRequestedModel {
+				message = RewriteRequestedModelResponse(message, "realtime", originalModel)
+			} else if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && bytes.Contains(message, mappedModelBytes) {
 				message = replaceOpenAIWSMessageModel(message, mappedModel, originalModel)
 			}
 			if openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(message) {
@@ -820,7 +823,9 @@ readLoop:
 			return nil, errors.New("ws finished without final response")
 		}
 
-		if needModelReplace {
+		if returnRequestedModel {
+			finalResponse = RewriteRequestedModelResponse(finalResponse, "openai", originalModel)
+		} else if needModelReplace {
 			finalResponse = s.replaceModelInResponseBody(finalResponse, mappedModel, originalModel)
 		}
 		finalResponse = s.correctToolCallsInResponseBody(finalResponse)

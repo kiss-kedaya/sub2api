@@ -113,6 +113,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 	requestInfo := service.ParseGrokMediaRequest(contentType, body)
 	requestModel := requestInfo.Model
+	finishModelResponse := service.InstallRequestedModelResponse(c, "openai", clientRequestedModel(c, requestModel), func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	routingModel := service.NormalizeGrokMediaModelForEndpoint(endpoint, requestModel, requestInfo.HasInputImage())
 	if endpoint.IsGenerationRequest() && strings.TrimSpace(requestModel) == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
