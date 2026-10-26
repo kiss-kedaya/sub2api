@@ -15,7 +15,7 @@ func (s *Service) NotifyWalletOperation(ctx context.Context, action, phase strin
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
-	labels := map[string]string{"sweep": "执行钱包归集", "destination_change": "修改归集地址", "export_mnemonics": "导出钱包助记词"}
+	labels := map[string]string{"sweep": "执行钱包归集", "destination_change": "修改归集地址", "export_mnemonics": "导出钱包助记词", "export_private_key": "导出单地址私钥"}
 	label, ok := labels[action]
 	if !ok {
 		return errors.New("invalid wallet notification action")

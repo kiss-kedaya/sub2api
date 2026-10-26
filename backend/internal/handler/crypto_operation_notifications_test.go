@@ -20,7 +20,7 @@ func (f operationNotificationFunc) NotifyWalletOperation(ctx context.Context, ac
 }
 
 func TestWalletOperationIntentNotifiesButDoesNotAuthorizeOrDiscloseSecrets(t *testing.T) {
-	for _, action := range []string{"sweep", "destination_change", "export_mnemonics"} {
+	for _, action := range []string{"sweep", "destination_change", "export_mnemonics", "export_private_key"} {
 		t.Run(action, func(t *testing.T) {
 			calls := 0
 			h := &CryptoHandler{operationNotifier: operationNotificationFunc(func(_ context.Context, gotAction, phase string) error {

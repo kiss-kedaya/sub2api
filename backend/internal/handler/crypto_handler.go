@@ -30,28 +30,32 @@ import (
 
 // CryptoHandler serves the built-in crypto deposit channel.
 type CryptoHandler struct {
-	addresses         *addresses.Service
-	store             cryptopay.SettingStore
-	service           *cryptopay.Service
-	security          cryptoAdminSecurityVerifier
-	securityConfig    *config.Config
-	mnemonicExporter  cryptoMnemonicExporter
-	operationNotifier cryptoWalletOperationNotifier
+	addresses          *addresses.Service
+	store              cryptopay.SettingStore
+	service            *cryptopay.Service
+	security           cryptoAdminSecurityVerifier
+	securityConfig     *config.Config
+	mnemonicExporter   cryptoMnemonicExporter
+	privateKeyExporter cryptoAddressPrivateKeyExporter
+	operationNotifier  cryptoWalletOperationNotifier
 }
 
 func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService, cryptoSvc *cryptopay.Service, totpService *service.TotpService, cfg *config.Config) *CryptoHandler {
 	var mnemonicExporter cryptoMnemonicExporter
+	var privateKeyExporter cryptoAddressPrivateKeyExporter
 	if cryptoSvc != nil {
 		mnemonicExporter = cryptoSvc
+		privateKeyExporter = cryptoSvc
 	}
 	return &CryptoHandler{
-		addresses:         addressService,
-		store:             cryptopay.NewServiceSettingStore(settings),
-		service:           cryptoSvc,
-		security:          service.NewCryptoSecurityService(totpService, cfg),
-		securityConfig:    cfg,
-		operationNotifier: cryptoSvc,
-		mnemonicExporter:  mnemonicExporter,
+		addresses:          addressService,
+		store:              cryptopay.NewServiceSettingStore(settings),
+		service:            cryptoSvc,
+		security:           service.NewCryptoSecurityService(totpService, cfg),
+		securityConfig:     cfg,
+		operationNotifier:  cryptoSvc,
+		mnemonicExporter:   mnemonicExporter,
+		privateKeyExporter: privateKeyExporter,
 	}
 }
 
