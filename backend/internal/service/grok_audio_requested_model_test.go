@@ -121,6 +121,12 @@ func TestGrokRealtimeRequestedModelRelayPreservesAudioAndInput(t *testing.T) {
 				wantModel = "second-voice"
 			}
 			require.Equal(t, wantModel, gjson.GetBytes(actual, "session.model").String())
+			// Voice activity detection can create the next response automatically,
+			// without a client response.create after the session's model changed.
+			upstream.events <- []byte(`{"type":"response.created","response":{"id":"auto_second","model":"provider-second"}}`)
+			_, actual, readErr = client.Read(ctx)
+			require.NoError(t, readErr)
+			require.Equal(t, wantModel, gjson.GetBytes(actual, "response.model").String())
 			_ = client.CloseNow()
 			select {
 			case audio := <-observed:

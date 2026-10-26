@@ -674,15 +674,24 @@ type liveRequestedModelUpdate struct {
 	model   string
 }
 
+type liveRequestedModelResponse struct {
+	eventID string
+	// A model is explicit only when response.create supplied one. Otherwise,
+	// retain the confirmed session and preceding updates for this response;
+	// rejected updates can be removed without a later session renaming it.
+	model          string
+	session        string
+	sessionUpdates []liveRequestedModelUpdate
+}
+
 // One mutex protects presentation state shared by the two relay directions.
 // Queue session acknowledgements and bind response IDs to their request names;
 // a later session/model update must not rename an in-flight response.
 type liveModelPresentation struct {
 	mu               sync.Mutex
 	session          string
-	issuedSession    string
 	pendingSessions  []liveRequestedModelUpdate
-	pendingResponses []liveRequestedModelUpdate
+	pendingResponses []liveRequestedModelResponse
 	responses        map[string]string
 	lastResponse     string
 }
@@ -692,7 +701,7 @@ func newLiveModelPresentation(record *LiveCallRecord) *liveModelPresentation {
 	if model == "" {
 		model = record.RequestedModel
 	}
-	return &liveModelPresentation{session: model, issuedSession: model, responses: make(map[string]string)}
+	return &liveModelPresentation{session: model, responses: make(map[string]string)}
 }
 
 func (p *liveModelPresentation) observeClient(payload []byte) error {
@@ -709,9 +718,8 @@ func (p *liveModelPresentation) observeClient(payload []byte) error {
 		}
 		model := gjson.GetBytes(payload, "session.model")
 		if model.Type == gjson.String && model.Str != "" {
-			p.issuedSession = model.Str
+			update.model = model.Str
 		}
-		update.model = p.issuedSession
 		p.pendingSessions = append(p.pendingSessions, update)
 	case "response.create":
 		if len(p.pendingResponses)+len(p.responses) >= 128 {
@@ -721,11 +729,14 @@ func (p *liveModelPresentation) observeClient(payload []byte) error {
 		if model.Type != gjson.String || model.Str == "" {
 			model = gjson.GetBytes(payload, "model")
 		}
-		update.model = p.issuedSession
-		if model.Type == gjson.String && model.Str != "" {
-			update.model = model.Str
+		response := liveRequestedModelResponse{
+			eventID: update.eventID, session: p.session,
+			sessionUpdates: append([]liveRequestedModelUpdate(nil), p.pendingSessions...),
 		}
-		p.pendingResponses = append(p.pendingResponses, update)
+		if model.Type == gjson.String && model.Str != "" {
+			response.model = model.Str
+		}
+		p.pendingResponses = append(p.pendingResponses, response)
 	}
 	return nil
 }
@@ -737,11 +748,21 @@ func (p *liveModelPresentation) responseModel(payload []byte) (string, bool) {
 	if event == "error" {
 		if eventID := gjson.GetBytes(payload, "error.event_id").Str; eventID != "" {
 			p.pendingSessions = removeLiveRequestedModelUpdate(p.pendingSessions, eventID)
-			p.pendingResponses = removeLiveRequestedModelUpdate(p.pendingResponses, eventID)
-			p.issuedSession = p.session
-			if len(p.pendingSessions) > 0 {
-				p.issuedSession = p.pendingSessions[len(p.pendingSessions)-1].model
+			for index := 0; index < len(p.pendingResponses); {
+				if p.pendingResponses[index].eventID == eventID {
+					p.pendingResponses = append(p.pendingResponses[:index], p.pendingResponses[index+1:]...)
+					continue
+				}
+				response := &p.pendingResponses[index]
+				response.sessionUpdates = removeLiveRequestedModelUpdate(response.sessionUpdates, eventID)
+				index++
 			}
+		} else {
+			// event_id is optional. An uncorrelated error makes speculative
+			// requests unreliable; preserve confirmed/active response models and
+			// rebuild future requests from the acknowledged session instead.
+			p.pendingSessions = nil
+			p.pendingResponses = nil
 		}
 		return "", false
 	}
@@ -750,7 +771,9 @@ func (p *liveModelPresentation) responseModel(payload []byte) (string, bool) {
 	}
 	if event == "session.updated" {
 		if len(p.pendingSessions) > 0 {
-			p.session = p.pendingSessions[0].model
+			if model := p.pendingSessions[0].model; model != "" {
+				p.session = model
+			}
 			p.pendingSessions = p.pendingSessions[1:]
 			return p.session, true
 		}
@@ -763,7 +786,11 @@ func (p *liveModelPresentation) responseModel(payload []byte) (string, bool) {
 	if event == "response.created" {
 		model := p.session
 		if len(p.pendingResponses) > 0 {
-			model = p.pendingResponses[0].model
+			response := p.pendingResponses[0]
+			model = response.model
+			if model == "" {
+				model = resolveLiveRequestedSessionModel(response.session, response.sessionUpdates)
+			}
 			p.pendingResponses = p.pendingResponses[1:]
 		}
 		p.lastResponse = model
@@ -783,6 +810,15 @@ func (p *liveModelPresentation) responseModel(payload []byte) (string, bool) {
 		delete(p.responses, responseID)
 	}
 	return model, false
+}
+
+func resolveLiveRequestedSessionModel(session string, updates []liveRequestedModelUpdate) string {
+	for _, update := range updates {
+		if update.model != "" {
+			session = update.model
+		}
+	}
+	return session
 }
 
 func removeLiveRequestedModelUpdate(updates []liveRequestedModelUpdate, eventID string) []liveRequestedModelUpdate {

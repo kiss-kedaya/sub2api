@@ -154,7 +154,9 @@ func TestRequestedModelFullHTTPHandlerJSONAndSSE(t *testing.T) {
 					if stream {
 						w.Header().Set("Content-Type", "text/event-stream")
 						_, err = io.WriteString(w, sse)
-						w.(http.Flusher).Flush()
+						if flusher, ok := w.(http.Flusher); ok {
+							flusher.Flush()
+						}
 					} else {
 						w.Header().Set("Content-Type", "application/json")
 						_, err = w.Write(response)
@@ -268,7 +270,9 @@ func TestRequestedModelFullChatCompletionsHandlerJSONAndSSE(t *testing.T) {
 					if stream {
 						w.Header().Set("Content-Type", "text/event-stream")
 						_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", encoded)
-						w.(http.Flusher).Flush()
+						if flusher, ok := w.(http.Flusher); ok {
+							flusher.Flush()
+						}
 					} else {
 						w.Header().Set("Content-Type", "application/json")
 						_, _ = w.Write(encoded)

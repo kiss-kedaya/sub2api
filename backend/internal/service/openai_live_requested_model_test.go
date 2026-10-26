@@ -92,6 +92,60 @@ func TestLiveModelPresentationRejectedSessionUpdateDoesNotChangeFallback(t *test
 	require.Equal(t, "Initial-Alias", model)
 }
 
+func TestLiveModelPresentationRejectedUpdateDoesNotLeakIntoInheritedQueuedModels(t *testing.T) {
+	p := newLiveModelPresentation(&LiveCallRecord{RequestedModel: "Initial-Alias", ReturnRequestedModel: true})
+	require.NoError(t, p.observeClient([]byte(`{"event_id":"bad-update","type":"session.update","session":{"model":"Rejected-Alias"}}`)))
+	require.NoError(t, p.observeClient([]byte(`{"event_id":"instructions-only","type":"session.update","session":{"instructions":"leave text"}}`)))
+	// This response inherited the pending session before its rejection arrived.
+	require.NoError(t, p.observeClient([]byte(`{"event_id":"inherited-response","type":"response.create"}`)))
+	model, changed := p.responseModel([]byte(`{"type":"error","error":{"event_id":"bad-update","message":"rejected"}}`))
+	require.Empty(t, model)
+	require.False(t, changed)
+	model, changed = p.responseModel([]byte(`{"type":"session.updated","session":{"model":"actual-initial"}}`))
+	require.Equal(t, "Initial-Alias", model, "instructions-only updates cannot inherit a rejected model")
+	require.True(t, changed)
+	// A later accepted model must not rename the already queued response either.
+	require.NoError(t, p.observeClient([]byte(`{"event_id":"new-update","type":"session.update","session":{"model":"New-Alias"}}`)))
+	model, changed = p.responseModel([]byte(`{"type":"session.updated","session":{"model":"actual-new"}}`))
+	require.Equal(t, "New-Alias", model)
+	require.True(t, changed)
+	model, _ = p.responseModel([]byte(`{"type":"response.created","response":{"id":"resp_inherited","model":"actual-initial"}}`))
+	require.Equal(t, "Initial-Alias", model)
+	model, _ = p.responseModel([]byte(`{"type":"response.done","response":{"id":"resp_inherited","model":"actual-initial"}}`))
+	require.Equal(t, "Initial-Alias", model)
+	require.NoError(t, p.observeClient([]byte(`{"type":"response.create"}`)))
+	model, _ = p.responseModel([]byte(`{"type":"response.created","response":{"id":"resp_new","model":"actual-new"}}`))
+	require.Equal(t, "New-Alias", model)
+}
+
+func TestLiveModelPresentationUncorrelatedErrorDiscardsRejectedPendingModels(t *testing.T) {
+	for _, rejected := range []string{
+		`{"type":"response.create","response":{"model":"Rejected-Alias"}}`,
+		`{"type":"session.update","session":{"model":"Rejected-Alias"}}`,
+	} {
+		t.Run(gjson.Get(rejected, "type").Str, func(t *testing.T) {
+			p := newLiveModelPresentation(&LiveCallRecord{RequestedModel: "Initial-Alias", ReturnRequestedModel: true})
+			require.NoError(t, p.observeClient([]byte(`{"type":"response.create","response":{"model":"Active-Alias"}}`)))
+			model, _ := p.responseModel([]byte(`{"type":"response.created","response":{"id":"resp_active","model":"actual-active"}}`))
+			require.Equal(t, "Active-Alias", model)
+			require.NoError(t, p.observeClient([]byte(rejected)))
+			errorPayload := []byte(`{"type":"error","model":"actual-error","error":{"message":"rejected"}}`)
+			model, changed := p.responseModel(errorPayload)
+			require.Empty(t, model)
+			require.False(t, changed)
+			require.Equal(t, string(errorPayload), string(RewriteRequestedModelResponse(errorPayload, "realtime", model)))
+			require.NoError(t, p.observeClient([]byte(`{"type":"response.create","response":{"model":"Next-Alias"}}`)))
+			model, _ = p.responseModel([]byte(`{"type":"response.created","response":{"id":"resp_next","model":"actual-next"}}`))
+			require.Equal(t, "Next-Alias", model, "the rejected request may not consume the next response's position")
+			model, _ = p.responseModel([]byte(`{"type":"response.done","response":{"id":"resp_active","model":"actual-active"}}`))
+			require.Equal(t, "Active-Alias", model, "an unrelated error cannot rename an active response")
+			require.NoError(t, p.observeClient([]byte(`{"type":"response.create"}`)))
+			model, _ = p.responseModel([]byte(`{"type":"response.created","response":{"id":"resp_default","model":"actual-initial"}}`))
+			require.Equal(t, "Initial-Alias", model, "uncorrelated errors revert speculative session models")
+		})
+	}
+}
+
 func TestLiveModelPresentationConcurrentDirectionsAndPendingBounds(t *testing.T) {
 	p := newLiveModelPresentation(&LiveCallRecord{RequestedModel: "Original-Alias"})
 	var workers sync.WaitGroup
