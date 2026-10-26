@@ -93,7 +93,8 @@ func SafeRecordedError(message string) string {
 		return message
 	}
 	switch message {
-	case "Bitget gasless service is unavailable", "Bitget order is missing verifiable signing data or exceeds sweep policy", "Bitget gasless transfer is not supported on this chain", "awaiting Bitget order and on-chain confirmation":
+	case "Bitget gasless service is unavailable", "Bitget order is missing verifiable signing data or exceeds sweep policy", "Bitget gasless transfer is not supported on this chain", "awaiting Bitget order and on-chain confirmation",
+		"gasless service is unavailable", "order is missing verifiable signing data or exceeds sweep policy", "gasless transfer is not supported on this chain":
 		return message
 	case "independent RPC confirmation is unavailable or disagrees":
 		return message

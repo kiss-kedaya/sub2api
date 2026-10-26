@@ -11,9 +11,9 @@ import (
 
 const Provider = "bitget"
 
-var ErrUnavailable = errors.New("Bitget gasless service is unavailable")
-var ErrUnsafeOrder = errors.New("Bitget order is missing verifiable signing data or exceeds sweep policy")
-var ErrUnsupportedChain = errors.New("Bitget gasless transfer is not supported on this chain")
+var ErrUnavailable = errors.New("gasless service is unavailable")
+var ErrUnsafeOrder = errors.New("order is missing verifiable signing data or exceeds sweep policy")
+var ErrUnsupportedChain = errors.New("gasless transfer is not supported on this chain")
 
 func Chain(chain string) (string, int64) {
 	switch chain {
@@ -149,6 +149,37 @@ type OrderStatus struct {
 	TxID   string `json:"txId"`
 }
 
+func (s *OrderStatus) UnmarshalJSON(raw []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return ErrUnsafeOrder
+	}
+	read := func(keys ...string) string {
+		for _, key := range keys {
+			if value, ok := fields[key]; ok {
+				var out string
+				if json.Unmarshal(value, &out) == nil {
+					return out
+				}
+				var number json.Number
+				if json.Unmarshal(value, &number) == nil {
+					return number.String()
+				}
+				return ""
+			}
+		}
+		return ""
+	}
+	s.ID = read("orderId")
+	s.Status = read("orderStatus")
+	s.Hash = read("txHash", "hash")
+	s.TxID = read("txid", "txId")
+	return nil
+}
+
 // Intent is the exact maximum token debit authorized by the credited ledger.
 // Net + fee must equal Gross. All quantities are integer token base units.
 type Intent struct {
@@ -166,6 +197,8 @@ type Intent struct {
 	MaxFeeBPS       int    `json:"max_fee_bps"`
 	Nonce           uint64 `json:"nonce"`
 	CurrentDelegate string `json:"current_delegate"`
+	CurrentCodeHash string `json:"current_code_hash"`
+	CreatedAt       int64  `json:"created_at"`
 }
 
 type Validated struct {

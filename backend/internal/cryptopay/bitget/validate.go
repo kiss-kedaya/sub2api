@@ -128,7 +128,7 @@ func (c *Client) ValidateSigning(o *Order, in Intent, now time.Time) (*Validated
 		var digest []byte
 		switch msg.Type {
 		case "auth":
-			if i != 0 || len(msgs) != 2 || !o.NoGas.NeedAuth {
+			if i != 0 || len(msgs) != 2 || !o.NoGas.NeedAuth || in.CurrentDelegate != "" {
 				return nil, ErrUnsafeOrder
 			}
 			var a struct {

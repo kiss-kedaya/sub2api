@@ -215,10 +215,11 @@ func (s *Service) scanWalletOutflows(ctx context.Context, evm *scanner.EVMScanne
 		// Bind its exact persisted order and receipt before evaluating outflow.
 		s.mu.RLock()
 		executor := s.executor
-		provider := s.config.SweepProvider
 		s.mu.RUnlock()
-		if executor == nil && provider == "bitget" {
-			executor = sweeper.NewExecutor(s.db, nil, s.wallet, sweeper.Config{Provider: provider}, nil, nil, 0)
+		if executor == nil {
+			// Observe already signed Bitget orders even after the admin switches
+			// providers or pauses deposits; this path cannot sign or submit.
+			executor = sweeper.NewExecutor(s.db, nil, s.wallet, sweeper.Config{Provider: "bitget"}, nil, nil, 0)
 		}
 		if executor != nil {
 			bound, bindErr := executor.AuthorizeGaslessObserved(ctx, pool, chain.Chain, transfer.TxHash, transfer.From)

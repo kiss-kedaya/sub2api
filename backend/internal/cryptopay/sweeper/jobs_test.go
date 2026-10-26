@@ -143,6 +143,8 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case "eth_getBalance":
 		result = fmt.Sprintf("0x%x", c.native)
+	case "eth_getCode":
+		result = "0x"
 	case "eth_getTransactionCount":
 		address := param(0)
 		c.nonceReads = append(c.nonceReads, address)
