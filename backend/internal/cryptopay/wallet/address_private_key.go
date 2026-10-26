@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -174,10 +175,7 @@ func deriveExportPrivateKey(deposit *Deriver, family string, index uint32, addre
 		if err != nil {
 			return nil, "", ErrExportAddressMismatch
 		}
-		defer func() {
-			clear(key.D.Bits())
-			key.D.SetInt64(0)
-		}()
+		defer clearExportECDSAKey(key)
 		if !exportAddressesEqual(family, address, derived.Hex()) {
 			return nil, "", ErrExportAddressMismatch
 		}
@@ -191,5 +189,17 @@ func deriveExportPrivateKey(deposit *Deriver, family string, index uint32, addre
 		return key, "base58", nil
 	default:
 		return nil, "", ErrExportAddressUnsupportedFamily
+	}
+}
+
+// This discarded geth secp256k1 key is never used after destruction. The
+// standard library provides no scalar-destruction API; this is not encoding,
+// signing, or arithmetic on the deprecated field.
+//
+//nolint:staticcheck // D is used only to erase the discarded private scalar.
+func clearExportECDSAKey(key *ecdsa.PrivateKey) {
+	if key != nil && key.D != nil {
+		clear(key.D.Bits())
+		key.D.SetInt64(0)
 	}
 }

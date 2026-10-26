@@ -30,8 +30,7 @@ func exportTestAddress(t *testing.T, mnemonic, family string, index uint32) stri
 		if err != nil {
 			t.Fatal("derive fixture EVM address")
 		}
-		clear(key.D.Bits())
-		key.D.SetInt64(0)
+		clearExportECDSAKey(key)
 		return address.Hex()
 	}
 	key, address, err := deposit.SolanaKey(index)
@@ -77,10 +76,7 @@ func assertExportedPrivateKey(t *testing.T, value *AddressPrivateKeyExport, fami
 		if err != nil {
 			t.Fatal("exported EVM private key cannot be imported")
 		}
-		defer func() {
-			clear(key.D.Bits())
-			key.D.SetInt64(0)
-		}()
+		defer clearExportECDSAKey(key)
 		if !strings.EqualFold(crypto.PubkeyToAddress(key.PublicKey).Hex(), address) {
 			t.Fatal("exported EVM private key belongs to another address")
 		}
