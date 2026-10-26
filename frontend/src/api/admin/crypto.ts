@@ -170,6 +170,29 @@ export async function setAddressStatus(id: number, status: string, verification?
   await apiClient.post(`/admin/crypto/addresses/${id}/status`, { status }, cryptoRequestOptions(verification))
 }
 
+export interface CryptoPrivateKeyExport {
+  address_id: number
+  address: string
+  family: 'evm' | 'solana'
+  derivation_index: number
+  private_key: string
+  format: 'hex' | 'base58'
+}
+
+export async function exportAddressPrivateKey(
+  id: number,
+  verification: CryptoVerification,
+  signal?: AbortSignal
+): Promise<CryptoPrivateKeyExport> {
+  const request = cryptoRequestOptions(verification)
+  const { data } = await apiClient.post<CryptoPrivateKeyExport>(`/admin/crypto/addresses/${id}/export-private-key`, {}, {
+    ...request,
+    signal,
+    headers: { ...request.headers, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+  })
+  return data
+}
+
 export async function getSweepPlan(): Promise<SweepPlan> {
   const { data } = await apiClient.get('/admin/crypto/sweep/plan')
   return data.data
@@ -459,7 +482,7 @@ async function checkedDownload(response: { data: Blob; status: number }): Promis
   throw { ...detail, status: response.status }
 }
 
-export type WalletOperationAction = 'sweep' | 'destination_change' | 'export_mnemonics'
+export type WalletOperationAction = 'sweep' | 'destination_change' | 'export_mnemonics' | 'export_private_key'
 
 // Intent notification precedes payment verification. The server sends the
 // separate verified notification itself; the client cannot assert verification.
