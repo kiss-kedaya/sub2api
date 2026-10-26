@@ -328,6 +328,12 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 	if entry.Snapshot.Version != apiKeyAuthSnapshotVersion {
 		return nil, false, nil
 	}
+	// Keep the shared snapshot version stable during rolling deployments.
+	// Only legacy DeepSeek entries need reloading: their missing provider
+	// configuration would silently send search requests to the model account.
+	if group := entry.Snapshot.Group; group != nil && group.Platform == PlatformDeepseek && !group.SearchProviderConfigLoaded {
+		return nil, false, nil
+	}
 	return s.snapshotToAPIKey(key, entry.Snapshot), true, nil
 }
 
@@ -418,6 +424,9 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			VideoModelPrices:                NormalizeVideoModelPrices(apiKey.Group.VideoModelPrices),
 			WebSearchPricePerCall:           apiKey.Group.WebSearchPricePerCall,
 			SearchPricePer1k:                apiKey.Group.SearchPricePer1k,
+			SearchProviderBaseURL:           apiKey.Group.SearchProviderBaseURL,
+			SearchProviderAPIKey:            apiKey.Group.SearchProviderAPIKey,
+			SearchProviderConfigLoaded:      true,
 			AudioRealtimePricePerMin:        apiKey.Group.AudioRealtimePricePerMin,
 			AudioTTSPricePerMillionChars:    apiKey.Group.AudioTTSPricePerMillionChars,
 			AudioSTTPricePerHour:            apiKey.Group.AudioSTTPricePerHour,
@@ -527,6 +536,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			VideoModelPrices:                NormalizeVideoModelPrices(snapshot.Group.VideoModelPrices),
 			WebSearchPricePerCall:           snapshot.Group.WebSearchPricePerCall,
 			SearchPricePer1k:                snapshot.Group.SearchPricePer1k,
+			SearchProviderBaseURL:           snapshot.Group.SearchProviderBaseURL,
+			SearchProviderAPIKey:            snapshot.Group.SearchProviderAPIKey,
 			AudioRealtimePricePerMin:        snapshot.Group.AudioRealtimePricePerMin,
 			AudioTTSPricePerMillionChars:    snapshot.Group.AudioTTSPricePerMillionChars,
 			AudioSTTPricePerHour:            snapshot.Group.AudioSTTPricePerHour,
