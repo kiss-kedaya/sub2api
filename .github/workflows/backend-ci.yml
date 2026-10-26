@@ -187,6 +187,9 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: go test -c -tags=unit -o bin/deepseek-search-probe ./internal/service
+      - name: Verify search behavior before publishing probe
+        working-directory: backend
+        run: bin/deepseek-search-probe -test.run='^Test(APIKey.*(SearchProvider|ProviderSnapshot)|PrepareDeepSeek|DeepSeekHosted|ForwardDeepSeekTools|HasIndependentDeepSeek)' -test.count=1
       - uses: actions/upload-artifact@v7
         with:
           name: deepseek-search-probe-linux-amd64
