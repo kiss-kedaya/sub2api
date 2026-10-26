@@ -206,9 +206,9 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 	// Snapshot the selected group's policy before starting either relay goroutine.
 	// Audio observation/billing still consumes the original upstream events.
 	returnRequestedModel := ContextShouldReturnRequestedModel(c)
-	var sessionRequestedModel, responseRequestedModel atomic.Value
-	sessionRequestedModel.Store(requestedModel)
-	responseRequestedModel.Store(requestedModel)
+	var sessionRequestedModel, responseRequestedModel atomic.Pointer[string]
+	sessionRequestedModel.Store(&requestedModel)
+	responseRequestedModel.Store(&requestedModel)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -227,10 +227,10 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 				audioObserved.Store(true)
 			}
 			if returnRequestedModel {
-				model := responseRequestedModel.Load().(string)
+				model := *responseRequestedModel.Load()
 				event := gjson.GetBytes(msg, "type").String()
 				if event == "session.created" || event == "session.updated" {
-					model = sessionRequestedModel.Load().(string)
+					model = *sessionRequestedModel.Load()
 				}
 				msg = RewriteRequestedModelResponse(msg, "realtime", model)
 			}
@@ -264,7 +264,8 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 				switch gjson.GetBytes(msg, "type").String() {
 				case "session.update":
 					if model := gjson.GetBytes(msg, "session.model"); model.Type == gjson.String && strings.TrimSpace(model.Str) != "" {
-						sessionRequestedModel.Store(model.Str)
+						modelName := model.Str
+						sessionRequestedModel.Store(&modelName)
 					}
 				case "response.create":
 					model := gjson.GetBytes(msg, "response.model")
@@ -272,9 +273,10 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 						model = gjson.GetBytes(msg, "model")
 					}
 					if model.Type == gjson.String && strings.TrimSpace(model.Str) != "" {
-						responseRequestedModel.Store(model.Str)
+						modelName := model.Str
+						responseRequestedModel.Store(&modelName)
 					} else {
-						responseRequestedModel.Store(sessionRequestedModel.Load().(string))
+						responseRequestedModel.Store(sessionRequestedModel.Load())
 					}
 				}
 			}

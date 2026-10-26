@@ -47,6 +47,8 @@ func (e *LiveAttestationUnavailableError) Error() string {
 type LiveCallRequest struct {
 	SDP     string          `json:"sdp"`
 	Session json.RawMessage `json:"session"`
+	// RequestedModel preserves the client spelling before composite routing.
+	RequestedModel string `json:"-"`
 }
 
 type LiveCallIdentity struct {
@@ -62,22 +64,26 @@ type LiveCallIdentity struct {
 }
 
 type LiveCallRecord struct {
-	CallID          string
-	CallHash        string
-	AccountID       int64
-	APIKeyID        int64
-	UserID          int64
-	GroupID         int64
-	SubscriptionID  int64
-	LeaseID         string
-	Model           string
-	CreatedAt       time.Time
-	ExpiresAt       time.Time
-	Controller      string
-	ControllerOwner string
-	UserAgent       string
-	IPAddress       string
-	InboundEndpoint string
+	CallID         string
+	CallHash       string
+	AccountID      int64
+	APIKeyID       int64
+	UserID         int64
+	GroupID        int64
+	SubscriptionID int64
+	LeaseID        string
+	Model          string
+	// Presentation fields never replace Model, which records the upstream model.
+	RequestedModel        string
+	SessionRequestedModel string
+	ReturnRequestedModel  bool
+	CreatedAt             time.Time
+	ExpiresAt             time.Time
+	Controller            string
+	ControllerOwner       string
+	UserAgent             string
+	IPAddress             string
+	InboundEndpoint       string
 	// AttestationCiphertext 仅用于让同一会话的 Sideband 复用创建时的证明。
 	AttestationCiphertext string
 }
@@ -97,6 +103,12 @@ type LiveCallStore interface {
 	ReleaseLiveController(ctx context.Context, callHash, owner string) (bool, error)
 	GetLiveController(ctx context.Context, callHash string) (string, error)
 	MarkLiveCallClosed(ctx context.Context, callHash string, ttl time.Duration) (bool, error)
+}
+
+// LiveCallPresentationStore updates only presentation metadata under the
+// current controller lease, without overwriting lifecycle or billing fields.
+type LiveCallPresentationStore interface {
+	UpdateLiveSessionRequestedModel(ctx context.Context, callHash, owner, model string) error
 }
 
 type LiveConcurrencyCache interface {

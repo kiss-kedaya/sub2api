@@ -88,7 +88,7 @@ func TestRequestedModelWriterJSONAndLateEffectiveGroup(t *testing.T) {
 	require.EqualValues(t, 9, gjson.Get(recorder.Body.String(), "usage.total_tokens").Int())
 	require.Empty(t, recorder.Result().Header.Get("Content-Length"))
 	_, hijacker := c.Writer.(http.Hijacker)
-	_, notifier := c.Writer.(http.CloseNotifier)
+	_, notifier := c.Writer.(interface{ CloseNotify() <-chan bool })
 	_, pusher := c.Writer.(http.Pusher)
 	require.True(t, hijacker)
 	require.True(t, notifier)
