@@ -2,6 +2,7 @@
 
 FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/GroupsView.returnRequestedModel.spec.ts \
+	src/components/crypto/__tests__/CryptoPrivateKeyDialog.spec.ts \
 	src/components/admin/account/__tests__/ScheduledTestsPanel.spec.ts \
 	src/components/admin/account/__tests__/ScheduledQualityConfig.spec.ts \
 	src/components/user/monitor/__tests__/ChannelMonitorV3QualityHistory.spec.ts \

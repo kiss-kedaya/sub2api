@@ -464,6 +464,15 @@
                   </span>
                 </td>
                 <td>
+                  <button
+                    v-if="row.family === 'evm' || row.family === 'solana'"
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    :data-export-address="row.id"
+                    @click="privateKeyAddress = { ...row }"
+                  >
+                    {{ t('admin.crypto.privateKeyExportAction') }}
+                  </button>
                   <button class="btn btn-secondary btn-sm" @click="toggleAddress(row)">
                     {{ row.status === 'active' ? t('admin.crypto.disable') : t('admin.crypto.enable') }}
                   </button>
@@ -731,6 +740,7 @@
     />
 
     <CryptoMnemonicsDialog :show="mnemonicsDialogOpen" @close="mnemonicsDialogOpen = false" />
+    <CryptoPrivateKeyDialog :address="privateKeyAddress" @close="privateKeyAddress = null" />
     <BaseDialog :show="walletDialog !== null" :title="t('admin.crypto.hotImportAction')" @close="closeWalletDialog">
       <form id="crypto-wallet-form" class="crypto-view__wallet-form" autocomplete="off" @submit.prevent="submitWallet">
         <p class="crypto-view__approval-notice">{{ t('admin.crypto.hotImportWarning') }}</p>
@@ -757,6 +767,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
 import CryptoGrantStatus from '@/components/crypto/CryptoGrantStatus.vue'
 import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
+import CryptoPrivateKeyDialog from '@/components/crypto/CryptoPrivateKeyDialog.vue'
 import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
 import CryptoGasWalletPanel from '@/components/crypto/CryptoGasWalletPanel.vue'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
@@ -807,6 +818,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
 const securityDialog = ref<InstanceType<typeof CryptoSecurityDialog> | null>(null)
+const privateKeyAddress = ref<DepositAddress | null>(null)
 const operationIntentError = ref('')
 
 async function notifyOperationIntent(action: WalletOperationAction): Promise<boolean> {
@@ -1627,6 +1639,7 @@ function clearWalletInputs() {
 
 watch(activeTab, clearWalletInputs)
 watch(activeTab, () => { mnemonicsDialogOpen.value = false })
+watch(activeTab, () => { privateKeyAddress.value = null }, { flush: 'sync' })
 onUnmounted(clearWalletInputs)
 
 async function loadDeposits() {
