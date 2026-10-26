@@ -156,6 +156,14 @@ type APIKeyAuthGroupSnapshot struct {
 	ProfitControlEnabled bool    `json:"profit_control_enabled"`
 	ProfitMinMargin      float64 `json:"profit_min_margin"`
 	ProfitSafetyBuffer   float64 `json:"profit_safety_buffer"`
+
+	// Search provider credentials stay in the internal auth cache. They must
+	// survive cache hits so standalone search never falls back to the model
+	// account's URL/key. Loaded distinguishes a known-empty configuration from
+	// snapshots written by older binaries that omitted these fields.
+	SearchProviderBaseURL      *string `json:"search_provider_base_url,omitempty"`
+	SearchProviderAPIKey       *string `json:"search_provider_api_key,omitempty"`
+	SearchProviderConfigLoaded bool    `json:"search_provider_config_loaded,omitempty"`
 }
 
 // APIKeyAuthCacheEntry 缓存条目，支持负缓存
