@@ -77,6 +77,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	finishModelResponse := service.InstallRequestedModelResponse(c, "openai", clientRequestedModel(c, reqModel), func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	bindRequestedReasoningEffort(c, body, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !compositeTargetPlatformResolved(c, apiKey, reqModel) {

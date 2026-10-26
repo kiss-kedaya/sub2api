@@ -657,6 +657,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	bareErrorMessage := ""
 	failureAccountSideEffectsApplied := false
 	mappedModel := actualModel
+	returnRequestedModel := ContextShouldReturnRequestedModel(c)
 	needModelReplace := false
 	var mappedModelBytes []byte
 	if originalModel != "" {
@@ -801,7 +802,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		imageCounter.AddSSEData(upstreamMessage)
 
-		if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && strings.Contains(trimmedData, mappedModel) {
+		if returnRequestedModel {
+			upstreamMessage = RewriteRequestedModelResponse(upstreamMessage, "realtime", originalModel)
+		} else if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && strings.Contains(trimmedData, mappedModel) {
 			upstreamMessage = replaceOpenAIWSMessageModel(upstreamMessage, mappedModel, originalModel)
 		}
 		if s.toolCorrector != nil && openAIWSEventMayContainToolCalls(eventType) && openAIWSMessageLikelyContainsToolCalls(upstreamMessage) {

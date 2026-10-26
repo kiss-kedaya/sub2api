@@ -746,6 +746,20 @@ func (_c *GroupCreate) SetNillableCrossProtocolConversionEnabled(v *bool) *Group
 	return _c
 }
 
+// SetReturnRequestedModel sets the "return_requested_model" field.
+func (_c *GroupCreate) SetReturnRequestedModel(v bool) *GroupCreate {
+	_c.mutation.SetReturnRequestedModel(v)
+	return _c
+}
+
+// SetNillableReturnRequestedModel sets the "return_requested_model" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableReturnRequestedModel(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetReturnRequestedModel(*v)
+	}
+	return _c
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_c *GroupCreate) SetAllowLive(v bool) *GroupCreate {
 	_c.mutation.SetAllowLive(v)
@@ -1207,6 +1221,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultCrossProtocolConversionEnabled
 		_c.mutation.SetCrossProtocolConversionEnabled(v)
 	}
+	if _, ok := _c.mutation.ReturnRequestedModel(); !ok {
+		v := group.DefaultReturnRequestedModel
+		_c.mutation.SetReturnRequestedModel(v)
+	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		v := group.DefaultAllowLive
 		_c.mutation.SetAllowLive(v)
@@ -1422,6 +1440,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.CrossProtocolConversionEnabled(); !ok {
 		return &ValidationError{Name: "cross_protocol_conversion_enabled", err: errors.New(`ent: missing required field "Group.cross_protocol_conversion_enabled"`)}
+	}
+	if _, ok := _c.mutation.ReturnRequestedModel(); !ok {
+		return &ValidationError{Name: "return_requested_model", err: errors.New(`ent: missing required field "Group.return_requested_model"`)}
 	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		return &ValidationError{Name: "allow_live", err: errors.New(`ent: missing required field "Group.allow_live"`)}
@@ -1728,6 +1749,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CrossProtocolConversionEnabled(); ok {
 		_spec.SetField(group.FieldCrossProtocolConversionEnabled, field.TypeBool, value)
 		_node.CrossProtocolConversionEnabled = value
+	}
+	if value, ok := _c.mutation.ReturnRequestedModel(); ok {
+		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
+		_node.ReturnRequestedModel = value
 	}
 	if value, ok := _c.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -2864,6 +2889,18 @@ func (u *GroupUpsert) SetCrossProtocolConversionEnabled(v bool) *GroupUpsert {
 // UpdateCrossProtocolConversionEnabled sets the "cross_protocol_conversion_enabled" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateCrossProtocolConversionEnabled() *GroupUpsert {
 	u.SetExcluded(group.FieldCrossProtocolConversionEnabled)
+	return u
+}
+
+// SetReturnRequestedModel sets the "return_requested_model" field.
+func (u *GroupUpsert) SetReturnRequestedModel(v bool) *GroupUpsert {
+	u.Set(group.FieldReturnRequestedModel, v)
+	return u
+}
+
+// UpdateReturnRequestedModel sets the "return_requested_model" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateReturnRequestedModel() *GroupUpsert {
+	u.SetExcluded(group.FieldReturnRequestedModel)
 	return u
 }
 
@@ -4193,6 +4230,20 @@ func (u *GroupUpsertOne) SetCrossProtocolConversionEnabled(v bool) *GroupUpsertO
 func (u *GroupUpsertOne) UpdateCrossProtocolConversionEnabled() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateCrossProtocolConversionEnabled()
+	})
+}
+
+// SetReturnRequestedModel sets the "return_requested_model" field.
+func (u *GroupUpsertOne) SetReturnRequestedModel(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetReturnRequestedModel(v)
+	})
+}
+
+// UpdateReturnRequestedModel sets the "return_requested_model" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateReturnRequestedModel() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateReturnRequestedModel()
 	})
 }
 
@@ -5723,6 +5774,20 @@ func (u *GroupUpsertBulk) SetCrossProtocolConversionEnabled(v bool) *GroupUpsert
 func (u *GroupUpsertBulk) UpdateCrossProtocolConversionEnabled() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateCrossProtocolConversionEnabled()
+	})
+}
+
+// SetReturnRequestedModel sets the "return_requested_model" field.
+func (u *GroupUpsertBulk) SetReturnRequestedModel(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetReturnRequestedModel(v)
+	})
+}
+
+// UpdateReturnRequestedModel sets the "return_requested_model" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateReturnRequestedModel() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateReturnRequestedModel()
 	})
 }
 

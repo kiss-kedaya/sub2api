@@ -1205,6 +1205,10 @@ export default {
         targetModelPlaceholder: '例如: gpt-5.4',
         removeExactMapping: '删除精确映射'
       },
+      returnRequestedModel: {
+        label: '返回请求中的模型名',
+        hint: '开启后，即使未配置模型映射，也将响应中的模型字段统一为用户请求的模型名。支持 JSON、流式和 Realtime，不修改正文内容。默认关闭。'
+      },
       openaiLive: {
         title: 'OpenAI Live',
         allow: '允许访问 Live',

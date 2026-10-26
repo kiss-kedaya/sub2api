@@ -167,6 +167,7 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 		AllowMessagesDispatch:           true,
 		AllowLive:                       true,
 		ForceOpenAIFast:                 true,
+		ReturnRequestedModel:            true,
 		FreeOpenAIFast:                  true,
 		RequireOAuthOnly:                true,
 		RequirePrivacySet:               true,
@@ -216,6 +217,7 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.Equal(t, source.ModelRouting, duplicate.ModelRouting)
 	require.Equal(t, source.MessagesDispatchModelConfig, duplicate.MessagesDispatchModelConfig)
 	require.Equal(t, source.ForceOpenAIFast, duplicate.ForceOpenAIFast)
+	require.Equal(t, source.ReturnRequestedModel, duplicate.ReturnRequestedModel)
 	require.Equal(t, source.FreeOpenAIFast, duplicate.FreeOpenAIFast)
 	require.Equal(t, source.ModelAllowlist, duplicate.ModelAllowlist)
 	require.Equal(t, source.RPMLimit, duplicate.RPMLimit)

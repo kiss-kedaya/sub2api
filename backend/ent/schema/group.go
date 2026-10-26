@@ -266,6 +266,9 @@ func (Group) Fields() []ent.Field {
 		field.Bool("cross_protocol_conversion_enabled").
 			Default(false).
 			Comment("是否允许本分组做 Anthropic 协议族 <-> OpenAI 协议族 的跨协议转换（默认关闭）"),
+		field.Bool("return_requested_model").
+			Default(false).
+			Comment("响应模型字段返回请求中的模型名，不改变请求路由、计费或正文"),
 		field.Bool("allow_live").
 			Default(false).
 			Comment("是否允许此 OpenAI 分组访问 Live 接口"),

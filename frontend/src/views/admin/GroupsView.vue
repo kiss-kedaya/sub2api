@@ -1697,6 +1697,23 @@
           </p>
         </div>
 
+        <div class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4">
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.returnRequestedModel.label") }}
+            </label>
+            <Toggle
+              data-testid="create-return-requested-model"
+              :aria-label="t('admin.groups.returnRequestedModel.label')"
+              aria-describedby="create-return-requested-model-hint"
+              v-model="createForm.return_requested_model"
+            />
+          </div>
+          <p id="create-return-requested-model-hint" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.returnRequestedModel.hint") }}
+          </p>
+        </div>
+
         <!-- 跨协议转换开关：所有平台的分组都有（Anthropic 协议族 <-> OpenAI 协议族）。
              账号有原生端点时始终先走原生转发，开关只决定"没有原生端点时"能否转换兜底。 -->
         <div class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4">
@@ -3428,6 +3445,23 @@
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {{ t("admin.groups.openaiLive.hint") }}
+          </p>
+        </div>
+
+        <div class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4">
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm text-gray-600 dark:text-gray-400">
+              {{ t("admin.groups.returnRequestedModel.label") }}
+            </label>
+            <Toggle
+              data-testid="edit-return-requested-model"
+              :aria-label="t('admin.groups.returnRequestedModel.label')"
+              aria-describedby="edit-return-requested-model-hint"
+              v-model="editForm.return_requested_model"
+            />
+          </div>
+          <p id="edit-return-requested-model-hint" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.returnRequestedModel.hint") }}
           </p>
         </div>
 
@@ -5177,6 +5211,7 @@ const createForm = reactive({
   allow_messages_dispatch: false,
   // 跨协议转换（Anthropic 协议族 <-> OpenAI 协议族），默认关闭
   cross_protocol_conversion_enabled: false,
+  return_requested_model: false,
   allow_live: false,
   opus_mapped_model: createMessagesDispatchDefaults.opus_mapped_model,
   sonnet_mapped_model: createMessagesDispatchDefaults.sonnet_mapped_model,
@@ -5550,6 +5585,7 @@ const editForm = reactive({
   allow_messages_dispatch: false,
   // 跨协议转换（Anthropic 协议族 <-> OpenAI 协议族），默认关闭
   cross_protocol_conversion_enabled: false,
+  return_requested_model: false,
   allow_live: false,
   default_mapped_model: '',
   opus_mapped_model: editMessagesDispatchDefaults.opus_mapped_model,
@@ -6005,6 +6041,7 @@ const closeCreateModal = () => {
   createForm.profit_min_margin_percent = 0;
   createForm.profit_safety_buffer_percent = 0;
   createForm.claude_code_only = false;
+  createForm.return_requested_model = false;
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
   resetMessagesDispatchFormState(createForm);
@@ -6313,6 +6350,7 @@ const handleEdit = async (group: AdminGroup) => {
   // 必须回填已保存的值：否则编辑任意分组都显示"关"，一点保存就把开关静默关掉。
   editForm.cross_protocol_conversion_enabled =
     group.cross_protocol_conversion_enabled ?? false;
+  editForm.return_requested_model = group.return_requested_model ?? false;
   editForm.opus_mapped_model = messagesDispatchFormState.opus_mapped_model;
   editForm.sonnet_mapped_model = messagesDispatchFormState.sonnet_mapped_model;
   editForm.haiku_mapped_model = messagesDispatchFormState.haiku_mapped_model;
@@ -6415,6 +6453,7 @@ const closeEditModal = () => {
   resetMessagesDispatchFormState(editForm);
   editForm.allow_live = false;
   editForm.cross_protocol_conversion_enabled = false;
+  editForm.return_requested_model = false;
   resetModelAllowlistState(editModelAllowlistState);
   editCodexManifestConfig.value = createCodexManifestDefaults();
   editCodexManifestAccountNames.value = {};

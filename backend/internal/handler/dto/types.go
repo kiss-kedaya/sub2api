@@ -173,6 +173,8 @@ type Group struct {
 // 注意：普通用户接口不得返回 model_routing/account_count/account_groups 等内部信息。
 type AdminGroup struct {
 	Group
+	// ReturnRequestedModel controls response model metadata for this group.
+	ReturnRequestedModel bool `json:"return_requested_model"`
 	// 搜索上游配置仅供主管理员读取，普通分组及其嵌套 DTO 不携带。
 	// 密钥本身永不返回，只暴露是否已配置。
 	SearchProviderBaseURL   *string `json:"search_provider_base_url"`

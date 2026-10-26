@@ -388,6 +388,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		googleError(c, http.StatusNotFound, "Model is not available for this group")
 		return
 	}
+	clientRequestModel := clientRequestedModel(c, modelName)
 	if resolvedModel, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context()); ok && strings.TrimSpace(resolvedModel) != "" {
 		modelName = strings.TrimSpace(resolvedModel)
 	}
@@ -422,6 +423,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, modelName)
 	reqModel := modelName // 保存映射前的原始模型名
+	finishModelResponse := service.InstallRequestedModelResponse(c, "gemini", clientRequestModel, func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	if channelMapping.Mapped {
 		modelName = channelMapping.MappedModel
 	}
