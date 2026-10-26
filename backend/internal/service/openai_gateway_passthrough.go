@@ -651,8 +651,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
-	// DeepSeek 搜索：与 forward 路径保持一致的注入规则。
-	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
+	// Keep the deprecated injection out of native hosted-search rounds.
+	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled && s.deepSeekResponseCompatEnabled() && ctx.Value(deepSeekHostedSearchSkipContextKey{}) != true {
 		if injected, changed := injectDeepSeekSearchTool(body); changed {
 			body = injected
 		}

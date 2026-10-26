@@ -59,6 +59,9 @@ jobs:
       - name: Requested response model concurrency regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/repository -run '^Test(RequestedModel|RewriteRequestedModel|ContextShouldReturnRequestedModel|GrokRealtimeRequestedModel|OpenAIWSPassthroughRequestedSession|LiveCallRequestedModel|LiveModelPresentation|LiveSidebandRequestedModel)' -count=1
+      - name: DeepSeek search configuration and hosted tool regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler -run '^Test(APIKey.*(SearchProvider|ProviderSnapshot)|PrepareDeepSeek|DeepSeekHosted|ForwardDeepSeekTools|HasIndependentDeepSeek)' -count=1
       - name: Billing and media concurrency regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/handler ./internal/service ./internal/repository -run 'Test(CNBalancePushNotifierConcurrent|GrokVideoDurable|MediaBilling|AsyncImage|ImageTask|OpenAIResponsesWebSocket.*(Balance|Subscription|Settlement)|SmartBilling|.*Refund.*Pending)' -count=1
@@ -168,6 +171,28 @@ jobs:
           path: backend/bin/server
           if-no-files-found: error
           retention-days: 7
+
+  deepseek-search-probe:
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/fix/deepseek-search-provider'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Compile opt-in live search verification
+        working-directory: backend
+        env:
+          CGO_ENABLED: '0'
+        run: go test -c -tags=unit -o bin/deepseek-search-probe ./internal/service
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deepseek-search-probe-linux-amd64
+          path: backend/bin/deepseek-search-probe
+          if-no-files-found: error
+          retention-days: 3
 
   golangci-lint:
     runs-on: ubuntu-latest
