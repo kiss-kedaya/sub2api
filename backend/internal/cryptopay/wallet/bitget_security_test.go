@@ -186,7 +186,9 @@ func TestBitgetSubmitRejectsMissingRevokedExpiredAndForeignGrants(t *testing.T) 
 				case "revoked":
 					revoke()
 				case "expired":
-					grant := *ctx.Value(signingGrantContextKey{}).(*signingGrant)
+					original, ok := ctx.Value(signingGrantContextKey{}).(*signingGrant)
+					require.True(t, ok)
+					grant := *original
 					grant.expires = time.Now().Add(-time.Second).UnixNano()
 					grant.mac = m.grantMAC(&grant)
 					ctx = context.WithValue(ctx, signingGrantContextKey{}, &grant)

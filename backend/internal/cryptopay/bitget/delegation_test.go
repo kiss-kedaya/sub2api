@@ -40,7 +40,10 @@ func TestMinedDelegationMustMatchExactSignedAuthorization(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &copy))
 			intent := in
 			signed := string(msgs)
-			a := copy["authorizationList"].([]any)[0].(map[string]any)
+			auths, ok := copy["authorizationList"].([]any)
+			require.True(t, ok)
+			a, ok := auths[0].(map[string]any)
+			require.True(t, ok)
 			switch name {
 			case "foreign delegate":
 				a["address"] = in.From

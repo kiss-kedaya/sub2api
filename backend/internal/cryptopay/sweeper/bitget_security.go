@@ -3,6 +3,7 @@ package sweeper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ func (e *Executor) AuthorizeGaslessObserved(ctx context.Context, pool *rpc.Pool,
 		}
 		if json.Unmarshal(raw, &p.in) != nil {
 			_ = rows.Close()
-			return false, bitget.ErrUnsafeOrder
+			return false, nil
 		}
 		jobs = append(jobs, p)
 	}
@@ -57,6 +58,9 @@ func (e *Executor) AuthorizeGaslessObserved(ctx context.Context, pool *rpc.Pool,
 	var waiting bool
 	for _, j := range jobs {
 		if err = w.VerifyBitgetRecord(ctx, j.id, j.order, j.in, j.signed); err != nil {
+			if errors.Is(err, bitget.ErrUnsafeOrder) {
+				return false, nil
+			}
 			return false, err
 		}
 		// Even an unknown vendor task cannot indefinitely suppress a confirmed
@@ -72,7 +76,8 @@ func (e *Executor) AuthorizeGaslessObserved(ctx context.Context, pool *rpc.Pool,
 			continue
 		}
 		if status == nil || status.ID != j.order || (status.Status != "PENDING" && status.Status != "PROCESSING" && status.Status != "SUCCESS" && status.Status != "FAILED") {
-			return false, bitget.ErrUnsafeOrder
+			waiting = waiting || fresh
+			continue
 		}
 		candidate := status.Hash
 		if candidate == "" {
@@ -91,9 +96,15 @@ func (e *Executor) AuthorizeGaslessObserved(ctx context.Context, pool *rpc.Pool,
 		}
 		collector, e2 := e.verifyBitgetReceipt(ctx, pool, j.in, hash, 0, false)
 		if e2 != nil {
+			if errors.Is(e2, bitget.ErrUnsafeOrder) {
+				return false, nil
+			}
 			return false, e2
 		}
 		if e2 = w.BindBitgetTransaction(ctx, j.id, hash, collector, j.in); e2 != nil {
+			if errors.Is(e2, bitget.ErrUnsafeOrder) {
+				return false, nil
+			}
 			return false, e2
 		}
 		return true, nil

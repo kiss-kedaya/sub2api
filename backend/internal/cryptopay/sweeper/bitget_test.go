@@ -146,7 +146,11 @@ func TestBitgetReceiptRequiresExactNetFeeAndCanonicalDepth(t *testing.T) {
 		{"confirmed exact net plus fee", 103, testBlockHash, nil, true},
 		{"not enough confirmations", 101, testBlockHash, nil, false},
 		{"reorg", 103, "0x" + strings.Repeat("bb", 32), nil, false},
-		{"extra token outflow", 103, testBlockHash, func(r map[string]any) { logs := r["logs"].([]any); r["logs"] = append(logs, logs[0]) }, false},
+		{"extra token outflow", 103, testBlockHash, func(r map[string]any) {
+			logs, ok := r["logs"].([]any)
+			require.True(t, ok)
+			r["logs"] = append(logs, logs[0])
+		}, false},
 		{"wrong token", 103, testBlockHash, func(r map[string]any) { r["logs"].([]any)[0].(map[string]any)["address"] = in.To }, false},
 		{"malformed amount", 103, testBlockHash, func(r map[string]any) { r["logs"].([]any)[0].(map[string]any)["data"] = "0x1" }, false},
 		{"missing fee", 103, testBlockHash, func(r map[string]any) { r["logs"] = r["logs"].([]any)[:1] }, false},
