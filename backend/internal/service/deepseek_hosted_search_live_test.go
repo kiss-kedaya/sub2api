@@ -93,7 +93,14 @@ func TestDeepSeekHostedSearchLive(t *testing.T) {
 			c.Set("api_key", key)
 			result, forwardErr := svc.Forward(ctx, c, account, body)
 			if forwardErr != nil {
-				t.Fatalf("live hosted-search forwarding failed (%T); response content withheld", forwardErr)
+				diagnostic := forwardErr.Error()
+				for _, secret := range []string{modelURL, modelKey, searchURL, searchKey} {
+					diagnostic = strings.ReplaceAll(diagnostic, secret, "[redacted]")
+				}
+				if len(diagnostic) > 300 {
+					diagnostic = diagnostic[:300]
+				}
+				t.Fatalf("live hosted-search forwarding failed (%T): %s; response content withheld", forwardErr, diagnostic)
 			}
 			require.Equal(t, http.StatusOK, recorder.Code)
 			require.NotNil(t, result)

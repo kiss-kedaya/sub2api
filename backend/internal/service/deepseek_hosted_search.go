@@ -53,6 +53,7 @@ type deepSeekHostedSearchState struct {
 	result                 *OpenAIForwardResult
 	firstTokenMs           *int
 	callIDs                map[string]struct{}
+	clientDisconnected     bool
 }
 
 type deepSeekHostedRoundWriter struct {
@@ -106,7 +107,10 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 	}
 	state := &deepSeekHostedSearchState{c: c, stream: gjson.GetBytes(body, "stream").Bool(), model: gjson.GetBytes(body, "model").String(), started: time.Now(), header: make(http.Header), callIDs: make(map[string]struct{})}
 	fail := func(cause error) (*OpenAIForwardResult, bool, error) {
-		if state.stream && c.Writer.Written() && ctx.Err() == nil && (state.result == nil || !state.result.ClientDisconnect) {
+		if ctx.Err() != nil {
+			state.clientDisconnected = true
+		}
+		if state.stream && c.Writer.Written() && !state.clientDisconnected && (state.result == nil || !state.result.ClientDisconnect) {
 			_ = state.writeFailure()
 		}
 		if state.attempted > 0 || c.Writer.Written() {
@@ -155,22 +159,36 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 			return fail(ctx.Err())
 		}
 		if result != nil && result.ClientDisconnect {
+			state.clientDisconnected = true
 			return fail(context.Canceled)
 		}
 		if forwardErr != nil {
+			if state.stream && len(writer.response) > 0 &&
+				(writer.terminal == "response.failed" || writer.terminal == "response.incomplete") {
+				if writeErr := state.writeFinal(writer); writeErr != nil {
+					return fail(writeErr)
+				}
+				return state.finishResult(), true, errors.New("deepseek upstream response did not complete")
+			}
 			if !c.Writer.Written() && len(writer.buffer) > 0 {
-				writer.writeBufferedError()
+				if writeErr := writer.writeBufferedError(); writeErr != nil {
+					return fail(writeErr)
+				}
 			}
 			return fail(forwardErr)
 		}
 		if len(writer.response) == 0 {
-			if len(writer.buffer) > 0 {
-				writer.writeBufferedError()
+			if writer.status >= http.StatusBadRequest && len(writer.buffer) > 0 {
+				if writeErr := writer.writeBufferedError(); writeErr != nil {
+					return fail(writeErr)
+				}
+				return state.finishResult(), true, nil
 			}
-			return state.finishResult(), true, nil
+			return fail(errors.New("deepseek upstream response has no terminal response"))
 		}
 		if writer.terminal == "response.failed" || writer.terminal == "response.incomplete" || len(writer.calls) == 0 {
-			return state.finishResult(), true, state.writeFinal(writer)
+			writeErr := state.writeFinal(writer)
+			return state.finishResult(), true, writeErr
 		}
 		outputs := make(map[string]string, len(writer.calls))
 		for _, call := range writer.calls {
@@ -194,6 +212,12 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 				state.attempted++
 				outputs[call.callID] = s.runDeepSeekHostedSearch(ctx, c, account, group, state, call)
 			}
+			if ctx.Err() != nil {
+				return fail(ctx.Err())
+			}
+			if state.clientDisconnected {
+				return fail(context.Canceled)
+			}
 			if err := state.completeSearch(call); err != nil {
 				return fail(err)
 			}
@@ -201,7 +225,8 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		// Client tools remain client-owned. Continuing before their outputs exist
 		// would create an invalid function-call history, so return this mixed turn.
 		if writer.hasClientCalls() {
-			return state.finishResult(), true, state.writeFinal(writer)
+			writeErr := state.writeFinal(writer)
+			return state.finishResult(), true, writeErr
 		}
 		next, nextErr := deepSeekHostedSearchNextRequest(request, writer.response, outputs)
 		if nextErr != nil {
@@ -385,11 +410,26 @@ func (w *deepSeekHostedRoundWriter) finish() {
 			w.err = w.frame(w.buffer)
 			w.buffer = nil
 		}
+		if w.err == nil && (len(w.response) == 0 || !deepSeekHostedTerminal(w.terminal)) {
+			w.err = errors.New("deepseek upstream stream ended without a terminal response")
+		}
+	} else if w.status >= http.StatusBadRequest {
+		return
 	} else if gjson.ValidBytes(w.buffer) && gjson.GetBytes(w.buffer, "output").IsArray() {
 		w.response = append([]byte(nil), w.buffer...)
 		w.terminal = "response." + gjson.GetBytes(w.buffer, "status").String()
+		if !deepSeekHostedTerminal(w.terminal) {
+			w.err = errors.New("deepseek upstream JSON response has no valid terminal status")
+			return
+		}
 		w.registerSnapshotCalls()
+	} else {
+		w.err = errors.New("deepseek upstream did not return a Responses response")
 	}
+}
+
+func deepSeekHostedTerminal(kind string) bool {
+	return kind == "response.completed" || kind == "response.done" || kind == "response.failed" || kind == "response.incomplete"
 }
 
 func (w *deepSeekHostedRoundWriter) index(original int) int {
@@ -449,6 +489,9 @@ func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
 		return errors.New("deepseek hosted search received invalid SSE JSON")
 	}
 	kind := gjson.GetBytes(raw, "type").String()
+	if kind == "" || (!strings.HasPrefix(kind, "response.") && kind != "error") {
+		return errors.New("deepseek upstream returned an unsupported SSE event")
+	}
 	w.state.header = w.header.Clone()
 	if kind == "response.created" || kind == "response.in_progress" {
 		id := gjson.GetBytes(raw, "response.id").String()
@@ -458,11 +501,12 @@ func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
 		w.state.responseID = id
 		return w.state.rawEvent(raw)
 	}
-	if kind == "response.completed" || kind == "response.done" || kind == "response.failed" || kind == "response.incomplete" {
+	if deepSeekHostedTerminal(kind) {
 		response := gjson.GetBytes(raw, "response")
-		if response.IsObject() {
-			w.response = []byte(response.Raw)
+		if !response.IsObject() {
+			return errors.New("deepseek upstream terminal event has no response body")
 		}
+		w.response = []byte(response.Raw)
 		w.terminal = kind
 		w.registerSnapshotCalls()
 		return w.err
@@ -534,16 +578,21 @@ func (w *deepSeekHostedRoundWriter) hasClientCalls() bool {
 	return false
 }
 
-func (w *deepSeekHostedRoundWriter) writeBufferedError() {
+func (w *deepSeekHostedRoundWriter) writeBufferedError() error {
 	if w.state.c.Writer.Written() {
-		return
+		return nil
 	}
 	for key, values := range w.header {
 		if !strings.EqualFold(key, "Content-Length") {
 			w.state.c.Writer.Header()[key] = values
 		}
 	}
-	w.state.c.Data(w.status, w.header.Get("Content-Type"), w.buffer)
+	w.state.c.Status(w.status)
+	_, err := w.state.c.Writer.Write(w.buffer)
+	if err != nil {
+		w.state.clientDisconnected = true
+	}
+	return err
 }
 
 func deepSeekHostedSearchItem(call *deepSeekHostedCall) map[string]any {
@@ -612,6 +661,8 @@ func (s *deepSeekHostedSearchState) event(value map[string]any) error {
 	_, err = fmt.Fprintf(s.c.Writer, "event: %s\ndata: %s\n\n", value["type"], raw)
 	if err == nil {
 		s.c.Writer.Flush()
+	} else {
+		s.clientDisconnected = true
 	}
 	return err
 }
@@ -622,15 +673,20 @@ func (s *deepSeekHostedSearchState) addResult(result *OpenAIForwardResult) {
 	}
 	if s.result == nil {
 		copy := *result
+		if result.NonBillableUpstreamError {
+			copy.Usage = OpenAIUsage{}
+		}
 		s.result = &copy
 		return
 	}
-	s.result.Usage.InputTokens += result.Usage.InputTokens
-	s.result.Usage.OutputTokens += result.Usage.OutputTokens
-	s.result.Usage.CacheReadInputTokens += result.Usage.CacheReadInputTokens
-	s.result.Usage.CacheCreationInputTokens += result.Usage.CacheCreationInputTokens
-	s.result.Usage.ImageInputTokens += result.Usage.ImageInputTokens
-	s.result.Usage.ImageOutputTokens += result.Usage.ImageOutputTokens
+	if !result.NonBillableUpstreamError {
+		s.result.Usage.InputTokens += result.Usage.InputTokens
+		s.result.Usage.OutputTokens += result.Usage.OutputTokens
+		s.result.Usage.CacheReadInputTokens += result.Usage.CacheReadInputTokens
+		s.result.Usage.CacheCreationInputTokens += result.Usage.CacheCreationInputTokens
+		s.result.Usage.ImageInputTokens += result.Usage.ImageInputTokens
+		s.result.Usage.ImageOutputTokens += result.Usage.ImageOutputTokens
+	}
 	s.result.ClientDisconnect = s.result.ClientDisconnect || result.ClientDisconnect
 	s.result.NonBillableUpstreamError = s.result.NonBillableUpstreamError && result.NonBillableUpstreamError
 	if result.RequestID != "" {
@@ -639,7 +695,7 @@ func (s *deepSeekHostedSearchState) addResult(result *OpenAIForwardResult) {
 }
 
 func (s *deepSeekHostedSearchState) finishResult() *OpenAIForwardResult {
-	if s.result == nil && s.searchCount > 0 {
+	if s.result == nil && (s.searchCount > 0 || s.clientDisconnected) {
 		s.result = &OpenAIForwardResult{Model: s.model, Stream: s.stream}
 	}
 	if s.result == nil {
@@ -647,6 +703,10 @@ func (s *deepSeekHostedSearchState) finishResult() *OpenAIForwardResult {
 	}
 	s.result.SearchCount = s.searchCount
 	s.result.WebSearchCalls = 0
+	s.result.ClientDisconnect = s.result.ClientDisconnect || s.clientDisconnected
+	if s.searchCount > 0 {
+		s.result.NonBillableUpstreamError = false
+	}
 	s.result.Duration = time.Since(s.started)
 	s.result.ResponseID = s.responseID
 	if s.firstTokenMs != nil {
@@ -720,8 +780,13 @@ func (s *deepSeekHostedSearchState) writeFinal(w *deepSeekHostedRoundWriter) err
 				s.c.Writer.Header()[key] = values
 			}
 		}
-		s.c.Data(w.status, "application/json", response)
-		return nil
+		s.c.Header("Content-Type", "application/json")
+		s.c.Status(w.status)
+		_, writeErr := s.c.Writer.Write(response)
+		if writeErr != nil {
+			s.clientDisconnected = true
+		}
+		return writeErr
 	}
 	kind := w.terminal
 	if kind == "" || kind == "response.done" {
@@ -736,6 +801,9 @@ func (s *deepSeekHostedSearchState) writeFinal(w *deepSeekHostedRoundWriter) err
 	}
 	if w.done {
 		_, err = s.c.Writer.Write([]byte("data: [DONE]\n\n"))
+		if err != nil {
+			s.clientDisconnected = true
+		}
 		s.c.Writer.Flush()
 	}
 	return err
