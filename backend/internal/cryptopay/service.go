@@ -751,6 +751,7 @@ func (s *Service) runSweep(ctx context.Context, dryRun, manual bool) (summary *s
 
 // SweepRecord is one sweep_records row for the admin UI.
 type SweepRecord struct {
+	jobVersion      int
 	Provider        string `json:"provider,omitempty"`
 	ProviderOrderID string `json:"provider_order_id,omitempty"`
 	FeeAmount       string `json:"fee_amount,omitempty"`
@@ -774,7 +775,7 @@ func (s *Service) ListSweepRecords(ctx context.Context, chain string, limit int)
 		limit = 100
 	}
 	query := `SELECT id, chain, from_address, to_address, token, amount::text,
-	                 gas_tx_hash, sweep_tx_hash, status, error, created_at
+	                 gas_tx_hash, sweep_tx_hash, status, error, created_at,job_version
 	            FROM sweep_records`
 	args := []any{}
 	if chain != "" {
@@ -792,7 +793,7 @@ func (s *Service) ListSweepRecords(ctx context.Context, chain string, limit int)
 		var r SweepRecord
 		var created time.Time
 		if err := rows.Scan(&r.ID, &r.Chain, &r.FromAddress, &r.ToAddress, &r.Token,
-			&r.Amount, &r.GasTxHash, &r.SweepTxHash, &r.Status, &r.Error, &created); err != nil {
+			&r.Amount, &r.GasTxHash, &r.SweepTxHash, &r.Status, &r.Error, &created, &r.jobVersion); err != nil {
 			return nil, err
 		}
 		r.Amount = trimDecimalZeros(r.Amount)

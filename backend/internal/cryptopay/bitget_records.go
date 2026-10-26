@@ -8,16 +8,22 @@ import (
 )
 
 func (s *Service) enrichBitgetRecords(ctx context.Context, records []SweepRecord) error {
-	if len(records) == 0 || s.Config().SweepProvider != "bitget" {
+	if len(records) == 0 {
 		return nil
 	}
 	args := make([]any, 0, len(records))
 	params := make([]string, 0, len(records))
 	indices := map[int64]int{}
 	for i, r := range records {
+		if r.jobVersion != 2 {
+			continue
+		}
 		indices[r.ID] = i
 		args = append(args, r.ID)
 		params = append(params, "$"+strconv.Itoa(len(args)))
+	}
+	if len(args) == 0 {
+		return nil
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT job_id,order_id,intent->>'fee',intent->>'net',intent->>'decimals' FROM crypto_bitget_sweep_jobs WHERE job_id IN (`+strings.Join(params, ",")+`)`, args...)
 	if err != nil {

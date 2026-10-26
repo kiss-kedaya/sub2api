@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS crypto_bitget_sweep_jobs (
     intent JSONB NOT NULL,
     prepared JSONB NOT NULL,
     signed_messages TEXT NOT NULL DEFAULT '',
-    authorization TEXT NOT NULL DEFAULT '',
+    authorization_mac TEXT NOT NULL DEFAULT '',
     bound_tx_hash VARCHAR(66) NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

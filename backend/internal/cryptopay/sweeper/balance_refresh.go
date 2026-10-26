@@ -12,7 +12,7 @@ import (
 // Only the token transaction freezes the token amount. An old preview or a
 // previously signed gas payment must not omit deposits credited before execution.
 func (e *Executor) refreshUnsignedAmount(ctx context.Context, job *sweepJob) error {
-	if job.Version != 1 || job.SweepRaw != "" || job.SweepHash != "" {
+	if (job.Version != 1 && job.Version != 2) || job.SweepRaw != "" || job.SweepHash != "" {
 		return nil
 	}
 	reader, ok := e.reader.(CurrentBalanceReader)
@@ -37,11 +37,15 @@ func (e *Executor) refreshUnsignedAmount(ctx context.Context, job *sweepJob) err
 	}
 	// Preserve every signed gas byte and nonce. The CAS also checks that a token
 	// signature has not appeared since the job was read.
-	result, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET
+	query := `UPDATE sweep_records SET
 		amount=$2, raw_amount=$3, revision=revision+1, updated_at=NOW()
 		WHERE id=$1 AND job_version=1 AND revision=$4
 		AND status IN ('planned','gas_pending','gas_confirmed')
-		AND sweep_raw_tx='' AND sweep_tx_hash=''`, job.ID,
+		AND sweep_raw_tx='' AND sweep_tx_hash=''`
+	if job.Version == 2 {
+		query = strings.Replace(query, "job_version=1", "job_version=2", 1) + ` AND NOT EXISTS (SELECT 1 FROM crypto_bitget_sweep_jobs WHERE job_id=$1)`
+	}
+	result, err := e.queries().ExecContext(ctx, query, job.ID,
 		amountString(balance.Raw, job.Decimals), balance.Raw.String(), job.Revision)
 	if err == nil {
 		var changed int64

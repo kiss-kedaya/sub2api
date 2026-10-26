@@ -102,6 +102,9 @@ func TestCryptoConfigSensitiveChangesVerifyBeforeNotificationAndPersistence(t *t
 		`{"confirmations":{"bsc":4}}`,
 		`{"credit_multiplier":7}`,
 		`{"sweep_auto":true}`,
+		`{"sweep_provider":"bitget"}`,
+		`{"bitget_max_fee":"0.75"}`,
+		`{"bitget_max_fee_bps":200}`,
 		`{"credit_min_amount":0.01,"rpc":{"bsc":"https://new.example.test"}}`,
 	} {
 		for _, failure := range []struct {

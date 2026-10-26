@@ -40,8 +40,14 @@ type Client struct {
 
 func NewClient() *Client {
 	block, _ := pem.Decode([]byte(vendorPublicKey))
-	key, _ := x509.ParsePKIXPublicKey(block.Bytes)
-	return &Client{http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, base: "https://copenapi.bgwapi.io", key: key.(*rsa.PublicKey)}
+	var key *rsa.PublicKey
+	if block != nil {
+		parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err == nil {
+			key, _ = parsed.(*rsa.PublicKey)
+		}
+	}
+	return &Client{http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, base: "https://copenapi.bgwapi.io", key: key}
 }
 
 // Error contains only bounded protocol status. Untrusted response bodies and
@@ -85,6 +91,9 @@ func (c *Client) request(ctx context.Context, method, path string, body any, ver
 	if res.StatusCode != http.StatusOK {
 		return &Error{HTTPStatus: res.StatusCode}
 	}
+	if rejectDuplicateJSONKeys(data) != nil {
+		return ErrUnsafeOrder
+	}
 	var envelope struct {
 		Status *int            `json:"status"`
 		Code   int             `json:"error_code"`
@@ -118,6 +127,9 @@ func (c *Client) verifyAttestation(o *Order, in Intent) error {
 	}
 	a := o.Attestation
 	if len(a.Response) > 1<<20 || len(a.Request) > 16<<10 || !c.verify(a.ResponseSignature, a.Response) || !c.verify(a.RequestSignature, a.Request) || !c.verify(a.DoubleSignature, []byte(a.ResponseSignature+a.RequestSignature)) {
+		return ErrUnsafeOrder
+	}
+	if rejectDuplicateJSONKeys(a.Response) != nil || rejectDuplicateJSONKeys(a.Request) != nil {
 		return ErrUnsafeOrder
 	}
 	var envelope struct {
@@ -159,7 +171,71 @@ func (c *Client) verifyAttestation(o *Order, in Intent) error {
 	return nil
 }
 
+func rejectDuplicateJSONKeys(raw []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var consume func(int) error
+	consume = func(depth int) error {
+		if depth > 128 {
+			return ErrUnsafeOrder
+		}
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		d, ok := tok.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch d {
+		case '{':
+			seen := map[string]bool{}
+			for dec.More() {
+				keyToken, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok || seen[key] {
+					return ErrUnsafeOrder
+				}
+				seen[key] = true
+				if err = consume(depth + 1); err != nil {
+					return err
+				}
+			}
+			end, err := dec.Token()
+			if err != nil || end != json.Delim('}') {
+				return ErrUnsafeOrder
+			}
+		case '[':
+			for dec.More() {
+				if err := consume(depth + 1); err != nil {
+					return err
+				}
+			}
+			end, err := dec.Token()
+			if err != nil || end != json.Delim(']') {
+				return ErrUnsafeOrder
+			}
+		default:
+			return ErrUnsafeOrder
+		}
+		return nil
+	}
+	if err := consume(0); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return ErrUnsafeOrder
+	}
+	return nil
+}
+
 func (c *Client) verify(signature string, data []byte) bool {
+	if c == nil || c.key == nil {
+		return false
+	}
 	sig, err := hex.DecodeString(strings.TrimPrefix(signature, "0x"))
 	if err != nil || len(sig) == 0 {
 		return false
