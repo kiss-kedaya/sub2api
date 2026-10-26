@@ -212,7 +212,7 @@ func deepSeekHostedSearchValidDomain(domain string) bool {
 			return false
 		}
 		for _, c := range label {
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
 				return false
 			}
 		}
@@ -221,7 +221,7 @@ func deepSeekHostedSearchValidDomain(domain string) bool {
 			digits, hex = label[2:], true
 		}
 		if digits == "" || strings.IndexFunc(digits, func(r rune) bool {
-			return !(r >= '0' && r <= '9' || hex && r >= 'a' && r <= 'f')
+			return (r < '0' || r > '9') && (!hex || r < 'a' || r > 'f')
 		}) >= 0 {
 			numericHost = false
 		}
@@ -244,12 +244,12 @@ func deepSeekHostedSearchPublicURL(raw string) bool {
 
 func deepSeekHostedSearchHistoryMessage(item gjson.Result) map[string]any {
 	var text strings.Builder
-	text.WriteString("[Previous web search]")
+	_, _ = text.WriteString("[Previous web search]")
 	if query := item.Get("action.query").String(); query != "" {
-		text.WriteString("\nQuery: " + query)
+		_, _ = text.WriteString("\nQuery: " + query)
 	}
 	if status := item.Get("status").String(); status != "" {
-		text.WriteString("\nStatus: " + status)
+		_, _ = text.WriteString("\nStatus: " + status)
 	}
 	seen := map[string]struct{}{}
 	add := func(raw string) {
@@ -258,7 +258,7 @@ func deepSeekHostedSearchHistoryMessage(item gjson.Result) map[string]any {
 		}
 		if _, exists := seen[raw]; !exists {
 			seen[raw] = struct{}{}
-			text.WriteString("\nSource: " + raw)
+			_, _ = text.WriteString("\nSource: " + raw)
 		}
 	}
 	add(item.Get("action.url").String())
