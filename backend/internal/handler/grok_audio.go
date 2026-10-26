@@ -154,7 +154,7 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	defer func() { _ = conn.CloseNow() }()
 
 	started := time.Now()
-	audioObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(c.Request.Context(), c, conn, upstream)
+	audioObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(c.Request.Context(), c, conn, upstream, model)
 	elapsed := time.Since(started)
 	if proxyErr != nil {
 		reqLog.Info("grok_realtime.proxy_failed", zap.Error(proxyErr))

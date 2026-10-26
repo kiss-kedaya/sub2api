@@ -1056,6 +1056,20 @@ func (_u *GroupUpdate) SetNillableCrossProtocolConversionEnabled(v *bool) *Group
 	return _u
 }
 
+// SetReturnRequestedModel sets the "return_requested_model" field.
+func (_u *GroupUpdate) SetReturnRequestedModel(v bool) *GroupUpdate {
+	_u.mutation.SetReturnRequestedModel(v)
+	return _u
+}
+
+// SetNillableReturnRequestedModel sets the "return_requested_model" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableReturnRequestedModel(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetReturnRequestedModel(*v)
+	}
+	return _u
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_u *GroupUpdate) SetAllowLive(v bool) *GroupUpdate {
 	_u.mutation.SetAllowLive(v)
@@ -1964,6 +1978,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.CrossProtocolConversionEnabled(); ok {
 		_spec.SetField(group.FieldCrossProtocolConversionEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ReturnRequestedModel(); ok {
+		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -3360,6 +3377,20 @@ func (_u *GroupUpdateOne) SetNillableCrossProtocolConversionEnabled(v *bool) *Gr
 	return _u
 }
 
+// SetReturnRequestedModel sets the "return_requested_model" field.
+func (_u *GroupUpdateOne) SetReturnRequestedModel(v bool) *GroupUpdateOne {
+	_u.mutation.SetReturnRequestedModel(v)
+	return _u
+}
+
+// SetNillableReturnRequestedModel sets the "return_requested_model" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableReturnRequestedModel(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetReturnRequestedModel(*v)
+	}
+	return _u
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_u *GroupUpdateOne) SetAllowLive(v bool) *GroupUpdateOne {
 	_u.mutation.SetAllowLive(v)
@@ -4298,6 +4329,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.CrossProtocolConversionEnabled(); ok {
 		_spec.SetField(group.FieldCrossProtocolConversionEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ReturnRequestedModel(); ok {
+		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)

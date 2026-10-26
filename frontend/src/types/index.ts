@@ -648,6 +648,8 @@ export interface Group {
   allow_messages_dispatch?: boolean
   // 分组级跨协议转换开关（Anthropic 协议族 <-> OpenAI 协议族），默认关闭
   cross_protocol_conversion_enabled?: boolean
+  // Return the requested model name in response model fields; default false.
+  return_requested_model?: boolean
   // OpenAI Live 接口开关
   allow_live: boolean
   default_mapped_model?: string
@@ -885,6 +887,7 @@ export interface CreateGroupRequest {
   codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
   cross_protocol_conversion_enabled?: boolean
+  return_requested_model?: boolean
   allow_live?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
@@ -957,6 +960,7 @@ export interface UpdateGroupRequest {
   codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
   cross_protocol_conversion_enabled?: boolean
+  return_requested_model?: boolean
   allow_live?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig

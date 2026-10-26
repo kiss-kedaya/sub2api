@@ -81,6 +81,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	finishModelResponse := service.InstallRequestedModelResponse(c, "openai", clientRequestedModel(c, reqModel), func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	body = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, body)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {

@@ -80,6 +80,10 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		return
 	}
 	requestedModel := strings.TrimSpace(modelResult.String())
+	finishModelResponse := service.InstallRequestedModelResponse(c, "openai", clientRequestedModel(c, requestedModel), func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	if !compositeTargetPlatformAllowed(c, apiKey, requestedModel, service.PlatformOpenAI) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Codex alpha search only supports OpenAI models for Composite groups")
 		return

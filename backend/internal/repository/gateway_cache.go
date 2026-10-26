@@ -478,22 +478,25 @@ func (c *gatewayCache) SaveLiveCall(ctx context.Context, record *service.LiveCal
 		return fmt.Errorf("invalid live call record")
 	}
 	values := map[string]any{
-		"call_id":          record.CallID,
-		"account_id":       record.AccountID,
-		"api_key_id":       record.APIKeyID,
-		"user_id":          record.UserID,
-		"group_id":         record.GroupID,
-		"subscription_id":  record.SubscriptionID,
-		"lease_id":         record.LeaseID,
-		"model":            record.Model,
-		"created_at":       record.CreatedAt.UnixMilli(),
-		"expires_at":       record.ExpiresAt.UnixMilli(),
-		"controller":       record.Controller,
-		"controller_owner": record.ControllerOwner,
-		"user_agent":       record.UserAgent,
-		"ip_address":       record.IPAddress,
-		"inbound_endpoint": record.InboundEndpoint,
-		"attestation":      record.AttestationCiphertext,
+		"call_id":                 record.CallID,
+		"account_id":              record.AccountID,
+		"api_key_id":              record.APIKeyID,
+		"user_id":                 record.UserID,
+		"group_id":                record.GroupID,
+		"subscription_id":         record.SubscriptionID,
+		"lease_id":                record.LeaseID,
+		"model":                   record.Model,
+		"requested_model":         record.RequestedModel,
+		"session_requested_model": record.SessionRequestedModel,
+		"return_requested_model":  strconv.FormatBool(record.ReturnRequestedModel),
+		"created_at":              record.CreatedAt.UnixMilli(),
+		"expires_at":              record.ExpiresAt.UnixMilli(),
+		"controller":              record.Controller,
+		"controller_owner":        record.ControllerOwner,
+		"user_agent":              record.UserAgent,
+		"ip_address":              record.IPAddress,
+		"inbound_endpoint":        record.InboundEndpoint,
+		"attestation":             record.AttestationCiphertext,
 	}
 	key := liveCallKey(record.CallHash)
 	pipe := c.rdb.TxPipeline()
@@ -527,6 +530,9 @@ func (c *gatewayCache) GetLiveCall(ctx context.Context, callHash string) (*servi
 		SubscriptionID:        parseInt("subscription_id"),
 		LeaseID:               values["lease_id"],
 		Model:                 values["model"],
+		RequestedModel:        values["requested_model"],
+		SessionRequestedModel: values["session_requested_model"],
+		ReturnRequestedModel:  values["return_requested_model"] == "true",
 		CreatedAt:             createdAt,
 		ExpiresAt:             expiresAt,
 		Controller:            values["controller"],
@@ -536,6 +542,30 @@ func (c *gatewayCache) GetLiveCall(ctx context.Context, callHash string) (*servi
 		InboundEndpoint:       values["inbound_endpoint"],
 		AttestationCiphertext: values["attestation"],
 	}, nil
+}
+
+var updateLiveSessionRequestedModelScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+    return 0
+end
+if redis.call('HGET', KEYS[1], 'controller') ~= 'proxy' or redis.call('HGET', KEYS[1], 'controller_owner') ~= ARGV[1] then
+    return 0
+end
+redis.call('HSET', KEYS[1], 'session_requested_model', ARGV[2])
+return 1
+`)
+
+// UpdateLiveSessionRequestedModel preserves the lifecycle fields and TTL while
+// persisting an acknowledged model update under the current sideband owner.
+func (c *gatewayCache) UpdateLiveSessionRequestedModel(ctx context.Context, callHash, owner, model string) error {
+	updated, err := updateLiveSessionRequestedModelScript.Run(ctx, c.rdb, []string{liveCallKey(callHash)}, owner, model).Int()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return service.ErrLiveControllerChanged
+	}
+	return nil
 }
 
 func (c *gatewayCache) ClaimLiveController(ctx context.Context, callHash, controller, owner string) (bool, error) {

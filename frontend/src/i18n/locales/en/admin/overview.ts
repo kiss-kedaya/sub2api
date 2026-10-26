@@ -1207,6 +1207,10 @@ export default {
         targetModelPlaceholder: 'e.g., gpt-5.4',
         removeExactMapping: 'Remove Exact Mapping'
       },
+      returnRequestedModel: {
+        label: 'Return the requested model name',
+        hint: 'When enabled, response model fields use the model name from the user request, even without a model mapping. Supports JSON, streaming, and Realtime without changing response content. Disabled by default.'
+      },
       openaiLive: {
         title: 'OpenAI Live',
         allow: 'Allow Live access',
