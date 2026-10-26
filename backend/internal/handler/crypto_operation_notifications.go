@@ -23,7 +23,7 @@ func (h *CryptoHandler) AdminWalletOperationIntent(c *gin.Context) {
 		return
 	}
 	switch req.Action {
-	case "sweep", "destination_change", "export_mnemonics":
+	case "sweep", "destination_change", "export_mnemonics", "export_private_key":
 	default:
 		response.BadRequest(c, "Invalid wallet operation")
 		return
@@ -51,6 +51,9 @@ func cryptoVerifiedOperation(c *gin.Context) string {
 	path := c.FullPath()
 	if strings.HasSuffix(path, "/wallet/export-mnemonics") {
 		return "export_mnemonics"
+	}
+	if strings.HasSuffix(path, "/addresses/:id/export-private-key") {
+		return "export_private_key"
 	}
 	if strings.HasSuffix(path, "/sweep/run") && c.DefaultQuery("dry_run", "1") == "0" {
 		return "sweep"
