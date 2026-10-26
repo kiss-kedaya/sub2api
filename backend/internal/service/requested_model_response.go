@@ -340,7 +340,7 @@ func (w *requestedModelResponseWriter) Unwrap() http.ResponseWriter { return w.R
 
 // Push preserves http.Pusher in addition to Gin's Pusher accessor.
 func (w *requestedModelResponseWriter) Push(target string, options *http.PushOptions) error {
-	if pusher := w.ResponseWriter.Pusher(); pusher != nil {
+	if pusher := w.Pusher(); pusher != nil {
 		return pusher.Push(target, options)
 	}
 	return http.ErrNotSupported

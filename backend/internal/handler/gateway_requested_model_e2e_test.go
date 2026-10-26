@@ -111,7 +111,7 @@ func requestedModelE2ESSE(t *testing.T, response []byte, upstreamModel, text, ar
 		require.NoError(t, err)
 		fmt.Fprintf(&body, "event: %s\ndata: %s\n\n", frame["type"], encoded)
 	}
-	body.WriteString("data: [DONE]\n\n")
+	_, _ = body.WriteString("data: [DONE]\n\n")
 	return body.String()
 }
 
