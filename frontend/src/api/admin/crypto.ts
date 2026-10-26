@@ -16,6 +16,9 @@ export interface CryptoConfig {
   hot_wallet_solana: string
   hot_index: 0
   sweep_auto: boolean
+  sweep_provider: 'native' | 'bitget'
+  bitget_max_fee: string
+  bitget_max_fee_bps: number
   confirmations: Record<string, number>
   scan_range: Record<string, number>
   credit_min_amount: number
@@ -48,6 +51,10 @@ export interface SweepRecord {
   status: string
   error: string
   created_at: string
+  provider?: string
+  provider_order_id?: string
+  fee_amount?: string
+  net_amount?: string
 }
 
 export interface DepositRecord {
@@ -70,6 +77,10 @@ export interface SweepPlan {
     Address: string
     Token: string
     AmountDecimal: number
+    Gasless?: boolean
+    NetAmount?: string
+    FeeAmount?: string
+    QuoteError?: string
   }> | null
   TotalUSD: number
   DryRun: boolean
@@ -83,6 +94,10 @@ export interface SweepEntry {
   sweep_tx_hash: string
   status: string
   error?: string
+  provider?: string
+  provider_order_id?: string
+  fee_amount?: string
+  net_amount?: string
 }
 
 export interface SweepSummary {

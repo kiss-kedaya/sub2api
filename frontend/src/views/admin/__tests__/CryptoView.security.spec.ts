@@ -20,7 +20,8 @@ const grantResponse = () => ({ data: { data: { credential: grantCredential, expi
 
 const config = () => ({ enabled: true, chains: ['bsc'], rpc: { bsc: 'https://one.example,https://two.example' }, sweep_global_threshold: 100,
   sweep_min_per_address: {}, gas_topup: {}, hot_wallet_evm: '0x1234567890123456789012345678901234567890', hot_wallet_solana: '', hot_index: 0,
-  sweep_auto: false, confirmations: {}, scan_range: {}, credit_min_amount: 1, credit_max_amount: 10000, credit_multiplier: 1 })
+  sweep_auto: false, sweep_provider: 'native' as 'native' | 'bitget', bitget_max_fee: '0.5', bitget_max_fee_bps: 100,
+  confirmations: {}, scan_range: {}, credit_min_amount: 1, credit_max_amount: 10000, credit_multiplier: 1 })
 let serverConfig = config()
 let walletStatus = { ok: true, configured: false, ready: false, enabled: false }
 
@@ -93,6 +94,88 @@ async function manageRPC(wrapper: VueWrapper) {
 }
 
 describe('Crypto page operation wiring (mocked UI contract only)', () => {
+  it('selects Bitget with only supported networks and keeps hidden RPC settings after 2FA save', async () => {
+    serverConfig.chains = ['bsc', 'plasma', 'xlayer']
+    Object.assign(serverConfig.rpc, { plasma: 'https://plasma.example', xlayer: 'https://xlayer.example' })
+    const wrapper = await render()
+    await configTab(wrapper)
+    await wrapper.get('[data-testid="crypto-sweep-provider"]').setValue('bitget')
+    expect(wrapper.get('[data-testid="crypto-bitget-removed"]').text()).toContain('plasma, xlayer')
+    for (const chain of ['plasma', 'xlayer']) {
+      const input = wrapper.get(`[data-testid="crypto-chain-${chain}"]`).element as HTMLInputElement
+      expect(input.disabled).toBe(true)
+      expect(input.checked).toBe(false)
+    }
+    expect((wrapper.get('[data-testid="crypto-chain-bsc"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.get('[data-testid="crypto-bitget-max-fee"]').element as HTMLInputElement).value).toBe('0.5')
+    await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    await flushPromises()
+    expect(mocks.put).not.toHaveBeenCalled()
+    await verify(wrapper, '234567')
+    expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', {
+      chains: ['bsc'], sweep_provider: 'bitget'
+    }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
+    expect(serverConfig.rpc).toEqual({ bsc: 'https://one.example,https://two.example', plasma: 'https://plasma.example', xlayer: 'https://xlayer.example' })
+  })
+
+  it('requires verification for either Bitget fee cap and does not submit unchanged settings', async () => {
+    serverConfig.sweep_provider = 'bitget'
+    const wrapper = await render()
+    await configTab(wrapper)
+    expect(wrapper.find('[data-testid="crypto-gas-wallet"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('admin.crypto.bitgetGasNotNeeded')
+    await wrapper.get('[data-testid="crypto-bitget-max-fee"]').setValue('0.25')
+    await wrapper.get('[data-testid="crypto-bitget-max-fee-bps"]').setValue('50')
+    await wrapper.get('.crypto-view__save-bar button').trigger('click')
+    await flushPromises()
+    expect(mocks.put).not.toHaveBeenCalled()
+    await verify(wrapper)
+    expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', {
+      bitget_max_fee: '0.25', bitget_max_fee_bps: 50
+    }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
+  })
+
+  it('does not request sweep verification or transfer when the current quote fails', async () => {
+    serverConfig.sweep_provider = 'bitget'
+    walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+    const normalGet = mocks.get.getMockImplementation()!
+    mocks.get.mockImplementation((path: string, ...args: unknown[]) => path.endsWith('/sweep/plan')
+      ? Promise.reject(new Error('Quote unavailable')) : normalGet(path, ...args))
+    const wrapper = await render()
+    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+    expect(mocks.post.mock.calls.some(([path]) => path.endsWith('/sweep/run'))).toBe(false)
+  })
+
+  it('shows net proceeds, fees and the provider order separately from the chain hash', async () => {
+    serverConfig.sweep_provider = 'bitget'
+    const normalGet = mocks.get.getMockImplementation()!
+    mocks.get.mockImplementation((path: string, ...args: unknown[]) => {
+      if (path.endsWith('/sweep/plan')) return Promise.resolve({ data: { data: {
+        Entries: [{ Chain: 'bsc', Address: '0xDEPOSIT', Token: 'USDT', AmountDecimal: 10, Gasless: true, NetAmount: '9.98', FeeAmount: '0.02' }],
+        TotalUSD: 10, DryRun: true
+      } } })
+      if (path.endsWith('/sweep/records')) return Promise.resolve({ data: { data: [{
+        id: 1, chain: 'bsc', from_address: '0xDEPOSIT', amount: '10', status: 'sweep_pending',
+        provider: 'bitget', provider_order_id: 'test-provider-order', net_amount: '9.98', fee_amount: '0.02', sweep_tx_hash: '', gas_tx_hash: ''
+      }] } })
+      return normalGet(path, ...args)
+    })
+    const wrapper = await render()
+    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'admin.crypto.loadPlan').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('9.98')
+    expect(wrapper.text()).toContain('0.02')
+    expect(wrapper.text()).toContain('admin.crypto.bitgetOrder')
+    expect(wrapper.findAll('a').some(link => link.attributes('href')?.includes('test-provider-order'))).toBe(false)
+  })
+
   it('refreshes an old sweep preview before asking for execution verification', async () => {
     walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     let amount = 10

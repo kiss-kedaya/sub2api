@@ -18,7 +18,7 @@ const settingVault = "crypto.signer.vault"
 const vaultSweepLockKey int64 = 0x43525950544f5357
 
 // Keep identical to sweeper's unfinishedPredicate, including ambiguous v0 jobs.
-const unfinishedSweepPredicate = `status NOT IN ('swept','failed') AND job_version = 1
+const unfinishedSweepPredicate = `status NOT IN ('swept','failed') AND job_version IN (1,2)
 	OR job_version = 0 AND status <> 'swept' AND
 	(status IN ('manual_review','gas_sent') OR gas_tx_hash <> '' OR sweep_tx_hash <> '')`
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/bitget"
 	"regexp"
 )
 
@@ -55,6 +56,10 @@ func SafeError(err error) string {
 	if err == nil {
 		return ""
 	}
+	var bg *bitget.Error
+	if errors.As(err, &bg) {
+		return bg.Error()
+	}
 	var failure *Failure
 	if errors.As(err, &failure) {
 		return failure.Error()
@@ -72,6 +77,7 @@ func SafeError(err error) string {
 }
 
 var safeRPCStatus = regexp.MustCompile(`^RPC (?:HTTP request failed \(status [1-5][0-9]{2}\)|node rejected request \(code -?[0-9]{1,10}\))$`)
+var safeBitgetStatus = regexp.MustCompile(`^Bitget gasless request failed \(HTTP [1-5][0-9]{2}, code -?[0-9]{1,10}\)$`)
 
 // SafeRecordedError also protects records written by previous versions. Only
 // known fixed messages or bounded numeric RPC statuses survive; free-form old
@@ -83,7 +89,12 @@ func SafeRecordedError(message string) string {
 	if safeRPCStatus.MatchString(message) {
 		return message
 	}
+	if safeBitgetStatus.MatchString(message) {
+		return message
+	}
 	switch message {
+	case "Bitget gasless service is unavailable", "Bitget order is missing verifiable signing data or exceeds sweep policy", "Bitget gasless transfer is not supported on this chain", "awaiting Bitget order and on-chain confirmation":
+		return message
 	case "independent RPC confirmation is unavailable or disagrees":
 		return message
 	case "RPC request is invalid", "RPC response is invalid", "RPC connection failed", "RPC request failed",

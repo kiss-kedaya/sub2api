@@ -23,7 +23,10 @@ type Config struct {
 	// Confirmations is the required block depth (head - receipt block), per chain.
 	// Execution fails closed when a chain is missing or zero. Wire from the
 	// same confirmation configuration used by the deposit scanner.
-	Confirmations map[string]uint64
+	Confirmations   map[string]uint64
+	Provider        string
+	BitgetMaxFee    string
+	BitgetMaxFeeBPS int
 }
 
 // PlanEntry is one address to sweep.
@@ -37,6 +40,10 @@ type PlanEntry struct {
 	Decimals        int
 	NeedsGasTopUp   bool
 	GasTopUpAmount  *big.Int
+	Gasless         bool
+	NetAmount       string
+	FeeAmount       string
+	QuoteError      string
 }
 
 // Plan is the full sweep plan for one run.
@@ -140,6 +147,9 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 // read leaves the fields at their zero values; the executor re-checks at
 // execution time (the live balance may have changed).
 func (p *Planner) estimateGas(ctx context.Context, chain string, entry *PlanEntry) {
+	if p.config.Provider == "bitget" {
+		return
+	}
 	pool := p.pools[chain]
 	if pool == nil {
 		return

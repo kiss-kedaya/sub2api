@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/sweeper"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/wallet"
 )
 
@@ -209,6 +210,30 @@ func (s *Service) scanWalletOutflows(ctx context.Context, evm *scanner.EVMScanne
 		}
 		if authorized {
 			continue
+		}
+		// A relayer may mine before the sweep caller has polled the final hash.
+		// Bind its exact persisted order and receipt before evaluating outflow.
+		s.mu.RLock()
+		executor := s.executor
+		provider := s.config.SweepProvider
+		s.mu.RUnlock()
+		if executor == nil && provider == "bitget" {
+			executor = sweeper.NewExecutor(s.db, nil, s.wallet, sweeper.Config{Provider: provider}, nil, nil, 0)
+		}
+		if executor != nil {
+			bound, bindErr := executor.AuthorizeGaslessObserved(ctx, pool, chain.Chain, transfer.TxHash, transfer.From)
+			if bindErr != nil {
+				return bindErr
+			}
+			if bound {
+				authorized, err = s.wallet.AuthorizedTokenTransfer(ctx, chain.Chain, chainID, transfer.TxHash, transfer.From, transfer.To, transfer.Token, transfer.Amount.String())
+				if err != nil {
+					return err
+				}
+				if authorized {
+					continue
+				}
+			}
 		}
 		lockErr := s.wallet.LockSecurity(ctx, "unauthorized_token_outflow", chain.Chain, transfer.TxHash)
 		status, _ := s.WalletSecurity(ctx)

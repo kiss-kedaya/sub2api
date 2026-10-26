@@ -46,7 +46,8 @@ type Executor struct {
 	tokens   map[string]TokenSpec
 	reader   BalanceReader
 	hotIndex uint32 // constructor compatibility; the local wallet supplies its gas index
-	store    jobDB  // Run's exclusive autocommit connection
+	gasless  gaslessProvider
+	store    jobDB // Run's exclusive autocommit connection
 	// Only an explicitly authorized RunAndWait opts into bounded receipt
 	// polling. The nonblocking Run contract remains available to observers.
 	confirmationDeadline time.Time
@@ -218,7 +219,12 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 		out.Error = rpc.SafeError(err)
 		return out, err
 	}
-	job, err := e.createJob(ctx, entry)
+	var job *sweepJob
+	if e.config.Provider == "bitget" {
+		job, err = e.createBitgetJob(ctx, entry)
+	} else {
+		job, err = e.createJob(ctx, entry)
+	}
 	if err != nil {
 		out.Error = rpc.SafeError(err)
 		return out, err
@@ -227,6 +233,9 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 }
 
 func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error) {
+	if job.Version == 2 {
+		return e.resumeBitget(ctx, job)
+	}
 	out := job.outcome()
 	if job.Version == 0 || job.Status == "manual_review" {
 		out.Status = "manual_review"

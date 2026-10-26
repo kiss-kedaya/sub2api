@@ -110,7 +110,7 @@ func (j *sweepJob) outcome() SweepEntry {
 
 // Legacy rows can contain duplicate attempts and inaccurate amounts. They
 // remain outside the new partial unique index and must never be auto-resigned.
-const unfinishedPredicate = `status NOT IN ('swept','failed') AND job_version = 1
+const unfinishedPredicate = `status NOT IN ('swept','failed') AND job_version IN (1,2)
 	OR job_version = 0 AND status <> 'swept' AND
 	(status IN ('manual_review','gas_sent') OR gas_tx_hash <> '' OR sweep_tx_hash <> '')`
 
@@ -136,7 +136,7 @@ func (e *Executor) loadUnfinished(ctx context.Context) ([]*sweepJob, error) {
 			&j.GasHash, &j.GasConfirmed, &j.SweepNonce, &j.SweepRaw, &j.SweepHash); err != nil {
 			return nil, err
 		}
-		if j.Version == 1 {
+		if j.Version == 1 || j.Version == 2 {
 			var ok bool
 			j.RawAmount, ok = new(big.Int).SetString(raw, 10)
 			if !ok || j.RawAmount.Sign() <= 0 {
