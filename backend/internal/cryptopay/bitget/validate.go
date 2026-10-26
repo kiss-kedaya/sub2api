@@ -82,9 +82,10 @@ func ValidateQuote(o *Order, in Intent) error {
 	return nil
 }
 
-// ValidateSigning reconstructs every digest. Hash-only orders, unexpected
-// approvals/calls, native value, foreign delegation and unbounded expiry fail.
-// An upstream change therefore cannot silently expand signing authority.
+// ValidateSigning authenticates the supplier's exact request and response.
+// When typed metadata is supplied its digest and transfer semantics are also
+// reconstructed locally. Opaque hashes follow the documented trusted-provider
+// transfer protocol; RSA attestation alone does not prove their call semantics.
 func ValidateSigning(o *Order, in Intent, now time.Time) (*Validated, error) {
 	return NewClient().ValidateSigning(o, in, now)
 }

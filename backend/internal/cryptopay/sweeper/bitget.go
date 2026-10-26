@@ -253,6 +253,10 @@ func (e *Executor) resumeBitget(ctx context.Context, j *sweepJob) (SweepEntry, e
 	if state == nil || state.ID != id || (state.Status != "PENDING" && state.Status != "PROCESSING" && state.Status != "SUCCESS" && state.Status != "FAILED") {
 		return e.bitgetError(ctx, j, bitget.ErrUnsafeOrder)
 	}
+	if state.Status == "FAILED" {
+		j.Status = "manual_review"
+		return e.bitgetError(ctx, j, bitget.ErrUnavailable)
+	}
 	hash := state.Hash
 	if hash == "" {
 		hash = state.TxID
@@ -285,11 +289,6 @@ func (e *Executor) resumeBitget(ctx context.Context, j *sweepJob) (SweepEntry, e
 		}
 		return e.bitgetError(ctx, j, e2)
 	}
-	if state.Status == "FAILED" {
-		j.Status = "manual_review"
-		j.Error = "provider reports terminal failure; operator reconciliation required"
-		return e.bitgetError(ctx, j, bitget.ErrUnavailable)
-	}
 	if state.Status == "SUCCESS" {
 		return e.bitgetError(ctx, j, bitget.ErrUnavailable)
 	}
@@ -304,8 +303,10 @@ func (e *Executor) resumeBitget(ctx context.Context, j *sweepJob) (SweepEntry, e
 			return e.bitgetError(ctx, j, errors.Join(nonceErr, codeErr))
 		}
 		if nonce != in.Nonce || !strings.EqualFold(delegate, in.CurrentDelegate) || !strings.EqualFold(codeHash, in.CurrentCodeHash) {
-			j.Status = "manual_review"
-			return e.bitgetError(ctx, j, bitget.ErrUnsafeOrder)
+			// A timed-out submit may already be mined while the provider still
+			// reports PENDING. Continue observing this exact order; never submit
+			// again against changed chain state or freeze a successful receipt out.
+			return e.bitgetError(ctx, j, bitget.ErrUnavailable)
 		}
 		_, err = w.GuardBitgetSubmit(ctx, j.ID, id, signed, func() (string, error) { return "", e.bitgetProvider().Submit(ctx, id, signed) })
 		if err != nil {
