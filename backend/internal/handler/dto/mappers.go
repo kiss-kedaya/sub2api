@@ -150,6 +150,7 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 	}
 	out := &AdminGroup{
 		Group:                       groupFromServiceBase(g),
+		ReturnRequestedModel:        g.ReturnRequestedModel,
 		SearchProviderBaseURL:       g.SearchProviderBaseURL,
 		SearchProviderAPIKeySet:     g.SearchProviderAPIKey != nil && *g.SearchProviderAPIKey != "",
 		ForceOpenAIFast:             g.ForceOpenAIFast,

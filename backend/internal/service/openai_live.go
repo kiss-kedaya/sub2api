@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -231,6 +232,10 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		if model == "" {
 			model = "gpt-live"
 		}
+		requestedModel := request.RequestedModel
+		if requestedModel == "" {
+			requestedModel = gjson.GetBytes(request.Session, "model").String()
+		}
 		record := &LiveCallRecord{
 			CallID:                created.CallID,
 			CallHash:              hashLiveCallID(created.CallID),
@@ -241,6 +246,9 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			SubscriptionID:        liveGroupID(identity.SubscriptionID),
 			LeaseID:               leaseID,
 			Model:                 model,
+			RequestedModel:        requestedModel,
+			SessionRequestedModel: requestedModel,
+			ReturnRequestedModel:  liveKey != nil && liveKey.Group != nil && liveKey.Group.ReturnRequestedModel,
 			CreatedAt:             now,
 			ExpiresAt:             now.Add(s.liveMaxSessionDuration()),
 			Controller:            LiveControllerPending,
@@ -571,6 +579,10 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 	if err != nil {
 		return err
 	}
+	presentationStore, hasPresentationStore := store.(LiveCallPresentationStore)
+	if record.ReturnRequestedModel && !hasPresentationStore {
+		return ErrLiveUnavailable
+	}
 	owner := uuid.NewString()
 	claimed, err := store.ClaimLiveController(ctx, record.CallHash, LiveControllerProxy, owner)
 	if err != nil {
@@ -594,12 +606,19 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 	proxyCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 2)
+	presentation := newLiveModelPresentation(record)
 	go func() {
 		for {
 			messageType, payload, readErr := downstream.Read(proxyCtx)
 			if readErr != nil {
 				errCh <- readErr
 				return
+			}
+			if record.ReturnRequestedModel && messageType == coderws.MessageText {
+				if presentationErr := presentation.observeClient(payload); presentationErr != nil {
+					errCh <- presentationErr
+					return
+				}
 			}
 			if writeErr := upstream.WriteFrame(proxyCtx, messageType, payload); writeErr != nil {
 				errCh <- writeErr
@@ -614,7 +633,18 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 				errCh <- liveSidebandReadError(readErr)
 				return
 			}
-			if writeErr := downstream.Write(proxyCtx, messageType, payload); writeErr != nil {
+			clientPayload := payload
+			if record.ReturnRequestedModel && messageType == coderws.MessageText {
+				model, sessionUpdated := presentation.responseModel(payload)
+				if sessionUpdated {
+					if persistErr := presentationStore.UpdateLiveSessionRequestedModel(proxyCtx, record.CallHash, owner, model); persistErr != nil {
+						errCh <- persistErr
+						return
+					}
+				}
+				clientPayload = RewriteRequestedModelResponse(payload, "realtime", model)
+			}
+			if writeErr := downstream.Write(proxyCtx, messageType, clientPayload); writeErr != nil {
 				errCh <- writeErr
 				return
 			}
@@ -637,6 +667,167 @@ func (s *OpenAIGatewayService) ProxyLiveSideband(
 	}
 	go s.observeLiveCall(record)
 	return runErr
+}
+
+type liveRequestedModelUpdate struct {
+	eventID string
+	model   string
+}
+
+type liveRequestedModelResponse struct {
+	eventID string
+	// A model is explicit only when response.create supplied one. Otherwise,
+	// retain the confirmed session and preceding updates for this response;
+	// rejected updates can be removed without a later session renaming it.
+	model          string
+	session        string
+	sessionUpdates []liveRequestedModelUpdate
+}
+
+// One mutex protects presentation state shared by the two relay directions.
+// Queue session acknowledgements and bind response IDs to their request names;
+// a later session/model update must not rename an in-flight response.
+type liveModelPresentation struct {
+	mu               sync.Mutex
+	session          string
+	pendingSessions  []liveRequestedModelUpdate
+	pendingResponses []liveRequestedModelResponse
+	responses        map[string]string
+	lastResponse     string
+}
+
+func newLiveModelPresentation(record *LiveCallRecord) *liveModelPresentation {
+	model := record.SessionRequestedModel
+	if model == "" {
+		model = record.RequestedModel
+	}
+	return &liveModelPresentation{session: model, responses: make(map[string]string)}
+}
+
+func (p *liveModelPresentation) observeClient(payload []byte) error {
+	if !gjson.ValidBytes(payload) {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	update := liveRequestedModelUpdate{eventID: gjson.GetBytes(payload, "event_id").Str}
+	switch gjson.GetBytes(payload, "type").Str {
+	case "session.update":
+		if len(p.pendingSessions) >= 128 {
+			return errors.New("too many pending live session updates")
+		}
+		model := gjson.GetBytes(payload, "session.model")
+		if model.Type == gjson.String && model.Str != "" {
+			update.model = model.Str
+		}
+		p.pendingSessions = append(p.pendingSessions, update)
+	case "response.create":
+		if len(p.pendingResponses)+len(p.responses) >= 128 {
+			return errors.New("too many pending live responses")
+		}
+		model := gjson.GetBytes(payload, "response.model")
+		if model.Type != gjson.String || model.Str == "" {
+			model = gjson.GetBytes(payload, "model")
+		}
+		response := liveRequestedModelResponse{
+			eventID: update.eventID, session: p.session,
+			sessionUpdates: append([]liveRequestedModelUpdate(nil), p.pendingSessions...),
+		}
+		if model.Type == gjson.String && model.Str != "" {
+			response.model = model.Str
+		}
+		p.pendingResponses = append(p.pendingResponses, response)
+	}
+	return nil
+}
+
+func (p *liveModelPresentation) responseModel(payload []byte) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	event := gjson.GetBytes(payload, "type").Str
+	if event == "error" {
+		if eventID := gjson.GetBytes(payload, "error.event_id").Str; eventID != "" {
+			p.pendingSessions = removeLiveRequestedModelUpdate(p.pendingSessions, eventID)
+			for index := 0; index < len(p.pendingResponses); {
+				if p.pendingResponses[index].eventID == eventID {
+					p.pendingResponses = append(p.pendingResponses[:index], p.pendingResponses[index+1:]...)
+					continue
+				}
+				response := &p.pendingResponses[index]
+				response.sessionUpdates = removeLiveRequestedModelUpdate(response.sessionUpdates, eventID)
+				index++
+			}
+		} else {
+			// event_id is optional. An uncorrelated error makes speculative
+			// requests unreliable; preserve confirmed/active response models and
+			// rebuild future requests from the acknowledged session instead.
+			p.pendingSessions = nil
+			p.pendingResponses = nil
+		}
+		return "", false
+	}
+	if event == "session.created" {
+		return p.session, false
+	}
+	if event == "session.updated" {
+		if len(p.pendingSessions) > 0 {
+			if model := p.pendingSessions[0].model; model != "" {
+				p.session = model
+			}
+			p.pendingSessions = p.pendingSessions[1:]
+			return p.session, true
+		}
+		return p.session, false
+	}
+	responseID := gjson.GetBytes(payload, "response.id").Str
+	if responseID == "" {
+		responseID = gjson.GetBytes(payload, "response_id").Str
+	}
+	if event == "response.created" {
+		model := p.session
+		if len(p.pendingResponses) > 0 {
+			response := p.pendingResponses[0]
+			model = response.model
+			if model == "" {
+				model = resolveLiveRequestedSessionModel(response.session, response.sessionUpdates)
+			}
+			p.pendingResponses = p.pendingResponses[1:]
+		}
+		p.lastResponse = model
+		if responseID != "" {
+			p.responses[responseID] = model
+		}
+		return model, false
+	}
+	model := p.responses[responseID]
+	if model == "" {
+		model = p.lastResponse
+	}
+	if model == "" {
+		model = p.session
+	}
+	if event == "response.done" || event == "response.completed" || event == "response.failed" || event == "response.cancelled" {
+		delete(p.responses, responseID)
+	}
+	return model, false
+}
+
+func resolveLiveRequestedSessionModel(session string, updates []liveRequestedModelUpdate) string {
+	for _, update := range updates {
+		if update.model != "" {
+			session = update.model
+		}
+	}
+	return session
+}
+
+func removeLiveRequestedModelUpdate(updates []liveRequestedModelUpdate, eventID string) []liveRequestedModelUpdate {
+	for index, update := range updates {
+		if update.eventID == eventID {
+			return append(updates[:index], updates[index+1:]...)
+		}
+	}
+	return updates
 }
 
 // liveSessionEnded 判断控制连接的退出原因是否意味着会话已终结（应 finalize：写

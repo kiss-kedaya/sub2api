@@ -81,6 +81,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	requestModel := parsed.Model
 	ensureCompositeTargetPlatform(c, apiKey, requestModel)
 	clientRequestModel := clientRequestedModel(c, requestModel)
+	finishModelResponse := service.InstallRequestedModelResponse(c, "openai", clientRequestModel, func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	routingModel := requestModel
 	if resolvedModel, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context()); ok {
 		routingModel = resolvedModel

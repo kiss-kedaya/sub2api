@@ -246,6 +246,7 @@ type CreateGroupRequest struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch          bool                                      `json:"allow_messages_dispatch"`
 	CrossProtocolConversionEnabled bool                                      `json:"cross_protocol_conversion_enabled"`
+	ReturnRequestedModel           bool                                      `json:"return_requested_model"`
 	AllowLive                      bool                                      `json:"allow_live"`
 	ForceOpenAIFast                bool                                      `json:"force_openai_fast"`
 	FreeOpenAIFast                 bool                                      `json:"free_openai_fast"`
@@ -325,6 +326,7 @@ type UpdateGroupRequest struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch          *bool                                      `json:"allow_messages_dispatch"`
 	CrossProtocolConversionEnabled *bool                                      `json:"cross_protocol_conversion_enabled"`
+	ReturnRequestedModel           *bool                                      `json:"return_requested_model"`
 	AllowLive                      *bool                                      `json:"allow_live"`
 	ForceOpenAIFast                *bool                                      `json:"force_openai_fast"`
 	FreeOpenAIFast                 *bool                                      `json:"free_openai_fast"`
@@ -730,6 +732,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		SupportedModelScopes:            req.SupportedModelScopes,
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		CrossProtocolConversionEnabled:  req.CrossProtocolConversionEnabled,
+		ReturnRequestedModel:            req.ReturnRequestedModel,
 		AllowLive:                       req.AllowLive,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
 		FreeOpenAIFast:                  req.FreeOpenAIFast,
@@ -880,6 +883,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		SupportedModelScopes:            req.SupportedModelScopes,
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		CrossProtocolConversionEnabled:  req.CrossProtocolConversionEnabled,
+		ReturnRequestedModel:            req.ReturnRequestedModel,
 		AllowLive:                       req.AllowLive,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
 		FreeOpenAIFast:                  req.FreeOpenAIFast,

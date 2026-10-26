@@ -124,6 +124,8 @@ const (
 	FieldAllowMessagesDispatch = "allow_messages_dispatch"
 	// FieldCrossProtocolConversionEnabled holds the string denoting the cross_protocol_conversion_enabled field in the database.
 	FieldCrossProtocolConversionEnabled = "cross_protocol_conversion_enabled"
+	// FieldReturnRequestedModel holds the string denoting the return_requested_model field in the database.
+	FieldReturnRequestedModel = "return_requested_model"
 	// FieldAllowLive holds the string denoting the allow_live field in the database.
 	FieldAllowLive = "allow_live"
 	// FieldForceOpenaiFast holds the string denoting the force_openai_fast field in the database.
@@ -285,6 +287,7 @@ var Columns = []string{
 	FieldSortOrder,
 	FieldAllowMessagesDispatch,
 	FieldCrossProtocolConversionEnabled,
+	FieldReturnRequestedModel,
 	FieldAllowLive,
 	FieldForceOpenaiFast,
 	FieldFreeOpenaiFast,
@@ -412,6 +415,8 @@ var (
 	DefaultAllowMessagesDispatch bool
 	// DefaultCrossProtocolConversionEnabled holds the default value on creation for the "cross_protocol_conversion_enabled" field.
 	DefaultCrossProtocolConversionEnabled bool
+	// DefaultReturnRequestedModel holds the default value on creation for the "return_requested_model" field.
+	DefaultReturnRequestedModel bool
 	// DefaultAllowLive holds the default value on creation for the "allow_live" field.
 	DefaultAllowLive bool
 	// DefaultForceOpenaiFast holds the default value on creation for the "force_openai_fast" field.
@@ -708,6 +713,11 @@ func ByAllowMessagesDispatch(opts ...sql.OrderTermOption) OrderOption {
 // ByCrossProtocolConversionEnabled orders the results by the cross_protocol_conversion_enabled field.
 func ByCrossProtocolConversionEnabled(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCrossProtocolConversionEnabled, opts...).ToFunc()
+}
+
+// ByReturnRequestedModel orders the results by the return_requested_model field.
+func ByReturnRequestedModel(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldReturnRequestedModel, opts...).ToFunc()
 }
 
 // ByAllowLive orders the results by the allow_live field.

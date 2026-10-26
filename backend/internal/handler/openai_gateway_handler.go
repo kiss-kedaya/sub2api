@@ -499,6 +499,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	finishModelResponse := service.InstallRequestedModelResponse(c, "openai", clientRequestedModel(c, reqModel), func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	body = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, body)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
@@ -1315,6 +1319,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	finishModelResponse := service.InstallRequestedModelResponse(c, "anthropic", clientRequestedModel(c, reqModel), func() bool {
+		return service.ContextShouldReturnRequestedModel(c)
+	})
+	defer finishModelResponse()
 	body = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, body)
 	if service.IsChatUnsupportedMediaModel(reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Messages endpoint")

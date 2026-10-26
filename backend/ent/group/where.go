@@ -305,6 +305,11 @@ func CrossProtocolConversionEnabled(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldCrossProtocolConversionEnabled, v))
 }
 
+// ReturnRequestedModel applies equality check predicate on the "return_requested_model" field. It's identical to ReturnRequestedModelEQ.
+func ReturnRequestedModel(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldReturnRequestedModel, v))
+}
+
 // AllowLive applies equality check predicate on the "allow_live" field. It's identical to AllowLiveEQ.
 func AllowLive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowLive, v))
@@ -2503,6 +2508,16 @@ func CrossProtocolConversionEnabledEQ(v bool) predicate.Group {
 // CrossProtocolConversionEnabledNEQ applies the NEQ predicate on the "cross_protocol_conversion_enabled" field.
 func CrossProtocolConversionEnabledNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldCrossProtocolConversionEnabled, v))
+}
+
+// ReturnRequestedModelEQ applies the EQ predicate on the "return_requested_model" field.
+func ReturnRequestedModelEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldReturnRequestedModel, v))
+}
+
+// ReturnRequestedModelNEQ applies the NEQ predicate on the "return_requested_model" field.
+func ReturnRequestedModelNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldReturnRequestedModel, v))
 }
 
 // AllowLiveEQ applies the EQ predicate on the "allow_live" field.

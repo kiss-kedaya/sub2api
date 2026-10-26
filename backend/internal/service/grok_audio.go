@@ -135,7 +135,7 @@ func (s *OpenAIGatewayService) ProxyGrokRealtime(ctx context.Context, c *gin.Con
 		return false, err
 	}
 	defer func() { _ = upstream.Close() }()
-	return s.ProxyGrokRealtimeConn(ctx, c, client, upstream)
+	return s.ProxyGrokRealtimeConn(ctx, c, client, upstream, model)
 }
 
 type GrokRealtimeUpstream struct{ conn openAIWSClientConn }
@@ -198,11 +198,15 @@ func (s *OpenAIGatewayService) HandleGrokRealtimeUpstreamError(ctx context.Conte
 	s.handleGrokAccountUpstreamError(ctx, account, statusCode, nil, body)
 }
 
-func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin.Context, client *coderws.Conn, upstream *GrokRealtimeUpstream) (bool, error) {
+func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin.Context, client *coderws.Conn, upstream *GrokRealtimeUpstream, requestedModel string) (bool, error) {
 	if s == nil || client == nil || upstream == nil || upstream.conn == nil {
 		return false, fmt.Errorf("realtime connection is required")
 	}
 	conn := upstream.conn
+	// Snapshot the selected group's policy before starting either relay goroutine.
+	// Audio observation/billing still consumes the original upstream events.
+	returnRequestedModel := ContextShouldReturnRequestedModel(c)
+	presentation := newLiveModelPresentation(&LiveCallRecord{RequestedModel: requestedModel})
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -219,6 +223,10 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 			}
 			if grokRealtimeEventHasAudio(msg) {
 				audioObserved.Store(true)
+			}
+			if returnRequestedModel {
+				model, _ := presentation.responseModel(msg)
+				msg = RewriteRequestedModelResponse(msg, "realtime", model)
 			}
 			if writeErr := client.Write(ctx, coderws.MessageText, msg); writeErr != nil {
 				errCh <- writeErr
@@ -245,6 +253,12 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 			if unmarshalErr := json.Unmarshal(msg, &raw); unmarshalErr != nil {
 				errCh <- fmt.Errorf("invalid realtime event: %w", unmarshalErr)
 				return
+			}
+			if returnRequestedModel {
+				if presentationErr := presentation.observeClient(msg); presentationErr != nil {
+					errCh <- presentationErr
+					return
+				}
 			}
 			if writeErr := conn.WriteJSON(ctx, raw); writeErr != nil {
 				errCh <- writeErr
