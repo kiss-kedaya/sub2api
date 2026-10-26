@@ -18,17 +18,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// deepSeekToolsDefaultModel is the model used to pick an account for the
-// standalone Search/Fetch endpoints. Those endpoints carry no model field, but
-// the scheduler still has to match the account's model_mapping; the flash tier
-// is the cheapest one that every DeepSeek account maps.
-const deepSeekToolsDefaultModel = "deepseek-v4-flash"
-
 // DeepSeekToolsSearch / DeepSeekToolsFetch proxy DeepSeek's standalone tool
 // endpoints (/v1/tools/search, /v1/tools/fetch). They are raw JSON endpoints
 // with Bearer auth, so the client body is forwarded as-is and the upstream
-// response is passed through. A 2xx call is billed once via WebSearchCalls,
-// which uses the group's per-call web search price.
+// response is passed through. HTTP 200 with actual results is billed once via
+// WebSearchCalls, using the group's per-1k search price when configured.
 func (h *OpenAIGatewayHandler) DeepSeekToolsSearch(c *gin.Context) {
 	h.deepSeekTools(c, service.DeepSeekToolsPathSearch, service.DeepSeekToolsLabelSearch)
 }
@@ -156,19 +150,22 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 	// 但计费标签用工具名，两者不能混用。
 	routingModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	if routingModel == "" {
-		// Search/Fetch 请求体通常不带 model，但调度器必须拿到一个真实模型名才能
-		// 匹配账号的 model_mapping（空模型会直接判 no available accounts）。
-		// 默认用分组里最便宜的 flash 档；可用 ?model= 覆盖。
 		routingModel = strings.TrimSpace(c.Query("model"))
 	}
-	if routingModel == "" {
-		routingModel = deepSeekToolsDefaultModel
+	// Search/Fetch has no required model. Use this key's authorized DeepSeek
+	// groups and their current catalog rather than a stale hard-coded alias.
+	toolsKey, routingModels, routingErr := h.gatewayService.PrepareDeepSeekToolsRouting(c.Request.Context(), apiKey, routingModel)
+	if routingErr != nil {
+		h.errorResponse(c, http.StatusBadGateway, "upstream_error", "No available DeepSeek search accounts")
+		return
 	}
+	modelIndex := 0
+	routingModel = routingModels[modelIndex]
 
 	for {
 		selection, _, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
 			c.Request.Context(),
-			apiKey,
+			toolsKey,
 			"",
 			sessionHash,
 			routingModel,
@@ -195,6 +192,12 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 			if failoverClientGone(c) {
 				reqLog.Info("deepseek_tools.account_select_aborted_client_disconnected", zap.Error(err))
 				return
+			}
+			if lastFailoverErr == nil && modelIndex+1 < len(routingModels) &&
+				(err == nil || errors.Is(err, service.ErrNoAvailableAccounts)) {
+				modelIndex++
+				routingModel = routingModels[modelIndex]
+				continue
 			}
 			reqLog.Warn("deepseek_tools.select_failed",
 				zap.String("tool_path", toolPath),
@@ -229,9 +232,12 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 			return h.gatewayService.ForwardDeepSeekTools(c.Request.Context(), c, account, apiKey.Group, toolPath, modelLabel, body)
 		}()
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, time.Since(forwardStart).Milliseconds())
+		independentProvider := service.HasIndependentDeepSeekSearchProvider(apiKey.Group)
 
 		if err == nil {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, modelLabel, false, result), true, nil)
+			if !independentProvider {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, modelLabel, false, result), true, nil)
+			}
 			if result != nil {
 				h.recordDeepSeekToolsUsage(c, reqLog, apiKey, account, subscription, body, result, subject.UserID, asPricingAt)
 			}
@@ -240,8 +246,13 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 
 		var failoverErr *service.UpstreamFailoverError
 		if !errors.As(err, &failoverErr) {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, modelLabel, false, result), false, nil, err)
+			if !independentProvider {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, modelLabel, false, result), false, nil, err)
+			}
 			reqLog.Warn("deepseek_tools.forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			if !c.Writer.Written() && !failoverClientGone(c) {
+				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "DeepSeek search provider request failed")
+			}
 			return
 		}
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, modelLabel, false, result), false, nil, err)
@@ -262,7 +273,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 }
 
 // recordDeepSeekToolsUsage 为一次成功的 Search/Fetch 落按次计费用量行。
-// 上游不返回 usage/token 字段，WebSearchCalls=1 会命中分组「每次网页搜索单价」。
+// 上游不返回 usage/token 字段，WebSearchCalls=1 按分组搜索单价计费。
 func (h *OpenAIGatewayHandler) recordDeepSeekToolsUsage(
 	c *gin.Context,
 	reqLog *zap.Logger,

@@ -1,0 +1,349 @@
+package service
+
+import (
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+)
+
+const deepSeekHostedSearchToolName = "__sub2api_deepseek_web_search"
+
+func isDeepSeekHostedSearchToolType(toolType string) bool {
+	if toolType == "web_search" || toolType == "web_search_preview" {
+		return true
+	}
+	if !strings.HasPrefix(toolType, "web_search_preview_") {
+		return false
+	}
+	suffix := strings.TrimPrefix(toolType, "web_search_preview_")
+	_, err := time.Parse("2006_01_02", suffix)
+	return err == nil
+}
+
+// The hosted search name belongs to this bridge only. Client functions are
+// never executed or replaced, even if their names happen to mention search.
+func prepareDeepSeekHostedSearchRequest(body []byte) ([]byte, bool, error) {
+	if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() {
+		return body, false, fmt.Errorf("deepseek hosted search: request must be a JSON object")
+	}
+	disabled := gjson.GetBytes(body, "tool_choice").String() == "none"
+	tools := gjson.GetBytes(body, "tools").Array()
+	hostedIndex := -1
+	for i, tool := range tools {
+		if isDeepSeekHostedSearchToolType(tool.Get("type").String()) {
+			if hostedIndex >= 0 {
+				return body, false, fmt.Errorf("deepseek hosted search: multiple hosted search tools are not supported")
+			}
+			hostedIndex = i
+		}
+	}
+	hasHistory := false
+	for _, item := range gjson.GetBytes(body, "input").Array() {
+		hasHistory = hasHistory || item.Get("type").String() == "web_search_call"
+	}
+	if disabled && !hasHistory {
+		return body, false, nil
+	}
+	if hostedIndex >= 0 || hasHistory {
+		for _, tool := range tools {
+			if tool.Get("type").String() == "function" &&
+				(tool.Get("name").String() == deepSeekHostedSearchToolName || tool.Get("function.name").String() == deepSeekHostedSearchToolName) {
+				return body, false, fmt.Errorf("deepseek hosted search: reserved function name conflicts with a client tool")
+			}
+		}
+	}
+	next := body
+	changed := false
+	if disabled && hostedIndex >= 0 {
+		// Hosted history still needs replaying, but "none" does not authorize
+		// a live search or an injected callable tool on the next model request.
+		kept := make([]json.RawMessage, 0, len(tools)-1)
+		for i, tool := range tools {
+			if i != hostedIndex {
+				kept = append(kept, json.RawMessage(tool.Raw))
+			}
+		}
+		var err error
+		next, err = sjson.SetBytes(next, "tools", kept)
+		if err != nil {
+			return body, false, err
+		}
+		changed = true
+	} else if hostedIndex >= 0 {
+		tool := tools[hostedIndex]
+		description, err := deepSeekHostedSearchDescription(tool)
+		if err != nil {
+			return body, false, err
+		}
+		function := map[string]any{
+			"type": "function", "name": deepSeekHostedSearchToolName, "description": description,
+			"parameters": map[string]any{
+				"type": "object", "properties": map[string]any{
+					"query": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+					"count": map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+				}, "required": []string{"query"}, "additionalProperties": false,
+			},
+		}
+		next, err = sjson.SetBytes(next, fmt.Sprintf("tools.%d", hostedIndex), function)
+		if err != nil {
+			return body, false, fmt.Errorf("deepseek hosted search: replace hosted tool: %w", err)
+		}
+		choice := gjson.GetBytes(body, "tool_choice")
+		if choice.IsObject() && isDeepSeekHostedSearchToolType(choice.Get("type").String()) {
+			next, err = sjson.SetBytes(next, "tool_choice", map[string]string{"type": "function", "name": deepSeekHostedSearchToolName})
+			if err != nil {
+				return body, false, fmt.Errorf("deepseek hosted search: replace forced tool choice: %w", err)
+			}
+		}
+		changed = true
+	}
+	input := gjson.GetBytes(next, "input")
+	if input.IsArray() {
+		for i, item := range input.Array() {
+			if item.Get("type").String() != "web_search_call" {
+				continue
+			}
+			var err error
+			next, err = sjson.SetBytes(next, fmt.Sprintf("input.%d", i), deepSeekHostedSearchHistoryMessage(item))
+			if err != nil {
+				return body, false, fmt.Errorf("deepseek hosted search: replay search history: %w", err)
+			}
+			changed = true
+		}
+	}
+	return next, changed, nil
+}
+
+func deepSeekHostedSearchDescription(tool gjson.Result) (string, error) {
+	var unsupported string
+	tool.ForEach(func(key, value gjson.Result) bool {
+		switch key.String() {
+		case "type", "filters", "allowed_domains", "user_location", "search_context_size", "external_web_access":
+		default:
+			unsupported = key.String()
+		}
+		return unsupported == ""
+	})
+	if unsupported != "" {
+		return "", fmt.Errorf("deepseek hosted search: unsupported option %s", unsupported)
+	}
+	if access := tool.Get("external_web_access"); access.Exists() && (access.Type != gjson.True && access.Type != gjson.False) {
+		return "", fmt.Errorf("deepseek hosted search: external_web_access must be boolean")
+	} else if access.Type == gjson.False {
+		return "", fmt.Errorf("deepseek hosted search: external_web_access=false is not supported by live search")
+	}
+	domains, err := deepSeekHostedSearchAllowedDomains(tool)
+	if err != nil {
+		return "", err
+	}
+	description := "Search the web for current facts. Use only when search is needed. Return a focused search query and optionally a result count."
+	if len(domains) > 0 {
+		description += " Search is restricted to these domains: " + strings.Join(domains, ", ") + "."
+	}
+	if location := tool.Get("user_location"); location.Exists() {
+		if !location.IsObject() {
+			return "", fmt.Errorf("deepseek hosted search: user_location must be an object")
+		}
+		description += " User location hint: " + location.Raw + "."
+	}
+	if size := tool.Get("search_context_size"); size.Exists() {
+		if size.Type != gjson.String || (size.String() != "low" && size.String() != "medium" && size.String() != "high") {
+			return "", fmt.Errorf("deepseek hosted search: unsupported search_context_size")
+		}
+		description += " Search context size hint: " + size.String() + "."
+	}
+	return description, nil
+}
+
+func deepSeekHostedSearchAllowedDomains(tool gjson.Result) ([]string, error) {
+	filters := tool.Get("filters")
+	if filters.Exists() {
+		if !filters.IsObject() {
+			return nil, fmt.Errorf("deepseek hosted search: filters must be an object")
+		}
+		unsupported := false
+		filters.ForEach(func(key, _ gjson.Result) bool { unsupported = key.String() != "allowed_domains"; return !unsupported })
+		if unsupported {
+			return nil, fmt.Errorf("deepseek hosted search: unsupported search filter")
+		}
+	}
+	domains := tool.Get("filters.allowed_domains")
+	if top := tool.Get("allowed_domains"); top.Exists() {
+		if domains.Exists() {
+			return nil, fmt.Errorf("deepseek hosted search: duplicate allowed_domains configuration")
+		}
+		domains = top
+	}
+	if !domains.Exists() {
+		return nil, nil
+	}
+	if !domains.IsArray() || len(domains.Array()) == 0 || len(domains.Array()) > 100 {
+		return nil, fmt.Errorf("deepseek hosted search: allowed_domains must contain 1 to 100 domains")
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	for _, item := range domains.Array() {
+		domain := strings.ToLower(strings.TrimSpace(item.String()))
+		if item.Type != gjson.String || !deepSeekHostedSearchValidDomain(domain) {
+			return nil, fmt.Errorf("deepseek hosted search: allowed_domains requires plain public DNS names")
+		}
+		if _, exists := seen[domain]; !exists {
+			seen[domain] = struct{}{}
+			out = append(out, domain)
+		}
+	}
+	return out, nil
+}
+
+func deepSeekHostedSearchValidDomain(domain string) bool {
+	if len(domain) > 253 || !strings.Contains(domain, ".") || net.ParseIP(domain) != nil ||
+		strings.HasSuffix(domain, ".localhost") || strings.HasSuffix(domain, ".local") || strings.HasSuffix(domain, ".internal") {
+		return false
+	}
+	numericHost := true
+	for _, label := range strings.Split(domain, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+		digits, hex := label, false
+		if strings.HasPrefix(label, "0x") {
+			digits, hex = label[2:], true
+		}
+		if digits == "" || strings.IndexFunc(digits, func(r rune) bool {
+			return (r < '0' || r > '9') && (!hex || r < 'a' || r > 'f')
+		}) >= 0 {
+			numericHost = false
+		}
+	}
+	last := domain[strings.LastIndexByte(domain, '.')+1:]
+	return !numericHost && strings.IndexFunc(last, func(r rune) bool { return r >= 'a' && r <= 'z' }) >= 0
+}
+
+func deepSeekHostedSearchPublicURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if address := net.ParseIP(host); address != nil {
+		return address.IsGlobalUnicast() && !address.IsPrivate() && !address.IsLoopback() && !address.IsLinkLocalUnicast()
+	}
+	return deepSeekHostedSearchValidDomain(host)
+}
+
+func deepSeekHostedSearchHistoryMessage(item gjson.Result) map[string]any {
+	var text strings.Builder
+	_, _ = text.WriteString("[Previous web search]")
+	if query := item.Get("action.query").String(); query != "" {
+		_, _ = text.WriteString("\nQuery: " + query)
+	}
+	if status := item.Get("status").String(); status != "" {
+		_, _ = text.WriteString("\nStatus: " + status)
+	}
+	seen := map[string]struct{}{}
+	add := func(raw string) {
+		if !deepSeekHostedSearchPublicURL(raw) {
+			return
+		}
+		if _, exists := seen[raw]; !exists {
+			seen[raw] = struct{}{}
+			_, _ = text.WriteString("\nSource: " + raw)
+		}
+	}
+	add(item.Get("action.url").String())
+	for _, source := range item.Get("action.sources").Array() {
+		add(source.Get("url").String())
+	}
+	return map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]string{"type": "output_text", "text": text.String()}}}
+}
+
+// Build the next stateless model request without flattening native reasoning,
+// encrypted_content, function calls, or unrelated client tools into text.
+func deepSeekHostedSearchNextRequest(request, response []byte, outputs map[string]string) ([]byte, error) {
+	if !gjson.ValidBytes(request) || !gjson.ParseBytes(request).IsObject() || !gjson.ValidBytes(response) {
+		return nil, fmt.Errorf("deepseek hosted search: invalid continuation JSON")
+	}
+	input := gjson.GetBytes(request, "input")
+	var items []json.RawMessage
+	if input.IsArray() {
+		for _, item := range input.Array() {
+			items = append(items, json.RawMessage(item.Raw))
+		}
+	} else if input.Type == gjson.String {
+		raw, _ := json.Marshal(map[string]any{"role": "user", "content": input.String()})
+		items = append(items, raw)
+	} else if input.Exists() && input.Type != gjson.Null {
+		return nil, fmt.Errorf("deepseek hosted search: input must be text or an array")
+	}
+	output := gjson.GetBytes(response, "output")
+	if !output.IsArray() {
+		return nil, fmt.Errorf("deepseek hosted search: model response has no output array")
+	}
+	completed := make(map[string]bool)
+	for _, item := range items {
+		if gjson.GetBytes(item, "type").String() == "function_call_output" {
+			completed[gjson.GetBytes(item, "call_id").String()] = true
+		}
+	}
+	ownedCalls := make(map[string]bool)
+	for _, item := range output.Array() {
+		if item.Get("type").String() == "function_call" && item.Get("name").String() == deepSeekHostedSearchToolName {
+			id := item.Get("call_id").String()
+			if ownedCalls[id] || completed[id] {
+				return nil, fmt.Errorf("deepseek hosted search: duplicate or completed owned search call")
+			}
+			ownedCalls[id] = true
+		}
+	}
+	for _, item := range output.Array() {
+		if item.Get("type").String() == "function_call_output" && ownedCalls[item.Get("call_id").String()] {
+			return nil, fmt.Errorf("deepseek hosted search: model response already contains owned search output")
+		}
+	}
+	var results []json.RawMessage
+	for _, item := range output.Array() {
+		items = append(items, json.RawMessage(item.Raw))
+		if item.Get("type").String() != "function_call" || item.Get("name").String() != deepSeekHostedSearchToolName {
+			continue
+		}
+		callID := item.Get("call_id").String()
+		content, exists := outputs[callID]
+		if callID == "" || !exists {
+			return nil, fmt.Errorf("deepseek hosted search: owned search call has no result")
+		}
+		raw, err := json.Marshal(map[string]string{"type": "function_call_output", "call_id": callID, "output": content})
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, raw)
+	}
+	items = append(items, results...)
+	next, err := sjson.SetBytes(request, "input", items)
+	if err != nil {
+		return nil, err
+	}
+	next, err = sjson.SetBytes(next, "store", false)
+	if err != nil {
+		return nil, err
+	}
+	next, err = sjson.DeleteBytes(next, "previous_response_id")
+	if err != nil {
+		return nil, err
+	}
+	choice := gjson.GetBytes(next, "tool_choice")
+	if choice.String() == "required" || (choice.IsObject() && choice.Get("type").String() == "function" && choice.Get("name").String() == deepSeekHostedSearchToolName) {
+		next, err = sjson.SetBytes(next, "tool_choice", "auto")
+	}
+	return next, err
+}
