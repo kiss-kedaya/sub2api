@@ -63,6 +63,30 @@ func TestPostgresBitgetOrderPersistsBeforeSubmitAndResumesWithoutNewGasOrSignatu
 	require.NoError(t, err)
 	require.Equal(t, 1, w.signs)
 	require.Equal(t, 1, p.submitted)
+	// A consumed nonce may be the timed-out order already mining. Observe it
+	// without either resubmitting or freezing it out of later reconciliation.
+	in.Nonce = 4
+	rawI, err = json.Marshal(in)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `UPDATE crypto_bitget_sweep_jobs SET intent=$2::jsonb WHERE job_id=$1`, j.ID, string(rawI))
+	require.NoError(t, err)
+	p.status.Status = "PENDING"
+	p.status.TxID = ""
+	_, err = e.resumeBitget(t.Context(), jobs[0])
+	require.ErrorIs(t, err, bitget.ErrUnavailable)
+	require.Equal(t, "sweep_pending", jobs[0].Status)
+	require.Equal(t, 1, p.submitted)
+	require.Equal(t, 1, w.signs)
+	p.status.Status = "FAILED"
+	p.status.Hash = "0x" + strings.Repeat("aa", 32)
+	_, err = e.resumeBitget(t.Context(), jobs[0])
+	require.Error(t, err)
+	require.Equal(t, "manual_review", jobs[0].Status)
+	queried := p.queried
+	_, err = e.resumeBitget(t.Context(), jobs[0])
+	require.NoError(t, err)
+	require.Equal(t, queried, p.queried)
+	require.Equal(t, 1, p.submitted)
 	// An ambiguous order cannot release its address or manufacture a second
 	// order. The full address debit stays gross for future unswept accounting.
 	var amount, gas, signed string
