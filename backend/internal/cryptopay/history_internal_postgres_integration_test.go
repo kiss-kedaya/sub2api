@@ -3,12 +3,10 @@
 package cryptopay
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/wallet"
 	"github.com/stretchr/testify/require"
@@ -37,14 +35,7 @@ func TestPostgresUserDepositHistoryHidesInternalFundingBeforeLimitAndPreservesOr
 	require.NoError(t, err)
 	manager := wallet.New(db, strings.Repeat("ab", 32))
 	t.Cleanup(manager.Close)
-	// Package tests use distinct schemas but share the PostgreSQL sweep lock.
-	// Wait only for that expected contention; any other initialization error
-	// remains an immediate failure of this history-query fixture.
-	require.Eventually(t, func() bool {
-		err = manager.Initialize(t.Context(), depositMnemonic, gasMnemonic)
-		return !errors.Is(err, wallet.ErrSweepBusy)
-	}, 10*time.Second, 25*time.Millisecond)
-	require.NoError(t, err)
+	require.NoError(t, manager.Initialize(t.Context(), depositMnemonic, gasMnemonic))
 	hot, err := manager.PublicHotAddresses(t.Context())
 	require.NoError(t, err)
 	const recipient = "0x1111111111111111111111111111111111111111"
