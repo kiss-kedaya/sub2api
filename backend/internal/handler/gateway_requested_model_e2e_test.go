@@ -147,7 +147,10 @@ func TestRequestedModelFullHTTPHandlerJSONAndSSE(t *testing.T) {
 				upstreamErrors := make(chan error, 2)
 				var calls atomic.Int32
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					calls.Add(1)
+					if calls.Add(1) != 1 {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
 					body, err := io.ReadAll(r.Body)
 					upstreamErrors <- err
 					requests <- body
@@ -259,7 +262,12 @@ func TestRequestedModelFullChatCompletionsHandlerJSONAndSSE(t *testing.T) {
 				require.NoError(t, err)
 				requests := make(chan []byte, 1)
 				paths := make(chan string, 1)
+				var calls atomic.Int32
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if calls.Add(1) != 1 {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
 					body, readErr := io.ReadAll(r.Body)
 					if readErr != nil {
 						http.Error(w, readErr.Error(), http.StatusInternalServerError)
@@ -291,6 +299,7 @@ func TestRequestedModelFullChatCompletionsHandlerJSONAndSSE(t *testing.T) {
 				recorder := httptest.NewRecorder()
 				router.ServeHTTP(recorder, request)
 				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				require.Equal(t, int32(1), calls.Load(), "the native chat fixture must not retry")
 				require.Equal(t, "/v1/chat/completions", <-paths, "exercise the actual native chat forwarder")
 				require.Equal(t, requestedModelE2EClientModel, gjson.GetBytes(<-requests, "model").String())
 				payload := recorder.Body.String()
@@ -366,7 +375,12 @@ func TestRequestedModelFullWebSocketHandlerWithoutMapping(t *testing.T) {
 			response, text, arguments := requestedModelE2EResponse(t, upstreamModel)
 			upstreamErrors := make(chan error, 3)
 			upstreamRequests := make(chan []byte, 1)
+			var calls atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) != 1 {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
 				conn, err := coderws.Accept(w, r, nil)
 				upstreamErrors <- err
 				if err != nil {
