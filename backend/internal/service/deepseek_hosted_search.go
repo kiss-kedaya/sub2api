@@ -75,7 +75,7 @@ type deepSeekHostedRoundWriter struct {
 
 func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, bool, error) {
 	if ctx.Value(deepSeekHostedSearchSkipContextKey{}) == true || account == nil ||
-		account.Platform != PlatformDeepseek || !account.usesNativeResponsesUpstream() || isOpenAIResponsesCompactPath(c) {
+		account.Platform != PlatformDeepseek || isOpenAIResponsesCompactPath(c) {
 		return nil, false, nil
 	}
 	group, enabled := deepSeekSearchGroupEnabled(c, account)
