@@ -97,7 +97,8 @@ jobs:
         working-directory: backend
         env:
           CRYPTO_SWEEP_TEST_DSN: postgres://crypto_review@127.0.0.1:15439/postgres?sslmode=disable
-        run: go test -tags=integration ./internal/cryptopay ./internal/cryptopay/sweeper -run '^TestPostgres' -count=1
+        # The packages use separate schemas but share database advisory locks.
+        run: go test -p 1 -tags=integration ./internal/cryptopay ./internal/cryptopay/sweeper -run '^TestPostgres' -count=1
 
   frontend:
     runs-on: ubuntu-latest
