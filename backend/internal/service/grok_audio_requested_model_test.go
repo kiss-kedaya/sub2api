@@ -82,6 +82,7 @@ func TestGrokRealtimeRequestedModelRelayPreservesAudioAndInput(t *testing.T) {
 				path string
 			}{
 				{`{"type":"session.created","session":{"model":"upstream-voice","instructions":"model: upstream-voice"}}`, "session.model"},
+				{`{"type":"session.updated","session":{"model":"upstream-voice","instructions":"keep model text"}}`, "session.model"},
 				{`{"type":"response.created","response":{"model":"upstream-voice","output":[],"usage":{"input_tokens":2}}}`, "response.model"},
 				{`{"type":"response.audio.delta","delta":"YXVkaW8="}`, ""},
 				{`{"type":"error","error":{"message":"upstream-voice"},"model":"upstream-voice"}`, ""},
