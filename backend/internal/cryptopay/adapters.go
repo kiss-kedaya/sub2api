@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/sweeper"
@@ -15,10 +16,23 @@ import (
 // addressResolver adapts the addresses service to the ledger's interface.
 type addressResolver struct {
 	svc *addresses.Service
+	mu  sync.RWMutex
+	hot sweeper.HotAddress
 }
 
 func newAddressResolver(svc *addresses.Service) *addressResolver {
 	return &addressResolver{svc: svc}
+}
+
+// setHotAddresses refreshes the public sender snapshot once per scan pass.
+// Resolving individual transfers must not decrypt the vault or write an audit.
+func (r *addressResolver) setHotAddresses(hot *sweeper.HotAddress) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hot = sweeper.HotAddress{}
+	if hot != nil {
+		r.hot = *hot
+	}
 }
 
 // ResolveDeposit maps a deposit address to its owner. Owned-but-unassigned
@@ -48,6 +62,13 @@ func (r *addressResolver) IsOwnAddress(ctx context.Context, chain, address strin
 	family, err := addresses.FamilyForChain(chain)
 	if err != nil {
 		return false, err
+	}
+	r.mu.RLock()
+	hot := r.hot
+	r.mu.RUnlock()
+	if family == addresses.FamilyEVM && hot.EVM != "" && strings.EqualFold(hot.EVM, address) ||
+		family == addresses.FamilySolana && hot.Solana != "" && hot.Solana == address {
+		return true, nil
 	}
 	assignment, err := r.svc.LookupAny(ctx, family, address)
 	if err != nil {
