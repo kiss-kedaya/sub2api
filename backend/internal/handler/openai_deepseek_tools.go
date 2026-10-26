@@ -159,14 +159,13 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		h.errorResponse(c, http.StatusBadGateway, "upstream_error", "No available DeepSeek search accounts")
 		return
 	}
-	apiKey = toolsKey
 	modelIndex := 0
 	routingModel = routingModels[modelIndex]
 
 	for {
 		selection, _, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(
 			c.Request.Context(),
-			apiKey,
+			toolsKey,
 			"",
 			sessionHash,
 			routingModel,
