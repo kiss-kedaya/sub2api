@@ -148,6 +148,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	nativeCNResponses := account.usesNativeResponsesUpstream()
 	nativeDeepSeekResponses := account.Platform == PlatformDeepseek && nativeCNResponses
+	if nativeDeepSeekResponses && !compactPath {
+		if result, handled, searchErr := s.forwardDeepSeekHostedSearch(ctx, c, account, body); handled {
+			return result, searchErr
+		}
+	}
 	if nativeDeepSeekResponses && account.Type == AccountTypeAPIKey && !compactPath &&
 		needsOpenAIResponsesClientToolAdaptation(body) {
 		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
@@ -1589,9 +1594,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现：强制 store=false、清除
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
-	// DeepSeek 搜索：分组配了搜索单价时，给模型注入一个 web_search 工具。
-	// 模型只会「提出要搜什么」，真正执行由网关完成后直接交给客户端。
-	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
+	// Legacy relay compatibility stays opt-in. Native Responses search is
+	// handled by the hosted-tool bridge, only when the client declares it.
+	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled && s.deepSeekResponseCompatEnabled() && ctx.Value(deepSeekHostedSearchSkipContextKey{}) != true {
 		if injected, changed := injectDeepSeekSearchTool(body); changed {
 			body = injected
 		}

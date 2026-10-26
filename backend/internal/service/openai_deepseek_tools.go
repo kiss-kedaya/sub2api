@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // DeepSeek standalone tool endpoints. These are raw JSON endpoints authenticated
@@ -30,14 +31,21 @@ func derefString(value *string) string {
 	return *value
 }
 
+// HasIndependentDeepSeekSearchProvider reports whether Search/Fetch uses any
+// group-specific connection setting. A failure of that provider must not affect
+// the selected model account's health or retry the same provider on other accounts.
+func HasIndependentDeepSeekSearchProvider(group *Group) bool {
+	return group != nil && (strings.TrimSpace(derefString(group.SearchProviderBaseURL)) != "" ||
+		strings.TrimSpace(derefString(group.SearchProviderAPIKey)) != "")
+}
+
 // ForwardDeepSeekTools proxies a standalone DeepSeek Search/Fetch call with the
 // selected account credential. Like ForwardAlphaSearch it deliberately does not
 // bind the evolving request/response schema: the client body is forwarded as-is
 // and the upstream response is passed through untouched.
 //
-// 返回值约定与 ForwardAlphaSearch 一致：仅当上游返回 2xx（一次真实成功的
-// 搜索 / 抓取）时返回非 nil 的 *OpenAIForwardResult（WebSearchCalls=1，供按次
-// 计费）；上游错误被原样透传给客户端时返回 (nil, nil)，不产生计费。
+// 仅当上游返回 HTTP 200 且实际包含搜索结果 / 抓取正文时返回非 nil 的
+// *OpenAIForwardResult（WebSearchCalls=1）。空结果、无效响应和错误不计费。
 func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 	ctx context.Context, c *gin.Context, account *Account, group *Group, path string, modelLabel string, body []byte,
 ) (*OpenAIForwardResult, error) {
@@ -79,7 +87,7 @@ func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildOpenAIEndpointURL(baseURL, path), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("deepseek tools: build request: %w", err)
 	}
@@ -95,6 +103,16 @@ func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 	upstreamStart := time.Now()
 	resp, err := s.doOpenAIUpstream(req, proxyURL, account)
 	if err != nil {
+		if HasIndependentDeepSeekSearchProvider(group) {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(err.Error()), "")
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{
+				"type": "upstream_error", "message": "DeepSeek search provider request failed",
+			}})
+			return nil, nil
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -104,7 +122,7 @@ func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 		return nil, fmt.Errorf("read deepseek tools response: %w", err)
 	}
 
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode >= http.StatusBadRequest && !HasIndependentDeepSeekSearchProvider(group) {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMessage, respBody) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -123,8 +141,8 @@ func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 		contentType = "application/json"
 	}
 	c.Data(resp.StatusCode, contentType, respBody)
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		// 非 2xx（错误/重定向）已原样透传给客户端：不是一次成功的调用，不计费。
+	if resp.StatusCode != http.StatusOK || !deepSeekToolsHasBillableResult(path, respBody) {
+		// 官方仅对 200 且有实际结果的请求计费。仍将上游响应原样交给客户端。
 		return nil, nil
 	}
 	return &OpenAIForwardResult{
@@ -134,4 +152,16 @@ func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 		Duration:        time.Since(upstreamStart),
 		WebSearchCalls:  1,
 	}, nil
+}
+
+func deepSeekToolsHasBillableResult(path string, body []byte) bool {
+	if !gjson.ValidBytes(body) {
+		return false
+	}
+	if path == DeepSeekToolsPathSearch {
+		results := gjson.GetBytes(body, "results")
+		return results.IsArray() && len(results.Array()) > 0
+	}
+	content := gjson.GetBytes(body, "content")
+	return path == DeepSeekToolsPathFetch && content.Type == gjson.String && strings.TrimSpace(content.String()) != ""
 }
