@@ -104,7 +104,7 @@ func hostedChatSearchSSE(round int) string {
 	}
 	chunk(map[string]any{}, finish)
 	emit([]any{}, map[string]any{"prompt_tokens": round * 10, "completion_tokens": round + 1, "total_tokens": round*10 + round + 1})
-	out.WriteString("data: [DONE]\n\n")
+	_, _ = out.WriteString("data: [DONE]\n\n")
 	return out.String()
 }
 
@@ -122,7 +122,9 @@ func TestDeepSeekHostedSearchChatAccountsExecuteAndResume(t *testing.T) {
 			require.Equal(t, []string{"/v1/chat/completions", "/v1/chat/completions"}, upstream.modelPaths, "hosted execution must not override the selected account's protocol")
 			require.Len(t, upstream.modelRequests, 2)
 			require.Len(t, upstream.searchRequests, 1)
-			searchProviderKey := c.MustGet("api_key").(*APIKey).Group.SearchProviderAPIKey
+			apiKey, ok := c.MustGet("api_key").(*APIKey)
+			require.True(t, ok)
+			searchProviderKey := apiKey.Group.SearchProviderAPIKey
 			require.NotNil(t, searchProviderKey)
 			expectedSearchAuthorization := "Bearer " + *searchProviderKey
 			require.Equal(t, []string{expectedSearchAuthorization}, upstream.searchKeys)
