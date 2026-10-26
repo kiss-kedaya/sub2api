@@ -8,7 +8,7 @@
       <template v-if="privateKey">
         <div class="crypto-private-key__field">
           <span id="crypto-private-key-label" class="crypto-private-key__label">{{ t('admin.crypto.privateKey') }}</span>
-          <pre id="crypto-private-key-value" data-testid="private-key-value" aria-labelledby="crypto-private-key-label">{{ visible ? privateKey : '••••••••••••••••••••••••••••••••' }}</pre>
+          <pre id="crypto-private-key-value" ref="privateKeyElement" data-testid="private-key-value" aria-labelledby="crypto-private-key-label">{{ visible ? privateKey : '••••••••••••••••••••••••••••••••' }}</pre>
         </div>
         <div class="crypto-private-key__actions">
           <button type="button" class="btn btn-secondary btn-sm" :aria-pressed="visible" aria-controls="crypto-private-key-value" @click="visible = !visible">
@@ -52,6 +52,7 @@ const securityDialog = ref<InstanceType<typeof CryptoSecurityDialog> | null>(nul
 const showResult = ref(false)
 const displayedAddress = ref<ExportAddress | null>(null)
 const privateKey = ref('')
+const privateKeyElement = ref<HTMLElement | null>(null)
 const visible = ref(false)
 const copyNotice = ref('')
 const remainingSeconds = ref(0)
@@ -60,6 +61,9 @@ let displayTimer: ReturnType<typeof setInterval> | undefined
 let controller: AbortController | undefined
 
 function clearPrivateKey() {
+  // BaseDialog may keep its old slot nodes during a leave transition, while
+  // unmounting can cancel Vue's queued render. Erase exposed text immediately.
+  if (privateKeyElement.value) privateKeyElement.value.textContent = ''
   if (displayTimer) clearInterval(displayTimer)
   displayTimer = undefined
   privateKey.value = ''
