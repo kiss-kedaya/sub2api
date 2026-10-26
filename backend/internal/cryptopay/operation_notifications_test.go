@@ -21,7 +21,7 @@ func (p *walletOperationPush) PushToAdmins(_ context.Context, title, body, _ str
 }
 
 func TestWalletOperationNotificationsAreFixedMetadataAndFailClosed(t *testing.T) {
-	for _, action := range []string{"sweep", "destination_change", "export_mnemonics"} {
+	for _, action := range []string{"sweep", "destination_change", "export_mnemonics", "export_private_key"} {
 		for _, phase := range []string{"requested", "verified"} {
 			s := &Service{}
 			push := &walletOperationPush{}
