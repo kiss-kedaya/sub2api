@@ -33,6 +33,7 @@ const (
 
 type deepSeekHostedCall struct {
 	itemID, callID, arguments, searchID, query string
+	name, url                                  string
 	index                                      int
 	sources                                    []map[string]string
 	status                                     string
@@ -91,7 +92,7 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 	}
 	hostedDeclared := false
 	for _, tool := range gjson.GetBytes(prepared, "tools").Array() {
-		if tool.Get("type").String() == "function" && tool.Get("name").String() == deepSeekHostedSearchToolName {
+		if tool.Get("type").String() == "function" && isDeepSeekHostedToolName(tool.Get("name").String()) {
 			hostedDeclared = true
 			break
 		}
@@ -162,7 +163,9 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		state.addResult(result)
 		if len(writer.response) > 0 {
 			state.mergeUsage(gjson.GetBytes(writer.response, "usage"))
-			writer.captureOutput()
+			if writer.err == nil {
+				writer.captureOutput()
+			}
 		}
 		// The recursive context owns per-attempt observations; carry only operation
 		// metadata back to the outer handler, never replace its request or identity.
@@ -229,7 +232,11 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 				outputs[call.callID] = `{"error":"search call limit reached; continue with available results"}`
 			} else {
 				state.attempted++
-				outputs[call.callID] = s.runDeepSeekHostedSearch(ctx, c, account, group, state, call)
+				if isDeepSeekHostedFetchToolName(call.name) {
+					outputs[call.callID] = s.runDeepSeekHostedFetch(ctx, c, account, group, state, call)
+				} else {
+					outputs[call.callID] = s.runDeepSeekHostedSearch(ctx, c, account, group, state, call)
+				}
 			}
 			if ctx.Err() != nil {
 				return fail(ctx.Err())
@@ -378,7 +385,7 @@ func (r *deepSeekHostedRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func deepSeekHostedRemoveTool(body []byte) ([]byte, error) {
 	tools := make([]json.RawMessage, 0)
 	for _, tool := range gjson.GetBytes(body, "tools").Array() {
-		if tool.Get("name").String() != deepSeekHostedSearchToolName {
+		if !isDeepSeekHostedToolName(tool.Get("name").String()) {
 			tools = append(tools, json.RawMessage(tool.Raw))
 		}
 	}
@@ -393,7 +400,7 @@ func deepSeekHostedRemoveTool(body []byte) ([]byte, error) {
 		}
 	}
 	choice := gjson.GetBytes(out, "tool_choice")
-	if choice.Get("name").String() == deepSeekHostedSearchToolName || choice.String() == "required" {
+	if isDeepSeekHostedToolName(choice.Get("name").String()) || choice.String() == "required" {
 		out, err = sjson.SetBytes(out, "tool_choice", "auto")
 	}
 	return out, err
@@ -498,7 +505,8 @@ func (w *deepSeekHostedRoundWriter) ownedCall(item gjson.Result, original int) *
 		call = w.ownedIndices[original]
 	}
 	if call != nil {
-		if call.index != index || call.callID != "" && callID != "" && call.callID != callID {
+		if call.index != index || call.callID != "" && callID != "" && call.callID != callID ||
+			call.name != item.Get("name").String() {
 			w.err = errors.New("deepseek hosted search changed a tool call identity within one output slot")
 			return call
 		}
@@ -516,7 +524,7 @@ func (w *deepSeekHostedRoundWriter) ownedCall(item gjson.Result, original int) *
 		}
 		return call
 	}
-	call = &deepSeekHostedCall{itemID: id, callID: callID, arguments: item.Get("arguments").String(), index: index, searchID: "ws_" + strings.ReplaceAll(uuid.NewString(), "-", ""), status: "in_progress"}
+	call = &deepSeekHostedCall{itemID: id, callID: callID, name: item.Get("name").String(), arguments: item.Get("arguments").String(), index: index, searchID: "ws_" + strings.ReplaceAll(uuid.NewString(), "-", ""), status: "in_progress"}
 	if w.ownedIndices == nil {
 		w.ownedIndices = make(map[int]*deepSeekHostedCall)
 	}
@@ -530,6 +538,18 @@ func (w *deepSeekHostedRoundWriter) ownedCall(item gjson.Result, original int) *
 		}
 	}
 	return call
+}
+
+func (w *deepSeekHostedRoundWriter) validateOwnedSlot(item gjson.Result, original int) error {
+	call := w.ownedIndices[original]
+	if call == nil {
+		return nil
+	}
+	if item.Get("type").String() != "function_call" || item.Get("name").String() != call.name ||
+		(call.callID != "" && item.Get("call_id").String() != call.callID) {
+		return errors.New("deepseek hosted search changed a tool call identity within one output slot")
+	}
+	return nil
 }
 
 func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
@@ -579,7 +599,12 @@ func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
 		return w.err
 	}
 	item := gjson.GetBytes(raw, "item")
-	if item.Get("type").String() == "function_call" && item.Get("name").String() == deepSeekHostedSearchToolName {
+	if item.IsObject() || kind == "response.output_item.added" || kind == "response.output_item.done" {
+		if err := w.validateOwnedSlot(item, int(gjson.GetBytes(raw, "output_index").Int())); err != nil {
+			return err
+		}
+	}
+	if item.Get("type").String() == "function_call" && isDeepSeekHostedToolName(item.Get("name").String()) {
 		w.ownedCall(item, int(gjson.GetBytes(raw, "output_index").Int()))
 		return w.err
 	}
@@ -647,9 +672,20 @@ func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
 }
 
 func (w *deepSeekHostedRoundWriter) registerSnapshotCalls() {
-	for i, item := range gjson.GetBytes(w.response, "output").Array() {
+	items := gjson.GetBytes(w.response, "output").Array()
+	for original := range w.ownedIndices {
+		if original >= len(items) {
+			w.err = errors.New("deepseek hosted search lost an owned tool call in the terminal response")
+			return
+		}
+		if err := w.validateOwnedSlot(items[original], original); err != nil {
+			w.err = err
+			return
+		}
+	}
+	for i, item := range items {
 		w.index(i)
-		if item.Get("type").String() == "function_call" && item.Get("name").String() == deepSeekHostedSearchToolName {
+		if item.Get("type").String() == "function_call" && isDeepSeekHostedToolName(item.Get("name").String()) {
 			w.ownedCall(item, i)
 		}
 	}
@@ -657,7 +693,7 @@ func (w *deepSeekHostedRoundWriter) registerSnapshotCalls() {
 
 func (w *deepSeekHostedRoundWriter) captureOutput() {
 	for i, item := range gjson.GetBytes(w.response, "output").Array() {
-		if item.Get("type").String() == "function_call" && item.Get("name").String() == deepSeekHostedSearchToolName {
+		if item.Get("type").String() == "function_call" && isDeepSeekHostedToolName(item.Get("name").String()) {
 			continue
 		}
 		index := w.index(i)
@@ -677,7 +713,7 @@ func (w *deepSeekHostedRoundWriter) captureOutput() {
 func (w *deepSeekHostedRoundWriter) hasClientCalls() bool {
 	for _, item := range gjson.GetBytes(w.response, "output").Array() {
 		t := item.Get("type").String()
-		if t == "function_call" && item.Get("name").String() != deepSeekHostedSearchToolName || t == "custom_tool_call" || t == "local_shell_call" || t == "tool_search_call" {
+		if t == "function_call" && !isDeepSeekHostedToolName(item.Get("name").String()) || t == "custom_tool_call" || t == "local_shell_call" || t == "tool_search_call" {
 			return true
 		}
 	}
@@ -704,6 +740,12 @@ func (w *deepSeekHostedRoundWriter) writeBufferedError() error {
 
 func deepSeekHostedSearchItem(call *deepSeekHostedCall) map[string]any {
 	action := map[string]any{"type": "search", "query": call.query}
+	if isDeepSeekHostedFetchToolName(call.name) {
+		action = map[string]any{"type": "open_page"}
+		if call.url != "" {
+			action["url"] = call.url
+		}
+	}
 	if len(call.sources) > 0 {
 		action["sources"] = call.sources
 	}
