@@ -18,12 +18,13 @@ func isDeepSeekHostedSearchToolType(toolType string) bool {
 	if toolType == "web_search" || toolType == "web_search_preview" {
 		return true
 	}
-	if !strings.HasPrefix(toolType, "web_search_preview_") {
-		return false
+	for _, prefix := range []string{"web_search_preview_", "web_search_"} {
+		if strings.HasPrefix(toolType, prefix) {
+			_, err := time.Parse("2006_01_02", strings.TrimPrefix(toolType, prefix))
+			return err == nil
+		}
 	}
-	suffix := strings.TrimPrefix(toolType, "web_search_preview_")
-	_, err := time.Parse("2006_01_02", suffix)
-	return err == nil
+	return false
 }
 
 // The hosted search name belongs to this bridge only. Client functions are
@@ -124,7 +125,7 @@ func deepSeekHostedSearchDescription(tool gjson.Result) (string, error) {
 	var unsupported string
 	tool.ForEach(func(key, value gjson.Result) bool {
 		switch key.String() {
-		case "type", "filters", "allowed_domains", "user_location", "search_context_size", "external_web_access":
+		case "type", "filters", "allowed_domains", "user_location", "search_context_size", "external_web_access", "indexed_web_access", "search_content_types":
 		default:
 			unsupported = key.String()
 		}
@@ -133,20 +134,50 @@ func deepSeekHostedSearchDescription(tool gjson.Result) (string, error) {
 	if unsupported != "" {
 		return "", fmt.Errorf("deepseek hosted search: unsupported option %s", unsupported)
 	}
+	// Codex may advertise both text and image search. The independent DeepSeek
+	// provider returns text web results, so a mixed declaration can use text;
+	// an image-only request must fail before any paid model or search call.
+	contentTypes := tool.Get("search_content_types")
+	if contentTypes.Exists() && contentTypes.Type != gjson.Null {
+		if !contentTypes.IsArray() || len(contentTypes.Array()) == 0 {
+			return "", fmt.Errorf("deepseek hosted search: search_content_types must be a non-empty array of text or image")
+		}
+		hasText := false
+		for _, contentType := range contentTypes.Array() {
+			if contentType.Type != gjson.String || (contentType.String() != "text" && contentType.String() != "image") {
+				return "", fmt.Errorf("deepseek hosted search: search_content_types supports only text or image")
+			}
+			hasText = hasText || contentType.String() == "text"
+		}
+		if !hasText {
+			return "", fmt.Errorf("deepseek hosted search: image-only search is not supported by the text search provider")
+		}
+	}
 	if access := tool.Get("external_web_access"); access.Exists() && (access.Type != gjson.True && access.Type != gjson.False) {
 		return "", fmt.Errorf("deepseek hosted search: external_web_access must be boolean")
 	} else if access.Type == gjson.False {
 		return "", fmt.Errorf("deepseek hosted search: external_web_access=false is not supported by live search")
+	}
+	if indexed := tool.Get("indexed_web_access"); indexed.Exists() && indexed.Type != gjson.Null {
+		if indexed.Type != gjson.True && indexed.Type != gjson.False {
+			return "", fmt.Errorf("deepseek hosted search: indexed_web_access must be boolean")
+		}
+		if indexed.Type == gjson.True {
+			return "", fmt.Errorf("deepseek hosted search: indexed_web_access=true is not supported by the live search provider")
+		}
 	}
 	domains, err := deepSeekHostedSearchAllowedDomains(tool)
 	if err != nil {
 		return "", err
 	}
 	description := "Search the web for current facts. Use only when search is needed. Return a focused search query and optionally a result count."
+	if contentTypes.IsArray() {
+		description += " This provider returns text web results; image search results are unavailable."
+	}
 	if len(domains) > 0 {
 		description += " Search is restricted to these domains: " + strings.Join(domains, ", ") + "."
 	}
-	if location := tool.Get("user_location"); location.Exists() {
+	if location := tool.Get("user_location"); location.Exists() && location.Type != gjson.Null {
 		if !location.IsObject() {
 			return "", fmt.Errorf("deepseek hosted search: user_location must be an object")
 		}
@@ -163,7 +194,7 @@ func deepSeekHostedSearchDescription(tool gjson.Result) (string, error) {
 
 func deepSeekHostedSearchAllowedDomains(tool gjson.Result) ([]string, error) {
 	filters := tool.Get("filters")
-	if filters.Exists() {
+	if filters.Exists() && filters.Type != gjson.Null {
 		if !filters.IsObject() {
 			return nil, fmt.Errorf("deepseek hosted search: filters must be an object")
 		}

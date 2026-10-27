@@ -11,7 +11,7 @@ import (
 )
 
 func TestPrepareDeepSeekHostedSearchReplacesOnlyHostedTool(t *testing.T) {
-	for _, searchType := range []string{"web_search", "web_search_preview", "web_search_preview_2025_03_11"} {
+	for _, searchType := range []string{"web_search", "web_search_preview", "web_search_preview_2025_03_11", "web_search_2025_08_26"} {
 		t.Run(searchType, func(t *testing.T) {
 			body := []byte(`{"model":"deepseek-flash","stream":true,"tools":[{"type":"function","name":"local_tool","parameters":{"type":"object"}},{"type":"` + searchType + `"},{"type":"local_shell"}],"tool_choice":{"type":"` + searchType + `"},"input":"news"}`)
 			next, changed, err := prepareDeepSeekHostedSearchRequest(body)
@@ -27,6 +27,33 @@ func TestPrepareDeepSeekHostedSearchReplacesOnlyHostedTool(t *testing.T) {
 			require.Equal(t, int64(50), gjson.GetBytes(next, "tools.1.parameters.properties.count.maximum").Int())
 			require.Equal(t, deepSeekHostedSearchToolName, gjson.GetBytes(next, "tool_choice.name").String())
 			require.True(t, gjson.GetBytes(next, "stream").Bool())
+		})
+	}
+}
+
+func TestPrepareDeepSeekHostedSearchCodexContentTypes(t *testing.T) {
+	for _, contentTypes := range []string{`["text","image"]`, `["text"]`, `["image","text"]`, `null`} {
+		t.Run(contentTypes, func(t *testing.T) {
+			body := []byte(`{"model":"deepseek-flash","stream":true,"tools":[{"type":"web_search","external_web_access":true,"indexed_web_access":null,"search_content_types":` + contentTypes + `,"filters":null,"user_location":null}],"tool_choice":{"type":"web_search"},"input":"Find the current documentation"}`)
+			next, changed, err := prepareDeepSeekHostedSearchRequest(body)
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.Equal(t, deepSeekHostedSearchToolName, gjson.GetBytes(next, "tools.0.name").String())
+			require.Equal(t, deepSeekHostedSearchToolName, gjson.GetBytes(next, "tool_choice.name").String())
+			require.False(t, gjson.GetBytes(next, "tools.0.search_content_types").Exists(), "provider-specific options must not leak into the function schema")
+			if contentTypes != "null" {
+				require.Contains(t, gjson.GetBytes(next, "tools.0.description").String(), "text web results")
+				require.Contains(t, gjson.GetBytes(next, "tools.0.description").String(), "image search results are unavailable")
+			}
+		})
+	}
+	for _, contentTypes := range []string{`["image"]`, `[]`, `"text"`, `[1]`, `["video"]`, `["text",null]`} {
+		t.Run("invalid_"+contentTypes, func(t *testing.T) {
+			body := []byte(`{"tools":[{"type":"web_search","search_content_types":` + contentTypes + `}],"input":"news"}`)
+			next, changed, err := prepareDeepSeekHostedSearchRequest(body)
+			require.Error(t, err)
+			require.False(t, changed)
+			require.Equal(t, body, next)
 		})
 	}
 }
@@ -76,6 +103,7 @@ func TestPrepareDeepSeekHostedSearchOptionsAreKeptOrExplicitlyRejected(t *testin
 	require.Equal(t, []string{"example.com", "docs.example.com"}, domains)
 	for _, options := range []string{
 		`"external_web_access":false`, `"filters":{"blocked_domains":["example.com"]}`,
+		`"indexed_web_access":true`, `"indexed_web_access":"true"`,
 		`"search_context_size":"huge"`, `"user_location":"Tokyo"`, `"unrecognized":true`,
 		`"filters":{"allowed_domains":["example.com OR site:evil.com"]}`,
 		`"filters":{"allowed_domains":["https://example.com"]}`,
