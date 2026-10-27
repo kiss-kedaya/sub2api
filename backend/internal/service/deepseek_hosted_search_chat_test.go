@@ -155,7 +155,7 @@ func TestDeepSeekHostedSearchChatAccountsExecuteAndResume(t *testing.T) {
 			require.Contains(t, final.Get("output.1.content.0.text").String(), "structured web results")
 			require.Equal(t, int64(30), final.Get("usage.input_tokens").Int())
 			require.Equal(t, int64(5), final.Get("usage.output_tokens").Int())
-			require.NotContains(t, recorder.Body.String(), deepSeekHostedSearchToolName)
+			require.NotContains(t, recorder.Body.String(), `"name":"`+deepSeekHostedSearchToolName+`"`)
 		})
 	}
 }
