@@ -129,6 +129,8 @@ describe('channel operations workflow', () => {
   it('keeps the channel selection and editor when a save response omits its identity', async () => {
     vi.mocked(channels.update).mockResolvedValue({} as channels.Channel)
     const w = mount(ChannelOperationsView); await flushPromises()
+    // Initial loading canonicalizes the URL. Only saving must preserve it.
+    state.replace.mockClear()
     await w.get('[data-testid="edit-channel"]').trigger('click')
     const form = w.get('[data-testid="dialog"] form')
     await form.get('input').setValue('Renamed')

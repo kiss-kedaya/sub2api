@@ -96,7 +96,7 @@ func testAPIKeyLiveAdmission(t *testing.T, clients []*redis.Client) {
 	for i, client := range []*concurrencyCache{cache, other} {
 		go func(i int, client *concurrencyCache) {
 			<-start
-			ok, err := client.AcquireLiveLease(ctx, int64(910+i), 0, int64(920+i), 0, 904, 2, []string{"pending-sdp-a", "pending-sdp-b"}[i], true)
+			ok, err := acquireAPIKeyLiveAdmissionLease(ctx, client, int64(910+i), 0, int64(920+i), 0, 904, 2, []string{"pending-sdp-a", "pending-sdp-b"}[i])
 			if err == nil && !ok {
 				err = service.ErrAPIKeyConcurrencyLimit
 			}
@@ -109,7 +109,7 @@ func testAPIKeyLiveAdmission(t *testing.T, clients []*redis.Client) {
 	counts, err := cache.GetAPIKeyConcurrencyBatch(ctx, []int64{904})
 	require.NoError(t, err)
 	require.Equal(t, 2, counts[904], "two pending SDP requests each own exactly one member")
-	ok, err := other.AcquireLiveLease(ctx, 912, 0, 922, 0, 904, 2, "third-sdp", true)
+	ok, err := acquireAPIKeyLiveAdmissionLease(ctx, other, 912, 0, 922, 0, 904, 2, "third-sdp")
 	require.ErrorIs(t, err, service.ErrAPIKeyConcurrencyLimit)
 	require.False(t, ok, "regular-slot handoff allowance must not bypass key capacity")
 	ok, err = other.AcquireAPIKeySlot(ctx, 904, 2, "normal")
@@ -124,6 +124,39 @@ func testAPIKeyLiveAdmission(t *testing.T, clients []*redis.Client) {
 	require.Equal(t, 2, counts[904], "one Live plus one ordinary request fills limit two")
 	require.NoError(t, other.ReleaseAPIKeySlot(ctx, 904, "normal"))
 	require.NoError(t, cache.ReleaseLiveLease(ctx, 911, 921, 904, "pending-sdp-b"))
+}
+
+// Live admission first owns ordinary reservations, then moves their exact
+// identities into one joint lease. The legacy Live API has no KeyMax argument.
+func acquireAPIKeyLiveAdmissionLease(ctx context.Context, cache *concurrencyCache, accountID int64, accountMax int, userID int64, userMax int, keyID int64, keyMax int, leaseID string) (bool, error) {
+	request := service.LiveLeaseTransferRequest{
+		AccountID: accountID, AccountMax: accountMax, AccountRequestID: leaseID + ":account",
+		UserID: userID, UserMax: userMax, UserRequestID: leaseID + ":user",
+		APIKeyID: keyID, APIKeyMax: keyMax, KeyRequestID: leaseID + ":key", LeaseID: leaseID,
+	}
+	if accountMax > 0 {
+		acquired, err := cache.AcquireAccountSlot(ctx, accountID, accountMax, request.AccountRequestID)
+		if err != nil || !acquired {
+			return acquired, err
+		}
+		defer func() { _ = cache.ReleaseAccountSlot(ctx, accountID, request.AccountRequestID) }()
+	}
+	if userMax > 0 {
+		acquired, err := cache.AcquireUserSlot(ctx, userID, userMax, request.UserRequestID)
+		if err != nil || !acquired {
+			return acquired, err
+		}
+		defer func() { _ = cache.ReleaseUserSlot(ctx, userID, request.UserRequestID) }()
+	}
+	acquired, err := cache.AcquireAPIKeySlot(ctx, keyID, keyMax, request.KeyRequestID)
+	if err != nil {
+		return false, err
+	}
+	if !acquired {
+		return false, service.ErrAPIKeyConcurrencyLimit
+	}
+	defer func() { _ = cache.ReleaseAPIKeySlot(ctx, keyID, request.KeyRequestID) }()
+	return cache.AcquireLiveLeaseTransferring(ctx, request)
 }
 
 func TestAPIKeyAdmissionPruningAndSameRequest(t *testing.T) {
@@ -167,20 +200,20 @@ func TestAPIKeyAdmissionLiveSessionsShareLimit(t *testing.T) {
 	cache, cacheOK := NewConcurrencyCache(rdb, 1, 60).(*concurrencyCache)
 	require.True(t, cacheOK)
 	ctx := context.Background()
-	ok, err := cache.AcquireLiveLease(ctx, 10, 5, 20, 5, 30, 1, "live", false)
+	ok, err := acquireAPIKeyLiveAdmissionLease(ctx, cache, 10, 5, 20, 5, 30, 1, "live")
 	require.NoError(t, err)
 	require.True(t, ok)
 	ok, err = cache.AcquireAPIKeySlot(ctx, 30, 1, "http")
 	require.NoError(t, err)
 	require.False(t, ok)
-	ok, err = cache.AcquireLiveLease(ctx, 11, 5, 21, 5, 30, 1, "live-other", false)
+	ok, err = acquireAPIKeyLiveAdmissionLease(ctx, cache, 11, 5, 21, 5, 30, 1, "live-other")
 	require.ErrorIs(t, err, service.ErrAPIKeyConcurrencyLimit)
 	require.False(t, ok)
 	require.NoError(t, cache.ReleaseLiveLease(ctx, 10, 20, 30, "live"))
 	ok, err = cache.AcquireAPIKeySlot(ctx, 30, 1, "http")
 	require.NoError(t, err)
 	require.True(t, ok)
-	ok, err = cache.AcquireLiveLease(ctx, 11, 5, 21, 5, 30, 1, "live-other", false)
+	ok, err = acquireAPIKeyLiveAdmissionLease(ctx, cache, 11, 5, 21, 5, 30, 1, "live-other")
 	require.ErrorIs(t, err, service.ErrAPIKeyConcurrencyLimit)
 	require.False(t, ok)
 }
