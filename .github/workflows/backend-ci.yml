@@ -191,7 +191,7 @@ jobs:
         run: make test-frontend
       - name: Operator feature frontend regression
         working-directory: frontend
-        run: pnpm exec vitest run src/api/__tests__/groupCacheTest.spec.ts src/views/admin/__tests__/GroupCacheTestView.spec.ts src/components/account/__tests__/SchedulableTimerControl.spec.ts src/components/usage/__tests__/TrafficPanel.spec.ts src/components/account/__tests__/geminiCacheSettings.spec.ts src/components/admin/operations/__tests__ src/components/group/__tests__ src/views/admin/__tests__/OpsAutomationView.spec.ts src/views/admin/__tests__/ServerlessView.spec.ts src/views/admin/__tests__/AccountOpsView.spec.ts src/views/admin/__tests__/ChannelOperationsView.spec.ts
+        run: pnpm exec vitest run src/api/__tests__/groupCacheTest.spec.ts src/views/admin/__tests__/GroupCacheTestView.spec.ts src/components/account/__tests__/SchedulableTimerControl.spec.ts src/components/usage/__tests__/TrafficPanel.spec.ts src/components/account/__tests__/geminiCacheSettings.spec.ts src/components/admin/operations/__tests__ src/components/group/__tests__ src/views/admin/__tests__/OpsAutomationView.spec.ts src/views/admin/__tests__/ServerlessView.spec.ts src/views/admin/__tests__/AccountOpsView.spec.ts src/views/admin/__tests__/ChannelOperationsView.spec.ts src/views/admin/__tests__/RequestCaptureDiagnostics.spec.ts
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build

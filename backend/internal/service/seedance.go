@@ -147,7 +147,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 	resp, err := s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(started).Milliseconds())
 	if err != nil {
-		return nil, fmt.Errorf("Seedance upstream transport failed")
+		return nil, fmt.Errorf("seedance upstream transport failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	responseBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
@@ -186,7 +186,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 		}
 		if endpoint == SeedanceEndpointContent {
 			if result.VideoCount != 1 {
-				return nil, fmt.Errorf("Seedance video is not ready")
+				return nil, fmt.Errorf("seedance video is not ready")
 			}
 			return s.forwardVideoProviderContent(upstreamCtx, c, account, gjson.GetBytes(responseBody, "content.video_url").String(), result)
 		}
