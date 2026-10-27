@@ -5,7 +5,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -132,6 +134,7 @@ func TestDeepSeekNativeReasoningReplayPreservesExplicitContentAndOpaqueBinding(t
 	for _, request := range []string{
 		`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1","content":[{"type":"reasoning_text","text":"client-provided"}]}]}`,
 		`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1","encrypted_content":"different"}]}`,
+		`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1"}]}`,
 		`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_unknown","summary":[{"type":"summary_text","text":"never fabricate full reasoning from this"}]}]}`,
 	} {
 		c, _ := deepSeekNativeReplayContext(21, "binding-thread")
@@ -142,6 +145,132 @@ func TestDeepSeekNativeReasoningReplayPreservesExplicitContentAndOpaqueBinding(t
 		c, _ := deepSeekNativeReplayContext(21, "binding-thread")
 		require.Equal(t, request, svc.prepareDeepSeekNativeReasoningReplay(c, other, request))
 	}
+}
+
+func TestDeepSeekNativeReasoningReplayReusedContextRechecksIdentity(t *testing.T) {
+	cache := &reasoningRecordingCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+	account := deepSeekNativeReplayAccount()
+	c, _ := deepSeekNativeReplayContext(21, "initial-session")
+	svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(`{"model":"deepseek-v4.1-flash","input":"question"}`))
+	svc.cacheDeepSeekNativeReasoningBody(c, account, []byte(`{"output":[{"type":"reasoning","id":"rs_reused","content":[{"type":"reasoning_text","text":"this conversation only"}]}]}`))
+	svc.cache = &reasoningRecordingCache{getResp: cache.snapshotSets()}
+	request := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_reused"}]}`)
+	require.Equal(t, "this conversation only", gjson.GetBytes(svc.prepareDeepSeekNativeReasoningReplay(c, account, request), "input.0.content.0.text").String())
+	for _, tc := range []struct {
+		name, session, model, thread string
+		keyID                        int64
+	}{
+		{"changed-key", "initial-session", "deepseek-v4.1-flash", "", 22},
+		{"changed-model", "initial-session", "deepseek-v4-pro", "", 21},
+		{"changed-session", "different-session", "deepseek-v4.1-flash", "", 21},
+		{"changed-thread", "initial-session", "deepseek-v4.1-flash", "different-thread", 21},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Reuse the exact gin context, as a WS connection does between turns.
+			c.Set("api_key", &APIKey{ID: tc.keyID})
+			c.Request.Header.Set("session-id", tc.session)
+			c.Request.Header.Set("thread-id", tc.thread)
+			body, err := sjson.SetBytes(request, "model", tc.model)
+			require.NoError(t, err)
+			require.Equal(t, body, svc.prepareDeepSeekNativeReasoningReplay(c, account, body))
+		})
+	}
+	c.Set("api_key", &APIKey{ID: 21})
+	c.Request.Header.Set("session-id", "initial-session")
+	c.Request.Header.Del("thread-id")
+	require.Equal(t, "this conversation only", gjson.GetBytes(svc.prepareDeepSeekNativeReasoningReplay(c, account, request), "input.0.content.0.text").String())
+	c.Set("api_key", &APIKey{ID: 22})
+	require.Nil(t, svc.newDeepSeekNativeReasoningRecorder(c, account), "an identity change must not write through a prior scope even before Forward runs")
+}
+
+func TestDeepSeekNativeReasoningReplayHasTotalRestoreBudget(t *testing.T) {
+	cache := &reasoningRecordingCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+	account := deepSeekNativeReplayAccount()
+	c, _ := deepSeekNativeReplayContext(21, "large-history")
+	svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(`{"model":"deepseek-v4.1-flash","input":"question"}`))
+	value, _ := c.Get(deepSeekNativeReasoningScopeKey)
+	scope, ok := value.(string)
+	require.True(t, ok)
+	content, err := json.Marshal([]map[string]string{{"type": "reasoning_text", "text": strings.Repeat("r", 512<<10)}})
+	require.NoError(t, err)
+	entry, err := json.Marshal(deepSeekNativeReasoningEntry{Content: content})
+	require.NoError(t, err)
+	entryText := string(entry)
+	getResp := make(map[string]string)
+	items := []map[string]any{{"role": "user", "content": "question"}}
+	for i := 0; i < deepSeekNativeReasoningMaxItems; i++ {
+		id := fmt.Sprintf("rs_large_%d", i)
+		items = append(items, map[string]any{"type": "reasoning", "id": id, "summary": []any{}})
+		getResp[deepSeekNativeReasoningCacheKey(scope, id)] = entryText
+	}
+	request, err := json.Marshal(map[string]any{"model": "deepseek-v4.1-flash", "input": items, "opaque": json.Number("9007199254740993")})
+	require.NoError(t, err)
+	svc.cache = &reasoningRecordingCache{getResp: getResp}
+	out := svc.prepareDeepSeekNativeReasoningReplay(c, account, request)
+	restored, restoredBytes := 0, 0
+	for _, item := range gjson.GetBytes(out, "input").Array() {
+		if content := item.Get("content"); item.Get("type").String() == "reasoning" && content.IsArray() {
+			restored++
+			restoredBytes += len(content.Raw)
+		}
+	}
+	require.Positive(t, restored)
+	require.Less(t, restored, deepSeekNativeReasoningMaxItems)
+	require.LessOrEqual(t, restoredBytes, deepSeekNativeReasoningMaxBytes)
+	require.LessOrEqual(t, len(out)-len(request), deepSeekNativeReasoningMaxBytes)
+	require.Equal(t, "9007199254740993", gjson.GetBytes(out, "opaque").Raw)
+}
+
+func TestDeepSeekNativeReasoningReplayRequiresConversationAnchor(t *testing.T) {
+	cache := &reasoningRecordingCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+	account := deepSeekNativeReplayAccount()
+	c, _ := deepSeekNativeReplayContext(21, "")
+	for _, request := range []string{
+		`{"model":"deepseek-v4.1-flash"}`,
+		`{"model":"deepseek-v4.1-flash","input":[]}`,
+		`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1"}]}`,
+		`{"model":"deepseek-v4.1-flash","input":[{"role":"user","content":"   "},{"type":"reasoning","id":"rs_1"}]}`,
+	} {
+		// Even a prior anchored turn on this context cannot authorize an
+		// anonymous model-only turn to access its cache namespace.
+		svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(`{"model":"deepseek-v4.1-flash","input":"real question"}`))
+		require.Equal(t, request, string(svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(request))))
+		require.Nil(t, svc.newDeepSeekNativeReasoningRecorder(c, account))
+	}
+}
+
+func TestDeepSeekNativeReasoningReplayOpaqueCannotBeAddedToPlainItem(t *testing.T) {
+	cache := &reasoningRecordingCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+	account := deepSeekNativeReplayAccount()
+	c, _ := deepSeekNativeReplayContext(21, "plain-thread")
+	svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(`{"model":"deepseek-v4.1-flash","input":"q"}`))
+	svc.cacheDeepSeekNativeReasoningBody(c, account, []byte(`{"output":[{"type":"reasoning","id":"rs_plain","content":[{"type":"reasoning_text","text":"real"}]}]}`))
+	svc.cache = &reasoningRecordingCache{getResp: cache.snapshotSets()}
+	request := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_plain","encrypted_content":"invented"}]}`)
+	require.Equal(t, request, svc.prepareDeepSeekNativeReasoningReplay(c, account, request))
+}
+
+func TestDeepSeekNativeReasoningReplayHostedContinuationKeepsAnchoredScope(t *testing.T) {
+	svc := &OpenAIGatewayService{cache: &reasoningRecordingCache{}}
+	account := deepSeekNativeReplayAccount()
+	c, _ := deepSeekNativeReplayContext(21, "")
+	svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(`{"model":"deepseek-v4.1-flash","input":"question","tools":[{"type":"web_search"}]}`))
+	initial, _ := c.Get(deepSeekNativeReasoningScopeKey)
+	require.NotNil(t, initial)
+	shadow := c.Copy()
+	shadow.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), deepSeekHostedSearchSkipContextKey{}, true))
+	request := []byte(`{"model":"deepseek-v4.1-flash","input":[{"role":"user","content":"question"}],"tools":[{"type":"function","name":"web_search"}]}`)
+	svc.prepareDeepSeekNativeReasoningReplay(shadow, account, request)
+	continued, _ := shadow.Get(deepSeekNativeReasoningScopeKey)
+	require.Equal(t, initial, continued, "trusted tool declaration rewriting must not orphan the original anonymous turn")
+	shadow.Set("api_key", &APIKey{ID: 22})
+	svc.prepareDeepSeekNativeReasoningReplay(shadow, account, request)
+	changed, _ := shadow.Get(deepSeekNativeReasoningScopeKey)
+	require.NotEqual(t, initial, changed, "even internal recursion must recheck its authenticated key")
 }
 
 type failingNativeReasoningCache struct {
