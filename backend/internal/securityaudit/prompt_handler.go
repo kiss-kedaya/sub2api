@@ -9,6 +9,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,7 +26,10 @@ type PromptAdminService interface {
 	DeleteByFilter(context.Context, DeleteByFilterRequest, int64) (*DeleteResult, error)
 }
 
-type PromptAdminHandler struct{ service PromptAdminService }
+type PromptAdminHandler struct {
+	service   PromptAdminService
+	penalties *service.SecurityPenaltyService
+}
 
 func NewPromptAdminHandler(service PromptAdminService) *PromptAdminHandler {
 	return &PromptAdminHandler{service: service}

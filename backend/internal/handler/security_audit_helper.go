@@ -3,6 +3,7 @@ package handler
 import (
 	"crypto/sha256"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
@@ -102,12 +103,14 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 				if entry, ok := cached.(securityAuditWSDedupeEntry); ok &&
 					entry.stage == request.Stage && entry.turn == turnNo && entry.bodyHash == bodyHash {
 					decision := entry.decision
+					decision = bindSecurityAuditGroupConstraint(c, apiKey, decision)
 					logSecurityAuditDone(reqLog, request, decision, true)
 					return &decision
 				}
 			}
 			logSecurityAuditStart(reqLog, request, len(body), false)
 			decision := coordinator.Check(c.Request.Context(), request)
+			decision = bindSecurityAuditGroupConstraint(c, apiKey, decision)
 			if decision.Kind == securityaudit.DecisionAllow {
 				c.Set(securityAuditWSDedupeContextKey, securityAuditWSDedupeEntry{
 					stage: request.Stage, turn: turnNo, bodyHash: bodyHash, decision: decision,
@@ -119,11 +122,25 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 	}
 	logSecurityAuditStart(reqLog, request, len(body), false)
 	decision := coordinator.Check(c.Request.Context(), request)
+	decision = bindSecurityAuditGroupConstraint(c, apiKey, decision)
 	if decision.AllowNextStage && cacheCompletion {
 		c.Set(securityAuditCompletedContextKey, true)
 	}
 	logSecurityAuditDone(reqLog, request, decision, false)
 	return &decision
+}
+
+func bindSecurityAuditGroupConstraint(c *gin.Context, apiKey *service.APIKey, decision securityaudit.Decision) securityaudit.Decision {
+	if !decision.AllowNextStage {
+		return decision
+	}
+	ctx, err := service.ContextWithSecurityPenaltyGroupConstraint(c.Request.Context(), apiKey, decision.RestrictedGroupID)
+	if err != nil {
+		return securityaudit.Decision{Kind: securityaudit.DecisionBlock, HTTPStatus: http.StatusForbidden,
+			ErrorCode: "security_penalty_group_restricted", ClientMessage: "This conversation is restricted to the configured group; review your security records", AllowNextStage: false}
+	}
+	c.Request = c.Request.WithContext(ctx)
+	return decision
 }
 
 func logSecurityAuditStart(reqLog *zap.Logger, request securityaudit.Request, bodyBytes int, cached bool) {
@@ -164,6 +181,10 @@ func buildSecurityAuditRequest(c *gin.Context, apiKey *service.APIKey, subject m
 		APIKeyID: legacy.APIKeyID, APIKeyName: legacy.APIKeyName, GroupID: cloneSecurityAuditGroupID(legacy.GroupID),
 		GroupName: legacy.GroupName, Provider: legacy.Provider, Endpoint: legacy.Endpoint,
 		Protocol: legacy.Protocol, Model: legacy.Model, Body: body, Stage: strings.TrimSpace(stage),
+		PenaltySessionIdentity: service.ExtractClientSessionID(c),
+	}
+	if turn, ok := securityAuditWSTurn(c); ok && turn > 0 {
+		request.RequestID += ":turn:" + strconv.Itoa(turn)
 	}
 	if apiKey != nil && apiKey.User != nil {
 		request.Username = apiKey.User.Username

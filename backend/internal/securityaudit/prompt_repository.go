@@ -78,8 +78,9 @@ type JobRepository interface {
 }
 
 type PostgreSQLRepository struct {
-	db    *sql.DB
-	clock Clock
+	db             *sql.DB
+	clock          Clock
+	prepareFinding func(context.Context) (func(*sql.Tx, PromptSnapshot, *NormalizedResult) error, error)
 }
 
 func NewPostgreSQLRepository(db *sql.DB) *PostgreSQLRepository {
@@ -173,6 +174,10 @@ func (r *PostgreSQLRepository) Complete(ctx context.Context, job *Job, result *N
 	if job == nil || result == nil {
 		return nil, errors.New("prompt audit completion requires job and result")
 	}
+	finding, err := r.preparePenaltyFinding(ctx)
+	if err != nil {
+		return nil, err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -189,6 +194,11 @@ func (r *PostgreSQLRepository) Complete(ctx context.Context, job *Job, result *N
 	if shouldStorePromptAuditEvent(result.Decision, storePassEvents) {
 		event, err = insertEvent(ctx, tx, job.ID, job.Snapshot.Redacted(), job.ConfigVersion, result)
 		if err != nil {
+			return nil, err
+		}
+	}
+	if finding != nil {
+		if err = finding(tx, job.Snapshot, result); err != nil {
 			return nil, err
 		}
 	}
@@ -282,6 +292,10 @@ func (r *PostgreSQLRepository) RecordBlocking(ctx context.Context, snapshot Prom
 	if result == nil {
 		return nil, errors.New("prompt guard result required")
 	}
+	finding, err := r.preparePenaltyFinding(ctx)
+	if err != nil {
+		return nil, err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -295,6 +309,11 @@ func (r *PostgreSQLRepository) RecordBlocking(ctx context.Context, snapshot Prom
 	if shouldStorePromptAuditEvent(result.Decision, storePassEvents) {
 		event, err = insertEvent(ctx, tx, job.ID, snapshot.Redacted(), configVersion, result)
 		if err != nil {
+			return nil, err
+		}
+	}
+	if finding != nil {
+		if err = finding(tx, snapshot, result); err != nil {
 			return nil, err
 		}
 	}

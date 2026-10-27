@@ -59,6 +59,9 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
+		return nil, err
+	}
 	ctx = WithLocalQualityGroup(ctx, groupID)
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 优先检查 context 中的强制平台（/antigravity 路由）
@@ -127,6 +130,9 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
+	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
+		return nil, err
+	}
 	ctx = WithLocalQualityGroup(ctx, groupID)
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 调试日志：记录调度入口参数
@@ -145,6 +151,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	// 检查 Claude Code 客户端限制（可能会替换 groupID 为降级分组）
 	group, groupID, err := s.checkClaudeCodeRestriction(ctx, groupID)
 	if err != nil {
+		return nil, err
+	}
+	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
 		return nil, err
 	}
 	ctx = s.withGroupContext(ctx, group)
@@ -1023,6 +1032,9 @@ func (s *GatewayService) routingAccountIDsForRequest(ctx context.Context, groupI
 }
 
 func (s *GatewayService) resolveGatewayGroup(ctx context.Context, groupID *int64) (*Group, *int64, error) {
+	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
+		return nil, nil, err
+	}
 	if groupID == nil {
 		return nil, nil, nil
 	}
@@ -1030,6 +1042,9 @@ func (s *GatewayService) resolveGatewayGroup(ctx context.Context, groupID *int64
 	currentID := *groupID
 	visited := map[int64]struct{}{}
 	for {
+		if err := CheckSecurityPenaltySchedulingGroup(ctx, &currentID); err != nil {
+			return nil, nil, err
+		}
 		if _, seen := visited[currentID]; seen {
 			return nil, nil, fmt.Errorf("fallback group cycle detected")
 		}

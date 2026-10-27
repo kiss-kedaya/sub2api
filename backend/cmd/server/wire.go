@@ -155,6 +155,9 @@ func provideCleanup(
 					handlers.Gateway.StopGeminiExplicitCache()
 				}
 				if handlers != nil && handlers.Admin != nil {
+					if handlers.Admin.PromptAudit != nil {
+						handlers.Admin.PromptAudit.StopSecurityPenalties()
+					}
 					if handlers.Admin.Serverless != nil {
 						handlers.Admin.Serverless.Stop()
 					}

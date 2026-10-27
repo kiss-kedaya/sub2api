@@ -450,10 +450,12 @@ func newAPIKeyRouteIterator(ctx context.Context, apiKey *APIKey, groupIDs []int6
 	resolveMapping func(context.Context, *int64, string) (ChannelMappingResult, bool),
 	fallbackModel func(context.Context, *Group, string) string,
 ) apiKeyRouteIterator {
+	groupIDs, constraintErr := securityPenaltyRouteCandidateIDs(ctx, apiKey, groupIDs)
 	return apiKeyRouteIterator{
 		ctx: ctx, apiKey: apiKey, groupIDs: groupIDs, requestedModel: requestedModel,
 		hydrate: hydrate, resolveCandidate: resolveCandidate, catalog: catalog,
 		resolveMapping: resolveMapping, fallbackModel: fallbackModel,
+		err: constraintErr,
 	}
 }
 
@@ -498,7 +500,13 @@ func (r *apiKeyRouteIterator) loadNext() bool {
 		// Route authorization applies to the API-key-bound candidate. A Claude
 		// fallback is an official group-level redirect and must not be rejected
 		// again as if it were directly bound to the key.
-		if !apiKeyRouteGroupAllowed(routed) || !groupAllowsRequestedModel(routed.Group, r.requestedModel) {
+		if !apiKeyRouteGroupAllowed(routed) {
+			if securityPenaltyConstraint(r.ctx) != nil {
+				r.err = ErrSecurityPenaltyGroupRestricted
+			}
+			continue
+		}
+		if !groupAllowsRequestedModel(routed.Group, r.requestedModel) {
 			continue
 		}
 		if r.resolveCandidate != nil {
@@ -507,6 +515,10 @@ func (r *apiKeyRouteIterator) loadNext() bool {
 				r.err = err
 				continue
 			}
+		}
+		if err := CheckSecurityPenaltySelectedGroup(r.ctx, routed); err != nil {
+			r.err = err
+			continue
 		}
 		if routed == nil || routed.Group == nil || !groupAllowsRequestedModel(routed.Group, r.requestedModel) {
 			continue

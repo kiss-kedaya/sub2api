@@ -25,6 +25,7 @@ Compared with upstream, this tree is built around a production site that already
 - **API key smart routing** — one key can bind several groups in strict order; protocol mismatches (for example an OpenAI account on an Anthropic path) are skipped instead of being forced.
 - **Built-in recharge** — EasyPay (including relative `payurl`/`qrcode`), per-provider fee and multiplier, instance recharge terms. See [docs/PAYMENT_CN.md](docs/PAYMENT_CN.md).
 - **Usage dashboard** — 30-day window with hourly rollup when data exists, otherwise a direct `usage_logs` fallback.
+- **Operator controls** — connection timelines, scoped payload capture, cache tests, traffic reports, notifications, channel drilldowns, and managed proxies, with opt-in automation and provider channels. See the [operator capability guide](docs/operator-capabilities.md).
 - **Gateway reliability** — WebSocket client-close is not treated as account failure; oversized passthrough can fall back to HTTP bridge; Spark 429 stays model-scoped; failed forwards release session slots immediately.
 - **Ops-safe upgrades** — production `DATABASE_MIGRATION_MODE=validate` on the live process; schema changes are applied out of band. Version is a single file: `backend/cmd/server/VERSION`. GitHub Releases fire only on `v*` tags.
 

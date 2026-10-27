@@ -31,6 +31,10 @@ func RegisterUserRoutes(
 		user := authenticated.Group("/user")
 		{
 			user.GET("/profile", h.User.GetProfile)
+			if h.Admin != nil && h.Admin.PromptAudit != nil {
+				user.GET("/security/summary", h.Admin.PromptAudit.MyPenaltySummary)
+				user.GET("/security/events", h.Admin.PromptAudit.MyPenaltyEvents)
+			}
 			user.GET("/custom-endpoints", h.Setting.GetCustomEndpoints)
 			user.PUT("/password", h.User.ChangePassword)
 			user.PUT("", h.User.UpdateProfile)

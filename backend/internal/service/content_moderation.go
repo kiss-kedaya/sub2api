@@ -527,6 +527,7 @@ type ContentModerationHashCache interface {
 }
 
 type ContentModerationService struct {
+	securityPenalties        *SecurityPenaltyService
 	settingRepo              SettingRepository
 	repo                     ContentModerationRepository
 	hashCache                ContentModerationHashCache
@@ -863,6 +864,10 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return allow, nil
 	}
 	cfg := runtimeSnapshot.config
+	if s.securityPenalties.OwnsLegacyEnforcement(ctx, input.UserID, input.GroupID) {
+		cfg = cloneContentModerationConfig(cfg)
+		cfg.AutoBanEnabled = false
+	}
 	inGroupScope := cfg.includesGroup(input.GroupID)
 	inModelScope := cfg.includesModel(input.Model)
 	slog.Info("content_moderation.config_loaded",
@@ -1927,6 +1932,11 @@ func (s *ContentModerationService) persistContentModerationLog(ctx context.Conte
 	if s == nil || log == nil {
 		return
 	}
+	if log.UserID != nil && s.securityPenalties.OwnsLegacyEnforcement(ctx, *log.UserID, log.GroupID) {
+		cfg = cloneContentModerationConfig(cfg)
+		cfg.AutoBanEnabled = false
+	}
+	s.recordSecurityPenaltyFromModeration(ctx, log)
 	if recordHash && s.hashCache != nil {
 		if err := s.hashCache.RecordFlaggedInputHash(ctx, hashText); err != nil {
 			slog.Warn("content_moderation.record_hash_failed", "user_id", contentModerationEmailUserID(log), "endpoint", log.Endpoint, "error", err)

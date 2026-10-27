@@ -2754,6 +2754,9 @@ func extractQuotaResetSeconds(err error) int {
 }
 
 func billingErrorDetails(err error) (status int, code, message string, retryAfter int) {
+	if errors.Is(err, service.ErrSecurityPenaltyGroupRestricted) {
+		return http.StatusForbidden, "security_penalty_group_restricted", "This conversation is restricted to the configured group; review your security records", 0
+	}
 	if errors.Is(err, service.ErrBillingServiceUnavailable) {
 		msg := pkgerrors.Message(err)
 		if msg == "" {

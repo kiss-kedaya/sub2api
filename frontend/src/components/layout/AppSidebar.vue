@@ -769,6 +769,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/affiliate', label: t('nav.affiliate'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate },
     { path: '/tickets', label: t('tickets.title'), icon: { render: () => h(Icon, { name: 'chat' }) } },
     { path: '/profile', label: t('nav.profile'), icon: UserIcon },
+    { path: '/security', label: locale.value === 'zh' ? '安全记录' : 'Security records', icon: ShieldIcon },
     ...customMenuItemsForUser.value.map((item): NavItem => ({
       path: `/custom/${item.id}`,
       label: item.label,
@@ -859,6 +860,7 @@ const adminNavItems = computed((): NavItem[] => {
 {path:'/admin/ip-risk',label:locale.value==='zh'?'IP风控':'IP policies',icon:ShieldIcon},
 {path:'/admin/ip-audit',label:locale.value==='zh'?'IP审计':'IP audit',icon:ShieldIcon},
         { path: '/admin/prompt-audit', label: t('nav.promptAudit'), icon: ShieldIcon },
+        { path: '/admin/security-penalties', label: locale.value === 'zh' ? '分层安全限制' : 'Layered API restrictions', icon: ShieldIcon },
       ],
     },
     { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: TicketIcon, hideInSimpleMode: true },
