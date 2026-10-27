@@ -223,8 +223,8 @@ func TestHandleErrorResponse_WrapsUpstreamStatusAndMessage(t *testing.T) {
 			http.StatusNotFound, "not_found_error", "Unknown request URL"},
 		{"unprocessable", http.StatusUnprocessableEntity, `{"error":{"message":"Invalid schema for field messages"}}`,
 			http.StatusUnprocessableEntity, "api_error", "Invalid schema for field messages"},
-		{"unauthorized", http.StatusUnauthorized, `{"error":{"message":"Incorrect API key provided: sk-abc"}}`,
-			http.StatusUnauthorized, "api_error", "Incorrect API key provided: sk-abc"},
+		{"unauthorized", http.StatusUnauthorized, `{"error":{"message":"Incorrect API key provided: sk-abc; upstream https://upstream.example/auth"}}`,
+			http.StatusUnauthorized, "api_error", "Incorrect API key provided: [redacted]; upstream [redacted]"},
 		{"forbidden", http.StatusForbidden, `{"error":{"message":"Your account is deactivated"}}`,
 			http.StatusForbidden, "api_error", "Your account is deactivated"},
 		{"rate_limited", http.StatusTooManyRequests, `{"error":{"message":"Rate limit reached"}}`,
@@ -251,6 +251,10 @@ func TestHandleErrorResponse_WrapsUpstreamStatusAndMessage(t *testing.T) {
 			require.Equal(t, tc.wantStatus, rec.Code)
 			require.Equal(t, tc.wantType, gjson.Get(rec.Body.String(), "error.type").String())
 			require.Equal(t, tc.wantMsg, gjson.Get(rec.Body.String(), "error.message").String())
+			if tc.name == "unauthorized" {
+				require.NotContains(t, rec.Body.String(), "sk-abc")
+				require.NotContains(t, rec.Body.String(), "upstream.example")
+			}
 		})
 	}
 }

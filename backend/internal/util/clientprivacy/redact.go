@@ -144,7 +144,7 @@ func safeProtocolPath(value string) bool {
 	}
 	for index, part := range parts[1:] {
 		switch part {
-		case "content", "role", "type", "name", "arguments", "function", "parameters", "properties", "text", "input", "output", "items", "schema", "strict", "json_schema", "ttl", "effort", "temperature", "max_output_tokens", "response_mime_type", "response_schema", "top_p", "top_k", "thinking_config":
+		case "content", "role", "type", "name", "arguments", "function", "parameters", "properties", "text", "input", "output", "items", "schema", "strict", "json_schema", "ttl", "effort", "mode", "temperature", "max_output_tokens", "response_mime_type", "response_schema", "top_p", "top_k", "thinking_config":
 			continue
 		}
 		if index > 0 && parts[index] == "properties" && part != "" && !strings.ContainsAny(part, ":/@") {
@@ -396,9 +396,9 @@ func sanitizeEvent(lines []string, knownError bool) string {
 			continue
 		}
 		if strings.HasPrefix(content, "data:") {
-			output.WriteString(line)
+			_, _ = output.WriteString(line)
 		} else {
-			output.WriteString(Text(line))
+			_, _ = output.WriteString(Text(line))
 		}
 	}
 	return output.String()

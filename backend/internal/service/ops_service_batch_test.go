@@ -54,7 +54,8 @@ func TestOpsServiceRecordErrorBatch_SanitizesAndBatches(t *testing.T) {
 	require.Nil(t, first.UpstreamStatusCode)
 	require.NotNil(t, first.UpstreamErrorMessage)
 	require.NotContains(t, *first.UpstreamErrorMessage, "secret-value")
-	require.Contains(t, *first.UpstreamErrorMessage, "access_token=***")
+	require.NotContains(t, *first.UpstreamErrorMessage, "example.com")
+	require.Contains(t, *first.UpstreamErrorMessage, "upstream failed:")
 	require.NotNil(t, first.UpstreamErrorDetail)
 	require.NotContains(t, *first.UpstreamErrorDetail, "secret-token")
 	require.NotContains(t, first.ErrorBody, "secret")
@@ -62,6 +63,7 @@ func TestOpsServiceRecordErrorBatch_SanitizesAndBatches(t *testing.T) {
 	require.NotNil(t, first.UpstreamErrorsJSON)
 	require.NotContains(t, *first.UpstreamErrorsJSON, "secret")
 	require.Contains(t, *first.UpstreamErrorsJSON, "[REDACTED]")
+	require.Contains(t, *first.UpstreamErrorsJSON, `"upstream_status_code":429`)
 
 	second := captured[1]
 	require.Equal(t, "upstream", second.ErrorPhase)

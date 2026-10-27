@@ -199,7 +199,7 @@ func TestOpenAIManagedModelNotFoundExhaustionSanitizesMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	body := []byte(`{"error":{"code":"model_not_found","message":"Model not found; inspect https://upstream.example/debug?access_token=super-secret-value&model=x"}}`)
+	body := []byte(`{"error":{"code":"model_not_found","param":"model","message":"Model not found; inspect https://upstream.example/debug?access_token=super-secret-value&model=x"}}`)
 
 	(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{
 		StatusCode:   http.StatusBadRequest,
@@ -208,11 +208,16 @@ func TestOpenAIManagedModelNotFoundExhaustionSanitizesMessage(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.NotContains(t, recorder.Body.String(), "super-secret-value")
-	require.Contains(t, gjson.Get(recorder.Body.String(), "error.message").String(), "access_token=***")
+	require.NotContains(t, recorder.Body.String(), "upstream.example")
+	require.Equal(t, "invalid_request_error", gjson.Get(recorder.Body.String(), "error.type").String())
+	require.Equal(t, "model_not_found", gjson.Get(recorder.Body.String(), "error.code").String())
+	require.Equal(t, "model", gjson.Get(recorder.Body.String(), "error.param").String())
+	require.Contains(t, gjson.Get(recorder.Body.String(), "error.message").String(), "Model not found")
 	recorded, ok := c.Get(service.OpsUpstreamErrorMessageKey)
 	require.True(t, ok)
 	require.NotContains(t, recorded, "super-secret-value")
-	require.Contains(t, recorded, "access_token=***")
+	require.NotContains(t, recorded, "upstream.example")
+	require.Contains(t, recorded, "Model not found")
 }
 
 func TestOpenAICapacityFailoverExhaustionReturnsNormalizedCooldownError(t *testing.T) {

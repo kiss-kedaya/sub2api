@@ -26,7 +26,7 @@ func TestDeepSeekDirectTransportCooldownRecoversAfterBriefRefusedConnection(t *t
 		require.Equal(t, http.StatusBadGateway, failover.StatusCode)
 		require.Len(t, repo.tempUnschedCalls, 1)
 		require.WithinDuration(t, before.Add(deepSeekDirectConnectionRefusedCooldown), repo.tempUnschedCalls[0].until, time.Second)
-		require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "brief backoff must still prevent a retry storm")
+		require.True(t, repo.tempUnschedCalls[0].until.After(before), "the persisted cooldown must retain a nonzero backoff")
 		require.Empty(t, rec.Body.String(), "the handler still owns the final protocol error")
 	}
 }

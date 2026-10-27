@@ -48,6 +48,7 @@ func TestTextKeepsSafeProtocolSemantics(t *testing.T) {
 		"response.failed: error.message describes the failure",
 		"stream relay failure: scanner_error: unexpected EOF",
 		"input tokens 1024 exceed maximum 512",
+		"reasoning.mode is not supported for this model",
 		"No healthy Grok OAuth account is currently available",
 		"response.output_text.delta",
 		"response.output_text.annotation.added",

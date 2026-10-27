@@ -144,13 +144,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 	}
 
 	if classifyUpstreamTransportError(err).Persistent {
-		duration := openAITransportErrorTempUnschedDuration
 		if account != nil && account.Platform == PlatformDeepseek && account.Type == AccountTypeAPIKey &&
 			account.ProxyID == nil && account.Proxy == nil &&
 			(errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(strings.ToLower(err.Error()), "connection refused")) {
-			duration = deepSeekDirectConnectionRefusedCooldown
+			s.tempUnscheduleOpenAITransportErrorFor(ctx, account, safeErr, deepSeekDirectConnectionRefusedCooldown)
+		} else {
+			s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
 		}
-		s.tempUnscheduleOpenAITransportErrorFor(ctx, account, safeErr, duration)
 	}
 
 	return &UpstreamFailoverError{
