@@ -245,12 +245,14 @@ func (s *OpsAutomationService) refresh(ctx context.Context) {
 	c, err := s.GetConfig(q)
 	if err != nil {
 		disabled := DefaultOpsAutomationConfig()
-		disabled.Revision = s.config.Load().(OpsAutomationConfig).Revision
+		if current, ok := s.config.Load().(OpsAutomationConfig); ok {
+			disabled.Revision = current.Revision
+		}
 		s.config.Store(disabled)
 		return
 	}
-	old := s.config.Load().(OpsAutomationConfig)
-	if old.Revision != c.Revision {
+	old, ok := s.config.Load().(OpsAutomationConfig)
+	if !ok || old.Revision != c.Revision {
 		s.blocked.Store(false)
 	}
 	s.config.Store(c)
@@ -261,8 +263,8 @@ func automationRankKey(group int64, model string) string {
 func (s *OpsAutomationService) refreshRank(ctx context.Context, q AutomationRankQuery) {
 	key := automationRankKey(q.GroupID, q.Model)
 	defer func() { s.mu.Lock(); delete(s.rankPending, key); s.mu.Unlock() }()
-	c := s.config.Load().(OpsAutomationConfig)
-	if (!c.Ranking.Enabled && !c.OAuthFallback.Enabled) || c.Revision != q.Revision {
+	c, ok := s.config.Load().(OpsAutomationConfig)
+	if !ok || (!c.Ranking.Enabled && !c.OAuthFallback.Enabled) || c.Revision != q.Revision {
 		return
 	}
 	query, stop := context.WithTimeout(ctx, 5*time.Second)
@@ -273,7 +275,7 @@ func (s *OpsAutomationService) refreshRank(ctx context.Context, q AutomationRank
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.config.Load().(OpsAutomationConfig).Revision != q.Revision {
+	if current, ok := s.config.Load().(OpsAutomationConfig); !ok || current.Revision != q.Revision {
 		return
 	}
 	if len(s.ranks) >= 32 {
@@ -295,8 +297,8 @@ func (s *OpsAutomationService) RankAccounts(groupID int64, model string, account
 	if s == nil || len(accounts) < 2 || len(accounts) > 2000 {
 		return accounts
 	}
-	c := s.config.Load().(OpsAutomationConfig)
-	if !c.Ranking.Enabled || !containsAutomationID(c.Ranking.GroupIDs, groupID) || len(model) > 200 {
+	c, ok := s.config.Load().(OpsAutomationConfig)
+	if !ok || !c.Ranking.Enabled || !containsAutomationID(c.Ranking.GroupIDs, groupID) || len(model) > 200 {
 		return accounts
 	}
 	for _, a := range accounts {

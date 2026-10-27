@@ -24,7 +24,7 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 	}
 	if s.excelBPSChannel == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "service_unavailable", "message": "Excel protocol is unavailable"}})
-		return nil, true, fmt.Errorf("Excel protocol is unavailable")
+		return nil, true, fmt.Errorf("excel protocol is unavailable")
 	}
 	session := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
 	if session == "" {
@@ -78,7 +78,7 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 	}
 	if resp == nil || resp.Body == nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel upstream returned no response"}})
-		return nil, true, fmt.Errorf("Excel upstream returned no response")
+		return nil, true, fmt.Errorf("excel upstream returned no response")
 	}
 	upstreamResponse := resp
 	defer func() { _ = upstreamResponse.Body.Close() }()
@@ -88,7 +88,7 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 		}
 		s.recordOpenAIStreamUpstreamError(c, account, true, resp.Header.Get("x-request-id"), "http_error", nil, "Excel upstream rejected this turn")
 		c.JSON(resp.StatusCode, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel upstream rejected this turn"}})
-		return nil, true, fmt.Errorf("Excel upstream status %d", resp.StatusCode)
+		return nil, true, fmt.Errorf("excel upstream status %d", resp.StatusCode)
 	}
 	resp, err = prepared.Transform(upstreamCtx, resp)
 	if err != nil {
