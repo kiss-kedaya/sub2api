@@ -2184,7 +2184,19 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 		return payload, false
 	}
 	if !gjson.ValidBytes(payload) {
+		// A known terminal event must remain a valid protocol terminal even
+		// when its provider JSON was truncated. Never write malformed private
+		// diagnostics or an untyped fallback that a Responses client ignores.
+		if isFailedEvent {
+			wire := buildOpenAIResponseFailedSSE("", "", nil, "Upstream returned an invalid error event")
+			return []byte(strings.TrimSuffix(strings.TrimPrefix(wire, "event: response.failed\ndata: "), "\n\n")), true
+		}
 		updated := clientprivacy.JSON(payload)
+		if next, err := sjson.SetBytes(updated, "type", "error"); err == nil {
+			updated = next
+		} else {
+			updated = []byte(`{"type":"error","error":{"type":"upstream_error","message":"Upstream returned an invalid error event"}}`)
+		}
 		return updated, !bytes.Equal(updated, payload)
 	}
 	if IsUpstreamFinancialError(0, payload) {

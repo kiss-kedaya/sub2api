@@ -129,6 +129,20 @@ func TestClientErrorPrivacyKeepsOpaqueCodexTurnState(t *testing.T) {
 	require.Equal(t, state, dst.Get("X-Codex-Turn-State"))
 }
 
+func TestClientErrorPrivacyMalformedTerminalRemainsRecognizable(t *testing.T) {
+	for _, eventType := range []string{"error", "response.failed"} {
+		input := []byte(`{"error":{"api\u005fkey":"synthetic-private-value",`)
+		output, changed := sanitizeOpenAIResponseFailedEventForClient(input, eventType, true)
+		require.True(t, changed)
+		require.True(t, gjson.ValidBytes(output))
+		require.Equal(t, eventType, gjson.GetBytes(output, "type").String())
+		require.NotContains(t, string(output), "synthetic-private-value")
+		if eventType == "response.failed" {
+			require.Equal(t, "failed", gjson.GetBytes(output, "response.status").String())
+		}
+	}
+}
+
 func TestClientErrorPrivacyCompactAndOrdinaryAnthropicErrorBoundaries(t *testing.T) {
 	const body = `{"error":{"type":"invalid_request_error","code":"invalid_parameter","message":"https://private-provider.example failed","api_key":"synthetic-opaque"}}`
 	rec := httptest.NewRecorder()

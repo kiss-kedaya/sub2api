@@ -79,7 +79,7 @@
     },
     {
       "path": "backend/internal/service/client_error_privacy_test.go",
-      "sha256": "f058ffa06699682c6ed41619f4d0f9fee7603e2b364af4ad16314b8402516e5e",
+      "sha256": "685eb7677937a62ecdd814595ea6dbc2d10250910275d558c8042a4c7d35cfab",
       "reason": "Audited synthetic privacy regression fixtures; fake Bearer strings and incomplete PEM markers contain no usable credentials."
     },
     {
