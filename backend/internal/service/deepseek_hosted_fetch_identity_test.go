@@ -31,7 +31,6 @@ func TestDeepSeekHostedFetchRejectsOwnedSlotIdentityChangesBeforeExecution(t *te
 		{name: "fetch done changes call id", phase: "done", replacement: "call_id", initialName: deepSeekHostedFetchToolName},
 		{name: "fetch terminal becomes client function", phase: "terminal", replacement: "client", initialName: deepSeekHostedFetchToolName},
 		{name: "fetch terminal becomes message", phase: "terminal", replacement: "message", initialName: deepSeekHostedFetchToolName},
-		{name: "fetch terminal loses owned slot", phase: "terminal", replacement: "missing", initialName: deepSeekHostedFetchToolName},
 		{name: "fetch terminal changes call id", phase: "terminal", replacement: "call_id", initialName: deepSeekHostedFetchToolName},
 		{name: "search done becomes fetch", phase: "done", replacement: "fetch", initialName: deepSeekHostedSearchToolName},
 		{name: "search terminal becomes fetch", phase: "terminal", replacement: "fetch", initialName: deepSeekHostedSearchToolName},
@@ -131,4 +130,59 @@ func TestDeepSeekHostedFetchRejectsOwnedSlotIdentityChangesBeforeExecution(t *te
 			require.NotEmpty(t, ownedID)
 		})
 	}
+}
+
+func TestDeepSeekHostedFetchRejectsMissingOwnedSlotAtWriterBoundary(t *testing.T) {
+	// The ordinary native forwarder can reconstruct an empty final output from
+	// valid live done items before this writer sees it. Test a genuinely missing
+	// owned slot at the writer boundary, rather than rejecting that valid repair.
+	writer := &deepSeekHostedRoundWriter{
+		response: []byte(`{"output":[]}`),
+		ownedIndices: map[int]*deepSeekHostedCall{
+			0: {name: deepSeekHostedFetchToolName, callID: "call_missing"},
+		},
+	}
+	writer.registerSnapshotCalls()
+	require.ErrorContains(t, writer.err, "lost an owned tool call")
+	require.Empty(t, writer.calls)
+}
+
+func TestDeepSeekHostedFetchAcceptsTerminalRebuiltFromValidatedLiveItems(t *testing.T) {
+	call := hostedSearchCall()
+	call["name"] = deepSeekHostedFetchToolName
+	call["arguments"] = `{"url":"https://example.com/public-page"}`
+	upstream := &hostedSearchUpstream{
+		modelResponses: [][]byte{
+			hostedSearchResponse("resp_empty_terminal", 10, 2, call),
+			hostedSearchResponse("resp_answer", 20, 3, hostedSearchAnswer()),
+		},
+		fetchResponse: `{"title":"Public page","content":"Verified page body."}`,
+		modelBody: func(index int, response string) io.ReadCloser {
+			if index != 0 {
+				return io.NopCloser(strings.NewReader(response))
+			}
+			lines := strings.Split(deepSeekHostedIdentityLiveIDs(response), "\n")
+			for i, line := range lines {
+				if !strings.HasPrefix(line, "data: ") {
+					continue
+				}
+				raw := []byte(strings.TrimPrefix(line, "data: "))
+				if gjson.GetBytes(raw, "type").String() == "response.completed" {
+					updated, err := sjson.SetBytes(raw, "response.output", []any{})
+					require.NoError(t, err)
+					lines[i] = "data: " + string(updated)
+				}
+			}
+			return io.NopCloser(strings.NewReader(strings.Join(lines, "\n")))
+		},
+	}
+	svc, c, recorder, account, body := hostedSearchFixture(t, upstream, true, "auto", false)
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.Len(t, upstream.modelRequests, 2)
+	require.Len(t, upstream.fetchRequests, 1)
+	require.Equal(t, 1, result.SearchCount)
+	final := hostedSearchFinal(t, recorder, true)
+	require.Equal(t, "open_page", final.Get("output.0.action.type").String())
+	require.Equal(t, "completed", final.Get("status").String())
 }
