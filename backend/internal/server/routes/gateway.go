@@ -553,7 +553,7 @@ func RegisterGatewayRoutes(
 	antigravityV1.Use(opsErrorLogger)
 	antigravityV1.Use(endpointNorm)
 	antigravityV1.Use(middleware.ForcePlatform(service.PlatformAntigravity))
-	antigravityV1.Use(gin.HandlerFunc(apiKeyAuth))
+	antigravityV1.Use(gin.HandlerFunc(apiKeyAuth), capture)
 	antigravityV1.Use(ipNotice)
 	antigravityV1.Use(groupModelAllowlist)
 	antigravityV1.Use(requireGroupAnthropic)

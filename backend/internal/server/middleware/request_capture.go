@@ -26,15 +26,23 @@ func RequestCapture(manager *requestcapture.Manager) gin.HandlerFunc {
 			group = *key.GroupID
 		}
 		rid, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
-		session := manager.Begin(requestcapture.Meta{RequestID: rid, ClientRequestID: c.GetHeader("X-Client-Request-ID"), UserID: key.UserID, GroupID: group, Method: c.Request.Method, Path: c.Request.URL.RequestURI(), Protocol: "http"})
+		session := manager.Begin(requestcapture.Meta{RequestID: rid, ClientRequestID: c.GetHeader("X-Client-Request-ID"), SessionID: c.GetHeader("Session-Id"), ThreadID: c.GetHeader("Thread-Id"), UserID: key.UserID, GroupID: group, Method: c.Request.Method, Path: c.Request.URL.RequestURI(), Protocol: "http"})
 		if session == nil {
 			c.Next()
 			return
 		}
 		c.Request = c.Request.WithContext(requestcapture.WithSession(c.Request.Context(), session))
+		var inputStream *requestcapture.Stream
+		if c.Request.Body != nil && !strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+			inputStream = session.NewStream("client_request", 0, 0, c.GetHeader("Content-Type"), c.Request.Header)
+			c.Request.Body = requestcapture.ObserveBody(c.Request.Body, inputStream)
+		}
 		writer := &captureResponseWriter{ResponseWriter: c.Writer, session: session}
 		c.Writer = writer
 		defer func() {
+			if inputStream != nil {
+				_ = inputStream.Close()
+			}
 			if key, ok := GetAPIKeyFromContext(c); ok && key.GroupID != nil {
 				session.SetRoutedGroup(*key.GroupID)
 			}

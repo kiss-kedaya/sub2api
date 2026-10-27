@@ -26,9 +26,10 @@ var (
 )
 
 type Config struct {
-	Enabled       bool
-	QuotaMiB      int64
-	RetentionDays int
+	Enabled              bool
+	QuotaMiB             int64
+	RetentionDays        int
+	ID1DiagnosticEnabled bool
 }
 
 func (c Config) Validate() error {
@@ -42,6 +43,7 @@ func (c Config) Validate() error {
 }
 
 type Task struct {
+	Mode       string     `json:"mode,omitempty"`
 	ID         string     `json:"id"`
 	InstanceID string     `json:"instance_id"`
 	TargetType string     `json:"target_type"`
@@ -67,6 +69,8 @@ type CreateTask struct {
 }
 
 type Meta struct {
+	SessionID       string `json:"session_id,omitempty"`
+	ThreadID        string `json:"thread_id,omitempty"`
 	RequestID       string `json:"request_id"`
 	ClientRequestID string `json:"client_request_id,omitempty"`
 	UserID          int64  `json:"user_id"`
@@ -108,10 +112,11 @@ type Part struct {
 }
 
 type Record struct {
-	ID         string `json:"id"`
-	TaskID     string `json:"task_id"`
-	InstanceID string `json:"instance_id"`
-	Turn       int    `json:"turn,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	ID         string     `json:"id"`
+	TaskID     string     `json:"task_id"`
+	InstanceID string     `json:"instance_id"`
+	Turn       int        `json:"turn,omitempty"`
 	Meta
 	CreatedAt     time.Time        `json:"created_at"`
 	FinishedAt    *time.Time       `json:"finished_at,omitempty"`

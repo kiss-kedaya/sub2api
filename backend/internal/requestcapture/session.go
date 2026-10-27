@@ -37,6 +37,7 @@ func FromContext(ctx context.Context) *Session {
 }
 
 type event struct {
+	created time.Time
 	s       *Session
 	part    Part
 	data    []byte
@@ -60,6 +61,9 @@ type recordState struct {
 	Record
 	parts   map[string]*partState
 	blocked bool
+	expired bool
+	expiry  *captureExpiry
+	owner   *Session
 }
 type Session struct {
 	frameMu         sync.Mutex
@@ -81,6 +85,7 @@ type Session struct {
 	nextPart        int
 	turn            int
 	turnEnded       bool
+	expiredTurn     bool
 	usage           map[string]int64
 	errorCode       string
 	resultBuffer    []byte
@@ -101,17 +106,24 @@ func (m *Manager) Begin(meta Meta) *Session {
 	}
 	if !m.mu.TryLock() {
 		m.admissionSkipped.Add(1)
+		m.noteSkipped("admission_busy")
 		return nil
 	}
 	defer m.mu.Unlock()
-	if !m.config.Enabled || m.unhealthy.Load() || m.stopping.Load() {
+	if (!m.config.Enabled && !m.config.ID1DiagnosticEnabled) || m.unhealthy.Load() || m.stopping.Load() {
 		return nil
 	}
 	candidates := []*runtimeTask{}
 	matched := map[string]bool{}
 	accounts := false
 	for id, t := range m.tasks {
-		if t.task.Status != "running" || !time.Now().Before(t.task.ExpiresAt) {
+		if t.task.Status != "running" || (t.task.Mode != ID1DiagnosticMode && !time.Now().Before(t.task.ExpiresAt)) {
+			continue
+		}
+		if t.task.Mode == ID1DiagnosticMode && (meta.UserID != 1 || !m.config.ID1DiagnosticEnabled) {
+			continue
+		}
+		if t.task.Mode != ID1DiagnosticMode && !m.config.Enabled {
 			continue
 		}
 		hit := t.task.TargetType == "user" && t.task.TargetID == meta.UserID || t.task.TargetType == "group" && t.task.TargetID == meta.GroupID
@@ -128,6 +140,7 @@ func (m *Manager) Begin(meta Meta) *Session {
 	}
 	if len(m.sessions) >= MaxSessions || !m.reserve(64<<10) {
 		m.admissionSkipped.Add(1)
+		m.noteSkipped("session_or_buffer_limit")
 		for _, t := range candidates {
 			if matched[t.task.ID] {
 				t.task.Skipped++
@@ -138,6 +151,8 @@ func (m *Manager) Begin(meta Meta) *Session {
 	}
 	meta.RequestID = bounded(meta.RequestID, 128)
 	meta.ClientRequestID = bounded(meta.ClientRequestID, 128)
+	meta.SessionID = bounded(meta.SessionID, 256)
+	meta.ThreadID = bounded(meta.ThreadID, 256)
 	meta.Path = bounded(SafeURL(meta.Path), 2048)
 	meta.Method = bounded(meta.Method, 16)
 	s := &Session{m: m, meta: meta, candidates: candidates, matched: matched, hasAccounts: accounts, streams: map[*Stream]struct{}{}, records: map[string]*recordState{}, finishedTargets: map[string]bool{}, usage: map[string]int64{}}
@@ -208,12 +223,18 @@ func (s *Session) ClientRequest(body []byte, ct string, h http.Header) {
 		return
 	}
 	s.mu.Lock()
+	s.meta.Model = bounded(gjson.GetBytes(body, "model").String(), 256)
+	if s.meta.SessionID == "" {
+		s.meta.SessionID = bounded(gjson.GetBytes(body, "session_id").String(), 256)
+	}
+	if s.meta.ThreadID == "" {
+		s.meta.ThreadID = bounded(gjson.GetBytes(body, "client_metadata.thread_id").String(), 256)
+	}
 	if s.clientObserved || s.closed {
 		s.mu.Unlock()
 		return
 	}
 	s.clientObserved = true
-	s.meta.Model = bounded(gjson.GetBytes(body, "model").String(), 256)
 	s.mu.Unlock()
 	stream := s.NewStream("client_request", 0, 0, ct, h)
 	_, _ = stream.Write(body)
@@ -242,6 +263,7 @@ func (s *Session) ClientFrame(body []byte) {
 		s.clientObserved = true
 		s.turn++
 		s.turnEnded = false
+		s.expiredTurn = false
 		s.status, s.nextPart = 0, 0
 		s.attempts = nil
 		s.reason, s.errorCode = "", ""
@@ -256,6 +278,9 @@ func (s *Session) ClientFrame(body []byte) {
 		}
 		s.releaseInputLocked()
 		s.meta.Model = bounded(gjson.GetBytes(body, "model").String(), 256)
+		if id := gjson.GetBytes(body, "client_metadata.thread_id").String(); id != "" {
+			s.meta.ThreadID = bounded(id, 256)
+		}
 	}
 	turn := s.turn
 	s.mu.Unlock()
@@ -401,7 +426,7 @@ func (s *Session) NewStream(stage string, attempt, turn int, ct string, h http.H
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.failed || (s.meta.Protocol == "websocket" && s.turnEnded) {
+	if s.closed || s.failed || s.expiredTurn || (s.meta.Protocol == "websocket" && s.turnEnded) {
 		return &Stream{}
 	}
 	s.nextPart++
@@ -567,12 +592,13 @@ func (s *Session) failCapture(reason string) {
 	s.failed = true
 	if s.reason == "" {
 		s.reason = reason
+		s.m.noteSkipped(reason)
 	}
 }
 func (s *Session) send(part Part, p []byte, end bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.failed || s.m.stopping.Load() {
+	if s.closed || s.failed || s.expiredTurn || s.m.stopping.Load() {
 		return
 	}
 	targets := []string{}
@@ -612,10 +638,11 @@ func (s *Session) enqueueLocked(part Part, p []byte, end bool, targets []string)
 		s.failed = true
 		if s.reason == "" {
 			s.reason = "buffer_limit"
+			s.m.noteSkipped("buffer_limit")
 		}
 		return
 	}
-	e := event{s: s, part: part, data: append([]byte(nil), p...), end: end, targets: targets, charge: charge}
+	e := event{s: s, part: part, data: append([]byte(nil), p...), end: end, targets: targets, charge: charge, created: time.Now().UTC()}
 	s.pending.Add(1)
 	select {
 	case s.m.queue <- e:
@@ -625,6 +652,7 @@ func (s *Session) enqueueLocked(part Part, p []byte, end bool, targets []string)
 		s.failed = true
 		if s.reason == "" {
 			s.reason = "queue_full"
+			s.m.noteSkipped("queue_full")
 		}
 	}
 }
@@ -756,7 +784,7 @@ func (m *Manager) process(e event) {
 		}
 		m.mu.Lock()
 		t := m.tasks[target]
-		running := t != nil && t.task.Status == "running" && time.Now().Before(t.task.ExpiresAt)
+		running := t != nil && t.task.Status == "running" && (t.task.Mode == ID1DiagnosticMode || time.Now().Before(t.task.ExpiresAt))
 		m.mu.Unlock()
 		key := recordKey(target, e.part.Turn)
 		r := e.s.records[key]
@@ -770,11 +798,23 @@ func (m *Manager) process(e event) {
 			continue
 		}
 		if r == nil {
-			r = &recordState{Record: Record{ID: uuid.NewString(), TaskID: target, InstanceID: m.instance, Turn: e.part.Turn, CreatedAt: time.Now().UTC()}, parts: map[string]*partState{}}
+			created := e.created
+			if created.IsZero() {
+				created = time.Now().UTC()
+			}
+			r = &recordState{Record: Record{ID: uuid.NewString(), TaskID: target, InstanceID: m.instance, Turn: e.part.Turn, CreatedAt: created}, parts: map[string]*partState{}}
+			if !m.prepareDiagnosticRecord(r, t) {
+				m.mu.Lock()
+				t.task.Skipped++
+				t.dirty = true
+				m.mu.Unlock()
+				continue
+			}
+			r.owner = e.s
 			// Pending bodies have no queryable index. Publish only finalized errors.
 			e.s.records[key] = r
 		}
-		if r.blocked {
+		if r.blocked || recordExpired(&r.Record, time.Now()) {
 			continue
 		}
 		part := r.parts[e.part.Name]
@@ -826,6 +866,9 @@ func (m *Manager) writePart(r *recordState, p *partState, data []byte) error {
 	}
 	m.storageMu.Lock()
 	defer m.storageMu.Unlock()
+	if r.expired || recordExpired(&r.Record, time.Now()) {
+		return fmt.Errorf("retention_expired")
+	}
 	m.mu.Lock()
 	t := m.tasks[r.TaskID]
 	running := t != nil && t.task.Status == "running"
@@ -869,9 +912,22 @@ func (m *Manager) writePart(r *recordState, p *partState, data []byte) error {
 }
 func recordKey(task string, turn int) string { return fmt.Sprintf("%s:%d", task, turn) }
 
-// Only the worker finalizes records. Successful and unclassified payloads are
-// removed before processing subsequent events; they never receive a DB index.
+// Only the worker finalizes records. Ordinary targeted captures discard success
+// and unclassified payloads; ID1 diagnostics retain all outcomes until expiry.
 func (m *Manager) finishRecord(r *recordState, t *runtimeTask, snapshot *Record) {
+	defer func() {
+		for _, p := range r.parts {
+			m.buffer.Add(-p.charge)
+			p.charge = 0
+		}
+		if r.expiry != nil {
+			r.expiry.record = nil
+		}
+		r.parts = nil
+	}()
+	if r.expired || recordExpired(&r.Record, time.Now()) {
+		return
+	}
 	r.Meta, r.Turn = snapshot.Meta, snapshot.Turn
 	r.Status, r.IsError = snapshot.Status, snapshot.IsError
 	r.ClientOutcome = snapshot.ClientOutcome
@@ -886,7 +942,7 @@ func (m *Manager) finishRecord(r *recordState, t *runtimeTask, snapshot *Record)
 		}
 	}
 	for _, p := range r.parts {
-		if !p.ended && r.IsError {
+		if !p.ended && (r.IsError || t.task.Mode == ID1DiagnosticMode) {
 			tail, reason := p.filter.End()
 			p.part.Omitted = reason
 			r.Partial = true
@@ -900,11 +956,12 @@ func (m *Manager) finishRecord(r *recordState, t *runtimeTask, snapshot *Record)
 			}
 		}
 		m.buffer.Add(-p.charge)
+		p.charge = 0
 		p.filter = nil
 		r.Parts = append(r.Parts, p.part)
 	}
 	sort.Slice(r.Parts, func(i, j int) bool { return r.Parts[i].Name < r.Parts[j].Name })
-	if !r.IsError {
+	if !r.IsError && t.task.Mode != ID1DiagnosticMode {
 		if r.Partial {
 			m.mu.Lock()
 			t.task.Skipped++
@@ -940,6 +997,12 @@ func (m *Manager) finishRecord(r *recordState, t *runtimeTask, snapshot *Record)
 	t.task.Bytes += r.Bytes
 	if r.Partial {
 		t.task.Partial++
+		m.noteSkipped(r.Reason)
+	}
+	if r.expiry != nil {
+		r.expiry.persisted = true
+		r.expiry.bytes = r.Bytes
+		r.expiry.partial = r.Partial
 	}
 	t.dirty = true
 	m.mu.Unlock()
@@ -976,8 +1039,11 @@ func (m *Manager) finishTurn(s *Session, snapshot *Record, targets []string) {
 		}
 		key := recordKey(id, snapshot.Turn)
 		r := s.records[key]
-		if r == nil && snapshot.IsError {
+		if r == nil && (snapshot.IsError || t.task.Mode == ID1DiagnosticMode) {
 			r = &recordState{Record: Record{ID: uuid.NewString(), TaskID: id, InstanceID: m.instance, CreatedAt: time.Now().UTC(), Partial: true, Reason: "no_payload_recorded"}, parts: map[string]*partState{}}
+			if !m.prepareDiagnosticRecord(r, t) {
+				continue
+			}
 		}
 		if r != nil {
 			m.finishRecord(r, t, snapshot)
@@ -1048,8 +1114,16 @@ func (m *Manager) finishTarget(s *Session, t *runtimeTask) {
 		m.finishRecord(r, t, snap)
 		delete(s.records, key)
 	}
-	if hit && !found && snapshot.IsError {
+	if hit && !found && (snapshot.IsError || t.task.Mode == ID1DiagnosticMode) {
 		r := &recordState{Record: Record{ID: uuid.NewString(), TaskID: id, InstanceID: m.instance, CreatedAt: time.Now().UTC(), Partial: true, Reason: "no_payload_recorded"}, parts: map[string]*partState{}}
+		if !m.prepareDiagnosticRecord(r, t) {
+			m.mu.Lock()
+			t.refs--
+			t.task.Skipped++
+			t.dirty = true
+			m.mu.Unlock()
+			return
+		}
 		m.finishRecord(r, t, snapshot)
 	}
 	m.mu.Lock()
@@ -1068,6 +1142,11 @@ type observedBody struct {
 func (b *observedBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if n > 0 {
+		if b.stream.part.Stage == "client_request" && b.stream.s != nil {
+			b.stream.s.mu.Lock()
+			b.stream.s.clientObserved = true
+			b.stream.s.mu.Unlock()
+		}
 		_, _ = b.stream.Write(p[:n])
 	}
 	if err != nil {

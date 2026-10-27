@@ -45,6 +45,9 @@ type Manager struct {
 	unhealthy        atomic.Bool
 	stopping         atomic.Bool
 	unlockOwner      func()
+	expirations      captureExpiryHeap
+	skippedByReason  sync.Map
+	expiredRecords   atomic.Int64
 }
 
 func New(store Store, dir string, config Config) (*Manager, error) {
@@ -88,7 +91,7 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 	m := &Manager{store: store, dir: dir, instance: string(raw), config: config, tasks: map[string]*runtimeTask{}, sessions: map[*Session]struct{}{}, exports: make(chan struct{}, 2), queue: make(chan event, 1024), wake: make(chan struct{}, 1), done: make(chan struct{}), closed: make(chan struct{}), unlockOwner: unlockOwner}
 	// Reserve fixed worker scratch before admitting payload copies.
 	m.buffer.Store(1 << 20)
-	m.enabled.Store(config.Enabled)
+	m.enabled.Store(config.Enabled || config.ID1DiagnosticEnabled)
 	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -133,7 +136,14 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 				}
 				kept := 0
 				for _, r := range records {
-					if !r.IsError || r.FinishedAt == nil {
+					if t.Mode == ID1DiagnosticMode && r.ExpiresAt == nil {
+						deadline := r.CreatedAt.Add(ID1DiagnosticRetention)
+						r.ExpiresAt = &deadline
+						if err := store.SaveRecord(ctx, &r); err != nil {
+							return nil, err
+						}
+					}
+					if (!r.IsError && t.Mode != ID1DiagnosticMode) || r.FinishedAt == nil || recordExpired(&r, time.Now()) {
 						if _, e = uuid.Parse(r.ID); e != nil {
 							return nil, e
 						}
@@ -146,6 +156,11 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 						continue
 					}
 					kept++
+					if t.Mode == ID1DiagnosticMode {
+						if !m.scheduleExpiry(&r, nil) {
+							return nil, ErrCapacity
+						}
+					}
 					requests++
 					bytes += r.Bytes
 					if r.Partial {
@@ -164,6 +179,9 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 					return nil, e
 				}
 			}
+			if t.Mode == ID1DiagnosticMode {
+				m.tasks[t.ID] = &runtimeTask{task: t}
+			}
 		}
 		if len(tasks) < 100 {
 			break
@@ -172,6 +190,9 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 	// Remove bodies whose final error index was never committed, including crashes
 	// between a successful response and its asynchronous deletion.
 	if err = m.cleanOrphanBodies(ctx); err != nil {
+		return nil, err
+	}
+	if err = m.syncID1Diagnostic(ctx); err != nil {
 		return nil, err
 	}
 	m.used.Store(0)
@@ -201,7 +222,7 @@ func (m *Manager) Enabled() bool {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.config.Enabled && !m.unhealthy.Load()
+	return (m.config.Enabled || m.config.ID1DiagnosticEnabled) && !m.unhealthy.Load()
 }
 func (m *Manager) Config() Config { m.mu.Lock(); defer m.mu.Unlock(); return m.config }
 func (m *Manager) ApplyConfig(c Config) {
@@ -210,16 +231,19 @@ func (m *Manager) ApplyConfig(c Config) {
 	}
 	m.mu.Lock()
 	m.config = c
-	m.enabled.Store(c.Enabled)
+	m.enabled.Store(c.Enabled || c.ID1DiagnosticEnabled)
 	reason := ""
-	if !c.Enabled {
-		reason = "feature_disabled"
-	} else if m.used.Load() >= c.QuotaMiB<<20 {
+	if m.used.Load() >= c.QuotaMiB<<20 {
 		reason = "quota_exceeded"
 	}
 	if reason != "" {
 		for _, t := range m.tasks {
 			m.stopLocked(t, reason)
+		}
+	}
+	for _, t := range m.tasks {
+		if (t.task.Mode == ID1DiagnosticMode && !c.ID1DiagnosticEnabled) || (t.task.Mode != ID1DiagnosticMode && !c.Enabled) {
+			m.stopLocked(t, "feature_disabled")
 		}
 	}
 	m.mu.Unlock()
@@ -345,8 +369,10 @@ func (m *Manager) Task(ctx context.Context, id string) (*Task, error) {
 	return m.store.Task(ctx, m.instance, id)
 }
 func (m *Manager) Stop(ctx context.Context, id string) error {
-	if _, err := m.Task(ctx, id); err != nil {
+	if task, err := m.Task(ctx, id); err != nil {
 		return err
+	} else if task.Mode == ID1DiagnosticMode {
+		return errors.New("disable the ID1 diagnostic switch to stop continuous capture")
 	}
 	m.mu.Lock()
 	if t := m.tasks[id]; t != nil {
@@ -356,21 +382,36 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	m.signal()
 	return nil
 }
-func (m *Manager) Records(ctx context.Context, task, rid string, _ bool, limit, offset int) ([]Record, error) {
-	if _, err := m.Task(ctx, task); err != nil {
+func (m *Manager) Records(ctx context.Context, task, rid string, onlyErrors bool, limit, offset int) ([]Record, error) {
+	t, err := m.Task(ctx, task)
+	if err != nil {
 		return nil, err
 	}
-	return m.store.Records(ctx, task, rid, true, limit, offset)
+	if t.Mode != ID1DiagnosticMode {
+		onlyErrors = true
+	}
+	rows, err := m.store.Records(ctx, task, rid, onlyErrors, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	out := rows[:0]
+	for _, r := range rows {
+		if !recordExpired(&r, time.Now()) && r.FinishedAt != nil {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 func (m *Manager) Record(ctx context.Context, task, id string) (*Record, error) {
-	if _, err := m.Task(ctx, task); err != nil {
+	t, err := m.Task(ctx, task)
+	if err != nil {
 		return nil, err
 	}
 	r, err := m.store.Record(ctx, task, id)
 	if err != nil {
 		return nil, err
 	}
-	if r.InstanceID != m.instance || !r.IsError || r.FinishedAt == nil {
+	if r.InstanceID != m.instance || (!r.IsError && t.Mode != ID1DiagnosticMode) || r.FinishedAt == nil || recordExpired(r, time.Now()) {
 		return nil, ErrNotFound
 	}
 	return r, nil
@@ -383,6 +424,12 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	defer m.exportMu.Unlock()
 	if _, err := m.Task(ctx, id); err != nil {
 		return err
+	}
+	m.mu.Lock()
+	diagnostic := m.config.ID1DiagnosticEnabled && m.tasks[id] != nil && m.tasks[id].task.Mode == ID1DiagnosticMode
+	m.mu.Unlock()
+	if diagnostic {
+		return errors.New("disable ID1 diagnostics before deleting its task")
 	}
 	m.mu.Lock()
 	rt := m.tasks[id]
@@ -436,20 +483,31 @@ func (m *Manager) Close() {
 }
 
 type Stats struct {
-	InstanceID       string `json:"instance_id"`
-	UsedBytes        int64  `json:"used_bytes"`
-	BufferBytes      int64  `json:"buffer_bytes"`
-	PeakBufferBytes  int64  `json:"peak_buffer_bytes"`
-	ActiveRequests   int    `json:"active_requests"`
-	AdmissionSkipped int64  `json:"admission_skipped"`
-	StorageError     bool   `json:"storage_error"`
+	SkippedByReason  map[string]int64 `json:"skipped_by_reason"`
+	ExpiredRecords   int64            `json:"expired_records"`
+	InstanceID       string           `json:"instance_id"`
+	UsedBytes        int64            `json:"used_bytes"`
+	BufferBytes      int64            `json:"buffer_bytes"`
+	PeakBufferBytes  int64            `json:"peak_buffer_bytes"`
+	ActiveRequests   int              `json:"active_requests"`
+	AdmissionSkipped int64            `json:"admission_skipped"`
+	StorageError     bool             `json:"storage_error"`
 }
 
 func (m *Manager) Stats() Stats {
 	m.mu.Lock()
 	n := len(m.sessions)
 	m.mu.Unlock()
-	return Stats{m.instance, m.used.Load(), m.buffer.Load(), m.peak.Load(), n, m.admissionSkipped.Load(), m.unhealthy.Load()}
+	reasons := map[string]int64{}
+	m.skippedByReason.Range(func(k, v any) bool {
+		key, ok := k.(string)
+		counter, valid := v.(*atomic.Int64)
+		if ok && valid {
+			reasons[key] = counter.Load()
+		}
+		return true
+	})
+	return Stats{InstanceID: m.instance, UsedBytes: m.used.Load(), BufferBytes: m.buffer.Load(), PeakBufferBytes: m.peak.Load(), ActiveRequests: n, AdmissionSkipped: m.admissionSkipped.Load(), StorageError: m.unhealthy.Load(), SkippedByReason: reasons, ExpiredRecords: m.expiredRecords.Load()}
 }
 
 func (m *Manager) run() {
@@ -460,7 +518,14 @@ func (m *Manager) run() {
 	cleanup := time.NewTicker(time.Minute)
 	defer cleanup.Stop()
 	for {
+		m.expireDue(time.Now())
+		ttl := time.Hour
+		if len(m.expirations) > 0 {
+			ttl = max(time.Until(m.expirations[0].at), 0)
+		}
+		timer := time.NewTimer(ttl)
 		select {
+		case <-timer.C:
 		case e := <-m.queue:
 			m.process(e)
 		case <-m.wake:
@@ -485,9 +550,16 @@ func (m *Manager) run() {
 				}
 			}
 		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
 	}
 }
 func (m *Manager) maintenance() {
+	m.expireDue(time.Now())
 	now := time.Now().UTC()
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))
@@ -495,11 +567,17 @@ func (m *Manager) maintenance() {
 		sessions = append(sessions, s)
 	}
 	for _, t := range m.tasks {
-		if t.task.Status == "running" && !now.Before(t.task.ExpiresAt) {
+		if t.task.Mode != ID1DiagnosticMode && t.task.Status == "running" && !now.Before(t.task.ExpiresAt) {
 			m.stopLocked(t, "expired")
 		}
 	}
 	m.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if err := m.syncID1Diagnostic(ctx); err != nil {
+		m.unhealthy.Store(true)
+		m.stopAll("index_write_failed")
+	}
+	cancel()
 	for _, s := range sessions {
 		for _, t := range s.candidates {
 			if !t.active.Load() && s.pending.Load() == 0 {
@@ -551,7 +629,7 @@ func (m *Manager) maintenance() {
 		if t := m.tasks[v.id]; t != nil {
 			if err != nil {
 				t.dirty = true
-			} else if t.task.Status != "running" && t.refs == 0 && !t.dirty {
+			} else if t.task.Mode != ID1DiagnosticMode && t.task.Status != "running" && t.refs == 0 && !t.dirty {
 				delete(m.tasks, v.id)
 			}
 		}
@@ -579,7 +657,7 @@ func (m *Manager) cleanExpired() {
 		}
 		deleted := 0
 		for _, t := range tasks {
-			if t.EndedAt != nil && t.EndedAt.Before(cutoff) {
+			if t.Mode != ID1DiagnosticMode && t.EndedAt != nil && t.EndedAt.Before(cutoff) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				err = m.Delete(ctx, t.ID)
 				cancel()
@@ -623,7 +701,8 @@ func (m *Manager) cleanOrphanBodies(ctx context.Context) error {
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			if err != nil || r.InstanceID != m.instance || !r.IsError || r.FinishedAt == nil {
+			t, taskErr := m.store.Task(ctx, m.instance, task.Name())
+			if err != nil || taskErr != nil || r.InstanceID != m.instance || (!r.IsError && t.Mode != ID1DiagnosticMode) || r.FinishedAt == nil || recordExpired(r, time.Now()) {
 				if err := os.RemoveAll(filepath.Join(m.dir, task.Name(), record.Name())); err != nil {
 					return err
 				}

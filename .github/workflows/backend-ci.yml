@@ -83,7 +83,7 @@ jobs:
         working-directory: backend
         run: |
           go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
-          go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+          go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
       - name: Explicit cache and operations safety regression
         working-directory: backend
         run: |

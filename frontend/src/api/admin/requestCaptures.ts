@@ -3,7 +3,8 @@ import { apiClient } from '../client'
 export type CaptureTarget = 'user' | 'account' | 'group'
 export interface CaptureTask {
   id: string; instance_id: string; target_type: CaptureTarget; target_id: number; target_name: string
-  save_media: boolean; created_at: string; expires_at: string; ended_at?: string
+  mode?: 'targeted' | 'id1_diagnostic'
+  save_media: boolean; created_at: string; expires_at?: string; ended_at?: string
   status: string; reason?: string; requests: number; partial: number; skipped: number; bytes: number
 }
 export interface CapturePart {
@@ -14,13 +15,15 @@ export interface CaptureRecord {
   id: string; task_id: string; request_id: string; client_request_id?: string; instance_id: string
   user_id: number; group_id: number; routed_group_id?: number; model?: string; path: string
   protocol: string; status: number; is_error: boolean; turn?: number; partial: boolean; reason?: string
-  created_at: string; finished_at?: string; bytes: number; error_code?: string; client_outcome?: 'completed' | 'failed'
+  created_at: string; finished_at?: string; expires_at?: string; session_id?: string; thread_id?: string
+  bytes: number; error_code?: string; client_outcome?: 'completed' | 'failed'
   attempts: Array<{ number: number; account_id: number; status?: number; upstream_request_id?: string; error?: string; error_stage?: string; read_error?: string; response_terminal?: string; local_close?: boolean }>
   parts: CapturePart[]; usage?: Record<string, number>
 }
 export interface CaptureStats {
   instance_id: string; used_bytes: number; buffer_bytes: number; peak_buffer_bytes: number
   active_requests: number; admission_skipped: number; storage_error: boolean
+  skipped_by_reason?: Record<string, number>; expired_records?: number
 }
 const base = '/admin/request-captures'
 let selectedInstance = ''
@@ -70,6 +73,9 @@ export async function exportCapture(task: string, record?: string, authorize?: (
   }
 }
 
-export interface CaptureConfig {enabled:boolean;quota_mib:number;retention_days:number;instance_id?:string;storage_ready?:boolean}
+export interface CaptureConfig {
+  enabled: boolean; id1_diagnostic_enabled?: boolean; quota_mib: number; retention_days: number
+  diagnostic_retention_hours?: number; diagnostic_record_limit?: number; record_limit_mib?: number; instance_id?: string; storage_ready?: boolean
+}
 export async function getConfig(){const data=(await apiClient.get<CaptureConfig>(base+'/config')).data; selectedInstance=data.instance_id || ''; return data}
 export async function saveConfig(input:CaptureConfig){return (await apiClient.put<CaptureConfig>(base+'/config',input,{headers:instanceHeaders()})).data}

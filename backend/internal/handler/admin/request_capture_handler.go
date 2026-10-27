@@ -58,6 +58,11 @@ func (h *AccountHandler) CaptureHandler(manager *requestcapture.Manager, setting
 }
 
 func (h *RequestCaptureHandler) GetConfig(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !middleware.IsPrimaryAdmin(c) {
+		response.Forbidden(c, "Only the primary administrator may manage captures")
+		return
+	}
 	v, err := h.Settings.GetCaptureSettings(c.Request.Context())
 	if err != nil {
 		response.Error(c, 503, "Capture settings unavailable")
@@ -68,16 +73,22 @@ func (h *RequestCaptureHandler) GetConfig(c *gin.Context) {
 		instance = h.Manager.InstanceID()
 	}
 	c.Header("Cache-Control", "no-store")
-	response.Success(c, gin.H{"enabled": v.Enabled, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": h.Manager != nil})
+	response.Success(c, captureConfigResponse(v, instance, h.Manager != nil))
 }
 
 func (h *RequestCaptureHandler) UpdateConfig(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !middleware.IsPrimaryAdmin(c) {
+		response.Forbidden(c, "Only the primary administrator may manage captures")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 	var v service.CaptureSettings
 	if err := c.ShouldBindJSON(&v); err != nil {
 		response.BadRequest(c, "Invalid capture settings")
 		return
 	}
-	if v.Enabled && h.Manager == nil {
+	if (v.Enabled || v.ID1DiagnosticEnabled) && h.Manager == nil {
 		response.Error(c, 503, "Capture storage requires a unique stable SUB2API_CAPTURE_INSTANCE slot")
 		return
 	}
@@ -92,7 +103,11 @@ func (h *RequestCaptureHandler) UpdateConfig(c *gin.Context) {
 	if h.Manager != nil {
 		instance = h.Manager.InstanceID()
 	}
-	response.Success(c, gin.H{"enabled": v.Enabled, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": h.Manager != nil})
+	response.Success(c, captureConfigResponse(v, instance, h.Manager != nil))
+}
+
+func captureConfigResponse(v service.CaptureSettings, instance string, ready bool) gin.H {
+	return gin.H{"enabled": v.Enabled, "id1_diagnostic_enabled": v.ID1DiagnosticEnabled, "diagnostic_retention_hours": 8, "diagnostic_record_limit": requestcapture.ID1DiagnosticRecordLimit, "record_limit_mib": requestcapture.RecordLimit >> 20, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": ready}
 }
 
 func (h *RequestCaptureHandler) requireInstance(c *gin.Context, required bool) bool {
@@ -111,7 +126,12 @@ func (h *RequestCaptureHandler) requireInstance(c *gin.Context, required bool) b
 }
 
 func (h *RequestCaptureHandler) Gate(c *gin.Context) {
-	if h.Manager == nil || !h.Manager.Config().Enabled {
+	if !middleware.IsPrimaryAdmin(c) {
+		response.Forbidden(c, "Only the primary administrator may manage captures")
+		c.Abort()
+		return
+	}
+	if h.Manager == nil {
 		response.Error(c, http.StatusNotFound, "Request capture is disabled")
 		c.Abort()
 		return
@@ -255,7 +275,7 @@ func (h *RequestCaptureHandler) Export(c *gin.Context) {
 		captureError(c, err)
 		return
 	}
-	if task.Status == "running" {
+	if task.Status == "running" && c.Param("record") == "" {
 		response.Error(c, 409, "Stop the capture task before exporting")
 		return
 	}

@@ -42,3 +42,19 @@ func TestCapturedPayloadAccessCannotBypassPrimarySessionAndStepUp(t *testing.T) 
 		}
 	}
 }
+
+func TestCaptureConfigurationRejectsObserversBeforeReadingOrWritingSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &RequestCaptureHandler{}
+	for _, handler := range []gin.HandlerFunc{h.GetConfig, h.UpdateConfig, h.Gate} {
+		r := gin.New()
+		r.GET("/config", func(c *gin.Context) {
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 2})
+			c.Set(string(middleware.ContextKeyUserRole), "admin")
+			handler(c)
+		})
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config", nil))
+		require.Equal(t, http.StatusForbidden, w.Code)
+	}
+}

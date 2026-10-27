@@ -114,7 +114,7 @@ func TestUnconfirmedDataDeletedWhenStoppedOrDisabled(t *testing.T) {
 			case "stop":
 				require.NoError(t, m.Stop(context.Background(), target.ID))
 			case "disable":
-				m.ApplyConfig(Config{false, 1024, 7})
+				m.ApplyConfig(Config{Enabled: false, QuotaMiB: 1024, RetentionDays: 7})
 			case "expire":
 				m.mu.Lock()
 				m.tasks[target.ID].task.ExpiresAt = time.Now().Add(-time.Minute)
@@ -217,7 +217,7 @@ func TestLegacyAndPendingRecordsCannotBeReadOrExported(t *testing.T) {
 func TestRestartPurgesSuccessPendingAndOrphanBodiesAcrossPages(t *testing.T) {
 	store := newMemoryStore()
 	dir := t.TempDir()
-	m, err := New(store, dir, Config{true, 1024, 7})
+	m, err := New(store, dir, Config{Enabled: true, QuotaMiB: 1024, RetentionDays: 7})
 	require.NoError(t, err)
 	target := task(t, m, "user", 1, true)
 	instance := m.instance
@@ -238,7 +238,7 @@ func TestRestartPurgesSuccessPendingAndOrphanBodiesAcrossPages(t *testing.T) {
 	orphan := filepath.Join(dir, target.ID, uuid.NewString())
 	require.NoError(t, os.MkdirAll(orphan, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(orphan, "body.txt"), []byte("orphan"), 0600))
-	m, err = New(store, dir, Config{false, 1024, 7})
+	m, err = New(store, dir, Config{Enabled: false, QuotaMiB: 1024, RetentionDays: 7})
 	require.NoError(t, err)
 	defer m.Close()
 	rows, err := store.Records(context.Background(), target.ID, "", false, 300, 0)
@@ -274,7 +274,7 @@ func TestSSEErrorEventWithoutErrorTypeIsRetained(t *testing.T) {
 func TestGracefulShutdownDiscardsUnclassifiedBody(t *testing.T) {
 	store := newMemoryStore()
 	dir := t.TempDir()
-	m, err := New(store, dir, Config{true, 1024, 7})
+	m, err := New(store, dir, Config{Enabled: true, QuotaMiB: 1024, RetentionDays: 7})
 	require.NoError(t, err)
 	target := task(t, m, "user", 1, false)
 	s := m.Begin(Meta{UserID: 1})

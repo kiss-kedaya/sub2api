@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -46,6 +47,9 @@ func (m *Manager) Preview(ctx context.Context, task, id, name string, offset int
 		n = PreviewLimit
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, n))
+	if _, expiryErr := m.Record(ctx, task, id); expiryErr != nil {
+		return "", 0, false, expiryErr
+	}
 	if offset+int64(len(raw)) < part.Bytes {
 		for cut := 0; cut < utf8.UTFMax && len(raw) > 0 && !utf8.Valid(raw); cut++ {
 			raw = raw[:len(raw)-1]
@@ -53,19 +57,38 @@ func (m *Manager) Preview(ctx context.Context, task, id, name string, offset int
 	}
 	return string(raw), offset + int64(len(raw)), offset+int64(len(raw)) < part.Bytes, err
 }
+
+type captureExpiryReader struct {
+	reader io.Reader
+	record *Record
+	ctx    context.Context
+}
+
+func (r captureExpiryReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if recordExpired(r.record, time.Now()) {
+		return 0, ErrNotFound
+	}
+	if len(p) > ChunkSize {
+		p = p[:ChunkSize]
+	}
+	return r.reader.Read(p)
+}
 func (m *Manager) Export(ctx context.Context, w io.Writer, taskID, recordID string) error {
 	t, err := m.Task(ctx, taskID)
 	if err != nil {
 		return err
 	}
-	if t.Status == "running" {
+	if t.Status == "running" && recordID == "" {
 		return ErrFinalizing
 	}
 	m.mu.Lock()
 	rt := m.tasks[taskID]
 	pending := rt != nil && rt.refs > 0
 	m.mu.Unlock()
-	if pending {
+	if pending && recordID == "" {
 		return ErrFinalizing
 	}
 	select {
@@ -101,10 +124,16 @@ func (m *Manager) Export(ctx context.Context, w io.Writer, taskID, recordID stri
 		return err
 	}
 	writeRecord := func(r *Record) error {
+		if recordExpired(r, time.Now()) {
+			return ErrNotFound
+		}
 		if err := writeJSON(r.ID+"/record.json", r); err != nil {
 			return err
 		}
 		for _, p := range r.Parts {
+			if recordExpired(r, time.Now()) {
+				return ErrNotFound
+			}
 			if p.Bytes == 0 {
 				continue
 			}
@@ -119,7 +148,7 @@ func (m *Manager) Export(ctx context.Context, w io.Writer, taskID, recordID stri
 				return err
 			}
 			if err = tw.WriteHeader(&tar.Header{Name: r.ID + "/" + p.Name, Mode: 0600, Size: p.Bytes}); err == nil {
-				_, err = io.CopyN(tw, file, p.Bytes)
+				_, err = io.CopyN(tw, captureExpiryReader{reader: file, record: r, ctx: ctx}, p.Bytes)
 			}
 			_ = file.Close()
 			if err != nil {
