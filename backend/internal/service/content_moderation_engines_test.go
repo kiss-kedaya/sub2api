@@ -20,7 +20,8 @@ func TestContentModerationEngineProfilesPreserveLegacy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "openai", view.Engine)
 	require.Equal(t, 1, view.APIKeyCount)
-	require.Equal(t, ContentModerationDefaultThresholds(), view.EngineConfigs["typesafe"].Thresholds)
+	require.Equal(t, ContentModerationDefaultThresholds(ContentModerationEngineTypeSafe), view.EngineConfigs["typesafe"].Thresholds)
+	require.Equal(t, ContentModerationDefaultThresholds(ContentModerationEngineOpenAI), view.EngineConfigs["openai"].Thresholds)
 	engine := "typesafe"
 	base := "https://typesafe.example"
 	model := "jev-test"
@@ -58,10 +59,19 @@ func TestContentModerationEngineProfilesPreserveLegacy(t *testing.T) {
 func TestContentModerationEngineThresholdDefaultsAreIndependent(t *testing.T) {
 	openai := moderationEngineDefaults(ContentModerationEngineOpenAI)
 	typeSafe := moderationEngineDefaults(ContentModerationEngineTypeSafe)
-	require.Equal(t, openai.Thresholds, typeSafe.Thresholds)
+	require.Len(t, openai.Thresholds, 13)
+	require.Len(t, typeSafe.Thresholds, 15)
+	for _, category := range []string{"jailbreak", "control_bypass"} {
+		require.NotContains(t, openai.Thresholds, category)
+		require.Equal(t, 0.95, typeSafe.Thresholds[category])
+		require.False(t, typeSafe.CategorySettings[category].Enabled)
+	}
 	typeSafe.Thresholds["sexual"] = 0.8
 	require.Equal(t, 0.65, openai.Thresholds["sexual"])
-	require.Equal(t, openai.Thresholds, moderationEngineDefaults(ContentModerationEngineTypeSafe).Thresholds)
+	for category, threshold := range openai.Thresholds {
+		require.Equal(t, threshold, moderationEngineDefaults(ContentModerationEngineTypeSafe).Thresholds[category])
+	}
+	require.False(t, moderationEngineDefaults(ContentModerationEngineTypeSafe).CategorySettings["jailbreak"].Enabled)
 }
 
 func TestContentModerationTypeSafeAllCategoriesAndImages(t *testing.T) {
@@ -96,7 +106,7 @@ func TestContentModerationTypeSafeAllCategoriesAndImages(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(1), calls.Load())
 	require.Len(t, result.CategoryScores, 13)
-	require.Equal(t, &ContentModerationEngineMeta{Engine: "typesafe", Model: "jev-fixed", RulesVersion: TypeSafeModerationRulesVersion, SkippedImages: 1}, result.EngineMeta)
+	require.Equal(t, &ContentModerationEngineMeta{Engine: "typesafe", Model: "jev-fixed", RulesVersion: TypeSafeModerationRulesVersion, SkippedImages: 1, CategorySettings: mergeModerationCategorySettings(cfg.Engine, nil, cfg.CategorySettings)}, result.EngineMeta)
 	trial := buildContentModerationTestAuditResult(result, cfg.Thresholds)
 	require.Equal(t, result.EngineMeta, trial.EngineMeta)
 	_, err = s.callModeration(context.Background(), cfg, ContentModerationInput{Images: content.Images}.ModerationInput())

@@ -98,6 +98,12 @@ func (h *SettingHandler) SetStepUpDeps(totpService *service.TotpService, userSer
 	h.userService = userService
 }
 
+func (h *SettingHandler) ConfigureCaptureStepUp(capture *RequestCaptureHandler) {
+	if h != nil && capture != nil {
+		capture.SetStepUpDependencies(h.totpService, h.userService)
+	}
+}
+
 // GetSettings 获取所有系统设置
 // GET /api/v1/admin/settings
 func (h *SettingHandler) GetSettings(c *gin.Context) {
@@ -137,6 +143,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		EmailVerifyEnabled:                                     settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:                       settings.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled:                    settings.RegistrationEmailDomainQuotaEnabled,
+		RegistrationEmailAliasBlockEnabled:                     settings.RegistrationEmailAliasBlockEnabled,
 		PromoCodeEnabled:                                       settings.PromoCodeEnabled,
 		PasswordResetEnabled:                                   settings.PasswordResetEnabled,
 		FrontendURL:                                            settings.FrontendURL,

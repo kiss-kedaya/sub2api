@@ -9,8 +9,24 @@ import admin from './admin'
 import misc from './misc'
 import deposit from './deposit'
 import docs from './docs'
+import connections from './connections'
+import requestTiming from './requestTiming'
+import traffic from './traffic'
+import ipAudit from '@/features/ip-audit/locale.en'
+import {en as moderationCategories} from '@/features/ip-risk/moderationCategories.locale'
+
+import accountOps from '@/components/admin/operations/accountOps.en'
+import channelOps from '@/components/admin/operations/channelOps.en'
+
+import { opsAutomationMessages } from '@/components/admin/operations/opsAutomationMessages'
+
+import { serverlessMessages } from '@/components/admin/operations/serverlessMessages'
 
 export default {
+ serverless: serverlessMessages.en.serverless,
+  opsAutomation: opsAutomationMessages.en.opsAutomation,
+  accountOps, channelOps,
+  qualityOps: { refresh: 'Refresh', accounts: 'Accounts', loadMore: 'Load more' },
   ...landing,
   ...common,
   ...dashboard,
@@ -22,4 +38,5 @@ export default {
   ...misc,
   ...deposit,
   ...docs,
+  connections,requestTiming,traffic,ipAudit,moderationCategories,
 }

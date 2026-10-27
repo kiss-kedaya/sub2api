@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -23,10 +24,12 @@ import (
 
 // UsageHandler handles admin usage-related requests
 type UsageHandler struct {
-	usageService   *service.UsageService
-	apiKeyService  *service.APIKeyService
-	adminService   service.AdminService
-	cleanupService *service.UsageCleanupService
+	trafficDelivery           *service.TrafficDelivery
+	trafficUninitializedDrops atomic.Int64
+	usageService              *service.UsageService
+	apiKeyService             *service.APIKeyService
+	adminService              service.AdminService
+	cleanupService            *service.UsageCleanupService
 }
 
 // NewUsageHandler creates a new admin usage handler

@@ -106,6 +106,7 @@ func (s *GeminiMessagesCompatService) SelectAccountForModel(ctx context.Context,
 }
 
 func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	ctx = WithLocalQualityGroup(ctx, groupID)
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 1. 确定目标平台和调度模式
 	// Determine target platform and scheduling mode
@@ -1459,6 +1460,14 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries: "+safeErr)
 		}
 
+		if resp.StatusCode >= 400 && (geminiCachedContentBoundFromContext(ctx) || bytes.Contains(body, []byte("cachedContent"))) {
+			errorBody := s.readUpstreamErrorBody(resp)
+			_ = resp.Body.Close()
+			resp = &http.Response{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: io.NopCloser(bytes.NewReader(errorBody))}
+			if isGeminiCachedContentNotFound(resp.StatusCode, errorBody) || isGeminiBoundCacheUpstreamPassthrough(ctx, account, resp.StatusCode) {
+				break
+			}
+		}
 		// 错误策略优先：匹配则跳过重试直接处理。
 		if matched, rebuilt := s.checkErrorPolicyInLoop(ctx, account, resp, mappedModel); matched {
 			resp = rebuilt
@@ -1552,6 +1561,12 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
+		if isGeminiCachedContentNotFound(resp.StatusCode, respBody) {
+			return nil, s.writeGeminiCachedContentNotFound(c, account, resp, respBody, requestID, isOAuth)
+		}
+		if isGeminiBoundCacheUpstreamPassthrough(ctx, account, resp.StatusCode) {
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, BoundUpstreamPassthrough: true}
+		}
 		// Best-effort fallback for OAuth tokens missing AI Studio scopes when calling countTokens.
 		// This avoids Gemini SDKs failing hard during preflight token counting.
 		// Checked before error policy so it always works regardless of custom error codes.

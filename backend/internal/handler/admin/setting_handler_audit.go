@@ -44,6 +44,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.RegistrationEmailDomainQuotaEnabled != after.RegistrationEmailDomainQuotaEnabled {
 		changed = append(changed, "registration_email_domain_quota_enabled")
 	}
+	if before.RegistrationEmailAliasBlockEnabled != after.RegistrationEmailAliasBlockEnabled {
+		changed = append(changed, "registration_email_alias_block_enabled")
+	}
 	if before.PromoCodeEnabled != after.PromoCodeEnabled {
 		changed = append(changed, "promo_code_enabled")
 	}

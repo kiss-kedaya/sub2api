@@ -83,6 +83,8 @@ func providePluginHostInfo(buildInfo handler.BuildInfo) service.PluginHostInfo {
 }
 
 func provideCleanup(
+	handlers *handler.Handlers,
+	settings *service.SettingService,
 	entClient *ent.Client,
 	rdb *redis.Client,
 	opsMetricsCollector *service.OpsMetricsCollector,
@@ -145,6 +147,41 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
+			{"OptionalDiagnostics", func() error {
+				if settings != nil {
+					settings.StopRequestCapture()
+				}
+				if handlers != nil && handlers.Gateway != nil {
+					handlers.Gateway.StopGeminiExplicitCache()
+				}
+				if handlers != nil && handlers.Admin != nil {
+					if handlers.Admin.PromptAudit != nil {
+						handlers.Admin.PromptAudit.StopSecurityPenalties()
+					}
+					if handlers.Admin.Serverless != nil {
+						handlers.Admin.Serverless.Stop()
+					}
+					if handlers.Admin.ExcelGrant != nil {
+						handlers.Admin.ExcelGrant.Stop()
+					}
+					if handlers.Admin.OpsAutomation != nil {
+						handlers.Admin.OpsAutomation.Stop()
+					}
+					if handlers.Admin.CredentialGuard != nil {
+						handlers.Admin.CredentialGuard.Stop()
+					}
+					if handlers.Admin.AccountOps != nil {
+						handlers.Admin.AccountOps.Stop()
+					}
+					if handlers.Admin.Usage != nil {
+						handlers.Admin.Usage.StopOperationalDiagnostics()
+					}
+					if handlers.Admin.IPRisk != nil {
+						handlers.Admin.IPRisk.Stop()
+					}
+				}
+				return nil
+			}},
 			{"PluginManager", func() error {
 				if pluginManager != nil {
 					pluginManager.Stop()

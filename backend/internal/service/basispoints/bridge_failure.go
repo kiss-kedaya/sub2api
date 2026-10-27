@@ -1,0 +1,43 @@
+package basispoints
+
+// BridgeFailure describes local conversion failure, never an upstream HTTP
+// rejection. Only bounded structural metadata may be added to Details.
+type BridgeFailure struct {
+	Message               string
+	FailureStage          string
+	RejectedTool          string
+	RepairSkippedReason   string
+	UpstreamTerminalEvent string
+}
+
+func (f *BridgeFailure) Details() map[string]any {
+	result := object{"type": "server_error", "code": "basispoints_protocol_error", "message": f.Message, "failure_stage": f.FailureStage}
+	if f.RejectedTool != "" {
+		result["rejected_tool"] = f.RejectedTool
+	}
+	if f.RepairSkippedReason != "" {
+		result["repair_skipped_reason"] = f.RepairSkippedReason
+	}
+	if f.UpstreamTerminalEvent != "" {
+		result["upstream_terminal_event"] = f.UpstreamTerminalEvent
+	}
+	return result
+}
+
+// ParseBridgeFailure consumes the bridge's normalized output. Raw upstream
+// failures pass through classifyUpstreamFailure first, which drops these fields.
+func ParseBridgeFailure(raw []byte) *BridgeFailure {
+	var payload object
+	if decode(raw, &payload) != nil || text(payload["type"]) != "response.failed" {
+		return nil
+	}
+	response, _ := payload["response"].(object)
+	detail, _ := response["error"].(object)
+	stage := text(detail["failure_stage"])
+	if text(detail["code"]) != "basispoints_protocol_error" || (stage != "bridge_tool_validation" && stage != "bridge_protocol_conversion") {
+		return nil
+	}
+	return &BridgeFailure{Message: text(detail["message"]), FailureStage: stage,
+		RejectedTool: safeSchemaName(text(detail["rejected_tool"])), RepairSkippedReason: text(detail["repair_skipped_reason"]),
+		UpstreamTerminalEvent: text(detail["upstream_terminal_event"])}
+}

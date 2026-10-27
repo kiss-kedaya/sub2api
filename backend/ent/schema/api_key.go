@@ -118,6 +118,7 @@ func (APIKey) Fields() []ent.Field {
 
 		// Anthropic 缓存 TTL 注入覆盖 (added by migration 252)
 		// 取值：inherit（跟随管理员全局设置）/ off（不注入）/ 1h / 5m。
+		field.Int("concurrency_limit").NonNegative().Default(0),
 		field.String("anthropic_cache_ttl_mode").
 			MaxLen(16).
 			Default("inherit").

@@ -1,0 +1,74 @@
+package accounttimer
+
+import (
+	"testing"
+	"time"
+)
+
+func TestResolve(t *testing.T) {
+	now := time.Date(2026, 10, 21, 23, 30, 0, 0, time.UTC)
+	cases := []struct {
+		name  string
+		input Input
+		want  string
+		code  string
+	}{
+		{"8h from server receipt", Input{Mode: "relative", Hours: 8, Timezone: "Asia/Shanghai"}, "2026-10-22T07:30:00Z", ""},
+		{"minutes cross midnight", Input{Mode: "relative", Minutes: 45, Timezone: "Asia/Shanghai"}, "2026-10-22T00:15:00Z", ""},
+		{"Beijing next 8", Input{Mode: "absolute", Time: "08:00", Timezone: "Asia/Shanghai"}, "2026-10-22T00:00:00Z", ""},
+		{"explicit past stays past", Input{Mode: "absolute", Date: "2026-10-21", Time: "08:00", Timezone: "Asia/Shanghai"}, "", "past"},
+		{"explicit Beijing date", Input{Mode: "absolute", Date: "2026-10-23", Time: "08:00", Timezone: "Asia/Shanghai"}, "2026-10-23T00:00:00Z", ""},
+		{"invalid zone", Input{Mode: "relative", Hours: 8, Timezone: "Mars/City"}, "", "timezone"},
+		{"no implicit zone", Input{Mode: "relative", Hours: 8}, "", "timezone"},
+		{"DST missing", Input{Mode: "absolute", Date: "2027-03-14", Time: "02:30", Timezone: "America/New_York"}, "", "dst"},
+		{"DST duplicate", Input{Mode: "absolute", Date: "2026-11-01", Time: "01:30", Timezone: "America/New_York"}, "", "dst"},
+		{"zero", Input{Mode: "relative", Timezone: "UTC"}, "", "duration"},
+		{"extreme", Input{Mode: "relative", Hours: 1 << 60, Timezone: "UTC"}, "", "duration"},
+		{"negative", Input{Mode: "relative", Hours: -1, Minutes: 90, Timezone: "UTC"}, "", "duration"},
+		{"invalid calendar date", Input{Mode: "absolute", Date: "2026-02-30", Time: "08:00", Timezone: "UTC"}, "", "datetime"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Resolve(c.input, now, DefaultPolicy())
+			if c.code != "" {
+				if ErrorCode(err) != c.code {
+					t.Fatalf("want %s, got %v", c.code, err)
+				}
+				return
+			}
+			if err != nil || got.ExecuteAt.Format(time.RFC3339) != c.want {
+				t.Fatalf("got %+v %v want %s", got, err, c.want)
+			}
+			if got.Timezone != c.input.Timezone || got.LocalDate == "" || got.Offset == "" {
+				t.Fatal("missing explicit zone preview")
+			}
+		})
+	}
+}
+func TestNextEightCrossesLocalDay(t *testing.T) {
+	now := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	p, err := Resolve(Input{Mode: "absolute", Time: "08:00", Timezone: "Asia/Shanghai"}, now, DefaultPolicy())
+	if err != nil || p.ExecuteAt.Format(time.RFC3339) != "2026-10-23T00:00:00Z" {
+		t.Fatalf("%+v %v", p, err)
+	}
+}
+func TestExecutionPolicy(t *testing.T) {
+	now := time.Now()
+	p := DefaultPolicy()
+	if Decision(true, now.Add(-16*time.Minute), now, "active", nil, false, p) != "open_expired" {
+		t.Fatal("late open must expire")
+	}
+	if Decision(false, now.Add(-365*24*time.Hour), now, "active", nil, false, p) != "" {
+		t.Fatal("late close must run")
+	}
+	if Decision(true, now, now, "disabled", nil, false, p) != "account_inactive" {
+		t.Fatal("must preserve disabled")
+	}
+	expired := now.Add(-time.Hour)
+	if Decision(true, now, now, "active", &expired, false, p) != "account_expired" {
+		t.Fatal("must preserve expiry")
+	}
+	if Decision(false, now, now, "active", nil, true, p) != "account_deleted" {
+		t.Fatal("must preserve deletion")
+	}
+}

@@ -3,6 +3,7 @@ package securityaudit
 import (
 	"context"
 	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"net/http"
 	"sync"
 )
@@ -18,15 +19,16 @@ type PromptEngine interface {
 }
 
 type Coordinator struct {
-	legacy LegacyEngine
-	prompt PromptEngine
+	legacy    LegacyEngine
+	prompt    PromptEngine
+	penalties *service.SecurityPenaltyService
 }
 
 func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {
 	return &Coordinator{legacy: legacy, prompt: prompt}
 }
 
-func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
+func (c *Coordinator) checkWithoutPenalty(ctx context.Context, req Request) Decision {
 	if c == nil {
 		return allowDecision(nil, nil)
 	}

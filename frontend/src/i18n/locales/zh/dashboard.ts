@@ -76,6 +76,9 @@ export default {
 
   // API Keys
   keys: {
+    queueWaiting: '排队等待',
+    concurrencyLimit: '此密钥最大并发',
+    concurrencyLimitHint: '0 不增加独立上限；用户总并发限制仍然有效。达到上限后按服务器队列策略等待或返回 429。',
     title: 'API 密钥',
     description: '管理您的 API 密钥和访问令牌',
     searchPlaceholder: '搜索名称或Key...',

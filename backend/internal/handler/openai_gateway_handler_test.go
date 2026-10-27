@@ -1272,7 +1272,10 @@ func TestOpenAIResponsesWebSocket_PreviousResponseIDKindLoggedBeforeAcquireFailu
 	var closeErr coderws.CloseError
 	require.ErrorAs(t, err, &closeErr)
 	require.Equal(t, coderws.StatusInternalError, closeErr.Code)
-	require.Contains(t, strings.ToLower(closeErr.Reason), "failed to acquire user concurrency slot")
+	// User and Key admission share the same safe public failure envelope.
+	// The valid response ID must reach admission, not be rejected as a message ID.
+	require.Equal(t, "failed to acquire concurrency slot", strings.ToLower(closeErr.Reason))
+	require.NotContains(t, closeErr.Reason, "user slot unavailable")
 }
 
 type contentModerationHandlerSettingRepo struct {

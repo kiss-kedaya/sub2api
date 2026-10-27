@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -43,6 +45,57 @@ func SetupRouter(
 	db *sql.DB,
 ) *gin.Engine {
 	adminhandler.ConfigureReportCacheRedis(redisClient)
+	if handlers.Admin != nil && handlers.Admin.Setting != nil && settingService != nil {
+		regional, err := service.NewServerlessRouting(settingService, db, redisClient, cfg)
+		if err != nil {
+			log.Printf("Warning: regional gateway routing unavailable")
+		} else {
+			handlers.Admin.Serverless = handlers.Admin.Setting.ServerlessHandler(regional)
+			regional.Start(func(ctx context.Context) error {
+				if db == nil || redisClient == nil {
+					return fmt.Errorf("readiness unavailable")
+				}
+				if err := db.PingContext(ctx); err != nil {
+					return err
+				}
+				return redisClient.Ping(ctx).Err()
+			})
+			r.Use(regional.Ingress())
+		}
+	}
+	if handlers.Admin != nil && handlers.Admin.OpsAutomation != nil {
+		r.Use(handler.OpsAutomationObserver(handlers.Admin.OpsAutomation.Engine()))
+	}
+	if handlers.Gateway != nil && db != nil {
+		handlers.Gateway.ConfigureGeminiExplicitCache(repository.NewGeminiCachedContentRepository(db), cfg)
+	}
+	ipRisk := service.NewIPRiskManager(settingService, redisClient)
+	ipRisk.Start()
+	handlers.Admin.IPRisk = adminhandler.NewIPRiskHandler(ipRisk, settingService, nil)
+	handlers.Admin.IPRisk.UseAuditHandler(handlers.Admin.AuditLog)
+	r.Use(ipRisk.Middleware())
+	if handlers.Admin != nil && handlers.Admin.Usage != nil {
+		if _, err := handlers.Admin.Usage.ConfigureTrafficDelivery(func() string {
+			dir := os.Getenv("DATA_DIR")
+			if dir == "" {
+				dir = "./data"
+			}
+			return filepath.Join(dir, "user-traffic-pending")
+		}); err != nil {
+			log.Printf("Warning: traffic diagnostics unavailable")
+		}
+		r.Use(middleware2.RequestTiming(handlers.Admin.Usage))
+		r.Use(middleware2.UserTraffic(handlers.Admin.Usage))
+	}
+	manager, captureErr := settingService.InitializeRequestCapture(db)
+	if captureErr != nil {
+		log.Printf("Warning: request capture unavailable")
+	}
+	if handlers.Admin != nil && handlers.Admin.Account != nil {
+		handlers.Admin.RequestCapture = handlers.Admin.Account.CaptureHandler(manager, settingService)
+		handlers.Admin.Setting.ConfigureCaptureStepUp(handlers.Admin.RequestCapture)
+	}
+
 	middleware2.SetIngressRejectRecorder(opsService)
 	service.SetUsageInflightStore(repository.NewUsageInflightCache(redisClient))
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
@@ -143,6 +196,9 @@ func registerRoutes(
 	panelRateLimiter := middleware2.NewPanelRateLimiter(redisClient, settingService)
 
 	// 注册各模块路由
+	if h.Admin != nil && h.Admin.Serverless != nil {
+		r.GET("/internal/serverless/probe", h.Admin.Serverless.Engine().ProbeHandler)
+	}
 	routes.RegisterAuthRoutes(v1, h, jwtAuth, auditLog, redisClient, settingService, panelRateLimiter)
 	routes.RegisterUserRoutes(v1, h, jwtAuth, auditLog, settingService, panelRateLimiter)
 	routes.RegisterModelPlazaRoutes(v1, h, optionalJWTAuth, settingService, panelRateLimiter)

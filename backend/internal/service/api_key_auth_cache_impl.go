@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 26 // v26: per-key DeepSeek tool injection; reject old writers that omit false
+const apiKeyAuthSnapshotVersion = APIKeyAuthCacheSchemaVersion
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -102,10 +102,11 @@ func (s *APIKeyService) initAuthCache(cfg *config.Config) {
 	}
 }
 
-// StartAuthCacheInvalidationSubscriber starts the Pub/Sub subscriber for L1 cache invalidation.
+// StartAuthCacheInvalidationSubscriber starts cross-version L2 and local L1
+// invalidation, including peers configured without a local cache.
 // This should be called after the service is fully initialized.
 func (s *APIKeyService) StartAuthCacheInvalidationSubscriber(ctx context.Context) {
-	if s.cache == nil || (s.authCacheL1 == nil && s.authNegativeCacheL1 == nil) {
+	if s.cache == nil {
 		return
 	}
 	s.authInvalidationStart.Do(func() {
@@ -180,6 +181,9 @@ func (s *APIKeyService) AuthCacheInvalidationSubscriberHealth() AuthCacheInvalid
 }
 
 func (s *APIKeyService) StopAuthCacheInvalidationSubscriber() {
+	if s != nil && s.concurrencyService != nil {
+		s.concurrencyService.StopAPIKeyQueue()
+	}
 	if s == nil {
 		return
 	}
@@ -359,6 +363,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 
 		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(apiKey.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: apiKey.DeepSeekToolInjectionEnabled,
+		ConcurrencyLimit:             apiKey.ConcurrencyLimit,
 		User: APIKeyAuthUserSnapshot{
 			ID:                                apiKey.User.ID,
 			Status:                            apiKey.User.Status,
@@ -488,6 +493,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 
 		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(snapshot.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: snapshot.DeepSeekToolInjectionEnabled,
+		ConcurrencyLimit:             snapshot.ConcurrencyLimit,
 		User: &User{
 			ID:                                snapshot.User.ID,
 			Status:                            snapshot.User.Status,

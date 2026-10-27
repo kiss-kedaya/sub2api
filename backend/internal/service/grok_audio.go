@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -212,9 +213,12 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 	defer cancel()
 	errCh := make(chan error, 2)
 	var audioObserved atomic.Bool
+	var relays sync.WaitGroup
+	relays.Add(2)
 
 	// Upstream → client
 	go func() {
+		defer relays.Done()
 		for {
 			msg, readErr := conn.ReadMessage(ctx)
 			if readErr != nil {
@@ -237,6 +241,7 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 
 	// Client → upstream (JSON events only)
 	go func() {
+		defer relays.Done()
 		for {
 			kind, msg, readErr := client.Read(ctx)
 			if readErr != nil {
@@ -267,7 +272,14 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 		}
 	}()
 
-	return awaitGrokRealtimeAudioObserved(errCh, &audioObserved)
+	_, relayErr := awaitGrokRealtimeAudioObserved(errCh, &audioObserved)
+	// Capacity remains owned until both I/O loops have stopped. Returning after
+	// the first loop lets admission release a slot while the other still relays.
+	cancel()
+	_ = conn.Close()
+	_ = client.CloseNow()
+	relays.Wait()
+	return audioObserved.Load(), relayErr
 }
 
 // ProbeGrokRealtime performs the upstream WebSocket handshake without sending

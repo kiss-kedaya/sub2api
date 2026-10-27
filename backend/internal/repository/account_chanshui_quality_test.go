@@ -22,7 +22,9 @@ func TestChanshuiAccountStateSQLGuardsAndAtomicOutbox(t *testing.T) {
 			require.True(t, changed)
 			require.Len(t, exec.execQueries, 1, "state and outbox must be one atomic statement")
 			q := normalizeSQLWhitespace(exec.execQueries[0])
-			require.Contains(t, q, "WITH changed AS ( UPDATE accounts")
+			require.Contains(t, q, "WITH prior_stamp AS MATERIALIZED")
+			require.Contains(t, q, "FOR UPDATE), changed AS ( UPDATE accounts")
+			require.Contains(t, q, "o.account_updated_at=stamp.previous_updated_at")
 			require.Contains(t, q, "INSERT INTO scheduler_outbox")
 			require.Contains(t, q, "deleted_at IS NULL AND status='active'")
 			require.Contains(t, q, "p.account_id=$1")
@@ -50,11 +52,11 @@ func TestChanshuiAccountStateNoopAndFailure(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &accountRepository{sql: db}
 	now := time.Now().UTC()
-	mock.ExpectExec("WITH changed AS").WithArgs(int64(2), int64(3), service.SchedulerOutboxEventAccountChanged, now).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("WITH prior_stamp AS").WithArgs(int64(2), int64(3), service.SchedulerOutboxEventAccountChanged, now).WillReturnResult(sqlmock.NewResult(0, 0))
 	changed, err := repo.ApplyChanshuiQualityState(context.Background(), 2, 3, now, false)
 	require.NoError(t, err)
 	require.False(t, changed)
-	mock.ExpectExec("WITH changed AS").WillReturnError(errors.New("outbox unavailable"))
+	mock.ExpectExec("WITH prior_stamp AS").WillReturnError(errors.New("outbox unavailable"))
 	changed, err = repo.ApplyChanshuiQualityState(context.Background(), 2, 3, now, true)
 	require.Error(t, err)
 	require.False(t, changed)
@@ -78,7 +80,8 @@ func TestChanshuiBulkUpdateManualOverrideAndBackgroundRecovery(t *testing.T) {
 			} else {
 				require.NotContains(t, q, "- 'chanshui_quality_pauses'")
 				if enabled {
-					require.Contains(t, q, "schedulable = CASE WHEN jsonb_typeof(extra->'chanshui_quality_pauses')='object'")
+					require.Contains(t, q, "schedulable = CASE WHEN (jsonb_typeof(extra->'chanshui_quality_pauses')='object'")
+					require.Contains(t, q, "local_reasoning_quality_pauses")
 					require.Contains(t, q, "THEN FALSE ELSE $1 END")
 				}
 			}
@@ -93,7 +96,8 @@ func TestChanshuiClearErrorPreservesOwnedPause(t *testing.T) {
 	require.Len(t, exec.execQueries, 1)
 	q := normalizeSQLWhitespace(exec.execQueries[0])
 	require.Contains(t, q, "status='active',error_message=''")
-	require.Contains(t, q, "extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE TRUE END")
+	require.Contains(t, q, "extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE")
+	require.Contains(t, q, "local_reasoning_quality_pauses")
 	require.Contains(t, q, "status='error' AND deleted_at IS NULL")
 	require.Contains(t, q, "INSERT INTO scheduler_outbox")
 }

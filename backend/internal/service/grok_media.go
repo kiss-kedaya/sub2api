@@ -45,12 +45,12 @@ func (e GrokMediaEndpoint) RequiresRequestBody() bool {
 }
 
 func (e GrokMediaEndpoint) IsVideoLookupRequest() bool {
-	return e == GrokMediaEndpointVideoStatus || e == GrokMediaEndpointVideoContent || e == GrokMediaEndpointVideoGenerationsStatus || e == GrokMediaEndpointVideoGenerationsContent
+	return e.IsSeedance() && e != SeedanceEndpointCreate || e.IsMiniMaxH3() && e != MiniMaxH3EndpointCreate || e == GrokMediaEndpointVideoStatus || e == GrokMediaEndpointVideoContent || e == GrokMediaEndpointVideoGenerationsStatus || e == GrokMediaEndpointVideoGenerationsContent
 }
 
 func (e GrokMediaEndpoint) IsGenerationRequest() bool {
 	switch e {
-	case GrokMediaEndpointImagesGenerations, GrokMediaEndpointImagesEdits, GrokMediaEndpointVideosGenerations, GrokMediaEndpointVideosEdits, GrokMediaEndpointVideosExtensions:
+	case SeedanceEndpointCreate, MiniMaxH3EndpointCreate, GrokMediaEndpointImagesGenerations, GrokMediaEndpointImagesEdits, GrokMediaEndpointVideosGenerations, GrokMediaEndpointVideosEdits, GrokMediaEndpointVideosExtensions:
 		return true
 	default:
 		return false
@@ -482,6 +482,10 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 var ErrGrokVideoSourceUnavailable = errors.New("grok video source account is unavailable")
 
 func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, accountID int64) (*Account, error) {
+	return s.GetVideoProviderBoundAccount(ctx, accountID, "")
+}
+
+func (s *OpenAIGatewayService) GetVideoProviderBoundAccount(ctx context.Context, accountID int64, provider string) (*Account, error) {
 	if accountID <= 0 {
 		return nil, fmt.Errorf("bound grok media account is invalid")
 	}
@@ -492,7 +496,7 @@ func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, acc
 	// one. The local create-time pointer is only a fallback for services without
 	// an authoritative account source (for example standalone fixtures).
 	if s.schedulerSnapshot == nil && s.accountRepo == nil {
-		if account := recallGrokVideoAccountByID(accountID); account != nil && account.Platform == PlatformGrok {
+		if account := recallGrokVideoAccountByID(accountID); videoProviderAccountMatches(account, provider) {
 			return account, nil
 		}
 		return nil, fmt.Errorf("account repository is unavailable")
@@ -514,7 +518,7 @@ func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, acc
 			return nil, err
 		}
 	}
-	if account == nil || account.Platform != PlatformGrok {
+	if !videoProviderAccountMatches(account, provider) {
 		return nil, ErrGrokVideoSourceUnavailable
 	}
 	return account, nil
@@ -554,10 +558,12 @@ func (s *OpenAIGatewayService) SelectGrokMediaVideoRequestAccount(
 // first observes a completed video URL. Status may omit model/duration; we fall
 // back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
-	DurableJobID  string `json:"durable_job_id,omitempty"`
-	Model         string `json:"model"`
-	BillingModel  string `json:"billing_model,omitempty"`
-	UpstreamModel string `json:"upstream_model,omitempty"`
+	Provider          string   `json:"provider,omitempty"`
+	MiniMaxH3BaseCost *float64 `json:"minimax_h3_base_cost,omitempty"`
+	DurableJobID      string   `json:"durable_job_id,omitempty"`
+	Model             string   `json:"model"`
+	BillingModel      string   `json:"billing_model,omitempty"`
+	UpstreamModel     string   `json:"upstream_model,omitempty"`
 	// GroupID is the smart-route group selected for the create request. The
 	// authenticated API key's primary group is not authoritative after routing.
 	GroupID              int64  `json:"group_id,omitempty"`
@@ -836,6 +842,13 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	body []byte,
 	contentType string,
 ) (*OpenAIForwardResult, error) {
+	if endpoint.IsSeedance() {
+		return s.ForwardSeedance(ctx, c, account, endpoint, requestID, body)
+	}
+	if endpoint.IsMiniMaxH3() {
+		return s.ForwardMiniMaxH3(ctx, c, account, endpoint, requestID, body)
+	}
+
 	startTime := time.Now()
 	if account == nil {
 		return nil, fmt.Errorf("grok account is required")

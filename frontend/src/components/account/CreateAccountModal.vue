@@ -1434,6 +1434,12 @@
           </label>
         </div>
 
+        <CopilotSDKFields v-if="form.platform === 'openai' && accountCategory === 'apikey'" v-model="copilotSDKEnabled" />
+        <GeminiCacheAccountFields
+          v-if="form.platform === 'gemini' && accountCategory === 'apikey' && !geminiUseCustomProtocol"
+          v-model="geminiCacheSettings"
+        />
+
         <!-- Gemini API Key tier selection -->
         <div v-if="form.platform === 'gemini' && accountCategory === 'apikey' && !geminiUseCustomProtocol">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
@@ -3909,6 +3915,10 @@
 </template>
 
 <script setup lang="ts">
+import CopilotSDKFields from '@/components/account/CopilotSDKFields.vue'
+import GeminiCacheAccountFields from '@/components/account/GeminiCacheAccountFields.vue'
+import { readGeminiCacheSettings, applyGeminiCacheSettings } from '@/components/account/geminiCacheSettings'
+
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -4192,7 +4202,9 @@ const adaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
   anthropic: '',
   responses: ''
 })
+const copilotSDKEnabled = ref(false)
 const geminiUseCustomProtocol = ref(false)
+const geminiCacheSettings = ref(readGeminiCacheSettings())
 const isCNPlatform = computed(() => isCNProviderPlatform(form.platform))
 const isGeminiProtocolAccount = computed(
   () => form.platform === 'gemini' && accountCategory.value === 'apikey' && geminiUseCustomProtocol.value
@@ -4560,16 +4572,17 @@ const openAITextEndpointCapabilityLabel = computed(() => {
 })
 const openAIEndpointCapabilityOptions = computed<{ value: OpenAIEndpointCapability; label: string }[]>(() => [
   { value: 'chat_completions', label: openAITextEndpointCapabilityLabel.value },
-  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') }
+  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') },
+  { value: 'seedance', label: 'Seedance / Ark video' }
 ])
 const openAITextGenerationCapabilityEnabled = computed(() =>
   openAIEndpointCapabilities.value.includes('chat_completions')
 )
 
-const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]) => {
-  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings']
+const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]): OpenAIEndpointCapability[] => {
+  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'seedance']
   const selected = allowed.filter((value) => values.includes(value))
-  return selected.length > 0 ? selected : allowed
+  return selected.length > 0 ? selected : ['chat_completions', 'embeddings']
 }
 
 const toggleOpenAIEndpointCapability = (capability: OpenAIEndpointCapability, event?: Event) => {
@@ -5358,7 +5371,9 @@ const resetForm = () => {
   form.notes = ''
   form.platform = 'anthropic'
   form.type = 'oauth'
+  copilotSDKEnabled.value = false
   form.credentials = {}
+  geminiCacheSettings.value = readGeminiCacheSettings()
   form.proxy_id = null
   form.concurrency = 10
   form.load_factor = null
@@ -5481,6 +5496,8 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
 
   const extra: Record<string, unknown> = { ...(base || {}) }
+  if (accountCategory.value === 'apikey' && copilotSDKEnabled.value) extra.openai_copilot_sdk = true
+  else delete extra.openai_copilot_sdk
   if (accountCategory.value === 'oauth-based') {
     extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
     extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)
@@ -5957,6 +5974,7 @@ const handleSubmit = async () => {
     return
   }
 
+  applyGeminiCacheSettings(credentials, geminiCacheSettings.value, form.platform, !geminiUseCustomProtocol.value)
   form.credentials = credentials
   const extra = buildAnthropicExtra(buildOpenAIExtra())
 
@@ -6770,7 +6788,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
 
         const credentials = antigravityOAuth.buildCredentials(tokenInfo, refreshTokens[i])
         applyAntigravityProjectID(credentials, antigravityProjectId.value, 'create')
-        
+
         // Generate account name with index for batch
         const accountName = refreshTokens.length > 1 ? `${form.name} #${i + 1}` : form.name
 

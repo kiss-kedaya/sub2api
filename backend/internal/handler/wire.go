@@ -52,12 +52,22 @@ func ProvideAdminHandlers(
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	settingService *service.SettingService,
 	claudeResetCredits *service.ClaudeResetCreditService,
+	accountOps *admin.AccountOpsHandler,
+	mihomo *admin.MihomoHandler,
+	credentialGuard *admin.CredentialGuardHandler,
+	opsAutomation *admin.OpsAutomationHandler,
+	excelGrant *admin.ExcelGrantHandler,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetCodexTicketSettings(settingService)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
 	return &AdminHandlers{
+		ExcelGrant:             excelGrant,
+		OpsAutomation:          opsAutomation,
+		CredentialGuard:        credentialGuard,
+		AccountOps:             accountOps,
+		Mihomo:                 mihomo,
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
 		Group:                  groupHandler,
@@ -297,6 +307,11 @@ var ProviderSet = wire.NewSet(
 	admin.NewAdminAPIKeyHandler,
 	admin.NewScheduledTestHandler,
 	admin.NewChannelHandler,
+	ProvideAccountOpsHandler,
+	ProvideMihomoHandler,
+	ProvideCredentialGuardHandler,
+	admin.NewOpsAutomationHandler,
+	ProvideExcelGrantHandler,
 	admin.NewChannelMonitorHandler,
 	admin.NewChannelMonitorRequestTemplateHandler,
 	admin.NewContentModerationHandler,

@@ -1,0 +1,26 @@
+[Unit]
+Description=Sub2API Copilot SDK Responses sidecar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sub2api-copilot
+Group=sub2api-copilot
+WorkingDirectory=/opt/sub2api-copilot/adapter
+EnvironmentFile=/etc/sub2api/copilot-sidecar.env
+ExecStart=/opt/sub2api-copilot/adapter/.venv/bin/python /opt/sub2api-public/deploy/copilot-sdk/server.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+StateDirectory=sub2api-copilot
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sub2api-copilot
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

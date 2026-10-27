@@ -109,6 +109,27 @@ describe('RegisterView invitation layout', () => {
     registerMock.mockResolvedValue({})
   })
 
+  it.each([
+    { enabled: true, email: 'signup+tag@example.com', rejected: true },
+    { enabled: false, email: 'signup+tag@example.com', rejected: false },
+    { enabled: true, email: 'first.last@example.com', rejected: false }
+  ])('enforces signup alias policy without rejecting ordinary distinct mailboxes ($email / $enabled)', async ({ enabled, email, rejected }) => {
+    getPublicSettingsMock.mockResolvedValueOnce({ ...publicSettings, turnstile_enabled: false, registration_email_alias_block_enabled: enabled })
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue(email)
+    await wrapper.get('#password').setValue('valid-test-password')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    if (rejected) {
+      expect(registerMock).not.toHaveBeenCalled()
+      expect(showErrorMock).toHaveBeenCalledWith('auth.emailAliasNotAllowed')
+    } else {
+      expect(registerMock).toHaveBeenCalledWith(expect.objectContaining({ email }))
+    }
+    wrapper.unmount()
+  })
+
   it('does not flash the promo-code field before disabled settings finish loading', async () => {
     let resolveSettings!: (settings: typeof publicSettings) => void
     getPublicSettingsMock.mockReturnValueOnce(

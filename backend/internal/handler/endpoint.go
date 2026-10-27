@@ -26,6 +26,7 @@ const (
 	EndpointImagesGenerations    = "/v1/images/generations"
 	EndpointImagesEdits          = "/v1/images/edits"
 	EndpointImageTasks           = "/v1/images/tasks"
+	EndpointSeedanceTasks        = "/api/v3/contents/generations/tasks"
 	EndpointVideosGenerations    = "/v1/videos/generations"
 	EndpointVideosEdits          = "/v1/videos/edits"
 	EndpointVideosExtensions     = "/v1/videos/extensions"
@@ -102,6 +103,8 @@ func NormalizeInboundEndpoint(path string) string {
 		return EndpointImageTasks
 	case strings.Contains(path, EndpointVideosGenerations) || strings.Contains(path, "/videos/generations"):
 		return EndpointVideosGenerations
+	case strings.HasPrefix(path, EndpointSeedanceTasks):
+		return EndpointSeedanceTasks
 	case strings.Contains(path, EndpointVideosEdits) || strings.Contains(path, "/videos/edits"):
 		return EndpointVideosEdits
 	case strings.Contains(path, EndpointVideosExtensions) || strings.Contains(path, "/videos/extensions"):

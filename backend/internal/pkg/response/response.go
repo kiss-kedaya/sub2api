@@ -59,6 +59,7 @@ func Accepted(c *gin.Context, data any) {
 
 // Error 返回错误响应
 func Error(c *gin.Context, statusCode int, message string) {
+	c.Set("response_error_reason", "")
 	c.JSON(statusCode, Response{
 		Code:     statusCode,
 		Message:  message,
@@ -70,12 +71,24 @@ func Error(c *gin.Context, statusCode int, message string) {
 // ErrorWithDetails returns an error response compatible with the existing envelope while
 // optionally providing structured error fields (reason/metadata).
 func ErrorWithDetails(c *gin.Context, statusCode int, message, reason string, metadata map[string]string) {
+	// Keep a fixed machine reason for admission diagnostics without retaining
+	// bodies, credentials or changing the status/message sent to the caller.
+	c.Set("response_error_reason", reason)
 	c.JSON(statusCode, Response{
 		Code:     statusCode,
 		Message:  message,
 		Reason:   reason,
 		Metadata: metadata,
 	})
+}
+
+// ErrorReason returns only the machine-readable reason explicitly supplied to
+// ErrorWithDetails. A status code alone is not evidence of bad credentials.
+func ErrorReason(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	return c.GetString("response_error_reason")
 }
 
 // ErrorFrom converts an ApplicationError (or any error) into the envelope-compatible error response.

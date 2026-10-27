@@ -2,7 +2,11 @@ import { apiClient } from '../client'
 
 export type ModerationMode = 'off' | 'observe' | 'pre_block'
 export type ModerationEngine = 'openai' | 'typesafe'
+export interface ModerationCategorySetting { enabled: boolean }
+
 export interface ModerationEngineMeta {
+  category_settings?: Record<string, ModerationCategorySetting>
+  matched_categories?: string[]
   engine: ModerationEngine
   model: string
   rules_version: string
@@ -34,6 +38,7 @@ export interface ContentModerationConfig {
   all_groups: boolean
   group_ids: number[]
   record_non_hits: boolean
+  category_settings?: Record<string, ModerationCategorySetting>
   thresholds: Record<string, number>
   worker_count: number
   queue_size: number
@@ -73,6 +78,7 @@ export interface ContentModerationAPIKeyStatus {
 
 export interface TestContentModerationAPIKeysPayload {
   engine?: ModerationEngine
+  category_settings?: Record<string, ModerationCategorySetting>
   thresholds?: Record<string, number>
   api_keys?: string[]
   base_url?: string
@@ -97,6 +103,7 @@ export interface ContentModerationTestAuditResult {
   highest_score: number
   composite_score: number
   category_scores: Record<string, number>
+  category_settings?: Record<string, ModerationCategorySetting>
   thresholds: Record<string, number>
 }
 
@@ -119,6 +126,7 @@ export interface UpdateContentModerationConfig {
   all_groups?: boolean
   group_ids?: number[]
   record_non_hits?: boolean
+  category_settings?: Record<string, ModerationCategorySetting>
   thresholds?: Record<string, number>
   worker_count?: number
   queue_size?: number
@@ -219,7 +227,7 @@ export interface ContentModerationLog {
 
 export type UpdateModerationEngineConfig = Pick<UpdateContentModerationConfig,
   'base_url' | 'model' | 'proxy_id' | 'api_keys' | 'api_keys_mode' | 'delete_api_key_hashes' |
-  'clear_api_key' | 'timeout_ms' | 'retry_count' | 'thresholds'>
+  'clear_api_key' | 'timeout_ms' | 'retry_count' | 'thresholds' | 'category_settings'>
 
 export interface ListContentModerationLogsParams {
   page?: number

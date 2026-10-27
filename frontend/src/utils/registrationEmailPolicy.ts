@@ -188,3 +188,15 @@ function normalizeRegistrationEmailSuffixToken(value: string, strict: boolean): 
 function toCanonicalRegistrationEmailSuffix(domain: string): string {
   return domain.startsWith(EMAIL_SUFFIX_WILDCARD_PREFIX) ? domain : `@${domain}`
 }
+
+// Signup-only policy. Non-Gmail dots can identify separate inboxes.
+export function isRegistrationEmailAlias(email: string): boolean {
+  const raw = String(email || '').trim().toLowerCase()
+  const separator = raw.indexOf('@')
+  if (separator <= 0 || separator !== raw.lastIndexOf('@')) return false
+  const local = raw.slice(0, separator)
+  const domain = raw.slice(separator + 1).replace(/\.+$/, '')
+  if (!domain) return false
+  return raw.endsWith('.') || local.indexOf('+') > 0 ||
+    ((domain === 'gmail.com' || domain === 'googlemail.com') && local.includes('.'))
+}

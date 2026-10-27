@@ -360,6 +360,7 @@ import { extractApiErrorCode, extractI18nErrorMessage } from '@/utils/apiError'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
   isRegistrationEmailFormatValid,
+  isRegistrationEmailAlias,
   isRegistrationEmailSuffixAllowed,
   normalizeRegistrationEmailSuffixWhitelist
 } from '@/utils/registrationEmailPolicy'
@@ -418,6 +419,7 @@ const googleOAuthEnabled = ref<boolean>(false)
 const registrationEmailSuffixWhitelist = ref<string[]>([])
 // 域名限量注册开关：开启时非白名单域名可注册 1 个账户（由后端判定），前端不做白名单预检。
 const emailDomainQuotaEnabled = ref<boolean>(false)
+const emailAliasBlockEnabled = ref<boolean>(false)
 const loginAgreementEnabled = ref<boolean>(false)
 const loginAgreementMode = ref<'modal' | 'checkbox' | string>('modal')
 const loginAgreementUpdatedAt = ref<string>('')
@@ -554,6 +556,7 @@ onMounted(async () => {
       settings.registration_email_suffix_whitelist || []
     )
     emailDomainQuotaEnabled.value = settings.registration_email_domain_quota_enabled === true
+    emailAliasBlockEnabled.value = settings.registration_email_alias_block_enabled === true
     applyLoginAgreementSettings(settings)
 
     // Read promo code from URL parameter only if promo code is enabled
@@ -911,6 +914,9 @@ function validateForm(): boolean {
     isValid = false
   } else if (!validateEmail(formData.email)) {
     errors.email = t('auth.invalidEmail')
+    isValid = false
+  } else if (emailAliasBlockEnabled.value && isRegistrationEmailAlias(formData.email)) {
+    errors.email = t('auth.emailAliasNotAllowed')
     isValid = false
   } else if (!isRegistrationEmailFormatValid(formData.email)) {
     // 与后端 EMAIL_FORMAT_INVALID 同口径：长度 / 特殊字符 / 多级域名。

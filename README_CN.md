@@ -25,6 +25,7 @@
 - **API Key 智能路由**：一把钥匙可按顺序绑定多个分组；协议对不上的账号（例如 Anthropic 路径上的 OpenAI 号）会跳过，而不是硬打。
 - **内置充值**：EasyPay（含相对 `payurl`/`qrcode`）、渠道手续费和倍率、实例充值说明。见 [docs/PAYMENT_CN.md](docs/PAYMENT_CN.md)。
 - **用量看板**：近 30 天；有小时汇总就走 rollup，没有再回 `usage_logs`。
+- **诊断与运维**：连接时间线、限时请求采集、缓存测试、流量统计、账号通知、渠道下钻和独立代理管理；自动化与专项通道按需开启。见 [运维能力与配置边界](docs/operator-capabilities.md)。
 - **网关可靠性**：客户端正常关 WS 不计账号故障；过大透传可走 HTTP bridge；Spark 429 只限该模型；转发失败立刻释放会话槽。
 - **升级纪律**：线上主进程 `DATABASE_MIGRATION_MODE=validate`，迁移单独做。版本号只写在 `backend/cmd/server/VERSION`。GitHub Release 只在推 `v*` 标签时触发。
 

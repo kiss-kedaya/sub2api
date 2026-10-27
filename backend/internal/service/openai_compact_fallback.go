@@ -270,6 +270,9 @@ func (s *OpenAIGatewayService) applyOpenAIPassthroughCompactFallbackFromSignal(
 	alreadyRetried bool,
 	resp *http.Response,
 ) ([]byte, string, bool) {
+	if account.IsCopilotSDKEnabled() {
+		return body, "", false
+	}
 	signal, ok := asOpenAICompactFallbackSignal(err)
 	if !ok {
 		return body, "", false

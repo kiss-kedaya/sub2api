@@ -19,6 +19,23 @@ import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadEr
  * Route definitions with lazy loading
  */
 const routes: RouteRecordRaw[] = [
+  {path:'/admin/security-penalties',name:'AdminSecurityPenalties',component:()=>import('@/views/admin/SecurityPenaltiesView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'分层安全限制'}},
+  {path:'/security',name:'SecurityRecords',component:()=>import('@/views/user/SecurityRecordsView.vue'),meta:{requiresAuth:true,title:'安全记录'}},
+  {path:'/admin/serverless',name:'AdminServerless',component:()=>import('@/views/admin/ServerlessView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'地区路由'}},
+  {path:'/admin/excel-grants',name:'AdminExcelGrants',component:()=>import('@/views/admin/ExcelGrantsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'Excel 协议授权'}},
+  {path:'/admin/ops-automation',name:'AdminOpsAutomation',component:()=>import('@/views/admin/OpsAutomationView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'账号自动化'}},
+  {path:'/admin/credential-guard',name:'AdminCredentialGuard',component:()=>import('@/views/admin/CredentialGuardView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'凭证巡检'}},
+  {path:'/admin/account-ops',name:'AdminAccountOps',component:()=>import('@/views/admin/AccountOpsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'账号通知'}},
+  {path:'/admin/channel-operations',name:'AdminChannelOperations',component:()=>import('@/views/admin/ChannelOperationsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'渠道运维'}},
+  {path:'/admin/mihomo',name:'AdminMihomo',component:()=>import('@/views/admin/MihomoView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'代理出口'}},
+  {path:'/admin/group-cache-tests',name:'AdminGroupCacheTests',component:()=>import('@/views/admin/GroupCacheTestView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'分组缓存测试'}},
+  {path:'/admin/request-captures',name:'AdminRequestCaptures',component:()=>import('@/views/admin/RequestCaptureView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'请求采集'}},
+  {path:'/admin/connections',name:'AdminConnections',component:()=>import('@/views/admin/ConnectionDiagnosticsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'连接诊断'}},
+  {path:'/admin/traffic',name:'AdminTraffic',component:()=>import('@/views/TrafficView.vue'),props:{admin:true},meta:{requiresAuth:true,requiresAdmin:true,title:'用户流量'}},
+  {path:'/traffic',name:'UserTraffic',component:()=>import('@/views/TrafficView.vue'),meta:{requiresAuth:true,requiresAdmin:false,title:'流量记录'}},
+  {path:'/admin/ip-risk',name:'AdminIPRisk',component:()=>import('@/views/admin/IPRiskView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'IP风控'}},
+  {path:'/admin/ip-audit',name:'AdminIPAudit',component:()=>import('@/features/ip-audit/IPAuditView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'IP审计'}},
+
   // ==================== Setup Routes ====================
   {
     path: '/setup',

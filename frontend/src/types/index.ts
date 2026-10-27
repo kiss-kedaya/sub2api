@@ -239,6 +239,7 @@ export interface PublicSettings {
   force_email_on_third_party_signup: boolean
   registration_email_suffix_whitelist: string[]
   registration_email_domain_quota_enabled?: boolean
+  registration_email_alias_block_enabled?: boolean
   promo_code_enabled: boolean
   password_reset_enabled: boolean
   invitation_code_enabled: boolean
@@ -765,6 +766,7 @@ export interface CompositeRouteDecision {
 }
 
 export interface ApiKey {
+  concurrency_limit?: number // 0 keeps user-level admission only
   id: number
   user_id: number
   key: string
@@ -802,6 +804,7 @@ export interface ApiKey {
 }
 
 export interface CreateApiKeyRequest {
+  concurrency_limit?: number // 0 keeps user-level admission only
   name: string
   group_id?: number | null
   group_ids?: number[]
@@ -818,6 +821,7 @@ export interface CreateApiKeyRequest {
 }
 
 export interface UpdateApiKeyRequest {
+  concurrency_limit?: number // 0 keeps user-level admission only
   name?: string
   group_id?: number | null
   group_ids?: number[]
@@ -1526,7 +1530,7 @@ export interface CodexUsageSnapshot {
 
 export type OpenAICompactMode = 'auto' | 'force_on' | 'force_off'
 export type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
-export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings'
+export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings' | 'seedance'
 
 export interface OpenAICompactState {
   openai_compact_mode?: OpenAICompactMode

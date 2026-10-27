@@ -34,13 +34,11 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// ── 1. 提取 API Key ──────────────────────────────────────────
-		if rejectInvalidAuthAbuse(c, apiKeyService) {
-			AbortWithError(c, http.StatusTooManyRequests, "INVALID_AUTH_RATE_LIMITED", "Too many invalid authentication attempts; retry later")
-			return
-		}
 
 		if apiKeyHeadersTooLarge(c) {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "malformed", false) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
 			return
@@ -49,7 +47,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		queryKey := strings.TrimSpace(c.Query("key"))
 		queryApiKey := strings.TrimSpace(c.Query("api_key"))
 		if queryKey != "" || queryApiKey != "" {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "malformed", false) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
 			AbortWithError(c, 400, "api_key_in_query_deprecated", "API key in query parameter is deprecated. Please use Authorization header instead.")
 			return
@@ -72,7 +72,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			apiKeyString = c.GetHeader("x-api-key")
 		}
 		if len(apiKeyString) > service.MaxAPIKeyCredentialBytes {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "malformed", false) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
 			return
@@ -85,7 +87,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// 如果所有header都没有API key
 		if apiKeyString == "" {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "missing", false) {
+				return
+			}
 			if hasAPIKeyCredentialInput(c) {
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			} else {
@@ -100,7 +104,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		apiKey, err := apiKeyService.GetByKey(c.Request.Context(), apiKeyString)
 		if err != nil {
 			if errors.Is(err, service.ErrAPIKeyNotFound) {
-				recordInvalidAuthFailure(c, apiKeyService)
+				if rejectAnonymousCredentialFailure(c, apiKeyService, "unknown", false) {
+					return
+				}
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 				AbortWithError(c, 401, "INVALID_API_KEY", "Invalid API key")
 				return
@@ -124,10 +130,15 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		if !apiKey.IsActive() &&
 			apiKey.Status != service.StatusAPIKeyExpired &&
 			apiKey.Status != service.StatusAPIKeyQuotaExhausted {
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "disabled", false) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectAPIKeyDisabled)
 			AbortWithError(c, 401, "API_KEY_DISABLED", "API key is disabled")
 			return
 		}
+
+		anonymousCredentialSuccess(c)
 
 		// 检查 IP 限制（白名单/黑名单）
 		// 注意：错误信息故意模糊，避免暴露具体的 IP 限制机制
@@ -184,7 +195,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			if !billingInfoRequest {
 				_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 			}
-			proceedAuthenticated(c)
+			nextWithAPIKeyAdmissionOwner(c, apiKeyService, apiKeyString, ip.GetClientIP(c), apiKey, false)
 			return
 		}
 
@@ -283,7 +294,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 		}
 
-		proceedAuthenticated(c)
+		nextWithAPIKeyAdmissionOwner(c, apiKeyService, apiKeyString, ip.GetClientIP(c), apiKey, false)
 	}
 }
 

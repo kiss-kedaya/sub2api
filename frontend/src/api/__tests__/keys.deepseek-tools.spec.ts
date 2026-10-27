@@ -29,6 +29,14 @@ describe('API key DeepSeek tool injection payloads', () => {
     }, { headers: { 'Idempotency-Key': 'test-key-create-once' } })
   })
 
+  it('sends an independent concurrency limit only when explicitly configured', async () => {
+    await keysAPI.create('Limited', 3, undefined, [], [], 0, undefined,
+      undefined, undefined, 'inherit', { concurrencyLimit: 4 })
+    expect(post).toHaveBeenCalledWith('/keys', {
+      name: 'Limited', group_id: 3, concurrency_limit: 4, deepseek_tool_injection_enabled: true,
+    }, undefined)
+  })
+
   it('keeps false in updates without changing unrelated settings', async () => {
     await keysAPI.update(1, { deepseek_tool_injection_enabled: false })
     expect(put).toHaveBeenCalledWith('/keys/1', { deepseek_tool_injection_enabled: false })

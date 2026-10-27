@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -132,6 +133,10 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 }
 
 func classifySelectionFailureErrorFromGin(c *gin.Context, err error, fallback noAccountErrorClassification) noAccountErrorClassification {
+	if errors.Is(err, service.ErrSecurityPenaltyGroupRestricted) {
+		return noAccountErrorClassification{Status: http.StatusForbidden, ErrType: "security_penalty_group_restricted",
+			Message: "This conversation is restricted to the configured group; review your security records"}
+	}
 	classification := classifySelectionFailureError(err, fallback)
 	if classification.ModelNotFound && !fallback.ModelNotFound {
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)

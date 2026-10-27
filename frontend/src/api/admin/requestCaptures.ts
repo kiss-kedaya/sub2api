@@ -1,0 +1,81 @@
+import { apiClient } from '../client'
+
+export type CaptureTarget = 'user' | 'account' | 'group'
+export interface CaptureTask {
+  id: string; instance_id: string; target_type: CaptureTarget; target_id: number; target_name: string
+  mode?: 'targeted' | 'id1_diagnostic'
+  save_media: boolean; created_at: string; expires_at?: string; ended_at?: string
+  status: string; reason?: string; requests: number; partial: number; skipped: number; bytes: number
+}
+export interface CapturePart {
+  name: string; stage: string; attempt: number; turn: number; content_type: string
+  headers?: Record<string, string>; bytes: number; omitted?: string
+}
+export interface CaptureRecord {
+  id: string; task_id: string; request_id: string; client_request_id?: string; instance_id: string
+  user_id: number; group_id: number; routed_group_id?: number; model?: string; path: string
+  protocol: string; status: number; is_error: boolean; turn?: number; partial: boolean; reason?: string
+  created_at: string; finished_at?: string; expires_at?: string; session_id?: string; thread_id?: string
+  bytes: number; error_code?: string; client_outcome?: 'completed' | 'failed'
+  attempts: Array<{ number: number; account_id: number; status?: number; upstream_request_id?: string; error?: string; error_stage?: string; read_error?: string; response_terminal?: string; local_close?: boolean }>
+  parts: CapturePart[]; usage?: Record<string, number>
+}
+export interface CaptureStats {
+  instance_id: string; used_bytes: number; buffer_bytes: number; peak_buffer_bytes: number
+  active_requests: number; admission_skipped: number; storage_error: boolean
+  skipped_by_reason?: Record<string, number>; expired_records?: number
+}
+const base = '/admin/request-captures'
+let selectedInstance = ''
+const instanceHeaders = () => selectedInstance ? { 'X-Capture-Instance': selectedInstance } : {}
+export async function listTasks(page = 1) {
+  const data = (await apiClient.get<{ items: CaptureTask[]; stats: CaptureStats; has_more: boolean }>(base, { params: { page, page_size: 20 }, headers: instanceHeaders() })).data
+  if (!selectedInstance) selectedInstance = data.stats.instance_id
+  return data
+}
+export async function createTask(input: { target_type: CaptureTarget; target_id: number; duration_minutes: number; save_media: boolean }) {
+  return (await apiClient.post<CaptureTask>(base, input, { headers: instanceHeaders() })).data
+}
+export async function stopTask(id: string) { await apiClient.post(base + '/' + id + '/stop', undefined, { headers: instanceHeaders() }) }
+export async function deleteTask(id: string) { await apiClient.delete(base + '/' + id, { headers: instanceHeaders() }) }
+export async function listRecords(task: string, page: number, requestID: string, errorsOnly: boolean) {
+  return (await apiClient.get<{ items: CaptureRecord[]; has_more: boolean }>(base + '/' + task + '/requests', { params: { page, page_size: 20, request_id: requestID, errors_only: errorsOnly }, headers: instanceHeaders() })).data
+}
+export async function getRecord(task: string, record: string) {
+  return (await apiClient.get<CaptureRecord>(base + '/' + task + '/requests/' + record, { headers: instanceHeaders() })).data
+}
+export async function getContent(task: string, record: string, part: string, offset: number) {
+  return (await apiClient.get<{ text: string; next_offset: number; has_more: boolean }>(base + '/' + task + '/requests/' + record + '/content/' + encodeURIComponent(part), { params: { offset }, headers: instanceHeaders() })).data
+}
+export async function authorizeSensitiveRead() {
+  await apiClient.get(base + '/sensitive-access', { headers: instanceHeaders() })
+}
+
+interface SaveHandle { createWritable(): Promise<WritableStream<Uint8Array>> }
+type SaveWindow = Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<SaveHandle> }
+export const canStreamExport = () => typeof (window as SaveWindow).showSaveFilePicker === 'function'
+export async function exportCapture(task: string, record?: string, authorize?: () => Promise<unknown>) {
+  const picker = (window as SaveWindow).showSaveFilePicker
+  if (!picker) throw new Error('STREAM_SAVE_UNSUPPORTED')
+  const handle = await picker.call(window, { suggestedName: 'request-capture-' + (record || task) + '.tar.gz' })
+  // Preserve the file-picker user gesture, then authenticate before truncating
+  // the selected file. The export endpoint independently validates the grant.
+  if (authorize) await authorize()
+  else await authorizeSensitiveRead()
+  const writable = await handle.createWritable()
+  try {
+    const path = base + '/' + task + (record ? '/requests/' + record : '') + '/export'
+    const { data } = await apiClient.get<ReadableStream<Uint8Array>>(path, { adapter: 'fetch', responseType: 'stream', timeout: 0, headers: instanceHeaders() })
+    await data.pipeTo(writable)
+  } catch (error) {
+    try { await writable.abort(error) } catch { /* pipeTo may already have aborted the file */ }
+    throw error
+  }
+}
+
+export interface CaptureConfig {
+  enabled: boolean; id1_diagnostic_enabled?: boolean; quota_mib: number; retention_days: number
+  diagnostic_retention_hours?: number; diagnostic_record_limit?: number; record_limit_mib?: number; instance_id?: string; storage_ready?: boolean
+}
+export async function getConfig(){const data=(await apiClient.get<CaptureConfig>(base+'/config')).data; selectedInstance=data.instance_id || ''; return data}
+export async function saveConfig(input:CaptureConfig){return (await apiClient.put<CaptureConfig>(base+'/config',input,{headers:instanceHeaders()})).data}

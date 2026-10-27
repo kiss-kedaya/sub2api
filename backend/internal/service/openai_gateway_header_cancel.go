@@ -11,8 +11,16 @@ import (
 // Only bound the header wait after the original client cancels. Once headers
 // arrive, the existing response handlers own draining and body cleanup.
 func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	return s.doOpenAIRequestWithHeaderCancel(clientCtx, request, func(req *http.Request) (*http.Response, error) {
+		return s.doOpenAIUpstream(req, proxyURL, account)
+	})
+}
+
+// Independent OAuth resource servers share cancellation handoff without running
+// Codex-specific token, ticket or cookie injection on their requests.
+func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context.Context, request *http.Request, send func(*http.Request) (*http.Response, error)) (*http.Response, error) {
 	if clientCtx == nil || clientCtx.Done() == nil {
-		return s.doOpenAIUpstream(request, proxyURL, account)
+		return send(request)
 	}
 	if err := clientCtx.Err(); err != nil {
 		return nil, err
@@ -34,7 +42,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx contex
 			cancelUpstream()
 		}
 	})
-	resp, err := s.doOpenAIUpstream(request.WithContext(upstreamCtx), proxyURL, account)
+	resp, err := send(request.WithContext(upstreamCtx))
 	close(headerDone)
 	if !stopWatch() {
 		// Join a started callback so it cannot cancel the body after handoff.
@@ -53,6 +61,10 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx contex
 			_ = resp.Body.Close()
 		}
 		return nil, errors.Join(clientCtx.Err(), context.Cause(clientCtx))
+	}
+	if resp == nil || resp.Body == nil {
+		cancelUpstream()
+		return resp, nil
 	}
 	resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: cancelUpstream}
 	return resp, nil

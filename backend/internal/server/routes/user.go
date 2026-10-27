@@ -31,6 +31,10 @@ func RegisterUserRoutes(
 		user := authenticated.Group("/user")
 		{
 			user.GET("/profile", h.User.GetProfile)
+			if h.Admin != nil && h.Admin.PromptAudit != nil {
+				user.GET("/security/summary", h.Admin.PromptAudit.MyPenaltySummary)
+				user.GET("/security/events", h.Admin.PromptAudit.MyPenaltyEvents)
+			}
 			user.GET("/custom-endpoints", h.Setting.GetCustomEndpoints)
 			user.PUT("/password", h.User.ChangePassword)
 			user.PUT("", h.User.UpdateProfile)
@@ -88,6 +92,7 @@ func RegisterUserRoutes(
 		keys := authenticated.Group("/keys")
 		{
 			keys.GET("", h.APIKey.List)
+			keys.GET("/concurrency", h.APIKey.GetConcurrencyQueue)
 			keys.GET("/:id", h.APIKey.GetByID)
 			keys.POST("", h.APIKey.Create)
 			keys.PUT("/:id", h.APIKey.Update)
@@ -109,6 +114,8 @@ func RegisterUserRoutes(
 
 		// 使用记录（聚合统计属重查询，叠加更严格的按用户限流）
 		usage := authenticated.Group("/usage")
+		usage.GET("/traffic", h.Usage.Traffic)
+		usage.GET("/traffic/keys", h.Usage.TrafficKeys)
 		usage.Use(panelRateLimiter.Heavy())
 		{
 			usage.GET("", h.Usage.List)

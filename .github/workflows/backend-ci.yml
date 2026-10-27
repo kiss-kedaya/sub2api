@@ -9,6 +9,20 @@ permissions:
   contents: read
 
 jobs:
+  operator-storage-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Operator lease and credential state PostgreSQL regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=integration ./internal/repository -run '^Test(CredentialGuardRepository|OAuthAdmissionCAS)' -count=1
+
   deepseek-native-replay:
     runs-on: ubuntu-latest
     steps:
@@ -22,6 +36,19 @@ jobs:
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/service -run '^TestDeepSeekNativeReasoningReplay' -count=1
 
+  copilot-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Prepare pinned public adapter
+        run: bash deploy/copilot-sdk/prepare.sh "$RUNNER_TEMP/copilot-adapter"
+      - name: Test authenticated tenant and tool contracts without network calls
+        run: |
+          "$RUNNER_TEMP/copilot-adapter/.venv/bin/python" -m pip install pytest pytest-asyncio pytest-socket
+          PYTHONPATH="$RUNNER_TEMP/copilot-adapter" "$RUNNER_TEMP/copilot-adapter/.venv/bin/python" -m pytest --disable-socket --allow-unix-socket -q deploy/copilot-sdk/test_server.py deploy/copilot-sdk/test_adapter_contract.py
   client-error-privacy:
     runs-on: ubuntu-latest
     steps:
@@ -66,6 +93,24 @@ jobs:
       - name: Wallet security concurrency regression
         working-directory: backend
         run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: Diagnostic and operator feature concurrency regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+          go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: Explicit cache and operations safety regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/mihomo -count=1
+          go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository ./cmd/server -run '^Test(GeminiCached|GeminiExplicit|GeminiCache|FixedCharge|AccountOps|ChannelOperations|CredentialGuard|ManagedProxy|ManagedAccount|APIKeyQueue|APIKeySlot|APIKeyAdmission|LiveLease|ProvideCleanup)' -count=1
+      - name: Provider and automation regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/localreasoning ./internal/serverless ./internal/service/basispoints -count=1
+          go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository -run '^Test(CopilotSDK|Excel|Seedance|MiniMaxH3|VideoProvider|Automation|OpsAutomation|LocalReasoning|APIKeyAuthSnapshot.*Concurrency)' -count=1
+      - name: Layered security admission and privacy regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/securityaudit -run '^Test(SecurityPenalty|SecurityAudit.*Constraint|SecurityAuditRejectsUnbound|Penalty|PromptPenalty|RegistrationEmailAlias)' -count=1
       - name: Unit tests
         working-directory: backend
         run: make test-unit
@@ -158,6 +203,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
+      - name: Operator feature frontend regression
+        working-directory: frontend
+        run: pnpm exec vitest run src/api/__tests__/groupCacheTest.spec.ts src/views/admin/__tests__/GroupCacheTestView.spec.ts src/components/account/__tests__/SchedulableTimerControl.spec.ts src/components/usage/__tests__/TrafficPanel.spec.ts src/components/account/__tests__/geminiCacheSettings.spec.ts src/components/admin/operations/__tests__ src/components/group/__tests__ src/views/admin/__tests__/OpsAutomationView.spec.ts src/views/admin/__tests__/ServerlessView.spec.ts src/views/admin/__tests__/AccountOpsView.spec.ts src/views/admin/__tests__/ChannelOperationsView.spec.ts src/views/admin/__tests__/RequestCaptureDiagnostics.spec.ts
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build

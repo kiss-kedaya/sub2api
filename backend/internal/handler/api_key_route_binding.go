@@ -75,6 +75,9 @@ func (h *GatewayHandler) bindSelectedKeyRoute(c *gin.Context, binding keyRouteBi
 // request context. Account retries inside a group do not repeat admission.
 func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billing keyRouteEligibilityChecker, preauthorizer balancePreauthorizer, binding keyRouteBinding) error {
 	previous, selected := binding.Previous, binding.Selected
+	if err := service.CheckSecurityPenaltySelectedGroup(c.Request.Context(), selected); err != nil {
+		return err
+	}
 	if selected == nil || previous == nil || selected.GroupID == nil || previous.GroupID == nil {
 		return nil
 	}

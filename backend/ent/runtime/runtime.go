@@ -145,14 +145,20 @@ func init() {
 	apikeyDescUsage7d := apikeyFields[16].Descriptor()
 	// apikey.DefaultUsage7d holds the default value on creation for the usage_7d field.
 	apikey.DefaultUsage7d = apikeyDescUsage7d.Default.(float64)
+	// apikeyDescConcurrencyLimit is the schema descriptor for concurrency_limit field.
+	apikeyDescConcurrencyLimit := apikeyFields[20].Descriptor()
+	// apikey.DefaultConcurrencyLimit holds the default value on creation for the concurrency_limit field.
+	apikey.DefaultConcurrencyLimit = apikeyDescConcurrencyLimit.Default.(int)
+	// apikey.ConcurrencyLimitValidator is a validator for the "concurrency_limit" field. It is called by the builders before save.
+	apikey.ConcurrencyLimitValidator = apikeyDescConcurrencyLimit.Validators[0].(func(int) error)
 	// apikeyDescAnthropicCacheTTLMode is the schema descriptor for anthropic_cache_ttl_mode field.
-	apikeyDescAnthropicCacheTTLMode := apikeyFields[20].Descriptor()
+	apikeyDescAnthropicCacheTTLMode := apikeyFields[21].Descriptor()
 	// apikey.DefaultAnthropicCacheTTLMode holds the default value on creation for the anthropic_cache_ttl_mode field.
 	apikey.DefaultAnthropicCacheTTLMode = apikeyDescAnthropicCacheTTLMode.Default.(string)
 	// apikey.AnthropicCacheTTLModeValidator is a validator for the "anthropic_cache_ttl_mode" field. It is called by the builders before save.
 	apikey.AnthropicCacheTTLModeValidator = apikeyDescAnthropicCacheTTLMode.Validators[0].(func(string) error)
 	// apikeyDescDeepseekToolInjectionEnabled is the schema descriptor for deepseek_tool_injection_enabled field.
-	apikeyDescDeepseekToolInjectionEnabled := apikeyFields[21].Descriptor()
+	apikeyDescDeepseekToolInjectionEnabled := apikeyFields[22].Descriptor()
 	// apikey.DefaultDeepseekToolInjectionEnabled holds the default value on creation for the deepseek_tool_injection_enabled field.
 	apikey.DefaultDeepseekToolInjectionEnabled = apikeyDescDeepseekToolInjectionEnabled.Default.(bool)
 	accountMixin := schema.Account{}.Mixin()

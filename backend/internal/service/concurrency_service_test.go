@@ -307,12 +307,20 @@ func TestTrackAPIKeySlot_FailOpen(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{apiKeyTrackErr: errors.New("redis down")}
 	svc := NewConcurrencyService(cache)
 
-	release := svc.TrackAPIKeySlot(context.Background(), 88)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reservation, err := svc.AcquireAPIKeySlot(ctx, 88, 0)
+	require.NoError(t, err, "stats-only failures must not reject unlimited requests")
+	require.True(t, reservation.Acquired)
+	require.NoError(t, ctx.Err(), "stats-only failures must not cancel business traffic")
+	release := reservation.ReleaseFunc
 	require.NotNil(t, release)
 	require.Equal(t, []int64{88}, cache.trackedAPIKeyIDs)
 
 	require.NotPanics(t, release)
-	require.Empty(t, cache.releasedAPIKeyIDs)
+	require.NotPanics(t, release)
+	require.Equal(t, []int64{88}, cache.releasedAPIKeyIDs, "ambiguous writes need exact-member cleanup once")
+	require.Equal(t, cache.trackedAPIKeyRequestIDs, cache.releasedAPIKeyRequestIDs)
 }
 
 func TestGetAPIKeyConcurrencyBatch_Fallbacks(t *testing.T) {

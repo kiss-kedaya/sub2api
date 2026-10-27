@@ -2,19 +2,24 @@ package service
 
 import "time"
 
+// APIKeyAuthCacheSchemaVersion namespaces L2 entries as well as validating
+// payloads. Different rolling-release writers must not replace each other.
+const APIKeyAuthCacheSchemaVersion = 27
+
 // APIKeyAuthSnapshot API Key 认证缓存快照（仅包含认证所需字段）
 type APIKeyAuthSnapshot struct {
-	Version       int                      `json:"version"`
-	APIKeyID      int64                    `json:"api_key_id"`
-	UserID        int64                    `json:"user_id"`
-	GroupID       *int64                   `json:"group_id,omitempty"`
-	RouteGroupIDs []int64                  `json:"route_group_ids,omitempty"`
-	Name          string                   `json:"name"`
-	Status        string                   `json:"status"`
-	IPWhitelist   []string                 `json:"ip_whitelist,omitempty"`
-	IPBlacklist   []string                 `json:"ip_blacklist,omitempty"`
-	User          APIKeyAuthUserSnapshot   `json:"user"`
-	Group         *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
+	ConcurrencyLimit int                      `json:"concurrency_limit"`
+	Version          int                      `json:"version"`
+	APIKeyID         int64                    `json:"api_key_id"`
+	UserID           int64                    `json:"user_id"`
+	GroupID          *int64                   `json:"group_id,omitempty"`
+	RouteGroupIDs    []int64                  `json:"route_group_ids,omitempty"`
+	Name             string                   `json:"name"`
+	Status           string                   `json:"status"`
+	IPWhitelist      []string                 `json:"ip_whitelist,omitempty"`
+	IPBlacklist      []string                 `json:"ip_blacklist,omitempty"`
+	User             APIKeyAuthUserSnapshot   `json:"user"`
+	Group            *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
 
 	// Quota fields for API Key independent quota feature
 	Quota     float64 `json:"quota"`      // Quota limit in USD (0 = unlimited)

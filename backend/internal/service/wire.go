@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"database/sql"
+	"github.com/Wei-Shaw/sub2api/internal/iprisk"
 	"os"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -12,10 +14,27 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/Wei-Shaw/sub2api/internal/serverless"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
+
+// Shared online database and existing authentication/billing remain the sole
+// authority. No offline grants, balance ledger, auth replica or billing replay.
+func NewServerlessRouting(settings *SettingService, db *sql.DB, cache *redis.Client, cfg *config.Config) (*serverless.Manager, error) {
+	r := serverless.Runtime{ID: strings.TrimSpace(os.Getenv("SUB2API_SERVERLESS_NODE_ID")), Endpoint: strings.TrimRight(strings.TrimSpace(os.Getenv("SUB2API_SERVERLESS_ENDPOINT")), "/"), Region: strings.TrimSpace(os.Getenv("SUB2API_SERVERLESS_REGION")), Secret: os.Getenv("SUB2API_SERVERLESS_CLUSTER_SECRET"), Version: settings.version}
+	r.Gateway = r.ID != ""
+	for _, v := range strings.Split(os.Getenv("SUB2API_SERVERLESS_TRUSTED_PRIVATE_CIDRS"), ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			r.TrustedPrivateCIDRs = append(r.TrustedPrivateCIDRs, v)
+		}
+	}
+	if cfg != nil {
+		r.MaxBodyBytes = cfg.Gateway.MaxBodySize
+	}
+	return serverless.New(r, cache, serverlessStore{settings: settings.settingRepo, db: db})
+}
 
 func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthClient, cfg *config.Config, redisClient *redis.Client) *GrokOAuthService {
 	svc := NewGrokOAuthService(proxyRepo, oauthClient, cfg)
@@ -454,6 +473,7 @@ func ProvideDeferredService(accountRepo AccountRepository, apiKeyRepo APIKeyRepo
 func ProvideConcurrencyService(cache ConcurrencyCache, accountRepo AccountRepository, cfg *config.Config) *ConcurrencyService {
 	svc := NewConcurrencyService(cache)
 	if cfg != nil {
+		svc.SetAPIKeyQueuePolicy(APIKeyQueuePolicy{MaxWaiting: cfg.Gateway.APIKeyQueue.MaxWaiting, Timeout: time.Duration(cfg.Gateway.APIKeyQueue.TimeoutSeconds) * time.Second})
 		svc.SetAccountLoadBatchCacheTTL(time.Duration(cfg.Gateway.Scheduling.LoadBatchCacheTTLMS) * time.Millisecond)
 	}
 	startBackgroundJob(func() {
@@ -502,6 +522,7 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	accountOps *AccountOpsService,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	if healthCache, ok := tempUnschedCache.(OpenAIAPIKeyHealthCache); ok {
@@ -511,6 +532,7 @@ func ProvideRateLimitService(
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetAccountOpsService(accountOps)
 	return svc
 }
 
@@ -857,6 +879,12 @@ func ProvideAPIKeyService(
 
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
+	NewExcelGrantService,
+	NewExcelBPSChannel,
+	ProvideOpsAutomationService,
+	ProvideCredentialGuardService,
+	ProvideAccountOpsService,
+	NewMihomoProxyService,
 	// Core services
 	ProvideAuthService,
 	NewPasskeyService,
@@ -978,7 +1006,8 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(ChannelCacheInvalidator), new(*ChannelService)),
 	NewModelPricingResolver,
 	ProvideModelPlazaService,
-	NewContentModerationService,
+	ProvideSecurityPenaltyService,
+	ProvideContentModerationWithPenalties,
 	NewAffiliateService,
 	ProvidePaymentConfigService,
 	ProvidePaymentService,
@@ -1093,4 +1122,10 @@ func ProvideClaudeResetCreditService(accounts AccountRepository, tokens *ClaudeT
 	s := NewClaudeResetCreditService(accounts, tokens, proxies, settings)
 	s.ConfigureRedemption(idem, locks)
 	return s
+}
+
+// NewIPRiskManager shares the existing Redis infrastructure; policy defaults
+// remain disabled until explicitly configured by the primary administrator.
+func NewIPRiskManager(settings *SettingService, client *redis.Client) *iprisk.Manager {
+	return iprisk.New(settings.IPRiskStore(), client, iprisk.NewGeoJSResolver(client), false)
 }

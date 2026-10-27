@@ -967,7 +967,7 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	}
 	// Candidate-list admission evaluates the account override before hydrating
 	// the full account. Dropping it silently falls back to the platform threshold.
-	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold"}
+	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold", "base_url", "auth_mode", "explicit_cache_upstream", "explicit_cache_upstream_max_ttl_seconds"}
 	filtered := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := credentials[key]; ok && value != nil {
@@ -1029,6 +1029,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// so omitting them makes a valid account look unsupported after a snapshot
 		// round-trip even though forwarding still treats it as passthrough.
 		"openai_passthrough",
+		"openai_copilot_sdk",
+		"excel_bps_enabled",
+		"excel_bps_models",
 		"openai_oauth_passthrough",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",

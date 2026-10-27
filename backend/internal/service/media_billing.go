@@ -234,9 +234,10 @@ func (s *OpenAIGatewayService) mediaBillingPostUsageParams(ctx context.Context, 
 }
 
 type grokVideoBillingSnapshot struct {
-	Pending   GrokVideoPendingBilling `json:"pending"`
-	Unit      MediaBillingIntent      `json:"unit"`
-	PerSecond bool                    `json:"per_second"`
+	Pending     GrokVideoPendingBilling `json:"pending"`
+	Unit        MediaBillingIntent      `json:"unit"`
+	PerSecond   bool                    `json:"per_second"`
+	TokenBilled bool                    `json:"token_billed,omitempty"`
 }
 
 func scaleVideoMediaIntent(unit MediaBillingIntent, factor float64, seconds int) MediaBillingIntent {
@@ -264,33 +265,52 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 	if !s.HasDurableMediaBilling() {
 		return nil, nil
 	}
+	if pending.Provider == VideoProviderMiniMaxH3 && pending.MiniMaxH3BaseCost == nil {
+		return nil, errors.New("MiniMax-H3 video price is not configured")
+	}
 	copyInput := *input
 	result := *input.Result
 	result.RequestID = "grok-video-pending:" + uuid.NewString()
 	result.ResponseID = result.RequestID
 	result.VideoCount, result.VideoDurationSeconds = 1, 1
 	result.VideoResolution = NormalizeVideoBillingResolutionOrDefault(pending.VideoResolution)
+	tokenBilled := pending.Provider == VideoProviderSeedance
+	if tokenBilled {
+		result.VideoTokenBilling = true
+		result.Usage = OpenAIUsage{OutputTokens: 1}
+	}
+	if pending.Provider == VideoProviderMiniMaxH3 {
+		result.MiniMaxH3BaseCost = pending.MiniMaxH3BaseCost
+	}
 	copyInput.Result = &result
 	unit, err := s.prepareMediaUsage(ctx, &copyInput)
 	if err != nil {
 		return nil, err
 	}
-	if unit.Usage.BillingMode == nil || *unit.Usage.BillingMode == string(BillingModeToken) {
+	if unit.Usage.BillingMode == nil || (!tokenBilled && *unit.Usage.BillingMode == string(BillingModeToken)) || (tokenBilled && *unit.Usage.BillingMode != string(BillingModeToken)) {
 		return nil, errors.New("asynchronous video requires duration or request pricing")
 	}
-	result.VideoDurationSeconds = 2
-	two, err := s.prepareMediaUsage(ctx, &copyInput)
-	if err != nil {
-		return nil, err
+	perSecond := false
+	if !tokenBilled && pending.Provider != VideoProviderMiniMaxH3 {
+		result.VideoDurationSeconds = 2
+		two, err := s.prepareMediaUsage(ctx, &copyInput)
+		if err != nil {
+			return nil, err
+		}
+		perSecond = two.Usage.TotalCost != unit.Usage.TotalCost || two.Usage.ActualCost != unit.Usage.ActualCost
 	}
-	perSecond := two.Usage.TotalCost != unit.Usage.TotalCost || two.Usage.ActualCost != unit.Usage.ActualCost
 	seconds := NormalizeVideoBillingDurationSecondsOrDefault(pending.VideoDurationSeconds)
 	factor := 1.0
 	if perSecond {
 		factor = float64(seconds)
 	}
+	// Ark's final completion usage is unknown at submission. Freeze its token
+	// unit price, but do not pretend the estimate is actual usage.
+	if tokenBilled {
+		factor = 0
+	}
 	estimated := scaleVideoMediaIntent(*unit, factor, seconds)
-	snapshot, err := json.Marshal(grokVideoBillingSnapshot{Pending: pending, Unit: *unit, PerSecond: perSecond})
+	snapshot, err := json.Marshal(grokVideoBillingSnapshot{Pending: pending, Unit: *unit, PerSecond: perSecond, TokenBilled: tokenBilled})
 	if err != nil {
 		return nil, err
 	}
@@ -387,6 +407,9 @@ func (s *OpenAIGatewayService) SettleGrokVideoBillingJob(ctx context.Context, jo
 			return err
 		}
 		seconds := result.VideoDurationSeconds
+		if snapshot.Pending.Provider == VideoProviderMiniMaxH3 {
+			seconds = snapshot.Pending.VideoDurationSeconds
+		}
 		if seconds <= 0 {
 			seconds = snapshot.Pending.VideoDurationSeconds
 		}
@@ -395,7 +418,22 @@ func (s *OpenAIGatewayService) SettleGrokVideoBillingJob(ctx context.Context, jo
 		if snapshot.PerSecond {
 			factor = float64(seconds)
 		}
+		if snapshot.TokenBilled {
+			if !result.VideoTokenBilling || result.VideoStatus != "succeeded" || result.Usage.OutputTokens < 0 {
+				return errors.New("completed video usage is unavailable")
+			}
+			factor = float64(result.Usage.OutputTokens)
+		}
 		intent := scaleVideoMediaIntent(snapshot.Unit, factor, seconds)
+		if snapshot.TokenBilled {
+			intent.Usage.OutputTokens = result.Usage.OutputTokens
+			intent.Usage.VideoCount = 1
+			intent.Usage.VideoDurationSeconds = nil
+			if result.VideoDurationSeconds > 0 {
+				duration := result.VideoDurationSeconds
+				intent.Usage.VideoDurationSeconds = &duration
+			}
+		}
 		intent.Command.RequestID = StableGrokVideoBillingRequestID(job.UpstreamTaskID)
 		intent.Command.RequestPayloadHash = HashUsageRequestPayload([]byte(job.UpstreamTaskID))
 		intent.Command.RequestFingerprint = ""
@@ -555,7 +593,11 @@ func (s *OpenAIGatewayService) pollGrokVideoBillingJob(ctx context.Context, job 
 	if job.Kind != MediaBillingKindGrokVideo || job.UpstreamTaskID == "" {
 		return errors.New("video job has no upstream task")
 	}
-	account, err := s.GetGrokMediaBoundAccount(ctx, job.AccountID)
+	pending, err := GrokVideoBillingJobPending(job)
+	if err != nil || pending == nil {
+		return errors.New("video billing snapshot is invalid")
+	}
+	account, err := s.GetVideoProviderBoundAccount(ctx, job.AccountID, pending.Provider)
 	if err != nil {
 		return err
 	}
@@ -565,7 +607,14 @@ func (s *OpenAIGatewayService) pollGrokVideoBillingJob(ctx context.Context, job 
 	if err != nil {
 		return err
 	}
-	result, err := s.ForwardGrokMedia(ctx, c, account, GrokMediaEndpointVideoStatus, job.UpstreamTaskID, nil, "")
+	endpoint := GrokMediaEndpointVideoStatus
+	if pending.Provider == VideoProviderSeedance {
+		endpoint = SeedanceEndpointStatus
+	}
+	if pending.Provider == VideoProviderMiniMaxH3 {
+		endpoint = MiniMaxH3EndpointStatus
+	}
+	result, err := s.ForwardGrokMedia(ctx, c, account, endpoint, job.UpstreamTaskID, nil, "")
 	if err != nil {
 		// The forwarding context carries the provider's status before any
 		// client error envelope or passthrough rule can rewrite it. A missing

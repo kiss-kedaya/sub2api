@@ -1091,6 +1091,7 @@
           </p>
         </div>
 
+        <MiniMaxH3PricingFields v-if="createForm.platform === 'minimax'" v-model="createForm.video_model_prices" />
         <!-- 视频生成计费配置（仅 Grok 平台） -->
         <div
           v-if="supportsVideoPricingPlatform(createForm.platform)"
@@ -2821,6 +2822,7 @@
           </p>
         </div>
 
+        <MiniMaxH3PricingFields v-if="editForm.platform === 'minimax'" v-model="editForm.video_model_prices" />
         <!-- 视频生成计费配置（仅 Grok 平台） -->
         <div
           v-if="supportsVideoPricingPlatform(editForm.platform)"
@@ -4477,6 +4479,7 @@
 </template>
 
 <script setup lang="ts">
+import MiniMaxH3PricingFields from "@/components/group/MiniMaxH3PricingFields.vue";
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";

@@ -188,7 +188,7 @@
             </div>
           </template>
 
-          <template #cell-current_concurrency="{ value }">
+          <template #cell-current_concurrency="{ value, row }">
             <span
               :class="[
                 'inline-flex min-w-8 items-center justify-center rounded px-2 py-1 text-sm font-semibold tabular-nums',
@@ -197,8 +197,9 @@
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-400'
               ]"
             >
-              {{ value ?? 0 }}
+              {{ value ?? 0 }}<span v-if="row.concurrency_limit" class="ml-1 opacity-70">/ {{ row.concurrency_limit }}</span>
             </span>
+            <span v-if="row.concurrency_limit" class="mt-1 block text-xs text-gray-500">{{ t('keys.queueWaiting') }}: {{ queueWaiting[row.id] ?? '—' }}</span>
           </template>
 
           <template #cell-usage="{ row }">
@@ -937,6 +938,12 @@
         </div>
 
         <!-- DeepSeek automatic tools -->
+        <div>
+          <label for="key-concurrency-limit" class="input-label">{{ t('keys.concurrencyLimit') }}</label>
+          <input id="key-concurrency-limit" v-model.number="formData.concurrency_limit" type="number" min="0" max="100000" step="1" class="input" />
+          <p class="input-hint">{{ t('keys.concurrencyLimitHint') }}</p>
+        </div>
+
         <div class="space-y-2">
           <div class="flex items-center justify-between gap-4">
             <span id="key-deepseek-tool-injection-label" class="input-label mb-0">
@@ -1539,6 +1546,7 @@ const formData = ref({
   expiration_date: '',
   // Anthropic cache_control TTL 覆盖：inherit/off/1h/5m
   anthropic_cache_ttl_mode: 'inherit' as 'inherit' | 'off' | '1h' | '5m',
+  concurrency_limit: 0,
   deepseek_tool_injection_enabled: true,
 })
 
@@ -1732,6 +1740,15 @@ const isAbortError = (error: unknown) => {
   return name === 'AbortError' || code === 'ERR_CANCELED'
 }
 
+const queueWaiting = ref<Record<number, number>>({})
+const loadQueueSnapshot = async (ids: number[], signal: AbortSignal) => {
+  queueWaiting.value = {}
+  if (!ids.length || typeof keysAPI.getConcurrencyQueue !== 'function') return
+  try {
+    const snapshot = await keysAPI.getConcurrencyQueue(ids.slice(0, 100), signal)
+    if (!signal.aborted) queueWaiting.value = Object.fromEntries(snapshot.items.map(item => [item.id, item.current_waiting]))
+  } catch { /* A failed snapshot stays unknown; the key table remains usable. */ }
+}
 const loadApiKeys = async () => {
   abortController?.abort()
   const controller = new AbortController()
@@ -1758,6 +1775,7 @@ const loadApiKeys = async () => {
     })
     if (signal.aborted) return
     apiKeys.value = response.items
+    void loadQueueSnapshot(response.items.filter(key => (key.concurrency_limit ?? 0) > 0).map(key => key.id), signal)
     pagination.value.total = response.total
     pagination.value.pages = response.pages
     loading.value = false
@@ -1876,6 +1894,7 @@ const editKey = (key: ApiKey) => {
     expiration_preset: 'custom',
     expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : '',
     anthropic_cache_ttl_mode: (key.anthropic_cache_ttl_mode || 'inherit') as 'inherit' | 'off' | '1h' | '5m',
+    concurrency_limit: key.concurrency_limit ?? 0,
     deepseek_tool_injection_enabled: key.deepseek_tool_injection_enabled !== false,
   }
   showEditModal.value = true
@@ -2042,6 +2061,7 @@ const handleSubmit = async () => {
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
         anthropic_cache_ttl_mode: formData.value.anthropic_cache_ttl_mode,
+        concurrency_limit: formData.value.concurrency_limit,
         deepseek_tool_injection_enabled: formData.value.deepseek_tool_injection_enabled,
       }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
@@ -2062,7 +2082,7 @@ const handleSubmit = async () => {
         rateLimitData,
         formData.value.smart_routing ? formData.value.group_ids : undefined,
         formData.value.anthropic_cache_ttl_mode,
-        { deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled }
+        { deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled, ...(formData.value.concurrency_limit > 0 ? { concurrencyLimit: formData.value.concurrency_limit } : {}) }
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -2127,7 +2147,8 @@ const closeModals = () => {
     expiration_preset: '30',
     expiration_date: '',
     anthropic_cache_ttl_mode: 'inherit',
-    deepseek_tool_injection_enabled: true,
+    concurrency_limit: 0,
+  deepseek_tool_injection_enabled: true,
   }
 }
 

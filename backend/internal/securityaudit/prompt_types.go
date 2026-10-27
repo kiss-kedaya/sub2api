@@ -67,20 +67,21 @@ const (
 )
 
 type Request struct {
-	RequestID  string
-	UserID     int64
-	Username   string
-	UserEmail  string
-	APIKeyID   int64
-	APIKeyName string
-	GroupID    *int64
-	GroupName  string
-	Provider   string
-	Endpoint   string
-	Protocol   string
-	Model      string
-	Body       []byte
-	Stage      string
+	PenaltySessionIdentity string
+	RequestID              string
+	UserID                 int64
+	Username               string
+	UserEmail              string
+	APIKeyID               int64
+	APIKeyName             string
+	GroupID                *int64
+	GroupName              string
+	Provider               string
+	Endpoint               string
+	Protocol               string
+	Model                  string
+	Body                   []byte
+	Stage                  string
 }
 
 func (r Request) Clone() Request {
@@ -157,13 +158,14 @@ type LegacyDecision struct {
 }
 
 type Decision struct {
-	Kind           DecisionKind    `json:"kind"`
-	HTTPStatus     int             `json:"http_status"`
-	ErrorCode      string          `json:"error_code,omitempty"`
-	ClientMessage  string          `json:"client_message,omitempty"`
-	Legacy         *LegacyDecision `json:"legacy,omitempty"`
-	Prompt         *PromptDecision `json:"prompt,omitempty"`
-	AllowNextStage bool            `json:"allow_next_stage"`
+	RestrictedGroupID *int64          `json:"-"`
+	Kind              DecisionKind    `json:"kind"`
+	HTTPStatus        int             `json:"http_status"`
+	ErrorCode         string          `json:"error_code,omitempty"`
+	ClientMessage     string          `json:"client_message,omitempty"`
+	Legacy            *LegacyDecision `json:"legacy,omitempty"`
+	Prompt            *PromptDecision `json:"prompt,omitempty"`
+	AllowNextStage    bool            `json:"allow_next_stage"`
 }
 
 type IssueSummary struct {

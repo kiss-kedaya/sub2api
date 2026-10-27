@@ -395,6 +395,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	ctx = WithLocalQualityGroup(ctx, req.GroupID)
 	if s != nil && s.service != nil && s.service.openAIGroupRequiresPrivacySet(ctx, req.GroupID) {
 		req.RequirePrivacySet = true
 	}
@@ -592,9 +593,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
 		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account:     account,
-			Acquired:    true,
-			ReleaseFunc: result.ReleaseFunc,
+			Account:          account,
+			Acquired:         true,
+			ReleaseFunc:      result.ReleaseFunc,
+			AccountRequestID: result.RequestID,
 		}), false, nil
 	}
 
@@ -1165,10 +1167,10 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
-		return selectionOrder
+		return s.rankAutomationCandidates(req, selectionOrder)
 	}
 
-	return orderPool(plan.candidates)
+	return s.rankAutomationCandidates(req, orderPool(plan.candidates))
 }
 
 // buildOpenAIFillSelectionOrder performs the failover "fill" walk.  Accounts
@@ -1385,9 +1387,10 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, fresh.ID)
 		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account:     fresh,
-			Acquired:    true,
-			ReleaseFunc: result.ReleaseFunc,
+			Account:          fresh,
+			Acquired:         true,
+			ReleaseFunc:      result.ReleaseFunc,
+			AccountRequestID: result.RequestID,
 		}), compactBlocked, nil
 	}
 	return nil, compactBlocked, nil
@@ -1476,9 +1479,10 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, account.ID)
 			}
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account:     account,
-				Acquired:    true,
-				ReleaseFunc: result.ReleaseFunc,
+				Account:          account,
+				Acquired:         true,
+				ReleaseFunc:      result.ReleaseFunc,
+				AccountRequestID: result.RequestID,
 			}), nil
 		}
 		if s.service.concurrencyService != nil {
@@ -2586,6 +2590,9 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
+		return nil, OpenAIAccountScheduleDecision{}, err
+	}
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)

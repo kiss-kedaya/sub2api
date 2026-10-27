@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/accounttimer"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -98,6 +99,7 @@ func cloneAccountJSONMap(value map[string]any) (map[string]any, error) {
 }
 
 var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
+	LocalQualityModelPausesKey: {}, OAuthAdmissionPauseKey: {}, "local_reasoning_quality_pauses": {}, "ops_automation_ramp": {},
 	// A retry identity belongs to the operation that created one copy, not to later copies.
 	duplicateAccountOperationIDExtraKey: {},
 	// External sync identity belongs to one local account only.
@@ -483,6 +485,12 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if input == nil {
+		return nil, errors.New("account input is required")
+	}
+	if err := s.ApplyOAuthDefaults(ctx, input); err != nil {
+		return nil, err
+	}
 	if err := ValidateAccountSchedulingFields(&input.Concurrency, &input.Priority); err != nil {
 		return nil, err
 	}
@@ -541,6 +549,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err := validateCloudflareAccount(account); err != nil {
 		return nil, infraerrors.BadRequest("INVALID_CLOUDFLARE_ACCOUNT", err.Error())
 	}
+	if err := s.PrepareOAuthAdmission(ctx, account); err != nil {
+		return nil, err
+	}
 	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
 	}
@@ -584,6 +595,8 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
+	// Ordinary settings edits preserve a concurrently executed timer.
+	ctx = accounttimer.WithPreservedSchedulable(accounttimer.WithoutManualIntent(ctx))
 	if err := ValidateAccountSchedulingFields(input.Concurrency, input.Priority); err != nil {
 		return nil, err
 	}
@@ -1184,6 +1197,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
 	}
+
+	// Scheduling intent is scoped to the explicit bulk update above.
+	ctx = accounttimer.WithoutManualIntent(ctx)
 
 	// 将 proxy 变更传播到每个目标账号的 spark 影子账号
 	if repoUpdates.ProxyID != nil {

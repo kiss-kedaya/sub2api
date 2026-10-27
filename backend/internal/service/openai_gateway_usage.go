@@ -268,6 +268,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		pricingAt,
 	)
 	if err != nil {
+		if result.VideoTokenBilling {
+			return err
+		}
 		if !isUsagePricingUnavailableError(err) {
 			return err
 		}
@@ -632,6 +635,9 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		}
 		return s.billingService.CalculateWebSearchCost(result.WebSearchCalls, webSearchPricePerCallFromAPIKey(apiKey), toolMultiplier), nil
 	}
+	if result != nil && result.MiniMaxH3BaseCost != nil && result.VideoCount > 0 {
+		return s.calculateOpenAIVideoCost(ctx, billingModel, apiKey, result, videoMultiplier), nil
+	}
 	if isGrokVideoUsageResult(result, billingModels) {
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
 			return s.calculateOpenAIVideoCost(ctx, billingModel, apiKey, result, videoMultiplier), nil
@@ -735,7 +741,7 @@ func isGrokVideoBillingModel(model string) bool {
 }
 
 func isGrokVideoUsageResult(result *OpenAIForwardResult, billingModels []string) bool {
-	if result == nil || result.VideoCount <= 0 {
+	if result == nil || result.VideoCount <= 0 || result.VideoTokenBilling {
 		return false
 	}
 	// VideoCount alone is authoritative for async video completion billing.
@@ -856,6 +862,9 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 	result *OpenAIForwardResult,
 	multiplier float64,
 ) *CostBreakdown {
+	if result.MiniMaxH3BaseCost != nil {
+		return &CostBreakdown{TotalCost: *result.MiniMaxH3BaseCost, ActualCost: *result.MiniMaxH3BaseCost * multiplier, BillingMode: string(BillingModeVideo)}
+	}
 	videoCount := result.VideoCount
 	if videoCount <= 0 {
 		videoCount = 1

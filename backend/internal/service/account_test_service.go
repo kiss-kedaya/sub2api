@@ -734,12 +734,19 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 
 	// Bedrock non-streaming response is standard Claude JSON, extract the text
 	var result struct {
-		Content []struct {
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
 			Text string `json:"text"`
 		} `json:"content"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to parse response: %s", err.Error()))
+	}
+	if c.GetBool(localQualityStrictKey) {
+		if result.StopReason != "end_turn" && result.StopReason != "stop_sequence" {
+			return s.sendErrorAndEnd(c, "Quality sample was incomplete")
+		}
+		c.Set(localQualityTerminalKey, true)
 	}
 
 	text := ""
@@ -931,7 +938,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if isOAuth && s.accountRepo != nil {
+	if isOAuth && s.accountRepo != nil && !c.GetBool(localQualityStrictKey) {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
@@ -949,7 +956,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
 			return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode)
 		}
-		if resp.StatusCode == http.StatusTooManyRequests {
+		if resp.StatusCode == http.StatusTooManyRequests && !c.GetBool(localQualityStrictKey) {
 			// The coordinator records quota evidence and probe state, but it does
 			// not own the durable account rate-limit timestamp. Persist the 429
 			// reset for every response (including quota 429s); the candidate query
@@ -959,7 +966,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
 		// 401 Unauthorized: 标记账号为永久错误
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil && !c.GetBool(localQualityStrictKey) {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -970,7 +977,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if err := s.processOpenAIStream(c, resp.Body); err != nil {
 		return err
 	}
-	s.observeCodexQuotaOverdraftTestResult(ctx, account, upstreamTestModelID, overdraftInjected)
+	if !c.GetBool(localQualityStrictKey) {
+		s.observeCodexQuotaOverdraftTestResult(ctx, account, upstreamTestModelID, overdraftInjected)
+	}
 	return nil
 }
 
@@ -2726,6 +2735,9 @@ func createGeminiTestPayload(modelID string, prompt string) []byte {
 
 // processGeminiStream processes SSE stream from Gemini API
 func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader) error {
+	if c.GetBool(localQualityStrictKey) {
+		return s.processLocalQualityStream(c, body, "gemini")
+	}
 	reader := bufio.NewReader(body)
 
 	for {
@@ -2859,6 +2871,9 @@ func createOpenAIChatCompletionsTestPayload(modelID string, prompt string) map[s
 
 // processClaudeStream processes the SSE stream from Claude API
 func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader) error {
+	if c.GetBool(localQualityStrictKey) {
+		return s.processLocalQualityStream(c, body, "anthropic")
+	}
 	reader := bufio.NewReader(body)
 
 	for {
@@ -2914,6 +2929,9 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 // processOpenAIChatCompletionsStream processes SSE chunks from the
 // OpenAI-compatible Chat Completions API.
 func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+	if c.GetBool(localQualityStrictKey) {
+		return s.processLocalQualityStream(c, body, "chat")
+	}
 	reader := bufio.NewReader(body)
 	seenJSON := false
 	seenFinish := false
@@ -2989,6 +3007,9 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 
 // processOpenAIStream processes the SSE stream from OpenAI Responses API
 func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader) error {
+	if c.GetBool(localQualityStrictKey) {
+		return s.processLocalQualityStream(c, body, "responses")
+	}
 	reader := bufio.NewReader(body)
 	seenCompleted := false
 

@@ -32,6 +32,14 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Realtime API is not supported for this platform")
 		return
 	}
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		h.handleConcurrencyError(c, keyErr, "API key", false)
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	if !h.ensureResponsesDependencies(c, nil) {
 		return
 	}
@@ -200,6 +208,14 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	if !ok || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformGrok {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Voice API is not supported for this platform")
 		return
+	}
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		h.handleConcurrencyError(c, keyErr, "API key", false)
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
 	}
 	if !h.ensureResponsesDependencies(c, nil) {
 		return

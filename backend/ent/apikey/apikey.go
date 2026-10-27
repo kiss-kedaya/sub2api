@@ -61,6 +61,8 @@ const (
 	FieldWindow1dStart = "window_1d_start"
 	// FieldWindow7dStart holds the string denoting the window_7d_start field in the database.
 	FieldWindow7dStart = "window_7d_start"
+	// FieldConcurrencyLimit holds the string denoting the concurrency_limit field in the database.
+	FieldConcurrencyLimit = "concurrency_limit"
 	// FieldAnthropicCacheTTLMode holds the string denoting the anthropic_cache_ttl_mode field in the database.
 	FieldAnthropicCacheTTLMode = "anthropic_cache_ttl_mode"
 	// FieldDeepseekToolInjectionEnabled holds the string denoting the deepseek_tool_injection_enabled field in the database.
@@ -122,6 +124,7 @@ var Columns = []string{
 	FieldWindow5hStart,
 	FieldWindow1dStart,
 	FieldWindow7dStart,
+	FieldConcurrencyLimit,
 	FieldAnthropicCacheTTLMode,
 	FieldDeepseekToolInjectionEnabled,
 }
@@ -174,6 +177,10 @@ var (
 	DefaultUsage1d float64
 	// DefaultUsage7d holds the default value on creation for the "usage_7d" field.
 	DefaultUsage7d float64
+	// DefaultConcurrencyLimit holds the default value on creation for the "concurrency_limit" field.
+	DefaultConcurrencyLimit int
+	// ConcurrencyLimitValidator is a validator for the "concurrency_limit" field. It is called by the builders before save.
+	ConcurrencyLimitValidator func(int) error
 	// DefaultAnthropicCacheTTLMode holds the default value on creation for the "anthropic_cache_ttl_mode" field.
 	DefaultAnthropicCacheTTLMode string
 	// AnthropicCacheTTLModeValidator is a validator for the "anthropic_cache_ttl_mode" field. It is called by the builders before save.
@@ -293,6 +300,11 @@ func ByWindow1dStart(opts ...sql.OrderTermOption) OrderOption {
 // ByWindow7dStart orders the results by the window_7d_start field.
 func ByWindow7dStart(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWindow7dStart, opts...).ToFunc()
+}
+
+// ByConcurrencyLimit orders the results by the concurrency_limit field.
+func ByConcurrencyLimit(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldConcurrencyLimit, opts...).ToFunc()
 }
 
 // ByAnthropicCacheTTLMode orders the results by the anthropic_cache_ttl_mode field.

@@ -24,7 +24,7 @@ func invalidAuthAbuseTestConfig(threshold int) *config.Config {
 	}
 }
 
-func TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository(t *testing.T) {
+func TestAPIKeyAuthInvalidAbuseChecksCredentialsBefore429(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repoCalls := 0
 	repo := &stubApiKeyRepo{getByKey: func(context.Context, string) (*service.APIKey, error) {
@@ -56,7 +56,7 @@ func TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository(t *testing.T) {
 	require.Equal(t, "60", w.Header().Get("Retry-After"))
 	require.Contains(t, w.Body.String(), "INVALID_AUTH_RATE_LIMITED")
 	require.Equal(t, IngressRejectInvalidAuthRateLimited, reason)
-	require.Equal(t, 1, repoCalls, "rate-limited request must not reach the repository")
+	require.Equal(t, 2, repoCalls, "a supplied key must be authenticated before applying anonymous punishment")
 }
 
 func TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429(t *testing.T) {
@@ -90,7 +90,7 @@ func TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429(t *testing.T) {
 	require.Equal(t, "60", w.Header().Get("Retry-After"))
 	require.Contains(t, w.Body.String(), "RESOURCE_EXHAUSTED")
 	require.Equal(t, IngressRejectInvalidAuthRateLimited, reason)
-	require.Equal(t, 2, repoCalls)
+	require.Equal(t, 3, repoCalls)
 }
 
 func TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures(t *testing.T) {
@@ -131,6 +131,40 @@ func TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures(t *testing.T) {
 func TestNormalizeIngressRejectIPGroupsIPv6By64(t *testing.T) {
 	require.Equal(t, "2001:db8:abcd:1234::", normalizeIngressRejectIP("2001:db8:abcd:1234:1111::1"))
 	require.Equal(t, normalizeIngressRejectIP("2001:db8:abcd:1234:1111::1"), normalizeIngressRejectIP("2001:db8:abcd:1234:ffff::2"))
+}
+
+// A shared NAT must not let one caller's invalid requests block another
+// caller's valid key. The same boundary applies when shared Redis is down.
+func TestInvalidAuthBanDoesNotRejectValidKeyFromSameIP(t *testing.T) {
+	for _, google := range []bool{false, true} {
+		t.Run(map[bool]string{false: "openai", true: "google"}[google], func(t *testing.T) {
+			cfg := invalidAuthAbuseTestConfig(2)
+			repo := &stubApiKeyRepo{getByKey: func(_ context.Context, key string) (*service.APIKey, error) {
+				if key == "valid-key" {
+					return &service.APIKey{ID: 1, UserID: 1, Status: service.StatusActive, User: &service.User{ID: 1, Role: service.RoleUser, Status: service.StatusActive}}, nil
+				}
+				return nil, service.ErrAPIKeyNotFound
+			}}
+			svc := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
+			router := gin.New()
+			if google {
+				router.Use(APIKeyAuthGoogle(svc, cfg))
+			} else {
+				router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(svc, nil, cfg)))
+			}
+			router.POST("/v1/responses", func(c *gin.Context) { c.Status(http.StatusOK) })
+			for range 3 {
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httpRequest(t, "/v1/responses", "", "invalid-key"))
+			}
+			valid := httptest.NewRecorder()
+			router.ServeHTTP(valid, httpRequest(t, "/v1/responses", "", "valid-key"))
+			require.Equal(t, http.StatusOK, valid.Code)
+			invalid := httptest.NewRecorder()
+			router.ServeHTTP(invalid, httpRequest(t, "/v1/responses", "", "invalid-key"))
+			require.Equal(t, http.StatusTooManyRequests, invalid.Code)
+		})
+	}
 }
 
 func httpRequest(t *testing.T, path, authorization, apiKey string) *http.Request {

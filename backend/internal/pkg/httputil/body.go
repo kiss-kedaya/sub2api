@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
+	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -66,6 +67,9 @@ func (p *PrereadBody) Bytes() []byte {
 // reader 是否已被消费——见 PrereadBody 的文档说明。
 func ReadRequestBodyWithPrealloc(req *http.Request) (body []byte, readErr error) {
 	defer func() {
+		if readErr == nil && req != nil {
+			requestcapture.FromContext(req.Context()).ClientRequest(body, req.Header.Get("Content-Type"), req.Header)
+		}
 		if readErr == nil && req != nil && req.URL != nil {
 			body = ipnotice.NormalizeReplay(body, ipnotice.ReplayProtocolForPath(req.URL.Path))
 		}

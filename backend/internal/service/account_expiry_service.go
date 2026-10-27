@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/accounttimer"
 )
 
 // AccountExpiryService periodically pauses expired accounts when auto-pause is enabled.
@@ -33,10 +35,15 @@ func (s *AccountExpiryService) Start() {
 		defer s.wg.Done()
 		ticker := time.NewTicker(s.interval)
 		defer ticker.Stop()
+		timerTicker := time.NewTicker(accounttimer.PollInterval)
+		defer timerTicker.Stop()
+		s.runTimers()
 
 		s.runOnce()
 		for {
 			select {
+			case <-timerTicker.C:
+				s.runTimers()
 			case <-ticker.C:
 				s.runOnce()
 			case <-s.stopCh:
@@ -67,5 +74,25 @@ func (s *AccountExpiryService) runOnce() {
 	}
 	if updated > 0 {
 		log.Printf("[AccountExpiry] Auto paused %d expired accounts", updated)
+	}
+}
+
+// Run the one-shot worker independently of expiry errors. Lifecycle and
+// cancellation are owned by the existing background service, including Stop.
+func (s *AccountExpiryService) runTimers() {
+	provider, ok := s.accountRepo.(interface {
+		SchedulableTimers() accounttimer.Repository
+	})
+	if !ok {
+		return
+	}
+	timers := provider.SchedulableTimers()
+	if timers == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := timers.RunDue(ctx); err != nil {
+		log.Printf("[AccountTimer] batch failed; pending rows will be reconsidered on next poll")
 	}
 }

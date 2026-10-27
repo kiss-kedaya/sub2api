@@ -28,6 +28,7 @@ import (
 	dbgroup "github.com/Wei-Shaw/sub2api/ent/group"
 	dbpredicate "github.com/Wei-Shaw/sub2api/ent/predicate"
 	dbproxy "github.com/Wei-Shaw/sub2api/ent/proxy"
+	"github.com/Wei-Shaw/sub2api/internal/accounttimer"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -46,8 +47,9 @@ import (
 //   - sql: 原生 SQL 执行器，用于复杂查询和批量操作
 //   - schedulerCache: 调度器缓存，用于在账号状态变更时同步快照
 type accountRepository struct {
-	client *dbent.Client // Ent ORM 客户端
-	sql    sqlExecutor   // 原生 SQL 执行接口
+	proxySecretEncryptor service.SecretEncryptor
+	client               *dbent.Client // Ent ORM 客户端
+	sql                  sqlExecutor   // 原生 SQL 执行接口
 	// schedulerCache 用于在账号状态变更时主动同步快照到缓存，
 	// 确保粘性会话能及时感知账号不可用状态。
 	// Used to proactively sync account snapshot to cache when status changes,
@@ -588,6 +590,9 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		// Prefer the preloaded proxy edge when available.
 		if entAcc.Edges.Proxy != nil {
 			out.Proxy = proxyEntityToService(entAcc.Edges.Proxy)
+			if err := service.DecodeManagedProxyCredential(out.Proxy, r.proxySecretEncryptor); err != nil {
+				return nil, err
+			}
 		}
 
 		if groups, ok := groupsByAccount[entAcc.ID]; ok {
@@ -769,6 +774,7 @@ func (r *accountRepository) updateAccount(
 	}
 
 	account.UpdatedAt = updated.UpdatedAt
+	account.Schedulable = updated.Schedulable
 	// 普通账号编辑（如 model_mapping / credentials）也需要立即刷新单账号快照，
 	// 否则网关在 outbox worker 延迟或异常时仍可能读到旧配置。
 	if contextTx == nil {
@@ -791,8 +797,15 @@ func (r *accountRepository) updateLockedAccount(
 		return nil, err
 	}
 	account.Extra = extra
+	// The account row is already locked by lockAndMergeAccountProbeExtra.
+	if err := accounttimer.CancelPending(ctx, client, account.ID, time.Now().UTC()); err != nil {
+		return nil, err
+	}
 
 	schedulable := account.Schedulable
+	if service.HasLocalReasoningPause(account) {
+		schedulable = false
+	}
 	if account.Status == service.StatusError {
 		schedulable = false
 	}
@@ -808,8 +821,11 @@ func (r *accountRepository) updateLockedAccount(
 		SetPriority(account.Priority).
 		SetStatus(account.Status).
 		SetErrorMessage(account.ErrorMessage).
-		SetSchedulable(schedulable).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
+	// Ordinary settings saves must not replay a stale scheduling toggle.
+	if !accounttimer.PreserveSchedulable(ctx) || account.Status == service.StatusError {
+		builder.SetSchedulable(schedulable)
+	}
 
 	if explicitRateMultiplier != nil {
 		builder.SetRateMultiplier(*explicitRateMultiplier)
@@ -976,6 +992,13 @@ func lockAndMergeAccountProbeExtra(
 		}
 	}
 	extra := service.MergeOpenAICodexTicketExtra(copyJSONMap(normalizeJSONMap(account.Extra)), currentExtra)
+	// Runtime quality ownership is not editable through ordinary account forms.
+	for _, key := range []string{"local_reasoning_quality_pauses", service.LocalQualityModelPausesKey, service.OAuthAdmissionPauseKey} {
+		delete(extra, key)
+		if owned, exists := currentExtra[key]; exists {
+			extra[key] = owned
+		}
+	}
 	delete(extra, service.CustomUsageExtraKey)
 	if currentConfig, exists := currentExtra[service.CustomUsageExtraKey]; exists {
 		extra[service.CustomUsageExtraKey] = currentConfig
@@ -2085,7 +2108,8 @@ func (r *accountRepository) ClearError(ctx context.Context, id int64) error {
 		_, err := r.sql.ExecContext(ctx, `WITH changed AS (
  UPDATE accounts SET status='active',error_message='',
  schedulable=CASE WHEN jsonb_typeof(extra->'chanshui_quality_pauses')='object'
-  AND extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE TRUE END,
+  AND extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE
+  WHEN jsonb_typeof(extra->'local_reasoning_quality_pauses')='object' AND extra->'local_reasoning_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE TRUE END,
  updated_at=NOW() WHERE id=$1 AND status='error' AND deleted_at IS NULL RETURNING id
  ) INSERT INTO scheduler_outbox(event_type,account_id,group_id,payload) SELECT $2,id,NULL,NULL FROM changed`, id, service.SchedulerOutboxEventAccountChanged)
 		if err != nil {
@@ -3355,8 +3379,10 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		idx++
 	}
 	if updates.Schedulable != nil {
-		if *updates.Schedulable && !manualScope {
-			setClauses = append(setClauses, "schedulable = CASE WHEN jsonb_typeof(extra->'chanshui_quality_pauses')='object' AND extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE $"+itoa(idx)+" END")
+		if *updates.Schedulable && manualScope {
+			setClauses = append(setClauses, "schedulable = CASE WHEN jsonb_typeof(extra->'local_reasoning_quality_pauses')='object' AND extra->'local_reasoning_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE $"+itoa(idx)+" END")
+		} else if *updates.Schedulable && !manualScope {
+			setClauses = append(setClauses, "schedulable = CASE WHEN (jsonb_typeof(extra->'chanshui_quality_pauses')='object' AND extra->'chanshui_quality_pauses'<>'{}'::jsonb) OR (jsonb_typeof(extra->'local_reasoning_quality_pauses')='object' AND extra->'local_reasoning_quality_pauses'<>'{}'::jsonb) THEN FALSE ELSE $"+itoa(idx)+" END")
 		} else {
 			setClauses = append(setClauses, "schedulable = $"+itoa(idx))
 		}
@@ -3395,7 +3421,11 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed || manualSchedulingOverride {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
-			payload, err := json.Marshal(updates.Extra)
+			patchExtra := copyJSONMap(updates.Extra)
+			delete(patchExtra, "local_reasoning_quality_pauses")
+			delete(patchExtra, service.LocalQualityModelPausesKey)
+			delete(patchExtra, service.OAuthAdmissionPauseKey)
+			payload, err := json.Marshal(patchExtra)
 			if err != nil {
 				return 0, err
 			}
@@ -3498,6 +3528,40 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 	}
 
+	if updates.Schedulable != nil && accounttimer.ManualActor(ctx) > 0 {
+		if contextTx == nil && tx == nil {
+			return 0, errors.New("manual bulk scheduling requires a transaction")
+		}
+		lockQuery := "SELECT id FROM accounts WHERE id=ANY($1) AND deleted_at IS NULL"
+		lockArgs := []any{pq.Array(ids)}
+		if adminID, fullPool, scoped := service.AccountOwnerScopeDetail(ctx); scoped && !fullPool {
+			lockQuery += " AND created_by=$2"
+			lockArgs = append(lockArgs, adminID)
+		}
+		locked, err := exec.QueryContext(ctx, lockQuery+" ORDER BY id FOR UPDATE", lockArgs...)
+		if err != nil {
+			return 0, err
+		}
+		lockedIDs := []int64{}
+		for locked.Next() {
+			var id int64
+			if err = locked.Scan(&id); err != nil {
+				_ = locked.Close()
+				return 0, err
+			}
+			lockedIDs = append(lockedIDs, id)
+		}
+		err = locked.Err()
+		_ = locked.Close()
+		if err != nil {
+			return 0, err
+		}
+		for _, id := range lockedIDs {
+			if err = accounttimer.CancelPending(ctx, exec, id, time.Now().UTC()); err != nil {
+				return 0, err
+			}
+		}
+	}
 	result, err := exec.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, err
@@ -3714,7 +3778,11 @@ func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (
 			return nil, err
 		}
 		for _, p := range proxies {
-			proxyMap[p.ID] = proxyEntityToService(p)
+			converted := proxyEntityToService(p)
+			if err := service.DecodeManagedProxyCredential(converted, r.proxySecretEncryptor); err != nil {
+				return nil, err
+			}
+			proxyMap[p.ID] = converted
 		}
 	}
 	return proxyMap, nil

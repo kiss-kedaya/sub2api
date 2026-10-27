@@ -48,6 +48,7 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetUserID(key.UserID).
 		SetKey(key.Key).
 		SetName(key.Name).
+		SetConcurrencyLimit(key.ConcurrencyLimit).
 		SetStatus(key.Status).
 		SetNillableGroupID(key.GroupID).
 		SetNillableLastUsedAt(key.LastUsedAt).
@@ -152,6 +153,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			// 管理员设的「强制 1h」，整条注入链路静默失效。
 			apikey.FieldAnthropicCacheTTLMode,
 			apikey.FieldDeepseekToolInjectionEnabled,
+			apikey.FieldConcurrencyLimit,
 		).
 		WithUser(func(q *dbent.UserQuery) {
 			q.Select(
@@ -290,6 +292,9 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 			SetRateLimit5h(key.RateLimit5h).
 			SetRateLimit1d(key.RateLimit1d).
 			SetRateLimit7d(key.RateLimit7d)
+	}
+	if fields.ConcurrencyLimit {
+		builder.SetConcurrencyLimit(key.ConcurrencyLimit)
 	}
 	if fields.AnthropicCacheTTLMode {
 		builder.SetAnthropicCacheTTLMode(service.NormalizeAnthropicCacheTTLMode(key.AnthropicCacheTTLMode))
@@ -948,7 +953,7 @@ func (r *apiKeyRepository) ResetRateLimitWindows(ctx context.Context, id int64) 
 // GetRateLimitData returns the current rate limit usage and window start times for an API key.
 func (r *apiKeyRepository) GetRateLimitData(ctx context.Context, id int64) (result *service.APIKeyRateLimitData, err error) {
 	rows, err := r.sql.QueryContext(ctx, `
-		SELECT usage_5h, usage_1d, usage_7d, window_5h_start, window_1d_start, window_7d_start
+		SELECT usage_5h, usage_1d, usage_7d, window_5h_start, window_1d_start, window_7d_start, quota_used
 		FROM api_keys
 		WHERE id = $1 AND deleted_at IS NULL`,
 		id)
@@ -964,7 +969,7 @@ func (r *apiKeyRepository) GetRateLimitData(ctx context.Context, id int64) (resu
 		return nil, service.ErrAPIKeyNotFound
 	}
 	data := &service.APIKeyRateLimitData{}
-	if err := rows.Scan(&data.Usage5h, &data.Usage1d, &data.Usage7d, &data.Window5hStart, &data.Window1dStart, &data.Window7dStart); err != nil {
+	if err := rows.Scan(&data.Usage5h, &data.Usage1d, &data.Usage7d, &data.Window5hStart, &data.Window1dStart, &data.Window7dStart, &data.QuotaUsed); err != nil {
 		return nil, err
 	}
 	return data, rows.Err()
@@ -975,23 +980,24 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		return nil
 	}
 	out := &service.APIKey{
-		ID:          m.ID,
-		UserID:      m.UserID,
-		Key:         m.Key,
-		Name:        m.Name,
-		Status:      m.Status,
-		IPWhitelist: m.IPWhitelist,
-		IPBlacklist: m.IPBlacklist,
-		LastUsedAt:  m.LastUsedAt,
-		CreatedAt:   m.CreatedAt,
-		UpdatedAt:   m.UpdatedAt,
-		GroupID:     m.GroupID,
-		Quota:       m.Quota,
-		QuotaUsed:   m.QuotaUsed,
-		ExpiresAt:   m.ExpiresAt,
-		RateLimit5h: m.RateLimit5h,
-		RateLimit1d: m.RateLimit1d,
-		RateLimit7d: m.RateLimit7d,
+		ID:               m.ID,
+		UserID:           m.UserID,
+		Key:              m.Key,
+		Name:             m.Name,
+		Status:           m.Status,
+		IPWhitelist:      m.IPWhitelist,
+		IPBlacklist:      m.IPBlacklist,
+		LastUsedAt:       m.LastUsedAt,
+		CreatedAt:        m.CreatedAt,
+		UpdatedAt:        m.UpdatedAt,
+		GroupID:          m.GroupID,
+		Quota:            m.Quota,
+		ConcurrencyLimit: m.ConcurrencyLimit,
+		QuotaUsed:        m.QuotaUsed,
+		ExpiresAt:        m.ExpiresAt,
+		RateLimit5h:      m.RateLimit5h,
+		RateLimit1d:      m.RateLimit1d,
+		RateLimit7d:      m.RateLimit7d,
 
 		AnthropicCacheTTLMode:        service.NormalizeAnthropicCacheTTLMode(m.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: &m.DeepseekToolInjectionEnabled,

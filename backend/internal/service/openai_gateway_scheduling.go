@@ -949,6 +949,10 @@ func resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel string) strin
 }
 
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, error) {
+	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
+		return nil, err
+	}
+	ctx = WithLocalQualityGroup(ctx, groupID)
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
@@ -1168,6 +1172,7 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		}
 		return s.isBetterAccount(a, b)
 	})
+	eligible = s.rankAutomationPool(groupID, requestedModel, eligible, requireCompact, openAIPreferNativeResponses(ctx), true)
 	return eligible[0], compactBlocked, filterStats
 }
 
@@ -1216,6 +1221,10 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
+	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
+		return nil, err
+	}
+	ctx = WithLocalQualityGroup(ctx, groupID)
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
@@ -1241,7 +1250,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 		result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
 		if err == nil && result != nil && result.Acquired {
-			return s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
+			return s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc, result.RequestID)
 		}
 		if stickyAccountID > 0 && stickyAccountID == account.ID && s.concurrencyService != nil {
 			waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, account.ID)
@@ -1315,7 +1324,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				} else {
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 					if err == nil && result != nil && result.Acquired {
-						selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
+						selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc, result.RequestID)
 						if selectErr != nil {
 							return nil, selectErr
 						}
@@ -1502,6 +1511,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		} else {
 			selectionOrder = append(selectionOrder, available...)
 		}
+		selectionOrder = s.rankAutomationLoaded(groupID, requestedModel, selectionOrder, requireCompact, preferNativeResponses)
 
 		for _, item := range selectionOrder {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, item.account, platform, requestedModel, false, requiredCapability)
@@ -1517,7 +1527,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
 			if err == nil && result != nil && result.Acquired {
-				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc)
+				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc, result.RequestID)
 				if selectErr != nil {
 					return nil, true, selectErr
 				}
@@ -1545,6 +1555,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if requireCompact {
 			ordered = prioritizeOpenAICompactAccounts(ordered)
 		}
+		ordered = s.rankAutomationPool(groupID, requestedModel, ordered, requireCompact, preferNativeResponses, false)
 		for _, acc := range ordered {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
 			if fresh == nil {
@@ -1559,7 +1570,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
 			if err == nil && result != nil && result.Acquired {
-				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc)
+				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc, result.RequestID)
 				if selectErr != nil {
 					return nil, selectErr
 				}
@@ -2062,8 +2073,11 @@ func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *
 	}), nil
 }
 
-func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, account *Account, release func()) (*AccountSelectionResult, error) {
+func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, account *Account, release func(), requestIDs ...string) (*AccountSelectionResult, error) {
 	selection, err := s.newSelectionResult(ctx, account, true, release, nil)
+	if selection != nil && len(requestIDs) > 0 {
+		selection.AccountRequestID = requestIDs[0]
+	}
 	if err != nil && release != nil {
 		release()
 	}

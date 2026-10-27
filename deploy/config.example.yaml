@@ -208,6 +208,13 @@ security:
 # 网关配置
 # =============================================================================
 gateway:
+  # Per-key queue applies only when a key has a positive concurrency limit.
+  # 0 waiters preserves immediate rejection; user concurrency is independent.
+  api_key_queue:
+    max_waiting: 0
+    timeout_seconds: 30
+  # Upper bound on native Gemini explicit-cache lifetime, including custom upstreams.
+  gemini_cached_content_max_ttl_seconds: 86400
   # Timeout for waiting upstream response headers (seconds)
   # 等待上游响应头超时时间（秒）
   response_header_timeout: 600

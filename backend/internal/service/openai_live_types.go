@@ -20,11 +20,14 @@ const (
 )
 
 var (
-	ErrLiveUnavailable       = errors.New("live is unavailable")
-	ErrLiveConcurrencyFull   = errors.New("live concurrency is full")
-	ErrLiveCallNotFound      = errors.New("live call not found")
-	ErrLiveIdentityMismatch  = errors.New("live call identity mismatch")
-	ErrLiveControllerChanged = errors.New("live controller changed")
+	ErrLiveLeaseSourceLost        = errors.New("live source reservation lost before transfer")
+	ErrLiveLeaseTransferUncertain = errors.New("live lease transfer result is unknown")
+	ErrLiveLeaseTransferFenced    = errors.New("live lease transfer was already fenced")
+	ErrLiveUnavailable            = errors.New("live is unavailable")
+	ErrLiveConcurrencyFull        = errors.New("live concurrency is full")
+	ErrLiveCallNotFound           = errors.New("live call not found")
+	ErrLiveIdentityMismatch       = errors.New("live call identity mismatch")
+	ErrLiveControllerChanged      = errors.New("live controller changed")
 	// ErrLiveBillingNotConfigured prevents unpriced Live calls in standard mode.
 	ErrLiveBillingNotConfigured = infraerrors.Forbidden(
 		"LIVE_BILLING_NOT_CONFIGURED",
@@ -52,15 +55,18 @@ type LiveCallRequest struct {
 }
 
 type LiveCallIdentity struct {
-	APIKey          *APIKey `json:"-"`
-	APIKeyID        int64
-	UserID          int64
-	GroupID         *int64
-	RouteGroupIDs   []int64
-	SubscriptionID  *int64
-	UserAgent       string
-	IPAddress       string
-	InboundEndpoint string
+	APIKeyConcurrencyLimit int
+	KeyReservation         *APIKeySlotReservation
+	UserRequestID          string
+	APIKey                 *APIKey `json:"-"`
+	APIKeyID               int64
+	UserID                 int64
+	GroupID                *int64
+	RouteGroupIDs          []int64
+	SubscriptionID         *int64
+	UserAgent              string
+	IPAddress              string
+	InboundEndpoint        string
 }
 
 type LiveCallRecord struct {
@@ -124,4 +130,44 @@ type LiveConcurrencyCache interface {
 	) (bool, error)
 	RefreshLiveLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) (bool, error)
 	ReleaseLiveLease(ctx context.Context, accountID, userID, apiKeyID int64, leaseID string) error
+}
+
+// LiveLeaseTransferRequest carries one ordinary account/user/key reservation
+// each. RequestID fields are the exact Redis members owned by the caller; an
+// empty ID is only valid when the matching Max is 0 (the dimension is
+// unlimited and has no ordinary member to move).
+type LiveLeaseTransferRequest struct {
+	AccountID        int64
+	AccountMax       int
+	AccountRequestID string
+	UserID           int64
+	UserMax          int
+	UserRequestID    string
+	APIKeyID         int64
+	APIKeyMax        int
+	KeyRequestID     string
+	LeaseID          string
+	// ReplacedAccountID is the account whose Live member is replaced when an
+	// already-held joint Key/user lease migrates to a new account after a
+	// retryable SDP failure. Zero means no previous account member is held.
+	ReplacedAccountID int64
+}
+
+// LiveLeaseTransferCache is optionally implemented by the Live lease cache. It
+// moves the exact ordinary members into one Live lease in a single atomic
+// operation, so no user/account/key dimension is counted twice and a missing
+// source fails closed.
+type LiveLeaseTransferCache interface {
+	AcquireLiveLeaseTransferring(ctx context.Context, request LiveLeaseTransferRequest) (bool, error)
+	// MigrateLiveLeaseAccount keeps an existing joint Key/user Live lease and
+	// atomically replaces its account member with the new ordinary account
+	// reservation. The Key and user members are never released or re-queued.
+	MigrateLiveLeaseAccount(ctx context.Context, request LiveLeaseTransferRequest) (bool, error)
+	// ReleaseLiveLeaseAccount removes only the current account's Live member,
+	// keeping the joint Key/user members for the next retry attempt.
+	ReleaseLiveLeaseAccount(ctx context.Context, accountID int64, leaseID string) error
+	// AbortLiveLeaseTransfer fences this exact transfer and removes its members
+	// after an unknown acknowledgement. It runs caller-supplied bounded cleanup
+	// and never touches another lease.
+	AbortLiveLeaseTransfer(ctx context.Context, request LiveLeaseTransferRequest) error
 }

@@ -16,6 +16,7 @@ type SystemSettings struct {
 	EmailVerifyEnabled                  bool
 	RegistrationEmailSuffixWhitelist    []string
 	RegistrationEmailDomainQuotaEnabled bool // 白名单非空时放行非白名单域名限量注册（默认关闭）
+	RegistrationEmailAliasBlockEnabled  bool // 拒绝邮箱别名注册（默认关闭，不影响已有账号登录）
 	PromoCodeEnabled                    bool
 	PasswordResetEnabled                bool
 	FrontendURL                         string
@@ -331,6 +332,7 @@ type PublicSettings struct {
 	ForceEmailOnThirdPartySignup        bool
 	RegistrationEmailSuffixWhitelist    []string
 	RegistrationEmailDomainQuotaEnabled bool
+	RegistrationEmailAliasBlockEnabled  bool
 	PromoCodeEnabled                    bool
 	PasswordResetEnabled                bool
 	InvitationCodeEnabled               bool
