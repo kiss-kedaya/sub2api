@@ -63,7 +63,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		stream := gjson.GetBytes(body, "stream").Bool()
 		result, err := s.forwardOpenAIPassthrough(ctx, c, account, body, body, model, false, nil, stream, startTime)
 		if result != nil {
-			stampOpenAIResponsesUpstreamEndpoint(c, result)
+			SetActualOpenAIUpstreamEndpoint(c, "/v1/responses")
+			result.UpstreamEndpoint = "/v1/responses"
 		}
 		return result, err
 	}

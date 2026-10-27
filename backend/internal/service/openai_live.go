@@ -157,7 +157,6 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 	// text pricing until a dedicated Live price exists.
 	ctx = WithOpenAIProfitControlSuppressed(ctx)
 	liveKey := cloneLiveAPIKey(identity.APIKey)
-	liveKey := cloneLiveAPIKey(identity.APIKey)
 	var lastErr error
 	// joint tracks the Key/user Live members that survive across SDP retry
 	// attempts: accountID is the account member currently held (0 after it was

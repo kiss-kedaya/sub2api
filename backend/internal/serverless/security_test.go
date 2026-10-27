@@ -1,7 +1,6 @@
 package serverless
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
