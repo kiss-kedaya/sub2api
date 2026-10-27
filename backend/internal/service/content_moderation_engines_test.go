@@ -61,7 +61,10 @@ func TestContentModerationEngineThresholdDefaultsAreIndependent(t *testing.T) {
 	require.Equal(t, openai.Thresholds, typeSafe.Thresholds)
 	typeSafe.Thresholds["sexual"] = 0.8
 	require.Equal(t, 0.65, openai.Thresholds["sexual"])
-	require.Equal(t, openai.Thresholds, moderationEngineDefaults(ContentModerationEngineTypeSafe).Thresholds)
+	for category, threshold := range openai.Thresholds {
+		require.Equal(t, threshold, moderationEngineDefaults(ContentModerationEngineTypeSafe).Thresholds[category])
+	}
+	require.False(t, moderationEngineDefaults(ContentModerationEngineTypeSafe).CategorySettings["jailbreak"].Enabled)
 }
 
 func TestContentModerationTypeSafeAllCategoriesAndImages(t *testing.T) {
@@ -96,7 +99,7 @@ func TestContentModerationTypeSafeAllCategoriesAndImages(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(1), calls.Load())
 	require.Len(t, result.CategoryScores, 13)
-	require.Equal(t, &ContentModerationEngineMeta{Engine: "typesafe", Model: "jev-fixed", RulesVersion: TypeSafeModerationRulesVersion, SkippedImages: 1}, result.EngineMeta)
+	require.Equal(t, &ContentModerationEngineMeta{Engine: "typesafe", Model: "jev-fixed", RulesVersion: TypeSafeModerationRulesVersion, SkippedImages: 1, CategorySettings: mergeModerationCategorySettings(cfg.Engine, nil, cfg.CategorySettings)}, result.EngineMeta)
 	trial := buildContentModerationTestAuditResult(result, cfg.Thresholds)
 	require.Equal(t, result.EngineMeta, trial.EngineMeta)
 	_, err = s.callModeration(context.Background(), cfg, ContentModerationInput{Images: content.Images}.ModerationInput())

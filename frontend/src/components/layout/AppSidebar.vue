@@ -831,6 +831,12 @@ const adminNavItems = computed((): NavItem[] => {
     },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
+    {path:'/admin/diagnostics',label:'诊断与运维',icon:ChartIcon,expandOnly:true,children:[
+      {path:'/admin/connections',label:'连接诊断',icon:ChartIcon},
+      {path:'/admin/group-cache-tests',label:'分组缓存测试',icon:ChartIcon},
+      {path:'/admin/request-captures',label:'请求采集',icon:ChartIcon},
+      {path:'/admin/traffic',label:'用户流量',icon:ChartIcon},
+    ]},
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/tickets', label: t('tickets.adminTitle'), icon: { render: () => h(Icon, { name: 'chat' }) } },
@@ -843,6 +849,8 @@ const adminNavItems = computed((): NavItem[] => {
       featureFlag: flagRiskControl,
       children: [
         { path: '/admin/risk-control', label: t('nav.contentModeration'), icon: ShieldIcon },
+{path:'/admin/ip-risk',label:'IP风控',icon:ShieldIcon},
+{path:'/admin/ip-audit',label:'IP审计',icon:ShieldIcon},
         { path: '/admin/prompt-audit', label: t('nav.promptAudit'), icon: ShieldIcon },
       ],
     },

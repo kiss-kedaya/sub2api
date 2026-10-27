@@ -25,25 +25,28 @@ func APIKeyAuthGoogle(apiKeyService *service.APIKeyService, cfg *config.Config) 
 // It is intended for Gemini native endpoints (/v1beta) to match Gemini SDK expectations.
 func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if rejectInvalidAuthAbuse(c, apiKeyService) {
-			abortWithGoogleError(c, 429, "Too many invalid authentication attempts; retry later")
-			return
-		}
+
 		if apiKeyHeadersTooLarge(c) {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "malformed", true) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			abortWithGoogleError(c, 401, "Invalid API key")
 			return
 		}
 		if v := strings.TrimSpace(c.Query("api_key")); v != "" {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "malformed", true) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
 			abortWithGoogleError(c, 400, "Query parameter api_key is deprecated. Use Authorization header or key instead.")
 			return
 		}
 		apiKeyString := extractAPIKeyForGoogle(c)
 		if apiKeyString == "" {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "missing", true) {
+				return
+			}
 			if hasAPIKeyCredentialInput(c) {
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			} else {
@@ -53,7 +56,9 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			return
 		}
 		if len(apiKeyString) > service.MaxAPIKeyCredentialBytes {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "malformed", true) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			abortWithGoogleError(c, 401, "Invalid API key")
 			return
@@ -62,7 +67,9 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		apiKey, err := apiKeyService.GetByKey(c.Request.Context(), apiKeyString)
 		if err != nil {
 			if errors.Is(err, service.ErrAPIKeyNotFound) {
-				recordInvalidAuthFailure(c, apiKeyService)
+				if rejectAnonymousCredentialFailure(c, apiKeyService, "unknown", true) {
+					return
+				}
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 				abortWithGoogleError(c, 401, "Invalid API key")
 				return
@@ -85,10 +92,15 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		if !apiKey.IsActive() &&
 			apiKey.Status != service.StatusAPIKeyExpired &&
 			apiKey.Status != service.StatusAPIKeyQuotaExhausted {
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "disabled", true) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectAPIKeyDisabled)
 			abortWithGoogleError(c, 401, "API key is disabled")
 			return
 		}
+
+		anonymousCredentialSuccess(c)
 
 		// 检查 IP 限制（白名单/黑名单）。与主中间件保持一致，避免 Gemini 端点绕过 Key 的 IP ACL。
 		if len(apiKey.IPWhitelist) > 0 || len(apiKey.IPBlacklist) > 0 {

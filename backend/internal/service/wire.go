@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"github.com/Wei-Shaw/sub2api/internal/iprisk"
 	"os"
 	"time"
 
@@ -1093,4 +1094,10 @@ func ProvideClaudeResetCreditService(accounts AccountRepository, tokens *ClaudeT
 	s := NewClaudeResetCreditService(accounts, tokens, proxies, settings)
 	s.ConfigureRedemption(idem, locks)
 	return s
+}
+
+// NewIPRiskManager shares the existing Redis infrastructure; policy defaults
+// remain disabled until explicitly configured by the primary administrator.
+func NewIPRiskManager(settings *SettingService, client *redis.Client) *iprisk.Manager {
+	return iprisk.New(settings.IPRiskStore(), client, iprisk.NewGeoJSResolver(client), false)
 }

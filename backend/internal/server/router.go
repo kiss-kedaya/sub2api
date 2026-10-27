@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -43,6 +45,32 @@ func SetupRouter(
 	db *sql.DB,
 ) *gin.Engine {
 	adminhandler.ConfigureReportCacheRedis(redisClient)
+	ipRisk := service.NewIPRiskManager(settingService, redisClient)
+	ipRisk.Start()
+	handlers.Admin.IPRisk = adminhandler.NewIPRiskHandler(ipRisk, settingService, nil)
+	handlers.Admin.IPRisk.UseAuditHandler(handlers.Admin.AuditLog)
+	r.Use(ipRisk.Middleware())
+	if handlers.Admin != nil && handlers.Admin.Usage != nil {
+		if _, err := handlers.Admin.Usage.ConfigureTrafficDelivery(func() string {
+			dir := os.Getenv("DATA_DIR")
+			if dir == "" {
+				dir = "./data"
+			}
+			return filepath.Join(dir, "user-traffic-pending")
+		}); err != nil {
+			log.Printf("Warning: traffic diagnostics unavailable")
+		}
+		r.Use(middleware2.RequestTiming(handlers.Admin.Usage))
+		r.Use(middleware2.UserTraffic(handlers.Admin.Usage))
+	}
+	manager, captureErr := settingService.InitializeRequestCapture(db)
+	if captureErr != nil {
+		log.Printf("Warning: request capture unavailable")
+	}
+	if handlers.Admin != nil && handlers.Admin.Account != nil {
+		handlers.Admin.RequestCapture = handlers.Admin.Account.CaptureHandler(manager, settingService)
+	}
+
 	middleware2.SetIngressRejectRecorder(opsService)
 	service.SetUsageInflightStore(repository.NewUsageInflightCache(redisClient))
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src

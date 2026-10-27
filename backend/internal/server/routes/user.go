@@ -109,6 +109,8 @@ func RegisterUserRoutes(
 
 		// 使用记录（聚合统计属重查询，叠加更严格的按用户限流）
 		usage := authenticated.Group("/usage")
+		usage.GET("/traffic", h.Usage.Traffic)
+		usage.GET("/traffic/keys", h.Usage.TrafficKeys)
 		usage.Use(panelRateLimiter.Heavy())
 		{
 			usage.GET("", h.Usage.List)

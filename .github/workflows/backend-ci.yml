@@ -53,6 +53,11 @@ jobs:
       - name: Wallet security concurrency regression
         working-directory: backend
         run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: Diagnostic and operator feature concurrency regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+          go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
       - name: Unit tests
         working-directory: backend
         run: make test-unit
@@ -145,6 +150,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
+      - name: Operator feature frontend regression
+        working-directory: frontend
+        run: pnpm exec vitest run src/api/__tests__/groupCacheTest.spec.ts src/views/admin/__tests__/GroupCacheTestView.spec.ts src/components/account/__tests__/SchedulableTimerControl.spec.ts src/components/usage/__tests__/TrafficPanel.spec.ts
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build

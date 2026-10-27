@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/accounttimer"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -584,6 +585,8 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
+	// Ordinary settings edits preserve a concurrently executed timer.
+	ctx = accounttimer.WithPreservedSchedulable(accounttimer.WithoutManualIntent(ctx))
 	if err := ValidateAccountSchedulingFields(input.Concurrency, input.Priority); err != nil {
 		return nil, err
 	}
@@ -1184,6 +1187,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
 	}
+
+	// Scheduling intent is scoped to the explicit bulk update above.
+	ctx = accounttimer.WithoutManualIntent(ctx)
 
 	// 将 proxy 变更传播到每个目标账号的 spark 影子账号
 	if repoUpdates.ProxyID != nil {

@@ -957,6 +957,11 @@
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                       {{ t('admin.riskControl.riskThresholdDefault', { value: formatThresholdPercent(row.defaultValue) }) }}
                     </p>
+                    <label v-if="configForm.engine === 'typesafe'" class="mt-2 flex items-center gap-2 text-xs">
+                      <input v-model="configForm.category_settings[row.category].enabled" type="checkbox" :data-test="`risk-category-enabled-${row.category}`" />
+                      {{ t('moderationCategories.enabled') }}
+                    </label>
+                    <p v-if="optionalTypeSafeCategories.has(row.category)" class="mt-1 text-xs text-amber-700 dark:text-amber-400">{{ t('moderationCategories.optInHint') }}</p>
                   </div>
                   <span class="inline-flex shrink-0 rounded-md bg-white px-2 py-1 font-mono text-xs font-medium text-gray-600 shadow-sm dark:bg-dark-800 dark:text-gray-300">
                     {{ formatThresholdPercent(row.value) }}
@@ -970,6 +975,7 @@
                     <input
                       :id="`risk-threshold-${row.category}`"
                       v-model.number="configForm.thresholds[row.category]"
+                      :disabled="configForm.engine === 'typesafe' && !configForm.category_settings[row.category]?.enabled"
                       :data-test="`risk-threshold-${row.category}`"
                       type="number"
                       min="0"
@@ -1090,6 +1096,11 @@
             <template v-if="inputDetailRow.engine_meta">
               {{ engineLabel(inputDetailRow.engine_meta.engine) }} · {{ inputDetailRow.engine_meta.model || '-' }} · {{ inputDetailRow.engine_meta.rules_version || '-' }}
               <span v-if="inputDetailRow.engine_meta.skipped_images"> · {{ t('admin.riskControl.skippedImages', { count: inputDetailRow.engine_meta.skipped_images }) }}</span>
+              <span v-if="inputDetailRow.engine_meta.matched_categories?.length"> · {{ t('moderationCategories.matched') }}: {{ inputDetailRow.engine_meta.matched_categories.join(', ') }}</span>
+              <span v-if="inputDetailRow.engine_meta.category_settings" class="mt-1 block break-words">
+                {{ t('moderationCategories.snapshot') }}:
+                <span v-for="(setting, category) in inputDetailRow.engine_meta.category_settings" :key="category" class="mr-2">{{ category }}={{ setting.enabled ? t('common.enabled') : t('common.disabled') }}</span>
+              </span>
             </template>
             <template v-else>{{ ['cyber_policy', 'keyword_block', 'hash_block'].includes(inputDetailRow.action) ? '-' : t('admin.riskControl.legacyAuditSource') }}</template>
           </div>
@@ -1222,10 +1233,17 @@ const riskThresholdDefaults: Record<string, number> = {
   'sexual/minors': 65,
   violence: 95,
   'violence/graphic': 95,
+  jailbreak: 95,
+  control_bypass: 95,
 }
 const riskThresholdCategories = Object.keys(riskThresholdDefaults)
+const optionalTypeSafeCategories = new Set(['jailbreak', 'control_bypass'])
+function categorySettingsFromConfig(settings?: Record<string, { enabled: boolean }>) {
+  return Object.fromEntries(riskThresholdCategories.map(category => [category, { enabled: settings?.[category]?.enabled ?? !optionalTypeSafeCategories.has(category) }]))
+}
 
-const { t } = useI18n()
+import {zh as moderationZh,en as moderationEn} from '@/features/ip-risk/moderationCategories.locale'
+const {t}=useI18n({useScope:'local',messages:{zh:{moderationCategories:moderationZh},en:{moderationCategories:moderationEn}},inheritLocale:true})
 const appStore = useAppStore()
 const defaultBlockMessage = () => t('admin.riskControl.defaultBlockMessage')
 
@@ -1290,13 +1308,14 @@ const configForm = reactive({
   non_hit_retention_days: 3,
   pre_hash_check_enabled: false,
   thresholds: { ...riskThresholdDefaults } as Record<string, number>,
+  category_settings: categorySettingsFromConfig(),
   blocked_keywords_text: '',
   keyword_blocking_mode: 'keyword_and_api' as KeywordBlockingMode,
   model_filter_type: 'all' as ContentModerationModelFilterType,
   model_filter_models: [] as string[],
 })
 
-const engineFields = ['base_url', 'model', 'proxy_id', 'api_keys_text', 'api_key_configured', 'api_key_masked', 'api_key_count', 'api_key_masks', 'api_key_statuses', 'api_keys_mode', 'clear_api_key', 'timeout_ms', 'retry_count', 'thresholds'] as const
+const engineFields = ['base_url', 'model', 'proxy_id', 'api_keys_text', 'api_key_configured', 'api_key_masked', 'api_key_count', 'api_key_masks', 'api_key_statuses', 'api_keys_mode', 'clear_api_key', 'timeout_ms', 'retry_count', 'thresholds', 'category_settings'] as const
 type EngineDraft = Pick<typeof configForm, typeof engineFields[number]> & { pendingDeletes: string[] }
 const engineDrafts = ref<Partial<Record<ModerationEngine, EngineDraft>>>({})
 
@@ -1328,6 +1347,7 @@ function engineDraftFromConfig(config: ContentModerationConfig | undefined, engi
     api_keys_mode: 'append', clear_api_key: false, pendingDeletes: [],
     timeout_ms: config?.timeout_ms ?? 3000, retry_count: config?.retry_count ?? 2,
     thresholds: riskThresholdsFromConfig(config?.thresholds),
+    category_settings: categorySettingsFromConfig(config?.category_settings),
   }
 }
 
@@ -1337,6 +1357,7 @@ function engineDraftPayload(draft: EngineDraft): UpdateModerationEngineConfig {
   return {
     base_url: draft.base_url, model: draft.model, proxy_id: draft.proxy_id ?? 0,
     timeout_ms: draft.timeout_ms, retry_count: draft.retry_count,
+    category_settings: structuredClone(toRaw(draft.category_settings)),
     thresholds: Object.fromEntries(riskThresholdCategories.map(k => [k, clampPercent(draft.thresholds[k]) / 100])),
     clear_api_key: draft.clear_api_key, api_keys: keys.length ? keys : undefined,
     api_keys_mode: draft.api_keys_mode, delete_api_key_hashes: draft.pendingDeletes,
@@ -1658,7 +1679,7 @@ const moderationScoreRows = computed<ModerationScoreRow[]>(() => {
 })
 
 const riskThresholdRows = computed<RiskThresholdRow[]>(() => (
-  riskThresholdCategories.map((category) => ({
+  riskThresholdCategories.filter(category => configForm.engine === 'typesafe' || !optionalTypeSafeCategories.has(category)).map((category) => ({
     category,
     value: configForm.thresholds[category] ?? riskThresholdDefaults[category],
     defaultValue: riskThresholdDefaults[category],
@@ -1817,6 +1838,7 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.non_hit_retention_days = Math.min(Math.max(config.non_hit_retention_days || 3, 1), 3)
   configForm.pre_hash_check_enabled = config.pre_hash_check_enabled ?? false
   configForm.thresholds = riskThresholdsFromConfig(config.thresholds)
+  configForm.category_settings = categorySettingsFromConfig(config.category_settings)
   configForm.blocked_keywords_text = Array.isArray(config.blocked_keywords) ? config.blocked_keywords.join('\n') : ''
   configForm.keyword_blocking_mode = normalizeKeywordBlockingMode(config.keyword_blocking_mode)
   const modelFilter = normalizeModelFilter(config.model_filter)
@@ -1911,6 +1933,7 @@ async function saveConfig() {
       non_hit_retention_days: Math.min(Math.max(Number(configForm.non_hit_retention_days) || 3, 1), 3),
       pre_hash_check_enabled: configForm.pre_hash_check_enabled,
       thresholds: buildRiskThresholdPayload(),
+      category_settings: structuredClone(toRaw(configForm.category_settings)),
       blocked_keywords: blockedKeywordList.value,
       keyword_blocking_mode: configForm.keyword_blocking_mode,
       model_filter: modelFilterPayload,
@@ -2091,6 +2114,7 @@ async function testApiKeys(useInputKeys: boolean) {
     const result = await adminAPI.riskControl.testAPIKeys({
       engine: configForm.engine,
       thresholds: buildRiskThresholdPayload(),
+      category_settings: structuredClone(toRaw(configForm.category_settings)),
       api_keys: keys,
       base_url: configForm.base_url,
       model: configForm.model,

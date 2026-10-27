@@ -19,6 +19,14 @@ import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadEr
  * Route definitions with lazy loading
  */
 const routes: RouteRecordRaw[] = [
+  {path:'/admin/group-cache-tests',name:'AdminGroupCacheTests',component:()=>import('@/views/admin/GroupCacheTestView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'分组缓存测试'}},
+  {path:'/admin/request-captures',name:'AdminRequestCaptures',component:()=>import('@/views/admin/RequestCaptureView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'请求采集'}},
+  {path:'/admin/connections',name:'AdminConnections',component:()=>import('@/views/admin/ConnectionDiagnosticsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'连接诊断'}},
+  {path:'/admin/traffic',name:'AdminTraffic',component:()=>import('@/views/TrafficView.vue'),props:{admin:true},meta:{requiresAuth:true,requiresAdmin:true,title:'用户流量'}},
+  {path:'/traffic',name:'UserTraffic',component:()=>import('@/views/TrafficView.vue'),meta:{requiresAuth:true,requiresAdmin:false,title:'流量记录'}},
+  {path:'/admin/ip-risk',name:'AdminIPRisk',component:()=>import('@/views/admin/IPRiskView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'IP风控'}},
+  {path:'/admin/ip-audit',name:'AdminIPAudit',component:()=>import('@/features/ip-audit/IPAuditView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'IP审计'}},
+
   // ==================== Setup Routes ====================
   {
     path: '/setup',

@@ -320,6 +320,12 @@
             </div>
           </template>
           <template #cell-schedulable="{ row }">
+            <SchedulableTimerControl
+              v-if="authStore.isAdmin && !authStore.isAdminObserver"
+              :account-id="row.id"
+              :refresh-key="timerRefreshKey"
+              @executed="handleTimerExecuted"
+            />
             <button @click="handleToggleSchedulable(row)" :disabled="togglingSchedulable === row.id" class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-dark-800" :class="[row.schedulable ? 'bg-primary-500 hover:bg-primary-600' : 'bg-gray-200 hover:bg-gray-300 dark:bg-dark-600 dark:hover:bg-dark-500']" :title="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')">
               <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="[row.schedulable ? 'translate-x-4' : 'translate-x-0']" />
             </button>
@@ -547,6 +553,9 @@ import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import SchedulableTimerControl from '@/components/account/SchedulableTimerControl.vue'
+import timerZh from '@/components/account/schedulableTimer.zh'
+import timerEn from '@/components/account/schedulableTimer.en'
 import { adminAPI } from '@/api/admin'
 import { useTableLoader } from '@/composables/useTableLoader'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
@@ -604,7 +613,7 @@ import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 
-const { t } = useI18n()
+const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const appStore = useAppStore()
 const authStore = useAuthStore()
 
@@ -2116,10 +2125,21 @@ const normalizeBulkSchedulableResult = (
     hasCounts: hasExplicitCounts
   }
 }
+const timerRefreshKey = ref(0)
+let timerListRefresh: ReturnType<typeof setTimeout> | undefined
+const handleTimerExecuted = () => {
+  if (timerListRefresh !== undefined) return
+  timerListRefresh = setTimeout(() => {
+    timerListRefresh = undefined
+    void load({ refreshTodayStats: false })
+  }, 150)
+}
 const handleBulkToggleSchedulable = async (schedulable: boolean) => {
   const accountIds = [...selIds.value]
+  if (!accountIds.length || !confirm(t('admin.accounts.timer.bulkOverrideConfirm'))) return
   try {
     const result = await adminAPI.accounts.bulkUpdate(accountIds, { schedulable })
+    timerRefreshKey.value++
     const { successIds, failedIds, successCount, failedCount, hasIds, hasCounts } = normalizeBulkSchedulableResult(result, accountIds)
     if (!hasIds && !hasCounts) {
       appStore.showError(t('admin.accounts.bulkSchedulableResultUnknown'))
@@ -2565,10 +2585,12 @@ const confirmCreateSparkShadow = async () => {
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
 const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
 const handleToggleSchedulable = async (a: Account) => {
+  if (!confirm(t('admin.accounts.timer.manualOverrideConfirm'))) return
   const nextSchedulable = !a.schedulable
   togglingSchedulable.value = a.id
   try {
     const updated = await adminAPI.accounts.setSchedulable(a.id, nextSchedulable)
+    timerRefreshKey.value++
     updateSchedulableInList([a.id], updated?.schedulable ?? nextSchedulable)
     enterAutoRefreshSilentWindow()
   } catch (error) {
@@ -2676,6 +2698,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  clearTimeout(timerListRefresh)
   upstreamBillingRateAbortController?.abort()
   if (usageBatchFlushTimer !== null) {
     clearTimeout(usageBatchFlushTimer)

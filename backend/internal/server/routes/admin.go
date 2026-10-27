@@ -32,6 +32,37 @@ func RegisterAdminRoutes(
 	admin.Use(gin.HandlerFunc(auditLog))
 	admin.Use(middleware.AdminComplianceGuard(settingService))
 	registerAdminTicketRoutes(admin, h.Ticket)
+	if h.Admin.IPRisk != nil {
+		risk := admin.Group("/settings/ip-risk")
+		risk.GET("", h.Admin.IPRisk.GetIPRisk)
+		risk.PUT("", h.Admin.IPRisk.SaveIPRisk)
+		risk.GET("/events", h.Admin.IPRisk.GetIPRiskEvents)
+		risk.DELETE("/events", h.Admin.IPRisk.ClearIPRiskEvents)
+		risk.GET("/bans", h.Admin.IPRisk.GetIPRiskBans)
+		risk.POST("/unban", h.Admin.IPRisk.UnbanIPRisk)
+		risk.GET("/anonymous-bans", h.Admin.IPRisk.GetAnonymousAPIBans)
+		risk.POST("/anonymous-unban", h.Admin.IPRisk.UnbanAnonymousAPI)
+		risk.POST("/check", h.Admin.IPRisk.CheckIPRisk)
+		admin.GET("/settings/ip-audit", h.Admin.IPRisk.GetIPAudit)
+		admin.POST("/settings/ip-audit/release", h.Admin.IPRisk.ReleaseIPAudit)
+	}
+
+	if h.Admin.RequestCapture != nil {
+		capture := admin.Group("/request-captures")
+		capture.GET("/config", h.Admin.RequestCapture.GetConfig)
+		capture.PUT("/config", h.Admin.RequestCapture.UpdateConfig)
+		capture.Use(h.Admin.RequestCapture.Gate)
+		capture.GET("", h.Admin.RequestCapture.List)
+		capture.POST("", h.Admin.RequestCapture.Create)
+		capture.POST("/:task/stop", h.Admin.RequestCapture.Stop)
+		capture.DELETE("/:task", h.Admin.RequestCapture.Delete)
+		capture.GET("/:task/requests", h.Admin.RequestCapture.Records)
+		capture.GET("/:task/requests/:record", h.Admin.RequestCapture.Detail)
+		capture.GET("/:task/requests/:record/content/:part", h.Admin.RequestCapture.Content)
+		capture.GET("/:task/export", h.Admin.RequestCapture.Export)
+		capture.GET("/:task/requests/:record/export", h.Admin.RequestCapture.Export)
+	}
+
 	{
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)
@@ -366,6 +397,11 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 
 func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	accounts := admin.Group("/accounts")
+	accounts.GET("/:id/schedulable-timers", h.Admin.Account.ListSchedulableTimers)
+	accounts.POST("/:id/schedulable-timers/preview", h.Admin.Account.PreviewSchedulableTimer)
+	accounts.POST("/:id/schedulable-timers", h.Admin.Account.SaveSchedulableTimer)
+	accounts.DELETE("/:id/schedulable-timers/:action", h.Admin.Account.CancelSchedulableTimer)
+
 	accounts.Use(func(c *gin.Context) {
 		if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
 			c.Request = c.Request.WithContext(service.EnsureAccountOwnerScope(c.Request.Context(), subject.UserID))
@@ -718,6 +754,12 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 
 func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	usage := admin.Group("/usage")
+	usage.GET("/connections", h.Admin.Usage.Connections)
+	usage.POST("/connections/edge", h.Admin.Usage.ImportEdgeConnections)
+	usage.GET("/traffic", h.Admin.Usage.Traffic)
+	usage.GET("/traffic/keys", h.Admin.Usage.TrafficKeys)
+	usage.GET("/traffic/health", h.Admin.Usage.TrafficHealth)
+
 	{
 		usage.GET("", h.Admin.Usage.List)
 		usage.GET("/stats", h.Admin.Usage.Stats)
