@@ -307,6 +307,9 @@ type OpenAIForwardResult struct {
 	WebSearchCalls int
 	// SearchCount is Grok-native web_search / tool search call count (per 1k pricing).
 	SearchCount int
+	// FixedToolBilling marks provider-hosted tools whose configured per-call
+	// fee is final. Model tokens retain their usual group/user multiplier.
+	FixedToolBilling bool
 	// AudioUsage carries Voice billing units when present.
 	AudioUsage *AudioUsage
 

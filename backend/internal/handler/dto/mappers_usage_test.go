@@ -8,6 +8,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUsageLogFromService_ExposesFailureStatusWithoutProviderDetailsOrChangingCharge(t *testing.T) {
+	status := 502
+	log := &service.UsageLog{FailureStatusCode: &status, ActualCost: .125, InputTokens: 10}
+	for _, value := range []any{UsageLogFromService(log), UsageLogFromServiceAdmin(log)} {
+		body, err := json.Marshal(value)
+		require.NoError(t, err)
+		var fields map[string]any
+		require.NoError(t, json.Unmarshal(body, &fields))
+		require.Equal(t, float64(502), fields["failure_status_code"])
+		require.Equal(t, .125, fields["actual_cost"])
+		require.Equal(t, float64(10), fields["input_tokens"])
+		require.NotContains(t, fields, "error_body")
+		require.NotContains(t, fields, "error_message")
+	}
+	body, err := json.Marshal(UsageLogFromService(&service.UsageLog{}))
+	require.NoError(t, err)
+	require.NotContains(t, string(body), "failure_status_code")
+}
+
 func TestUsageLogFromService_IncludesOpenAIWSMode(t *testing.T) {
 	t.Parallel()
 
