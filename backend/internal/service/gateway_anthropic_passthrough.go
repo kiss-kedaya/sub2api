@@ -1,8 +1,6 @@
 package service
 
-// 本文件由 gateway_service.go 纯移动拆分而来：Anthropic APIKey 直通
-// （passthrough）转发路径及其流式/非流式响应与 usage 解析。仅做代码搬迁，
-// 无任何行为变更。
+// Anthropic APIKey 直通（passthrough）转发路径及其流式/非流式响应与 usage 解析。
 
 import (
 	"bufio"
@@ -450,6 +448,39 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	clientDisconnected := false
 	sawTerminalEvent := false
 	pendingErrorHeader := ""
+	var pendingErrorLines []string
+	var pendingErrorData []string
+	finishStreamError := func(payload, wire string) (*streamingResult, error) {
+		status, errorType, message := anthropicStreamErrorSemantics(payload)
+		setOpsUpstreamError(c, status, message, "")
+		MarkOpsStreamFailure(c, errorType, "", message, status)
+		streamErr := &AnthropicPassthroughStreamError{
+			StatusCode: status,
+			ErrorType:  errorType,
+			Message:    message,
+			RawData:    payload,
+		}
+		if !clientDisconnected {
+			// Finish the original SSE event, including when the upstream omitted
+			// its final blank line. Do not rewrite its error payload or append a
+			// generic gateway error after it.
+			n, err := io.WriteString(w, wire)
+			if err != nil || n != len(wire) {
+				clientDisconnected = true
+			} else {
+				flusher.Flush()
+				streamErr.ResponseWritten = true
+			}
+		}
+		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, streamErr
+	}
+	finishPendingError := func() (*streamingResult, error) {
+		wire := pendingErrorHeader + "\n"
+		if len(pendingErrorLines) > 0 {
+			wire += strings.Join(pendingErrorLines, "\n") + "\n"
+		}
+		return finishStreamError(strings.Join(pendingErrorData, "\n"), wire+"\n")
+	}
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
@@ -536,14 +567,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				// 兜底：上游发了 event: error 但没有跟随 data 行就收尾，这一帧会
-				// 一直停在 pendingErrorHeader 里。原样补写出去，保持透传语义。
-				if pendingErrorHeader != "" && !clientDisconnected {
-					if _, werr := io.WriteString(w, pendingErrorHeader+"\n\n"); werr == nil {
-						flusher.Flush()
-					} else {
-						clientDisconnected = true
-					}
+				if pendingErrorHeader != "" {
+					return finishPendingError()
 				}
 				if !clientDisconnected {
 					// 兜底补刷，确保最后一个未以空行结尾的事件也能及时送达客户端。
@@ -561,6 +586,11 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 			}
 			if ev.err != nil {
+				if pendingErrorHeader != "" {
+					// An upstream error event remains a failure even if the socket
+					// then ends with unexpected EOF instead of a final blank line.
+					return finishPendingError()
+				}
 				if sawTerminalEvent {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
@@ -578,12 +608,13 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			}
 
 			line := ev.line
-			if strings.TrimSpace(line) == "event: error" {
-				pendingErrorHeader = line
-				continue
+			if eventName, ok := strings.CutPrefix(strings.TrimSpace(line), "event:"); ok && strings.TrimSpace(eventName) == "error" {
+				if pendingErrorHeader == "" {
+					pendingErrorHeader = line
+					continue
+				}
 			}
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
-				trimmed := strings.TrimSpace(data)
 				if upstreamFinancialFailureEnvelope([]byte(data)) || pendingErrorHeader != "" && IsUpstreamFinancialError(0, []byte(data)) {
 					setOpsUpstreamError(c, http.StatusBadGateway, extractUpstreamErrorMessage([]byte(data)), "")
 					if !clientDisconnected {
@@ -591,6 +622,25 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					}
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
+			}
+			if pendingErrorHeader != "" {
+				if line == "" {
+					return finishPendingError()
+				}
+				pendingErrorLines = append(pendingErrorLines, line)
+				if data, ok := extractAnthropicSSEDataLine(line); ok {
+					pendingErrorData = append(pendingErrorData, data)
+					if json.Valid([]byte(strings.Join(pendingErrorData, "\n"))) {
+						return finishPendingError()
+					}
+				}
+				continue
+			}
+			if payload, ok := anthropicStreamErrorPayload(line); ok {
+				return finishStreamError(payload, line+"\n\n")
+			}
+			if data, ok := extractAnthropicSSEDataLine(line); ok {
+				trimmed := strings.TrimSpace(data)
 				observer.ObserveAnthropic([]byte(trimmed))
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
@@ -607,22 +657,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				}
 			}
 
-			// 上游把错误作为流内事件下发（SSE data 行或非标准裸 JSON 行）时，它就是
-			// 本次请求的语义终态：照常透传，但按官方语义记录状态（overloaded→529），
-			// 避免请求尾再补一帧通用 502「Upstream request failed」兜底。
-			if payload, ok := anthropicStreamErrorPayload(line); ok {
-				sawTerminalEvent = true
-				errStatus, errType, errMsg := anthropicStreamErrorSemantics(payload)
-				setOpsUpstreamError(c, errStatus, errMsg, "")
-				MarkOpsStreamError(c, errType, errMsg, errStatus)
-			}
-
 			if !clientDisconnected {
 				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
-				if pendingErrorHeader != "" {
-					restored = pendingErrorHeader + "\n" + restored
-					pendingErrorHeader = ""
-				}
 				if _, err := io.WriteString(w, restored); err != nil {
 					clientDisconnected = true
 					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
