@@ -49,6 +49,12 @@ func HasIndependentDeepSeekSearchProvider(group *Group) bool {
 func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 	ctx context.Context, c *gin.Context, account *Account, group *Group, path string, modelLabel string, body []byte,
 ) (*OpenAIForwardResult, error) {
+	return s.forwardDeepSeekTools(ctx, c, account, group, path, modelLabel, body, 0)
+}
+
+func (s *OpenAIGatewayService) forwardDeepSeekTools(
+	ctx context.Context, c *gin.Context, account *Account, group *Group, path string, modelLabel string, body []byte, responseLimit int64,
+) (*OpenAIForwardResult, error) {
 	if s == nil || c == nil || account == nil {
 		return nil, fmt.Errorf("service, context, and account are required")
 	}
@@ -117,9 +123,16 @@ func (s *OpenAIGatewayService) ForwardDeepSeekTools(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	var reader io.Reader = resp.Body
+	if responseLimit > 0 {
+		reader = io.LimitReader(reader, responseLimit+1)
+	}
+	respBody, err := ReadUpstreamResponseBody(reader, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		return nil, fmt.Errorf("read deepseek tools response: %w", err)
+	}
+	if responseLimit > 0 && int64(len(respBody)) > responseLimit {
+		return nil, fmt.Errorf("deepseek hosted tool response exceeds size limit")
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest && !HasIndependentDeepSeekSearchProvider(group) {
