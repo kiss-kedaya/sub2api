@@ -48,6 +48,9 @@ func TestDeepSeekHostedFetchSearchThenPageThenSummary(t *testing.T) {
 			}, searchResponse: `{"results":[{"title":"DeepSeek docs","url":"` + pageURL + `","summary":"Search snippet"}]}`,
 				fetchResponse: `{"title":"DeepSeek docs","content":"Full page content beyond the search snippet."}`}
 			svc, c, recorder, account, body := hostedSearchFixture(t, upstream, stream, "auto", false)
+			// Concise web_search matches the legacy emulation name. Even with
+			// that opt-in compatibility flag, only the hosted loop may execute it.
+			svc.cfg.Gateway.DeepSeekResponseCompatEnabled = true
 			result, err := svc.Forward(context.Background(), c, account, body)
 			require.NoError(t, err, recorder.Body.String())
 			require.NotNil(t, result)
