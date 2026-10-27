@@ -177,7 +177,7 @@ func TestAPIKeyAdmissionGrokRealtimeJoinsBeforeRelease(t *testing.T) {
 			done <- err
 			return
 		}
-		_, err = (&OpenAIGatewayService{}).ProxyGrokRealtimeConn(ctx, nil, client, &GrokRealtimeUpstream{conn: upstream})
+		_, err = (&OpenAIGatewayService{}).ProxyGrokRealtimeConn(ctx, nil, client, &GrokRealtimeUpstream{conn: upstream}, "grok-realtime")
 		lease.ReleaseFunc()
 		done <- err
 	}))

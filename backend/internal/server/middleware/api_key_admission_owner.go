@@ -141,7 +141,7 @@ type apiKeyQueueInitialIdentity struct {
 	groupID            *int64
 	platform           string
 	subscriptionType   string
-	codexCLIOnly       bool
+	claudeCodeOnly     bool
 	routeGroupIDs      []int64
 	maxReasoningEffort string
 	reasoningOverLimit string
@@ -163,7 +163,7 @@ func captureAPIKeyQueueIdentity(initial *service.APIKey) apiKeyQueueInitialIdent
 	if initial.Group != nil {
 		identity.platform = initial.Group.Platform
 		identity.subscriptionType = initial.Group.SubscriptionType
-		identity.codexCLIOnly = initial.Group.CodexCLIOnly
+		identity.claudeCodeOnly = initial.Group.ClaudeCodeOnly
 		identity.maxReasoningEffort = initial.Group.MaxReasoningEffort
 		identity.reasoningOverLimit = initial.Group.MaxReasoningEffortOverLimit
 		identity.reasoningMappings = append([]service.ReasoningEffortMapping(nil), initial.Group.ReasoningEffortMappings...)
@@ -189,18 +189,18 @@ func apiKeyQueueCoreIdentityChanged(initial apiKeyQueueInitialIdentity, latest *
 		return true
 	}
 	platform, subscriptionType := "", ""
-	codexCLIOnly := false
+	claudeCodeOnly := false
 	if latest.Group != nil {
 		platform = latest.Group.Platform
 		subscriptionType = latest.Group.SubscriptionType
-		codexCLIOnly = latest.Group.CodexCLIOnly
+		claudeCodeOnly = latest.Group.ClaudeCodeOnly
 		if initial.maxReasoningEffort != latest.Group.MaxReasoningEffort || initial.reasoningOverLimit != latest.Group.MaxReasoningEffortOverLimit || !slices.Equal(initial.reasoningMappings, latest.Group.ReasoningEffortMappings) {
 			return true
 		}
 	}
 	// A queued request or persistent WS connection must re-enter the public
 	// client gate after this policy changes, including off -> on transitions.
-	return initial.platform != platform || initial.subscriptionType != subscriptionType || initial.codexCLIOnly != codexCLIOnly || !slices.Equal(initial.routeGroupIDs, latest.CandidateGroupIDs())
+	return initial.platform != platform || initial.subscriptionType != subscriptionType || initial.claudeCodeOnly != claudeCodeOnly || !slices.Equal(initial.routeGroupIDs, latest.CandidateGroupIDs())
 }
 
 // apiKeyQueueBlockedModel re-checks only the client-written model candidates

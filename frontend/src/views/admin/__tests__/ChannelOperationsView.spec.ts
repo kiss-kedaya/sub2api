@@ -126,6 +126,19 @@ describe('channel operations workflow', () => {
     const form = w.get('[data-testid="dialog"] form'); await form.get('input').setValue('Renamed'); await form.trigger('submit'); await flushPromises()
     expect(channels.update).toHaveBeenCalledWith(7, { name: 'Renamed', description: 'Keep pricing', status: 'active' }); w.unmount()
   })
+  it('keeps the channel selection and editor when a save response omits its identity', async () => {
+    vi.mocked(channels.update).mockResolvedValue({} as channels.Channel)
+    const w = mount(ChannelOperationsView); await flushPromises()
+    await w.get('[data-testid="edit-channel"]').trigger('click')
+    const form = w.get('[data-testid="dialog"] form')
+    await form.get('input').setValue('Renamed')
+    await form.trigger('submit'); await flushPromises()
+    expect(w.get('[data-testid="dialog"]').text()).toContain('channelOps.failed')
+    expect(form.get('input').element.value).toBe('Renamed')
+    expect(w.text()).toContain('Canonical')
+    expect(state.replace).not.toHaveBeenCalled()
+    w.unmount()
+  })
   it('uses exact selected model identity and group, paginates quality history by cursor', async () => {
     const w = mount(ChannelOperationsView); await flushPromises()
     const form = w.findAll('form')[1]

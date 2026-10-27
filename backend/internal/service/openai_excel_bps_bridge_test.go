@@ -11,9 +11,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type excelBPSForwardResult struct {
+	result *OpenAIForwardResult
+	err    error
+}
+
+type excelBPSUpstreamFunc func(*http.Request) (*http.Response, error)
+
+func (f excelBPSUpstreamFunc) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	return f(req)
+}
+
+func (f excelBPSUpstreamFunc) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return f(req)
+}
 
 func excelBPSGatewayFixture(t *testing.T, upstream HTTPUpstream) (*OpenAIGatewayService, *Account) {
 	t.Helper()
@@ -36,7 +52,7 @@ func TestExcelBPSGatewayCancelledClientStillRecordsAcceptedUsage(t *testing.T) {
 	defer cancel()
 	arrived := make(chan struct{})
 	upstreamCancelled := make(chan bool, 1)
-	upstream := headerCancelUpstreamFunc(func(req *http.Request) (*http.Response, error) {
+	upstream := excelBPSUpstreamFunc(func(req *http.Request) (*http.Response, error) {
 		close(arrived)
 		reader, writer := io.Pipe()
 		go func() {
@@ -52,13 +68,13 @@ func TestExcelBPSGatewayCancelledClientStillRecordsAcceptedUsage(t *testing.T) {
 	body := []byte(`{"model":"gpt-fixture","stream":true,"prompt_cache_key":"conversation-one","input":"hello"}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body)).WithContext(ctx)
 	c.Set("api_key", &APIKey{ID: 8})
-	done := make(chan headerCancelForwardResult, 1)
+	done := make(chan excelBPSForwardResult, 1)
 	go func() {
 		result, handled, err := svc.forwardSelectedExcelBPS(ctx, c, account, body, time.Now(), "gpt-fixture")
 		if !handled && err == nil {
 			err = io.ErrUnexpectedEOF
 		}
-		done <- headerCancelForwardResult{result: result, err: err}
+		done <- excelBPSForwardResult{result: result, err: err}
 	}()
 	select {
 	case <-arrived:

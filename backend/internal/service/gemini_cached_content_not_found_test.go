@@ -180,8 +180,10 @@ func TestGeminiForwardNative_VertexCachedContentNotFoundReturnsStandardForbidden
 			require.Equal(t, GeminiCachedContentNotFoundResponse, rec.Body.String())
 			require.NotContains(t, rec.Body.String(), "8079767076522164224", "不应暴露上游缓存 ID")
 			require.True(t, IsOpsRequestScopedError(c), "缓存不存在按客户端请求错误统计")
-			errType, _ := OpsLocalErrorType(c)
-			require.Equal(t, "permission_error", errType)
+			opsError, recorded := GetOpsStreamError(c)
+			require.True(t, recorded)
+			require.Equal(t, "permission_error", opsError.ErrType)
+			require.True(t, opsError.NonStream)
 		})
 	}
 }

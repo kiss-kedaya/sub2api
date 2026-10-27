@@ -938,7 +938,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if isOAuth && s.accountRepo != nil {
+	if isOAuth && s.accountRepo != nil && !c.GetBool(localQualityStrictKey) {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
@@ -956,7 +956,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
 			return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode)
 		}
-		if resp.StatusCode == http.StatusTooManyRequests {
+		if resp.StatusCode == http.StatusTooManyRequests && !c.GetBool(localQualityStrictKey) {
 			// The coordinator records quota evidence and probe state, but it does
 			// not own the durable account rate-limit timestamp. Persist the 429
 			// reset for every response (including quota 429s); the candidate query
@@ -966,7 +966,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
 		// 401 Unauthorized: 标记账号为永久错误
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil && !c.GetBool(localQualityStrictKey) {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -977,7 +977,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if err := s.processOpenAIStream(c, resp.Body); err != nil {
 		return err
 	}
-	s.observeCodexQuotaOverdraftTestResult(ctx, account, upstreamTestModelID, overdraftInjected)
+	if !c.GetBool(localQualityStrictKey) {
+		s.observeCodexQuotaOverdraftTestResult(ctx, account, upstreamTestModelID, overdraftInjected)
+	}
 	return nil
 }
 
