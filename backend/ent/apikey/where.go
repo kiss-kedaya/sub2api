@@ -165,6 +165,11 @@ func AnthropicCacheTTLMode(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldAnthropicCacheTTLMode, v))
 }
 
+// DeepseekToolInjectionEnabled applies equality check predicate on the "deepseek_tool_injection_enabled" field. It's identical to DeepseekToolInjectionEnabledEQ.
+func DeepseekToolInjectionEnabled(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldDeepseekToolInjectionEnabled, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldCreatedAt, v))
@@ -1193,6 +1198,16 @@ func AnthropicCacheTTLModeEqualFold(v string) predicate.APIKey {
 // AnthropicCacheTTLModeContainsFold applies the ContainsFold predicate on the "anthropic_cache_ttl_mode" field.
 func AnthropicCacheTTLModeContainsFold(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldContainsFold(FieldAnthropicCacheTTLMode, v))
+}
+
+// DeepseekToolInjectionEnabledEQ applies the EQ predicate on the "deepseek_tool_injection_enabled" field.
+func DeepseekToolInjectionEnabledEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldDeepseekToolInjectionEnabled, v))
+}
+
+// DeepseekToolInjectionEnabledNEQ applies the NEQ predicate on the "deepseek_tool_injection_enabled" field.
+func DeepseekToolInjectionEnabledNEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldDeepseekToolInjectionEnabled, v))
 }
 
 // HasUser applies the HasEdge predicate on the "user" edge.

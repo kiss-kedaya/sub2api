@@ -55,6 +55,9 @@ type deepSeekHostedSearchState struct {
 	firstTokenMs           *int
 	callIDs                map[string]struct{}
 	clientDisconnected     bool
+	// A disabled key leaves an explicitly supplied client web_fetch function
+	// client-owned, including its declaration, call output and forced choice.
+	skipFetchTool bool
 }
 
 type deepSeekHostedRoundWriter struct {
@@ -83,7 +86,8 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 	if !enabled {
 		return nil, false, nil
 	}
-	prepared, changed, err := prepareDeepSeekHostedSearchRequest(body)
+	injectTools := deepSeekToolInjectionEnabled(c)
+	prepared, changed, err := prepareDeepSeekHostedSearchRequestWithToolInjection(body, injectTools)
 	if err != nil {
 		return nil, true, writeDeepSeekHostedSearchValidationError(ctx, c, err)
 	}
@@ -92,7 +96,7 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 	}
 	hostedDeclared := false
 	for _, tool := range gjson.GetBytes(prepared, "tools").Array() {
-		if tool.Get("type").String() == "function" && isDeepSeekHostedToolName(tool.Get("name").String()) {
+		if tool.Get("type").String() == "function" && deepSeekHostedOwnedToolName(tool.Get("name").String(), injectTools) {
 			hostedDeclared = true
 			break
 		}
@@ -107,7 +111,7 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		result, forwardErr := s.Forward(innerCtx, shadow, account, prepared)
 		return result, true, forwardErr
 	}
-	state := &deepSeekHostedSearchState{c: c, stream: gjson.GetBytes(body, "stream").Bool(), model: gjson.GetBytes(body, "model").String(), started: time.Now(), header: make(http.Header), callIDs: make(map[string]struct{})}
+	state := &deepSeekHostedSearchState{c: c, stream: gjson.GetBytes(body, "stream").Bool(), model: gjson.GetBytes(body, "model").String(), started: time.Now(), header: make(http.Header), callIDs: make(map[string]struct{}), skipFetchTool: !injectTools}
 	fail := func(cause error) (*OpenAIForwardResult, bool, error) {
 		if ctx.Err() != nil {
 			state.clientDisconnected = true
@@ -254,12 +258,12 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 			writeErr := state.writeFinal(writer)
 			return state.finishResult(), true, writeErr
 		}
-		next, nextErr := deepSeekHostedSearchNextRequest(request, writer.response, outputs)
+		next, nextErr := deepSeekHostedSearchNextRequestWithFetch(request, writer.response, outputs, !state.skipFetchTool)
 		if nextErr != nil {
 			return fail(nextErr)
 		}
 		if state.attempted >= deepSeekHostedMaxCalls || round+1 >= deepSeekHostedMaxRounds {
-			next, err = deepSeekHostedRemoveTool(next)
+			next, err = deepSeekHostedRemoveToolWithFetch(next, !state.skipFetchTool)
 			if err != nil {
 				return fail(err)
 			}
@@ -382,10 +386,10 @@ func (r *deepSeekHostedRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, errors.New("hosted search recorder does not support hijacking")
 }
 
-func deepSeekHostedRemoveTool(body []byte) ([]byte, error) {
+func deepSeekHostedRemoveToolWithFetch(body []byte, ownFetch bool) ([]byte, error) {
 	tools := make([]json.RawMessage, 0)
 	for _, tool := range gjson.GetBytes(body, "tools").Array() {
-		if !isDeepSeekHostedToolName(tool.Get("name").String()) {
+		if !deepSeekHostedOwnedToolName(tool.Get("name").String(), ownFetch) {
 			tools = append(tools, json.RawMessage(tool.Raw))
 		}
 	}
@@ -400,7 +404,7 @@ func deepSeekHostedRemoveTool(body []byte) ([]byte, error) {
 		}
 	}
 	choice := gjson.GetBytes(out, "tool_choice")
-	if isDeepSeekHostedToolName(choice.Get("name").String()) || choice.String() == "required" {
+	if deepSeekHostedOwnedToolName(choice.Get("name").String(), ownFetch) || choice.String() == "required" {
 		out, err = sjson.SetBytes(out, "tool_choice", "auto")
 	}
 	return out, err
@@ -604,7 +608,7 @@ func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
 			return err
 		}
 	}
-	if item.Get("type").String() == "function_call" && isDeepSeekHostedToolName(item.Get("name").String()) {
+	if item.Get("type").String() == "function_call" && deepSeekHostedOwnedToolName(item.Get("name").String(), !w.state.skipFetchTool) {
 		w.ownedCall(item, int(gjson.GetBytes(raw, "output_index").Int()))
 		return w.err
 	}
@@ -685,7 +689,7 @@ func (w *deepSeekHostedRoundWriter) registerSnapshotCalls() {
 	}
 	for i, item := range items {
 		w.index(i)
-		if item.Get("type").String() == "function_call" && isDeepSeekHostedToolName(item.Get("name").String()) {
+		if item.Get("type").String() == "function_call" && deepSeekHostedOwnedToolName(item.Get("name").String(), !w.state.skipFetchTool) {
 			w.ownedCall(item, i)
 		}
 	}
@@ -693,7 +697,7 @@ func (w *deepSeekHostedRoundWriter) registerSnapshotCalls() {
 
 func (w *deepSeekHostedRoundWriter) captureOutput() {
 	for i, item := range gjson.GetBytes(w.response, "output").Array() {
-		if item.Get("type").String() == "function_call" && isDeepSeekHostedToolName(item.Get("name").String()) {
+		if item.Get("type").String() == "function_call" && deepSeekHostedOwnedToolName(item.Get("name").String(), !w.state.skipFetchTool) {
 			continue
 		}
 		index := w.index(i)
@@ -713,7 +717,7 @@ func (w *deepSeekHostedRoundWriter) captureOutput() {
 func (w *deepSeekHostedRoundWriter) hasClientCalls() bool {
 	for _, item := range gjson.GetBytes(w.response, "output").Array() {
 		t := item.Get("type").String()
-		if t == "function_call" && !isDeepSeekHostedToolName(item.Get("name").String()) || t == "custom_tool_call" || t == "local_shell_call" || t == "tool_search_call" {
+		if t == "function_call" && !deepSeekHostedOwnedToolName(item.Get("name").String(), !w.state.skipFetchTool) || t == "custom_tool_call" || t == "local_shell_call" || t == "tool_search_call" {
 			return true
 		}
 	}

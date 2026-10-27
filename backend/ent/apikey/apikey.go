@@ -63,6 +63,8 @@ const (
 	FieldWindow7dStart = "window_7d_start"
 	// FieldAnthropicCacheTTLMode holds the string denoting the anthropic_cache_ttl_mode field in the database.
 	FieldAnthropicCacheTTLMode = "anthropic_cache_ttl_mode"
+	// FieldDeepseekToolInjectionEnabled holds the string denoting the deepseek_tool_injection_enabled field in the database.
+	FieldDeepseekToolInjectionEnabled = "deepseek_tool_injection_enabled"
 	// EdgeUser holds the string denoting the user edge name in mutations.
 	EdgeUser = "user"
 	// EdgeGroup holds the string denoting the group edge name in mutations.
@@ -121,6 +123,7 @@ var Columns = []string{
 	FieldWindow1dStart,
 	FieldWindow7dStart,
 	FieldAnthropicCacheTTLMode,
+	FieldDeepseekToolInjectionEnabled,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -175,6 +178,8 @@ var (
 	DefaultAnthropicCacheTTLMode string
 	// AnthropicCacheTTLModeValidator is a validator for the "anthropic_cache_ttl_mode" field. It is called by the builders before save.
 	AnthropicCacheTTLModeValidator func(string) error
+	// DefaultDeepseekToolInjectionEnabled holds the default value on creation for the "deepseek_tool_injection_enabled" field.
+	DefaultDeepseekToolInjectionEnabled bool
 )
 
 // OrderOption defines the ordering options for the APIKey queries.
@@ -293,6 +298,11 @@ func ByWindow7dStart(opts ...sql.OrderTermOption) OrderOption {
 // ByAnthropicCacheTTLMode orders the results by the anthropic_cache_ttl_mode field.
 func ByAnthropicCacheTTLMode(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAnthropicCacheTTLMode, opts...).ToFunc()
+}
+
+// ByDeepseekToolInjectionEnabled orders the results by the deepseek_tool_injection_enabled field.
+func ByDeepseekToolInjectionEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDeepseekToolInjectionEnabled, opts...).ToFunc()
 }
 
 // ByUserField orders the results by user field.

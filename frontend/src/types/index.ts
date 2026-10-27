@@ -797,6 +797,8 @@ export interface ApiKey {
   reset_7d_at: string | null
   // Anthropic cache_control TTL 覆盖：inherit/off/1h/5m
   anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
+  // Omitted by older servers: DeepSeek tool injection defaults to enabled.
+  deepseek_tool_injection_enabled?: boolean
 }
 
 export interface CreateApiKeyRequest {
@@ -812,6 +814,7 @@ export interface CreateApiKeyRequest {
   rate_limit_1d?: number
   rate_limit_7d?: number
   anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
+  deepseek_tool_injection_enabled?: boolean
 }
 
 export interface UpdateApiKeyRequest {
@@ -829,6 +832,7 @@ export interface UpdateApiKeyRequest {
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
   anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
+  deepseek_tool_injection_enabled?: boolean
 }
 
 export interface CreateGroupRequest {

@@ -347,7 +347,87 @@ describe('user KeysView column settings', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('Provider key', 3, undefined, [], [], 0, undefined,
-      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined, 'inherit')
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined, 'inherit',
+      { deepseekToolInjectionEnabled: true })
+    wrapper.unmount()
+  })
+
+  it.each([true, false])('creates a key with DeepSeek tool injection set to %s', async (enabled) => {
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('Web tools key')
+    const toggle = wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    if (!enabled) await toggle.trigger('click')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(createKey).toHaveBeenCalledWith('Web tools key', 3, undefined, [], [], 0, undefined,
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined, 'inherit',
+      { deepseekToolInjectionEnabled: enabled })
+    wrapper.unmount()
+  })
+
+  it.each([
+    { saved: undefined, expected: true },
+    { saved: true, expected: true },
+    { saved: false, expected: false },
+  ])('loads the saved DeepSeek switch $saved and keeps it on save', async ({ saved, expected }) => {
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    listKeys.mockResolvedValue({
+      items: [{ ...createApiKey(), group_id: 3, deepseek_tool_injection_enabled: saved }],
+      total: 1,
+    })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    const toggle = wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]')
+    expect(toggle.attributes('aria-checked')).toBe(String(expected))
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(1, expect.objectContaining({
+      deepseek_tool_injection_enabled: expected,
+    }))
+    wrapper.unmount()
+  })
+
+  it('saves an explicit off value and resets the next new key to on', async () => {
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    listKeys.mockResolvedValue({ items: [{ ...createApiKey(), group_id: 3 }], total: 1 })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]').trigger('click')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(1, expect.objectContaining({
+      deepseek_tool_injection_enabled: false,
+    }))
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    expect(wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]')
+      .attributes('aria-checked')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('can turn injection back on for a smart-routing key that includes DeepSeek', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 2, name: 'OpenAI', platform: 'openai' },
+      { id: 3, name: 'DeepSeek', platform: 'deepseek' },
+    ])
+    listKeys.mockResolvedValue({
+      items: [{ ...createApiKey(), group_id: 2, group_ids: [2, 3], deepseek_tool_injection_enabled: false }],
+      total: 1,
+    })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    const toggle = wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(1, expect.objectContaining({
+      group_id: 2, group_ids: [2, 3], deepseek_tool_injection_enabled: true,
+    }))
     wrapper.unmount()
   })
 

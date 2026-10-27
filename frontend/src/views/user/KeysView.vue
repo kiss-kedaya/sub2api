@@ -936,6 +936,23 @@
           </div>
         </div>
 
+        <!-- DeepSeek automatic tools -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between gap-4">
+            <span id="key-deepseek-tool-injection-label" class="input-label mb-0">
+              {{ t('keys.deepseekToolInjection') }}
+            </span>
+            <Toggle
+              v-model="formData.deepseek_tool_injection_enabled"
+              aria-labelledby="key-deepseek-tool-injection-label"
+              aria-describedby="key-deepseek-tool-injection-hint"
+            />
+          </div>
+          <p id="key-deepseek-tool-injection-hint" class="input-hint">
+            {{ t('keys.deepseekToolInjectionHint') }}
+          </p>
+        </div>
+
         <!-- Anthropic Cache TTL Override -->
         <div class="space-y-2">
           <label class="input-label">{{ t('keys.anthropicCacheTtlMode') }}</label>
@@ -1264,6 +1281,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import EmptyState from '@/components/common/EmptyState.vue'
 	import Select from '@/components/common/Select.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
+	import Toggle from '@/components/common/Toggle.vue'
 	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
@@ -1520,7 +1538,8 @@ const formData = ref({
   expiration_preset: '30' as '7' | '30' | '90' | 'custom',
   expiration_date: '',
   // Anthropic cache_control TTL 覆盖：inherit/off/1h/5m
-  anthropic_cache_ttl_mode: 'inherit' as 'inherit' | 'off' | '1h' | '5m'
+  anthropic_cache_ttl_mode: 'inherit' as 'inherit' | 'off' | '1h' | '5m',
+  deepseek_tool_injection_enabled: true,
 })
 
 // 自定义Key验证
@@ -1856,7 +1875,8 @@ const editKey = (key: ApiKey) => {
     enable_expiration: hasExpiration,
     expiration_preset: 'custom',
     expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : '',
-    anthropic_cache_ttl_mode: (key.anthropic_cache_ttl_mode || 'inherit') as 'inherit' | 'off' | '1h' | '5m'
+    anthropic_cache_ttl_mode: (key.anthropic_cache_ttl_mode || 'inherit') as 'inherit' | 'off' | '1h' | '5m',
+    deepseek_tool_injection_enabled: key.deepseek_tool_injection_enabled !== false,
   }
   showEditModal.value = true
 }
@@ -2022,6 +2042,7 @@ const handleSubmit = async () => {
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
         anthropic_cache_ttl_mode: formData.value.anthropic_cache_ttl_mode,
+        deepseek_tool_injection_enabled: formData.value.deepseek_tool_injection_enabled,
       }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
@@ -2040,7 +2061,8 @@ const handleSubmit = async () => {
         expiresInDays,
         rateLimitData,
         formData.value.smart_routing ? formData.value.group_ids : undefined,
-        formData.value.anthropic_cache_ttl_mode
+        formData.value.anthropic_cache_ttl_mode,
+        { deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled }
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -2104,7 +2126,8 @@ const closeModals = () => {
     enable_expiration: false,
     expiration_preset: '30',
     expiration_date: '',
-    anthropic_cache_ttl_mode: 'inherit'
+    anthropic_cache_ttl_mode: 'inherit',
+    deepseek_tool_injection_enabled: true,
   }
 }
 

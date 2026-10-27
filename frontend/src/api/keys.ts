@@ -56,6 +56,7 @@ export async function getById(id: number): Promise<ApiKey> {
  * @param expiresInDays - Optional days until expiry (undefined = never expires)
  * @param rateLimitData - Optional rate limit fields
  * @param anthropicCacheTtlMode - Optional Anthropic cache_control TTL override
+ * @param options - Optional idempotency key and DeepSeek tool injection setting (enabled by default)
  * @returns Created API key
  */
 export async function create(
@@ -69,9 +70,12 @@ export async function create(
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
   groupIds?: number[],
   anthropicCacheTtlMode?: 'inherit' | 'off' | '1h' | '5m',
-  options?: { idempotencyKey?: string }
+  options?: { idempotencyKey?: string; deepseekToolInjectionEnabled?: boolean }
 ): Promise<ApiKey> {
-  const payload: CreateApiKeyRequest = { name }
+  const payload: CreateApiKeyRequest = {
+    name,
+    deepseek_tool_injection_enabled: options?.deepseekToolInjectionEnabled ?? true,
+  }
   if (groupId !== undefined) {
     payload.group_id = groupId
   }

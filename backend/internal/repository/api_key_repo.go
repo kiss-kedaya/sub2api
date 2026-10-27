@@ -57,7 +57,8 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetRateLimit5h(key.RateLimit5h).
 		SetRateLimit1d(key.RateLimit1d).
 		SetRateLimit7d(key.RateLimit7d).
-		SetAnthropicCacheTTLMode(service.NormalizeAnthropicCacheTTLMode(key.AnthropicCacheTTLMode))
+		SetAnthropicCacheTTLMode(service.NormalizeAnthropicCacheTTLMode(key.AnthropicCacheTTLMode)).
+		SetDeepseekToolInjectionEnabled(key.IsDeepSeekToolInjectionEnabled())
 
 	if len(key.IPWhitelist) > 0 {
 		builder.SetIPWhitelist(key.IPWhitelist)
@@ -150,6 +151,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			// AnthropicCacheTTLMode 恒为空 -> 归一化成 inherit -> 网关读不到
 			// 管理员设的「强制 1h」，整条注入链路静默失效。
 			apikey.FieldAnthropicCacheTTLMode,
+			apikey.FieldDeepseekToolInjectionEnabled,
 		).
 		WithUser(func(q *dbent.UserQuery) {
 			q.Select(
@@ -291,6 +293,9 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 	}
 	if fields.AnthropicCacheTTLMode {
 		builder.SetAnthropicCacheTTLMode(service.NormalizeAnthropicCacheTTLMode(key.AnthropicCacheTTLMode))
+	}
+	if fields.DeepSeekToolInjectionEnabled {
+		builder.SetDeepseekToolInjectionEnabled(key.IsDeepSeekToolInjectionEnabled())
 	}
 	if fields.RateLimitUsage {
 		builder.
@@ -988,13 +993,14 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		RateLimit1d: m.RateLimit1d,
 		RateLimit7d: m.RateLimit7d,
 
-		AnthropicCacheTTLMode: service.NormalizeAnthropicCacheTTLMode(m.AnthropicCacheTTLMode),
-		Usage5h:               m.Usage5h,
-		Usage1d:               m.Usage1d,
-		Usage7d:               m.Usage7d,
-		Window5hStart:         m.Window5hStart,
-		Window1dStart:         m.Window1dStart,
-		Window7dStart:         m.Window7dStart,
+		AnthropicCacheTTLMode:        service.NormalizeAnthropicCacheTTLMode(m.AnthropicCacheTTLMode),
+		DeepSeekToolInjectionEnabled: &m.DeepseekToolInjectionEnabled,
+		Usage5h:                      m.Usage5h,
+		Usage1d:                      m.Usage1d,
+		Usage7d:                      m.Usage7d,
+		Window5hStart:                m.Window5hStart,
+		Window1dStart:                m.Window1dStart,
+		Window7dStart:                m.Window7dStart,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)

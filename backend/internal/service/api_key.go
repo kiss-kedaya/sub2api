@@ -71,6 +71,14 @@ type APIKey struct {
 	// inherit（跟随管理员全局设置）/ off（不注入）/ 1h / 5m。
 	// 仅在请求最终落在 Anthropic 平台分组（含智能路由解析出的 anthropic 目标）时生效。
 	AnthropicCacheTTLMode string
+	// nil preserves the enabled behavior of keys and auth snapshots created
+	// before the per-key tool-injection setting existed.
+	DeepSeekToolInjectionEnabled *bool
+}
+
+// IsDeepSeekToolInjectionEnabled defaults to enabled for existing keys.
+func (k *APIKey) IsDeepSeekToolInjectionEnabled() bool {
+	return k == nil || k.DeepSeekToolInjectionEnabled == nil || *k.DeepSeekToolInjectionEnabled
 }
 
 // AnthropicCacheTTLMode* 是 APIKey.AnthropicCacheTTLMode 的合法取值。

@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 25 // v25: smart-routing + model_allowlist + restrict_public_groups
+const apiKeyAuthSnapshotVersion = 26 // v26: per-key DeepSeek tool injection; reject old writers that omit false
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -328,9 +328,8 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 	if entry.Snapshot.Version != apiKeyAuthSnapshotVersion {
 		return nil, false, nil
 	}
-	// Keep the shared snapshot version stable during rolling deployments.
-	// Only legacy DeepSeek entries need reloading: their missing provider
-	// configuration would silently send search requests to the model account.
+	// Even a current-version DeepSeek entry must have its provider loaded;
+	// otherwise search requests could silently use the model account instead.
 	if group := entry.Snapshot.Group; group != nil && group.Platform == PlatformDeepseek && !group.SearchProviderConfigLoaded {
 		return nil, false, nil
 	}
@@ -358,7 +357,8 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		RateLimit1d:   apiKey.RateLimit1d,
 		RateLimit7d:   apiKey.RateLimit7d,
 
-		AnthropicCacheTTLMode: NormalizeAnthropicCacheTTLMode(apiKey.AnthropicCacheTTLMode),
+		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(apiKey.AnthropicCacheTTLMode),
+		DeepSeekToolInjectionEnabled: apiKey.DeepSeekToolInjectionEnabled,
 		User: APIKeyAuthUserSnapshot{
 			ID:                                apiKey.User.ID,
 			Status:                            apiKey.User.Status,
@@ -486,7 +486,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		RateLimit1d:   snapshot.RateLimit1d,
 		RateLimit7d:   snapshot.RateLimit7d,
 
-		AnthropicCacheTTLMode: NormalizeAnthropicCacheTTLMode(snapshot.AnthropicCacheTTLMode),
+		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(snapshot.AnthropicCacheTTLMode),
+		DeepSeekToolInjectionEnabled: snapshot.DeepSeekToolInjectionEnabled,
 		User: &User{
 			ID:                                snapshot.User.ID,
 			Status:                            snapshot.User.Status,

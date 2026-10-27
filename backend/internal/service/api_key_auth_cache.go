@@ -30,6 +30,8 @@ type APIKeyAuthSnapshot struct {
 	// AnthropicCacheTTLMode 密钥级 Anthropic cache_control TTL 覆盖：
 	// inherit|off|1h|5m。必须随认证快照缓存，网关热路径不再回查数据库。
 	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode"`
+	// Pointer keeps missing legacy snapshots default-on while retaining false.
+	DeepSeekToolInjectionEnabled *bool `json:"deepseek_tool_injection_enabled,omitempty"`
 }
 
 // APIKeyAuthUserSnapshot 用户快照

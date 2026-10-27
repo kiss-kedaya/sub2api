@@ -321,6 +321,20 @@ func (_c *APIKeyCreate) SetNillableAnthropicCacheTTLMode(v *string) *APIKeyCreat
 	return _c
 }
 
+// SetDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field.
+func (_c *APIKeyCreate) SetDeepseekToolInjectionEnabled(v bool) *APIKeyCreate {
+	_c.mutation.SetDeepseekToolInjectionEnabled(v)
+	return _c
+}
+
+// SetNillableDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableDeepseekToolInjectionEnabled(v *bool) *APIKeyCreate {
+	if v != nil {
+		_c.SetDeepseekToolInjectionEnabled(*v)
+	}
+	return _c
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_c *APIKeyCreate) SetUser(v *User) *APIKeyCreate {
 	return _c.SetUserID(v.ID)
@@ -437,6 +451,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultAnthropicCacheTTLMode
 		_c.mutation.SetAnthropicCacheTTLMode(v)
 	}
+	if _, ok := _c.mutation.DeepseekToolInjectionEnabled(); !ok {
+		v := apikey.DefaultDeepseekToolInjectionEnabled
+		_c.mutation.SetDeepseekToolInjectionEnabled(v)
+	}
 	return nil
 }
 
@@ -506,6 +524,9 @@ func (_c *APIKeyCreate) check() error {
 		if err := apikey.AnthropicCacheTTLModeValidator(v); err != nil {
 			return &ValidationError{Name: "anthropic_cache_ttl_mode", err: fmt.Errorf(`ent: validator failed for field "APIKey.anthropic_cache_ttl_mode": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.DeepseekToolInjectionEnabled(); !ok {
+		return &ValidationError{Name: "deepseek_tool_injection_enabled", err: errors.New(`ent: missing required field "APIKey.deepseek_tool_injection_enabled"`)}
 	}
 	if len(_c.mutation.UserIDs()) == 0 {
 		return &ValidationError{Name: "user", err: errors.New(`ent: missing required edge "APIKey.user"`)}
@@ -624,6 +645,10 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AnthropicCacheTTLMode(); ok {
 		_spec.SetField(apikey.FieldAnthropicCacheTTLMode, field.TypeString, value)
 		_node.AnthropicCacheTTLMode = value
+	}
+	if value, ok := _c.mutation.DeepseekToolInjectionEnabled(); ok {
+		_spec.SetField(apikey.FieldDeepseekToolInjectionEnabled, field.TypeBool, value)
+		_node.DeepseekToolInjectionEnabled = value
 	}
 	if nodes := _c.mutation.UserIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1102,6 +1127,18 @@ func (u *APIKeyUpsert) SetAnthropicCacheTTLMode(v string) *APIKeyUpsert {
 // UpdateAnthropicCacheTTLMode sets the "anthropic_cache_ttl_mode" field to the value that was provided on create.
 func (u *APIKeyUpsert) UpdateAnthropicCacheTTLMode() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldAnthropicCacheTTLMode)
+	return u
+}
+
+// SetDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field.
+func (u *APIKeyUpsert) SetDeepseekToolInjectionEnabled(v bool) *APIKeyUpsert {
+	u.Set(apikey.FieldDeepseekToolInjectionEnabled, v)
+	return u
+}
+
+// UpdateDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateDeepseekToolInjectionEnabled() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldDeepseekToolInjectionEnabled)
 	return u
 }
 
@@ -1588,6 +1625,20 @@ func (u *APIKeyUpsertOne) SetAnthropicCacheTTLMode(v string) *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) UpdateAnthropicCacheTTLMode() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateAnthropicCacheTTLMode()
+	})
+}
+
+// SetDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field.
+func (u *APIKeyUpsertOne) SetDeepseekToolInjectionEnabled(v bool) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetDeepseekToolInjectionEnabled(v)
+	})
+}
+
+// UpdateDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateDeepseekToolInjectionEnabled() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateDeepseekToolInjectionEnabled()
 	})
 }
 
@@ -2240,6 +2291,20 @@ func (u *APIKeyUpsertBulk) SetAnthropicCacheTTLMode(v string) *APIKeyUpsertBulk 
 func (u *APIKeyUpsertBulk) UpdateAnthropicCacheTTLMode() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateAnthropicCacheTTLMode()
+	})
+}
+
+// SetDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field.
+func (u *APIKeyUpsertBulk) SetDeepseekToolInjectionEnabled(v bool) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetDeepseekToolInjectionEnabled(v)
+	})
+}
+
+// UpdateDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateDeepseekToolInjectionEnabled() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateDeepseekToolInjectionEnabled()
 	})
 }
 

@@ -122,6 +122,9 @@ func (APIKey) Fields() []ent.Field {
 			MaxLen(16).
 			Default("inherit").
 			Comment("Anthropic cache_control TTL 注入覆盖：inherit/off/1h/5m"),
+		field.Bool("deepseek_tool_injection_enabled").
+			Default(true).
+			Comment("Whether DeepSeek search and fetch tools may be injected for this API key"),
 	}
 }
 
