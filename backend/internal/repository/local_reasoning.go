@@ -14,11 +14,11 @@ import (
 	"github.com/google/uuid"
 )
 
-const localPlanColumns = `id,account_id,model,enabled,interval_minutes,action,auto_restore,revision,last_outcome,next_run_at,lease,judge_kind,COALESCE(judge_group_id,0),judge_model`
+const localPlanColumns = `id,account_id,model,enabled,interval_minutes,action,auto_restore,revision,last_outcome,next_run_at,lease,judge_kind,COALESCE(judge_group_id,0),judge_model,pause_scope,COALESCE(target_group_id,0)`
 
 func scanLocalPlan(row scannable) (*service.LocalReasoningPlan, error) {
 	p := &service.LocalReasoningPlan{}
-	err := row.Scan(&p.ID, &p.AccountID, &p.Model, &p.Enabled, &p.IntervalMinutes, &p.Action, &p.AutoRestore, &p.Revision, &p.LastOutcome, &p.NextRunAt, &p.Lease, &p.JudgeKind, &p.JudgeGroupID, &p.JudgeModel)
+	err := row.Scan(&p.ID, &p.AccountID, &p.Model, &p.Enabled, &p.IntervalMinutes, &p.Action, &p.AutoRestore, &p.Revision, &p.LastOutcome, &p.NextRunAt, &p.Lease, &p.JudgeKind, &p.JudgeGroupID, &p.JudgeModel, &p.PauseScope, &p.TargetGroupID)
 	return p, err
 }
 func (r *opsAutomationRepository) ListLocalPlans(ctx context.Context) ([]service.LocalReasoningPlan, error) {
@@ -38,6 +38,9 @@ func (r *opsAutomationRepository) ListLocalPlans(ctx context.Context) ([]service
 	return out, rows.Err()
 }
 func (r *opsAutomationRepository) SaveLocalPlan(ctx context.Context, p service.LocalReasoningPlan) (*service.LocalReasoningPlan, error) {
+	if p.PauseScope == "" {
+		p.PauseScope = "account"
+	}
 	if p.JudgeKind == "" {
 		p.JudgeKind = "local"
 	}
@@ -61,7 +64,7 @@ func (r *opsAutomationRepository) SaveLocalPlan(ctx context.Context, p service.L
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM local_reasoning_owners WHERE plan_id=$1)`, p.ID).Scan(&owned); err != nil {
 			return nil, err
 		}
-		if owned && (old.AccountID != p.AccountID || old.Model != p.Model || old.Action != p.Action || old.JudgeKind != p.JudgeKind || old.JudgeGroupID != p.JudgeGroupID || old.JudgeModel != p.JudgeModel) {
+		if owned && (old.AccountID != p.AccountID || old.Model != p.Model || old.Action != p.Action || old.JudgeKind != p.JudgeKind || old.JudgeGroupID != p.JudgeGroupID || old.JudgeModel != p.JudgeModel || old.PauseScope != p.PauseScope || old.TargetGroupID != p.TargetGroupID) {
 			return nil, errors.New("restore this plan's pause before changing its scope")
 		}
 	}
@@ -71,6 +74,15 @@ func (r *opsAutomationRepository) SaveLocalPlan(ctx context.Context, p service.L
 	}
 	if !live {
 		return nil, errors.New("account is unavailable")
+	}
+	if p.TargetGroupID > 0 {
+		var bound bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_groups WHERE account_id=$1 AND group_id=$2) OR EXISTS(SELECT 1 FROM local_quality_group_owners WHERE account_id=$1 AND group_id=$2)`, p.AccountID, p.TargetGroupID).Scan(&bound); err != nil {
+			return nil, err
+		}
+		if !bound {
+			return nil, errors.New("account is not bound to target group")
+		}
 	}
 	var saved *service.LocalReasoningPlan
 	if p.ID == 0 {
@@ -82,6 +94,10 @@ func (r *opsAutomationRepository) SaveLocalPlan(ctx context.Context, p service.L
 	if err != nil {
 		return nil, err
 	}
+	if _, err = tx.ExecContext(ctx, `UPDATE local_reasoning_plans SET pause_scope=$2,target_group_id=NULLIF($3::bigint,0) WHERE id=$1`, saved.ID, p.PauseScope, p.TargetGroupID); err != nil {
+		return nil, err
+	}
+	saved.PauseScope, saved.TargetGroupID = p.PauseScope, p.TargetGroupID
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -150,6 +166,9 @@ func (r *opsAutomationRepository) CompleteLocalPlan(ctx context.Context, p *serv
 const localPauseObject = `CASE WHEN jsonb_typeof(extra->'local_reasoning_quality_pauses')='object' THEN extra->'local_reasoning_quality_pauses' ELSE '{}'::jsonb END`
 
 func (r *opsAutomationRepository) pauseLocal(ctx context.Context, tx *sql.Tx, p *service.LocalReasoningPlan) (bool, error) {
+	if p.PauseScope == "model" || p.PauseScope == "group" {
+		return r.pauseLocalModel(ctx, tx, p)
+	}
 	var enabled bool
 	var raw []byte
 	var chanshui bool
@@ -182,6 +201,12 @@ func (r *opsAutomationRepository) pauseLocal(ctx context.Context, tx *sql.Tx, p 
 	return true, enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &p.AccountID, nil, nil)
 }
 func (r *opsAutomationRepository) restoreLocal(ctx context.Context, tx *sql.Tx, planID, accountID int64) (bool, error) {
+	var scope string
+	if err := tx.QueryRowContext(ctx, `SELECT pause_scope FROM local_reasoning_owners WHERE plan_id=$1 AND account_id=$2`, planID, accountID).Scan(&scope); err == nil && scope != "account" {
+		return r.restoreLocalModel(ctx, tx, planID, accountID)
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
 	var ownerToken, token, status string
 	var accountStamp, ownerStamp time.Time
 	var extra []byte
@@ -237,15 +262,29 @@ func (r *opsAutomationRepository) LocalOwnership(ctx context.Context, id int64, 
 	if err = tx.QueryRowContext(ctx, `SELECT updated_at,COALESCE(extra,'{}'::jsonb),schedulable FROM accounts WHERE id=$1 FOR UPDATE`, account).Scan(&stamp, &extra, &sched); err != nil {
 		return nil, err
 	}
-	var token string
+	var token, scope string
 	var ownedStamp time.Time
-	err = tx.QueryRowContext(ctx, `SELECT token,account_updated_at FROM local_reasoning_owners WHERE plan_id=$1`, id).Scan(&token, &ownedStamp)
+	err = tx.QueryRowContext(ctx, `SELECT token,account_updated_at,pause_scope FROM local_reasoning_owners WHERE plan_id=$1`, id).Scan(&token, &ownedStamp, &scope)
 	owned := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%s:%s:%s", id, revision, stamp.UTC().Format(time.RFC3339Nano), token, string(extra))))
-	out := &service.LocalReasoningOwnership{PlanID: id, AccountID: account, Owned: owned, Fence: fmt.Sprintf("%x", digest), CanRestore: owned && !sched && stamp.Equal(ownedStamp)}
+	groupState := ""
+	groupRestorable := true
+	if scope == "group" {
+		var current, expected int64
+		var groupStamp time.Time
+		e := tx.QueryRowContext(ctx, `SELECT COALESCE(v.revision,0),o.binding_revision,o.account_updated_at FROM local_quality_group_owners o LEFT JOIN local_quality_group_versions v ON v.account_id=o.account_id WHERE o.account_id=$1 AND o.group_id=(SELECT target_group_id FROM local_reasoning_plans WHERE id=$2)`, account, id).Scan(&current, &expected, &groupStamp)
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return nil, e
+		}
+		if e == nil {
+			groupState = fmt.Sprintf("%d:%d:%s", current, expected, groupStamp.UTC().Format(time.RFC3339Nano))
+			groupRestorable = current == expected && groupStamp.Equal(stamp)
+		}
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%s:%s:%s:%s", id, revision, stamp.UTC().Format(time.RFC3339Nano), token, string(extra), groupState)))
+	out := &service.LocalReasoningOwnership{PlanID: id, AccountID: account, Owned: owned, Fence: fmt.Sprintf("%x", digest), CanRestore: owned && (!sched || scope != "account") && stamp.Equal(ownedStamp) && groupRestorable}
 	if restore || remove {
 		if fence == "" || fence != out.Fence {
 			return nil, service.ErrChannelOperationsConflict
@@ -254,11 +293,20 @@ func (r *opsAutomationRepository) LocalOwnership(ctx context.Context, id int64, 
 			if !restore && remove {
 				// Explicit deletion may relinquish only this plan's marker. Keep
 				// schedulable=false, so a manual edit is never undone by cleanup.
-				if _, err = tx.ExecContext(ctx, `UPDATE accounts SET extra=jsonb_set(COALESCE(extra,'{}'::jsonb),'{local_reasoning_quality_pauses}',(`+localPauseObject+`)-$2::text),updated_at=clock_timestamp() WHERE id=$1 AND extra->'local_reasoning_quality_pauses'->>$2=$3`, account, strconv.FormatInt(id, 10), token); err != nil {
+				query := `UPDATE accounts SET extra=jsonb_set(COALESCE(extra,'{}'::jsonb),'{local_reasoning_quality_pauses}',(` + localPauseObject + `)-$2::text),updated_at=clock_timestamp() WHERE id=$1 AND extra->'local_reasoning_quality_pauses'->>$2=$3`
+				if scope != "account" {
+					query = `UPDATE accounts SET extra=jsonb_set(COALESCE(extra,'{}'::jsonb),'{local_reasoning_model_pauses}',(` + localModelObject + `)-$2::text),updated_at=clock_timestamp() WHERE id=$1 AND extra->'local_reasoning_model_pauses'->$2->>'token'=$3`
+				}
+				if _, err = tx.ExecContext(ctx, query, account, strconv.FormatInt(id, 10), token); err != nil {
 					return nil, err
 				}
 				if _, err = tx.ExecContext(ctx, `DELETE FROM local_reasoning_owners WHERE plan_id=$1`, id); err != nil {
 					return nil, err
+				}
+				if scope == "group" {
+					if _, err = tx.ExecContext(ctx, `DELETE FROM local_quality_group_owners WHERE account_id=$1 AND group_id=(SELECT target_group_id FROM local_reasoning_plans WHERE id=$2)`, account, id); err != nil {
+						return nil, err
+					}
 				}
 				if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &account, nil, nil); err != nil {
 					return nil, err

@@ -74,6 +74,18 @@ func (r *opsAutomationRepository) RecordOutcome(ctx context.Context, e service.A
 	if !actual.Ramp.Enabled || actual.Revision != c.Revision || e.StartedAt.Before(actual.UpdatedAt) {
 		return nil
 	}
+	if e.Success {
+		allowed := false
+		for _, g := range actual.Ramp.GroupIDs {
+			if e.GroupID == g {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return tx.Commit()
+		}
+	}
 	var current int
 	var stateRaw []byte
 	err = tx.QueryRowContext(ctx, `SELECT concurrency,COALESCE(extra->'ops_automation_ramp','{}'::jsonb) FROM accounts a WHERE id=$1 AND deleted_at IS NULL AND parent_account_id IS NULL AND type='oauth' AND concurrency>0 AND EXISTS(SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id WHERE ag.account_id=a.id AND ag.group_id=ANY($2) AND g.deleted_at IS NULL AND g.status='active') AND (NOT $3 OR (a.status='active' AND a.schedulable AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at<NOW()) AND (overload_until IS NULL OR overload_until<NOW()) AND (temp_unschedulable_until IS NULL OR temp_unschedulable_until<NOW()))) FOR UPDATE`, e.AccountID, pq.Array(actual.Ramp.GroupIDs), e.Success).Scan(&current, &stateRaw)
@@ -136,14 +148,12 @@ func (r *opsAutomationRepository) RankingSignals(ctx context.Context, q service.
 		if err = rows.Scan(&id, &v.Samples, &v.P90MS); err != nil {
 			return nil, err
 		}
-		if v.P90MS > 0 {
-			out[id] = v
-		}
+		out[id] = v
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	quality, err := r.db.QueryContext(ctx, `SELECT account_id,count(*) FILTER(WHERE outcome='passed')::float8/NULLIF(count(*) FILTER(WHERE outcome IN ('passed','failed')),0) FROM local_reasoning_results WHERE account_id=ANY($1) AND model=$2 AND created_at>=$3 GROUP BY account_id`, pq.Array(q.AccountIDs), q.Model, q.Since)
+	quality, err := r.db.QueryContext(ctx, `SELECT account_id,count(*) FILTER(WHERE outcome='passed')::float8/NULLIF(count(*) FILTER(WHERE outcome IN ('passed','failed')),0),count(*) FILTER(WHERE outcome IN ('passed','failed')) FROM local_reasoning_results WHERE account_id=ANY($1) AND model=$2 AND created_at>=$3 GROUP BY account_id`, pq.Array(q.AccountIDs), q.Model, q.Since)
 	if err != nil {
 		return nil, err
 	}
@@ -151,11 +161,13 @@ func (r *opsAutomationRepository) RankingSignals(ctx context.Context, q service.
 	for quality.Next() {
 		var id int64
 		var value sql.NullFloat64
-		if err = quality.Scan(&id, &value); err != nil {
+		var samples int
+		if err = quality.Scan(&id, &value, &samples); err != nil {
 			return nil, err
 		}
 		if v, ok := out[id]; ok && value.Valid {
 			v.Quality = &value.Float64
+			v.QualitySamples = samples
 			out[id] = v
 		}
 	}

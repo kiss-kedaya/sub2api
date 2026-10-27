@@ -38,6 +38,8 @@ type WithinGroupRankingConfig struct {
 	CostWeight     float64 `json:"cost_weight"`
 }
 type OpsAutomationConfig struct {
+	OAuthFallback OAuthFallbackConfig      `json:"oauth_fallback"`
+	Admission     OAuthAdmissionConfig     `json:"admission"`
 	RampSuspended bool                     `json:"ramp_suspended,omitempty"`
 	Revision      string                   `json:"revision"`
 	UpdatedAt     time.Time                `json:"updated_at"`
@@ -48,6 +50,8 @@ type OpsAutomationConfig struct {
 
 func DefaultOpsAutomationConfig() OpsAutomationConfig {
 	c := OpsAutomationConfig{OAuth: []OAuthDefaults{}, Ramp: ConcurrencyRampConfig{GroupIDs: []int64{}, SuccessesPerStep: 20, Step: 1, Maximum: 100, CooldownSeconds: 60}, Ranking: WithinGroupRankingConfig{GroupIDs: []int64{}, Mode: "balanced", WindowMinutes: 60, MinimumSamples: 10, QualityWeight: 30, LatencyWeight: 45, CostWeight: 25}}
+	c.OAuthFallback = OAuthFallbackConfig{GroupIDs: []int64{}, MinimumQuality: 1, MinimumQuotaPercent: 10, MaximumLoadPercent: 90}
+	c.Admission = OAuthAdmissionConfig{Platforms: []string{}}
 	for _, p := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok} {
 		c.OAuth = append(c.OAuth, OAuthDefaults{Platform: p, Concurrency: 3, Priority: 50, LoadFactor: 1, GroupIDs: []int64{}})
 	}
@@ -67,6 +71,9 @@ func validateAutomationGroups(ids []int64, enabled bool) error {
 	return nil
 }
 func ValidateOpsAutomationConfig(c OpsAutomationConfig) error {
+	if err := validateOAuthOperations(c); err != nil {
+		return err
+	}
 	if len(c.OAuth) > 5 {
 		return errors.New("at most one template per OAuth platform")
 	}
@@ -136,7 +143,7 @@ func (s *adminServiceImpl) ApplyOAuthDefaults(ctx context.Context, input *Create
 	if input.Type != AccountTypeOAuth || s.settingService == nil {
 		return nil
 	}
-	if _, observer := ObserverGroupIDs(ctx); observer {
+	if adminID, _, scoped := AccountOwnerScopeDetail(ctx); scoped && adminID != 1 {
 		return nil
 	}
 	c, err := loadOpsAutomation(ctx, s.settingService.settingRepo)

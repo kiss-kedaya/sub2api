@@ -993,9 +993,11 @@ func lockAndMergeAccountProbeExtra(
 	}
 	extra := service.MergeOpenAICodexTicketExtra(copyJSONMap(normalizeJSONMap(account.Extra)), currentExtra)
 	// Runtime quality ownership is not editable through ordinary account forms.
-	delete(extra, "local_reasoning_quality_pauses")
-	if owned, exists := currentExtra["local_reasoning_quality_pauses"]; exists {
-		extra["local_reasoning_quality_pauses"] = owned
+	for _, key := range []string{"local_reasoning_quality_pauses", service.LocalQualityModelPausesKey, service.OAuthAdmissionPauseKey} {
+		delete(extra, key)
+		if owned, exists := currentExtra[key]; exists {
+			extra[key] = owned
+		}
 	}
 	delete(extra, service.CustomUsageExtraKey)
 	if currentConfig, exists := currentExtra[service.CustomUsageExtraKey]; exists {
@@ -3421,6 +3423,8 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		if len(updates.Extra) > 0 {
 			patchExtra := copyJSONMap(updates.Extra)
 			delete(patchExtra, "local_reasoning_quality_pauses")
+			delete(patchExtra, service.LocalQualityModelPausesKey)
+			delete(patchExtra, service.OAuthAdmissionPauseKey)
 			payload, err := json.Marshal(patchExtra)
 			if err != nil {
 				return 0, err

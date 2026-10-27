@@ -50,6 +50,15 @@ func (s *defaultOpenAIAccountScheduler) rankAutomationCandidates(req OpenAIAccou
 		byID[item.account.ID] = item
 	}
 	ordered := s.service.rankAutomationPool(req.GroupID, req.RequestedModel, accounts, req.RequireCompact, req.PreferNativeResponses, false)
+	if req.GroupID != nil {
+		loads := map[int64]*AccountLoadInfo{}
+		for _, item := range items {
+			if item.loadKnown {
+				loads[item.account.ID] = item.loadInfo
+			}
+		}
+		ordered = s.service.opsAutomation.PreferQualifiedOAuth(*req.GroupID, req.RequestedModel, ordered, loads, func(a *Account) string { return oauthFallbackStratum(a, req.RequireCompact, req.PreferNativeResponses) })
+	}
 	out := make([]openAIAccountCandidateScore, 0, len(items))
 	for _, a := range ordered {
 		out = append(out, byID[a.ID])
@@ -64,6 +73,13 @@ func (s *OpenAIGatewayService) rankAutomationLoaded(group *int64, model string, 
 		byID[item.account.ID] = item
 	}
 	ordered := s.rankAutomationPool(group, model, accounts, compact, native, false)
+	if s != nil && s.opsAutomation != nil && group != nil {
+		loads := map[int64]*AccountLoadInfo{}
+		for _, item := range items {
+			loads[item.account.ID] = item.loadInfo
+		}
+		ordered = s.opsAutomation.PreferQualifiedOAuth(*group, model, ordered, loads, func(a *Account) string { return oauthFallbackStratum(a, compact, native) })
+	}
 	out := make([]accountWithLoad, 0, len(items))
 	for _, a := range ordered {
 		out = append(out, byID[a.ID])

@@ -51,7 +51,7 @@ func TestAutomationConfigCASAndRealSuccessConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	_, err = integrationDB.Exec(`UPDATE accounts SET extra=jsonb_set(COALESCE(extra,'{}'::jsonb),'{ops_automation_ramp}',$2::jsonb) WHERE id=$1`, account.ID, string(raw))
 	require.NoError(t, err)
-	e := service.AutomationOutcome{ID: "once-ramp-1", AccountID: account.ID, StartedAt: time.Now(), Success: true}
+	e := service.AutomationOutcome{ID: "once-ramp-1", AccountID: account.ID, GroupID: group.ID, StartedAt: time.Now(), Success: true}
 	require.NoError(t, repo.RecordOutcome(ctx, e, c))
 	require.NoError(t, repo.RecordOutcome(ctx, e, c))
 	var current int

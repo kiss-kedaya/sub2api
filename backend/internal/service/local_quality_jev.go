@@ -58,7 +58,7 @@ func (j *localJevJudge) config(ctx context.Context) *ContentModerationConfig {
 		return nil
 	}
 	cfg = cfg.effectiveEngine(ContentModerationEngineTypeSafe)
-	cfg.normalize(ContentModerationEngineTypeSafe)
+	cfg.normalize()
 	if cfg.Model != typesafe.JevLatestModel {
 		return nil
 	}
@@ -94,11 +94,7 @@ func (j *localJevJudge) judge(ctx context.Context, q localreasoning.Question, an
 		if !ok {
 			return "inconclusive"
 		}
-		base, e := typesafe.SystemOneURL(cfg.BaseURL)
-		if e != nil {
-			return "inconclusive"
-		}
-		base, e = j.validateURL(base)
+		base, e := j.validateURL(cfg.BaseURL)
 		if e != nil {
 			return "inconclusive"
 		}

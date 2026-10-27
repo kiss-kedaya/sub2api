@@ -20,9 +20,10 @@ type AutomationRankQuery struct {
 	Since      time.Time
 }
 type AutomationRankSignal struct {
-	Samples int
-	P90MS   float64
-	Quality *float64
+	Samples        int
+	QualitySamples int
+	P90MS          float64
+	Quality        *float64
 }
 type LocalReasoningPlan struct {
 	ID              int64     `json:"id"`
@@ -39,6 +40,8 @@ type LocalReasoningPlan struct {
 	JudgeKind       string    `json:"judge_kind"`
 	JudgeGroupID    int64     `json:"judge_group_id"`
 	JudgeModel      string    `json:"judge_model"`
+	PauseScope      string    `json:"pause_scope"`
+	TargetGroupID   int64     `json:"target_group_id"`
 }
 type LocalReasoningResult struct {
 	QuestionID string `json:"question_id"`
@@ -109,7 +112,7 @@ func (s *OpsAutomationService) SaveConfig(ctx context.Context, c OpsAutomationCo
 			}
 		}
 	}
-	for _, ids := range [][]int64{c.Ramp.GroupIDs, c.Ranking.GroupIDs} {
+	for _, ids := range [][]int64{c.Ramp.GroupIDs, c.Ranking.GroupIDs, c.OAuthFallback.GroupIDs} {
 		for _, id := range ids {
 			g, err := s.groups.GetByID(ctx, id)
 			if err != nil {
@@ -214,6 +217,7 @@ func (s *OpsAutomationService) start(shared bool) {
 						stop()
 					}
 					s.runDueLocal(ctx)
+					s.runOAuthAdmission(ctx)
 				}
 			}
 		}()
@@ -251,7 +255,7 @@ func (s *OpsAutomationService) refreshRank(ctx context.Context, q AutomationRank
 	key := automationRankKey(q.GroupID, q.Model)
 	defer func() { s.mu.Lock(); delete(s.rankPending, key); s.mu.Unlock() }()
 	c := s.config.Load().(OpsAutomationConfig)
-	if !c.Ranking.Enabled || c.Revision != q.Revision {
+	if (!c.Ranking.Enabled && !c.OAuthFallback.Enabled) || c.Revision != q.Revision {
 		return
 	}
 	query, stop := context.WithTimeout(ctx, 5*time.Second)

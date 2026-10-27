@@ -16,6 +16,12 @@ func ValidateLocalReasoningPlan(p LocalReasoningPlan) error {
 	if p.JudgeKind != "" && p.JudgeKind != "local" && p.JudgeKind != "llm" && p.JudgeKind != "jev" {
 		return errors.New("invalid judge kind")
 	}
+	if p.PauseScope != "" && p.PauseScope != "account" && p.PauseScope != "model" && p.PauseScope != "group" {
+		return errors.New("invalid pause scope")
+	}
+	if p.PauseScope == "group" && p.TargetGroupID <= 0 || p.TargetGroupID < 0 {
+		return errors.New("group scope requires a target group")
+	}
 	if p.JudgeKind == "llm" {
 		if p.JudgeGroupID <= 0 || strings.TrimSpace(p.JudgeModel) == "" || len(p.JudgeModel) > 200 || strings.ContainsAny(p.JudgeModel, "\r\n\t") {
 			return errors.New("LLM judge requires a group and model")
@@ -29,6 +35,9 @@ func (s *OpsAutomationService) ListLocalPlans(ctx context.Context) ([]LocalReaso
 	return s.repo.ListLocalPlans(ctx)
 }
 func (s *OpsAutomationService) SaveLocalPlan(ctx context.Context, p LocalReasoningPlan) (*LocalReasoningPlan, error) {
+	if p.PauseScope == "" {
+		p.PauseScope = "account"
+	}
 	if p.JudgeKind == "" {
 		p.JudgeKind = "local"
 	}
@@ -39,6 +48,12 @@ func (s *OpsAutomationService) SaveLocalPlan(ctx context.Context, p LocalReasoni
 		g, e := s.groups.GetByID(ctx, p.JudgeGroupID)
 		if e != nil || g == nil || g.Status != StatusActive || g.ModelAllowlistEnabled() && !g.ModelAllowlist.Allows(p.JudgeModel) {
 			return nil, errors.New("judge group or model unavailable")
+		}
+	}
+	if p.TargetGroupID > 0 {
+		g, e := s.groups.GetByID(ctx, p.TargetGroupID)
+		if e != nil || g == nil || g.Status != StatusActive {
+			return nil, errors.New("target group unavailable")
 		}
 	}
 	return s.repo.SaveLocalPlan(ctx, p)

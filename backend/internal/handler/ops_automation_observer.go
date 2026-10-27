@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -170,7 +171,11 @@ func OpsAutomationObserver(engine *service.OpsAutomationService) gin.HandlerFunc
 		if failedAccounts[id] {
 			return
 		}
-		engine.ObserveOutcome(service.AutomationOutcome{AccountID: id, Model: c.GetString(opsModelKey), StartedAt: started, Success: success})
+		groupID := int64(0)
+		if g, ok := c.Request.Context().Value(ctxkey.Group).(*service.Group); ok && g != nil {
+			groupID = g.ID
+		}
+		engine.ObserveOutcome(service.AutomationOutcome{AccountID: id, GroupID: groupID, Model: c.GetString(opsModelKey), StartedAt: started, Success: success})
 	}
 }
 

@@ -99,6 +99,7 @@ func cloneAccountJSONMap(value map[string]any) (map[string]any, error) {
 }
 
 var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
+	LocalQualityModelPausesKey: {}, OAuthAdmissionPauseKey: {}, "local_reasoning_quality_pauses": {}, "ops_automation_ramp": {},
 	// A retry identity belongs to the operation that created one copy, not to later copies.
 	duplicateAccountOperationIDExtraKey: {},
 	// External sync identity belongs to one local account only.
@@ -547,6 +548,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	}
 	if err := validateCloudflareAccount(account); err != nil {
 		return nil, infraerrors.BadRequest("INVALID_CLOUDFLARE_ACCOUNT", err.Error())
+	}
+	if err := s.PrepareOAuthAdmission(ctx, account); err != nil {
+		return nil, err
 	}
 	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
