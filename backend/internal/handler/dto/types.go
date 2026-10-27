@@ -606,6 +606,9 @@ type UsageLog struct {
 	AccountID int64  `json:"account_id"`
 	RequestID string `json:"request_id"`
 	Model     string `json:"model"`
+	// Associated semantic error code, not wire HTTP status or proof of delivery.
+	// Only status is exposed; raw provider errors remain in Ops.
+	FailureStatusCode *int `json:"failure_status_code,omitempty"`
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
 	ServiceTier *string `json:"service_tier,omitempty"`
 	// ReasoningEffort is the client-requested effort (mapping-hidden, like Model).

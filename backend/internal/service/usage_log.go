@@ -108,6 +108,10 @@ type UsageLog struct {
 	AccountID int64
 	RequestID string
 	Model     string
+	// FailureStatusCode is best-effort read-time correlation with a terminal Ops
+	// error, not a wire HTTP status or a durable delivery outcome. Nil means no
+	// unambiguous retained match was found, never an assertion of success.
+	FailureStatusCode *int
 	// RequestedModel is the client-requested model name recorded for stable user/admin display.
 	// Empty should be treated as Model for backward compatibility with historical rows.
 	RequestedModel string

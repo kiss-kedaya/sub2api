@@ -1762,6 +1762,8 @@ export interface UsageLog {
   account_id: number | null
   request_id: string
   model: string
+  /** Conservatively associated semantic error; not a durable delivery outcome or wire status. */
+  failure_status_code?: number | null
   service_tier?: string | null
   reasoning_effort?: string | null
   inbound_endpoint?: string | null

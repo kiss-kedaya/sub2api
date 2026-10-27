@@ -21,6 +21,12 @@ import UsageTable from '../UsageTable.vue'
 const messages: Record<string, string> = {
   'admin.usage.userDeletedBadge': 'Deleted',
   'usage.costDetails': 'Cost Breakdown',
+  'usage.failedMetered': 'Related error (metered)',
+  'usage.failedMeteredHint': 'Reported usage remains billed.',
+  'usage.requestFailed': 'Related error',
+  'usage.failureCode': 'Error code',
+  'usage.toolBilling': 'Tool billing',
+  'usage.fixedPerCall': 'Fixed per call',
   'admin.usage.inputCost': 'Input Cost',
   'admin.usage.outputCost': 'Output Cost',
   'admin.usage.cacheCreationCost': 'Cache Creation Cost',
@@ -134,6 +140,27 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable tooltip', () => {
+  it('marks metered failures while leaving unknown outcomes unlabeled and charges intact', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          { ...baseImageRow, request_id: 'failed-metered', failure_status_code: 502 },
+          { ...baseImageRow, request_id: 'unknown-outcome' },
+          { ...baseImageRow, request_id: 'failed-unbilled', failure_status_code: 500, actual_cost: 0 },
+          { ...baseImageRow, request_id: 'inflight-not-final', failure_status_code: 502, inflight: true },
+        ],
+        loading: false,
+        columns: [],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    const badges = wrapper.findAll('[data-testid="usage-failure-badge"]')
+    expect(badges).toHaveLength(2)
+    expect(badges[0].text()).toBe('Related error (metered) · Error code 502')
+    expect(badges[0].attributes('title')).toBe('Reported usage remains billed.')
+    expect(badges[1].text()).toBe('Related error · Error code 500')
+    expect(wrapper.props('data')[0].actual_cost).toBe(0.4)
+  })
   beforeEach(() => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       x: 0,
@@ -278,6 +305,24 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('$5.0000 / 1M tokens')
     expect(text).toContain('$30.0000 / 1M tokens')
     expect(text).toContain('$0.069568')
+  })
+
+  it.each(['/v1/tools/search', '/v1/tools/fetch'])('shows fixed billing only for zero-token independent tool %s', async (endpoint) => {
+    const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', inbound_endpoint: endpoint, actual_cost: .005, total_cost: .005 }
+    const wrapper = mount(UsageTable, {
+      props: { data: [row], loading: false, columns: [] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    const triggers = wrapper.findAll('.group.relative')
+    await triggers[triggers.length - 1].trigger('mouseenter')
+    await nextTick()
+    expect(wrapper.get('[data-testid="fixed-tool-billing"]').text()).toContain('Fixed per call')
+    expect(wrapper.text()).toContain('$0.00500000')
+    await wrapper.setProps({ data: [{ ...row, inbound_endpoint: '/v1/responses', input_tokens: 10 }] })
+    const updated = wrapper.findAll('.group.relative')
+    await updated[updated.length - 1].trigger('mouseenter')
+    await nextTick()
+    expect(wrapper.find('[data-testid="fixed-tool-billing"]').exists()).toBe(false)
   })
 
   it('shows average output tokens per second beside latency', () => {
