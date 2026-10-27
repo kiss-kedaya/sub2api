@@ -851,6 +851,7 @@ func (s *deepSeekHostedSearchState) finishResult() *OpenAIForwardResult {
 		return nil
 	}
 	s.result.SearchCount = s.searchCount
+	s.result.FixedToolBilling = true
 	s.result.WebSearchCalls = 0
 	s.result.ClientDisconnect = s.result.ClientDisconnect || s.clientDisconnected
 	if s.searchCount > 0 {

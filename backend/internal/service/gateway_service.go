@@ -666,6 +666,7 @@ type ForwardResult struct {
 	ImageSizeSource    string
 	ImageSizeBreakdown map[string]int
 	SearchCount        int
+	FixedToolBilling   bool // only the tool surcharge is fixed; model tokens retain their multiplier
 	AudioUsage         *AudioUsage
 }
 

@@ -329,9 +329,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		).Info("openai_usage.non_billable_upstream_request_error")
 	}
 	// Forced billing (e.g. Grok safety refusals) replaces the computed usage
-	// cost with a deterministic per-request fee. The fee already carries the
-	// resolved group/user multiplier, so it is used for both TotalCost and
-	// ActualCost without a second multiplication.
+	// cost with a deterministic final per-request fee, independent of the
+	// resolved group/user multiplier.
 	if result.ForcedBillingCost > 0 {
 		cost = &CostBreakdown{
 			TotalCost:   result.ForcedBillingCost,
@@ -460,7 +459,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.ActualCost = canonicalUsageActualCost(cost)
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
 	}
-	if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
+	if result.FixedToolBilling && result.WebSearchCalls > 0 {
+		// Standalone DeepSeek Search/Fetch contains only fixed tool charges.
+		// Keep mixed hosted requests on their token multiplier below.
+		usageLog.RateMultiplier = 1
+	} else if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = videoMultiplier
 	} else if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
@@ -612,6 +615,10 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	pricingAt time.Time,
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
+	toolMultiplier := webSearchMultiplier
+	if result != nil && result.FixedToolBilling {
+		toolMultiplier = 1
+	}
 	if result != nil && result.WebSearchCalls > 0 {
 		// Codex alpha/search 网页搜索按次计费：上游不返回 usage/token 字段，单价只取
 		// 分组覆盖价（nil 时默认 0.01 = 官方 $10/1000 次），不参与渠道级模型定价。
@@ -621,9 +628,9 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		// 分组填写了「每千次搜索价格」时，按 callCount/1000 * 每千次价 计费，
 		// 这样每一次搜索都会真实扣费；未填写时回落到按次单价。
 		if per1k := groupSearchPricePer1kFromAPIKey(apiKey); per1k != nil {
-			return s.billingService.CalculateSearchCost(result.WebSearchCalls, per1k, webSearchMultiplier), nil
+			return s.billingService.CalculateSearchCost(result.WebSearchCalls, per1k, toolMultiplier), nil
 		}
-		return s.billingService.CalculateWebSearchCost(result.WebSearchCalls, webSearchPricePerCallFromAPIKey(apiKey), webSearchMultiplier), nil
+		return s.billingService.CalculateWebSearchCost(result.WebSearchCalls, webSearchPricePerCallFromAPIKey(apiKey), toolMultiplier), nil
 	}
 	if isGrokVideoUsageResult(result, billingModels) {
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
@@ -691,7 +698,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 				zap.Any("group_id", apiKey.GroupID),
 			)
 		}
-		searchCost = s.billingService.CalculateSearchCost(result.SearchCount, price, webSearchMultiplier)
+		searchCost = s.billingService.CalculateSearchCost(result.SearchCount, price, toolMultiplier)
 	}
 
 	tokenBillingAttempted := len(billingModels) > 0 && billingModel != ""
