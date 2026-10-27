@@ -141,7 +141,10 @@ func (s *OpsAutomationService) ObserveOutcome(e AutomationOutcome) {
 	if s == nil || s.blocked.Load() || e.AccountID <= 0 {
 		return
 	}
-	c := s.config.Load().(OpsAutomationConfig)
+	c, ok := s.config.Load().(OpsAutomationConfig)
+	if !ok {
+		return
+	}
 	if !c.Ramp.Enabled {
 		return
 	}
@@ -180,7 +183,11 @@ func (s *OpsAutomationService) start(shared bool) {
 					if !seen[e.AccountID] {
 						e.Reset = true
 					}
-					c := s.config.Load().(OpsAutomationConfig)
+					c, ok := s.config.Load().(OpsAutomationConfig)
+					if !ok {
+						s.blocked.Store(true)
+						continue
+					}
 					q, stop := context.WithTimeout(ctx, 3*time.Second)
 					err := s.repo.RecordOutcome(q, e, c)
 					stop()

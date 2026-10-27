@@ -218,29 +218,29 @@ func validateExcelGrantTokens(a *Account, token *openai.TokenResponse) (excelGra
 		clientOK = clientOK || aud == openai.ExcelClientID
 	}
 	if !clientOK {
-		return grant, errors.New("Excel identity token client mismatch")
+		return grant, errors.New("excel identity token client mismatch")
 	}
 	access, err := openai.DecodeIDToken(token.AccessToken)
 	if err != nil || access.Exp <= time.Now().Unix() || access.OpenAIAuth == nil || access.OpenAIAuth.ChatGPTAccountID == "" {
-		return grant, errors.New("Excel access token identity missing")
+		return grant, errors.New("excel access token identity missing")
 	}
 	parts := strings.Split(token.AccessToken, ".")
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return grant, errors.New("Excel access token is invalid")
+		return grant, errors.New("excel access token is invalid")
 	}
 	var client struct {
 		ClientID string `json:"client_id"`
 		AZP      string `json:"azp"`
 	}
 	if json.Unmarshal(payload, &client) != nil || (client.ClientID != openai.ExcelClientID && client.AZP != openai.ExcelClientID) {
-		return grant, errors.New("Excel access token client mismatch")
+		return grant, errors.New("excel access token client mismatch")
 	}
 	info := claims.GetUserInfo()
 	expectedEmail := strings.TrimSpace(a.GetCredential("email"))
 	expectedID := a.GetChatGPTAccountID()
 	if expectedEmail == "" || !strings.EqualFold(info.Email, expectedEmail) || (expectedID != "" && access.OpenAIAuth.ChatGPTAccountID != expectedID) {
-		return grant, errors.New("Excel authorization does not match this account")
+		return grant, errors.New("excel authorization does not match this account")
 	}
 	expires := time.Now().Unix() + token.ExpiresIn
 	if access.Exp < expires {
@@ -252,7 +252,7 @@ func (s *ExcelGrantService) encryptGrant(grant excelGrantTokens) (string, error)
 	raw, _ := json.Marshal(grant)
 	cipher, err := s.encryptor.Encrypt(string(raw))
 	if err != nil || cipher == "" {
-		return "", errors.New("Excel grant encryption failed")
+		return "", errors.New("excel grant encryption failed")
 	}
 	return cipher, nil
 }
@@ -304,18 +304,18 @@ func (s *ExcelGrantService) AccessToken(ctx context.Context, id int64) (string, 
 			return e
 		}
 		if row == nil || !row.Config.Enabled || row.Cipher == "" {
-			return errors.New("Excel grant is not authorized or enabled")
+			return errors.New("excel grant is not authorized or enabled")
 		}
 		raw, e := s.encryptor.Decrypt(row.Cipher)
 		if e != nil || json.Unmarshal([]byte(raw), &grant) != nil || grant.AccessToken == "" {
-			return errors.New("Excel grant cannot be decrypted")
+			return errors.New("excel grant cannot be decrypted")
 		}
 		if grant.ExpiresAt > time.Now().Add(2*time.Minute).Unix() {
 			return nil
 		}
 		a, e := s.accounts.GetByID(ctx, id)
 		if e != nil || !credentialGuardEligible(a) {
-			return errors.New("Excel account unavailable")
+			return errors.New("excel account unavailable")
 		}
 		proxy := ""
 		if a.Proxy != nil {
@@ -323,7 +323,7 @@ func (s *ExcelGrantService) AccessToken(ctx context.Context, id int64) (string, 
 		}
 		token, e := s.oauth.RefreshTokenWithClientID(ctx, grant.RefreshToken, proxy, openai.ExcelClientID)
 		if e != nil || token == nil {
-			return errors.New("Excel grant refresh failed; authorize again if required")
+			return errors.New("excel grant refresh failed; authorize again if required")
 		}
 		if token.RefreshToken == "" {
 			token.RefreshToken = grant.RefreshToken
@@ -344,7 +344,7 @@ func (s *ExcelGrantService) AccessToken(ctx context.Context, id int64) (string, 
 			return e
 		}
 		if !changed {
-			return errors.New("Excel grant changed during refresh")
+			return errors.New("excel grant changed during refresh")
 		}
 		grant = refreshed
 		return nil

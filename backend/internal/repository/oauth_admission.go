@@ -21,7 +21,7 @@ func (r *opsAutomationRepository) CompleteOAuthAdmission(ctx context.Context, jo
 	if e != nil {
 		return e
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// Only the same request lease, account version and marker may release this
 	// admission. Other quality owners and expiry remain independently effective.
 	if outcome == "passed" {

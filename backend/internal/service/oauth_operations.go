@@ -79,7 +79,10 @@ type oauthAdmissionRepository interface {
 }
 
 func (s *OpsAutomationService) runOAuthAdmission(ctx context.Context) {
-	c := s.config.Load().(OpsAutomationConfig)
+	c, ok := s.config.Load().(OpsAutomationConfig)
+	if !ok {
+		return
+	}
 	if !c.Admission.Enabled || s.tester == nil {
 		return
 	}
