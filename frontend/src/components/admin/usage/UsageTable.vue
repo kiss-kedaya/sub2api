@@ -55,6 +55,14 @@
 
         <template #cell-model="{ row }">
           <div class="space-y-0.5 text-xs">
+            <span
+              v-if="!row.inflight && row.failure_status_code >= 400"
+              data-testid="usage-failure-badge"
+              class="inline-flex rounded bg-rose-100 px-1.5 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+              :title="row.actual_cost > 0 ? t('usage.failedMeteredHint') : t('usage.requestFailed')"
+            >
+              {{ row.actual_cost > 0 ? t('usage.failedMetered') : t('usage.requestFailed') }} · {{ t('usage.failureCode') }} {{ row.failure_status_code }}
+            </span>
             <div v-if="row.model_mapping_chain && row.model_mapping_chain.includes('→')" class="space-y-0.5">
               <div v-for="(step, i) in row.model_mapping_chain.split('→')" :key="i"
                    class="break-all"
@@ -517,7 +525,11 @@
             <span class="text-gray-400">{{ t('usage.serviceTier') }}</span>
             <span class="font-semibold text-cyan-300">{{ getUsageServiceTierLabel(tooltipData?.service_tier, t) }}</span>
           </div>
-          <div class="flex items-center justify-between gap-6">
+          <div v-if="isIndependentToolUsage(tooltipData)" data-testid="fixed-tool-billing" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.toolBilling') }}</span>
+            <span class="font-semibold text-blue-400">{{ t('usage.fixedPerCall') }}</span>
+          </div>
+          <div v-else class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.rate') }}</span>
             <span class="font-semibold text-blue-400">{{ formatMultiplier(tooltipData?.rate_multiplier || 1) }}x</span>
           </div>
@@ -597,6 +609,15 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
   const base = row.account_stats_cost != null ? row.account_stats_cost : (row.total_cost ?? 0)
   const result = base * (row.account_rate_multiplier ?? 1)
   return Number.isNaN(result) ? 0 : result
+}
+
+function isIndependentToolUsage(row: AdminUsageLog | null): boolean {
+  if (!row) return false
+  const endpoint = row.inbound_endpoint?.trim() || row.upstream_endpoint?.trim()
+  return (endpoint === '/v1/tools/search' || endpoint === '/v1/tools/fetch') &&
+    row.rate_multiplier === 1 &&
+    row.input_tokens === 0 && row.output_tokens === 0 &&
+    row.cache_creation_tokens === 0 && row.cache_read_tokens === 0
 }
 
 

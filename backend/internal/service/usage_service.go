@@ -170,6 +170,11 @@ func (s *UsageService) GetByID(ctx context.Context, id int64) (*UsageLog, error)
 	if err != nil {
 		return nil, fmt.Errorf("get usage log: %w", err)
 	}
+	if log != nil {
+		rows := []UsageLog{*log}
+		s.hydrateUsageFailures(ctx, rows)
+		log.FailureStatusCode = rows[0].FailureStatusCode
+	}
 	return log, nil
 }
 
@@ -179,6 +184,7 @@ func (s *UsageService) ListByUser(ctx context.Context, userID int64, params pagi
 	if err != nil {
 		return nil, nil, fmt.Errorf("list usage logs: %w", err)
 	}
+	s.hydrateUsageFailures(ctx, logs)
 	return logs, pagination, nil
 }
 
@@ -188,6 +194,7 @@ func (s *UsageService) ListByAPIKey(ctx context.Context, apiKeyID int64, params 
 	if err != nil {
 		return nil, nil, fmt.Errorf("list usage logs: %w", err)
 	}
+	s.hydrateUsageFailures(ctx, logs)
 	return logs, pagination, nil
 }
 
@@ -197,6 +204,7 @@ func (s *UsageService) ListByAccount(ctx context.Context, accountID int64, param
 	if err != nil {
 		return nil, nil, fmt.Errorf("list usage logs: %w", err)
 	}
+	s.hydrateUsageFailures(ctx, logs)
 	return logs, pagination, nil
 }
 
@@ -493,6 +501,7 @@ func (s *UsageService) ListWithFilters(ctx context.Context, params pagination.Pa
 	if err != nil {
 		return nil, nil, fmt.Errorf("list usage logs with filters: %w", err)
 	}
+	s.hydrateUsageFailures(ctx, logs)
 	return logs, result, nil
 }
 
