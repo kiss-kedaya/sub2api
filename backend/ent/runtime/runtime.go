@@ -151,6 +151,10 @@ func init() {
 	apikey.DefaultAnthropicCacheTTLMode = apikeyDescAnthropicCacheTTLMode.Default.(string)
 	// apikey.AnthropicCacheTTLModeValidator is a validator for the "anthropic_cache_ttl_mode" field. It is called by the builders before save.
 	apikey.AnthropicCacheTTLModeValidator = apikeyDescAnthropicCacheTTLMode.Validators[0].(func(string) error)
+	// apikeyDescDeepseekToolInjectionEnabled is the schema descriptor for deepseek_tool_injection_enabled field.
+	apikeyDescDeepseekToolInjectionEnabled := apikeyFields[21].Descriptor()
+	// apikey.DefaultDeepseekToolInjectionEnabled holds the default value on creation for the deepseek_tool_injection_enabled field.
+	apikey.DefaultDeepseekToolInjectionEnabled = apikeyDescDeepseekToolInjectionEnabled.Default.(bool)
 	accountMixin := schema.Account{}.Mixin()
 	accountMixinHooks1 := accountMixin[1].Hooks()
 	account.Hooks[0] = accountMixinHooks1[0]

@@ -324,6 +324,9 @@ export default {
     anthropicCacheTtlOff: '关闭（不注入）',
     anthropicCacheTtl1h: '强制 1 小时缓存',
     anthropicCacheTtl5m: '强制 5 分钟缓存',
+    deepseekToolInjection: 'DeepSeek 工具注入',
+    deepseekToolInjectionHint:
+      '默认开启。仅对启用搜索的 DeepSeek 分组自动补充 web_search / web_fetch，关闭不影响客户端自带工具和独立 Search / Fetch API。',
     rateLimitHint: '设置此密钥在指定时间窗口内的最大消费额。0 = 无限制。',
     rateLimitUsage: '速率限制用量',
     resetRateLimitUsage: '重置速率限制用量',

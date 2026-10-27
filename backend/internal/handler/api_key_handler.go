@@ -48,7 +48,8 @@ type CreateAPIKeyRequest struct {
 
 	// AnthropicCacheTTLMode 密钥级 Anthropic cache_control TTL 覆盖：
 	// inherit（默认，跟随管理员全局设置）/ off / 1h / 5m。
-	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode"`
+	AnthropicCacheTTLMode        string `json:"anthropic_cache_ttl_mode"`
+	DeepSeekToolInjectionEnabled *bool  `json:"deepseek_tool_injection_enabled"`
 }
 
 // UpdateAPIKeyRequest represents the update API key request payload
@@ -71,7 +72,8 @@ type UpdateAPIKeyRequest struct {
 
 	// AnthropicCacheTTLMode 密钥级 Anthropic cache_control TTL 覆盖
 	// （nil = 不修改；合法值 inherit/off/1h/5m）。
-	AnthropicCacheTTLMode *string `json:"anthropic_cache_ttl_mode"`
+	AnthropicCacheTTLMode        *string `json:"anthropic_cache_ttl_mode"`
+	DeepSeekToolInjectionEnabled *bool   `json:"deepseek_tool_injection_enabled"`
 }
 
 func validAPIKeyLimit(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
@@ -228,6 +230,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		svcReq.RateLimit7d = *req.RateLimit7d
 	}
 	svcReq.AnthropicCacheTTLMode = req.AnthropicCacheTTLMode
+	svcReq.DeepSeekToolInjectionEnabled = req.DeepSeekToolInjectionEnabled
 
 	executeUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		key, err := h.apiKeyService.Create(ctx, subject.UserID, svcReq)
@@ -273,7 +276,8 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		RateLimit7d:         req.RateLimit7d,
 		ResetRateLimitUsage: req.ResetRateLimitUsage,
 
-		AnthropicCacheTTLMode: req.AnthropicCacheTTLMode,
+		AnthropicCacheTTLMode:        req.AnthropicCacheTTLMode,
+		DeepSeekToolInjectionEnabled: req.DeepSeekToolInjectionEnabled,
 	}
 	if req.Name != "" {
 		svcReq.Name = &req.Name

@@ -452,6 +452,20 @@ func (_u *APIKeyUpdate) SetNillableAnthropicCacheTTLMode(v *string) *APIKeyUpdat
 	return _u
 }
 
+// SetDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field.
+func (_u *APIKeyUpdate) SetDeepseekToolInjectionEnabled(v bool) *APIKeyUpdate {
+	_u.mutation.SetDeepseekToolInjectionEnabled(v)
+	return _u
+}
+
+// SetNillableDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableDeepseekToolInjectionEnabled(v *bool) *APIKeyUpdate {
+	if v != nil {
+		_u.SetDeepseekToolInjectionEnabled(*v)
+	}
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *APIKeyUpdate) SetUser(v *User) *APIKeyUpdate {
 	return _u.SetUserID(v.ID)
@@ -717,6 +731,9 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AnthropicCacheTTLMode(); ok {
 		_spec.SetField(apikey.FieldAnthropicCacheTTLMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.DeepseekToolInjectionEnabled(); ok {
+		_spec.SetField(apikey.FieldDeepseekToolInjectionEnabled, field.TypeBool, value)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1261,6 +1278,20 @@ func (_u *APIKeyUpdateOne) SetNillableAnthropicCacheTTLMode(v *string) *APIKeyUp
 	return _u
 }
 
+// SetDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field.
+func (_u *APIKeyUpdateOne) SetDeepseekToolInjectionEnabled(v bool) *APIKeyUpdateOne {
+	_u.mutation.SetDeepseekToolInjectionEnabled(v)
+	return _u
+}
+
+// SetNillableDeepseekToolInjectionEnabled sets the "deepseek_tool_injection_enabled" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableDeepseekToolInjectionEnabled(v *bool) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetDeepseekToolInjectionEnabled(*v)
+	}
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *APIKeyUpdateOne) SetUser(v *User) *APIKeyUpdateOne {
 	return _u.SetUserID(v.ID)
@@ -1556,6 +1587,9 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if value, ok := _u.mutation.AnthropicCacheTTLMode(); ok {
 		_spec.SetField(apikey.FieldAnthropicCacheTTLMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.DeepseekToolInjectionEnabled(); ok {
+		_spec.SetField(apikey.FieldDeepseekToolInjectionEnabled, field.TypeBool, value)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{

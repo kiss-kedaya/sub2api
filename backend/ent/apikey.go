@@ -68,6 +68,8 @@ type APIKey struct {
 	Window7dStart *time.Time `json:"window_7d_start,omitempty"`
 	// Anthropic cache_control TTL 注入覆盖：inherit/off/1h/5m
 	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode,omitempty"`
+	// Whether DeepSeek search and fetch tools may be injected for this API key
+	DeepseekToolInjectionEnabled bool `json:"deepseek_tool_injection_enabled,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the APIKeyQuery when eager-loading is set.
 	Edges        APIKeyEdges `json:"edges"`
@@ -125,6 +127,8 @@ func (*APIKey) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case apikey.FieldIPWhitelist, apikey.FieldIPBlacklist:
 			values[i] = new([]byte)
+		case apikey.FieldDeepseekToolInjectionEnabled:
+			values[i] = new(sql.NullBool)
 		case apikey.FieldQuota, apikey.FieldQuotaUsed, apikey.FieldRateLimit5h, apikey.FieldRateLimit1d, apikey.FieldRateLimit7d, apikey.FieldUsage5h, apikey.FieldUsage1d, apikey.FieldUsage7d:
 			values[i] = new(sql.NullFloat64)
 		case apikey.FieldID, apikey.FieldUserID, apikey.FieldGroupID:
@@ -309,6 +313,12 @@ func (_m *APIKey) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.AnthropicCacheTTLMode = value.String
 			}
+		case apikey.FieldDeepseekToolInjectionEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field deepseek_tool_injection_enabled", values[i])
+			} else if value.Valid {
+				_m.DeepseekToolInjectionEnabled = value.Bool
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -445,6 +455,9 @@ func (_m *APIKey) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("anthropic_cache_ttl_mode=")
 	builder.WriteString(_m.AnthropicCacheTTLMode)
+	builder.WriteString(", ")
+	builder.WriteString("deepseek_tool_injection_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DeepseekToolInjectionEnabled))
 	builder.WriteByte(')')
 	return builder.String()
 }

@@ -216,6 +216,22 @@ func clampDeepSeekSearchCount(count int) int {
 	return count
 }
 
+// deepSeekToolInjectionEnabled controls only tools added by the gateway. An
+// omitted setting on an old key (or old auth-cache entry) keeps injection on.
+// This must not gate deepSeekSearchGroupEnabled: a client-declared native search
+// and the independent Search/Fetch endpoints keep their existing capabilities.
+func deepSeekToolInjectionEnabled(c *gin.Context) bool {
+	if c == nil {
+		return true
+	}
+	value, exists := c.Get("api_key")
+	if !exists {
+		return true
+	}
+	apiKey, ok := value.(*APIKey)
+	return !ok || apiKey == nil || apiKey.IsDeepSeekToolInjectionEnabled()
+}
+
 // deepSeekSearchGroupEnabled 判断当前请求所属分组是否启用了搜索能力。
 //
 // 判定标准：DeepSeek 平台 + 分组配了搜索单价（search_price_per_1k）。
@@ -251,7 +267,7 @@ func deepSeekSearchGroupEnabled(c *gin.Context, account *Account) (*Group, bool)
 func (s *OpenAIGatewayService) applyDeepSeekSearchResults(
 	c *gin.Context, account *Account, group *Group, body []byte,
 ) ([]byte, bool) {
-	if len(body) == 0 || account == nil ||
+	if len(body) == 0 || account == nil || !deepSeekToolInjectionEnabled(c) ||
 		(c != nil && c.Request != nil && c.Request.Context().Value(deepSeekHostedSearchSkipContextKey{}) == true) {
 		return body, false
 	}

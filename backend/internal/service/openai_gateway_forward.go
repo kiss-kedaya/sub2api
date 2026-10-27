@@ -1599,7 +1599,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
 	// Legacy relay compatibility stays opt-in. Native Responses search is
 	// handled by the hosted-tool bridge, only when the client declares it.
-	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled && s.deepSeekResponseCompatEnabled() && ctx.Value(deepSeekHostedSearchSkipContextKey{}) != true {
+	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled && deepSeekToolInjectionEnabled(c) && s.deepSeekResponseCompatEnabled() && ctx.Value(deepSeekHostedSearchSkipContextKey{}) != true {
 		if injected, changed := injectDeepSeekSearchTool(body); changed {
 			body = injected
 		}

@@ -81,7 +81,8 @@ type APIKeyUpdateFields struct {
 	// IPRules 覆盖 ip_whitelist 与 ip_blacklist。
 	IPRules bool
 	// AnthropicCacheTTLMode 覆盖 anthropic_cache_ttl_mode 一列。
-	AnthropicCacheTTLMode bool
+	AnthropicCacheTTLMode        bool
+	DeepSeekToolInjectionEnabled bool
 }
 
 // IsEmpty 报告该次 Update 是否不写任何列。
@@ -240,6 +241,8 @@ type CreateAPIKeyRequest struct {
 	// AnthropicCacheTTLMode 本密钥对 Anthropic cache_control TTL 的覆盖：
 	// inherit（跟随管理员全局设置）/ off / 1h / 5m。空值按 inherit 处理。
 	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode"`
+	// nil means enabled, preserving existing clients that omit this option.
+	DeepSeekToolInjectionEnabled *bool `json:"deepseek_tool_injection_enabled"`
 }
 
 // UpdateAPIKeyRequest 更新API Key请求
@@ -266,6 +269,8 @@ type UpdateAPIKeyRequest struct {
 	// AnthropicCacheTTLMode 本密钥的 Anthropic cache_control TTL 覆盖
 	// （nil = 不修改；合法值 inherit/off/1h/5m）。
 	AnthropicCacheTTLMode *string `json:"anthropic_cache_ttl_mode"`
+	// nil means no change; false explicitly disables automatic tool injection.
+	DeepSeekToolInjectionEnabled *bool `json:"deepseek_tool_injection_enabled"`
 }
 
 func validateAPIKeyLimit(v float64) error {
@@ -605,7 +610,8 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		RateLimit1d: req.RateLimit1d,
 		RateLimit7d: req.RateLimit7d,
 
-		AnthropicCacheTTLMode: NormalizeAnthropicCacheTTLMode(req.AnthropicCacheTTLMode),
+		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(req.AnthropicCacheTTLMode),
+		DeepSeekToolInjectionEnabled: req.DeepSeekToolInjectionEnabled,
 	}
 
 	// Set expiration time if specified
@@ -965,6 +971,10 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	if req.AnthropicCacheTTLMode != nil {
 		apiKey.AnthropicCacheTTLMode = NormalizeAnthropicCacheTTLMode(*req.AnthropicCacheTTLMode)
 		fields.AnthropicCacheTTLMode = true
+	}
+	if req.DeepSeekToolInjectionEnabled != nil {
+		apiKey.DeepSeekToolInjectionEnabled = req.DeepSeekToolInjectionEnabled
+		fields.DeepSeekToolInjectionEnabled = true
 	}
 	resetRateLimit := req.ResetRateLimitUsage != nil && *req.ResetRateLimitUsage
 	if resetRateLimit {

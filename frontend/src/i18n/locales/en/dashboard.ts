@@ -319,6 +319,9 @@ export default {
     anthropicCacheTtlOff: 'Off (no injection)',
     anthropicCacheTtl1h: 'Force 1-hour cache',
     anthropicCacheTtl5m: 'Force 5-minute cache',
+    deepseekToolInjection: 'DeepSeek tool injection',
+    deepseekToolInjectionHint:
+      'Enabled by default. Automatically adds web_search / web_fetch when this key uses a DeepSeek group with search enabled. Turning it off preserves client-defined tools and access to the independent Search / Fetch APIs.',
     rateLimitHint: 'Set the maximum spending for this key within each time window. 0 = unlimited.',
     rateLimitUsage: 'Rate Limit Usage',
     resetRateLimitUsage: 'Reset Rate Limit Usage',

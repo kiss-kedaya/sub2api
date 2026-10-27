@@ -22,6 +22,10 @@ func isDeepSeekHostedToolName(name string) bool {
 	return name == deepSeekHostedSearchToolName || name == deepSeekHostedFetchToolName
 }
 
+func deepSeekHostedOwnedToolName(name string, ownFetch bool) bool {
+	return name == deepSeekHostedSearchToolName || ownFetch && name == deepSeekHostedFetchToolName
+}
+
 func isDeepSeekHostedFetchToolName(name string) bool {
 	return name == deepSeekHostedFetchToolName
 }
@@ -42,6 +46,13 @@ func isDeepSeekHostedSearchToolType(toolType string) bool {
 // The hosted search name belongs to this bridge only. Client functions are
 // never executed or replaced, even if their names happen to mention search.
 func prepareDeepSeekHostedSearchRequest(body []byte) ([]byte, bool, error) {
+	return prepareDeepSeekHostedSearchRequestWithToolInjection(body, true)
+}
+
+// Turning off automatic injection leaves the client's explicitly declared
+// native search supported. Only the additional gateway-owned Fetch tool is
+// omitted; existing client functions and ordinary history are not removed.
+func prepareDeepSeekHostedSearchRequestWithToolInjection(body []byte, injectTools bool) ([]byte, bool, error) {
 	if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() {
 		return body, false, fmt.Errorf("deepseek hosted search: request must be a JSON object")
 	}
@@ -66,7 +77,7 @@ func prepareDeepSeekHostedSearchRequest(body []byte) ([]byte, bool, error) {
 	if hostedIndex >= 0 || hasHistory {
 		for _, tool := range tools {
 			if tool.Get("type").String() == "function" &&
-				(isDeepSeekHostedToolName(tool.Get("name").String()) || isDeepSeekHostedToolName(tool.Get("function.name").String())) {
+				(deepSeekHostedOwnedToolName(tool.Get("name").String(), injectTools) || deepSeekHostedOwnedToolName(tool.Get("function.name").String(), injectTools)) {
 				return body, false, fmt.Errorf("deepseek hosted search: reserved function name conflicts with a client tool")
 			}
 		}
@@ -94,6 +105,9 @@ func prepareDeepSeekHostedSearchRequest(body []byte) ([]byte, bool, error) {
 		if err != nil {
 			return body, false, err
 		}
+		if !injectTools {
+			description = strings.ReplaceAll(description, " Use web_fetch with a result URL when you need the page's full text.", "")
+		}
 		function := map[string]any{
 			"type": "function", "name": deepSeekHostedSearchToolName, "description": description,
 			"parameters": map[string]any{
@@ -119,9 +133,11 @@ func prepareDeepSeekHostedSearchRequest(body []byte) ([]byte, bool, error) {
 				}, "required": []string{"url"}, "additionalProperties": false,
 			},
 		}
-		next, err = sjson.SetBytes(next, "tools.-1", fetch)
-		if err != nil {
-			return body, false, fmt.Errorf("deepseek hosted search: add page fetch tool: %w", err)
+		if injectTools {
+			next, err = sjson.SetBytes(next, "tools.-1", fetch)
+			if err != nil {
+				return body, false, fmt.Errorf("deepseek hosted search: add page fetch tool: %w", err)
+			}
 		}
 		choice := gjson.GetBytes(body, "tool_choice")
 		if choice.IsObject() && isDeepSeekHostedSearchToolType(choice.Get("type").String()) {
@@ -333,6 +349,10 @@ func deepSeekHostedSearchHistoryMessage(item gjson.Result) map[string]any {
 // Build the next stateless model request without flattening native reasoning,
 // encrypted_content, function calls, or unrelated client tools into text.
 func deepSeekHostedSearchNextRequest(request, response []byte, outputs map[string]string) ([]byte, error) {
+	return deepSeekHostedSearchNextRequestWithFetch(request, response, outputs, true)
+}
+
+func deepSeekHostedSearchNextRequestWithFetch(request, response []byte, outputs map[string]string, ownFetch bool) ([]byte, error) {
 	if !gjson.ValidBytes(request) || !gjson.ParseBytes(request).IsObject() || !gjson.ValidBytes(response) {
 		return nil, fmt.Errorf("deepseek hosted search: invalid continuation JSON")
 	}
@@ -360,7 +380,7 @@ func deepSeekHostedSearchNextRequest(request, response []byte, outputs map[strin
 	}
 	ownedCalls := make(map[string]bool)
 	for _, item := range output.Array() {
-		if item.Get("type").String() == "function_call" && isDeepSeekHostedToolName(item.Get("name").String()) {
+		if item.Get("type").String() == "function_call" && deepSeekHostedOwnedToolName(item.Get("name").String(), ownFetch) {
 			id := item.Get("call_id").String()
 			if ownedCalls[id] || completed[id] {
 				return nil, fmt.Errorf("deepseek hosted search: duplicate or completed owned search call")
@@ -376,7 +396,7 @@ func deepSeekHostedSearchNextRequest(request, response []byte, outputs map[strin
 	var results []json.RawMessage
 	for _, item := range output.Array() {
 		items = append(items, json.RawMessage(item.Raw))
-		if item.Get("type").String() != "function_call" || !isDeepSeekHostedToolName(item.Get("name").String()) {
+		if item.Get("type").String() != "function_call" || !deepSeekHostedOwnedToolName(item.Get("name").String(), ownFetch) {
 			continue
 		}
 		callID := item.Get("call_id").String()
@@ -404,7 +424,7 @@ func deepSeekHostedSearchNextRequest(request, response []byte, outputs map[strin
 		return nil, err
 	}
 	choice := gjson.GetBytes(next, "tool_choice")
-	if choice.String() == "required" || (choice.IsObject() && choice.Get("type").String() == "function" && isDeepSeekHostedToolName(choice.Get("name").String())) {
+	if choice.String() == "required" || (choice.IsObject() && choice.Get("type").String() == "function" && deepSeekHostedOwnedToolName(choice.Get("name").String(), ownFetch)) {
 		next, err = sjson.SetBytes(next, "tool_choice", "auto")
 	}
 	return next, err
