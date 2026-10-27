@@ -41,6 +41,9 @@ jobs:
       - name: Unit tests
         working-directory: backend
         run: make test-unit
+      - name: Stream delivery and fixed tool billing concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/repository ./internal/handler/dto -run '^Test(AnthropicPassthrough|GatewayService_AnthropicAPIKeyPassthrough_StreamError|GatewayHandlerMessagesPassthroughStreamFailure|GatewayBridgePreservesFixedToolBilling|GatewayForwardErrorAlreadyCommunicated|UpstreamErrorFrameReader|DeepSeekStandaloneToolFees|DeepSeekFixed|DeepSeekHostedUsageRecord|DeepSeekHostedSearchAndFetchMark|UsageFailure)' -count=1
       - name: Integration tests
         working-directory: backend
         run: make test-integration

@@ -1,6 +1,11 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/data/__tests__/apiDocs.spec.ts \
+	src/utils/__tests__/docsUrl.spec.ts \
+	src/views/public/__tests__/DocsView.spec.ts \
+	src/components/layout/__tests__/docUrlSanitization.spec.ts \
+	src/components/admin/usage/__tests__/UsageTable.spec.ts \
 	src/views/admin/__tests__/GroupsView.returnRequestedModel.spec.ts \
 	src/components/crypto/__tests__/CryptoPrivateKeyDialog.spec.ts \
 	src/components/admin/account/__tests__/ScheduledTestsPanel.spec.ts \
