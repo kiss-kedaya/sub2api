@@ -155,6 +155,15 @@ func provideCleanup(
 					handlers.Gateway.StopGeminiExplicitCache()
 				}
 				if handlers != nil && handlers.Admin != nil {
+					if handlers.Admin.Serverless != nil {
+						handlers.Admin.Serverless.Stop()
+					}
+					if handlers.Admin.ExcelGrant != nil {
+						handlers.Admin.ExcelGrant.Stop()
+					}
+					if handlers.Admin.OpsAutomation != nil {
+						handlers.Admin.OpsAutomation.Stop()
+					}
 					if handlers.Admin.CredentialGuard != nil {
 						handlers.Admin.CredentialGuard.Stop()
 					}

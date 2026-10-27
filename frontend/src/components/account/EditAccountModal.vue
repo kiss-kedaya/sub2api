@@ -28,6 +28,7 @@
 
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey' || account.type === 'cloudflare'" class="space-y-4">
+        <CopilotSDKFields v-if="account.platform === 'openai' && account.type === 'apikey'" v-model="copilotSDKEnabled" />
         <GeminiCacheAccountFields
           v-if="account.platform === 'gemini' && account.type === 'apikey' && !geminiUseCustomProtocol"
           v-model="geminiCacheSettings"
@@ -3044,6 +3045,7 @@
 </template>
 
 <script setup lang="ts">
+import CopilotSDKFields from '@/components/account/CopilotSDKFields.vue'
 import GeminiCacheAccountFields from '@/components/account/GeminiCacheAccountFields.vue'
 import { readGeminiCacheSettings, applyGeminiCacheSettings } from '@/components/account/geminiCacheSettings'
 
@@ -3222,6 +3224,7 @@ const editCloudflareAccountID = ref('')
 const isCNApiKeyAccount = computed(
   () => props.account?.type === 'apikey' && isCNProviderPlatform(props.account.platform)
 )
+const copilotSDKEnabled = ref(false)
 const geminiUseCustomProtocol = ref(false)
 const geminiCacheSettings = ref(readGeminiCacheSettings())
 const isGeminiProtocolAccount = computed(
@@ -3709,16 +3712,17 @@ const openAITextEndpointCapabilityLabel = computed(() => {
 })
 const openAIEndpointCapabilityOptions = computed<{ value: OpenAIEndpointCapability; label: string }[]>(() => [
   { value: 'chat_completions', label: openAITextEndpointCapabilityLabel.value },
-  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') }
+  { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') },
+  { value: 'seedance', label: 'Seedance / Ark video' }
 ])
 const openAITextGenerationCapabilityEnabled = computed(() =>
   openAIEndpointCapabilities.value.includes('chat_completions')
 )
 
 const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]) => {
-  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings']
+  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'seedance']
   const selected = allowed.filter((value) => values.includes(value))
-  return selected.length > 0 ? selected : allowed
+  return selected.length > 0 ? selected : ['chat_completions', 'embeddings']
 }
 
 const readOpenAIEndpointCapabilities = (credentials?: Record<string, unknown>): OpenAIEndpointCapability[] => {
@@ -3988,6 +3992,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.expires_at = newAccount.expires_at ?? null
 
   // Load intercept warmup requests setting (applies to all account types)
+  copilotSDKEnabled.value = newAccount.extra?.openai_copilot_sdk === true
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
   geminiCacheSettings.value = readGeminiCacheSettings(credentials)
   interceptWarmupRequests.value = credentials?.intercept_warmup_requests === true
@@ -5660,6 +5665,13 @@ const handleSubmit = async () => {
       // Quota notify config
       writeQuotaNotifyToExtra(newExtra, 'update')
       updatePayload.extra = newExtra
+    }
+
+    if (props.account.platform === 'openai' && props.account.type === 'apikey') {
+      const extra = { ...((updatePayload.extra ?? props.account.extra ?? {}) as Record<string, unknown>) }
+      if (copilotSDKEnabled.value) extra.openai_copilot_sdk = true
+      else delete extra.openai_copilot_sdk
+      updatePayload.extra = extra
     }
 
     // 上游ID头名只在改动时写回 extra，避免用弹窗打开时的快照覆盖运行态键。

@@ -74,9 +74,9 @@ export async function create(
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = {
     name,
-    concurrency_limit: options?.concurrencyLimit ?? 0,
     deepseek_tool_injection_enabled: options?.deepseekToolInjectionEnabled ?? true,
   }
+  if (options?.concurrencyLimit !== undefined && options.concurrencyLimit > 0) payload.concurrency_limit = options.concurrencyLimit
   if (groupId !== undefined) {
     payload.group_id = groupId
   }
@@ -150,6 +150,7 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
 }
 
 export const keysAPI = {
+	getConcurrencyQueue,
   list,
   getById,
   create,
@@ -159,3 +160,13 @@ export const keysAPI = {
 }
 
 export default keysAPI
+
+export interface KeyQueueSnapshot {
+  queue_policy: { max_waiting: number; timeout_seconds: number }
+  items: Array<{ id: number; current_concurrency: number; current_waiting: number }>
+}
+
+export async function getConcurrencyQueue(ids: number[], signal?: AbortSignal): Promise<KeyQueueSnapshot> {
+  const { data } = await apiClient.get<KeyQueueSnapshot>('/keys/concurrency', { params: { ids: ids.join(',') }, signal })
+  return data
+}

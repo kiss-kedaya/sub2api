@@ -2539,6 +2539,9 @@ func setDefaults() {
 
 	// Gateway
 	viper.SetDefault("gateway.response_header_timeout", 600) // 600秒(10分钟)等待上游响应头，LLM高负载时可能排队较久
+	viper.SetDefault("gateway.api_key_queue.max_waiting", 0)
+	viper.SetDefault("gateway.api_key_queue.timeout_seconds", 30)
+	viper.SetDefault("gateway.gemini_cached_content_max_ttl_seconds", 86400)
 	viper.SetDefault("gateway.openai_response_header_timeout", 0)
 	viper.SetDefault("gateway.grok_response_header_timeout", 120)
 	viper.SetDefault("gateway.openai_first_output_timeout_seconds", 0)
@@ -2848,6 +2851,9 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.Gateway.APIKeyQueue.MaxWaiting < 0 || c.Gateway.APIKeyQueue.MaxWaiting > 10000 || c.Gateway.APIKeyQueue.TimeoutSeconds < 0 || c.Gateway.APIKeyQueue.TimeoutSeconds > 3600 {
+		return fmt.Errorf("gateway.api_key_queue must have 0..10000 waiters and 0..3600 timeout seconds")
+	}
 	if c.Security.AccountPoolOwnerUserID < 0 {
 		return fmt.Errorf("security.account_pool_owner_user_id must be non-negative")
 	}

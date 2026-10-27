@@ -329,7 +329,8 @@ func (s *Store) execute(ctx context.Context, candidate Task) error {
 		// Do not touch status, expiry, credentials, quotas, cooldown or quality fields.
 		var changed sql.Result
 		changed, err = tx.ExecContext(ctx, `UPDATE accounts SET schedulable=$1, updated_at=$2 WHERE id=$3 AND deleted_at IS NULL
- AND NOT ($1 AND COALESCE(jsonb_typeof(extra->'chanshui_quality_pauses')='object' AND extra->'chanshui_quality_pauses'<>'{}'::jsonb, FALSE))`, t.Action == "open", now, t.AccountID)
+ AND NOT ($1 AND (COALESCE(jsonb_typeof(extra->'chanshui_quality_pauses')='object' AND extra->'chanshui_quality_pauses'<>'{}'::jsonb, FALSE)
+ OR COALESCE(jsonb_typeof(extra->'local_reasoning_quality_pauses')='object' AND extra->'local_reasoning_quality_pauses'<>'{}'::jsonb,FALSE)))`, t.Action == "open", now, t.AccountID)
 		if err == nil {
 			var affected int64
 			affected, err = changed.RowsAffected()

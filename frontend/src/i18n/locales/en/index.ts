@@ -18,7 +18,13 @@ import {en as moderationCategories} from '@/features/ip-risk/moderationCategorie
 import accountOps from '@/components/admin/operations/accountOps.en'
 import channelOps from '@/components/admin/operations/channelOps.en'
 
+import { opsAutomationMessages } from '@/components/admin/operations/opsAutomationMessages'
+
+import { serverlessMessages } from '@/components/admin/operations/serverlessMessages'
+
 export default {
+ serverless: serverlessMessages.en.serverless,
+  opsAutomation: opsAutomationMessages.en.opsAutomation,
   accountOps, channelOps,
   qualityOps: { refresh: 'Refresh', accounts: 'Accounts', loadMore: 'Load more' },
   ...landing,

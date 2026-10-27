@@ -58,6 +58,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		})
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
 	}
+	if account.IsCopilotSDKEnabled() {
+		model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		stream := gjson.GetBytes(body, "stream").Bool()
+		result, err := s.forwardOpenAIPassthrough(ctx, c, account, body, body, model, false, nil, stream, startTime)
+		if result != nil {
+			stampOpenAIResponsesUpstreamEndpoint(c, result)
+		}
+		return result, err
+	}
 
 	normalizedBody, normalized, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, account, body)
 	if err != nil {
@@ -121,6 +130,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
 	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, GetOpenAIClientTransport(c))
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
+	if account.IsCopilotSDKEnabled() {
+		passthroughEnabled = true
+	}
 	compactPath := isOpenAIResponsesCompactPath(c)
 	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
 		body, err = flattenOpenAIResponsesNamespaces(c, body)
@@ -282,7 +294,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		return nil, errors.New("openai ws v1 is temporarily unsupported; use ws v2")
 	}
-	if passthroughEnabled {
+	bpsRouteCandidate := ExcelBPSRouteSelected(account, account.GetMappedModel(reqModel)) && !compactPath
+	if passthroughEnabled && !bpsRouteCandidate {
 		attemptImageIntentInvalidated := false
 		if isCodexCLI && codexImageGenerationExplicitToolPolicy == codexImageGenerationExplicitToolPolicyStrip {
 			strippedBody, changed, stripErr := stripOpenAIImageGenerationToolsFromRawPayload(body)
@@ -803,6 +816,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageBillingModel = imageCfg.Model
 		imageSizeTier = imageCfg.SizeTier
 		imageInputSize = imageCfg.InputSize
+	}
+	// Explicit BPS routes share the model rewrite, feature gates and fast-tier
+	// policy above. Their independent grant is selected before native Codex
+	// token/ticket acquisition and before the WebSocket transport branch.
+	if !isCompactRequest {
+		if result, handled, bpsErr := s.forwardSelectedExcelBPS(ctx, c, account, body, startTime, originalModel); handled {
+			if result != nil {
+				result.Model = originalModel
+				result.BillingModel = billingModel
+				result.UpstreamModel = upstreamModel
+				result.Stream = reqStream
+				result.ReasoningEffort = extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+				result.ServiceTier = resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(body))
+			}
+			return result, bpsErr
+		}
 	}
 	// Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
@@ -1449,6 +1478,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 }
 
 func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
+	if account.IsCopilotSDKEnabled() {
+		return false
+	}
 	if account == nil {
 		return false
 	}

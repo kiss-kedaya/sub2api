@@ -76,6 +76,7 @@ export default {
 
   // API Keys
   keys: {
+    queueWaiting: 'Waiting',
     concurrencyLimit: 'Key concurrency limit',
     concurrencyLimitHint: '0 adds no key limit; the user limit still applies. Busy keys wait under the server queue policy or return 429.',
     title: 'API Keys',

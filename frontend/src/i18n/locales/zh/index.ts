@@ -18,7 +18,13 @@ import {zh as moderationCategories} from '@/features/ip-risk/moderationCategorie
 import accountOps from '@/components/admin/operations/accountOps.zh'
 import channelOps from '@/components/admin/operations/channelOps.zh'
 
+import { opsAutomationMessages } from '@/components/admin/operations/opsAutomationMessages'
+
+import { serverlessMessages } from '@/components/admin/operations/serverlessMessages'
+
 export default {
+ serverless: serverlessMessages.zh.serverless,
+  opsAutomation: opsAutomationMessages.zh.opsAutomation,
   accountOps, channelOps,
   qualityOps: { refresh: '刷新', accounts: '账号', loadMore: '加载更多' },
   ...landing,

@@ -306,7 +306,15 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	credentialGuardRepository := repository.NewCredentialGuardRepository(db)
 	credentialGuardService := service.ProvideCredentialGuardService(credentialGuardRepository, accountRepository, openAIGatewayService, secretEncryptor, compositeTokenCacheInvalidator)
 	credentialGuardHandler := handler.ProvideCredentialGuardHandler(credentialGuardService, totpService, userService)
-	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, cnProviderHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, pluginHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, promptAdminHandler, paymentHandler, affiliateHandler, complianceHandler, auditLogHandler, groupQualityCheckHandler, upstreamBillingProbeService, ollamaCloudUsageService, settingService, claudeResetCreditService, accountOpsHandler, mihomoHandler, credentialGuardHandler)
+	opsAutomationRepository := repository.NewOpsAutomationRepository(db, accountRepository)
+	opsAutomationService := service.ProvideOpsAutomationService(settingRepository, groupRepository, opsAutomationRepository, accountTestService, openAIGatewayService, accountRepository, concurrencyService, contentModerationService)
+	opsAutomationHandler := admin.NewOpsAutomationHandler(opsAutomationService)
+	excelGrantRepository := repository.NewExcelGrantRepository(db)
+	excelGrantService := service.NewExcelGrantService(excelGrantRepository, accountRepository, openAIOAuthClient, secretEncryptor)
+	excelBPSStateRepository := repository.NewExcelBPSStateRepository(db, secretEncryptor)
+	excelBPSChannel := service.NewExcelBPSChannel(excelGrantService, excelBPSStateRepository)
+	excelGrantHandler := handler.ProvideExcelGrantHandler(excelGrantService, excelBPSChannel, openAIGatewayService, totpService, userService)
+	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, cnProviderHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, pluginHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, promptAdminHandler, paymentHandler, affiliateHandler, complianceHandler, auditLogHandler, groupQualityCheckHandler, upstreamBillingProbeService, ollamaCloudUsageService, settingService, claudeResetCreditService, accountOpsHandler, mihomoHandler, credentialGuardHandler, opsAutomationHandler, excelGrantHandler)
 	usageRecordWorkerPool := service.NewUsageRecordWorkerPool(configConfig)
 	balancePreauthorizationService := service.NewBalancePreauthorizationService(configConfig, billingService, billingCacheService, usageBillingRepository)
 	userMsgQueueCache := repository.NewUserMsgQueueCache(redisClient)
@@ -496,6 +504,15 @@ func provideCleanup(
 					handlers.Gateway.StopGeminiExplicitCache()
 				}
 				if handlers != nil && handlers.Admin != nil {
+					if handlers.Admin.Serverless != nil {
+						handlers.Admin.Serverless.Stop()
+					}
+					if handlers.Admin.ExcelGrant != nil {
+						handlers.Admin.ExcelGrant.Stop()
+					}
+					if handlers.Admin.OpsAutomation != nil {
+						handlers.Admin.OpsAutomation.Stop()
+					}
 					if handlers.Admin.CredentialGuard != nil {
 						handlers.Admin.CredentialGuard.Stop()
 					}

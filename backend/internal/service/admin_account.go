@@ -484,6 +484,12 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if input == nil {
+		return nil, errors.New("account input is required")
+	}
+	if err := s.ApplyOAuthDefaults(ctx, input); err != nil {
+		return nil, err
+	}
 	if err := ValidateAccountSchedulingFields(&input.Concurrency, &input.Priority); err != nil {
 		return nil, err
 	}

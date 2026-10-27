@@ -153,7 +153,7 @@ func IsGeminiExplicitCacheAccount(account *Account) bool {
 		return false
 	}
 	if account.Type == AccountTypeServiceAccount {
-		return !account.IsVertexAPIKey()
+		return account.IsVertexServiceAccount()
 	}
 	if strings.TrimSpace(account.GetCredential("api_key")) == "" {
 		return false

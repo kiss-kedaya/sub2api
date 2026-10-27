@@ -482,6 +482,10 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 var ErrGrokVideoSourceUnavailable = errors.New("grok video source account is unavailable")
 
 func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, accountID int64) (*Account, error) {
+	return s.GetVideoProviderBoundAccount(ctx, accountID, "")
+}
+
+func (s *OpenAIGatewayService) GetVideoProviderBoundAccount(ctx context.Context, accountID int64, provider string) (*Account, error) {
 	if accountID <= 0 {
 		return nil, fmt.Errorf("bound grok media account is invalid")
 	}
@@ -492,7 +496,7 @@ func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, acc
 	// one. The local create-time pointer is only a fallback for services without
 	// an authoritative account source (for example standalone fixtures).
 	if s.schedulerSnapshot == nil && s.accountRepo == nil {
-		if account := recallGrokVideoAccountByID(accountID); account != nil && account.Platform == PlatformGrok {
+		if account := recallGrokVideoAccountByID(accountID); videoProviderAccountMatches(account, provider) {
 			return account, nil
 		}
 		return nil, fmt.Errorf("account repository is unavailable")
@@ -514,7 +518,7 @@ func (s *OpenAIGatewayService) GetGrokMediaBoundAccount(ctx context.Context, acc
 			return nil, err
 		}
 	}
-	if account == nil || account.Platform != PlatformGrok {
+	if !videoProviderAccountMatches(account, provider) {
 		return nil, ErrGrokVideoSourceUnavailable
 	}
 	return account, nil

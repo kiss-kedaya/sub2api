@@ -45,6 +45,27 @@ func SetupRouter(
 	db *sql.DB,
 ) *gin.Engine {
 	adminhandler.ConfigureReportCacheRedis(redisClient)
+	if handlers.Admin != nil && handlers.Admin.Setting != nil && settingService != nil {
+		regional, err := service.NewServerlessRouting(settingService, db, redisClient, cfg)
+		if err != nil {
+			log.Printf("Warning: regional gateway routing unavailable")
+		} else {
+			handlers.Admin.Serverless = handlers.Admin.Setting.ServerlessHandler(regional)
+			regional.Start(func(ctx context.Context) error {
+				if db == nil || redisClient == nil {
+					return fmt.Errorf("readiness unavailable")
+				}
+				if err := db.PingContext(ctx); err != nil {
+					return err
+				}
+				return redisClient.Ping(ctx).Err()
+			})
+			r.Use(regional.Ingress())
+		}
+	}
+	if handlers.Admin != nil && handlers.Admin.OpsAutomation != nil {
+		r.Use(handler.OpsAutomationObserver(handlers.Admin.OpsAutomation.Engine()))
+	}
 	if handlers.Gateway != nil && db != nil {
 		handlers.Gateway.ConfigureGeminiExplicitCache(repository.NewGeminiCachedContentRepository(db), cfg)
 	}
@@ -174,6 +195,9 @@ func registerRoutes(
 	panelRateLimiter := middleware2.NewPanelRateLimiter(redisClient, settingService)
 
 	// 注册各模块路由
+	if h.Admin != nil && h.Admin.Serverless != nil {
+		r.GET("/internal/serverless/probe", h.Admin.Serverless.Engine().ProbeHandler)
+	}
 	routes.RegisterAuthRoutes(v1, h, jwtAuth, auditLog, redisClient, settingService, panelRateLimiter)
 	routes.RegisterUserRoutes(v1, h, jwtAuth, auditLog, settingService, panelRateLimiter)
 	routes.RegisterModelPlazaRoutes(v1, h, optionalJWTAuth, settingService, panelRateLimiter)

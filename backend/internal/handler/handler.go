@@ -7,6 +7,9 @@ import (
 
 // AdminHandlers contains all admin-related HTTP handlers
 type AdminHandlers struct {
+	Serverless             *admin.ServerlessHandler
+	ExcelGrant             *admin.ExcelGrantHandler
+	OpsAutomation          *admin.OpsAutomationHandler
 	CredentialGuard        *admin.CredentialGuardHandler
 	AccountOps             *admin.AccountOpsHandler
 	Mihomo                 *admin.MihomoHandler

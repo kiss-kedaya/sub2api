@@ -6,6 +6,28 @@ import (
 )
 
 func registerAccountOperationsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if v := h.Admin.Serverless; v != nil {
+		r := admin.Group("/serverless")
+		r.GET("", v.Get)
+		r.PUT("", v.RequireStepUp, v.Save)
+	}
+	if v := h.Admin.ExcelGrant; v != nil {
+		r := admin.Group("/excel-grants")
+		r.GET("", v.List)
+		r.PUT("/:id", v.Save)
+		r.POST("/:id/authorize", v.Authorize)
+		r.POST("/:id/callback", v.Callback)
+	}
+	if v := h.Admin.OpsAutomation; v != nil {
+		r := admin.Group("/ops-automation")
+		r.GET("", v.Get)
+		r.PUT("", v.Save)
+		r.GET("/reasoning", v.Plans)
+		r.PUT("/reasoning", v.SavePlan)
+		r.POST("/reasoning/:id/run", v.RunPlan)
+		r.GET("/reasoning/:id/ownership", v.Ownership)
+		r.POST("/reasoning/:id/ownership", v.Ownership)
+	}
 	if v := h.Admin.CredentialGuard; v != nil {
 		r := admin.Group("/credential-guard")
 		r.GET("", v.List)

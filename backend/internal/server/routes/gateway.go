@@ -8,6 +8,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	iputil "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -42,6 +43,17 @@ func RegisterGatewayRoutes(
 		redisClient = redisClients[0]
 	}
 	ipNotice := middleware.GatewayIPNotice(settingService, redisClient)
+	regional := func(c *gin.Context) { c.Next() }
+	if h.Admin != nil && h.Admin.Serverless != nil {
+		regional = func(c *gin.Context) {
+			key, ok := middleware.GetAPIKeyFromContext(c)
+			if !ok || key == nil {
+				c.Next()
+				return
+			}
+			h.Admin.Serverless.Engine().Route(c, key.ID, iputil.GetTrustedClientIP(c))
+		}
+	}
 	capture := func(c *gin.Context) { c.Next() }
 	if h.Admin != nil && h.Admin.RequestCapture != nil {
 		capture = middleware.RequestCapture(h.Admin.RequestCapture.Manager)
@@ -113,6 +125,10 @@ func RegisterGatewayRoutes(
 		}
 	}
 	videoGenerationHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformMiniMax {
+			h.OpenAIGateway.MiniMaxH3Videos(c)
+			return
+		}
 		// Video status/content lookups below already allow Composite groups; keep
 		// task creation aligned so composite keys that route to Grok accounts can
 		// submit video generation jobs.
@@ -129,6 +145,10 @@ func RegisterGatewayRoutes(
 		})
 	}
 	videoStatusHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformMiniMax {
+			h.OpenAIGateway.MiniMaxH3Videos(c)
+			return
+		}
 		// Video status requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler and let scheduler/account selection enforce capacity.
@@ -145,6 +165,10 @@ func RegisterGatewayRoutes(
 		})
 	}
 	videoContentHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformMiniMax {
+			h.OpenAIGateway.MiniMaxH3Videos(c)
+			return
+		}
 		// Video content requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler just like video status lookups.
@@ -205,7 +229,7 @@ func RegisterGatewayRoutes(
 	gateway.Use(clientRequestID)
 	gateway.Use(opsErrorLogger)
 	gateway.Use(endpointNorm)
-	gateway.Use(gin.HandlerFunc(apiKeyAuth), capture)
+	gateway.Use(gin.HandlerFunc(apiKeyAuth), regional, capture)
 	gateway.Use(ipNotice)
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
 	gateway.Use(groupModelAllowlist)
@@ -361,6 +385,15 @@ func RegisterGatewayRoutes(
 		})
 	}
 
+	// Ark native task management keeps ordinary key authentication and routing.
+	ark := r.Group("/api/v3")
+	ark.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth))
+	ark.Use(capture, ipNotice, groupModelAllowlist, compositeTarget)
+	ark.POST("/contents/generations/tasks", h.OpenAIGateway.SeedanceTasks)
+	ark.GET("/contents/generations/tasks/:task_id", h.OpenAIGateway.SeedanceTasks)
+	ark.DELETE("/contents/generations/tasks/:task_id", h.OpenAIGateway.SeedanceTasks)
+	ark.GET("/contents/generations/tasks/:task_id/content", h.OpenAIGateway.SeedanceTasks)
+
 	// Gemini 原生 API 兼容层（Gemini SDK/CLI 直连）
 	gemini := r.Group("/v1beta")
 	gemini.Use(bodyLimit)
@@ -396,7 +429,7 @@ func RegisterGatewayRoutes(
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
 	// 之前，避免逐条路由手工维护链导致漏挂。
 	rootRoute := func(method, path string, limit gin.HandlerFunc, handler gin.HandlerFunc) {
-		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
+		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
 	}
 	rootRoute(http.MethodPost, "/responses", bodyLimit, responsesHandler)
 	rootRoute(http.MethodPost, "/responses/*subpath", bodyLimit, guardResponsesSubpath(responsesHandler))
@@ -408,7 +441,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic)
+	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic)
 	{
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)
@@ -511,7 +544,7 @@ func RegisterGatewayRoutes(
 	})
 
 	// Antigravity 模型列表
-	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), capture, ipNotice, requireGroupAnthropic, h.Gateway.AntigravityModels)
+	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), regional, capture, ipNotice, requireGroupAnthropic, h.Gateway.AntigravityModels)
 
 	// Antigravity 专用路由（仅使用 antigravity 账户，不混合调度）
 	antigravityV1 := r.Group("/antigravity/v1")

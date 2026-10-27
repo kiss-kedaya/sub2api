@@ -1166,10 +1166,10 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
-		return selectionOrder
+		return s.rankAutomationCandidates(req, selectionOrder)
 	}
 
-	return orderPool(plan.candidates)
+	return s.rankAutomationCandidates(req, orderPool(plan.candidates))
 }
 
 // buildOpenAIFillSelectionOrder performs the failover "fill" walk.  Accounts

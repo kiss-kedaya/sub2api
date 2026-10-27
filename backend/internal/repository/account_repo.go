@@ -803,6 +803,9 @@ func (r *accountRepository) updateLockedAccount(
 	}
 
 	schedulable := account.Schedulable
+	if service.HasLocalReasoningPause(account) {
+		schedulable = false
+	}
 	if account.Status == service.StatusError {
 		schedulable = false
 	}
@@ -989,6 +992,11 @@ func lockAndMergeAccountProbeExtra(
 		}
 	}
 	extra := service.MergeOpenAICodexTicketExtra(copyJSONMap(normalizeJSONMap(account.Extra)), currentExtra)
+	// Runtime quality ownership is not editable through ordinary account forms.
+	delete(extra, "local_reasoning_quality_pauses")
+	if owned, exists := currentExtra["local_reasoning_quality_pauses"]; exists {
+		extra["local_reasoning_quality_pauses"] = owned
+	}
 	delete(extra, service.CustomUsageExtraKey)
 	if currentConfig, exists := currentExtra[service.CustomUsageExtraKey]; exists {
 		extra[service.CustomUsageExtraKey] = currentConfig
@@ -2098,7 +2106,8 @@ func (r *accountRepository) ClearError(ctx context.Context, id int64) error {
 		_, err := r.sql.ExecContext(ctx, `WITH changed AS (
  UPDATE accounts SET status='active',error_message='',
  schedulable=CASE WHEN jsonb_typeof(extra->'chanshui_quality_pauses')='object'
-  AND extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE TRUE END,
+  AND extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE
+  WHEN jsonb_typeof(extra->'local_reasoning_quality_pauses')='object' AND extra->'local_reasoning_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE TRUE END,
  updated_at=NOW() WHERE id=$1 AND status='error' AND deleted_at IS NULL RETURNING id
  ) INSERT INTO scheduler_outbox(event_type,account_id,group_id,payload) SELECT $2,id,NULL,NULL FROM changed`, id, service.SchedulerOutboxEventAccountChanged)
 		if err != nil {
@@ -3368,8 +3377,10 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		idx++
 	}
 	if updates.Schedulable != nil {
-		if *updates.Schedulable && !manualScope {
-			setClauses = append(setClauses, "schedulable = CASE WHEN jsonb_typeof(extra->'chanshui_quality_pauses')='object' AND extra->'chanshui_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE $"+itoa(idx)+" END")
+		if *updates.Schedulable && manualScope {
+			setClauses = append(setClauses, "schedulable = CASE WHEN jsonb_typeof(extra->'local_reasoning_quality_pauses')='object' AND extra->'local_reasoning_quality_pauses'<>'{}'::jsonb THEN FALSE ELSE $"+itoa(idx)+" END")
+		} else if *updates.Schedulable && !manualScope {
+			setClauses = append(setClauses, "schedulable = CASE WHEN (jsonb_typeof(extra->'chanshui_quality_pauses')='object' AND extra->'chanshui_quality_pauses'<>'{}'::jsonb) OR (jsonb_typeof(extra->'local_reasoning_quality_pauses')='object' AND extra->'local_reasoning_quality_pauses'<>'{}'::jsonb) THEN FALSE ELSE $"+itoa(idx)+" END")
 		} else {
 			setClauses = append(setClauses, "schedulable = $"+itoa(idx))
 		}
@@ -3408,7 +3419,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed || manualSchedulingOverride {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
-			payload, err := json.Marshal(updates.Extra)
+			patchExtra := copyJSONMap(updates.Extra)
+			delete(patchExtra, "local_reasoning_quality_pauses")
+			payload, err := json.Marshal(patchExtra)
 			if err != nil {
 				return 0, err
 			}

@@ -70,7 +70,7 @@ export function videoModelPriceFamilyRows(form: VideoModelPricesForm) {
   const known = new Set<string>(grokVideoPriceFamilies.map(({ key }) => key))
   const extra = Object.keys(form)
     .map(normalizeFamily)
-    .filter((family) => family && !known.has(family))
+    .filter((family) => family && family !== 'minimax-h3' && !known.has(family))
     .sort()
     .map((key) => ({ key, label: key }))
   return [...grokVideoPriceFamilies, ...extra]

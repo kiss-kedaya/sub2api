@@ -832,7 +832,10 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     {path:'/admin/diagnostics',label:locale.value==='zh'?'诊断与运维':'Diagnostics and operations',icon:ChartIcon,expandOnly:true,children:[
-      {path:'/admin/credential-guard',label:locale.value==='zh'?'凭证巡检':'Credential inspection',icon:ShieldIcon},
+      {path:'/admin/excel-grants',label:locale.value==='zh'?'Excel 协议授权':'Excel authorization',icon:ShieldIcon},
+        {path:'/admin/serverless',label:locale.value==='zh'?'地区路由':'Regional routing',icon:GlobeIcon},
+        {path:'/admin/ops-automation',label:locale.value==='zh'?'账号自动化':'Account automation',icon:ChartIcon},
+        {path:'/admin/credential-guard',label:locale.value==='zh'?'凭证巡检':'Credential inspection',icon:ShieldIcon},
         {path:'/admin/account-ops',label:locale.value==='zh'?'账号通知':'Account notifications',icon:BellIcon},
         {path:'/admin/channel-operations',label:locale.value==='zh'?'渠道运维':'Channel operations',icon:ChartIcon},
         {path:'/admin/mihomo',label:locale.value==='zh'?'代理出口':'Managed proxies',icon:GlobeIcon},

@@ -1168,6 +1168,7 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		}
 		return s.isBetterAccount(a, b)
 	})
+	eligible = s.rankAutomationPool(groupID, requestedModel, eligible, requireCompact, openAIPreferNativeResponses(ctx), true)
 	return eligible[0], compactBlocked, filterStats
 }
 
@@ -1502,6 +1503,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		} else {
 			selectionOrder = append(selectionOrder, available...)
 		}
+		selectionOrder = s.rankAutomationLoaded(groupID, requestedModel, selectionOrder, requireCompact, preferNativeResponses)
 
 		for _, item := range selectionOrder {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, item.account, platform, requestedModel, false, requiredCapability)
@@ -1545,6 +1547,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if requireCompact {
 			ordered = prioritizeOpenAICompactAccounts(ordered)
 		}
+		ordered = s.rankAutomationPool(groupID, requestedModel, ordered, requireCompact, preferNativeResponses, false)
 		for _, acc := range ordered {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
 			if fresh == nil {

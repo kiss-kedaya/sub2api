@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 26 // v26: per-key DeepSeek tool injection; reject old writers that omit false
+const apiKeyAuthSnapshotVersion = 27 // v27: reject old writers that omit the independent key concurrency limit
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int

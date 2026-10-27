@@ -9,6 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  copilot-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Prepare pinned public adapter
+        run: bash deploy/copilot-sdk/prepare.sh "$RUNNER_TEMP/copilot-adapter"
+      - name: Test authenticated tenant and tool contracts without network calls
+        run: |
+          "$RUNNER_TEMP/copilot-adapter/.venv/bin/python" -m pip install pytest pytest-asyncio pytest-socket
+          PYTHONPATH="$RUNNER_TEMP/copilot-adapter" "$RUNNER_TEMP/copilot-adapter/.venv/bin/python" -m pytest --disable-socket --allow-unix-socket -q deploy/copilot-sdk/test_server.py deploy/copilot-sdk/test_adapter_contract.py
   client-error-privacy:
     runs-on: ubuntu-latest
     steps:
@@ -63,6 +76,11 @@ jobs:
         run: |
           go test -race -p 1 ./internal/mihomo -count=1
           go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository ./cmd/server -run '^Test(GeminiCached|GeminiExplicit|GeminiCache|FixedCharge|AccountOps|ChannelOperations|CredentialGuard|ManagedProxy|ManagedAccount|APIKeyQueue|APIKeySlot|APIKeyAdmission|LiveLease|ProvideCleanup)' -count=1
+      - name: Provider and automation regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/localreasoning ./internal/service/basispoints -count=1
+          go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository -run '^Test(CopilotSDK|Excel|Seedance|MiniMaxH3|VideoProvider|Automation|OpsAutomation|LocalReasoning|APIKeyAuthSnapshot.*Concurrency)' -count=1
       - name: Unit tests
         working-directory: backend
         run: make test-unit

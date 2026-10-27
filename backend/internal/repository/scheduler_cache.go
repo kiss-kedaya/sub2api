@@ -1029,6 +1029,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// so omitting them makes a valid account look unsupported after a snapshot
 		// round-trip even though forwarding still treats it as passthrough.
 		"openai_passthrough",
+		"openai_copilot_sdk",
+		"excel_bps_enabled",
+		"excel_bps_models",
 		"openai_oauth_passthrough",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
