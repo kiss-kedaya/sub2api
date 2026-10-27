@@ -153,9 +153,9 @@ func (s *OpenAIGatewayService) forwardDeepSeekTools(
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	c.Data(resp.StatusCode, contentType, respBody)
+	c.Data(resp.StatusCode, contentType, sanitizeClientUpstreamErrorBody(resp.StatusCode, respBody))
 	if resp.StatusCode != http.StatusOK || !deepSeekToolsHasBillableResult(path, respBody) {
-		// 官方仅对 200 且有实际结果的请求计费。仍将上游响应原样交给客户端。
+		// 官方仅对 200 且有实际结果的请求计费；错误只在下发时脱敏。
 		return nil, nil
 	}
 	return &OpenAIForwardResult{

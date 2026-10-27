@@ -18,6 +18,12 @@ import (
 // unscheduled after a durable transport failure (matches tokenRefreshTempUnschedDuration).
 const openAITransportErrorTempUnschedDuration = 10 * time.Minute
 
+// A direct DeepSeek endpoint can briefly refuse connections while restarting.
+// Probe it again soon instead of turning one failed dial into a ten-minute
+// outage for a group backed by a single API key. Proxy/auth/DNS faults keep the
+// durable cooldown because retrying those credentials cannot restore service.
+const deepSeekDirectConnectionRefusedCooldown = 5 * time.Second
+
 // openAITransportFailoverBody is the OpenAI-format error body attached to the
 // failover error for a transport-level failure. Kept identical to the legacy
 // inline 502 body so the client-visible payload is unchanged if failover is
@@ -138,7 +144,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 	}
 
 	if classifyUpstreamTransportError(err).Persistent {
-		s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
+		if account != nil && account.Platform == PlatformDeepseek && account.Type == AccountTypeAPIKey &&
+			account.ProxyID == nil && account.Proxy == nil &&
+			(errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(strings.ToLower(err.Error()), "connection refused")) {
+			s.tempUnscheduleOpenAITransportErrorFor(ctx, account, safeErr, deepSeekDirectConnectionRefusedCooldown)
+		} else {
+			s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
+		}
 	}
 
 	return &UpstreamFailoverError{

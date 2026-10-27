@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -437,7 +438,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		c.Header("Connection", "keep-alive")
 	}
 	c.Header("X-Accel-Buffering", "no")
-	if v := resp.Header.Get("x-request-id"); v != "" {
+	if v := resp.Header.Get("x-request-id"); v != "" && clientprivacy.Text(v) == v {
 		c.Header("x-request-id", v)
 	}
 
@@ -480,9 +481,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			RawData:    payload,
 		}
 		if !clientDisconnected {
-			// Finish the original SSE event, including when the upstream omitted
-			// its final blank line. Do not rewrite its error payload or append a
-			// generic gateway error after it.
+			// Classify the original payload above, then redact only the client
+			// copy. Keep the SSE envelope and never append a second error.
+			wire = clientprivacy.ErrorSSE(wire)
 			n, err := io.WriteString(w, wire)
 			if err != nil || n != len(wire) {
 				clientDisconnected = true
@@ -1085,7 +1086,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	if upstreamFinancialFailureEnvelope(body) {
 		defer GuardUpstreamFinancialError(c, 0, body)()
 	}
-	c.Data(resp.StatusCode, contentType, body)
+	c.Data(resp.StatusCode, contentType, sanitizeClientUpstreamErrorBody(resp.StatusCode, body))
 	return usage, nil
 }
 
@@ -1112,7 +1113,7 @@ func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, 
 	if v := strings.TrimSpace(src.Get("Content-Type")); v != "" {
 		dst.Set("Content-Type", v)
 	}
-	if v := strings.TrimSpace(src.Get("x-request-id")); v != "" {
+	if v := strings.TrimSpace(src.Get("x-request-id")); v != "" && clientprivacy.Text(v) == v {
 		dst.Set("x-request-id", v)
 	}
 }

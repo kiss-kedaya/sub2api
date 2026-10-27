@@ -69,7 +69,7 @@ func writeOpenAICompactSSEBridge(c *gin.Context, statusCode int, finalResponse [
 		}
 		return false
 	}
-	payload, ok := buildOpenAICompactSSEPayload(finalResponse)
+	payload, ok := buildOpenAICompactSSEPayload(sanitizeClientUpstreamErrorBody(statusCode, finalResponse))
 	if !ok {
 		if committed {
 			writeOpenAICompactSSEFailure(c, http.StatusBadGateway, finalResponse)
@@ -127,8 +127,8 @@ func writeOpenAICompactSSEFailureMessage(c *gin.Context, statusCode int, errType
 			"status":     "failed",
 			"output":     []any{},
 			"error": map[string]any{
-				"code":    errType,
-				"message": message,
+				"code":    sanitizeUpstreamErrorMessage(errType),
+				"message": sanitizeUpstreamErrorMessage(message),
 			},
 		},
 	})

@@ -182,3 +182,101 @@ func TestToUserErrorRequestDetail_Nil(t *testing.T) {
 		t.Errorf("expected nil for nil input, got %+v", out)
 	}
 }
+
+func TestToUserErrorRequest_RedactsHistoricalMessageWithoutChangingOwnedFields(t *testing.T) {
+	clientIP := "192.0.2.25"
+	requestType := int16(2)
+	src := &OpsErrorLog{
+		ID:              789,
+		CreatedAt:       time.Unix(1000, 0).UTC(),
+		Model:           "model-test",
+		InboundEndpoint: "/v1/responses",
+		StatusCode:      403,
+		Phase:           "upstream",
+		Type:            "api_error",
+		Message: "request refused by https://provider.example.invalid/private for upstream-owner@example.invalid " +
+			"using Bearer sk-example-private-test-credential-1234567890",
+		APIKeyName:  "my-own-key",
+		ClientIP:    &clientIP,
+		GroupName:   "my-group",
+		RequestType: &requestType,
+		Stream:      true,
+		UserAgent:   "client-test/1.0",
+	}
+	originalMessage := src.Message
+	out := ToUserErrorRequest(src)
+	if out == nil {
+		t.Fatal("expected a user error view")
+	}
+	for _, private := range []string{"provider.example.invalid", "upstream-owner@example.invalid", "sk-example-private-test-credential-1234567890"} {
+		if strings.Contains(out.Message, private) {
+			t.Fatal("historical error message exposed private upstream data")
+		}
+	}
+	if !strings.Contains(out.Message, "request refused") {
+		t.Fatal("safe error context was discarded")
+	}
+	if out.StatusCode != src.StatusCode || out.Category != "upstream" || out.ID != src.ID ||
+		out.Model != src.Model || out.InboundEndpoint != src.InboundEndpoint ||
+		out.ClientIP != clientIP || out.KeyName != src.APIKeyName || out.GroupName != src.GroupName ||
+		out.RequestType != src.RequestType || out.Stream != src.Stream || out.UserAgent != src.UserAgent {
+		t.Fatal("user-owned request attributes or status changed during redaction")
+	}
+	if src.Message != originalMessage {
+		t.Fatal("redaction mutated the stored operator error")
+	}
+}
+
+func TestToUserErrorRequestDetail_RedactsHistoricalBodyAtReadBoundary(t *testing.T) {
+	status := 403
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "json",
+			body: `{"error":{"message":"upstream denied https://provider.example.invalid/private for upstream-owner@example.invalid","type":"permission_error","api_key":"sk-example-private-test-credential-1234567890"}}`,
+		},
+		{
+			name: "html",
+			body: `<html><body>upstream denied https://provider.example.invalid/private for upstream-owner@example.invalid using Bearer sk-example-private-test-credential-1234567890</body></html>`,
+		},
+		{
+			name: "malformed json",
+			body: `{"error":{"message":"upstream denied https://provider.example.invalid/private for upstream-owner@example.invalid using Bearer sk-example-private-test-credential-1234567890`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := &OpsErrorLogDetail{
+				OpsErrorLog: OpsErrorLog{
+					ID:         789,
+					StatusCode: status,
+					Phase:      "upstream",
+					Type:       "api_error",
+					Message:    "upstream denied",
+				},
+				ErrorBody:          tc.body,
+				UpstreamStatusCode: &status,
+			}
+			out := ToUserErrorRequestDetail(src)
+			if out == nil {
+				t.Fatal("expected a user detail view")
+			}
+			for _, private := range []string{"provider.example.invalid", "upstream-owner@example.invalid", "sk-example-private-test-credential-1234567890"} {
+				if strings.Contains(out.ErrorBody, private) {
+					t.Fatal("historical error body exposed private upstream data")
+				}
+			}
+			if json.Valid([]byte(tc.body)) && !json.Valid([]byte(out.ErrorBody)) {
+				t.Fatal("redaction corrupted an upstream JSON error")
+			}
+			if out.StatusCode != status || out.UpstreamStatusCode == nil || *out.UpstreamStatusCode != status {
+				t.Fatal("redaction changed the upstream status")
+			}
+			if src.ErrorBody != tc.body || src.Message != "upstream denied" {
+				t.Fatal("redaction mutated the stored operator error")
+			}
+		})
+	}
+}
