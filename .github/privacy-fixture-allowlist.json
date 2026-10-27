@@ -78,6 +78,11 @@
       "reason": "Audited incomplete PEM text for service-account error-redaction assertions."
     },
     {
+      "path": "backend/internal/service/client_error_privacy_test.go",
+      "sha256": "38cec6de2e372890068f9d46f6c2e6690c85cf5a9d12441886aeb34edc2f526c",
+      "reason": "Audited synthetic privacy regression fixtures; fake Bearer strings and incomplete PEM markers contain no usable credentials."
+    },
+    {
       "path": "backend/internal/service/content_moderation_test.go",
       "sha256": "5e459ddfbe396b19ab1c5b9a8c7e8f1b74f1a359cc25a92387c1654a3257f618",
       "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
@@ -106,6 +111,11 @@
       "path": "backend/internal/service/vertex_service_account_test.go",
       "sha256": "d1d02f5d0cf490e08f8495438cd03b1b683a02c3337f573b35f7eabaf6e403cc",
       "reason": "Audited incomplete PEM text for service-account validation assertions."
+    },
+    {
+      "path": "backend/internal/util/clientprivacy/redact_test.go",
+      "sha256": "4e442e8ad6a7c2213ae1e006f5080200f8bc06e20f7564c6333c1d83e07f412b",
+      "reason": "Audited synthetic privacy regression fixtures; fake Bearer strings and incomplete PEM markers contain no usable credentials."
     },
     {
       "path": "frontend/src/components/account/__tests__/EditAccountModal.spec.ts",

@@ -1,6 +1,10 @@
 package service
 
-import "time"
+import (
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
+)
 
 // UserErrorRequest 是面向终端用户的"错误请求"精简脱敏视图（白名单）。
 // 严禁包含 account / api_key_prefix / upstream_endpoint / user_email 等
@@ -115,7 +119,7 @@ func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 		StatusCode:      e.StatusCode,
 		Category:        MapUserErrorCategory(e.Phase, e.Type),
 		Platform:        e.Platform,
-		Message:         e.Message,
+		Message:         clientprivacy.Text(e.Message),
 		KeyName:         e.APIKeyName,
 		KeyDeleted:      e.APIKeyDeleted,
 		ClientIP:        clientIP,
@@ -143,7 +147,7 @@ func ToUserErrorRequestDetail(e *OpsErrorLogDetail) *UserErrorRequestDetail {
 	base := ToUserErrorRequest(&e.OpsErrorLog)
 	return &UserErrorRequestDetail{
 		UserErrorRequest:   *base,
-		ErrorBody:          e.ErrorBody,
+		ErrorBody:          string(clientprivacy.JSON([]byte(e.ErrorBody))),
 		UpstreamStatusCode: e.UpstreamStatusCode,
 	}
 }

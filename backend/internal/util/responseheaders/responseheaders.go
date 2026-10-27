@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 )
 
 // defaultAllowed 定义允许透传的响应头白名单
@@ -30,8 +31,6 @@ var defaultAllowed = map[string]struct{}{
 	"x-ratelimit-reset-requests":     {},
 	"x-ratelimit-reset-tokens":       {},
 	"retry-after":                    {},
-	"location":                       {},
-	"www-authenticate":               {},
 	// Codex uses this response header to avoid estimating reasoning tokens a
 	// second time when upstream usage already includes them.
 	"x-reasoning-included": {},
@@ -42,6 +41,21 @@ var hopByHopHeaders = map[string]struct{}{
 	"content-length":    {},
 	"transfer-encoding": {},
 	"connection":        {},
+}
+
+// These headers can expose upstream routing or credentials. Operators cannot
+// opt them back in with AdditionalAllowed.
+func privateHeader(name string) bool {
+	switch name {
+	case "location", "content-location", "www-authenticate", "proxy-authenticate",
+		"authentication-info", "proxy-authentication-info", "authorization",
+		"proxy-authorization", "cookie", "set-cookie", "set-cookie2", "key", "token":
+		return true
+	}
+	return strings.Contains(name, "api-key") || strings.Contains(name, "apikey") ||
+		strings.Contains(name, "authorization") || strings.Contains(name, "cookie") ||
+		strings.Contains(name, "secret") || strings.Contains(name, "credential") ||
+		strings.HasSuffix(name, "-key") || strings.HasSuffix(name, "-token")
 }
 
 type CompiledHeaderFilter struct {
@@ -93,6 +107,9 @@ func FilterHeaders(src http.Header, filter *CompiledHeaderFilter) http.Header {
 	filtered := make(http.Header, len(src))
 	for key, values := range src {
 		lower := strings.ToLower(key)
+		if privateHeader(lower) {
+			continue
+		}
 		if _, blocked := filter.forceRemove[lower]; blocked {
 			continue
 		}
@@ -104,6 +121,11 @@ func FilterHeaders(src http.Header, filter *CompiledHeaderFilter) http.Header {
 			continue
 		}
 		for _, value := range values {
+			// A header whose value needs redaction is optional metadata, not a
+			// safe channel for a partially rewritten upstream diagnostic.
+			if clientprivacy.Text(value) != value {
+				continue
+			}
 			filtered.Add(key, value)
 		}
 	}

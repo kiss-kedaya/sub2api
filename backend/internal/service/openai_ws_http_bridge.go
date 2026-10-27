@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -726,12 +727,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if clientDisconnected {
 			return nil
 		}
-		clientMessage := buildOpenAIWSHTTPBridgeFailedEvent(responseID, originalModel, bareErrorPayload, bareErrorMessage)
+		upstreamMessage := buildOpenAIWSHTTPBridgeFailedEvent(responseID, originalModel, bareErrorPayload, bareErrorMessage)
+		clientMessage := upstreamMessage
 		if IsUpstreamFinancialError(0, clientMessage) {
 			clientMessage = redactUpstreamFinancialEvent(clientMessage, "response.failed")
 		} else if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 			clientMessage = rewritten
 		}
+		clientMessage = clientprivacy.JSON(clientMessage)
 		messages := append(pendingClientMessages, clientMessage)
 		pendingClientMessages = nil
 		pendingClientMessageBytes = 0
@@ -745,7 +748,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			}
 			wroteDownstream = true
 		}
-		markOpenAIWSClientVisibleFailure(c, "response.failed", clientMessage)
+		markOpenAIWSClientVisibleFailure(c, "response.failed", upstreamMessage)
 		return nil
 	}
 	for scanner.Scan() {
@@ -902,6 +905,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			} else if rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient(clientMessage); changed {
 				clientMessage = rewritten
 			}
+			clientMessage = clientprivacy.JSON(clientMessage)
 		}
 		if !clientDisconnected && !suppressClientMessage {
 			stageBeforeSemanticOutput := turn == 1 && account.Platform == PlatformOpenAI && !wroteDownstream

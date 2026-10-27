@@ -2089,7 +2089,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
-	if v := resp.Header.Get("x-request-id"); v != "" {
+	if v := resp.Header.Get("x-request-id"); v != "" && sanitizeUpstreamErrorMessage(v) == v {
 		c.Header("x-request-id", v)
 	}
 
@@ -2751,7 +2751,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// chat.completion. Restore it before the client sees it.
 	body = repairChatCompletionMessageRole(body)
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
-		c.Data(resp.StatusCode, contentType, body)
+		c.Data(resp.StatusCode, contentType, sanitizeClientUpstreamErrorBody(resp.StatusCode, body))
 	}
 	return &openaiNonStreamingResultPassthrough{
 		OpenAIUsage:      usage,
@@ -2846,7 +2846,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		}
 	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
-		c.Data(resp.StatusCode, contentType, body)
+		c.Data(resp.StatusCode, contentType, sanitizeClientUpstreamErrorBody(resp.StatusCode, body))
 	}
 
 	return &openaiNonStreamingResultPassthrough{
@@ -2901,7 +2901,9 @@ func writeOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 		key := http.CanonicalHeaderKey(rawKey)
 		dst.Del(key)
 		for _, v := range vals {
-			dst.Add(key, v)
+			if sanitizeUpstreamErrorMessage(v) == v {
+				dst.Add(key, v)
+			}
 		}
 	}
 
@@ -2911,6 +2913,8 @@ func writeOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 	turnStateKey := http.CanonicalHeaderKey(openAICodexTurnStateHeader)
 	dst.Del(turnStateKey)
 	for _, v := range getCaseInsensitiveValues(src, openAICodexTurnStateHeader) {
+		// This is a protocol-defined opaque state token, not an error
+		// diagnostic. Rewriting it would corrupt the client's next turn.
 		dst.Add(turnStateKey, v)
 	}
 }

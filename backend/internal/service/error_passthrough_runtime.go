@@ -65,7 +65,7 @@ func applyErrorPassthroughRule(
 		status = *rule.ResponseCode
 	}
 
-	errMsg = ExtractUpstreamErrorMessage(responseBody)
+	errMsg = sanitizeUpstreamErrorMessage(ExtractUpstreamErrorMessage(responseBody))
 	if !rule.PassthroughBody && rule.CustomMessage != nil {
 		errMsg = *rule.CustomMessage
 	}
