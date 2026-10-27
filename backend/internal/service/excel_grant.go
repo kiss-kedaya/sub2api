@@ -75,7 +75,7 @@ func (s *ExcelGrantService) SaveConfig(ctx context.Context, id int64, config Exc
 		return nil, err
 	}
 	if !credentialGuardEligible(a) {
-		return nil, errors.New("Excel grants require an ordinary OpenAI OAuth account")
+		return nil, errors.New("excel grants require an ordinary OpenAI OAuth account")
 	}
 	if len(config.Models) > 100 {
 		return nil, errors.New("select at most 100 BPS models")
@@ -207,11 +207,11 @@ type excelGrantTokens struct {
 func validateExcelGrantTokens(a *Account, token *openai.TokenResponse) (excelGrantTokens, error) {
 	grant := excelGrantTokens{}
 	if token == nil || token.AccessToken == "" || token.RefreshToken == "" || token.IDToken == "" || token.ExpiresIn <= 0 {
-		return grant, errors.New("Excel token exchange returned incomplete credentials")
+		return grant, errors.New("excel token exchange returned incomplete credentials")
 	}
 	claims, err := openai.ParseIDToken(token.IDToken)
 	if err != nil {
-		return grant, errors.New("Excel identity token is invalid")
+		return grant, errors.New("excel identity token is invalid")
 	}
 	clientOK := false
 	for _, aud := range claims.Aud {

@@ -26,7 +26,7 @@ func (r *opsAutomationRepository) ListLocalPlans(ctx context.Context) ([]service
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []service.LocalReasoningPlan{}
 	for rows.Next() {
 		p, err := scanLocalPlan(rows)
@@ -51,7 +51,7 @@ func (r *opsAutomationRepository) SaveLocalPlan(ctx context.Context, p service.L
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if p.ID > 0 {
 		old, err := scanLocalPlan(tx.QueryRowContext(ctx, `SELECT `+localPlanColumns+` FROM local_reasoning_plans WHERE id=$1 FOR UPDATE`, p.ID))
 		if err != nil {
@@ -115,7 +115,7 @@ func (r *opsAutomationRepository) CompleteLocalPlan(ctx context.Context, p *serv
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var revision int64
 	var lease string
 	err = tx.QueryRowContext(ctx, `SELECT revision,lease FROM local_reasoning_plans WHERE id=$1 AND lease_until>NOW() FOR UPDATE`, p.ID).Scan(&revision, &lease)
@@ -251,7 +251,7 @@ func (r *opsAutomationRepository) LocalOwnership(ctx context.Context, id int64, 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var account, revision int64
 	if err = tx.QueryRowContext(ctx, `SELECT account_id,revision FROM local_reasoning_plans WHERE id=$1 FOR UPDATE`, id).Scan(&account, &revision); err != nil {
 		return nil, err

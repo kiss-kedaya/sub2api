@@ -32,7 +32,7 @@ func (s serverlessStore) Save(ctx context.Context, c serverless.Config, expected
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(784120299)`); err != nil {
 		return err
 	}

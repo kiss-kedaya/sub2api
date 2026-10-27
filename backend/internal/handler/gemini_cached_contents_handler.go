@@ -289,8 +289,11 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 		if err != nil {
 			reqLog.Info("gemini.cached_content.storage_charge_rejected", zap.Float64("amount", amount), zap.Error(err))
 			h.cleanupGeminiCachedContentUpstream(reqLog, account, upstream.Name)
-			h.submitGeminiCachedContentUsage(c, apiKey, account, subscription, pricingAt,
-				service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), 0, usageFields, body)
+			if usageErr := h.submitGeminiCachedContentUsage(c, apiKey, account, subscription, pricingAt,
+				service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), 0, usageFields, body); usageErr != nil {
+				googleError(c, http.StatusServiceUnavailable, "Cached content usage settlement is temporarily unavailable")
+				return
+			}
 			writeGeminiCachedContentBillingError(c, err)
 			return
 		}
@@ -892,18 +895,6 @@ func decodeGeminiCachedContentPageToken(raw string) (int64, bool) {
 		return 0, false
 	}
 	return id, true
-}
-
-// mergeAccountIDSets 返回两个账号 ID 集合的并集（不修改入参）。
-func mergeAccountIDSets(a, b map[int64]struct{}) map[int64]struct{} {
-	out := make(map[int64]struct{}, len(a)+len(b))
-	for id := range a {
-		out[id] = struct{}{}
-	}
-	for id := range b {
-		out[id] = struct{}{}
-	}
-	return out
 }
 
 // handleGeminiCachedContentFailoverExhausted 处理绑定缓存的请求在持有账号上重试耗尽：没有其他账号可换。

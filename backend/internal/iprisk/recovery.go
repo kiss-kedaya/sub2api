@@ -396,7 +396,7 @@ func (m *Manager) ReleaseAuditEntry(ctx context.Context, source, id, network, ve
 		return ErrAuditReadOnly
 	}
 	return m.auditRedis(ctx, func(budget context.Context) error {
-		keys := []string{}
+		var keys []string
 		raw := ""
 		expiryMS := int64(0)
 		deleteCount := 0

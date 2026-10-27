@@ -12,20 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func upstreamBalanceProbeWalletBody() io.ReadCloser {
-	return io.NopCloser(strings.NewReader(`{
-		"mode":"unrestricted",
-		"isValid":true,
-		"planName":"钱包余额",
-		"remaining":12.34,
-		"unit":"USD",
-		"balance":12.34,
-		"usage":{"today":{"requests":3,"cost":0.5},"total":{"requests":9,"cost":7.5}},
-		"daily_usage":[{"date":"2026-07-13","requests":3}],
-		"model_stats":[{"model":"gpt-5","requests":3}]
-	}`))
-}
-
 func upstreamBalanceProbeJSONResponse(status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,

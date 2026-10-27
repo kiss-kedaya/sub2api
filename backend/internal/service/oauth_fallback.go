@@ -12,7 +12,10 @@ func (s *OpsAutomationService) PreferQualifiedOAuth(group int64, model string, a
 	if s == nil || len(accounts) < 2 {
 		return accounts
 	}
-	cfg := s.config.Load().(OpsAutomationConfig)
+	cfg, configured := s.config.Load().(OpsAutomationConfig)
+	if !configured {
+		return accounts
+	}
 	v := cfg.OAuthFallback
 	if !v.Enabled || !containsAutomationID(v.GroupIDs, group) {
 		return accounts

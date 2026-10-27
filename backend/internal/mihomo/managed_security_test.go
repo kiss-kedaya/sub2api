@@ -3,11 +3,12 @@ package mihomo
 import (
 	"context"
 	"encoding/json"
-	"github.com/stretchr/testify/require"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestManagedExposureRejectsPublicAndBroadSources(t *testing.T) {
@@ -61,8 +62,11 @@ func TestManagedListenerRequiresAuthenticationAndPrivateSources(t *testing.T) {
 	require.Equal(t, "127.0.0.1:9098", cfg["external-controller"])
 	require.Equal(t, "127.0.0.1", cfg["bind-address"])
 	require.Contains(t, cfg["lan-allowed-ips"], "10.0.0.0/24")
-	for _, value := range cfg["listeners"].([]any) {
-		listener := value.(map[string]any)
+	listeners, ok := cfg["listeners"].([]any)
+	require.True(t, ok)
+	for _, value := range listeners {
+		listener, ok := value.(map[string]any)
+		require.True(t, ok)
 		if listener["name"] == "STATIC-fixture" {
 			require.Equal(t, "10.0.0.2", listener["listen"])
 			require.NotEmpty(t, listener["users"])

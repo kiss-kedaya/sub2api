@@ -180,7 +180,6 @@ func (r *cachedBillingRepo) expireLease(id int64) {
 type cachedBillingAccountRepo struct {
 	service.AccountRepository
 	accounts map[int64]*service.Account
-	ledger   *cachedContentLedger
 }
 
 func (r *cachedBillingAccountRepo) GetByID(_ context.Context, id int64) (*service.Account, error) {
@@ -314,6 +313,7 @@ type cachedBillingEnv struct {
 	repo     *cachedBillingRepo
 	upstream *cachedBillingUpstream
 	usage    *cachedBillingUsageRepo
+	ledger   *cachedContentLedger
 	apiKey   *service.APIKey
 	group    *service.Group
 	// accounts 是调度快照桩直接返回的账号对象，测试可改其凭据。

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 
@@ -90,16 +91,20 @@ func captureOpenAIWSHandshake(ctx context.Context, account int64, wsURL string) 
 	n := capture.BeginHandshake(account, route)
 	return func(status int, headers http.Header, err error) {
 		capture.AttemptResponse(n, status, headers, err)
+		var handshakeErr *openAIWSHandshakeError
+		if errors.As(err, &handshakeErr) && handshakeErr != nil {
+			captureOpenAIWSHandshakeBody(ctx, n, handshakeErr.Body, headers)
+		}
 		finishTiming(status, err)
 	}
 }
 
-func captureOpenAIWSHandshakeBody(ctx context.Context, body []byte, headers http.Header) {
+func captureOpenAIWSHandshakeBody(ctx context.Context, attempt int, body []byte, headers http.Header) {
 	capture := requestcapture.FromContext(ctx)
 	if capture == nil || len(body) == 0 {
 		return
 	}
-	st := capture.NewStream("upstream_response", capture.LastAttempt(), 0, headers.Get("Content-Type"), headers)
+	st := capture.NewStream("upstream_response", attempt, 0, headers.Get("Content-Type"), headers)
 	_, _ = st.Write(body)
 	_ = st.Close()
 }

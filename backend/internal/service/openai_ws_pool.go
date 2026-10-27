@@ -2095,7 +2095,9 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			return nil, err
 		}
 	}
+	finishCapture := captureOpenAIWSHandshake(ctx, req.Account.ID, req.WSURL)
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
+	finishCapture(status, handshakeHeaders, err)
 	if err != nil {
 		var handshakeErr *openAIWSHandshakeError
 		var responseBody []byte

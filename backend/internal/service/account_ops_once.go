@@ -93,35 +93,6 @@ type accountOpsThresholdRepository interface {
 	ThresholdEventEligible(context.Context, *AccountOpsEvent) (bool, error)
 }
 
-func (s *AccountOpsService) observeThreshold(ctx context.Context, a *Account, id int64, kind string, c AccountOpsConfig, now time.Time, invalid bool) error {
-	repo, ok := s.repo.(accountOpsThresholdRepository)
-	if !ok {
-		return nil
-	}
-	criteria, enabled, alert, recovery := opsCriteria(c, id, kind)
-	e := AccountOpsEvent{AccountID: id, Kind: kind, Criteria: criteria}
-	state := "unknown"
-	if invalid || !enabled {
-		state = "invalid"
-	} else if a != nil {
-		var assessed *AccountOpsEvent
-		assessed, state = s.assessThreshold(ctx, a, kind, c, now)
-		e.Identity = opsAccountIdentity(a)
-		e.AccountName = a.Name
-		if assessed != nil {
-			e = *assessed
-			e.Criteria = criteria
-		}
-		if state == "suppressed" {
-			state = "unknown"
-		}
-		if (kind == "balance_threshold" && a.Type != AccountTypeAPIKey) || (kind == "quota_threshold" && a.Type != AccountTypeOAuth) {
-			state = "invalid"
-		}
-	}
-	return repo.ObserveThreshold(ctx, e, state, now, alert, recovery)
-}
-
 // ThresholdCriteria exposes only an opaque criteria fingerprint for repository
 // invalidation; raw account credentials are never part of settings or public DTOs.
 func (c AccountOpsConfig) ThresholdCriteria(id int64, kind string) (string, bool, bool, bool) {

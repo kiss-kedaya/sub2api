@@ -158,6 +158,11 @@ func (c *grokLeaseBarrierConn) ReadFrame(ctx context.Context) (coderws.MessageTy
 	return coderws.MessageText, nil, ctx.Err()
 }
 
+func (c *grokLeaseBarrierConn) ReadMessage(ctx context.Context) ([]byte, error) {
+	_, payload, err := c.ReadFrame(ctx)
+	return payload, err
+}
+
 func TestAPIKeyAdmissionGrokRealtimeJoinsBeforeRelease(t *testing.T) {
 	ctx, cancel := WithAPIKeyAdmissionOwner(context.Background())
 	defer cancel()

@@ -593,17 +593,9 @@ func (s *ConcurrencyService) ReserveAPIKeySlotWithWait(ctx context.Context, apiK
 
 	revalidator := apiKeyQueueAuthRevalidatorFromContext(ctx)
 	keyLimit := maxConcurrency
-	if revalidator != nil {
-		limit, err := s.revalidateAPIKeyQueueAuth(ctx, revalidator)
-		if err != nil {
-			return nil, err
-		}
-		if limit == 0 {
-			// No queue is needed for a key that is now unlimited.
-			return s.trackAPIKeyReservation(ctx, apiKeyID), nil
-		}
-		keyLimit = limit
-	}
+	// maxConcurrency already comes from the bounded revalidation above, shared
+	// with the immediate path. Revalidate again at ENTER/POLL and before handoff,
+	// rather than reading the same snapshot twice before the first Redis call.
 
 	requestID := generateRequestID()
 	started := time.Now()

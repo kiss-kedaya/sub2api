@@ -28,7 +28,7 @@ func (r *opsAutomationRepository) SaveConfig(ctx context.Context, c service.OpsA
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('ops_automation_v1',0))`); err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func (r *opsAutomationRepository) RecordOutcome(ctx context.Context, e service.A
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var raw string
 	if err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=$1 FOR SHARE`, service.OpsAutomationSettingsKey).Scan(&raw); err != nil {
 		return err
@@ -140,7 +140,7 @@ func (r *opsAutomationRepository) RankingSignals(ctx context.Context, q service.
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[int64]service.AutomationRankSignal{}
 	for rows.Next() {
 		var id int64
@@ -157,7 +157,7 @@ func (r *opsAutomationRepository) RankingSignals(ctx context.Context, q service.
 	if err != nil {
 		return nil, err
 	}
-	defer quality.Close()
+	defer func() { _ = quality.Close() }()
 	for quality.Next() {
 		var id int64
 		var value sql.NullFloat64

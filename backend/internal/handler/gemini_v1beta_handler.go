@@ -551,7 +551,6 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	if boundCache != nil {
 		sessionKey = ""
-		sessionHash = ""
 	}
 
 	// 查询粘性会话绑定的账号 ID（用于检测账号切换）
