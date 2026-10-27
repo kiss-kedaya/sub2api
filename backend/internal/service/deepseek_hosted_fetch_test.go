@@ -391,13 +391,14 @@ func TestDeepSeekHostedFetchCancellationStopsNewWork(t *testing.T) {
 				upstream := &hostedSearchUpstream{modelResponses: [][]byte{
 					hostedSearchResponse("resp_canceled", 10, 2, hostedFetchCall("open_canceled", "https://example.com/page")),
 				}, fetchResponse: `{"content":"Successfully fetched before cancellation."}`}
-				if phase == "before_model" {
+				switch phase {
+				case "before_model":
 					cancel()
-				} else if phase == "before_fetch" {
+				case "before_fetch":
 					upstream.modelBody = func(_ int, response string) io.ReadCloser {
 						return &hostedSearchChunkReader{chunks: []string{response}, beforeTail: cancel}
 					}
-				} else {
+				default:
 					upstream.fetchContext = func(fetchCtx context.Context) {
 						require.NoError(t, fetchCtx.Err())
 						_, deadlineSet := fetchCtx.Deadline()
