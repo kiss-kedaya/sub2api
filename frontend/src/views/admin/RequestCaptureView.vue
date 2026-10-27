@@ -2,11 +2,12 @@
   <AppLayout>
     <div class="space-y-5">
       <form class="card flex flex-wrap items-end gap-4 p-4" @submit.prevent="saveConfig">
-        <label class="flex items-center gap-2"><input v-model="captureConfig.enabled" type="checkbox" />{{ t('admin.requestCapture.enabled') }}</label>
+        <label class="flex items-center gap-2"><input v-model="captureConfig.enabled" type="checkbox" :disabled="captureConfig.storage_ready === false" />{{ t('admin.requestCapture.enabled') }}</label>
         <label>MiB <input v-model.number="captureConfig.quota_mib" class="input w-28" type="number" min="1" required /></label>
         <label>{{ t('admin.requestCapture.retentionDays') }} <input v-model.number="captureConfig.retention_days" class="input w-24" type="number" min="1" max="30" required /></label>
         <button class="btn btn-primary" :disabled="busy">{{ t('common.save') }}</button>
       </form>
+      <p class="text-sm text-gray-500">{{ t('admin.requestCapture.instanceScope') }} <code v-if="captureConfig.instance_id">{{ captureConfig.instance_id }}</code><span v-else>{{ t('admin.requestCapture.storageNotConfigured') }}</span></p>
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div><h1 class="text-2xl font-semibold text-gray-900 dark:text-white">{{ t('admin.requestCapture.title') }}</h1><p class="mt-1 text-sm text-gray-500">{{ t('admin.requestCapture.description') }}</p></div>
         <button class="btn btn-secondary" :disabled="loading" @click="refresh">{{ t('admin.requestCapture.refresh') }}</button>
@@ -86,7 +87,7 @@ import zh from '@/i18n/locales/zh/admin/requestCapture'
 import en from '@/i18n/locales/en/admin/requestCapture'
 const { t } = useI18n({useScope:'local',messages:{zh:{admin:zh},en:{admin:en}},inheritLocale:true})
 const stepUp = useStepUp()
-const captureConfig=ref({enabled:false,quota_mib:1024,retention_days:7})
+const captureConfig=ref<api.CaptureConfig>({enabled:false,quota_mib:1024,retention_days:7})
 async function saveConfig(){ await action(async()=>{captureConfig.value=await api.saveConfig(captureConfig.value)}) }
 const kinds: CaptureTarget[] = ['user', 'account', 'group']
 const stages = ['client_request', 'upstream_request', 'upstream_response', 'client_response']

@@ -51,6 +51,9 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("symlink capture directory")
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}

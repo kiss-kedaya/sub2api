@@ -10,7 +10,22 @@ import (
 
 type managedProxyFixtureRepository struct {
 	ProxyRepository
-	row Proxy
+	row        Proxy
+	references int64
+	deleted    int
+	deleteErr  error
+}
+
+func (r *managedProxyFixtureRepository) CountAccountsByProxyID(context.Context, int64) (int64, error) {
+	return r.references, nil
+}
+
+func (r *managedProxyFixtureRepository) Delete(context.Context, int64) error {
+	if r.deleteErr != nil {
+		return r.deleteErr
+	}
+	r.deleted++
+	return nil
 }
 
 func (r *managedProxyFixtureRepository) Create(_ context.Context, p *Proxy) error {
@@ -73,4 +88,17 @@ func TestManagedProxyDecryptionFailureCannotBecomeOutboundCredential(t *testing.
 		require.Nil(t, read)
 		require.NotContains(t, err.Error(), "invalid")
 	}
+}
+
+func TestManagedProxyCannotDeleteRowWithoutReleasingListener(t *testing.T) {
+	store := &managedProxyFixtureRepository{row: Proxy{ID: 7, Username: "mh_fixture", Password: managedProxyCipherPrefix + "sealed:fixture"}}
+	repo := WrapEncryptedManagedProxyRepository(store, managedProxyFixtureEncryptor{})
+	err := repo.Delete(context.Background(), 7)
+	require.Error(t, err)
+	require.Zero(t, store.deleted)
+	require.NoError(t, repo.Delete(withManagedProxyDeletion(context.Background()), 7))
+	require.Equal(t, 1, store.deleted)
+	store.row = Proxy{ID: 8, Username: "ordinary", Password: "legacy"}
+	require.NoError(t, repo.Delete(context.Background(), 8))
+	require.Equal(t, 2, store.deleted)
 }

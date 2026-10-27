@@ -108,6 +108,7 @@
         <template #cell-actions="{ row }">
           <div class="flex flex-wrap gap-2">
             <button type="button" class="btn btn-primary btn-sm" :disabled="busy || !status?.running || row.state !== 'enabled'" @click="openStaticProxyDialog([row])">{{ text('添加为静态代理', 'Add as static proxy') }}</button>
+            <button v-if="row.static_proxy" type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="removeStaticProxy(row)">{{ text('移除静态代理', 'Remove static proxy') }}</button>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="!status?.installed || testingNodes.has(row.name)" :aria-busy="testingNodes.has(row.name)" @click="testNode(row)">{{ testingNodes.has(row.name) ? t('admin.proxies.testing') : t('admin.proxies.testConnection') }}</button>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="!status?.installed || qualityNodes.has(row.name)" :aria-busy="qualityNodes.has(row.name)" @click="checkNodeQuality(row)">{{ qualityNodes.has(row.name) ? t('admin.proxies.testing') : t('admin.proxies.qualityCheck') }}</button>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !status?.running" :title="text('经运行中的内核测速：失败则标记为检测失败，成功则恢复节点', 'Measures through the running kernel: failure marks the node failed, success recovers it')" @click="operate('probe/' + row.name)">{{ text('检测', 'Probe') }}</button>
@@ -349,6 +350,21 @@ async function addStaticProxies() {
   } catch (cause) {
     staticProxyError.value = causeMessage(cause, text('添加未完成，请重试；已创建的代理会自动复用。', 'Could not finish adding proxies. Retry to reuse any proxies already created.'))
     emit('static-proxies-added')
+  } finally {
+    pending.value = false
+    if (!disposed) await refresh()
+  }
+}
+async function removeStaticProxy(node: ManagedNode) {
+  if (pending.value || !window.confirm(text('确认释放此静态代理？仍被账号引用时将拒绝操作。', 'Remove this static proxy? The operation is rejected while accounts still use it.'))) return
+  pending.value = true
+  error.value = ''
+  try {
+    await apiClient.post('/admin/system/mihomo/nodes/static-proxies/remove', { names: [node.name] }, { timeout: 180000 })
+    emit('static-proxies-added')
+    appStore.showSuccess(text('静态代理已移除，对应监听已关闭。', 'Static proxy removed and its listener closed.'))
+  } catch (cause) {
+    error.value = causeMessage(cause, text('移除失败；请先取消账号对该代理的引用。', 'Removal failed; remove account references to this proxy first.'))
   } finally {
     pending.value = false
     if (!disposed) await refresh()

@@ -23,25 +23,29 @@ export interface CaptureStats {
   active_requests: number; admission_skipped: number; storage_error: boolean
 }
 const base = '/admin/request-captures'
+let selectedInstance = ''
+const instanceHeaders = () => selectedInstance ? { 'X-Capture-Instance': selectedInstance } : {}
 export async function listTasks(page = 1) {
-  return (await apiClient.get<{ items: CaptureTask[]; stats: CaptureStats; has_more: boolean }>(base, { params: { page, page_size: 20 } })).data
+  const data = (await apiClient.get<{ items: CaptureTask[]; stats: CaptureStats; has_more: boolean }>(base, { params: { page, page_size: 20 }, headers: instanceHeaders() })).data
+  if (!selectedInstance) selectedInstance = data.stats.instance_id
+  return data
 }
 export async function createTask(input: { target_type: CaptureTarget; target_id: number; duration_minutes: number; save_media: boolean }) {
-  return (await apiClient.post<CaptureTask>(base, input)).data
+  return (await apiClient.post<CaptureTask>(base, input, { headers: instanceHeaders() })).data
 }
-export async function stopTask(id: string) { await apiClient.post(base + '/' + id + '/stop') }
-export async function deleteTask(id: string) { await apiClient.delete(base + '/' + id) }
+export async function stopTask(id: string) { await apiClient.post(base + '/' + id + '/stop', undefined, { headers: instanceHeaders() }) }
+export async function deleteTask(id: string) { await apiClient.delete(base + '/' + id, { headers: instanceHeaders() }) }
 export async function listRecords(task: string, page: number, requestID: string, errorsOnly: boolean) {
-  return (await apiClient.get<{ items: CaptureRecord[]; has_more: boolean }>(base + '/' + task + '/requests', { params: { page, page_size: 20, request_id: requestID, errors_only: errorsOnly } })).data
+  return (await apiClient.get<{ items: CaptureRecord[]; has_more: boolean }>(base + '/' + task + '/requests', { params: { page, page_size: 20, request_id: requestID, errors_only: errorsOnly }, headers: instanceHeaders() })).data
 }
 export async function getRecord(task: string, record: string) {
-  return (await apiClient.get<CaptureRecord>(base + '/' + task + '/requests/' + record)).data
+  return (await apiClient.get<CaptureRecord>(base + '/' + task + '/requests/' + record, { headers: instanceHeaders() })).data
 }
 export async function getContent(task: string, record: string, part: string, offset: number) {
-  return (await apiClient.get<{ text: string; next_offset: number; has_more: boolean }>(base + '/' + task + '/requests/' + record + '/content/' + encodeURIComponent(part), { params: { offset } })).data
+  return (await apiClient.get<{ text: string; next_offset: number; has_more: boolean }>(base + '/' + task + '/requests/' + record + '/content/' + encodeURIComponent(part), { params: { offset }, headers: instanceHeaders() })).data
 }
 export async function authorizeSensitiveRead() {
-  await apiClient.get(base + '/sensitive-access')
+  await apiClient.get(base + '/sensitive-access', { headers: instanceHeaders() })
 }
 
 interface SaveHandle { createWritable(): Promise<WritableStream<Uint8Array>> }
@@ -58,7 +62,7 @@ export async function exportCapture(task: string, record?: string, authorize?: (
   const writable = await handle.createWritable()
   try {
     const path = base + '/' + task + (record ? '/requests/' + record : '') + '/export'
-    const { data } = await apiClient.get<ReadableStream<Uint8Array>>(path, { adapter: 'fetch', responseType: 'stream', timeout: 0 })
+    const { data } = await apiClient.get<ReadableStream<Uint8Array>>(path, { adapter: 'fetch', responseType: 'stream', timeout: 0, headers: instanceHeaders() })
     await data.pipeTo(writable)
   } catch (error) {
     try { await writable.abort(error) } catch { /* pipeTo may already have aborted the file */ }
@@ -66,6 +70,6 @@ export async function exportCapture(task: string, record?: string, authorize?: (
   }
 }
 
-export interface CaptureConfig {enabled:boolean;quota_mib:number;retention_days:number}
-export async function getConfig(){return (await apiClient.get<CaptureConfig>(base+'/config')).data}
-export async function saveConfig(input:CaptureConfig){return (await apiClient.put<CaptureConfig>(base+'/config',input)).data}
+export interface CaptureConfig {enabled:boolean;quota_mib:number;retention_days:number;instance_id?:string;storage_ready?:boolean}
+export async function getConfig(){const data=(await apiClient.get<CaptureConfig>(base+'/config')).data; selectedInstance=data.instance_id || ''; return data}
+export async function saveConfig(input:CaptureConfig){return (await apiClient.put<CaptureConfig>(base+'/config',input,{headers:instanceHeaders()})).data}

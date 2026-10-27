@@ -5,10 +5,17 @@ import (
 	"errors"
 	"strings"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
 
 const managedProxyCipherPrefix = "enc:managed:v1:"
+
+type managedProxyDeletionContextKey struct{}
+
+func withManagedProxyDeletion(ctx context.Context) context.Context {
+	return context.WithValue(ctx, managedProxyDeletionContextKey{}, true)
+}
 
 type encryptedManagedProxyRepository struct {
 	ProxyRepository
@@ -96,6 +103,18 @@ func (r *encryptedManagedProxyRepository) GetByID(ctx context.Context, id int64)
 		return nil, err
 	}
 	return p, nil
+}
+
+func (r *encryptedManagedProxyRepository) Delete(ctx context.Context, id int64) error {
+	p, err := r.ProxyRepository.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	allowed, _ := ctx.Value(managedProxyDeletionContextKey{}).(bool)
+	if p != nil && strings.HasPrefix(p.Username, "mh_") && strings.HasPrefix(p.Password, managedProxyCipherPrefix) && !allowed {
+		return infraerrors.Conflict("MANAGED_PROXY_RELEASE_REQUIRED", "Remove this static proxy from its managed node page so its listener can be closed safely")
+	}
+	return r.ProxyRepository.Delete(ctx, id)
 }
 func (r *encryptedManagedProxyRepository) decodeList(p []Proxy, err error) ([]Proxy, error) {
 	if err != nil {

@@ -63,7 +63,12 @@ func (h *RequestCaptureHandler) GetConfig(c *gin.Context) {
 		response.Error(c, 503, "Capture settings unavailable")
 		return
 	}
-	response.Success(c, v)
+	instance := ""
+	if h.Manager != nil {
+		instance = h.Manager.InstanceID()
+	}
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, gin.H{"enabled": v.Enabled, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": h.Manager != nil})
 }
 
 func (h *RequestCaptureHandler) UpdateConfig(c *gin.Context) {
@@ -73,19 +78,47 @@ func (h *RequestCaptureHandler) UpdateConfig(c *gin.Context) {
 		return
 	}
 	if v.Enabled && h.Manager == nil {
-		response.Error(c, 503, "Capture storage unavailable on this instance")
+		response.Error(c, 503, "Capture storage requires a unique stable SUB2API_CAPTURE_INSTANCE slot")
+		return
+	}
+	if h.Manager != nil && !h.requireInstance(c, true) {
 		return
 	}
 	if err := h.Settings.UpdateCaptureSettings(c.Request.Context(), v); err != nil {
 		response.BadRequest(c, "Unable to save capture settings")
 		return
 	}
-	response.Success(c, v)
+	instance := ""
+	if h.Manager != nil {
+		instance = h.Manager.InstanceID()
+	}
+	response.Success(c, gin.H{"enabled": v.Enabled, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": h.Manager != nil})
+}
+
+func (h *RequestCaptureHandler) requireInstance(c *gin.Context, required bool) bool {
+	if h.Manager == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Capture storage is not configured on this instance")
+		return false
+	}
+	actual := h.Manager.InstanceID()
+	c.Header("X-Capture-Instance", actual)
+	wanted := c.GetHeader("X-Capture-Instance")
+	if (required && wanted == "") || (wanted != "" && wanted != actual) {
+		response.Error(c, http.StatusConflict, "Capture request reached a different instance; use the selected instance's management route")
+		return false
+	}
+	return true
 }
 
 func (h *RequestCaptureHandler) Gate(c *gin.Context) {
 	if h.Manager == nil || !h.Manager.Config().Enabled {
 		response.Error(c, http.StatusNotFound, "Request capture is disabled")
+		c.Abort()
+		return
+	}
+	// Only the initial task list may discover an instance without a binding.
+	// Payload reads and all mutations must target the previously selected one.
+	if !h.requireInstance(c, c.Request.Method != http.MethodGet || c.Param("task") != "") {
 		c.Abort()
 		return
 	}

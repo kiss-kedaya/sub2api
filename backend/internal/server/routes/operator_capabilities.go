@@ -69,4 +69,5 @@ func registerMihomoRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	r.POST("/nodes/:name/test", v.TestMihomoNode)
 	r.POST("/nodes/:name/quality-check", v.CheckMihomoNodeQuality)
 	r.POST("/nodes/static-proxies", v.AddMihomoNodesAsStaticProxies)
+	r.POST("/nodes/static-proxies/remove", v.RemoveMihomoNodesAsStaticProxies)
 }

@@ -71,6 +71,7 @@ func runLocalQualitySample(ctx context.Context, tester *AccountTestService, id i
 	defer cancel()
 	w := &localQualityRecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
 	c, _ := gin.CreateTestContext(w)
+	c.Set(localQualityStrictKey, true)
 	c.Request = (&http.Request{Header: make(http.Header)}).WithContext(ctx)
 	if e := tester.TestAccountConnection(c, id, model, prompt, AccountTestModeDefault); e != nil || w.overflow || ctx.Err() != nil {
 		return nil, errors.New("quality sample incomplete")
@@ -86,7 +87,7 @@ func runLocalQualitySample(ctx context.Context, tester *AccountTestService, id i
 			complete = true
 		}
 	}
-	if !complete || message != "" {
+	if !complete || !c.GetBool(localQualityTerminalKey) || message != "" || strings.TrimSpace(text) == "" {
 		return nil, errors.New("quality sample incomplete")
 	}
 	return &ScheduledTestResult{Status: "success", ResponseText: text}, nil
@@ -149,7 +150,7 @@ func localJudgeCandidates(accounts []Account, tested, group int64, model string)
 	out := []Account{}
 	seen := map[int64]bool{}
 	for _, a := range accounts {
-		if a.ID == tested || seen[a.ID] || !a.IsSchedulable() || !a.IsModelSupportedInGroup(&group, model) {
+		if a.ID == tested || seen[a.ID] || !a.IsSchedulable() || !a.IsModelSupported(model) {
 			continue
 		}
 		seen[a.ID] = true

@@ -151,3 +151,23 @@ func (h *MihomoHandler) AddMihomoNodesAsStaticProxies(c *gin.Context) {
 	middleware.SetAuditAction(c, "admin.mihomo.static_proxies.import")
 	response.Success(c, gin.H{"created": summaries(result.Created), "existing": summaries(result.Existing), "failed": result.Failed})
 }
+
+func (h *MihomoHandler) RemoveMihomoNodesAsStaticProxies(c *gin.Context) {
+	if !h.guard(c) {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+	var req struct {
+		Names []string `json:"names" binding:"required,min=1,max=100"`
+	}
+	if c.ShouldBindJSON(&req) != nil {
+		response.BadRequest(c, "Select between 1 and 100 nodes")
+		return
+	}
+	removed, err := h.checker.RemoveMihomoNodeProxies(c.Request.Context(), h.kernel, req.Names)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	middleware.SetAuditAction(c, "admin.mihomo.static_proxies.remove")
+	response.Success(c, gin.H{"removed": removed})
+}

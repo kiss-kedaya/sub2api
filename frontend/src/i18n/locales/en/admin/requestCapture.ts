@@ -1,5 +1,7 @@
 export default { requestCapture: {
  retentionDays: 'Retention days',
+  instanceScope: 'Captures traffic on this instance only; pin management requests to this instance. Instance:',
+  storageNotConfigured: 'Stable capture slot not configured; capture cannot be enabled.',
   "title": "Request capture",
   "description": "Capture a user, upstream account or ingress group and retain only failed requests for traffic comparison.",
   "enabled": "Enable request capture",
