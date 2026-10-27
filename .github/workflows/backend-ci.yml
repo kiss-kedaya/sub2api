@@ -9,6 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  deepseek-native-replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Native DeepSeek reasoning replay and tenant isolation
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service -run '^TestDeepSeekNativeReasoningReplay' -count=1
+
   client-error-privacy:
     runs-on: ubuntu-latest
     steps:
