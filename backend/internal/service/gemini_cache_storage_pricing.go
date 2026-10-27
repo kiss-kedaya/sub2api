@@ -4,6 +4,7 @@ package service
 import (
 	"slices"
 	"strings"
+	"time"
 )
 
 // Gemini 显式上下文缓存存储的内置官方单价（USD / token / 小时，Standard 档）。
@@ -48,6 +49,10 @@ var geminiCacheStorageModelPrices = []struct {
 // Pro 系列取 geminiProCacheStoragePrice，Flash 与 Flash-Lite 系列取 geminiFlashCacheStoragePrice（标准价，
 // 不套用优惠价）。其他 Gemini 模型与非 Gemini 模型返回 0。
 func builtinGeminiCacheStoragePrice(model string) float64 {
+	return builtinGeminiCacheStoragePriceAt(model, time.Now())
+}
+
+func builtinGeminiCacheStoragePriceAt(model string, at time.Time) float64 {
 	name := lastSegment(strings.ToLower(strings.TrimSpace(model)))
 	if !strings.HasPrefix(name, "gemini-") {
 		return 0
@@ -60,6 +65,9 @@ func builtinGeminiCacheStoragePrice(model string) float64 {
 			continue
 		}
 		if name == entry.prefix || strings.HasPrefix(name, entry.prefix+"-") {
+			if entry.price == geminiFlashPromoCacheStoragePrice && !at.Before(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)) {
+				return geminiFlashCacheStoragePrice
+			}
 			return entry.price
 		}
 	}

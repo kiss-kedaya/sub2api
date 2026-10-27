@@ -5,6 +5,7 @@ package service
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -55,6 +56,15 @@ func TestBuiltinGeminiCacheStoragePrice(t *testing.T) {
 	} {
 		require.InDelta(t, tc.want, builtinGeminiCacheStoragePrice(tc.model), 1e-15, tc.model)
 	}
+}
+
+func TestGeminiCacheStoragePromotionHasAnExpiry(t *testing.T) {
+	end := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, model := range []string{"gemini-3.8-flash", "gemini-3.7-flash-preview", "gemini-3.6-flash"} {
+		require.Equal(t, geminiFlashPromoCacheStoragePrice, builtinGeminiCacheStoragePriceAt(model, end.Add(-time.Nanosecond)))
+		require.Equal(t, geminiFlashCacheStoragePrice, builtinGeminiCacheStoragePriceAt(model, end))
+	}
+	require.Equal(t, geminiFlashCacheStoragePrice, builtinGeminiCacheStoragePriceAt("gemini-3.8-flash-cyber", end.Add(-time.Second)))
 }
 
 func TestCacheStoragePricePerTokenHourPriority(t *testing.T) {

@@ -26,20 +26,30 @@ func NewGeminiCachedContentRepository(db *sql.DB) service.GeminiCachedContentRep
 }
 
 const geminiCachedContentColumns = `id, public_id, user_id, api_key_id, group_id, account_id, upstream_name, model,
- upstream_model, display_name, total_token_count, expire_time, channel_usage, created_at, updated_at`
+ upstream_model, display_name, total_token_count, expire_time, channel_usage, created_at, updated_at,
+ NOT billing_ready, charge_intent, charge_target_expire_time`
 
 func (r *geminiCachedContentRepository) Create(ctx context.Context, record *service.GeminiCachedContent) error {
 	channelUsage, err := json.Marshal(record.ChannelUsage)
 	if err != nil {
 		return err
 	}
+	var chargeIntent any
+	if record.ChargeIntent != nil {
+		payload, err := json.Marshal(record.ChargeIntent)
+		if err != nil {
+			return err
+		}
+		chargeIntent = payload
+	}
 	row := r.sql.QueryRowContext(ctx, `
 INSERT INTO gemini_cached_contents (public_id, user_id, api_key_id, group_id, account_id, upstream_name, model,
- upstream_model, display_name, total_token_count, expire_time, channel_usage)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ upstream_model, display_name, total_token_count, expire_time, channel_usage, billing_ready, charge_intent, charge_target_expire_time)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 RETURNING id, created_at, updated_at`,
 		record.PublicID, record.UserID, record.APIKeyID, record.GroupID, record.AccountID, record.UpstreamName,
-		record.Model, record.UpstreamModel, record.DisplayName, record.TotalTokenCount, record.ExpireTime, channelUsage)
+		record.Model, record.UpstreamModel, record.DisplayName, record.TotalTokenCount, record.ExpireTime, channelUsage,
+		!record.BillingPending, chargeIntent, record.ChargeTargetExpire)
 	if err := row.Scan(&record.ID, &record.CreatedAt, &record.UpdatedAt); err != nil {
 		return translatePersistenceError(err, nil, service.ErrGeminiCachedContentExists)
 	}
@@ -62,7 +72,7 @@ func (r *geminiCachedContentRepository) ListForOwner(ctx context.Context, apiKey
 	}
 	rows, err := r.sql.QueryContext(ctx, `SELECT `+geminiCachedContentColumns+`
  FROM gemini_cached_contents
- WHERE api_key_id = $1 AND group_id = $2 AND deleted_at IS NULL AND expire_time > $3 AND ($4 <= 0 OR id < $4)
+ WHERE api_key_id = $1 AND group_id = $2 AND deleted_at IS NULL AND billing_ready AND charge_intent IS NULL AND expire_time > $3 AND ($4 <= 0 OR id < $4)
  ORDER BY id DESC
  LIMIT $5`, apiKeyID, groupID, activeAt, beforeID, limit)
 	if err != nil {
@@ -83,7 +93,7 @@ func (r *geminiCachedContentRepository) ListForOwner(ctx context.Context, apiKey
 func (r *geminiCachedContentRepository) BeginMutation(ctx context.Context, id int64, baseline time.Time, token string, lease time.Duration) (bool, error) {
 	result, err := r.sql.ExecContext(ctx, `UPDATE gemini_cached_contents
  SET mutation_token = $2, mutation_lease_until = NOW() + make_interval(secs => $3::double precision)
- WHERE id = $1 AND deleted_at IS NULL AND mutation_token IS NULL AND expire_time = $4`,
+ WHERE id = $1 AND deleted_at IS NULL AND mutation_token IS NULL AND billing_ready AND charge_intent IS NULL AND expire_time = $4`,
 		id, token, lease.Seconds(), baseline)
 	if err != nil {
 		return false, err
@@ -123,7 +133,7 @@ func (r *geminiCachedContentRepository) TakeOverStaleMutation(ctx context.Contex
 func (r *geminiCachedContentRepository) CommitMutation(ctx context.Context, id int64, token string, expireTime time.Time) error {
 	result, err := r.sql.ExecContext(ctx, `UPDATE gemini_cached_contents
  SET expire_time = $3, updated_at = NOW(), mutation_token = NULL, mutation_lease_until = NULL
- WHERE id = $1 AND deleted_at IS NULL AND mutation_token = $2`, id, token, expireTime)
+ WHERE id = $1 AND deleted_at IS NULL AND mutation_token = $2 AND charge_intent IS NULL`, id, token, expireTime)
 	if err != nil {
 		return err
 	}
@@ -177,7 +187,7 @@ type geminiCachedContentScanner interface {
 
 func scanGeminiCachedContent(row geminiCachedContentScanner) (*service.GeminiCachedContent, error) {
 	var record service.GeminiCachedContent
-	var channelUsage []byte
+	var channelUsage, chargeIntent []byte
 	if err := row.Scan(
 		&record.ID,
 		&record.PublicID,
@@ -194,11 +204,19 @@ func scanGeminiCachedContent(row geminiCachedContentScanner) (*service.GeminiCac
 		&channelUsage,
 		&record.CreatedAt,
 		&record.UpdatedAt,
+		&record.BillingPending,
+		&chargeIntent,
+		&record.ChargeTargetExpire,
 	); err != nil {
 		return nil, err
 	}
 	if len(channelUsage) > 0 {
 		if err := json.Unmarshal(channelUsage, &record.ChannelUsage); err != nil {
+			return nil, err
+		}
+	}
+	if len(chargeIntent) > 0 && string(chargeIntent) != "null" {
+		if err := json.Unmarshal(chargeIntent, &record.ChargeIntent); err != nil {
 			return nil, err
 		}
 	}

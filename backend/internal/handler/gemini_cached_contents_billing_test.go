@@ -180,6 +180,7 @@ func (r *cachedBillingRepo) expireLease(id int64) {
 type cachedBillingAccountRepo struct {
 	service.AccountRepository
 	accounts map[int64]*service.Account
+	ledger   *cachedContentLedger
 }
 
 func (r *cachedBillingAccountRepo) GetByID(_ context.Context, id int64) (*service.Account, error) {
@@ -272,13 +273,22 @@ func (r *cachedBillingUserRepo) DeductBalance(context.Context, int64, float64) e
 
 type cachedBillingUsageRepo struct {
 	service.UsageLogRepository
-	mu   sync.Mutex
-	logs []*service.UsageLog
+	mu         sync.Mutex
+	logs       []*service.UsageLog
+	failWrites bool
 }
 
 func (r *cachedBillingUsageRepo) Create(_ context.Context, log *service.UsageLog) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failWrites {
+		return false, errors.New("usage storage unavailable")
+	}
+	for _, existing := range r.logs {
+		if existing.RequestID == log.RequestID && existing.APIKeyID == log.APIKeyID {
+			return false, nil
+		}
+	}
 	r.logs = append(r.logs, log)
 	return true, nil
 }
@@ -343,7 +353,8 @@ func newCachedBillingEnv(t *testing.T, balance float64, accountIDs ...int64) *ca
 	bcs := service.NewBillingCacheService(&cachedBillingReservationCache{balance: balance}, userRepo, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(bcs.Stop)
 	snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: scheduled}, nil, nil, nil, nil)
-	gw := service.NewGatewayService(nil, &fakeGroupRepo{group: group}, usage, nil, userRepo, nil, nil, nil, cfg, snapshot, nil,
+	ledger := &cachedContentLedger{}
+	gw := service.NewGatewayService(nil, &fakeGroupRepo{group: group}, usage, ledger, userRepo, nil, nil, nil, cfg, snapshot, nil,
 		billing, nil, &service.BillingCacheService{}, nil, nil, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	upstream := &cachedBillingUpstream{}
 	compat := service.NewGeminiMessagesCompatService(&cachedBillingAccountRepo{accounts: accounts}, nil, nil, nil, nil, nil, upstream, nil, cfg)
@@ -354,9 +365,10 @@ func newCachedBillingEnv(t *testing.T, balance float64, accountIDs ...int64) *ca
 		concurrencyHelper:          NewConcurrencyHelper(service.NewConcurrencyService(&fakeConcurrencyCache{}), SSEPingFormatNone, 0),
 		geminiCachedContentService: service.NewGeminiCachedContentService(repo, compat, cfg),
 	}
+	h.geminiCachedContentService.SetBillingGateway(gw)
 	apiKey := &service.APIKey{ID: 7, UserID: 3, GroupID: &groupID, Group: group, Status: service.StatusActive,
 		User: &service.User{ID: 3, Concurrency: 10, Balance: balance}}
-	return &cachedBillingEnv{h: h, repo: repo, upstream: upstream, usage: usage, apiKey: apiKey, group: group, accounts: accounts}
+	return &cachedBillingEnv{h: h, repo: repo, upstream: upstream, usage: usage, apiKey: apiKey, group: group, accounts: accounts, ledger: ledger}
 }
 
 // TestGeminiExplicitCacheExclusions_FiltersUnsupportedAccountsFromSnapshot 候选过滤直接按快照里的凭据判定：

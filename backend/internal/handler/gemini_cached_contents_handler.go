@@ -311,8 +311,15 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			ExpireTime:      expireTime,
 			ChannelUsage:    usageFields,
 		}
+		intent, prepareErr := h.prepareGeminiCachedContentCharge(c, apiKey, account, subscription, pricingAt,
+			service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), storageTokenHours, usageFields, body)
+		if prepareErr != nil {
+			h.cleanupGeminiCachedContentUpstream(reqLog, account, record.UpstreamName)
+			googleError(c, http.StatusServiceUnavailable, "Cached content billing could not be prepared")
+			return
+		}
 		persistCtx, cancelPersist := geminiCachedContentPersistContext(c)
-		err = svc.Save(persistCtx, record)
+		err = svc.SaveCharged(persistCtx, record, intent)
 		cancelPersist()
 		if err != nil {
 			reqLog.Error("gemini.cached_content.save_failed", zap.Int64("account_id", account.ID), zap.Error(err))
@@ -320,16 +327,15 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			googleError(c, http.StatusInternalServerError, "Failed to persist cached content")
 			return
 		}
-
-		if err := h.submitGeminiCachedContentUsage(c, apiKey, account, subscription, pricingAt,
-			service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), storageTokenHours, usageFields, body); err != nil {
-			h.cleanupGeminiCachedContentUpstream(reqLog, account, record.UpstreamName)
-			persistCtx, cancelPersist := geminiCachedContentPersistContext(c)
-			if forgetErr := svc.Forget(persistCtx, record); forgetErr != nil {
-				reqLog.Error("gemini.cached_content.unpaid_forget_failed", zap.Error(forgetErr))
-			}
-			cancelPersist()
-			googleError(c, http.StatusServiceUnavailable, "Cached content billing could not be confirmed")
+		// The resource and frozen charge are durable together. Once saved, failures
+		// leave it unavailable and recoverable; never delete a committed charge.
+		persistCtx, cancelPersist = geminiCachedContentPersistContext(c)
+		err = svc.SettleCharge(persistCtx, record)
+		cancelPersist()
+		if err != nil {
+			reqLog.Error("gemini.cached_content.charge_pending", zap.Error(err))
+			c.Header("Retry-After", "2")
+			googleError(c, http.StatusServiceUnavailable, "Cached content billing is pending confirmation")
 			return
 		}
 		c.JSON(http.StatusOK, service.GeminiCachedContentView(record))
@@ -521,30 +527,41 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		return
 	}
 	expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, svc.Now().Add(ttl))
-	persistCtx, cancelPersist := geminiCachedContentPersistContext(c)
-	err = svc.CommitMutation(persistCtx, mutation, expireTime)
-	cancelPersist()
-	if err != nil {
-		reqLog.Error("gemini.cached_content.commit_mutation_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-		if errors.Is(err, service.ErrGeminiCachedContentMutationConflict) {
-			writeGeminiCachedContentMutationConflict(c)
+	var intent *service.MediaBillingIntent
+	if extended := expireTime.Sub(mutation.Baseline()); extended > 0 {
+		intent, err = h.prepareGeminiCachedContentCharge(c, apiKey, account, subscription, pricingAt,
+			service.GeminiCachedContentPatchUsageRequestID(record.PublicID), record.Model, record.UpstreamModelID(), 0,
+			service.GeminiCachedContentStorageTokenHours(record.TotalTokenCount, extended), record.ChannelUsage, body)
+		if err != nil {
+			// Keep the mutation lease for the existing rollback worker.
+			googleError(c, http.StatusServiceUnavailable, "Cached content billing could not be prepared")
 			return
 		}
-		googleError(c, http.StatusInternalServerError, "Failed to persist cached content expiration")
+	}
+	persistCtx, cancelPersist := geminiCachedContentPersistContext(c)
+	if intent != nil {
+		err = svc.CommitChargedMutation(persistCtx, mutation, expireTime, intent)
+	} else {
+		err = svc.CommitMutation(persistCtx, mutation, expireTime)
+	}
+	cancelPersist()
+	if err != nil {
+		reqLog.Error("gemini.cached_content.commit_mutation_failed", zap.Error(err))
+		if errors.Is(err, service.ErrGeminiCachedContentMutationConflict) {
+			writeGeminiCachedContentMutationConflict(c)
+		} else {
+			googleError(c, http.StatusInternalServerError, "Failed to persist cached content expiration")
+		}
 		return
 	}
-	// 提交前库中的到期时间一直是修改前的值：按本次实际推进的时长收费。
-	if extended := expireTime.Sub(mutation.Baseline()); extended > 0 {
-		if err := h.submitGeminiCachedContentUsage(c, apiKey, account, subscription, pricingAt,
-			service.GeminiCachedContentPatchUsageRequestID(record.PublicID), record.Model, record.UpstreamModelID(), 0,
-			service.GeminiCachedContentStorageTokenHours(record.TotalTokenCount, extended), record.ChannelUsage, body); err != nil {
-			h.cleanupGeminiCachedContentUpstream(reqLog, account, record.UpstreamName)
-			persistCtx, cancelPersist := geminiCachedContentPersistContext(c)
-			if forgetErr := svc.Forget(persistCtx, record); forgetErr != nil {
-				reqLog.Error("gemini.cached_content.unpaid_forget_failed", zap.Error(forgetErr))
-			}
-			cancelPersist()
-			googleError(c, http.StatusServiceUnavailable, "Cached content billing could not be confirmed")
+	if intent != nil {
+		persistCtx, cancelPersist = geminiCachedContentPersistContext(c)
+		err = svc.SettleCharge(persistCtx, record)
+		cancelPersist()
+		if err != nil {
+			reqLog.Error("gemini.cached_content.charge_pending", zap.Error(err))
+			c.Header("Retry-After", "2")
+			googleError(c, http.StatusServiceUnavailable, "Cached content billing is pending confirmation")
 			return
 		}
 	}
@@ -757,6 +774,18 @@ func (h *GatewayHandler) submitGeminiCachedContentUsage(
 		).Error("gemini.cached_content.record_usage_failed", zap.Error(err))
 	}
 	return err
+}
+
+func (h *GatewayHandler) prepareGeminiCachedContentCharge(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, pricingAt time.Time, requestID, model, upstreamModel string, inputTokens int, storageTokenHours float64, usageFields service.ChannelUsageFields, payload []byte) (*service.MediaBillingIntent, error) {
+	ctx, cancel := geminiCachedContentPersistContext(c)
+	defer cancel()
+	return h.gatewayService.PrepareCachedContentCharge(ctx, &service.RecordUsageInput{
+		Result: &service.ForwardResult{RequestID: requestID, Model: model, UpstreamModel: upstreamModel, Usage: service.ClaudeUsage{InputTokens: inputTokens}, CacheStorageTokenHours: storageTokenHours},
+		APIKey: apiKey, User: apiKey.User, Account: account, Subscription: subscription, PricingAt: pricingAt,
+		InboundEndpoint: GetInboundEndpoint(c), UpstreamEndpoint: GetUpstreamEndpoint(c, account.Platform),
+		UserAgent: c.GetHeader("User-Agent"), IPAddress: ip.GetClientIP(c), RequestPayloadHash: service.HashUsageRequestPayload(payload),
+		APIKeyService: h.apiKeyService, QuotaPlatform: service.QuotaPlatform(c.Request.Context(), apiKey), ChannelUsageFields: usageFields,
+	})
 }
 
 // geminiCachedContentPersistContext 返回与客户端连接脱钩的落库 context：上游操作已生效时，客户端断开不应让本地记录缺失。
