@@ -142,9 +142,7 @@ func TestDeepSeekHostedSearchFirstHTTPErrorKeepsSingleJSON(t *testing.T) {
 				require.Error(t, err)
 				var failover *UpstreamFailoverError
 				require.False(t, errors.As(err, &failover), "a visible HTTP rejection cannot be replayed on another account")
-				require.NotNil(t, result)
-				require.Equal(t, OpenAIUsage{}, result.Usage)
-				require.Zero(t, result.SearchCount)
+				require.Nil(t, result, "a rejected first model turn has no billable usage or search result")
 				require.Equal(t, 1, upstream.modelCalls)
 				require.Empty(t, base.searchRequests)
 				require.Equal(t, status, recorder.Code)
