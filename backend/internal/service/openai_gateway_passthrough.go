@@ -2113,6 +2113,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiStreamingResultPassthrough, error) {
+	nativeReasoning := s.newDeepSeekNativeReasoningRecorder(c, account)
 	if account.IsCopilotSDKEnabled() && ctx != nil && resp.Body != nil {
 		stop := context.AfterFunc(ctx, func() { _ = resp.Body.Close() })
 		defer stop()
@@ -2307,6 +2308,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
+			nativeReasoning.ObserveFrame(frame)
 			rawEventType := frame.eventType
 			observer.ObserveOpenAIFrame(frame)
 			if refusalErr := grokModerationRefusalProtocolError(account, dataBytes); refusalErr != nil &&
@@ -2717,6 +2719,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if err != nil {
 		return nil, err
 	}
+	s.cacheDeepSeekNativeReasoningBody(c, account, body)
 	if upstreamFinancialFailureEnvelope(body) {
 		defer GuardUpstreamFinancialError(c, 0, body)()
 	}
