@@ -69,8 +69,28 @@ func TestLocalGroupQualityDetachesOnlyAfterAllModelsAndRestoresExactBinding(t *t
 func TestOAuthAdmissionCASCannotReleaseManuallyEditedAccount(t *testing.T) {
 	ctx := context.Background()
 	repo := &opsAutomationRepository{db: integrationDB}
-	a := mustCreateAccount(t, integrationEntClient, &service.Account{Name: "admission fixture", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: false, Concurrency: 3, Extra: map[string]any{service.OAuthAdmissionPauseKey: map[string]any{"token": "fixture-only", "model": "fixture"}}})
+	// The general fixture helper defaults false schedulable values to true.
+	// Create the paused account directly so migration 303's admission trigger
+	// sees the same marker and account version as a real admission candidate.
+	a, e := integrationEntClient.Account.Create().
+		SetName("admission fixture").
+		SetPlatform(service.PlatformOpenAI).
+		SetType(service.AccountTypeOAuth).
+		SetStatus(service.StatusActive).
+		SetSchedulable(false).
+		SetConcurrency(3).
+		SetPriority(50).
+		SetCredentials(map[string]any{}).
+		SetExtra(map[string]any{service.OAuthAdmissionPauseKey: map[string]any{"token": "fixture-only", "model": "fixture"}}).
+		Save(ctx)
+	require.NoError(t, e)
 	t.Cleanup(func() { _, _ = integrationDB.Exec(`DELETE FROM accounts WHERE id=$1`, a.ID) })
+	var leaseToken string
+	var versionMatches, sched bool
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT l.token,l.account_updated_at=a.updated_at,a.schedulable FROM oauth_admission_leases l JOIN accounts a ON a.id=l.account_id WHERE l.account_id=$1`, a.ID).Scan(&leaseToken, &versionMatches, &sched))
+	require.Equal(t, "fixture-only", leaseToken)
+	require.True(t, versionMatches, "the insert trigger must bind the lease to the current account version")
+	require.False(t, sched, "only paused accounts are admission candidates")
 	job, e := repo.ClaimOAuthAdmission(ctx)
 	require.NoError(t, e)
 	require.NotNil(t, job)
@@ -78,7 +98,6 @@ func TestOAuthAdmissionCASCannotReleaseManuallyEditedAccount(t *testing.T) {
 	_, e = integrationDB.Exec(`UPDATE accounts SET name='manual admission edit',updated_at=clock_timestamp() WHERE id=$1`, a.ID)
 	require.NoError(t, e)
 	require.NoError(t, repo.CompleteOAuthAdmission(ctx, job, "passed"))
-	var sched bool
 	require.NoError(t, integrationDB.QueryRow(`SELECT schedulable FROM accounts WHERE id=$1`, a.ID).Scan(&sched))
 	require.False(t, sched)
 }

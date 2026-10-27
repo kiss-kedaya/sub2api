@@ -9,6 +9,20 @@ permissions:
   contents: read
 
 jobs:
+  operator-storage-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Operator lease and credential state PostgreSQL regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=integration ./internal/repository -run '^Test(CredentialGuardRepository|OAuthAdmissionCAS)' -count=1
+
   deepseek-native-replay:
     runs-on: ubuntu-latest
     steps:

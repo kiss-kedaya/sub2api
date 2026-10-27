@@ -82,3 +82,61 @@ func TestCredentialGuardRepositoryClaimsBudgetAndCAS(t *testing.T) {
 	require.True(t, stored.Blocked)
 	require.Equal(t, "security_verification_required", stored.Code)
 }
+
+func TestCredentialGuardRepositoryCompletionKeepsAuditOutcomeAtomic(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		state        string
+		code         string
+		httpStatus   int
+		blocked      bool
+		wantFailures int
+	}{
+		{name: "healthy resets failures", state: "healthy", code: "probe_ok", httpStatus: 200},
+		{name: "blocked preserves failures", state: "manual_required", code: "security_verification_required", httpStatus: 403, blocked: true, wantFailures: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r, id := credentialGuardDatabaseFixture(t)
+			ctx := context.Background()
+			cfg := service.DefaultCredentialGuardConfig()
+			cfg.Enabled = true
+			row := &service.CredentialGuardRecord{AccountID: id, Config: cfg, Revision: uuid.NewString()}
+			require.NoError(t, r.Save(ctx, row, "", false))
+			claim, err := r.Claim(ctx, id)
+			require.NoError(t, err)
+			require.NotNil(t, claim)
+			reserved, err := r.ReserveRelogin(ctx, claim)
+			require.NoError(t, err)
+			require.True(t, reserved)
+
+			result := service.CredentialGuardCompletion{State: test.state, Code: test.code, HTTPStatus: test.httpStatus, Blocked: test.blocked, Next: time.Now().Add(time.Hour)}
+			require.NoError(t, r.Complete(ctx, claim, result))
+			stored, err := r.Get(ctx, id)
+			require.NoError(t, err)
+			require.NotNil(t, stored)
+			require.Equal(t, test.state, stored.State)
+			require.Equal(t, test.code, stored.Code)
+			require.Equal(t, test.httpStatus, stored.HTTPStatus)
+			require.Equal(t, test.blocked, stored.Blocked)
+			require.Equal(t, test.wantFailures, stored.Failures)
+			require.Empty(t, stored.Lease)
+
+			var eventState, eventCode string
+			var eventStatus int
+			require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT state,code,http_status FROM credential_guard_events WHERE account_id=$1`, id).Scan(&eventState, &eventCode, &eventStatus))
+			require.Equal(t, stored.State, eventState)
+			require.Equal(t, stored.Code, eventCode)
+			require.Equal(t, stored.HTTPStatus, eventStatus)
+
+			// Reusing the completed claim must neither overwrite its outcome nor
+			// append a second event, even when the stale result says healthy.
+			require.NoError(t, r.Complete(ctx, claim, service.CredentialGuardCompletion{State: "healthy", Code: "stale_success", HTTPStatus: 200, Next: time.Now()}))
+			var eventCount int
+			require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM credential_guard_events WHERE account_id=$1`, id).Scan(&eventCount))
+			require.Equal(t, 1, eventCount)
+			stored, err = r.Get(ctx, id)
+			require.NoError(t, err)
+			require.Equal(t, test.code, stored.Code)
+		})
+	}
+}

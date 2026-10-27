@@ -89,7 +89,19 @@ func (r *credentialGuardRepository) ReserveRelogin(ctx context.Context, row *ser
 	return n == 1, err
 }
 func (r *credentialGuardRepository) Complete(ctx context.Context, row *service.CredentialGuardRecord, result service.CredentialGuardCompletion) error {
-	_, err := r.db.ExecContext(ctx, `WITH completed AS (UPDATE credential_guard_accounts SET state=$4,code=$5,http_status=$6,blocked=$7,failures=CASE WHEN $4='healthy' THEN 0 ELSE failures END,last_checked_at=NOW(),next_check_at=$8,lease='',lease_until=NULL,updated_at=NOW() WHERE account_id=$1 AND revision=$2 AND lease=$3 RETURNING account_id) INSERT INTO credential_guard_events(account_id,state,code,http_status) SELECT account_id,$4,$5,$6 FROM completed`, row.AccountID, row.Revision, row.Lease, result.State, result.Code, result.HTTPStatus, result.Blocked, result.Next)
+	// Bind repeated state comparisons as text instead of allowing PostgreSQL to
+	// infer both varchar (the column assignment) and text (the CASE expression).
+	// The event is projected from the CAS result, so it records exactly the
+	// committed outcome and a stale completion cannot create an orphan event.
+	_, err := r.db.ExecContext(ctx, `WITH completed AS (
+		UPDATE credential_guard_accounts SET
+			state=$4::text,code=$5::text,http_status=$6,blocked=$7,
+			failures=CASE WHEN $4::text='healthy' THEN 0 ELSE failures END,
+			last_checked_at=NOW(),next_check_at=$8,lease='',lease_until=NULL,updated_at=NOW()
+		WHERE account_id=$1 AND revision=$2 AND lease=$3
+		RETURNING account_id,state,code,http_status
+	) INSERT INTO credential_guard_events(account_id,state,code,http_status)
+	SELECT account_id,state,code,http_status FROM completed`, row.AccountID, row.Revision, row.Lease, result.State, result.Code, result.HTTPStatus, result.Blocked, result.Next)
 	return err
 }
 func (r *credentialGuardRepository) PersistCredentials(ctx context.Context, row *service.CredentialGuardRecord, a *service.Account, credentials map[string]any) (bool, error) {
