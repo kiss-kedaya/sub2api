@@ -251,7 +251,8 @@ func deepSeekSearchGroupEnabled(c *gin.Context, account *Account) (*Group, bool)
 func (s *OpenAIGatewayService) applyDeepSeekSearchResults(
 	c *gin.Context, account *Account, group *Group, body []byte,
 ) ([]byte, bool) {
-	if len(body) == 0 || account == nil {
+	if len(body) == 0 || account == nil ||
+		(c != nil && c.Request != nil && c.Request.Context().Value(deepSeekHostedSearchSkipContextKey{}) == true) {
 		return body, false
 	}
 	calls := collectDeepSeekSearchCalls(body)
