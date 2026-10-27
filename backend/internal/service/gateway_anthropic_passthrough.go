@@ -654,13 +654,13 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					return errorEventTooLarge()
 				}
 				pendingErrorBytes += len(line) + 1
-				pendingErrorLines.WriteString(line)
-				pendingErrorLines.WriteByte('\n')
+				_, _ = pendingErrorLines.WriteString(line)
+				_ = pendingErrorLines.WriteByte('\n')
 				if data, ok := extractAnthropicSSEDataLine(line); ok {
 					if pendingErrorDataLines > 0 {
-						pendingErrorData.WriteByte('\n')
+						_ = pendingErrorData.WriteByte('\n')
 					}
-					pendingErrorData.WriteString(data)
+					_, _ = pendingErrorData.WriteString(data)
 					pendingErrorDataLines++
 				}
 				continue
