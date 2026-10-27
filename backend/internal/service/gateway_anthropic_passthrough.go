@@ -33,6 +33,10 @@ type anthropicPassthroughForwardInput struct {
 	StartTime     time.Time
 }
 
+// Error diagnostics must not grow to the normal model-content response limit.
+// Only terminal error events use this cap; ordinary output keeps its own limit.
+const anthropicPassthroughMaxErrorEventBytes = 1 << 20
+
 func (s *GatewayService) forwardAnthropicAPIKeyPassthrough(
 	ctx context.Context,
 	c *gin.Context,
@@ -448,9 +452,24 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	clientDisconnected := false
 	sawTerminalEvent := false
 	pendingErrorHeader := ""
-	var pendingErrorLines []string
-	var pendingErrorData []string
+	var pendingErrorLines strings.Builder
+	var pendingErrorData strings.Builder
+	pendingErrorDataLines := 0
+	pendingErrorBytes := 0
+	errorEventTooLarge := func() (*streamingResult, error) {
+		const message = "upstream error event exceeds size limit"
+		setOpsUpstreamError(c, http.StatusBadGateway, message, "")
+		MarkOpsStreamFailure(c, "upstream_error", "", message, http.StatusBadGateway)
+		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, &AnthropicPassthroughStreamError{
+			StatusCode: http.StatusBadGateway,
+			ErrorType:  "upstream_error",
+			Message:    message,
+		}
+	}
 	finishStreamError := func(payload, wire string) (*streamingResult, error) {
+		if len(wire) > anthropicPassthroughMaxErrorEventBytes {
+			return errorEventTooLarge()
+		}
 		status, errorType, message := anthropicStreamErrorSemantics(payload)
 		setOpsUpstreamError(c, status, message, "")
 		MarkOpsStreamFailure(c, errorType, "", message, status)
@@ -476,13 +495,13 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	}
 	finishPendingError := func() (*streamingResult, error) {
 		wire := pendingErrorHeader + "\n"
-		if len(pendingErrorLines) > 0 {
-			wire += strings.Join(pendingErrorLines, "\n") + "\n"
+		if pendingErrorLines.Len() > 0 {
+			wire += pendingErrorLines.String()
 		}
-		return finishStreamError(strings.Join(pendingErrorData, "\n"), wire+"\n")
+		return finishStreamError(pendingErrorData.String(), wire+"\n")
 	}
 
-	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
+	scanner := bufio.NewScanner(newUpstreamErrorFrameReaderWithErrorLimit(resp.Body, resolveUpstreamResponseReadLimit(s.cfg), anthropicPassthroughMaxErrorEventBytes))
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -586,6 +605,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 			}
 			if ev.err != nil {
+				if errors.Is(ev.err, errUpstreamErrorFrameTooLarge) {
+					return errorEventTooLarge()
+				}
 				if pendingErrorHeader != "" {
 					// An upstream error event remains a failure even if the socket
 					// then ends with unexpected EOF instead of a final blank line.
@@ -611,6 +633,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			if eventName, ok := strings.CutPrefix(strings.TrimSpace(line), "event:"); ok && strings.TrimSpace(eventName) == "error" {
 				if pendingErrorHeader == "" {
 					pendingErrorHeader = line
+					pendingErrorBytes = len(line) + 2 // header newline plus final event boundary
 					continue
 				}
 			}
@@ -627,12 +650,18 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				if line == "" {
 					return finishPendingError()
 				}
-				pendingErrorLines = append(pendingErrorLines, line)
+				if len(line)+1 > anthropicPassthroughMaxErrorEventBytes-pendingErrorBytes {
+					return errorEventTooLarge()
+				}
+				pendingErrorBytes += len(line) + 1
+				pendingErrorLines.WriteString(line)
+				pendingErrorLines.WriteByte('\n')
 				if data, ok := extractAnthropicSSEDataLine(line); ok {
-					pendingErrorData = append(pendingErrorData, data)
-					if json.Valid([]byte(strings.Join(pendingErrorData, "\n"))) {
-						return finishPendingError()
+					if pendingErrorDataLines > 0 {
+						pendingErrorData.WriteByte('\n')
 					}
+					pendingErrorData.WriteString(data)
+					pendingErrorDataLines++
 				}
 				continue
 			}
