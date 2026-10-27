@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,8 +17,16 @@ import (
 )
 
 const deepSeekNativeReasoningScopeKey = "deepseek_native_reasoning_scope_v1"
+const deepSeekNativeReasoningSourceKey = "deepseek_native_reasoning_source_v1"
 const deepSeekNativeReasoningMaxBytes = 2 << 20
 const deepSeekNativeReasoningMaxItems = 128
+
+type deepSeekNativeReasoningSource struct {
+	keyID        int64
+	model        string
+	conversation string
+	explicit     bool
+}
 
 // DeepSeek requires the full reasoning_text of historical assistant turns when
 // tools are enabled. Responses clients such as Codex retain summary/encrypted
@@ -27,33 +36,54 @@ const deepSeekNativeReasoningMaxItems = 128
 // older unscoped Chat fallback cache and never substitute a summary for CoT.
 func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Context, account *Account, body []byte) []byte {
 	if s == nil || s.cache == nil || c == nil || account == nil || account.Platform != PlatformDeepseek || !account.UsesNativeCNResponses() {
+		if c != nil {
+			c.Set(deepSeekNativeReasoningScopeKey, nil)
+			c.Set(deepSeekNativeReasoningSourceKey, nil)
+		}
 		return body
 	}
 	keyID := getAPIKeyIDFromContext(c)
 	if keyID <= 0 {
+		c.Set(deepSeekNativeReasoningScopeKey, nil)
+		c.Set(deepSeekNativeReasoningSourceKey, nil)
 		return body
 	}
-	scope, _ := c.Get(deepSeekNativeReasoningScopeKey)
-	if scope == nil {
-		conversation, _ := resolveOpenAIWSExecutionScope(c, body, keyID)
-		if conversation == "" {
-			conversation = deriveOpenAIContentSessionSeed(body)
+	// A WebSocket may reuse its gin context for many turns. Always derive the
+	// current identity again; a prior turn's cached scope is not authorization.
+	conversation, _ := resolveOpenAIWSExecutionScope(c, body, keyID)
+	source := deepSeekNativeReasoningSource{keyID: keyID, model: gjson.GetBytes(body, "model").String(), conversation: conversation, explicit: conversation != ""}
+	if conversation == "" {
+		source.conversation = deriveOpenAIAnchoredContentSessionSeed(body)
+		// Internal hosted-tool recursion changes tool declarations. Keep its
+		// original anonymous conversation identity only inside that trusted
+		// request context, after rechecking key/model and absence of an explicit
+		// identity. Public headers/body cannot set this private context marker.
+		previous, _ := c.Get(deepSeekNativeReasoningSourceKey)
+		if old, ok := previous.(deepSeekNativeReasoningSource); ok && c.Request != nil &&
+			c.Request.Context().Value(deepSeekHostedSearchSkipContextKey{}) == true &&
+			!old.explicit && old.keyID == source.keyID && old.model == source.model {
+			source.conversation = old.conversation
 		}
-		if conversation == "" {
-			return body
-		}
-		scope = deepSeekNativeReasoningDigest(fmt.Sprintf("%d\x00%s\x00%s", keyID, conversation, gjson.GetBytes(body, "model").String()))
-		c.Set(deepSeekNativeReasoningScopeKey, scope)
 	}
-	scopeString, _ := scope.(string)
-	if scopeString == "" || !gjson.GetBytes(body, "input").IsArray() {
+	if source.conversation == "" {
+		c.Set(deepSeekNativeReasoningScopeKey, nil)
+		c.Set(deepSeekNativeReasoningSourceKey, nil)
+		return body
+	}
+	scopeString := deepSeekNativeReasoningDigest(fmt.Sprintf("%d\x00%s\x00%s", source.keyID, source.conversation, source.model))
+	c.Set(deepSeekNativeReasoningScopeKey, scopeString)
+	c.Set(deepSeekNativeReasoningSourceKey, source)
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
 		return body
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	next := body
+	items := input.Array()
+	replacements := make(map[int][]byte)
+	addedBytes := 0
 	lookups := 0
-	for i, item := range gjson.GetBytes(body, "input").Array() {
+	for i, item := range items {
 		if item.Get("type").String() != "reasoning" || item.Get("id").String() == "" || hasDeepSeekNativeReasoningText(item.Get("content")) {
 			continue
 		}
@@ -75,14 +105,50 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		if json.Unmarshal([]byte(cached), &entry) != nil || !hasDeepSeekNativeReasoningText(gjson.ParseBytes(entry.Content)) {
 			continue
 		}
-		if encrypted := item.Get("encrypted_content").String(); encrypted != "" && entry.EncryptedDigest != "" && deepSeekNativeReasoningDigest(encrypted) != entry.EncryptedDigest {
+		encryptedDigest := ""
+		if encrypted := item.Get("encrypted_content").String(); encrypted != "" {
+			encryptedDigest = deepSeekNativeReasoningDigest(encrypted)
+		}
+		// Absence is part of the binding too: dropping the opaque value must
+		// not turn an encrypted item into an unbound item-id lookup.
+		if encryptedDigest != entry.EncryptedDigest {
 			continue
 		}
-		if updated, err := sjson.SetRawBytes(next, fmt.Sprintf("input.%d.content", i), entry.Content); err == nil {
-			next = updated
+		if len(entry.Content) > deepSeekNativeReasoningMaxBytes-addedBytes {
+			break
+		}
+		if updated, err := sjson.SetRawBytes([]byte(item.Raw), "content", entry.Content); err == nil {
+			added := max(len(entry.Content), len(updated)-len(item.Raw))
+			if added > deepSeekNativeReasoningMaxBytes-addedBytes {
+				break
+			}
+			replacements[i] = updated
+			addedBytes += added
 		}
 	}
-	return next
+	if len(replacements) == 0 {
+		return body
+	}
+	// Rebuild the input and request once. Rewriting the entire growing request
+	// once per restored item would multiply both allocations and copy time.
+	var restored bytes.Buffer
+	restored.Grow(len(input.Raw) + addedBytes)
+	restored.WriteByte('[')
+	for i, item := range items {
+		if i > 0 {
+			restored.WriteByte(',')
+		}
+		if replacement, ok := replacements[i]; ok {
+			restored.Write(replacement)
+		} else {
+			restored.WriteString(item.Raw)
+		}
+	}
+	restored.WriteByte(']')
+	if next, err := sjson.SetRawBytes(body, "input", restored.Bytes()); err == nil {
+		return next
+	}
+	return body
 }
 
 func deepSeekNativeReasoningDigest(value string) string {
@@ -136,7 +202,9 @@ func (s *OpenAIGatewayService) newDeepSeekNativeReasoningRecorder(c *gin.Context
 	}
 	value, _ := c.Get(deepSeekNativeReasoningScopeKey)
 	scope, _ := value.(string)
-	if scope == "" {
+	identity, _ := c.Get(deepSeekNativeReasoningSourceKey)
+	source, ok := identity.(deepSeekNativeReasoningSource)
+	if scope == "" || !ok || source.keyID != getAPIKeyIDFromContext(c) {
 		return nil
 	}
 	return &deepSeekNativeReasoningRecorder{s: s, scope: scope, items: make(map[int]*deepSeekNativeReasoningItem)}
