@@ -393,6 +393,7 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 		ImageSizeSource:               result.ImageSizeSource,
 		ImageSizeBreakdown:            result.ImageSizeBreakdown,
 		SearchCount:                   result.SearchCount,
+		FixedToolBilling:              result.FixedToolBilling,
 		AudioUsage:                    result.AudioUsage,
 	}
 }

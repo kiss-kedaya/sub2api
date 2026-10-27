@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -123,6 +124,48 @@ func TestGatewayForwardErrorAlreadyCommunicated(t *testing.T) {
 		reported := gatewayForwardErrorAlreadyCommunicated(c, before, errors.New("stream read error: unexpected EOF"))
 
 		require.False(t, reported)
+	})
+
+	t.Run("complete upstream error event must not append generic 502", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, EndpointMessages, nil)
+		c.Header("Content-Type", "text/event-stream")
+		before := c.Writer.Size()
+		const frame = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"relay_stream_error\",\"status_code\":500,\"message\":\"upstream interrupted\"}}\n\n"
+		_, _ = c.Writer.WriteString(frame)
+		c.Writer.Flush()
+		err := fmt.Errorf("forward failed: %w", &service.AnthropicPassthroughStreamError{
+			StatusCode: 500, ErrorType: "relay_stream_error", ResponseWritten: true,
+		})
+		reported := gatewayForwardErrorAlreadyCommunicated(c, before, err)
+		if !reported {
+			(&GatewayHandler{}).ensureForwardErrorResponse(c, true)
+		}
+		require.True(t, reported)
+		require.Equal(t, frame, w.Body.String())
+		require.NotContains(t, w.Body.String(), "Upstream request failed")
+	})
+
+	t.Run("failed terminal write still needs fallback", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, EndpointMessages, nil)
+		c.Header("Content-Type", "text/event-stream")
+		before := c.Writer.Size()
+		_, _ = c.Writer.WriteString(":\n\n")
+		require.False(t, gatewayForwardErrorAlreadyCommunicated(c, before, &service.AnthropicPassthroughStreamError{
+			StatusCode: 500, ErrorType: "relay_stream_error", ResponseWritten: false,
+		}))
+	})
+
+	t.Run("terminal marker without output still needs fallback", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, EndpointMessages, nil)
+		require.False(t, gatewayForwardErrorAlreadyCommunicated(c, c.Writer.Size(), &service.AnthropicPassthroughStreamError{
+			StatusCode: 500, ErrorType: "relay_stream_error", ResponseWritten: true,
+		}))
 	})
 
 	t.Run("no write still needs fallback", func(t *testing.T) {

@@ -159,11 +159,12 @@ func (s *OpenAIGatewayService) forwardDeepSeekTools(
 		return nil, nil
 	}
 	return &OpenAIForwardResult{
-		RequestID:       strings.TrimSpace(resp.Header.Get("x-request-id")),
-		UpstreamHeaders: resp.Header,
-		Model:           modelLabel,
-		Duration:        time.Since(upstreamStart),
-		WebSearchCalls:  1,
+		RequestID:        strings.TrimSpace(resp.Header.Get("x-request-id")),
+		UpstreamHeaders:  resp.Header,
+		Model:            modelLabel,
+		Duration:         time.Since(upstreamStart),
+		WebSearchCalls:   1,
+		FixedToolBilling: true,
 	}, nil
 }
 

@@ -2306,6 +2306,10 @@ func gatewayForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForw
 	if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
 		return false
 	}
+	var streamErr *service.AnthropicPassthroughStreamError
+	if errors.As(err, &streamErr) && streamErr.ResponseWritten {
+		return true
+	}
 
 	contentType := strings.ToLower(strings.TrimSpace(c.Writer.Header().Get("Content-Type")))
 	if contentType == "" {
