@@ -151,6 +151,14 @@ func (w trafficPartialWriter) Write(p []byte) (int, error) {
 	return 2, errors.New("disconnected")
 }
 
+type trafficFlushErrorWriter struct {
+	gin.ResponseWriter
+	err error
+}
+
+func (w *trafficFlushErrorWriter) FlushError() error { return w.err }
+func (w *trafficFlushErrorWriter) Flush()            { _ = w.FlushError() }
+
 func TestTrafficCountsPartialWritesAndFlushErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := &trafficTestRecorder{}
@@ -161,11 +169,14 @@ func TestTrafficCountsPartialWritesAndFlushErrors(t *testing.T) {
 	require.Len(t, recorder.events, 1)
 	require.EqualValues(t, 2, recorder.events[0].DownloadBytes)
 	require.Equal(t, "write_error", recorder.events[0].Outcome)
-	flushRecorder := &timingFlushErrorRecorder{ResponseRecorder: httptest.NewRecorder(), err: errors.New("flush failed")}
 	r = gin.New()
-	r.Use(UserTraffic(recorder), trafficTestAuth)
+	r.Use(func(c *gin.Context) {
+		c.Writer = &trafficFlushErrorWriter{ResponseWriter: c.Writer, err: errors.New("flush failed")}
+		c.Next()
+	}, UserTraffic(recorder), trafficTestAuth)
 	r.POST("/v1/messages", func(c *gin.Context) { c.Writer.Flush() })
-	r.ServeHTTP(flushRecorder, httptest.NewRequest("POST", "/v1/messages", nil))
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/v1/messages", nil))
+	require.Len(t, recorder.events, 2)
 	require.Equal(t, "write_error", recorder.events[1].Outcome)
 }
 
