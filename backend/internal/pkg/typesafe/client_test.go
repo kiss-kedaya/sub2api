@@ -12,6 +12,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSystemOneEndpointAcceptsOriginAndVersionedBases(t *testing.T) {
+	for _, tc := range []struct{ base, path string }{
+		{"https://example.com", "/v1/systemone"},
+		{"https://example.com/", "/v1/systemone"},
+		{"https://example.com/v1", "/v1/systemone"},
+		{"https://example.com/v1/", "/v1/systemone"},
+		{"https://example.com/relay", "/relay/v1/systemone"},
+		{"https://example.com/relay/v1", "/relay/v1/systemone"},
+	} {
+		t.Run(tc.base, func(t *testing.T) {
+			req, err := NewSystemOneRequest(context.Background(), tc.base, "fixture", []byte(`{}`))
+			require.NoError(t, err)
+			require.Equal(t, tc.path, req.URL.Path)
+			require.Equal(t, "Bearer fixture", req.Header.Get("Authorization"))
+			require.Equal(t, http.MethodPost, req.Method)
+		})
+	}
+}
+
 func TestEvaluateContract(t *testing.T) {
 	questions := map[string]Question{"sexual": {Type: "noul", Instructions: "Evaluate sexual content"}, "illicit": {Type: "noul", Instructions: "Evaluate illegal assistance"}}
 	for _, tc := range []struct {

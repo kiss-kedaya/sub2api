@@ -155,11 +155,11 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 			c.JSON(status, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel upstream did not complete this turn"}})
 		}
 		if errors.Is(err, context.Canceled) {
-			return result, true, fmt.Errorf("Excel relay canceled: %w", context.Canceled)
+			return result, true, fmt.Errorf("excel relay canceled: %w", context.Canceled)
 		}
 		// Shared relay can return a typed failover after a generation has been
 		// accepted. Do not replay that paid generation on another account.
-		return result, true, fmt.Errorf("Excel relay failed: %v", err)
+		return result, true, fmt.Errorf("excel relay failed: %v", err)
 	}
 	return result, true, nil
 }

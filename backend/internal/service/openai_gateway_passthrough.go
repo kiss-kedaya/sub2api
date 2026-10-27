@@ -515,7 +515,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			result, handleErr := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
 				if account.IsCopilotSDKEnabled() {
-					handleErr = fmt.Errorf("Copilot turn failed: %v", handleErr)
+					handleErr = fmt.Errorf("copilot turn failed: %v", handleErr)
 				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
@@ -556,7 +556,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
 				if account.IsCopilotSDKEnabled() {
-					handleErr = fmt.Errorf("Copilot turn failed: %v", handleErr)
+					handleErr = fmt.Errorf("copilot turn failed: %v", handleErr)
 				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
@@ -796,7 +796,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	if account.IsCopilotSDKEnabled() {
 		id := getAPIKeyIDFromContext(c)
 		if id <= 0 {
-			return nil, fmt.Errorf("Copilot requires an authenticated API key")
+			return nil, fmt.Errorf("copilot requires an authenticated API key")
 		}
 		req.Header.Set("X-Sub2API-Client-ID", strconv.FormatInt(id, 10))
 	}

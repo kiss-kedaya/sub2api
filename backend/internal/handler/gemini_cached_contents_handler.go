@@ -851,6 +851,13 @@ func (h *GatewayHandler) writeGeminiCachedContentUpstreamError(c *gin.Context, u
 		c.Data(http.StatusForbidden, "application/json", []byte(service.GeminiCachedContentNotFoundResponse))
 		return
 	}
+	if status == http.StatusTooManyRequests && !upErr.UpstreamGateway {
+		// A bound cache cannot fail over to another account. Preserve the
+		// retryable rate-limit status without exposing account quota details or
+		// feeding it through generic financial-error masking (which uses 502).
+		googleError(c, status, "Upstream rate limit exceeded")
+		return
+	}
 	if (status == http.StatusTooManyRequests || status >= http.StatusInternalServerError) && !upErr.UpstreamGateway {
 		h.handleGeminiFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: status, ResponseBody: upErr.Body})
 		return
@@ -901,8 +908,8 @@ func decodeGeminiCachedContentPageToken(raw string) (int64, bool) {
 // 上游网关账号的限流 / 不可用响应反映持有缓存的上游账号状态，原样返回供客户端判断；
 // 其余（含官方账号）仍按普通 Gemini 路径处理：透传规则、通用映射。
 func (h *GatewayHandler) handleGeminiCachedContentFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError) {
-	if failoverErr != nil && (failoverErr.StatusCode == http.StatusUnauthorized || failoverErr.StatusCode == http.StatusForbidden) {
-		h.writeGeminiCachedContentUpstreamError(c, &service.GeminiCachedContentUpstreamError{StatusCode: failoverErr.StatusCode, Body: failoverErr.ResponseBody})
+	if failoverErr != nil && (failoverErr.StatusCode == http.StatusUnauthorized || failoverErr.StatusCode == http.StatusForbidden || failoverErr.StatusCode == http.StatusTooManyRequests) {
+		h.writeGeminiCachedContentUpstreamError(c, &service.GeminiCachedContentUpstreamError{StatusCode: failoverErr.StatusCode, Body: failoverErr.ResponseBody, UpstreamGateway: failoverErr.BoundUpstreamPassthrough})
 		return
 	}
 	if failoverErr == nil || !failoverErr.BoundUpstreamPassthrough || len(failoverErr.ResponseBody) == 0 || !json.Valid(failoverErr.ResponseBody) {

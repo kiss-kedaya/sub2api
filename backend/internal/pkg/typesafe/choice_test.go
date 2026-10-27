@@ -55,19 +55,23 @@ func TestTypeSafeQualityChoiceOneAttemptBoundAndRedaction(t *testing.T) {
 		{"truncated", 200, `{"model":"jev-latest"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			calls := 0
-			client := &http.Client{Transport: choiceTransport(func(req *http.Request) (*http.Response, error) {
-				calls++
-				require.Equal(t, "/v1/systemone", req.URL.Path)
-				require.Equal(t, "Bearer synthetic-key", req.Header.Get("Authorization"))
-				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
-			})}
-			_, status, err := EvaluateChoice(context.Background(), client, "https://example.com/v1", "synthetic-key", input, "quality")
-			require.Error(t, err)
-			require.Equal(t, tc.status, status)
-			require.Equal(t, 1, calls)
-			require.NotContains(t, err.Error(), "SYNTHETIC_SECRET")
-			require.NotContains(t, err.Error(), "synthetic-key")
+			for _, base := range []string{"https://example.com", "https://example.com/v1"} {
+				t.Run(base, func(t *testing.T) {
+					calls := 0
+					client := &http.Client{Transport: choiceTransport(func(req *http.Request) (*http.Response, error) {
+						calls++
+						require.Equal(t, "/v1/systemone", req.URL.Path)
+						require.Equal(t, "Bearer synthetic-key", req.Header.Get("Authorization"))
+						return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header)}, nil
+					})}
+					_, status, err := EvaluateChoice(context.Background(), client, base, "synthetic-key", input, "quality")
+					require.Error(t, err)
+					require.Equal(t, tc.status, status)
+					require.Equal(t, 1, calls)
+					require.NotContains(t, err.Error(), "SYNTHETIC_SECRET")
+					require.NotContains(t, err.Error(), "synthetic-key")
+				})
+			}
 		})
 	}
 }

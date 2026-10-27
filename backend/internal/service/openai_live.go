@@ -344,6 +344,7 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 			LeaseID:               leaseID,
 			Model:                 model,
 			RequestedModel:        requestedModel,
+			SessionRequestedModel: requestedModel,
 			ReturnRequestedModel:  identity.APIKey != nil && identity.APIKey.Group != nil && identity.APIKey.Group.ReturnRequestedModel,
 			CreatedAt:             now,
 			ExpiresAt:             now.Add(s.liveMaxSessionDuration()),
