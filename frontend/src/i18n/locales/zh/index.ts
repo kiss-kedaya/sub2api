@@ -9,6 +9,11 @@ import admin from './admin'
 import misc from './misc'
 import deposit from './deposit'
 import docs from './docs'
+import connections from './connections'
+import requestTiming from './requestTiming'
+import traffic from './traffic'
+import ipAudit from '@/features/ip-audit/locale.zh'
+import {zh as moderationCategories} from '@/features/ip-risk/moderationCategories.locale'
 
 export default {
   ...landing,
@@ -22,4 +27,5 @@ export default {
   ...misc,
   ...deposit,
   ...docs,
+  connections,requestTiming,traffic,ipAudit,moderationCategories,
 }

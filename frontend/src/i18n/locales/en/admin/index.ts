@@ -9,7 +9,7 @@ import promptAudit from './promptAudit'
 import plugins from './plugins'
 import crypto from './crypto'
 
-export default {
+const messages = {
   ...overview,
   ...channels,
   ...accounts,
@@ -21,3 +21,9 @@ export default {
   ...plugins,
   ...crypto,
 }
+
+import groupCacheTest from './groupCacheTest'
+import requestCapture from './requestCapture'
+import timer from '@/components/account/schedulableTimer.en'
+import ipRisk from '@/features/ip-risk/locale.en'
+export default {...messages,...groupCacheTest,...requestCapture,accounts:{...messages.accounts,timer},settings:{...messages.settings,ipRisk}}

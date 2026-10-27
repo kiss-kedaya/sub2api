@@ -1,4 +1,5 @@
 export default { requestCapture: {
+ retentionDays: '保留天数',
   "title": "请求采集",
   "description": "按用户, 上游账户或入口分组定向采集, 仅保留出错请求, 对照客户端与上游的请求和响应.",
   "enabled": "启用请求采集",

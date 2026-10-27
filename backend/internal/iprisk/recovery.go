@@ -479,7 +479,7 @@ func (m *Manager) AuditEntryPresent(ctx context.Context, source, id, network str
 		return false, err
 	}
 	present := false
-	err = m.riskRedis(ctx, func(budget context.Context) error {
+	err := m.riskRedis(ctx, func(budget context.Context) error {
 		key := ""
 		switch source {
 		case "anonymous_api", "ip_risk", "ip_risk_observe":

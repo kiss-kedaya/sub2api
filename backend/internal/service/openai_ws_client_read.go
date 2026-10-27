@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
+	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	coderws "github.com/coder/websocket"
 )
 
@@ -58,6 +59,9 @@ func readOpenAIWSClientMessageWithTimeoutStart(
 	go func() {
 		messageType, payload, err := conn.Read(context.Background())
 		if err == nil {
+			capture := requestcapture.FromContext(controlCtx)
+			capture.SetProtocol("websocket")
+			capture.ClientFrame(payload)
 			payload = ipnotice.NormalizeReplay(payload, ipnotice.Responses)
 		}
 		readDone <- openAIWSClientReadResult{messageType: messageType, payload: payload, err: err}

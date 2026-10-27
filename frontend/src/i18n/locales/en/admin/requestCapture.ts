@@ -1,4 +1,5 @@
 export default { requestCapture: {
+ retentionDays: 'Retention days',
   "title": "Request capture",
   "description": "Capture a user, upstream account or ingress group and retain only failed requests for traffic comparison.",
   "enabled": "Enable request capture",

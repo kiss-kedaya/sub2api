@@ -206,7 +206,7 @@ func (l *openAIWSConnLease) WriteJSONWithContextTimeout(ctx context.Context, val
 	if err != nil {
 		return err
 	}
-	return conn.writeJSONWithTimeout(ctx, value, timeout)
+	return captureWSLeaseWrite(ctx, l.accountID, l.HandshakeHeaders(), value, func() error { return conn.writeJSONWithTimeout(ctx, value, timeout) })
 }
 
 func (l *openAIWSConnLease) WriteJSONContext(ctx context.Context, value any) error {
@@ -214,7 +214,7 @@ func (l *openAIWSConnLease) WriteJSONContext(ctx context.Context, value any) err
 	if err != nil {
 		return err
 	}
-	return conn.writeJSON(value, ctx)
+	return captureWSLeaseWrite(ctx, l.accountID, l.HandshakeHeaders(), value, func() error { return conn.writeJSON(value, ctx) })
 }
 
 func (l *openAIWSConnLease) ReadMessage(timeout time.Duration) ([]byte, error) {
@@ -230,7 +230,7 @@ func (l *openAIWSConnLease) ReadMessageContext(ctx context.Context) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	return conn.readMessage(ctx)
+	return captureWSLeaseRead(ctx, func() ([]byte, error) { return conn.readMessage(ctx) })
 }
 
 func (l *openAIWSConnLease) ReadMessageWithContextTimeout(ctx context.Context, timeout time.Duration) ([]byte, error) {
@@ -238,7 +238,7 @@ func (l *openAIWSConnLease) ReadMessageWithContextTimeout(ctx context.Context, t
 	if err != nil {
 		return nil, err
 	}
-	return conn.readMessageWithContextTimeout(ctx, timeout)
+	return captureWSLeaseRead(ctx, func() ([]byte, error) { return conn.readMessageWithContextTimeout(ctx, timeout) })
 }
 
 func (l *openAIWSConnLease) PingWithTimeout(timeout time.Duration) error {
