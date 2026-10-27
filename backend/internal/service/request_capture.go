@@ -7,7 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,13 +88,14 @@ func (s *SettingService) InitializeRequestCapture(db *sql.DB) (*requestcapture.M
 	if dir == "" {
 		dir = "./data"
 	}
-	// Concurrent rolling versions must not share one capture identity or stop
-	// each other's active tasks. Stable instance storage is explicitly selectable.
-	instance := os.Getenv("SUB2API_CAPTURE_INSTANCE")
+	// Each blue/green slot must explicitly own a stable local storage identity.
+	// PID directories lose retention ownership after restart; no implicit slot is
+	// safe across concurrent rolling versions, so unconfigured storage stays off.
+	instance := strings.TrimSpace(os.Getenv("SUB2API_CAPTURE_INSTANCE"))
 	if instance == "" {
-		instance = "pid-" + strconv.Itoa(os.Getpid())
+		return nil, nil
 	}
-	if filepath.Base(instance) != instance || instance == "." || instance == ".." {
+	if filepath.Base(instance) != instance || instance == "." || instance == ".." || len(instance) > 96 {
 		return nil, errors.New("invalid capture instance identifier")
 	}
 	m, err := requestcapture.New(&requestcapture.SQLStore{DB: db}, filepath.Join(dir, "request-captures", instance), c.captureConfig())

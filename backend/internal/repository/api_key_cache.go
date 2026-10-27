@@ -13,11 +13,11 @@ import (
 )
 
 const (
-	apiKeyRateLimitKeyPrefix   = "apikey:ratelimit:"
-	apiKeyRateLimitDuration    = 24 * time.Hour
-	apiKeyCreateCountKeyPrefix = "apikey:create_count:"
-	apiKeyAuthCachePrefix      = "apikey:auth:"
-	authCacheInvalidateChannel = "auth:cache:invalidate"
+	apiKeyRateLimitKeyPrefix    = "apikey:ratelimit:"
+	apiKeyRateLimitDuration     = 24 * time.Hour
+	apiKeyCreateCountKeyPrefix  = "apikey:create_count:"
+	apiKeyAuthCacheLegacyPrefix = "apikey:auth:"
+	authCacheInvalidateChannel  = "auth:cache:invalidate"
 )
 
 // apiKeyRateLimitKey generates the Redis key for API key creation rate limiting.
@@ -31,7 +31,7 @@ func apiKeyCreateCountKey(userID int64) string {
 }
 
 func apiKeyAuthCacheKey(key string) string {
-	return fmt.Sprintf("%s%s", apiKeyAuthCachePrefix, key)
+	return fmt.Sprintf("%sv%d:%s", apiKeyAuthCacheLegacyPrefix, service.APIKeyAuthCacheSchemaVersion, key)
 }
 
 type apiKeyCache struct {
@@ -106,7 +106,7 @@ func (c *apiKeyCache) SetAuthCache(ctx context.Context, key string, entry *servi
 }
 
 func (c *apiKeyCache) DeleteAuthCache(ctx context.Context, key string) error {
-	return c.rdb.Del(ctx, apiKeyAuthCacheKey(key)).Err()
+	return c.rdb.Del(ctx, apiKeyAuthCacheKey(key), apiKeyAuthCacheLegacyPrefix+key).Err()
 }
 
 // PublishAuthCacheInvalidation publishes a cache invalidation message to all instances
@@ -142,7 +142,14 @@ func (c *apiKeyCache) SubscribeAuthCacheInvalidation(ctx context.Context, handle
 				return errors.New("auth cache invalidation pubsub channel closed")
 			}
 			if msg != nil {
+				// Keep the wire message as the shared key hash. An old binary
+				// publishes exactly this payload, so every current-version peer
+				// must evict its own L2 namespace even when it has no L1 cache.
+				deleteErr := c.DeleteAuthCache(ctx, msg.Payload)
 				handler(msg.Payload)
+				if deleteErr != nil {
+					return fmt.Errorf("evict versioned auth cache: %w", deleteErr)
+				}
 			}
 		}
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -17,6 +18,39 @@ type RequestCaptureHandler struct {
 	Manager      *requestcapture.Manager
 	Settings     *service.SettingService
 	adminService service.AdminService
+	totp         *service.TotpService
+	users        *service.UserService
+}
+
+func (h *RequestCaptureHandler) SetStepUpDependencies(totp *service.TotpService, users *service.UserService) {
+	h.totp, h.users = totp, users
+}
+
+// Body text can contain confidential prompts and tool results even after
+// structured credential redaction. Metadata browsing remains available without
+// repeatedly challenging the operator, but payload reads always require 2FA.
+func (h *RequestCaptureHandler) requireSensitiveRead(c *gin.Context) bool {
+	c.Header("Cache-Control", "no-store")
+	if !middleware.IsPrimaryAdmin(c) {
+		response.Forbidden(c, "Only the primary administrator may read captured content")
+		return false
+	}
+	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
+		return middleware.EnforceStepUpAlways(c, h.totp, h.users)
+	}
+	if h.totp == nil || h.users == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Step-up verification service unavailable")
+		return false
+	}
+	return middleware.EnforceStepUpAlways(c, h.totp, h.users)
+}
+
+// This JSON preflight lets streamed downloads prompt for 2FA before opening the
+// stream. Content and Export independently repeat the gate; this is no bypass.
+func (h *RequestCaptureHandler) AuthorizeSensitiveRead(c *gin.Context) {
+	if h.requireSensitiveRead(c) {
+		response.Success(c, gin.H{"authorized": true})
+	}
 }
 
 func (h *AccountHandler) CaptureHandler(manager *requestcapture.Manager, settings *service.SettingService) *RequestCaptureHandler {
@@ -164,6 +198,9 @@ func (h *RequestCaptureHandler) Detail(c *gin.Context) {
 	response.Success(c, r)
 }
 func (h *RequestCaptureHandler) Content(c *gin.Context) {
+	if !h.requireSensitiveRead(c) {
+		return
+	}
 	offset, err := strconv.ParseInt(c.DefaultQuery("offset", "0"), 10, 64)
 	if err != nil || offset < 0 {
 		response.BadRequest(c, "Invalid content offset")
@@ -177,6 +214,9 @@ func (h *RequestCaptureHandler) Content(c *gin.Context) {
 	response.Success(c, gin.H{"text": text, "next_offset": next, "has_more": more})
 }
 func (h *RequestCaptureHandler) Export(c *gin.Context) {
+	if !h.requireSensitiveRead(c) {
+		return
+	}
 	task, err := h.Manager.Task(c.Request.Context(), c.Param("task"))
 	if err != nil {
 		captureError(c, err)

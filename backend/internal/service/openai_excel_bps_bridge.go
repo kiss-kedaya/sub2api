@@ -41,6 +41,15 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 	if prepared.NativeFallback {
 		return nil, false, nil
 	}
+	clientCtx := ctx
+	if c.Request != nil {
+		clientCtx = c.Request.Context()
+	}
+	if err := clientCtx.Err(); err != nil {
+		return nil, true, err
+	}
+	upstreamCtx, releaseUpstream := detachUpstreamContext(ctx)
+	defer releaseUpstream()
 	proxy := ""
 	if account.Proxy != nil {
 		proxy = account.Proxy.URL()
@@ -50,13 +59,18 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 	// BPS has its own resource-server grant. Codex OAuth plugins, ticket
 	// acquisition and cookie injection must never run on this request.
 	upstreamStart := time.Now()
-	request := prepared.Request.WithContext(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileOpenAI))
-	resp, err := s.httpUpstream.Do(request, proxy, account.ID, account.Concurrency)
+	request := prepared.Request.WithContext(WithHTTPUpstreamProfile(upstreamCtx, HTTPUpstreamProfileOpenAI))
+	resp, err := s.doOpenAIRequestWithHeaderCancel(clientCtx, request, func(req *http.Request) (*http.Response, error) {
+		return s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
+	})
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	captureOpsHeadersFromRequest(request, resp)
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
+		}
+		if clientCtx.Err() != nil {
+			return nil, true, clientCtx.Err()
 		}
 		s.recordOpenAIStreamUpstreamError(c, account, true, "", "transport_error", nil, "Excel upstream transport failed")
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel upstream transport failed; turn was not replayed"}})
@@ -76,11 +90,14 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 		c.JSON(resp.StatusCode, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel upstream rejected this turn"}})
 		return nil, true, fmt.Errorf("Excel upstream status %d", resp.StatusCode)
 	}
-	resp, err = prepared.Transform(ctx, resp)
+	resp, err = prepared.Transform(upstreamCtx, resp)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel response could not be converted"}})
 		return nil, true, err
 	}
+	// Conversion owns a pipe above the resource-server body. Give both stream
+	// and buffered clients the normal bounded usage-drain window on cancel.
+	resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 	defer func() { _ = resp.Body.Close() }()
 	SetActualOpenAIUpstreamEndpoint(c, "/basispoints/api/responses")
 	model, stream := gjson.GetBytes(body, "model").String(), gjson.GetBytes(body, "stream").Bool()

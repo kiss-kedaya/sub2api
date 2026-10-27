@@ -44,6 +44,7 @@ type Manager struct {
 	storageMu        sync.Mutex
 	unhealthy        atomic.Bool
 	stopping         atomic.Bool
+	unlockOwner      func()
 }
 
 func New(store Store, dir string, config Config) (*Manager, error) {
@@ -56,6 +57,16 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, err
 	}
+	unlockOwner, err := lockCaptureOwner(filepath.Join(dir, ".owner.lock"))
+	if err != nil {
+		return nil, err
+	}
+	ready := false
+	defer func() {
+		if !ready {
+			unlockOwner()
+		}
+	}()
 	instanceFile := filepath.Join(dir, ".instance")
 	if info, e := os.Lstat(instanceFile); e == nil && info.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("symlink capture identity")
@@ -71,7 +82,7 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 	if _, err = uuid.Parse(string(raw)); err != nil {
 		return nil, fmt.Errorf("invalid capture instance identity: %w", err)
 	}
-	m := &Manager{store: store, dir: dir, instance: string(raw), config: config, tasks: map[string]*runtimeTask{}, sessions: map[*Session]struct{}{}, exports: make(chan struct{}, 2), queue: make(chan event, 1024), wake: make(chan struct{}, 1), done: make(chan struct{}), closed: make(chan struct{})}
+	m := &Manager{store: store, dir: dir, instance: string(raw), config: config, tasks: map[string]*runtimeTask{}, sessions: map[*Session]struct{}{}, exports: make(chan struct{}, 2), queue: make(chan event, 1024), wake: make(chan struct{}, 1), done: make(chan struct{}), closed: make(chan struct{}), unlockOwner: unlockOwner}
 	// Reserve fixed worker scratch before admitting payload copies.
 	m.buffer.Store(1 << 20)
 	m.enabled.Store(config.Enabled)
@@ -177,6 +188,7 @@ func New(store Store, dir string, config Config) (*Manager, error) {
 		return nil, err
 	}
 	go m.run()
+	ready = true
 	return m, nil
 }
 func (m *Manager) InstanceID() string { return m.instance }
@@ -439,6 +451,7 @@ func (m *Manager) Stats() Stats {
 
 func (m *Manager) run() {
 	defer close(m.closed)
+	defer m.unlockOwner()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	cleanup := time.NewTicker(time.Minute)

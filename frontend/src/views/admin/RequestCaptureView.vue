@@ -68,6 +68,7 @@
         <div v-if="part" class="flex gap-3"><button class="btn btn-secondary" :disabled="contentOffset === 0 || contentLoading" @click="readContent(0)">{{ t('admin.requestCapture.firstSegment') }}</button><button class="btn btn-secondary" :disabled="!contentMore || contentLoading" @click="readContent(nextOffset)">{{ t('admin.requestCapture.nextSegment') }}</button></div>
       </section>
     </div>
+    <TotpStepUpDialog :controller="stepUp" />
   </AppLayout>
 </template>
 
@@ -75,6 +76,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
 import { adminAPI } from '@/api'
 import * as api from '@/api/admin/requestCaptures'
 import type { CaptureTask, CaptureRecord, CapturePart, CaptureStats, CaptureTarget } from '@/api/admin/requestCaptures'
@@ -82,6 +85,7 @@ import type { CaptureTask, CaptureRecord, CapturePart, CaptureStats, CaptureTarg
 import zh from '@/i18n/locales/zh/admin/requestCapture'
 import en from '@/i18n/locales/en/admin/requestCapture'
 const { t } = useI18n({useScope:'local',messages:{zh:{admin:zh},en:{admin:en}},inheritLocale:true})
+const stepUp = useStepUp()
 const captureConfig=ref({enabled:false,quota_mib:1024,retention_days:7})
 async function saveConfig(){ await action(async()=>{captureConfig.value=await api.saveConfig(captureConfig.value)}) }
 const kinds: CaptureTarget[] = ['user', 'account', 'group']
@@ -108,7 +112,7 @@ function captureOutcome(record: CaptureRecord) {
 }
 function bytes(value: number) { return (value / 1048576).toFixed(2) + ' MiB' }
 function remaining(task: CaptureTask) { if (task.status !== 'running') return '-'; const seconds = Math.max(0, Math.ceil((Date.parse(task.expires_at) - now.value) / 1000)); return Math.floor(seconds / 60) + 'm ' + seconds % 60 + 's' }
-function report(err: unknown) { const e = err as { message?: string; status?: number; name?: string; code?: string }; if (e.name === 'AbortError' || e.code === 'ERR_CANCELED') return; error.value = e.message || t('admin.requestCapture.failed');  }
+function report(err: unknown) { if (isStepUpCancelled(err)) return; const e = err as { message?: string; status?: number; name?: string; code?: string }; if (e.name === 'AbortError' || e.code === 'ERR_CANCELED') return; error.value = e.message || t('admin.requestCapture.failed');  }
 async function loadTargets(page = 1) {
   searchAbort?.abort(); const controller = new AbortController(); searchAbort = controller; searching.value = true
   try {
@@ -125,14 +129,14 @@ async function action(fn: () => Promise<void>) { busy.value = true; error.value 
 async function create() { if (!targetID.value || !validDuration.value) return; await action(async () => { const task = await api.createTask({ target_type: targetType.value, target_id: targetID.value, duration_minutes: duration.value, save_media: saveMedia.value }); taskPage.value = 1; selectTask(task) }) }
 async function stop(task: CaptureTask) { await action(() => api.stopTask(task.id)) }
 async function remove(task: CaptureTask) { if (!window.confirm(t('admin.requestCapture.deleteConfirm'))) return; await action(async () => { await api.deleteTask(task.id); if (selectedTask.value?.id === task.id) { selectedTask.value = undefined; detail.value = undefined; records.value = []; detailVersion++; contentVersion++ } }) }
-async function download(task: string, record?: string) { await action(() => api.exportCapture(task, record)) }
+async function download(task: string, record?: string) { await action(() => api.exportCapture(task, record, () => stepUp.run(api.authorizeSensitiveRead))) }
 function changeTaskPage(delta: number) { taskPage.value += delta; void refresh() }
 function selectTask(task: CaptureTask) { selectedTask.value = task; recordPage.value = 1; records.value = []; detail.value = undefined; detailVersion++; contentVersion++; void loadRecords() }
 async function viewRecord(record: CaptureRecord) { const version = ++detailVersion; try { const result = await api.getRecord(record.task_id, record.id); if (version !== detailVersion || disposed) return; detail.value = result; selectStage(stages[0]) } catch (err) { report(err) } }
 function selectStage(value: string) { stage.value = value; part.value = stageParts.value[0]; content.value = ''; contentMore.value = false; contentVersion++; if (part.value && part.value.bytes > 0) void readContent(0) }
 function selectPart(name: string) { part.value = stageParts.value.find(item => item.name === name); content.value = ''; contentVersion++; if (part.value && part.value.bytes > 0) void readContent(0) }
-async function readContent(offset: number) { if (!detail.value || !part.value) return; const version = ++contentVersion; contentLoading.value = true; try { const result = await api.getContent(detail.value.task_id, detail.value.id, part.value.name, offset); if (version !== contentVersion || disposed) return; content.value = result.text; contentOffset.value = offset; nextOffset.value = result.next_offset; contentMore.value = result.has_more } catch (err) { report(err) } finally { if (version === contentVersion) contentLoading.value = false } }
+async function readContent(offset: number) { if (!detail.value || !part.value || stepUp.visible.value) return; const version = ++contentVersion; const task = detail.value.task_id, record = detail.value.id, name = part.value.name; contentLoading.value = true; try { const result = await stepUp.run(() => api.getContent(task, record, name, offset)); if (version !== contentVersion || disposed) return; content.value = result.text; contentOffset.value = offset; nextOffset.value = result.next_offset; contentMore.value = result.has_more } catch (err) { report(err) } finally { if (version === contentVersion) contentLoading.value = false } }
 watch([targetType, search], () => { targetID.value = 0; clearTimeout(debounce); debounce = setTimeout(() => { void loadTargets(1) }, 250) })
 onMounted(() => { void api.getConfig().then(value=>{captureConfig.value=value;if(value.enabled)void refresh()}).catch(report); void loadTargets(); poll = setInterval(() => { now.value = Date.now(); if(captureConfig.value.enabled)void refresh() }, 3000) })
-onUnmounted(() => { disposed = true; clearInterval(poll); clearTimeout(debounce); searchAbort?.abort(); detailVersion++; contentVersion++ })
+onUnmounted(() => { disposed = true; stepUp.onCancel(); clearInterval(poll); clearTimeout(debounce); searchAbort?.abort(); detailVersion++; contentVersion++ })
 </script>

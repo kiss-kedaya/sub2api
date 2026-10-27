@@ -26,6 +26,7 @@ func TestServerlessTargetsNeedExplicitPrivateTrustAndAlwaysBlockMetadata(t *test
 	require.False(t, m.allowIP(netip.MustParseAddr("169.254.169.254")))
 	require.False(t, m.allowIP(netip.MustParseAddr("100.100.100.200")))
 	require.Error(t, ValidateRuntime(Runtime{TrustedPrivateCIDRs: []string{"0.0.0.0/0"}}))
+	require.Error(t, ValidateRuntime(Runtime{TrustedPrivateCIDRs: []string{"10.0.0.0/1"}}))
 }
 func TestServerlessProofBindsBodyOriginHostAndAuthentication(t *testing.T) {
 	m := managerFor(t, "us-pod", cacheFor(t), &memoryStore{})

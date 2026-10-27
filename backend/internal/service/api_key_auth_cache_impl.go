@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 27 // v27: reject old writers that omit the independent key concurrency limit
+const apiKeyAuthSnapshotVersion = APIKeyAuthCacheSchemaVersion
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -102,10 +102,11 @@ func (s *APIKeyService) initAuthCache(cfg *config.Config) {
 	}
 }
 
-// StartAuthCacheInvalidationSubscriber starts the Pub/Sub subscriber for L1 cache invalidation.
+// StartAuthCacheInvalidationSubscriber starts cross-version L2 and local L1
+// invalidation, including peers configured without a local cache.
 // This should be called after the service is fully initialized.
 func (s *APIKeyService) StartAuthCacheInvalidationSubscriber(ctx context.Context) {
-	if s.cache == nil || (s.authCacheL1 == nil && s.authNegativeCacheL1 == nil) {
+	if s.cache == nil {
 		return
 	}
 	s.authInvalidationStart.Do(func() {

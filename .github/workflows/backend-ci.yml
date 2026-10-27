@@ -79,7 +79,7 @@ jobs:
       - name: Provider and automation regression
         working-directory: backend
         run: |
-          go test -race -p 1 ./internal/localreasoning ./internal/service/basispoints -count=1
+          go test -race -p 1 ./internal/localreasoning ./internal/serverless ./internal/service/basispoints -count=1
           go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository -run '^Test(CopilotSDK|Excel|Seedance|MiniMaxH3|VideoProvider|Automation|OpsAutomation|LocalReasoning|APIKeyAuthSnapshot.*Concurrency)' -count=1
       - name: Unit tests
         working-directory: backend
@@ -175,7 +175,7 @@ jobs:
         run: make test-frontend
       - name: Operator feature frontend regression
         working-directory: frontend
-        run: pnpm exec vitest run src/api/__tests__/groupCacheTest.spec.ts src/views/admin/__tests__/GroupCacheTestView.spec.ts src/components/account/__tests__/SchedulableTimerControl.spec.ts src/components/usage/__tests__/TrafficPanel.spec.ts src/components/account/__tests__/geminiCacheSettings.spec.ts src/components/admin/operations/__tests__ src/views/admin/__tests__/AccountOpsView.spec.ts src/views/admin/__tests__/ChannelOperationsView.spec.ts
+        run: pnpm exec vitest run src/api/__tests__/groupCacheTest.spec.ts src/views/admin/__tests__/GroupCacheTestView.spec.ts src/components/account/__tests__/SchedulableTimerControl.spec.ts src/components/usage/__tests__/TrafficPanel.spec.ts src/components/account/__tests__/geminiCacheSettings.spec.ts src/components/admin/operations/__tests__ src/components/group/__tests__ src/views/admin/__tests__/OpsAutomationView.spec.ts src/views/admin/__tests__/ServerlessView.spec.ts src/views/admin/__tests__/AccountOpsView.spec.ts src/views/admin/__tests__/ChannelOperationsView.spec.ts
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build

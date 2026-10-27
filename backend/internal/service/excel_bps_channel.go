@@ -76,7 +76,11 @@ func (s *ExcelBPSChannel) Prepare(ctx context.Context, a *Account, raw []byte, a
 	}
 	sum := sha256.Sum256([]byte(strconv.FormatInt(a.ID, 10) + ":" + strconv.FormatInt(apiKeyID, 10) + ":" + session))
 	scope := hex.EncodeToString(sum[:])
-	replay, catalog := basispoints.NewPersistentCaches(ctx, s.state)
+	// Terminal replay/catalog writes can happen during the gateway's usage-drain
+	// window after the client leaves; keep the admission owner's stop signal.
+	cacheCtx, releaseCache := detachUpstreamContext(ctx)
+	defer releaseCache()
+	replay, catalog := basispoints.NewPersistentCaches(cacheCtx, s.state)
 	body, bridge, err := basispoints.PrepareWithCatalog(raw, scope, replay, catalog)
 	if err != nil {
 		return nil, err

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -20,6 +21,27 @@ func TestAPIKeyAuthCacheRejectsPreConcurrencyWriters(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, accepted)
 	require.Nil(t, key)
+}
+
+func TestAPIKeyAuthVersionedInvalidationSubscribesWithoutL1(t *testing.T) {
+	ready := make(chan struct{})
+	cache := &authInvalidationCacheStub{subscribeFn: func(ctx context.Context, _ func(string)) error {
+		NotifyAuthCacheSubscriptionReady(ctx)
+		close(ready)
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	svc := &APIKeyService{cache: cache}
+	require.Nil(t, svc.authCacheL1)
+	require.Nil(t, svc.authNegativeCacheL1)
+	svc.StartAuthCacheInvalidationSubscriber(context.Background())
+	t.Cleanup(svc.StopAuthCacheInvalidationSubscriber)
+	select {
+	case <-ready:
+		require.True(t, svc.AuthCacheInvalidationSubscriberHealth().Connected)
+	case <-time.After(time.Second):
+		t.Fatal("L2-only peer did not subscribe to cross-version invalidations")
+	}
 }
 
 func TestAPIKeyAuthCacheCurrentConcurrencyRoundTrip(t *testing.T) {

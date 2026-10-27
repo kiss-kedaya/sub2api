@@ -62,6 +62,7 @@ func (w *localQualityRecorder) Write(data []byte) (int, error) {
 	}
 	return w.ResponseRecorder.Write(data)
 }
+func (w *localQualityRecorder) WriteString(data string) (int, error) { return w.Write([]byte(data)) }
 
 // A partial answer without an explicit successful terminal test event cannot
 // quarantine an account. Keep all prompt/response data in bounded memory only.

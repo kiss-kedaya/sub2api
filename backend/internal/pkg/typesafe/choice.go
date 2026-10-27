@@ -1,3 +1,4 @@
+// Native choice parsing adapted from ranxi2001/sub2api 9620d315f72a7dbf04fa10fca02970e1e410805e, LGPL-3.0.
 package typesafe
 
 import (

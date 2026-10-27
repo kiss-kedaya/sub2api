@@ -51,7 +51,6 @@ type Manager struct {
 	transport *http.Transport
 	mu        sync.Mutex
 	config    Config
-	expires   time.Time
 	loadErr   error
 	stop      context.CancelFunc
 	done      chan struct{}

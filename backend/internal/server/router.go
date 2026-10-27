@@ -93,6 +93,7 @@ func SetupRouter(
 	}
 	if handlers.Admin != nil && handlers.Admin.Account != nil {
 		handlers.Admin.RequestCapture = handlers.Admin.Account.CaptureHandler(manager, settingService)
+		handlers.Admin.Setting.ConfigureCaptureStepUp(handlers.Admin.RequestCapture)
 	}
 
 	middleware2.SetIngressRejectRecorder(opsService)

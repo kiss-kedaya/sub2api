@@ -54,6 +54,7 @@ func RegisterAdminRoutes(
 		capture.GET("/config", h.Admin.RequestCapture.GetConfig)
 		capture.PUT("/config", h.Admin.RequestCapture.UpdateConfig)
 		capture.Use(h.Admin.RequestCapture.Gate)
+		capture.GET("/sensitive-access", h.Admin.RequestCapture.AuthorizeSensitiveRead)
 		capture.GET("", h.Admin.RequestCapture.List)
 		capture.POST("", h.Admin.RequestCapture.Create)
 		capture.POST("/:task/stop", h.Admin.RequestCapture.Stop)

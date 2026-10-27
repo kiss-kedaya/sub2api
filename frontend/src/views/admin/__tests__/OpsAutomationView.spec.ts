@@ -23,4 +23,11 @@ describe('account automation', () => {
     expect(w.text()).toContain('opsAutomation.oauth'); expect(w.find('form').exists()).toBe(true)
     w.unmount()
   })
+  it('offers all three explicit judge methods while a new plan stays disabled', async () => {
+    const w = mount(OpsAutomationView); await flushPromises()
+    await w.findAll('button').find(b => b.text() === 'opsAutomation.newPlan')!.trigger('click')
+    const judge = w.findAll('select').find(s => s.find('option[value="jev"]').exists())!
+    expect(judge.findAll('option').map(o => o.attributes('value'))).toEqual(['local', 'llm', 'jev'])
+    expect(api.saveReasoningPlan).not.toHaveBeenCalled(); w.unmount()
+  })
 })

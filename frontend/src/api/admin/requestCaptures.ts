@@ -40,14 +40,21 @@ export async function getRecord(task: string, record: string) {
 export async function getContent(task: string, record: string, part: string, offset: number) {
   return (await apiClient.get<{ text: string; next_offset: number; has_more: boolean }>(base + '/' + task + '/requests/' + record + '/content/' + encodeURIComponent(part), { params: { offset } })).data
 }
+export async function authorizeSensitiveRead() {
+  await apiClient.get(base + '/sensitive-access')
+}
 
 interface SaveHandle { createWritable(): Promise<WritableStream<Uint8Array>> }
 type SaveWindow = Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<SaveHandle> }
 export const canStreamExport = () => typeof (window as SaveWindow).showSaveFilePicker === 'function'
-export async function exportCapture(task: string, record?: string) {
+export async function exportCapture(task: string, record?: string, authorize?: () => Promise<unknown>) {
   const picker = (window as SaveWindow).showSaveFilePicker
   if (!picker) throw new Error('STREAM_SAVE_UNSUPPORTED')
   const handle = await picker.call(window, { suggestedName: 'request-capture-' + (record || task) + '.tar.gz' })
+  // Preserve the file-picker user gesture, then authenticate before truncating
+  // the selected file. The export endpoint independently validates the grant.
+  if (authorize) await authorize()
+  else await authorizeSensitiveRead()
   const writable = await handle.createWritable()
   try {
     const path = base + '/' + task + (record ? '/requests/' + record : '') + '/export'

@@ -75,9 +75,9 @@ func (r *opsAutomationRepository) SaveLocalPlan(ctx context.Context, p service.L
 	var saved *service.LocalReasoningPlan
 	if p.ID == 0 {
 		p.Revision = 1
-		saved, err = scanLocalPlan(tx.QueryRowContext(ctx, `INSERT INTO local_reasoning_plans(account_id,model,enabled,interval_minutes,action,auto_restore,judge_kind,judge_group_id,judge_model) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,0),$9) RETURNING `+localPlanColumns, p.AccountID, p.Model, p.Enabled, p.IntervalMinutes, p.Action, p.AutoRestore, p.JudgeKind, p.JudgeGroupID, p.JudgeModel))
+		saved, err = scanLocalPlan(tx.QueryRowContext(ctx, `INSERT INTO local_reasoning_plans(account_id,model,enabled,interval_minutes,action,auto_restore,judge_kind,judge_group_id,judge_model) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8::bigint,0),$9) RETURNING `+localPlanColumns, p.AccountID, p.Model, p.Enabled, p.IntervalMinutes, p.Action, p.AutoRestore, p.JudgeKind, p.JudgeGroupID, p.JudgeModel))
 	} else {
-		saved, err = scanLocalPlan(tx.QueryRowContext(ctx, `UPDATE local_reasoning_plans SET account_id=$2,model=$3,enabled=$4,interval_minutes=$5,action=$6,auto_restore=$7,revision=revision+1,updated_at=NOW(),lease='',lease_until=NULL,judge_kind=$8,judge_group_id=NULLIF($9,0),judge_model=$10 WHERE id=$1 RETURNING `+localPlanColumns, p.ID, p.AccountID, p.Model, p.Enabled, p.IntervalMinutes, p.Action, p.AutoRestore, p.JudgeKind, p.JudgeGroupID, p.JudgeModel))
+		saved, err = scanLocalPlan(tx.QueryRowContext(ctx, `UPDATE local_reasoning_plans SET account_id=$2,model=$3,enabled=$4,interval_minutes=$5,action=$6,auto_restore=$7,revision=revision+1,updated_at=NOW(),lease='',lease_until=NULL,judge_kind=$8,judge_group_id=NULLIF($9::bigint,0),judge_model=$10 WHERE id=$1 RETURNING `+localPlanColumns, p.ID, p.AccountID, p.Model, p.Enabled, p.IntervalMinutes, p.Action, p.AutoRestore, p.JudgeKind, p.JudgeGroupID, p.JudgeModel))
 	}
 	if err != nil {
 		return nil, err

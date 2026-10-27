@@ -53,6 +53,9 @@ type Runtime struct {
 }
 
 func ValidateEndpoint(raw string) error {
+	if len(raw) > 2048 {
+		return errors.New("Pod endpoint is too long")
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || u.ForceQuery || (u.Path != "" && u.Path != "/") {
 		return errors.New("Pod endpoint must be an origin without credentials, path, query or fragment")
@@ -79,6 +82,9 @@ func ValidateEndpoint(raw string) error {
 	return nil
 }
 func Validate(c Config) error {
+	if len(c.Revision) > 64 {
+		return errors.New("invalid configuration revision")
+	}
 	if len(c.Pods) > 128 || len(c.Regions) > 64 {
 		return errors.New("maximum 128 Pods and 64 regions")
 	}
@@ -98,7 +104,7 @@ func Validate(c Config) error {
 			return errors.New("region codes must be unique two-letter uppercase country codes")
 		}
 		codes[r.Country] = true
-		if len(r.PodIDs) == 0 {
+		if len(r.PodIDs) == 0 || len(r.PodIDs) > 128 {
 			return errors.New("each region requires at least one approved Pod")
 		}
 		seen := map[string]bool{}
@@ -112,9 +118,22 @@ func Validate(c Config) error {
 	return nil
 }
 func ValidateRuntime(r Runtime) error {
+	if len(r.TrustedPrivateCIDRs) > 64 || len(r.Secret) > 1024 || len(r.Version) > 100 {
+		return errors.New("invalid serverless runtime limits")
+	}
 	for _, raw := range r.TrustedPrivateCIDRs {
 		p, e := netip.ParsePrefix(raw)
-		if e != nil || p.Bits() == 0 || !(p.Addr().IsPrivate() || p.Addr().IsLoopback()) {
+		valid := false
+		if e == nil {
+			for _, parent := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "::1/128"} {
+				network := netip.MustParsePrefix(parent)
+				if p.Bits() >= network.Bits() && network.Contains(p.Masked().Addr()) {
+					valid = true
+					break
+				}
+			}
+		}
+		if !valid {
 			return errors.New("trusted private CIDRs must be explicit private or loopback networks")
 		}
 	}

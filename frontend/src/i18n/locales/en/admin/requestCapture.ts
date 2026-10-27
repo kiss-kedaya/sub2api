@@ -6,7 +6,7 @@ export default { requestCapture: {
   "quota": "Total capture file quota (MiB)",
   "retention": "Retention days (1-30)",
   "limitsHint": "Disabled by default; changes apply immediately. Reaching the quota stops capture and keeps only confirmed error records. Disabling stops tasks. Retention starts when a task ends; restarts do not resume tasks.",
-  "privacy": "Only confirmed request or WebSocket turn errors are retained, including failed retries followed by success. Pending data is temporarily written to disk and cannot be viewed or exported. Successful traffic is queued for immediate deletion; unconfirmed data is also removed on stop or restart. Error bodies may still contain conversations, tool arguments and personal information. Authentication fields are redacted before writing. Enable selectively and delete when no longer needed.",
+  "privacy": "Only confirmed request or WebSocket turn errors are retained, including failed retries followed by success. Pending data is temporarily written to disk and cannot be viewed or exported. Successful traffic is queued for immediate deletion; unconfirmed data is also removed on stop or restart. Structured credentials are redacted before writing; bodies can still contain conversations, tool arguments, personal information or credentials pasted into free text. Only administrator ID1 can read or export bodies, after 2FA verification within the last 5 minutes. Enable selectively and delete when no longer needed.",
   "refresh": "Refresh",
   "instance": "Current instance",
   "used": "Disk usage (including pending data)",

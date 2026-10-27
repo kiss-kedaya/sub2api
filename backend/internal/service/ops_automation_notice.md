@@ -1,4 +1,5 @@
-The local randomized reasoning question solver and concurrency ramp transition
+The local randomized reasoning question solver, LLM/native Jev answer comparison,
+strict TypeSafe choice parsing and concurrency ramp transition
 are adapted from ranxi2001/sub2api commit
 9620d315f72a7dbf04fa10fca02970e1e410805e under LGPL-3.0.
 
