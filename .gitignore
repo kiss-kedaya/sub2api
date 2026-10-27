@@ -188,6 +188,11 @@ docs/*
 !docs/PLUGIN_DEVELOPMENT.md
 !docs/legal/
 !docs/legal/*.md
+!docs/operator-capabilities.md
+!docs/account-automation.md
+!docs/account-notifications-channel-operations.md
+!docs/regional-gateway-routing.md
+!docs/copilot-sdk-codex.md
 .serena/
 .codex/
 frontend/coverage/
