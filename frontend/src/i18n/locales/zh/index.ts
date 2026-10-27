@@ -8,6 +8,7 @@ import tickets from './tickets'
 import admin from './admin'
 import misc from './misc'
 import deposit from './deposit'
+import docs from './docs'
 
 export default {
   ...landing,
@@ -20,4 +21,5 @@ export default {
   admin,
   ...misc,
   ...deposit,
+  ...docs,
 }
