@@ -118,7 +118,11 @@ func hostedSearchFixture(t *testing.T, upstream *hostedSearchUpstream, stream bo
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	var tools []any
-	tools = append(tools, map[string]any{"type": "web_search"})
+	// Match the hosted tool emitted by Codex text-and-image search models.
+	tools = append(tools, map[string]any{
+		"type": "web_search", "search_content_types": []string{"text", "image"},
+		"external_web_access": true, "filters": nil, "user_location": nil,
+	})
 	if mixed {
 		tools = append(tools, map[string]any{"type": "function", "name": "client_lookup", "parameters": map[string]any{"type": "object", "properties": map[string]any{}}})
 	}

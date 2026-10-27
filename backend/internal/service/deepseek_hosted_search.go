@@ -84,8 +84,7 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 	}
 	prepared, changed, err := prepareDeepSeekHostedSearchRequest(body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": err.Error(), "param": "tools"}})
-		return nil, true, err
+		return nil, true, writeDeepSeekHostedSearchValidationError(ctx, c, err)
 	}
 	if !changed {
 		return nil, false, nil
@@ -120,7 +119,9 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 			detail := truncateString(sanitizeUpstreamErrorMessage(cause.Error()), 512)
 			setOpsUpstreamError(c, status, "DeepSeek hosted search failed", detail)
 		}
-		if state.stream && c.Writer.Written() && !state.clientDisconnected && (state.result == nil || !state.result.ClientDisconnect) {
+		if state.stream && c.Writer.Written() && !IsResponseCommitted(c) &&
+			strings.Contains(c.Writer.Header().Get("Content-Type"), "text/event-stream") &&
+			!state.clientDisconnected && (state.result == nil || !state.result.ClientDisconnect) {
 			_ = state.writeFailure()
 		}
 		if state.attempted > 0 || c.Writer.Written() {
@@ -259,6 +260,34 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		request = next
 	}
 	return fail(errors.New("deepseek hosted search exceeded continuation limit"))
+}
+
+func writeDeepSeekHostedSearchValidationError(ctx context.Context, c *gin.Context, cause error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.Request != nil {
+		if err := c.Request.Context().Err(); err != nil {
+			return err
+		}
+	}
+	if IsResponseCommitted(c) {
+		return cause
+	}
+	// Stop the pre-header heartbeat before deciding between HTTP JSON and an
+	// in-band terminal event. A heartbeat may already have committed HTTP 200.
+	streamCommitted := StopOpenAICompactSSEKeepaliveCommitted(c)
+	MarkResponseCommitted(c)
+	if streamCommitted || (c.Writer.Written() && strings.Contains(c.Writer.Header().Get("Content-Type"), "text/event-stream")) {
+		writeOpenAICompactSSEFailureMessage(c, http.StatusBadRequest, "invalid_request_error", cause.Error())
+		return cause
+	}
+	if !c.Writer.Written() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"type": "invalid_request_error", "message": cause.Error(), "param": "tools",
+		}})
+	}
+	return cause
 }
 
 func (s *OpenAIGatewayService) runDeepSeekHostedSearch(ctx context.Context, c *gin.Context, account *Account, group *Group, state *deepSeekHostedSearchState, call *deepSeekHostedCall) string {
@@ -664,6 +693,7 @@ func (w *deepSeekHostedRoundWriter) writeBufferedError() error {
 			w.state.c.Writer.Header()[key] = values
 		}
 	}
+	MarkResponseCommitted(w.state.c)
 	w.state.c.Status(w.status)
 	_, err := w.state.c.Writer.Write(w.buffer)
 	if err != nil {
@@ -858,6 +888,7 @@ func (s *deepSeekHostedSearchState) writeFinal(w *deepSeekHostedRoundWriter) err
 			}
 		}
 		s.c.Header("Content-Type", "application/json")
+		MarkResponseCommitted(s.c)
 		s.c.Status(w.status)
 		_, writeErr := s.c.Writer.Write(response)
 		if writeErr != nil {
@@ -873,6 +904,7 @@ func (s *deepSeekHostedSearchState) writeFinal(w *deepSeekHostedRoundWriter) err
 	if err := json.Unmarshal(response, &object); err != nil {
 		return err
 	}
+	MarkResponseCommitted(s.c)
 	if err := s.event(map[string]any{"type": kind, "response": object}); err != nil {
 		return err
 	}
@@ -893,6 +925,7 @@ func (s *deepSeekHostedSearchState) writeFailure() error {
 			output = append(output, item)
 		}
 	}
+	MarkResponseCommitted(s.c)
 	return s.event(map[string]any{"type": "response.failed", "response": map[string]any{
 		"id": s.responseID, "object": "response", "created_at": s.started.Unix(), "model": s.model,
 		"status": "failed", "output": output, "usage": s.usage,
