@@ -18,10 +18,6 @@ const (
 	deepSeekHostedFetchToolName  = "web_fetch"
 )
 
-func isDeepSeekHostedToolName(name string) bool {
-	return name == deepSeekHostedSearchToolName || name == deepSeekHostedFetchToolName
-}
-
 func deepSeekHostedOwnedToolName(name string, ownFetch bool) bool {
 	return name == deepSeekHostedSearchToolName || ownFetch && name == deepSeekHostedFetchToolName
 }
@@ -348,10 +344,6 @@ func deepSeekHostedSearchHistoryMessage(item gjson.Result) map[string]any {
 
 // Build the next stateless model request without flattening native reasoning,
 // encrypted_content, function calls, or unrelated client tools into text.
-func deepSeekHostedSearchNextRequest(request, response []byte, outputs map[string]string) ([]byte, error) {
-	return deepSeekHostedSearchNextRequestWithFetch(request, response, outputs, true)
-}
-
 func deepSeekHostedSearchNextRequestWithFetch(request, response []byte, outputs map[string]string, ownFetch bool) ([]byte, error) {
 	if !gjson.ValidBytes(request) || !gjson.ParseBytes(request).IsObject() || !gjson.ValidBytes(response) {
 		return nil, fmt.Errorf("deepseek hosted search: invalid continuation JSON")

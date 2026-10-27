@@ -143,7 +143,7 @@ func TestPrepareDeepSeekHostedSearchReplaysHistoryWithoutOrphanTools(t *testing.
 func TestDeepSeekHostedSearchNextRequestPreservesNativeOutputAndOwnsOnlySearch(t *testing.T) {
 	request := []byte(`{"model":"deepseek-flash","input":"question","stream":true,"store":true,"previous_response_id":"resp_old","tool_choice":{"type":"function","name":"` + deepSeekHostedSearchToolName + `"},"tools":[{"type":"function","name":"` + deepSeekHostedSearchToolName + `"}],"metadata":{"keep":"opaque"}}`)
 	response := []byte(`{"output":[{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"opaque-cipher"},{"type":"function_call","id":"fc_1","call_id":"search1","name":"` + deepSeekHostedSearchToolName + `","arguments":"{\"query\":\"latest\"}"},{"type":"function_call","id":"fc_2","call_id":"local2","name":"client_tool","arguments":"{}"}]}`)
-	next, err := deepSeekHostedSearchNextRequest(request, response, map[string]string{"search1": `{"results":[]}`, "local2": "must-not-attach"})
+	next, err := deepSeekHostedSearchNextRequestWithFetch(request, response, map[string]string{"search1": `{"results":[]}`, "local2": "must-not-attach"}, true)
 	require.NoError(t, err)
 	items := gjson.GetBytes(next, "input").Array()
 	require.Len(t, items, 5)
@@ -162,7 +162,7 @@ func TestDeepSeekHostedSearchNextRequestPreservesNativeOutputAndOwnsOnlySearch(t
 	require.JSONEq(t, gjson.GetBytes(request, "metadata").Raw, gjson.GetBytes(next, "metadata").Raw)
 	// A second round retains, rather than repeats, the already-appended result.
 	last := []byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`)
-	final, err := deepSeekHostedSearchNextRequest(next, last, nil)
+	final, err := deepSeekHostedSearchNextRequestWithFetch(next, last, nil, true)
 	require.NoError(t, err)
 	count := 0
 	for _, item := range gjson.GetBytes(final, "input").Array() {
@@ -178,7 +178,7 @@ func TestDeepSeekHostedSearchNextRequestPreservesNativeOutputAndOwnsOnlySearch(t
 func TestDeepSeekHostedSearchNextRequestRejectsOrphanOwnedCall(t *testing.T) {
 	request := []byte(`{"input":[],"stream":false}`)
 	response := []byte(`{"output":[{"type":"function_call","call_id":"missing","name":"` + deepSeekHostedSearchToolName + `"}]}`)
-	_, err := deepSeekHostedSearchNextRequest(request, response, nil)
+	_, err := deepSeekHostedSearchNextRequestWithFetch(request, response, nil, true)
 	require.ErrorContains(t, err, "has no result")
 }
 
@@ -200,9 +200,9 @@ func TestDeepSeekHostedSearchNextRequestRejectsDuplicateOwnedResults(t *testing.
 		`{"output":[` + call + `,` + call + `]}`,
 		`{"output":[` + call + `,{"type":"function_call_output","call_id":"same","output":"already there"}]}`,
 	} {
-		_, err := deepSeekHostedSearchNextRequest([]byte(`{"input":[]}`), []byte(response), map[string]string{"same": "owned result"})
+		_, err := deepSeekHostedSearchNextRequestWithFetch([]byte(`{"input":[]}`), []byte(response), map[string]string{"same": "owned result"}, true)
 		require.Error(t, err)
 	}
-	_, err := deepSeekHostedSearchNextRequest([]byte(`{"input":[{"type":"function_call_output","call_id":"same","output":"previous result"}]}`), []byte(`{"output":[`+call+`]}`), map[string]string{"same": "duplicate result"})
+	_, err := deepSeekHostedSearchNextRequestWithFetch([]byte(`{"input":[{"type":"function_call_output","call_id":"same","output":"previous result"}]}`), []byte(`{"output":[`+call+`]}`), map[string]string{"same": "duplicate result"}, true)
 	require.ErrorContains(t, err, "completed owned search call")
 }

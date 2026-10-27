@@ -18,7 +18,8 @@ func TestDeepSeekToolInjectionKeySettingControlsLegacyRequestBuilders(t *testing
 			t.Run(fmt.Sprintf("passthrough=%t/%s", passthrough, setting), func(t *testing.T) {
 				svc, c, _, account, _ := hostedSearchFixture(t, &hostedSearchUpstream{}, false, "auto", false)
 				svc.cfg.Gateway.DeepSeekResponseCompatEnabled = true
-				key := c.MustGet("api_key").(*APIKey)
+				key, ok := c.MustGet("api_key").(*APIKey)
+				require.True(t, ok)
 				if setting != "default" {
 					enabled := setting != "disabled"
 					key.DeepSeekToolInjectionEnabled = &enabled
@@ -59,7 +60,9 @@ func TestDeepSeekToolInjectionHostedRequestDefaultAndExplicitSettings(t *testing
 				svc, c, recorder, account, body := hostedSearchFixture(t, upstream, stream, "auto", true)
 				if setting != "default" {
 					enabled := setting == "enabled"
-					c.MustGet("api_key").(*APIKey).DeepSeekToolInjectionEnabled = &enabled
+					key, ok := c.MustGet("api_key").(*APIKey)
+					require.True(t, ok)
+					key.DeepSeekToolInjectionEnabled = &enabled
 				}
 				result, err := svc.Forward(context.Background(), c, account, body)
 				require.NoError(t, err, recorder.Body.String())
@@ -91,7 +94,9 @@ func TestDeepSeekToolInjectionDisabledPreservesDeclaredHostedSearchAndBilling(t 
 				}, searchResponse: `{"results":[{"title":"Docs","url":"https://example.com/search","summary":"Search result"}]}`}
 				svc, c, recorder, account, body := hostedSearchFixture(t, upstream, stream, "auto", false)
 				disabled := false
-				c.MustGet("api_key").(*APIKey).DeepSeekToolInjectionEnabled = &disabled
+				key, ok := c.MustGet("api_key").(*APIKey)
+				require.True(t, ok)
+				key.DeepSeekToolInjectionEnabled = &disabled
 				chatUpstream := &hostedChatSearchUpstream{}
 				if chat {
 					account.Credentials["api_protocol"] = APIProtocolChatCompletions
@@ -130,7 +135,9 @@ func TestDeepSeekToolInjectionDisabledKeepsClientFetchFunctionClientOwned(t *tes
 			upstream := &hostedSearchUpstream{modelResponses: [][]byte{hostedSearchResponse("resp_client", 10, 2, clientFetch)}}
 			svc, c, recorder, account, body := hostedSearchFixture(t, upstream, stream, "auto", false)
 			disabled := false
-			c.MustGet("api_key").(*APIKey).DeepSeekToolInjectionEnabled = &disabled
+			key, ok := c.MustGet("api_key").(*APIKey)
+			require.True(t, ok)
+			key.DeepSeekToolInjectionEnabled = &disabled
 			const clientTool = `{"type":"function","name":"web_fetch","description":"Client-owned fetch","parameters":{"type":"object","properties":{"url":{"type":"string"}}}}`
 			body, err := sjson.SetRawBytes(body, "tools.-1", []byte(clientTool))
 			require.NoError(t, err)
@@ -157,7 +164,8 @@ func TestDeepSeekToolInjectionDisabledDoesNotDisableIndependentTools(t *testing.
 			upstream := &hostedSearchUpstream{searchResponse: `{"results":[{"title":"Docs","url":"https://example.com/"}]}`, fetchResponse: `{"title":"Docs","content":"Page text"}`}
 			svc, c, recorder, account, _ := hostedSearchFixture(t, upstream, false, "auto", false)
 			disabled := false
-			key := c.MustGet("api_key").(*APIKey)
+			key, ok := c.MustGet("api_key").(*APIKey)
+			require.True(t, ok)
 			key.DeepSeekToolInjectionEnabled = &disabled
 			body := []byte(`{"query":"Docs"}`)
 			if path == DeepSeekToolsPathFetch {
@@ -176,7 +184,9 @@ func TestDeepSeekToolInjectionDisabledLeavesLegacyClientSearchOutputUntouched(t 
 	upstream := &hostedSearchUpstream{}
 	svc, c, _, account, _ := hostedSearchFixture(t, upstream, false, "auto", false)
 	disabled := false
-	c.MustGet("api_key").(*APIKey).DeepSeekToolInjectionEnabled = &disabled
+	key, ok := c.MustGet("api_key").(*APIKey)
+	require.True(t, ok)
+	key.DeepSeekToolInjectionEnabled = &disabled
 	group, enabled := deepSeekSearchGroupEnabled(c, account)
 	require.True(t, enabled, "the key setting controls injection, not group search permission")
 	body := hostedSearchResponse("resp_client_search", 10, 2, hostedSearchCall())

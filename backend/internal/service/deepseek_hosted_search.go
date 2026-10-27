@@ -386,10 +386,6 @@ func (r *deepSeekHostedRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, errors.New("hosted search recorder does not support hijacking")
 }
 
-func deepSeekHostedRemoveTool(body []byte) ([]byte, error) {
-	return deepSeekHostedRemoveToolWithFetch(body, true)
-}
-
 func deepSeekHostedRemoveToolWithFetch(body []byte, ownFetch bool) ([]byte, error) {
 	tools := make([]json.RawMessage, 0)
 	for _, tool := range gjson.GetBytes(body, "tools").Array() {
