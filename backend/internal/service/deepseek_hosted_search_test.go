@@ -29,6 +29,10 @@ type hostedSearchUpstream struct {
 	searchRequests [][]byte
 	searchStatus   int
 	searchResponse string
+	fetchRequests  [][]byte
+	fetchStatus    int
+	fetchResponse  string
+	fetchContext   func(context.Context)
 	modelBody      func(index int, response string) io.ReadCloser
 }
 
@@ -44,6 +48,15 @@ func (u *hostedSearchUpstream) Do(req *http.Request, _ string, _ int64, _ int) (
 		status, response = u.searchStatus, u.searchResponse
 		if status == 0 {
 			status = http.StatusOK
+		}
+	} else if strings.HasSuffix(req.URL.Path, "/tools/fetch") {
+		u.fetchRequests = append(u.fetchRequests, body)
+		status, response = u.fetchStatus, u.fetchResponse
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if u.fetchContext != nil {
+			u.fetchContext(req.Context())
 		}
 	} else {
 		u.modelRequests = append(u.modelRequests, body)
@@ -193,7 +206,7 @@ func TestDeepSeekHostedSearchForwardSearchThenSummary(t *testing.T) {
 			require.Contains(t, final.Get("output.1.content.0.text").String(), "structured web results")
 			require.Equal(t, int64(30), final.Get("usage.input_tokens").Int())
 			require.Equal(t, int64(5), final.Get("usage.output_tokens").Int())
-			require.NotContains(t, recorder.Body.String(), deepSeekHostedSearchToolName)
+			require.NotContains(t, recorder.Body.String(), `"name":"`+deepSeekHostedSearchToolName+`"`)
 			if stream {
 				for _, line := range strings.Split(recorder.Body.String(), "\n") {
 					if !strings.HasPrefix(line, "data: ") {

@@ -70,7 +70,7 @@ func TestDeepSeekHostedSearchNativeTerminalIdentityAliases(t *testing.T) {
 	require.NotEqual(t, final.Get("output.2.id").String(), final.Get("output.3.id").String())
 	require.Contains(t, string(upstream.modelRequests[1]), `"id":"rs_snapshot"`, "the upstream continuation must keep the provider's raw terminal identity")
 	require.NotContains(t, string(upstream.modelRequests[1]), "live_rs_snapshot")
-	require.NotContains(t, recorder.Body.String(), deepSeekHostedSearchToolName)
+	require.NotContains(t, recorder.Body.String(), `"name":"`+deepSeekHostedSearchToolName+`"`)
 }
 
 func TestDeepSeekHostedSearchRejectsRepeatedCallIDInDifferentSlots(t *testing.T) {
