@@ -61,8 +61,8 @@ function scheduleUsers() {
     } catch { if (alive && sequence === userSequence) userError.value = true }
   }, 300)
 }
-async function lookupKeys(query: string) {
-  const sequence = ++keySequence, userId = props.modelValue.user_id
+async function lookupKeys(query: string, userId = props.modelValue.user_id) {
+  const sequence = ++keySequence
   keyResults.value = []; keyError.value = false
   try {
     const result = await props.apiKeySearch(userId, query)
@@ -81,7 +81,9 @@ function selectUser(user: SimpleUser) {
   userKeyword.value = user.email; userOpen.value = false; userResults.value = []
   keyKeyword.value = ''; keyResults.value = []
   update({ user_id: user.id, api_key_id: null })
-  void lookupKeys('')
+  // The parent model update is synchronous, but this child's props are patched
+  // on the next render. Carry the chosen identity into the immediate lookup.
+  void lookupKeys('', user.id)
 }
 function clearUser() {
   clearTimeout(userTimer); userSequence++; clearTimeout(keyTimer); keySequence++

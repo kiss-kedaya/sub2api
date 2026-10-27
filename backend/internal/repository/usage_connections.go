@@ -112,7 +112,7 @@ func connectionTraceQuery(f service.ConnectionTraceFilter) (string, []any) {
  'application'::text,''::text,''::text,'POST'::text,''::text,''::text,''::text,''::text,true
  FROM ops_error_logs e
  WHERE e.created_at >= $1 AND e.created_at < $2 AND e.status_code>=400
- AND (e.request_path LIKE '%/responses' OR e.request_path LIKE '%/responses/compact')
+ AND (e.request_path LIKE '%/responses' OR e.request_path LIKE '%/responses/compact' OR e.request_path LIKE '%/messages' OR e.request_path LIKE '%/chat/completions')
  AND NOT EXISTS (SELECT 1 FROM request_connection_traces n WHERE n.request_id=e.request_id)
 
  ORDER BY e.request_id,e.created_at DESC)
@@ -240,16 +240,6 @@ func (r *usageLogRepository) ListConnectionTraces(ctx context.Context, f service
 
 // ImportEdgeConnections acknowledges durable writes, not queue acceptance. A
 // collector can safely resend a batch after a lost acknowledgement.
-func (r *usageLogRepository) ImportEdgeConnections(ctx context.Context, records []service.ConnectionTrace) error {
-	r.startConnectionWriter()
-	for _, record := range records {
-		if err := r.writeConnectionTrace(ctx, record); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (r *usageLogRepository) ImportEdgeConnections(ctx context.Context, records []service.ConnectionTrace) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -33,7 +33,7 @@
       />
       <div v-else class="w-full sm:w-auto sm:min-w-[220px]">
         <label for="traffic-key" class="input-label">{{ t('usage.apiKeyFilter') }}</label>
-        <Select :key="searchResetKey" id="traffic-key" v-model="searchFilters.api_key_id" :options="ownKeyOptions" searchable remote :loading="ownKeyLoading" @open="onOwnKeyOpen" @search="searchOwnKeys" @change="selectOwnKey">
+        <Select :key="searchResetKey" id="traffic-key" v-model="searchFilters.api_key_id" :options="ownKeyOptions" searchable remote :loading="ownKeyLoading" @click="onOwnKeyOpen" @keydown.down="onOwnKeyOpen" @keydown.up="onOwnKeyOpen" @search="searchOwnKeys" @change="selectOwnKey">
           <template #selected="{ option }">{{ searchFilters.api_key_id ? selectedKeyLabel : option?.label || t('usage.allApiKeys') }}</template>
         </Select>
         <p v-if="ownKeyError" role="alert" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ t('traffic.keysFailed') }} <button type="button" class="underline" @click="searchOwnKeys(ownKeyQuery)">{{ t('common.refresh') }}</button></p>
@@ -165,7 +165,10 @@ async function searchOwnKeys(query = '') {
   } finally { if (!current.signal.aborted) ownKeyLoading.value = false }
 }
 function selectOwnKey(_value: unknown, option: SelectOption | null) { ownKeyLabel.value = option?.label || ''; applyFilters() }
-function onOwnKeyOpen() { if (ownKeyQuery.value) void searchOwnKeys() }
+function onOwnKeyOpen(event: Event) {
+  if (!(event.target instanceof Element) || !event.target.closest('#traffic-key')) return
+  if (ownKeyQuery.value) void searchOwnKeys()
+}
 const siteDate = (value: string | Date) => {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: report.value?.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(value))
   const get = (type: string) => parts.find(p => p.type === type)?.value || ''
