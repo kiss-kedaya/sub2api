@@ -326,12 +326,12 @@ func sanitizeSSE(input string, knownError bool) string {
 	for _, line := range strings.SplitAfter(input, "\n") {
 		event = append(event, line)
 		if strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r") == "" && line != "" {
-			output.WriteString(sanitizeEvent(event, knownError))
+			_, _ = output.WriteString(sanitizeEvent(event, knownError))
 			event = event[:0]
 		}
 	}
 	if len(event) > 0 {
-		output.WriteString(sanitizeEvent(event, knownError))
+		_, _ = output.WriteString(sanitizeEvent(event, knownError))
 	}
 	return output.String()
 }
@@ -390,7 +390,7 @@ func sanitizeEvent(lines []string, knownError bool) string {
 				}
 				// Malformed data can contain real newlines; each remains an SSE
 				// data line rather than becoming an injected event/header.
-				output.WriteString("data: " + strings.ReplaceAll(safeData, "\n", "\ndata: ") + newline)
+				_, _ = output.WriteString("data: " + strings.ReplaceAll(safeData, "\n", "\ndata: ") + newline)
 				wroteData = true
 			}
 			continue

@@ -745,7 +745,9 @@ readLoop:
 				emitStreamMessage(message, true)
 			}
 			if !reqStream {
-				clientErrType := errType
+				// Log summaries are truncated; the API must retain the complete
+				// protocol error type before applying client-side redaction.
+				clientErrType := strings.TrimSpace(errTypeRaw)
 				if clientErrType == "" || clientErrType == "upstream_error" {
 					if statusCode < http.StatusInternalServerError {
 						clientErrType = openAIDeterministicClientErrorType(statusCode)

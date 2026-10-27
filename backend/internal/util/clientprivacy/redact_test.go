@@ -97,11 +97,17 @@ func TestJSONRemovesSecretsWithoutChangingStatusOrUsage(t *testing.T) {
 	if decoded["status_code"] != float64(403) || decoded["type"] != "error" {
 		t.Fatalf("status or event type changed: %s", output)
 	}
-	errorBody := decoded["error"].(map[string]any)
+	errorBody, ok := decoded["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("error object missing: %s", output)
+	}
 	if errorBody["type"] != "invalid_request_error" || errorBody["code"] != "invalid_parameter" || errorBody["param"] != "messages.0.content" {
 		t.Fatalf("error protocol fields changed: %s", output)
 	}
-	usage := decoded["usage"].(map[string]any)
+	usage, ok := decoded["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("usage object missing: %s", output)
+	}
 	if usage["input_tokens"] != float64(1024) || usage["output_tokens"] != float64(7) {
 		t.Fatalf("usage changed: %s", output)
 	}

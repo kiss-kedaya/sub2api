@@ -117,3 +117,36 @@ func TestClientErrorPrivacyOpenAITerminalAndSyntheticEOF(t *testing.T) {
 	require.False(t, changed)
 	require.Equal(t, tool, cleaned)
 }
+
+func TestClientErrorPrivacyKeepsOpaqueCodexTurnState(t *testing.T) {
+	// The protocol defines this as opaque. Credential-shaped syntax alone
+	// cannot justify corrupting a legitimate state value needed next turn.
+	state := strings.Join([]string{"eyJhbGciOiJub25lIn0", "eyJzdGF0ZSI6InN5bnRoZXRpYyJ9", "synthetic-signature"}, ".")
+	header := http.Header{"X-Codex-Turn-State": {state}}
+	require.Equal(t, state, extractOpenAICodexTurnState(header))
+	dst := make(http.Header)
+	writeOpenAIPassthroughResponseHeaders(dst, header, nil)
+	require.Equal(t, state, dst.Get("X-Codex-Turn-State"))
+}
+
+func TestClientErrorPrivacyCompactAndOrdinaryAnthropicErrorBoundaries(t *testing.T) {
+	const body = `{"error":{"type":"invalid_request_error","code":"invalid_parameter","message":"https://private-provider.example failed","api_key":"synthetic-opaque"}}`
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	MarkOpenAICompactClientStream(c)
+	require.True(t, writeOpenAICompactSSEBridge(c, http.StatusOK, []byte(body)))
+	require.NotContains(t, rec.Body.String(), "private-provider")
+	require.NotContains(t, rec.Body.String(), "synthetic-opaque")
+
+	rec = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	svc := &GatewayService{}
+	resp := &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, &Account{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey})
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.NotContains(t, rec.Body.String(), "private-provider")
+	require.NotContains(t, rec.Body.String(), "synthetic-opaque")
+}
