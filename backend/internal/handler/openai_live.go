@@ -104,22 +104,30 @@ func (h *OpenAIGatewayHandler) Live(c *gin.Context) {
 		return
 	}
 
-	userRelease, acquired, err := h.concurrencyHelper.TryAcquireUserSlot(
-		c.Request.Context(),
-		subject.UserID,
-		subject.Concurrency,
-	)
+	keyReservation, err := h.concurrencyHelper.ReserveAPIKeySlotWithWait(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
 	if err != nil {
-		h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Live concurrency unavailable")
+		h.handleConcurrencyError(c, err, "API key", false)
 		return
 	}
-	if !acquired {
+	defer keyReservation.Release()
+	userResult, err := h.concurrencyHelper.concurrencyService.AcquireUserSlot(c.Request.Context(), subject.UserID, subject.Concurrency)
+	if err != nil {
+		h.handleConcurrencyError(c, err, "user", false)
+		return
+	}
+	if !userResult.Acquired {
 		h.errorResponse(c, http.StatusTooManyRequests, "rate_limit_error", "Live concurrency limit reached")
 		return
 	}
-	defer userRelease()
-
+	if userResult.ReleaseFunc != nil {
+		defer userResult.ReleaseFunc()
+	}
 	identity := liveCallIdentity(c, apiKey, subject.UserID, subscription)
+	identity.KeyReservation = keyReservation
+	if keyReservation != nil {
+		identity.APIKeyConcurrencyLimit = keyReservation.EffectiveLimit()
+	}
+	identity.UserRequestID = userResult.RequestID
 	created, err := h.gatewayService.CreateLiveCall(c.Request.Context(), request, identity, subject.Concurrency)
 	if err != nil {
 		h.writeLiveCreateError(c, err)

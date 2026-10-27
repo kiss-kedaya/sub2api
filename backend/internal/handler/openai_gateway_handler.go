@@ -2390,6 +2390,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return
 		}
 	}
+	permissions := service.APIKeyQueueRequestPermissions{Models: []string{reqModel}, Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
+	if service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage) {
+		permissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
+	}
+	ctx = service.WithAPIKeyQueueRequestPermissions(ctx, permissions)
+	c.Request = c.Request.WithContext(ctx)
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(firstMessage, "previous_response_id").String())
 	previousResponseIDKind := service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
 	if previousResponseID != "" && previousResponseIDKind == service.OpenAIPreviousResponseIDKindMessageID {
@@ -2509,7 +2515,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyFromGin(c, subject.UserID, subject.Concurrency, apiKey.ID)
 	if err != nil {
 		reqLog.Warn("openai.websocket_user_slot_acquire_failed", zap.Error(err))
-		closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire user concurrency slot")
+		closeErr := openAIWSUserSlotAcquireError(err)
+		closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
 		return
 	}
 	if !userAcquired {
@@ -2524,7 +2531,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyFromGin(c, subject.UserID, subject.Concurrency, apiKey.ID)
 		if err != nil {
 			reqLog.Warn("openai.websocket_user_slot_reacquire_failed", zap.Error(err))
-			closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire user concurrency slot")
+			closeErr := openAIWSUserSlotAcquireError(err)
+			closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
 			return false
 		}
 		if !userAcquired {
@@ -2858,6 +2866,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			ReasoningEffortMappings:     reasoningEffortMappings,
 			TurnStarted:                 recordTurnStart,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) ([]byte, error) {
+				turnPermissions := service.APIKeyQueueRequestPermissions{Models: []string{originalModel}, Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
+				if service.IsExplicitImageGenerationIntent("/v1/responses", originalModel, payload) {
+					turnPermissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
+				}
+				ctx = service.WithAPIKeyQueueRequestPermissions(ctx, turnPermissions)
+				c.Request = c.Request.WithContext(ctx)
+				if err := h.concurrencyHelper.RevalidateTurnAuth(ctx); err != nil {
+					return nil, openAIWSUserSlotAcquireError(err)
+				}
 				c.Set(securityAuditWSTurnContextKey, turn)
 				service.BeginOpsStreamTurn(c, turn)
 				setCyberTurnBody(turn, payload)
@@ -3013,7 +3030,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
 					userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyFromGin(c, subject.UserID, subject.Concurrency, apiKey.ID)
 					if err != nil {
-						return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
+						return openAIWSUserSlotAcquireError(err)
 					}
 					if !userAcquired {
 						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)

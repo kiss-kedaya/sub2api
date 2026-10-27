@@ -438,6 +438,27 @@ func (_u *APIKeyUpdate) ClearWindow7dStart() *APIKeyUpdate {
 	return _u
 }
 
+// SetConcurrencyLimit sets the "concurrency_limit" field.
+func (_u *APIKeyUpdate) SetConcurrencyLimit(v int) *APIKeyUpdate {
+	_u.mutation.ResetConcurrencyLimit()
+	_u.mutation.SetConcurrencyLimit(v)
+	return _u
+}
+
+// SetNillableConcurrencyLimit sets the "concurrency_limit" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableConcurrencyLimit(v *int) *APIKeyUpdate {
+	if v != nil {
+		_u.SetConcurrencyLimit(*v)
+	}
+	return _u
+}
+
+// AddConcurrencyLimit adds value to the "concurrency_limit" field.
+func (_u *APIKeyUpdate) AddConcurrencyLimit(v int) *APIKeyUpdate {
+	_u.mutation.AddConcurrencyLimit(v)
+	return _u
+}
+
 // SetAnthropicCacheTTLMode sets the "anthropic_cache_ttl_mode" field.
 func (_u *APIKeyUpdate) SetAnthropicCacheTTLMode(v string) *APIKeyUpdate {
 	_u.mutation.SetAnthropicCacheTTLMode(v)
@@ -588,6 +609,11 @@ func (_u *APIKeyUpdate) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ConcurrencyLimit(); ok {
+		if err := apikey.ConcurrencyLimitValidator(v); err != nil {
+			return &ValidationError{Name: "concurrency_limit", err: fmt.Errorf(`ent: validator failed for field "APIKey.concurrency_limit": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.AnthropicCacheTTLMode(); ok {
 		if err := apikey.AnthropicCacheTTLModeValidator(v); err != nil {
 			return &ValidationError{Name: "anthropic_cache_ttl_mode", err: fmt.Errorf(`ent: validator failed for field "APIKey.anthropic_cache_ttl_mode": %w`, err)}
@@ -728,6 +754,12 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.Window7dStartCleared() {
 		_spec.ClearField(apikey.FieldWindow7dStart, field.TypeTime)
+	}
+	if value, ok := _u.mutation.ConcurrencyLimit(); ok {
+		_spec.SetField(apikey.FieldConcurrencyLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedConcurrencyLimit(); ok {
+		_spec.AddField(apikey.FieldConcurrencyLimit, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.AnthropicCacheTTLMode(); ok {
 		_spec.SetField(apikey.FieldAnthropicCacheTTLMode, field.TypeString, value)
@@ -1264,6 +1296,27 @@ func (_u *APIKeyUpdateOne) ClearWindow7dStart() *APIKeyUpdateOne {
 	return _u
 }
 
+// SetConcurrencyLimit sets the "concurrency_limit" field.
+func (_u *APIKeyUpdateOne) SetConcurrencyLimit(v int) *APIKeyUpdateOne {
+	_u.mutation.ResetConcurrencyLimit()
+	_u.mutation.SetConcurrencyLimit(v)
+	return _u
+}
+
+// SetNillableConcurrencyLimit sets the "concurrency_limit" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableConcurrencyLimit(v *int) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetConcurrencyLimit(*v)
+	}
+	return _u
+}
+
+// AddConcurrencyLimit adds value to the "concurrency_limit" field.
+func (_u *APIKeyUpdateOne) AddConcurrencyLimit(v int) *APIKeyUpdateOne {
+	_u.mutation.AddConcurrencyLimit(v)
+	return _u
+}
+
 // SetAnthropicCacheTTLMode sets the "anthropic_cache_ttl_mode" field.
 func (_u *APIKeyUpdateOne) SetAnthropicCacheTTLMode(v string) *APIKeyUpdateOne {
 	_u.mutation.SetAnthropicCacheTTLMode(v)
@@ -1427,6 +1480,11 @@ func (_u *APIKeyUpdateOne) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ConcurrencyLimit(); ok {
+		if err := apikey.ConcurrencyLimitValidator(v); err != nil {
+			return &ValidationError{Name: "concurrency_limit", err: fmt.Errorf(`ent: validator failed for field "APIKey.concurrency_limit": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.AnthropicCacheTTLMode(); ok {
 		if err := apikey.AnthropicCacheTTLModeValidator(v); err != nil {
 			return &ValidationError{Name: "anthropic_cache_ttl_mode", err: fmt.Errorf(`ent: validator failed for field "APIKey.anthropic_cache_ttl_mode": %w`, err)}
@@ -1584,6 +1642,12 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if _u.mutation.Window7dStartCleared() {
 		_spec.ClearField(apikey.FieldWindow7dStart, field.TypeTime)
+	}
+	if value, ok := _u.mutation.ConcurrencyLimit(); ok {
+		_spec.SetField(apikey.FieldConcurrencyLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedConcurrencyLimit(); ok {
+		_spec.AddField(apikey.FieldConcurrencyLimit, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.AnthropicCacheTTLMode(); ok {
 		_spec.SetField(apikey.FieldAnthropicCacheTTLMode, field.TypeString, value)

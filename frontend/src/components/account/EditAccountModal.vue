@@ -28,6 +28,11 @@
 
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey' || account.type === 'cloudflare'" class="space-y-4">
+        <GeminiCacheAccountFields
+          v-if="account.platform === 'gemini' && account.type === 'apikey' && !geminiUseCustomProtocol"
+          v-model="geminiCacheSettings"
+        />
+
         <div v-if="account.platform === 'gemini'" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
           <label class="flex cursor-pointer items-start gap-2">
             <input
@@ -3039,6 +3044,9 @@
 </template>
 
 <script setup lang="ts">
+import GeminiCacheAccountFields from '@/components/account/GeminiCacheAccountFields.vue'
+import { readGeminiCacheSettings, applyGeminiCacheSettings } from '@/components/account/geminiCacheSettings'
+
 import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -3215,6 +3223,7 @@ const isCNApiKeyAccount = computed(
   () => props.account?.type === 'apikey' && isCNProviderPlatform(props.account.platform)
 )
 const geminiUseCustomProtocol = ref(false)
+const geminiCacheSettings = ref(readGeminiCacheSettings())
 const isGeminiProtocolAccount = computed(
   () => props.account?.platform === 'gemini' && props.account?.type === 'apikey' && geminiUseCustomProtocol.value
 )
@@ -3980,6 +3989,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
+  geminiCacheSettings.value = readGeminiCacheSettings(credentials)
   interceptWarmupRequests.value = credentials?.intercept_warmup_requests === true
   autoPauseOnExpired.value = newAccount.auto_pause_on_expired === true
   editVertexProjectId.value = ''
@@ -5100,6 +5110,7 @@ const handleSubmit = async () => {
         return
       }
 
+      applyGeminiCacheSettings(newCredentials, geminiCacheSettings.value, props.account.platform, !geminiUseCustomProtocol.value)
       updatePayload.credentials = newCredentials
     } else if (props.account.type === 'upstream') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}

@@ -19,6 +19,10 @@ import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadEr
  * Route definitions with lazy loading
  */
 const routes: RouteRecordRaw[] = [
+  {path:'/admin/credential-guard',name:'AdminCredentialGuard',component:()=>import('@/views/admin/CredentialGuardView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'凭证巡检'}},
+  {path:'/admin/account-ops',name:'AdminAccountOps',component:()=>import('@/views/admin/AccountOpsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'账号通知'}},
+  {path:'/admin/channel-operations',name:'AdminChannelOperations',component:()=>import('@/views/admin/ChannelOperationsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'渠道运维'}},
+  {path:'/admin/mihomo',name:'AdminMihomo',component:()=>import('@/views/admin/MihomoView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'代理出口'}},
   {path:'/admin/group-cache-tests',name:'AdminGroupCacheTests',component:()=>import('@/views/admin/GroupCacheTestView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'分组缓存测试'}},
   {path:'/admin/request-captures',name:'AdminRequestCaptures',component:()=>import('@/views/admin/RequestCaptureView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'请求采集'}},
   {path:'/admin/connections',name:'AdminConnections',component:()=>import('@/views/admin/ConnectionDiagnosticsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'连接诊断'}},

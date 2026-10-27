@@ -585,10 +585,11 @@ type AccountWaitPlan struct {
 }
 
 type AccountSelectionResult struct {
-	Account     *Account
-	Acquired    bool
-	ReleaseFunc func()
-	WaitPlan    *AccountWaitPlan // nil means no wait allowed
+	AccountRequestID string
+	Account          *Account
+	Acquired         bool
+	ReleaseFunc      func()
+	WaitPlan         *AccountWaitPlan // nil means no wait allowed
 	// profitGate 携带本次选号真实生效的利润门（无门为 nil）。门安装在调度栈的
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。
@@ -619,7 +620,9 @@ type AudioUsage struct {
 }
 
 type ForwardResult struct {
-	RequestID string
+	// CacheStorageTokenHours records explicit Gemini cache storage separately from token usage.
+	CacheStorageTokenHours float64
+	RequestID              string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
 	Usage           ClaudeUsage
@@ -705,6 +708,8 @@ type GatewayFailureReason string
 // trigger account failover. Additive metadata keeps existing composite literals
 // source-compatible and preserves their legacy retry-next-account behavior.
 type UpstreamFailoverError struct {
+	// BoundUpstreamPassthrough keeps a cache-bound request on its original account.
+	BoundUpstreamPassthrough bool
 	StatusCode               int
 	ResponseBody             []byte        // 上游响应体，用于错误透传规则匹配
 	ResponseHeaders          http.Header   // 上游响应头，用于透传 cf-ray/cf-mitigated/content-type 等诊断信息

@@ -91,6 +91,14 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
 	}
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		geminiCachedContentConcurrencyError(c, keyErr, "API key")
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	// 检查平台：优先使用强制平台（/antigravity 路由），否则要求 gemini 分组
 	forcePlatform, hasForcePlatform := middleware.GetForcePlatformFromContext(c)
 	if !hasForcePlatform && !geminiNativePlatformAllowed(c, apiKey) {
@@ -292,6 +300,14 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 		googleError(c, http.StatusUnauthorized, "Invalid API key")
 		return
 	}
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		geminiCachedContentConcurrencyError(c, keyErr, "API key")
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	// 检查平台：优先使用强制平台（/antigravity 路由），否则要求 gemini 分组
 	forcePlatform, hasForcePlatform := middleware.GetForcePlatformFromContext(c)
 	if !hasForcePlatform && !geminiNativePlatformAllowed(c, apiKey) {
@@ -431,6 +447,15 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		modelName = channelMapping.MappedModel
 	}
 
+	boundCache, rewrittenCacheBody, cacheOK := h.resolveGeminiCachedContentBinding(c, reqLog, apiKey, modelName, body)
+	if !cacheOK {
+		return
+	}
+	body = rewrittenCacheBody
+	if boundCache != nil {
+		c.Request = c.Request.WithContext(service.WithGeminiCachedContentBound(c.Request.Context()))
+	}
+
 	// Get subscription (may be nil)
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
 
@@ -524,6 +549,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		sessionKey = "gemini:" + sessionHash
 	}
 
+	if boundCache != nil {
+		sessionKey = ""
+		sessionHash = ""
+	}
+
 	// 查询粘性会话绑定的账号 ID（用于检测账号切换）
 	var sessionBoundAccountID int64
 	if sessionKey != "" {
@@ -544,7 +574,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	var geminiPrefixHash string
 	var geminiSessionUUID string
 	var matchedDigestChain string
-	useDigestFallback := sessionBoundAccountID == 0
+	useDigestFallback := boundCache == nil && sessionBoundAccountID == 0
 
 	if useDigestFallback {
 		// 解析 Gemini 请求体
@@ -617,8 +647,26 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		c.Request = c.Request.WithContext(ctx)
 	}
 
+	var cacheExcluded map[int64]struct{}
+	if boundCache != nil {
+		cacheExcluded, err = h.gatewayService.GeminiExplicitCacheExclusions(c.Request.Context(), apiKey.GroupID, boundCache.AccountID)
+		if err != nil {
+			googleError(c, http.StatusServiceUnavailable, geminiCachedContentUnavailableMessage)
+			return
+		}
+	}
 	for {
-		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0), service.PlatformGemini) // Gemini 不使用会话限制
+		var selection *service.AccountSelectionResult
+		var routedKey *service.APIKey
+		if boundCache != nil {
+			selection, err = h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, "", modelName, cacheExcluded, "", int64(0))
+		} else {
+			selection, routedKey, err = h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0), service.PlatformGemini) // Gemini 不使用会话限制
+		}
+		if boundCache != nil && err != nil {
+			googleError(c, http.StatusServiceUnavailable, geminiCachedContentUnavailableMessage)
+			return
+		}
 		if err == nil && routedKey != nil {
 			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
 				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
@@ -661,6 +709,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			}
 		}
 		account := selection.Account
+		if boundCache != nil && (account == nil || account.ID != boundCache.AccountID || !service.IsGeminiExplicitCacheAccount(account) || account.GetMappedModel(modelName) != boundCache.UpstreamModelID()) {
+			releaseRejectedKeyRouteSelection(selection)
+			googleError(c, http.StatusServiceUnavailable, geminiCachedContentUnavailableMessage)
+			return
+		}
 		setOpsSelectedAccount(c, account.ID, account.Platform, account.Name)
 
 		// 检测账号切换：如果粘性会话绑定的账号与当前选择的账号不同，清除 thoughtSignature
@@ -752,6 +805,13 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		account = latest
 		selection.Account = latest
+		if boundCache != nil && (account.ID != boundCache.AccountID || !service.IsGeminiExplicitCacheAccount(account) || account.GetMappedModel(modelName) != boundCache.UpstreamModelID()) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			googleError(c, http.StatusServiceUnavailable, geminiCachedContentUnavailableMessage)
+			return
+		}
 		// 等待路径保持既有 eager 绑定（无门时 helper 直接绑定）；调度器已抢槽
 		// 的直达路径无门时由选号内部绑定，这里只在门下补准入后绑定。
 		if selection.ProfitGateActive() || !selection.Acquired {
@@ -813,6 +873,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionKey, account, err)
 			var failoverErr *service.UpstreamFailoverError
 			if result == nil && errors.As(err, &failoverErr) {
+				if boundCache != nil {
+					h.handleGeminiCachedContentFailoverExhausted(c, failoverErr)
+					return
+				}
 				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
 				switch failoverAction {
 				case FailoverContinue:

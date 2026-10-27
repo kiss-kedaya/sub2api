@@ -32,6 +32,8 @@ func RegisterAdminRoutes(
 	admin.Use(gin.HandlerFunc(auditLog))
 	admin.Use(middleware.AdminComplianceGuard(settingService))
 	registerAdminTicketRoutes(admin, h.Ticket)
+	registerAccountOperationsRoutes(admin, h)
+	registerMihomoRoutes(admin, h)
 	if h.Admin.IPRisk != nil {
 		risk := admin.Group("/settings/ip-risk")
 		risk.GET("", h.Admin.IPRisk.GetIPRisk)
@@ -848,6 +850,9 @@ func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		channels.GET("", h.Admin.Channel.List)
 		channels.GET("/model-pricing", h.Admin.Channel.GetModelDefaultPricing)
+		channels.GET("/operations/snapshot", h.Admin.Channel.OperationsSnapshot)
+		channels.GET("/:id/operations", h.Admin.Channel.OperationsCatalog)
+		channels.POST("/:id/operations", h.Admin.Channel.MutateOperations)
 		channels.GET("/pricing/sync-models", h.Admin.Channel.SyncPricingModels)
 		channels.GET("/:id", h.Admin.Channel.GetByID)
 		channels.POST("", h.Admin.Channel.Create)

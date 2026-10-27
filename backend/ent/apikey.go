@@ -66,6 +66,8 @@ type APIKey struct {
 	Window1dStart *time.Time `json:"window_1d_start,omitempty"`
 	// Start time of the current 7d rate limit window
 	Window7dStart *time.Time `json:"window_7d_start,omitempty"`
+	// ConcurrencyLimit holds the value of the "concurrency_limit" field.
+	ConcurrencyLimit int `json:"concurrency_limit,omitempty"`
 	// Anthropic cache_control TTL 注入覆盖：inherit/off/1h/5m
 	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode,omitempty"`
 	// Whether DeepSeek search and fetch tools may be injected for this API key
@@ -131,7 +133,7 @@ func (*APIKey) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case apikey.FieldQuota, apikey.FieldQuotaUsed, apikey.FieldRateLimit5h, apikey.FieldRateLimit1d, apikey.FieldRateLimit7d, apikey.FieldUsage5h, apikey.FieldUsage1d, apikey.FieldUsage7d:
 			values[i] = new(sql.NullFloat64)
-		case apikey.FieldID, apikey.FieldUserID, apikey.FieldGroupID:
+		case apikey.FieldID, apikey.FieldUserID, apikey.FieldGroupID, apikey.FieldConcurrencyLimit:
 			values[i] = new(sql.NullInt64)
 		case apikey.FieldKey, apikey.FieldName, apikey.FieldStatus, apikey.FieldAnthropicCacheTTLMode:
 			values[i] = new(sql.NullString)
@@ -307,6 +309,12 @@ func (_m *APIKey) assignValues(columns []string, values []any) error {
 				_m.Window7dStart = new(time.Time)
 				*_m.Window7dStart = value.Time
 			}
+		case apikey.FieldConcurrencyLimit:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field concurrency_limit", values[i])
+			} else if value.Valid {
+				_m.ConcurrencyLimit = int(value.Int64)
+			}
 		case apikey.FieldAnthropicCacheTTLMode:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field anthropic_cache_ttl_mode", values[i])
@@ -452,6 +460,9 @@ func (_m *APIKey) String() string {
 		builder.WriteString("window_7d_start=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("concurrency_limit=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ConcurrencyLimit))
 	builder.WriteString(", ")
 	builder.WriteString("anthropic_cache_ttl_mode=")
 	builder.WriteString(_m.AnthropicCacheTTLMode)

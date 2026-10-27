@@ -45,6 +45,9 @@ func SetupRouter(
 	db *sql.DB,
 ) *gin.Engine {
 	adminhandler.ConfigureReportCacheRedis(redisClient)
+	if handlers.Gateway != nil && db != nil {
+		handlers.Gateway.ConfigureGeminiExplicitCache(repository.NewGeminiCachedContentRepository(db), cfg)
+	}
 	ipRisk := service.NewIPRiskManager(settingService, redisClient)
 	ipRisk.Start()
 	handlers.Admin.IPRisk = adminhandler.NewIPRiskHandler(ipRisk, settingService, nil)

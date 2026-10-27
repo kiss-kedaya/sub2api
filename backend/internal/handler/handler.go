@@ -7,6 +7,9 @@ import (
 
 // AdminHandlers contains all admin-related HTTP handlers
 type AdminHandlers struct {
+	CredentialGuard        *admin.CredentialGuardHandler
+	AccountOps             *admin.AccountOpsHandler
+	Mihomo                 *admin.MihomoHandler
 	IPRisk                 *admin.IPRiskHandler
 	RequestCapture         *admin.RequestCaptureHandler
 	Dashboard              *admin.DashboardHandler

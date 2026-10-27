@@ -998,6 +998,8 @@ const (
 
 // GatewayConfig API网关相关配置
 type GatewayConfig struct {
+	APIKeyQueue                      APIKeyQueueConfig `mapstructure:"api_key_queue"`
+	GeminiCachedContentMaxTTLSeconds int               `mapstructure:"gemini_cached_content_max_ttl_seconds"`
 	// 等待上游响应头的超时时间（秒），0表示无超时
 	// 注意：这不影响流式数据传输，只控制等待响应头的时间
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
@@ -1184,6 +1186,13 @@ type GatewayConfig struct {
 	// CNProviders: 国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）的余额检测配置。
 	// 仅作用于 payg（按量付费）账号：周期探测余额，低于阈值则临时停调。
 	CNProviders GatewayCNProvidersConfig `mapstructure:"cn_providers"`
+}
+
+// APIKeyQueueConfig applies only to keys with a positive concurrency limit.
+// Zero max_waiting leaves the previous immediate-rejection behavior unchanged.
+type APIKeyQueueConfig struct {
+	MaxWaiting     int `mapstructure:"max_waiting"`
+	TimeoutSeconds int `mapstructure:"timeout_seconds"`
 }
 
 // GatewayGrokConfig holds Grok-specific gateway scheduling knobs.

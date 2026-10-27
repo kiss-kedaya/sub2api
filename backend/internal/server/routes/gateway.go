@@ -372,6 +372,12 @@ func RegisterGatewayRoutes(
 	gemini.Use(groupModelAllowlist)
 	gemini.Use(compositeGeminiTarget)
 	gemini.Use(requireGroupGoogle)
+	gemini.POST("/cachedContents", h.Gateway.GeminiCachedContentsCreate)
+	gemini.GET("/cachedContents", h.Gateway.GeminiCachedContentsList)
+	gemini.GET("/cachedContents/:cacheID", h.Gateway.GeminiCachedContentsGet)
+	gemini.PATCH("/cachedContents/:cacheID", h.Gateway.GeminiCachedContentsPatch)
+	gemini.DELETE("/cachedContents/:cacheID", h.Gateway.GeminiCachedContentsDelete)
+
 	{
 		gemini.GET("/models", h.Gateway.GeminiV1BetaListModels)
 		gemini.GET("/models/:model", h.Gateway.GeminiV1BetaGetModel)

@@ -1434,6 +1434,11 @@
           </label>
         </div>
 
+        <GeminiCacheAccountFields
+          v-if="form.platform === 'gemini' && accountCategory === 'apikey' && !geminiUseCustomProtocol"
+          v-model="geminiCacheSettings"
+        />
+
         <!-- Gemini API Key tier selection -->
         <div v-if="form.platform === 'gemini' && accountCategory === 'apikey' && !geminiUseCustomProtocol">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
@@ -3909,6 +3914,9 @@
 </template>
 
 <script setup lang="ts">
+import GeminiCacheAccountFields from '@/components/account/GeminiCacheAccountFields.vue'
+import { readGeminiCacheSettings, applyGeminiCacheSettings } from '@/components/account/geminiCacheSettings'
+
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -4193,6 +4201,7 @@ const adaptiveBaseUrls = ref<Record<CnNativeApiProtocol, string>>({
   responses: ''
 })
 const geminiUseCustomProtocol = ref(false)
+const geminiCacheSettings = ref(readGeminiCacheSettings())
 const isCNPlatform = computed(() => isCNProviderPlatform(form.platform))
 const isGeminiProtocolAccount = computed(
   () => form.platform === 'gemini' && accountCategory.value === 'apikey' && geminiUseCustomProtocol.value
@@ -5359,6 +5368,7 @@ const resetForm = () => {
   form.platform = 'anthropic'
   form.type = 'oauth'
   form.credentials = {}
+  geminiCacheSettings.value = readGeminiCacheSettings()
   form.proxy_id = null
   form.concurrency = 10
   form.load_factor = null
@@ -5957,6 +5967,7 @@ const handleSubmit = async () => {
     return
   }
 
+  applyGeminiCacheSettings(credentials, geminiCacheSettings.value, form.platform, !geminiUseCustomProtocol.value)
   form.credentials = credentials
   const extra = buildAnthropicExtra(buildOpenAIExtra())
 

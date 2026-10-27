@@ -66,11 +66,12 @@ const apiKeyAuthSharedLookupTimeout = 5 * time.Second
 // 若编辑 Key 时无条件整行回写，并发累计的配额与限流计数就会被旧快照覆盖。
 // 因此调用方必须显式声明要改的列。
 type APIKeyUpdateFields struct {
-	Name      bool
-	Status    bool
-	Quota     bool
-	GroupID   bool
-	ExpiresAt bool
+	ConcurrencyLimit bool
+	Name             bool
+	Status           bool
+	Quota            bool
+	GroupID          bool
+	ExpiresAt        bool
 	// QuotaUsed 仅供"重置配额用量"路径声明；常规计费走 IncrementQuotaUsed。
 	QuotaUsed bool
 	// RateLimits 覆盖 rate_limit_5h / _1d / _7d 三个阈值。
@@ -140,6 +141,7 @@ type apiKeyGroupRouteStore interface {
 
 // APIKeyRateLimitData holds rate limit usage and window state for an API key.
 type APIKeyRateLimitData struct {
+	QuotaUsed     float64
 	Usage5h       float64
 	Usage1d       float64
 	Usage7d       float64
@@ -222,12 +224,13 @@ type APIKeyAuthCacheInvalidator interface {
 
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
-	Name        string   `json:"name"`
-	GroupID     *int64   `json:"group_id"`
-	GroupIDs    []int64  `json:"group_ids"`
-	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
-	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
-	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单
+	ConcurrencyLimit int      `json:"concurrency_limit"`
+	Name             string   `json:"name"`
+	GroupID          *int64   `json:"group_id"`
+	GroupIDs         []int64  `json:"group_ids"`
+	CustomKey        *string  `json:"custom_key"`   // 可选的自定义key
+	IPWhitelist      []string `json:"ip_whitelist"` // IP 白名单
+	IPBlacklist      []string `json:"ip_blacklist"` // IP 黑名单
 
 	// Quota fields
 	Quota         float64 `json:"quota"`           // Quota limit in USD (0 = unlimited)
@@ -247,12 +250,13 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest 更新API Key请求
 type UpdateAPIKeyRequest struct {
-	Name        *string   `json:"name"`
-	GroupID     *int64    `json:"group_id"`
-	GroupIDs    *[]int64  `json:"group_ids"`
-	Status      *string   `json:"status"`
-	IPWhitelist *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
-	IPBlacklist *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
+	ConcurrencyLimit *int      `json:"concurrency_limit"`
+	Name             *string   `json:"name"`
+	GroupID          *int64    `json:"group_id"`
+	GroupIDs         *[]int64  `json:"group_ids"`
+	Status           *string   `json:"status"`
+	IPWhitelist      *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
+	IPBlacklist      *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
 
 	// Quota fields
 	Quota           *float64   `json:"quota"`       // Quota limit in USD (nil = no change, 0 = unlimited)
@@ -281,6 +285,9 @@ func validateAPIKeyLimit(v float64) error {
 }
 
 func validateCreateAPIKeyRequest(req CreateAPIKeyRequest) error {
+	if req.ConcurrencyLimit < 0 {
+		return infraerrors.BadRequest("API_KEY_CONCURRENCY_INVALID", "API key concurrency limit must be non-negative")
+	}
 	for _, v := range []float64{req.Quota, req.RateLimit5h, req.RateLimit1d, req.RateLimit7d} {
 		if err := validateAPIKeyLimit(v); err != nil {
 			return err
@@ -293,6 +300,9 @@ func validateCreateAPIKeyRequest(req CreateAPIKeyRequest) error {
 }
 
 func validateUpdateAPIKeyRequest(req UpdateAPIKeyRequest) error {
+	if req.ConcurrencyLimit != nil && *req.ConcurrencyLimit < 0 {
+		return infraerrors.BadRequest("API_KEY_CONCURRENCY_INVALID", "API key concurrency limit must be non-negative")
+	}
 	for _, v := range []*float64{req.Quota, req.RateLimit5h, req.RateLimit1d, req.RateLimit7d} {
 		if v != nil {
 			if err := validateAPIKeyLimit(*v); err != nil {
@@ -597,18 +607,19 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 创建API Key记录
 	apiKey := &APIKey{
-		UserID:      userID,
-		Key:         key,
-		Name:        html.EscapeString(req.Name),
-		GroupID:     req.GroupID,
-		Status:      StatusActive,
-		IPWhitelist: req.IPWhitelist,
-		IPBlacklist: req.IPBlacklist,
-		Quota:       req.Quota,
-		QuotaUsed:   0,
-		RateLimit5h: req.RateLimit5h,
-		RateLimit1d: req.RateLimit1d,
-		RateLimit7d: req.RateLimit7d,
+		UserID:           userID,
+		Key:              key,
+		Name:             html.EscapeString(req.Name),
+		GroupID:          req.GroupID,
+		Status:           StatusActive,
+		IPWhitelist:      req.IPWhitelist,
+		IPBlacklist:      req.IPBlacklist,
+		Quota:            req.Quota,
+		ConcurrencyLimit: req.ConcurrencyLimit,
+		QuotaUsed:        0,
+		RateLimit5h:      req.RateLimit5h,
+		RateLimit1d:      req.RateLimit1d,
+		RateLimit7d:      req.RateLimit7d,
 
 		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(req.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: req.DeepSeekToolInjectionEnabled,
@@ -874,6 +885,10 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	// 下面若干分支会顺带把 Status 改回 active（配额扩容、清除过期等），
 	// 所以用原始值比对来决定是否写 status，而不是只看 req.Status。
 	originalStatus := apiKey.Status
+	if req.ConcurrencyLimit != nil {
+		apiKey.ConcurrencyLimit = *req.ConcurrencyLimit
+		fields.ConcurrencyLimit = true
+	}
 
 	// 更新字段
 	if req.Name != nil {
@@ -1295,4 +1310,19 @@ func (s *APIKeyService) UpdateRateLimitUsage(ctx context.Context, apiKeyID int64
 		return nil
 	}
 	return s.apiKeyRepo.IncrementRateLimitUsage(ctx, apiKeyID, cost)
+}
+
+// GetByKeyUncached is used for persistent connection turn admission. HTTP queue
+// polls reuse the existing invalidated auth cache; WS gets a fresh DB snapshot.
+func (s *APIKeyService) GetByKeyUncached(ctx context.Context, key string) (*APIKey, error) {
+	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes {
+		return nil, ErrAPIKeyNotFound
+	}
+	loaded, err := s.lookupAPIKeyForAuth(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	loaded.Key = key
+	s.compileAPIKeyIPRules(loaded)
+	return loaded, nil
 }

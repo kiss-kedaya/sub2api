@@ -47,8 +47,9 @@ import (
 //   - sql: 原生 SQL 执行器，用于复杂查询和批量操作
 //   - schedulerCache: 调度器缓存，用于在账号状态变更时同步快照
 type accountRepository struct {
-	client *dbent.Client // Ent ORM 客户端
-	sql    sqlExecutor   // 原生 SQL 执行接口
+	proxySecretEncryptor service.SecretEncryptor
+	client               *dbent.Client // Ent ORM 客户端
+	sql                  sqlExecutor   // 原生 SQL 执行接口
 	// schedulerCache 用于在账号状态变更时主动同步快照到缓存，
 	// 确保粘性会话能及时感知账号不可用状态。
 	// Used to proactively sync account snapshot to cache when status changes,
@@ -589,6 +590,9 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		// Prefer the preloaded proxy edge when available.
 		if entAcc.Edges.Proxy != nil {
 			out.Proxy = proxyEntityToService(entAcc.Edges.Proxy)
+			if err := service.DecodeManagedProxyCredential(out.Proxy, r.proxySecretEncryptor); err != nil {
+				return nil, err
+			}
 		}
 
 		if groups, ok := groupsByAccount[entAcc.ID]; ok {
@@ -3757,7 +3761,11 @@ func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (
 			return nil, err
 		}
 		for _, p := range proxies {
-			proxyMap[p.ID] = proxyEntityToService(p)
+			converted := proxyEntityToService(p)
+			if err := service.DecodeManagedProxyCredential(converted, r.proxySecretEncryptor); err != nil {
+				return nil, err
+			}
+			proxyMap[p.ID] = converted
 		}
 	}
 	return proxyMap, nil

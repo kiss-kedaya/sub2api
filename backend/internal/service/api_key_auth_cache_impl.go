@@ -180,6 +180,9 @@ func (s *APIKeyService) AuthCacheInvalidationSubscriberHealth() AuthCacheInvalid
 }
 
 func (s *APIKeyService) StopAuthCacheInvalidationSubscriber() {
+	if s != nil && s.concurrencyService != nil {
+		s.concurrencyService.StopAPIKeyQueue()
+	}
 	if s == nil {
 		return
 	}
@@ -359,6 +362,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 
 		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(apiKey.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: apiKey.DeepSeekToolInjectionEnabled,
+		ConcurrencyLimit:             apiKey.ConcurrencyLimit,
 		User: APIKeyAuthUserSnapshot{
 			ID:                                apiKey.User.ID,
 			Status:                            apiKey.User.Status,
@@ -488,6 +492,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 
 		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(snapshot.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: snapshot.DeepSeekToolInjectionEnabled,
+		ConcurrencyLimit:             snapshot.ConcurrencyLimit,
 		User: &User{
 			ID:                                snapshot.User.ID,
 			Status:                            snapshot.User.Status,

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -24,7 +25,7 @@ type ConnectionTraceRecorder interface {
 func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := strings.TrimRight(c.Request.URL.Path, "/")
-		if c.Request.Method != http.MethodPost || (!strings.HasSuffix(path, "/responses") && !strings.HasSuffix(path, "/responses/compact")) {
+		if c.Request.Method != http.MethodPost || (!strings.HasSuffix(path, "/responses") && !strings.HasSuffix(path, "/responses/compact") && !strings.HasSuffix(path, "/messages") && !strings.HasSuffix(path, "/chat/completions")) {
 			c.Next()
 			return
 		}
@@ -34,13 +35,15 @@ func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 		writer := &timingWriter{ResponseWriter: c.Writer, collector: collector}
 		c.Writer = writer
 		finish := func() {
+			writer.mu.Lock()
 			if writer.outcome != nil {
 				terminal := writer.outcome.Finish()
 				requesttiming.Output(c.Request.Context(), false, false, terminal)
-				if writer.flushed {
+				if writer.flushed && writer.flushAt == writer.writes {
 					requesttiming.TerminalFlushed(c.Request.Context(), terminal)
 				}
 			}
+			writer.mu.Unlock()
 			// Copy bounded metadata even before authentication. Never retain headers,
 			// bodies, credential values or gin.Context in the async writer.
 			if len(recorders) > 0 && recorders[0] != nil {
@@ -130,6 +133,9 @@ func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 }
 
 type timingWriter struct {
+	mu      sync.Mutex
+	writes  int64
+	flushAt int64
 	gin.ResponseWriter
 	collector *requesttiming.Collector
 	outcome   *requestcapture.OutcomeObserver
@@ -140,33 +146,42 @@ func (w *timingWriter) Write(p []byte) (int, error) {
 	start := time.Now()
 	n, err := w.ResponseWriter.Write(p)
 	w.collector.Written(start, n, err, false)
+	w.mu.Lock()
 	if n > 0 {
+		w.writes++
 		if w.outcome == nil {
 			w.outcome = requestcapture.NewOutcomeObserver(w.Header().Get("Content-Type"))
 		}
 		w.outcome.Write(p[:n])
 	}
+	w.mu.Unlock()
 	return n, err
 }
 func (w *timingWriter) WriteString(s string) (int, error) {
 	start := time.Now()
 	n, err := w.ResponseWriter.WriteString(s)
 	w.collector.Written(start, n, err, false)
+	w.mu.Lock()
 	if n > 0 {
+		w.writes++
 		if w.outcome == nil {
 			w.outcome = requestcapture.NewOutcomeObserver(w.Header().Get("Content-Type"))
 		}
 		w.outcome.Write([]byte(s[:n]))
 	}
+	w.mu.Unlock()
 	return n, err
 }
 func (w *timingWriter) Flush() { _ = w.FlushError() }
 func (w *timingWriter) FlushError() error {
 	start := time.Now()
 	err := http.NewResponseController(w.ResponseWriter).Flush()
+	w.mu.Lock()
 	if err == nil {
 		w.flushed = true
+		w.flushAt = w.writes
 	}
+	w.mu.Unlock()
 	w.collector.Written(start, 0, err, err == nil)
 	return err
 }

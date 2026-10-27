@@ -58,6 +58,11 @@ jobs:
         run: |
           go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
           go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: Explicit cache and operations safety regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/mihomo -count=1
+          go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository ./cmd/server -run '^Test(GeminiCached|GeminiExplicit|GeminiCache|FixedCharge|AccountOps|ChannelOperations|CredentialGuard|ManagedProxy|ManagedAccount|APIKeyQueue|APIKeySlot|APIKeyAdmission|LiveLease|ProvideCleanup)' -count=1
       - name: Unit tests
         working-directory: backend
         run: make test-unit
@@ -152,7 +157,7 @@ jobs:
         run: make test-frontend
       - name: Operator feature frontend regression
         working-directory: frontend
-        run: pnpm exec vitest run src/api/__tests__/groupCacheTest.spec.ts src/views/admin/__tests__/GroupCacheTestView.spec.ts src/components/account/__tests__/SchedulableTimerControl.spec.ts src/components/usage/__tests__/TrafficPanel.spec.ts
+        run: pnpm exec vitest run src/api/__tests__/groupCacheTest.spec.ts src/views/admin/__tests__/GroupCacheTestView.spec.ts src/components/account/__tests__/SchedulableTimerControl.spec.ts src/components/usage/__tests__/TrafficPanel.spec.ts src/components/account/__tests__/geminiCacheSettings.spec.ts src/components/admin/operations/__tests__ src/views/admin/__tests__/AccountOpsView.spec.ts src/views/admin/__tests__/ChannelOperationsView.spec.ts
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build

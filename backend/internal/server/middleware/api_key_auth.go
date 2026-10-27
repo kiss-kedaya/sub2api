@@ -195,7 +195,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			if !billingInfoRequest {
 				_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 			}
-			proceedAuthenticated(c)
+			nextWithAPIKeyAdmissionOwner(c, apiKeyService, apiKeyString, ip.GetClientIP(c), apiKey, false)
 			return
 		}
 
@@ -294,7 +294,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 		}
 
-		proceedAuthenticated(c)
+		nextWithAPIKeyAdmissionOwner(c, apiKeyService, apiKeyString, ip.GetClientIP(c), apiKey, false)
 	}
 }
 

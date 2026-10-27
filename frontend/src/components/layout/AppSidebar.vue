@@ -832,7 +832,11 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     {path:'/admin/diagnostics',label:locale.value==='zh'?'诊断与运维':'Diagnostics and operations',icon:ChartIcon,expandOnly:true,children:[
-      {path:'/admin/connections',label:locale.value==='zh'?'连接诊断':'Connections',icon:ChartIcon},
+      {path:'/admin/credential-guard',label:locale.value==='zh'?'凭证巡检':'Credential inspection',icon:ShieldIcon},
+        {path:'/admin/account-ops',label:locale.value==='zh'?'账号通知':'Account notifications',icon:BellIcon},
+        {path:'/admin/channel-operations',label:locale.value==='zh'?'渠道运维':'Channel operations',icon:ChartIcon},
+        {path:'/admin/mihomo',label:locale.value==='zh'?'代理出口':'Managed proxies',icon:GlobeIcon},
+        {path:'/admin/connections',label:locale.value==='zh'?'连接诊断':'Connections',icon:ChartIcon},
       {path:'/admin/group-cache-tests',label:locale.value==='zh'?'分组缓存测试':'Cache tests',icon:ChartIcon},
       {path:'/admin/request-captures',label:locale.value==='zh'?'请求采集':'Request capture',icon:ChartIcon},
       {path:'/admin/traffic',label:locale.value==='zh'?'用户流量':'User traffic',icon:ChartIcon},

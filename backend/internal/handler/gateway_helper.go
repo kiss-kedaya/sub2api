@@ -243,7 +243,8 @@ func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKey(ctx context.Context, use
 	if err != nil || !acquired {
 		return releaseFunc, acquired, err
 	}
-	return h.withAPIKeySlot(ctx, apiKeyID, releaseFunc), true, nil
+	combined, err := h.withAPIKeySlot(ctx, apiKeyID, 0, releaseFunc)
+	return combined, err == nil, err
 }
 
 // TryAcquireUserSlotForAPIKeyFromGin is the context-aware variant used by
@@ -252,11 +253,25 @@ func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKeyFromGin(c *gin.Context, u
 	if c == nil || c.Request == nil {
 		return h.TryAcquireUserSlotForAPIKey(context.Background(), userID, maxConcurrency, apiKeyID)
 	}
-	releaseFunc, acquired, err := h.TryAcquireUserSlot(c.Request.Context(), userID, maxConcurrency)
-	if err != nil || !acquired {
-		return releaseFunc, acquired, err
+	keyLimit := 0
+	if key, ok := middleware2.GetAPIKeyFromContext(c); ok && key != nil {
+		keyLimit = key.ConcurrencyLimit
 	}
-	return h.withAPIKeySlotFromGin(c, releaseFunc), true, nil
+	reservation, err := h.ReserveWSAPIKeySlotWithWait(c.Request.Context(), apiKeyID, keyLimit)
+	if err != nil {
+		return nil, false, err
+	}
+	userRelease, acquired, err := h.TryAcquireUserSlot(c.Request.Context(), userID, maxConcurrency)
+	if err != nil || !acquired {
+		reservation.Release()
+		return userRelease, acquired, err
+	}
+	return sync.OnceFunc(func() {
+		if userRelease != nil {
+			userRelease()
+		}
+		reservation.Release()
+	}), true, nil
 }
 
 // AcquireOpenAIWSIngressLease bounds the whole client WebSocket lifecycle,
@@ -290,6 +305,30 @@ func (h *ConcurrencyHelper) AcquireUserSlotWithWait(c *gin.Context, userID int64
 
 func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
 	ctx := c.Request.Context()
+	apiKeyID, keyLimit := int64(0), 0
+	if key, ok := middleware2.GetAPIKeyFromContext(c); ok && key != nil {
+		apiKeyID, keyLimit = key.ID, key.ConcurrencyLimit
+	}
+	// Reserve key capacity before any user queue can emit an SSE heartbeat.
+	keyRelease, err := h.withAPIKeySlot(ctx, apiKeyID, keyLimit, nil)
+	if err != nil {
+		return nil, err
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			keyRelease()
+		}
+	}()
+	combine := func(userRelease func()) func() {
+		transferred = true
+		return wrapReleaseOnDone(ctx, sync.OnceFunc(func() {
+			if userRelease != nil {
+				userRelease()
+			}
+			keyRelease()
+		}))
+	}
 
 	// Try to acquire immediately
 	releaseFunc, acquired, err := h.TryAcquireUserSlot(ctx, userID, maxConcurrency)
@@ -298,7 +337,7 @@ func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userI
 	}
 
 	if acquired {
-		return h.withAPIKeySlotFromGin(c, releaseFunc), nil
+		return combine(releaseFunc), nil
 	}
 
 	queueLimit := service.CalculateMaxWait(maxConcurrency) - maxConcurrency
@@ -319,33 +358,102 @@ func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userI
 	if err != nil {
 		return nil, err
 	}
-	return h.withAPIKeySlotFromGin(c, releaseFunc), nil
+	return combine(releaseFunc), nil
 }
 
-func (h *ConcurrencyHelper) withAPIKeySlotFromGin(c *gin.Context, releaseFunc func()) func() {
-	if c == nil {
-		return releaseFunc
+// ReserveAPIKeySlotWithWait is the owned-reservation variant used by Live
+// creation, which transfers the key member instead of releasing it.
+func (h *ConcurrencyHelper) ReserveAPIKeySlotWithWait(ctx context.Context, apiKeyID int64, keyLimit int) (*service.APIKeySlotReservation, error) {
+	if h == nil || h.concurrencyService == nil {
+		if keyLimit != 0 {
+			return nil, fmt.Errorf("API key concurrency admission unavailable")
+		}
+		return nil, nil
 	}
-	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
-	if !ok || apiKey == nil {
-		return releaseFunc
+	reservation, err := h.concurrencyService.ReserveAPIKeySlotWithWait(ctx, apiKeyID, keyLimit)
+	if err != nil {
+		return nil, err
 	}
-	return h.withAPIKeySlot(c.Request.Context(), apiKey.ID, releaseFunc)
+	if reservation == nil {
+		return nil, &ConcurrencyError{SlotType: "API key"}
+	}
+	return reservation, nil
 }
 
-func (h *ConcurrencyHelper) withAPIKeySlot(ctx context.Context, apiKeyID int64, releaseFunc func()) func() {
-	if h == nil || h.concurrencyService == nil || apiKeyID <= 0 {
-		return releaseFunc
+// ReserveWSAPIKeySlotWithWait is the WS turn admission variant: every turn runs
+// one bounded fresh authorization check before deciding capacity, so unlimited
+// and queue-disabled keys still see per-turn revocations and expansions. The
+// refreshed limit is the one used for capacity, and only an enforced (limit > 0)
+// result touches Redis admission; limit 0 stays stats-only.
+func (h *ConcurrencyHelper) ReserveWSAPIKeySlotWithWait(ctx context.Context, apiKeyID int64, keyLimit int) (*service.APIKeySlotReservation, error) {
+	if h == nil || h.concurrencyService == nil {
+		if keyLimit != 0 {
+			return nil, fmt.Errorf("API key concurrency admission unavailable")
+		}
+		return nil, nil
 	}
-	apiKeyReleaseFunc := h.concurrencyService.TrackAPIKeySlot(ctx, apiKeyID)
-	return func() {
+	refreshed, revalidated, err := h.concurrencyService.RevalidateAPIKeyQueueTurn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if revalidated {
+		keyLimit = refreshed
+	}
+	reservation, err := h.concurrencyService.ReserveAPIKeySlotWithWait(ctx, apiKeyID, keyLimit)
+	if err != nil {
+		return nil, err
+	}
+	if reservation == nil {
+		return nil, &ConcurrencyError{SlotType: "API key"}
+	}
+	return reservation, nil
+}
+
+// RevalidateTurnAuth runs the installed queue revalidator once under the
+// bounded admission context, or returns nil when no fresh gate is installed.
+// WS frame hooks call it ahead of payload parsing to refresh permissions for
+// the current frame; it performs no moderation, slot or pricing work.
+func (h *ConcurrencyHelper) RevalidateTurnAuth(ctx context.Context) error {
+	if h == nil || h.concurrencyService == nil {
+		return nil
+	}
+	_, _, err := h.concurrencyService.RevalidateAPIKeyQueueTurn(ctx)
+	return err
+}
+
+// AcquireAPIKeySlot covers HTTP forwarding endpoints without a user wait queue.
+func (h *ConcurrencyHelper) AcquireAPIKeySlot(ctx context.Context, apiKeyID int64, keyLimit int) (func(), error) {
+	if h == nil || h.concurrencyService == nil {
+		if keyLimit != 0 {
+			return nil, fmt.Errorf("API key concurrency admission unavailable")
+		}
+		return func() {}, nil
+	}
+	release, err := h.withAPIKeySlot(ctx, apiKeyID, keyLimit, nil)
+	return wrapReleaseOnDone(ctx, release), err
+}
+
+func (h *ConcurrencyHelper) withAPIKeySlot(ctx context.Context, apiKeyID int64, keyLimit int, releaseFunc func()) (func(), error) {
+	// The key-level queue (when configured) waits here, before user/account
+	// admission and without writing any response header.
+	result, err := h.concurrencyService.AcquireAPIKeySlotWithWait(ctx, apiKeyID, keyLimit)
+	if err != nil || !result.Acquired {
 		if releaseFunc != nil {
 			releaseFunc()
 		}
-		if apiKeyReleaseFunc != nil {
-			apiKeyReleaseFunc()
+		if err != nil {
+			return nil, err
 		}
+		return nil, &ConcurrencyError{SlotType: "API key"}
 	}
+	return sync.OnceFunc(func() {
+		if releaseFunc != nil {
+			releaseFunc()
+		}
+		if result.ReleaseFunc != nil {
+			result.ReleaseFunc()
+		}
+	}), nil
 }
 
 // AcquireAccountSlotWithWait acquires an account concurrency slot, waiting if necessary.

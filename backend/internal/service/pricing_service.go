@@ -213,11 +213,12 @@ var (
 // LiteLLMModelPricing LiteLLM价格数据结构
 // 只保留我们需要的字段，使用指针来处理可能缺失的值
 type LiteLLMModelPricing struct {
-	InputCostPerToken           float64 `json:"input_cost_per_token"`
-	InputCostPerTokenPriority   float64 `json:"input_cost_per_token_priority"`
-	OutputCostPerToken          float64 `json:"output_cost_per_token"`
-	OutputCostPerTokenPriority  float64 `json:"output_cost_per_token_priority"`
-	CacheCreationInputTokenCost float64 `json:"cache_creation_input_token_cost"`
+	CacheStorageCostPerTokenPerHour float64 `json:"cache_storage_cost_per_token_per_hour"`
+	InputCostPerToken               float64 `json:"input_cost_per_token"`
+	InputCostPerTokenPriority       float64 `json:"input_cost_per_token_priority"`
+	OutputCostPerToken              float64 `json:"output_cost_per_token"`
+	OutputCostPerTokenPriority      float64 `json:"output_cost_per_token_priority"`
+	CacheCreationInputTokenCost     float64 `json:"cache_creation_input_token_cost"`
 	// CacheCreationInputTokenCostExplicit 为真表示价格表显式给出了缓存写入价。
 	// GPT-6 Sol/Luna/6.1 的官方写入价低于输入价的 1.25 倍，必须靠它阻止按 1.25 倍回填。
 	CacheCreationInputTokenCostExplicit bool    `json:"-"`
@@ -250,6 +251,7 @@ type PricingRemoteClient interface {
 
 // LiteLLMRawEntry 用于解析原始JSON数据
 type LiteLLMRawEntry struct {
+	CacheStorageCostPerTokenPerHour     *float64 `json:"cache_storage_cost_per_token_per_hour"`
 	InputCostPerToken                   *float64 `json:"input_cost_per_token"`
 	InputCostPerTokenPriority           *float64 `json:"input_cost_per_token_priority"`
 	OutputCostPerToken                  *float64 `json:"output_cost_per_token"`
@@ -733,6 +735,9 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		}
 		if entry.CacheCreationInputTokenCostAbove1hr != nil {
 			pricing.CacheCreationInputTokenCostAbove1hr = *entry.CacheCreationInputTokenCostAbove1hr
+		}
+		if entry.CacheStorageCostPerTokenPerHour != nil {
+			pricing.CacheStorageCostPerTokenPerHour = *entry.CacheStorageCostPerTokenPerHour
 		}
 		if entry.CacheReadInputTokenCost != nil {
 			pricing.CacheReadInputTokenCost = *entry.CacheReadInputTokenCost

@@ -41,25 +41,26 @@ var gatewayCompatibilityMetricsLogCounter atomic.Uint64
 
 // GatewayHandler handles API gateway requests
 type GatewayHandler struct {
-	gatewayService            *service.GatewayService
-	openAIGatewayService      *service.OpenAIGatewayService
-	geminiCompatService       *service.GeminiMessagesCompatService
-	antigravityGatewayService *service.AntigravityGatewayService
-	userService               *service.UserService
-	billingCacheService       *service.BillingCacheService
-	usageService              *service.UsageService
-	apiKeyService             *service.APIKeyService
-	usageRecordWorkerPool     *service.UsageRecordWorkerPool
-	balancePreauthorizer      balancePreauthorizer
-	errorPassthroughService   *service.ErrorPassthroughService
-	contentModerationService  *service.ContentModerationService
-	securityAuditCoordinator  *securityaudit.Coordinator
-	concurrencyHelper         *ConcurrencyHelper
-	userMsgQueueHelper        *UserMsgQueueHelper
-	maxAccountSwitches        int
-	maxAccountSwitchesGemini  int
-	cfg                       *config.Config
-	settingService            *service.SettingService
+	geminiCachedContentService *service.GeminiCachedContentService
+	gatewayService             *service.GatewayService
+	openAIGatewayService       *service.OpenAIGatewayService
+	geminiCompatService        *service.GeminiMessagesCompatService
+	antigravityGatewayService  *service.AntigravityGatewayService
+	userService                *service.UserService
+	billingCacheService        *service.BillingCacheService
+	usageService               *service.UsageService
+	apiKeyService              *service.APIKeyService
+	usageRecordWorkerPool      *service.UsageRecordWorkerPool
+	balancePreauthorizer       balancePreauthorizer
+	errorPassthroughService    *service.ErrorPassthroughService
+	contentModerationService   *service.ContentModerationService
+	securityAuditCoordinator   *securityaudit.Coordinator
+	concurrencyHelper          *ConcurrencyHelper
+	userMsgQueueHelper         *UserMsgQueueHelper
+	maxAccountSwitches         int
+	maxAccountSwitchesGemini   int
+	cfg                        *config.Config
+	settingService             *service.SettingService
 }
 
 // streamKeepaliveInterval returns the configured interval for compatibility
@@ -1286,6 +1287,14 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	}
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		h.handleConcurrencyError(c, keyErr, "API key", false)
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	forcedPlatform := ""
 	if platform, ok := middleware2.GetForcePlatformFromContext(c); ok {
 		forcedPlatform = strings.TrimSpace(platform)
@@ -1434,6 +1443,14 @@ func (h *GatewayHandler) CodexModels(c *gin.Context) {
 		return
 	}
 
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		h.handleConcurrencyError(c, keyErr, "API key", false)
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	forcedPlatform := ""
 	if value, exists := middleware2.GetForcePlatformFromContext(c); exists {
 		forcedPlatform = strings.TrimSpace(value)
@@ -2394,6 +2411,14 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 		return
 	}
 
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		h.handleConcurrencyError(c, keyErr, "API key", false)
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	_, ok = middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")

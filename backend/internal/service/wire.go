@@ -455,6 +455,7 @@ func ProvideDeferredService(accountRepo AccountRepository, apiKeyRepo APIKeyRepo
 func ProvideConcurrencyService(cache ConcurrencyCache, accountRepo AccountRepository, cfg *config.Config) *ConcurrencyService {
 	svc := NewConcurrencyService(cache)
 	if cfg != nil {
+		svc.SetAPIKeyQueuePolicy(APIKeyQueuePolicy{MaxWaiting: cfg.Gateway.APIKeyQueue.MaxWaiting, Timeout: time.Duration(cfg.Gateway.APIKeyQueue.TimeoutSeconds) * time.Second})
 		svc.SetAccountLoadBatchCacheTTL(time.Duration(cfg.Gateway.Scheduling.LoadBatchCacheTTLMS) * time.Millisecond)
 	}
 	startBackgroundJob(func() {
@@ -503,6 +504,7 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	accountOps *AccountOpsService,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	if healthCache, ok := tempUnschedCache.(OpenAIAPIKeyHealthCache); ok {
@@ -512,6 +514,7 @@ func ProvideRateLimitService(
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetAccountOpsService(accountOps)
 	return svc
 }
 
@@ -858,6 +861,9 @@ func ProvideAPIKeyService(
 
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
+	ProvideCredentialGuardService,
+	ProvideAccountOpsService,
+	NewMihomoProxyService,
 	// Core services
 	ProvideAuthService,
 	NewPasskeyService,

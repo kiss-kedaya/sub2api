@@ -15,7 +15,12 @@ import traffic from './traffic'
 import ipAudit from '@/features/ip-audit/locale.en'
 import {en as moderationCategories} from '@/features/ip-risk/moderationCategories.locale'
 
+import accountOps from '@/components/admin/operations/accountOps.en'
+import channelOps from '@/components/admin/operations/channelOps.en'
+
 export default {
+  accountOps, channelOps,
+  qualityOps: { refresh: 'Refresh', accounts: 'Accounts', loadMore: 'Load more' },
   ...landing,
   ...common,
   ...dashboard,
