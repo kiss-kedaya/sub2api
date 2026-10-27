@@ -239,6 +239,7 @@ export interface PublicSettings {
   force_email_on_third_party_signup: boolean
   registration_email_suffix_whitelist: string[]
   registration_email_domain_quota_enabled?: boolean
+  registration_email_alias_block_enabled?: boolean
   promo_code_enabled: boolean
   password_reset_enabled: boolean
   invitation_code_enabled: boolean

@@ -27,6 +27,7 @@ type UpdateSettingsRequest struct {
 	EmailVerifyEnabled                  bool                         `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist    []string                     `json:"registration_email_suffix_whitelist"`
 	RegistrationEmailDomainQuotaEnabled *bool                        `json:"registration_email_domain_quota_enabled"` // 非白名单域名限量注册开关（省略=保持现值）
+	RegistrationEmailAliasBlockEnabled  *bool                        `json:"registration_email_alias_block_enabled"`  // 邮箱别名格式拒绝开关（省略=保持现值）
 	PromoCodeEnabled                    bool                         `json:"promo_code_enabled"`
 	PasswordResetEnabled                bool                         `json:"password_reset_enabled"`
 	FrontendURL                         string                       `json:"frontend_url"`
@@ -546,6 +547,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	registrationEmailDomainQuotaEnabled := previousSettings.RegistrationEmailDomainQuotaEnabled
 	if req.RegistrationEmailDomainQuotaEnabled != nil {
 		registrationEmailDomainQuotaEnabled = *req.RegistrationEmailDomainQuotaEnabled
+	}
+	registrationEmailAliasBlockEnabled := previousSettings.RegistrationEmailAliasBlockEnabled
+	if req.RegistrationEmailAliasBlockEnabled != nil {
+		registrationEmailAliasBlockEnabled = *req.RegistrationEmailAliasBlockEnabled
 	}
 	if passkeyEnabled {
 		configured, _, _ := h.settingService.PasskeyConfiguration()
@@ -1532,6 +1537,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		EmailVerifyEnabled:                  req.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:    req.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled: registrationEmailDomainQuotaEnabled,
+		RegistrationEmailAliasBlockEnabled:  registrationEmailAliasBlockEnabled,
 		PromoCodeEnabled:                    req.PromoCodeEnabled,
 		PasswordResetEnabled:                req.PasswordResetEnabled,
 		FrontendURL:                         req.FrontendURL,
@@ -2208,6 +2214,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		EmailVerifyEnabled:                                     updatedSettings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:                       updatedSettings.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled:                    updatedSettings.RegistrationEmailDomainQuotaEnabled,
+		RegistrationEmailAliasBlockEnabled:                     updatedSettings.RegistrationEmailAliasBlockEnabled,
 		PromoCodeEnabled:                                       updatedSettings.PromoCodeEnabled,
 		PasswordResetEnabled:                                   updatedSettings.PasswordResetEnabled,
 		FrontendURL:                                            updatedSettings.FrontendURL,

@@ -1219,6 +1219,9 @@ func (s *AuthService) validateRegistrationEmailPolicy(ctx context.Context, email
 // 非白名单域名默认直接拒绝（严格白名单模式）；仅当域名限量注册开关开启时，
 // 非白名单域名每个最多允许一个账户。
 func (s *AuthService) validateRegistrationEmailQuota(ctx context.Context, email string) error {
+	if err := s.validateRegistrationEmailAlias(ctx, email); err != nil {
+		return err
+	}
 	if s.settingService == nil {
 		return nil
 	}

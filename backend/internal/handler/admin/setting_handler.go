@@ -143,6 +143,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		EmailVerifyEnabled:                                     settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:                       settings.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled:                    settings.RegistrationEmailDomainQuotaEnabled,
+		RegistrationEmailAliasBlockEnabled:                     settings.RegistrationEmailAliasBlockEnabled,
 		PromoCodeEnabled:                                       settings.PromoCodeEnabled,
 		PasswordResetEnabled:                                   settings.PasswordResetEnabled,
 		FrontendURL:                                            settings.FrontendURL,

@@ -199,6 +199,7 @@ import { extractApiErrorCode } from '@/utils/apiError'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
   isRegistrationEmailFormatValid,
+  isRegistrationEmailAlias,
   isRegistrationEmailSuffixAllowed,
   normalizeRegistrationEmailSuffixWhitelist
 } from '@/utils/registrationEmailPolicy'
@@ -275,6 +276,7 @@ const siteName = ref<string>('Sub2API')
 const registrationEmailSuffixWhitelist = ref<string[]>([])
 // 域名限量注册开关：开启时非白名单域名可注册 1 个账户（由后端判定），前端不做白名单预检。
 const emailDomainQuotaEnabled = ref<boolean>(false)
+const emailAliasBlockEnabled = ref<boolean>(false)
 
 // Turnstile for resend
 const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
@@ -378,6 +380,7 @@ onMounted(async () => {
       settings.registration_email_suffix_whitelist || []
     )
     emailDomainQuotaEnabled.value = settings.registration_email_domain_quota_enabled === true
+    emailAliasBlockEnabled.value = settings.registration_email_alias_block_enabled === true
   } catch (error) {
     console.error('Failed to load public settings:', error)
   }
@@ -534,7 +537,19 @@ async function sendCode(): Promise<void> {
   let captchaProofUsed = false
 
   try {
-    if (!shouldBypassRegistrationEmailPolicy() && !isRegistrationEmailFormatValid(email.value)) {
+    if (!isPendingOAuthFlow() && !pendingAuthToken.value.trim() && emailAliasBlockEnabled.value && isRegistrationEmailAlias(email.value)) {
+      errorMessage.value = t('auth.emailAliasNotAllowed')
+      appStore.showError(errorMessage.value)
+      return
+    }
+
+    if (!isPendingOAuthFlow() && !pendingAuthToken.value.trim() && emailAliasBlockEnabled.value && isRegistrationEmailAlias(email.value)) {
+    errorMessage.value = t('auth.emailAliasNotAllowed')
+    appStore.showError(errorMessage.value)
+    return
+  }
+
+  if (!shouldBypassRegistrationEmailPolicy() && !isRegistrationEmailFormatValid(email.value)) {
       errorMessage.value = t('auth.emailFormatInvalid')
       appStore.showError(errorMessage.value)
       return
