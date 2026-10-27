@@ -133,18 +133,18 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 	// once per restored item would multiply both allocations and copy time.
 	var restored bytes.Buffer
 	restored.Grow(len(input.Raw) + addedBytes)
-	restored.WriteByte('[')
+	_ = restored.WriteByte('[')
 	for i, item := range items {
 		if i > 0 {
-			restored.WriteByte(',')
+			_ = restored.WriteByte(',')
 		}
 		if replacement, ok := replacements[i]; ok {
-			restored.Write(replacement)
+			_, _ = restored.Write(replacement)
 		} else {
-			restored.WriteString(item.Raw)
+			_, _ = restored.WriteString(item.Raw)
 		}
 	}
-	restored.WriteByte(']')
+	_ = restored.WriteByte(']')
 	if next, err := sjson.SetRawBytes(body, "input", restored.Bytes()); err == nil {
 		return next
 	}
@@ -258,7 +258,7 @@ func (r *deepSeekNativeReasoningRecorder) ObserveFrame(frame openAISSEDataFrame)
 		if item.parts[index] == nil {
 			item.parts[index] = &strings.Builder{}
 		}
-		item.parts[index].WriteString(text)
+		_, _ = item.parts[index].WriteString(text)
 	case "response.completed", "response.done", "response.incomplete":
 		r.ObserveResponse(frame.root.Get("response"))
 		if frame.eventType != "response.incomplete" {
