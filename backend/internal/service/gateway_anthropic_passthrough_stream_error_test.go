@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -157,4 +158,72 @@ func TestAnthropicStreamErrorPayload_DetectsBareJSONAndSSE(t *testing.T) {
 	require.False(t, ok)
 	_, ok = anthropicStreamErrorPayload(`event: message_stop`)
 	require.False(t, ok)
+}
+
+func TestAnthropicPassthroughOversizedErrorRemainsFailedAndRetainsUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const usagePrefix = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":11}}}\n\n"
+	for _, named := range []bool{true, false} {
+		t.Run(fmt.Sprintf("named=%t", named), func(t *testing.T) {
+			var source io.Reader
+			var flood *repeatingErrorDataReader
+			if named {
+				flood = &repeatingErrorDataReader{line: "data: \"synthetic-private-provider-diagnostic\",\n"}
+				source = io.MultiReader(strings.NewReader(usagePrefix+"event: error\n"), flood)
+			} else {
+				payload := `data: {"type":"error","error":{"message":"synthetic-private-provider-diagnostic` + strings.Repeat("x", anthropicPassthroughMaxErrorEventBytes) + `"}}` + "\n\n"
+				source = strings.NewReader(usagePrefix + payload)
+			}
+			upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(source),
+			}}
+			svc := newForwardPartialUsageServiceForTest(upstream)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			result, err := svc.Forward(context.Background(), c, newAnthropicAPIKeyAccountForTest(), &ParsedRequest{
+				Body:  NewRequestBodyRef([]byte(`{"model":"claude-3-7-sonnet-20250219","stream":true,"messages":[{"role":"user","content":"hello"}]}`)),
+				Model: "claude-3-7-sonnet-20250219", Stream: true,
+			})
+			var failure *AnthropicPassthroughStreamError
+			require.ErrorAs(t, err, &failure)
+			require.Equal(t, http.StatusBadGateway, failure.StatusCode)
+			require.False(t, failure.ResponseWritten, "the handler owns the single fallback error frame")
+			require.Empty(t, failure.RawData, "oversized diagnostics cannot leak into logs")
+			var retry *UpstreamFailoverError
+			require.False(t, errors.As(err, &retry), "oversized terminal errors cannot replay accepted work")
+			require.NotNil(t, result)
+			require.Equal(t, 11, result.Usage.InputTokens)
+			require.Equal(t, usagePrefix, recorder.Body.String())
+			require.NotContains(t, recorder.Body.String(), "synthetic-private-provider-diagnostic")
+			marker, ok := GetOpsStreamError(c)
+			require.True(t, ok)
+			require.Equal(t, http.StatusBadGateway, marker.IntendedStatus)
+			require.True(t, marker.CountTowardsSLA)
+			if flood != nil {
+				require.LessOrEqual(t, flood.read, anthropicPassthroughMaxErrorEventBytes+8192)
+			}
+		})
+	}
+}
+
+func TestAnthropicPassthroughErrorLimitDoesNotCapNormalModelOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	largeText := strings.Repeat("x", anthropicPassthroughMaxErrorEventBytes+128)
+	wire := "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"" + largeText + "\"}}\n\n" +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(wire)),
+	}}
+	svc := newForwardPartialUsageServiceForTest(upstream)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	result, err := svc.Forward(context.Background(), c, newAnthropicAPIKeyAccountForTest(), &ParsedRequest{
+		Body:  NewRequestBodyRef([]byte(`{"model":"claude-3-7-sonnet-20250219","stream":true,"messages":[{"role":"user","content":"hello"}]}`)),
+		Model: "claude-3-7-sonnet-20250219", Stream: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, wire, recorder.Body.String())
 }
