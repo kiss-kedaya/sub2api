@@ -207,11 +207,11 @@ import { useAppStore } from '@/stores/app'
 import DataTable from '@/components/common/DataTable.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import ProxyQualityReportDialog from '@/components/admin/proxy/ProxyQualityReportDialog.vue'
+import ProxyQualityReportDialog from './ProxyQualityReportDialog.vue'
 import MihomoCountryFilter from './MihomoCountryFilter.vue'
 import type { CountryFilter, CountryNode } from './mihomoCountry'
 import type { ProxyQualityCheckResult } from '@/types'
-import { proxyQualityOverallClass, proxyQualityOverallLabelKey, summarizeProxyQuality } from '@/utils/proxyQuality'
+import { proxyQualityOverallClass, proxyQualityOverallLabelKey, summarizeProxyQuality } from './proxyQuality'
 const props = withDefaults(defineProps<{ section?: 'subscriptions' | 'dynamic' | 'nodes' | 'kernel' }>(), { section: 'subscriptions' })
 const emit = defineEmits<{ 'static-proxies-added': [] }>()
 const { locale, t } = useI18n()
