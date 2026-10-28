@@ -55,6 +55,20 @@ Mihomo 本机管理入口和共享数据面分开配置；共享代理必须显�
 专项通道不提供公共凭据，也不保证任意上游支持相同协议。CI 的合成协议测试
 与页面预览用于验证本站集成；真实提供商授权、额度、网络及价格需由站长核对。
 
+## 安全惩罚（迁移 304）
+
+`security_penalty_config` 默认 `enabled=false`、`observe_only=true`；迁移只在缺少
+该键时写入，不覆盖已有配置。配置读写、事件查看与解除均限主管理员，普通用户只
+能看到自己的原因、范围与期限。
+
+惩罚只限制网关准入，不修改 `users.status`。除 `enabled` 外还需现有风控开关开启
+（`risk_control_enabled`），并排除豁免与受信用户。`observe_only=true` 时违规照常
+记录、状态显示为 observe，不会产生 block/route；只有显式关闭 observe_only，才按
+`session_block`、`user_block`、`session_route_then_block` 生效。阈值 1–1000，
+窗口与时长 1–87600 小时，分组与豁免名单各上限 1000。
+
+停用只需关闭 `enabled`；既有事件与状态保留，回退时不删除这些表。
+
 ## 自动化和升级
 
 质量检测需要完整成功终态。取消、断流、空答案或判题不确定不会被解释为

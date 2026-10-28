@@ -22,6 +22,11 @@ jobs:
       - name: Operator lease and credential state PostgreSQL regression
         working-directory: backend
         run: go test -race -p 1 -tags=integration ./internal/repository -run '^Test(CredentialGuardRepository|OAuthAdmissionCAS)' -count=1
+      - name: Capture request ID filters PostgreSQL 15 regression
+        working-directory: backend
+        env:
+          SUB2API_TEST_POSTGRES_IMAGE: postgres:15-alpine
+        run: go test -race -p 1 -tags=integration ./internal/repository -run '^TestRequestCaptureSQLStore' -count=1
 
   deepseek-native-replay:
     runs-on: ubuntu-latest
