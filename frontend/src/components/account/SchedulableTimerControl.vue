@@ -121,7 +121,6 @@ const props = defineProps<{ accountId: number; refreshKey?: number }>()
 const emit = defineEmits<{ executed: [] }>()
 const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const app = useAppStore()
-const actions: TimerAction[] = ['open', 'close', 'recurring']
 const snapshot = ref<TimerSnapshot | null>(null)
 const pending = computed(() => snapshot.value?.tasks.filter(task => task.status === 'pending') ?? [])
 const maxMinutes = computed(() => snapshot.value?.max_delay_minutes ?? 366 * 1440)
