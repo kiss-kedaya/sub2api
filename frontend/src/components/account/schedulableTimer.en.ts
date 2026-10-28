@@ -1,5 +1,7 @@
 // Adapted from ranxi2001/sub2api (LGPL-3.0); timer-only locale messages.
 export default {
+  "title": "Schedule",
+  "action": "Action",
   "open": "Timed on",
   "close": "Timed off",
   "edit": "Edit",

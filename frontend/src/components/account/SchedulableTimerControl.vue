@@ -1,10 +1,10 @@
 <template>
   <div class="mb-1 min-w-0 text-left text-xs" @click.stop>
     <div class="flex flex-wrap gap-x-2 gap-y-1">
-      <button v-for="value in actions" :key="value" type="button" :data-test="`timer-${value}`"
+      <button type="button" data-test="timer-entry"
         class="text-primary-600 hover:underline disabled:opacity-50 dark:text-primary-400"
-        :disabled="busy || loading" :aria-expanded="expanded && action === value" @click="begin(value)">
-        {{ t(`admin.accounts.timer.${value}`) }}
+        :disabled="busy || loading" :aria-expanded="expanded" @click="begin(lastOneShotAction)">
+        {{ t('admin.accounts.timer.title') }}
       </button>
     </div>
     <div v-if="snapshot?.recurring?.enabled" class="mt-2 max-w-80 whitespace-normal break-words text-gray-600 dark:text-dark-300" aria-live="polite">
@@ -24,10 +24,16 @@
     </div>
     <p v-if="error && !expanded" class="mt-1 max-w-80 whitespace-normal text-red-600" role="alert">{{ error }}</p>
     <button v-if="loadFailed" type="button" class="text-primary-600 underline" @click="load">{{ t('admin.accounts.timer.reload') }}</button>
-    <BaseDialog :show="expanded" :title="t(`admin.accounts.timer.${action}`)" width="narrow"
+    <BaseDialog :show="expanded" :title="t('admin.accounts.timer.title')" width="narrow"
       :close-on-escape="!busy" :close-on-click-outside="!busy" :show-close-button="!busy" @close="expanded = false">
     <div v-if="expanded" data-test="timer-form" class="max-w-full space-y-4 whitespace-normal">
       <fieldset :disabled="busy" class="min-w-0 space-y-2">
+        <label v-if="form.mode !== 'recurring'" class="block">{{ t('admin.accounts.timer.action') }}
+          <select v-model="action" data-test="timer-action" class="input mt-1 w-full text-xs" @change="onActionChanged">
+            <option value="open">{{ t('admin.accounts.timer.open') }}</option>
+            <option value="close">{{ t('admin.accounts.timer.close') }}</option>
+          </select>
+        </label>
         <label class="block">{{ t('admin.accounts.timer.mode') }}
           <select v-model="form.mode" data-test="timer-mode" class="input mt-1 w-full text-xs" @change="modeChanged">
             <option value="relative">{{ t('admin.accounts.timer.relative') }}</option>
@@ -115,7 +121,6 @@ const props = defineProps<{ accountId: number; refreshKey?: number }>()
 const emit = defineEmits<{ executed: [] }>()
 const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const app = useAppStore()
-const actions: TimerAction[] = ['open', 'close', 'recurring']
 const snapshot = ref<TimerSnapshot | null>(null)
 const pending = computed(() => snapshot.value?.tasks.filter(task => task.status === 'pending') ?? [])
 const maxMinutes = computed(() => snapshot.value?.max_delay_minutes ?? 366 * 1440)
@@ -247,6 +252,11 @@ function input(): TimerInput {
 }
 function addPeriod() { if (recurringPeriods.value.length < 24) recurringPeriods.value.push({ start: '08:00', end: '18:00' }) }
 function removePeriod(index: number) { if (recurringPeriods.value.length > 1) recurringPeriods.value.splice(index, 1) }
+function onActionChanged() {
+  if (action.value !== 'open' && action.value !== 'close') return
+  lastOneShotAction.value = action.value
+  editVersion.value = snapshot.value?.tasks.find(item => item.action === action.value)?.version ?? 0
+}
 function modeChanged() {
   if (form.mode === 'recurring') {
     action.value = 'recurring'
