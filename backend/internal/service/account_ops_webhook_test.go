@@ -20,6 +20,7 @@ func TestAccountOpsWebhookAutoDetectsAndRetainsConcreteProvider(t *testing.T) {
 		{"wecom", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=synthetic-token"},
 		{"dingtalk", "https://oapi.dingtalk.com/robot/send?access_token=synthetic-token"},
 		{"feishu", "https://open.feishu.cn/open-apis/bot/v2/hook/synthetic-token"},
+		{"bark", "https://api.day.app/synthetic-device-key"},
 		{"custom", "https://hooks.example.test:8443/notify?token=synthetic-token"},
 	} {
 		for _, provider := range []string{"", "auto", tc.provider} {

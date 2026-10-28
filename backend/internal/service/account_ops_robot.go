@@ -72,6 +72,15 @@ func (s *AccountOpsService) sendRobot(ctx context.Context, w AccountOpsWebhook, 
 		if err != nil {
 			return errors.New("invalid webhook message template")
 		}
+	case "bark":
+		// Bark accepts a JSON POST to https://api.day.app/<device-key>.
+		// The URL (and therefore the device key) is decrypted only in memory;
+		// it is never logged or returned to the admin UI.
+		payload = map[string]any{
+			"title": title,
+			"body":  message.plain,
+			"group": "account-ops",
+		}
 	case "wecom":
 		payload = map[string]any{"msgtype": "markdown", "markdown": map[string]any{"content": message.markdown}}
 	case "dingtalk":
@@ -117,9 +126,18 @@ func (s *AccountOpsService) sendRobot(ctx context.Context, w AccountOpsWebhook, 
 		return errors.New("robot request failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if w.Provider == "custom" {
+	if w.Provider == "custom" || w.Provider == "bark" {
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return errors.New("webhook HTTP failure")
+			return errors.New("notification HTTP failure")
+		}
+		if w.Provider == "bark" {
+			result, readErr := io.ReadAll(io.LimitReader(resp.Body, 16385))
+			if readErr != nil || len(result) > 16384 {
+				return errors.New("invalid Bark response")
+			}
+			// Bark deployments differ in whether they include a JSON body; a
+			// successful 2xx response is the stable contract.
+			return nil
 		}
 		return nil
 	}

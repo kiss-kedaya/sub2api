@@ -117,6 +117,7 @@ type AccountOpsService struct {
 	settingsMu             sync.Mutex
 	dropped                atomic.Uint64
 	failures               atomic.Uint64
+	lastThresholdScan      atomic.Int64
 }
 
 func NewAccountOpsService(settings SettingRepository, repo AccountOpsRepository, email accountOpsEmailSender) *AccountOpsService {
@@ -219,12 +220,31 @@ func (s *AccountOpsService) start(runSharedJobs bool) {
 				}
 			case <-ticker.C:
 				if s.refreshConfig(ctx, runSharedJobs) && runSharedJobs {
-					s.scanBalances(ctx)
+					if s.thresholdScanDue(time.Now()) {
+						s.scanBalances(ctx)
+					}
 					s.deliver(ctx)
 				}
 			}
 		}
 	}()
+}
+
+// thresholdScanDue keeps the inexpensive config refresh/queue drain at 15s
+// while bounding upstream balance/quota snapshot work to once per minute. The
+// first scan after startup is immediate, and no scan is attempted when no
+// threshold rule is enabled.
+func (s *AccountOpsService) thresholdScanDue(now time.Time) bool {
+	c := s.currentConfig()
+	if !c.hasThreshold() && !c.hasQuotaThreshold() {
+		return false
+	}
+	next := now.UnixNano()
+	last := s.lastThresholdScan.Load()
+	if last != 0 && next-last < int64(time.Minute) {
+		return false
+	}
+	return s.lastThresholdScan.CompareAndSwap(last, next)
 }
 func (s *AccountOpsService) Stop() {
 	s.lifecycle.Lock()

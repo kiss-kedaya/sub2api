@@ -1,18 +1,18 @@
 <template>
   <AppLayout>
-    <div class="account-ops space-y-5">
-      <header><h1 class="text-2xl font-semibold">{{ t('accountOps.title') }}</h1><p class="mt-1 text-sm text-gray-500">{{ t('accountOps.description') }}</p></header>
-      <dl v-if="remote" class="grid gap-3 sm:grid-cols-3" data-testid="account-ops-summary">
-        <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-700"><dt class="text-xs text-gray-500">{{ t('accountOps.enabledChannels') }}</dt><dd class="mt-1 text-2xl font-semibold tabular-nums">{{ enabledChannelCount }}</dd></div>
-        <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-700"><dt class="text-xs text-gray-500">{{ t('accountOps.enabledRules') }}</dt><dd class="mt-1 text-2xl font-semibold tabular-nums">{{ enabledRuleCount }}</dd></div>
-        <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-700"><dt class="text-xs text-gray-500">{{ t('accountOps.loadedPending') }}</dt><dd class="mt-1 text-2xl font-semibold tabular-nums" :class="pendingEventCount ? 'text-amber-600' : ''">{{ pendingEventCount }}</dd></div>
+    <div class="account-ops mx-auto max-w-6xl space-y-8">
+      <header class="flex flex-wrap items-end justify-between gap-3"><div><h1 class="text-2xl font-semibold tracking-tight">{{ t('accountOps.title') }}</h1><p class="mt-1 text-sm text-gray-500">{{ t('accountOps.description') }}</p></div><span v-if="remote" class="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300">{{ enabledDraft ? t('accountOps.observing') : t('accountOps.disabled') }}</span></header>
+      <dl v-if="remote" class="grid gap-2 sm:grid-cols-3" data-testid="account-ops-summary">
+        <div class="py-1"><dt class="text-[11px] text-gray-500">{{ t('accountOps.enabledChannels') }}</dt><dd class="mt-1 text-xl font-semibold tabular-nums">{{ enabledChannelCount }}</dd></div>
+        <div class="py-1"><dt class="text-[11px] text-gray-500">{{ t('accountOps.enabledRules') }}</dt><dd class="mt-1 text-xl font-semibold tabular-nums">{{ enabledRuleCount }}</dd></div>
+        <div class="py-1"><dt class="text-[11px] text-gray-500">{{ t('accountOps.loadedPending') }}</dt><dd class="mt-1 text-xl font-semibold tabular-nums" :class="pendingEventCount ? 'text-amber-600' : ''">{{ pendingEventCount }}</dd></div>
       </dl>
       <p v-if="loadError" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ t('accountOps.previousData') }} {{ loadError }}</p>
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 dark:border-dark-700">
+      <div class="flex flex-wrap items-center justify-between gap-3">
         <div role="tablist" :aria-label="t('accountOps.pageSections')" class="flex gap-6">
           <button v-for="tab in tabs" :id="`ops-tab-${tab}`" :key="tab" type="button" role="tab" :aria-selected="activeTab === tab"
-            :aria-controls="`ops-panel-${tab}`" :tabindex="activeTab === tab ? 0 : -1" class="border-b-2 px-1 py-3 text-sm font-medium"
-            :class="activeTab === tab ? 'border-primary-600 text-primary-700 dark:text-primary-400' : 'border-transparent text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'"
+            :aria-controls="`ops-panel-${tab}`" :tabindex="activeTab === tab ? 0 : -1" class="rounded-md px-2.5 py-2 text-sm font-medium transition-colors"
+            :class="activeTab === tab ? 'text-gray-900 dark:text-gray-100' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'"
             :data-testid="`account-ops-tab-${tab}`" @click="selectTab(tab)"
             @keydown="tabKey($event, tab)">{{ t(tab === 'records' ? 'accountOps.recordsTab' : 'accountOps.settingsTab') }}</button>
         </div>
@@ -27,9 +27,9 @@
         </div>
       </div>
       <section v-if="activeTab === 'records'" id="ops-panel-records" role="tabpanel" aria-labelledby="ops-tab-records"
-        class="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-5 dark:border-dark-700">
-          <div>
+        class="overflow-hidden">
+        <div class="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div class="min-w-0">
             <h2 class="text-base font-semibold">{{ t('accountOps.recordsTab') }}</h2>
             <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.recordsOnceHint') }}</p>
           </div>
@@ -59,7 +59,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="event in filteredEvents" :key="eventKey(event)" class="border-t border-gray-100 align-top dark:border-dark-700"
+              <tr v-for="event in filteredEvents" :key="eventKey(event)" class="align-top transition-colors hover:bg-gray-50/70 dark:hover:bg-dark-800/50"
                 data-testid="notification-record">
                 <td class="px-5 py-4">
                   <p class="font-medium">{{ event.group_name || event.account_name }}</p>
@@ -94,42 +94,42 @@
           <p class="max-w-lg text-xs leading-5">{{ t('accountOps.recordsEmptyHint') }}</p><button type="button"
             class="btn btn-secondary mt-1" @click="selectTab('settings')">{{ t('accountOps.settingsTab') }}</button>
         </div>
-        <div class="flex items-center justify-between gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-dark-700">
+        <div class="flex items-center justify-between gap-3 py-3 text-xs text-gray-500">
           <span>{{ t('accountOps.noRawErrors') }}</span><button v-if="hasMore" :disabled="loadingMore" class="text-primary-600"
             @click="more">{{ t(loadingMore ? 'common.loading' : 'qualityOps.loadMore') }}</button></div>
       </section>
       <section v-if="activeTab === 'settings' && remote" id="ops-panel-settings" role="tabpanel" aria-labelledby="ops-tab-settings"
         class="space-y-5">
-        <section class="rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900"
+        <section class="rounded-xl bg-gray-50/40 dark:bg-dark-900/40"
           data-testid="account-ops-channels">
-          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+          <div class="flex flex-wrap items-center justify-between gap-3 px-1 py-2">
             <div>
               <h2 class="text-sm font-semibold">{{ t('accountOps.notificationChannels') }}</h2>
               <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.channelSummaryHint') }}</p>
             </div>
           </div>
-          <div class="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-3">
-            <div v-if="remote.config.recipient" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700"
+          <div class="grid gap-2.5 p-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div v-if="remote.config.recipient" class="rounded-lg bg-white/80 p-3 shadow-sm dark:bg-dark-900/70"
               data-testid="account-ops-email-channel">
               <div class="flex items-center justify-between"><span
                   class="min-w-0 truncate text-sm font-medium" :title="remote.config.email_name || t('accountOps.providers.email')">{{ remote.config.email_name || t('accountOps.providers.email') }}</span><span
                   class="text-xs text-gray-500">{{ t(remote.config.recipient ? 'accountOps.channelConfigured' : 'accountOps.channelUnconfigured') }}</span>
               </div>
-              <p class="mt-2 truncate text-xs text-gray-500">{{ remote.config.email_name ? `${t('accountOps.providers.email')} · ` : '' }}{{ remote.config.recipient }}</p>
-              <div class="mt-3 flex gap-4 text-xs"><button type="button" class="text-primary-600" data-testid="edit-email-channel"
+              <p class="mt-1 truncate text-xs text-gray-500">{{ remote.config.email_name ? `${t('accountOps.providers.email')} · ` : '' }}{{ remote.config.recipient }}</p>
+              <div class="mt-2 flex gap-3 text-xs"><button type="button" class="text-primary-600" data-testid="edit-email-channel"
                   @click="showEmail = true">{{ t('common.edit') }}</button><button type="button" :disabled="mutating"
                   class="text-gray-500 hover:text-red-600 disabled:opacity-40" data-testid="delete-email-channel"
                   @click="removeEmail">{{ t('common.delete') }}</button></div>
             </div>
             <div v-for="(hook, index) in remote.config.webhooks" :key="hook.id"
-              class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              class="rounded-lg bg-white/80 p-3 shadow-sm dark:bg-dark-900/70">
               <div class="flex items-center justify-between gap-2"><span
                   class="min-w-0 truncate text-sm font-medium" :title="hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}`">{{ hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}` }}</span><span class="text-xs"
                   :class="hook.enabled ? 'text-emerald-600' : 'text-gray-500'">{{ t(hook.enabled ? 'accountOps.channelEnabled' : 'accountOps.channelDisabled') }}</span>
               </div>
-              <p class="mt-2 text-xs text-gray-500">
+              <p class="mt-1 text-xs text-gray-500">
                 {{ hook.name ? `${t(`accountOps.providers.${hook.provider}`)} · ` : '' }}{{ t(hook.url_configured ? 'accountOps.credentialSaved' : 'accountOps.channelUnconfigured') }}</p>
-              <div class="mt-3 flex gap-4 text-xs"><button type="button" class="text-primary-600" :data-testid="`edit-webhook-${hook.id}`"
+              <div class="mt-2 flex gap-3 text-xs"><button type="button" class="text-primary-600" :data-testid="`edit-webhook-${hook.id}`"
                   @click="editWebhook(hook)">{{ t('common.edit') }}</button><button type="button"
                   class="text-primary-600 disabled:opacity-40" :disabled="!hook.url_configured || !!testingId"
                   :data-testid="`account-ops-webhook-test-${hook.id}`"
@@ -137,12 +137,12 @@
                   type="button" class="text-gray-500 hover:text-red-600" @click="removeWebhook(hook.id)">{{ t('common.delete') }}</button>
               </div>
             </div><button type="button"
-              class="min-h-28 rounded-lg border border-dashed border-gray-300 p-4 text-sm text-primary-600 disabled:opacity-40 dark:border-dark-600"
+              class="min-h-20 rounded-lg bg-gray-100/70 p-3 text-sm text-primary-600 transition-colors hover:bg-gray-100 disabled:opacity-40 dark:bg-dark-800/70 dark:hover:bg-dark-800"
               :disabled="!canAddChannel" data-testid="account-ops-add-channel"
               @click="showAddChannel = true">{{ t('accountOps.addChannel') }}</button>
           </div>
         </section>
-        <section class="rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900" data-testid="account-ops-groups">
+        <section class="rounded-xl bg-gray-50/40 px-1 dark:bg-dark-900/40" data-testid="account-ops-groups">
           <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
             <div>
               <h2 class="text-sm font-semibold">{{ t('accountOps.accountGroups') }}</h2>
@@ -155,7 +155,7 @@
           :ready="thresholdReady" :error="thresholdError" :busy="mutating"
           @batch-edit="batchAccounts = $event" @edit-group="showGroupDialog = true" @toggle="toggleGroup">
           <template #global-settings>
-            <details class="border-b border-gray-100 dark:border-dark-700"><summary class="cursor-pointer px-5 py-3 text-sm font-medium">{{ t('accountOps.advancedSettings') }}</summary><AccountOpsGlobalSettings :config="remote.config" :disabled="mutating" @saving="globalSaving = $event" @saved="acceptConfig"
+            <details><summary class="cursor-pointer px-1 py-3 text-sm font-medium">{{ t('accountOps.advancedSettings') }}</summary><AccountOpsGlobalSettings :config="remote.config" :disabled="mutating" @saving="globalSaving = $event" @saved="acceptConfig"
               @error="app.showError" /></details>
           </template>
         </AccountOpsRuleList>
@@ -166,7 +166,7 @@
         <AccountOpsAddChannelDialog :show="showAddChannel" :email-configured="!!remote.config.recipient"
           :webhook-count="remote.config.webhooks?.length ?? 0" :encryption-configured="remote.encryption_key_configured === true"
           @close="showAddChannel = false" @select="addChannel" />
-        <AccountOpsWebhookDialog :show="showWebhook" :hook="editingHook" :encryption-configured="remote.encryption_key_configured === true"
+        <AccountOpsWebhookDialog :show="showWebhook" :hook="editingHook" :initial-provider="editingProvider" :encryption-configured="remote.encryption_key_configured === true"
           :testing-id="testingId" @close="showWebhook = false" @saved="acceptConfig" @error="app.showError" @test="testWebhook" />
         <AccountOpsEmailDialog :show="showEmail" :config="remote.config" :smtp-configured="remote.smtp_configured"
           @close="showEmail = false" @saved="acceptConfig" @error="app.showError" />
@@ -196,7 +196,7 @@ import AccountOpsAddChannelDialog from '@/components/admin/operations/AccountOps
 import AccountOpsGlobalSettings from '@/components/admin/operations/AccountOpsGlobalSettings.vue'
 import AccountOpsGroupDialog from '@/components/admin/operations/AccountOpsGroupDialog.vue'
 import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, testAccountOpsWebhook, saveAccountOpsRuleGroups, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
-import type { AccountOpsConfig, AccountOpsEvent, AccountOpsThresholdAccount, AccountOpsWebhook, AccountOpsGroup, AccountOpsRuleBatchGroup } from '@/api/admin/accountOps'
+import type { AccountOpsConfig, AccountOpsEvent, AccountOpsThresholdAccount, AccountOpsWebhook, AccountOpsWebhookProvider, AccountOpsGroup, AccountOpsRuleBatchGroup } from '@/api/admin/accountOps'
 import { extractApiErrorMessage } from '@/utils/apiError'
 const { t } = useI18n({ useScope: 'local', messages: accountOpsMessages }), auth = useAuthStore(), app = useAppStore()
 const { remote, events, hasMore } = storeToRefs(useAccountOpsStore())
@@ -219,7 +219,7 @@ watch(thresholdAccounts, accounts => {
   batchAccounts.value = accounts.filter(account => selected.has(account.account_id))
 })
 const query = ref(''), kind = ref('all'), phase = ref('all'), alertKinds = ['balance_threshold','quota_threshold','balance_low','weekly_quota']
-const editingHook = ref<AccountOpsWebhook|null>(null), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
+const editingHook = ref<AccountOpsWebhook|null>(null), editingProvider = ref<AccountOpsWebhookProvider>('custom'), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
 let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, alive = true, timer: ReturnType<typeof setInterval>|null = null
 const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', balance_low:c.balance_low, weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,provider:g.provider,site:g.site,account_ids:g.account_ids ? [...g.account_ids] : []})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })
 const eventKey = (e: AccountOpsEvent) => e.id ?? `${e.account_id}:${e.kind}:${e.phase??'legacy'}:${e.first_seen}`
@@ -255,15 +255,15 @@ function acceptConfig(config: AccountOpsConfig){if(!alive||!auth.user||!remote.v
 function acceptGroupConfig(config: AccountOpsConfig){showGroupDialog.value=false;acceptConfig(config);void loadGroups()}
 async function loadGroups(){try{const groups=await getAccountOpsThresholdGroups();if(alive)accountGroups.value=groups}catch(e){if(alive)app.showError(message(e))}}
 function acceptBatchConfig(config: AccountOpsConfig){acceptConfig(config);ruleList.value?.clearSelection()}
-function editWebhook(hook:AccountOpsWebhook|null){editingHook.value=hook;showWebhook.value=true}
-function addChannel(provider: 'email'|'webhook') {
+function editWebhook(hook:AccountOpsWebhook|null, provider: AccountOpsWebhookProvider = 'custom'){editingHook.value=hook;editingProvider.value=provider;showWebhook.value=true}
+function addChannel(provider: 'email'|'webhook'|'bark') {
   if (!remote.value) return
   if (provider === 'email') {
     if (remote.value.config.recipient) return
     showEmail.value = true
   } else {
     if (remote.value.encryption_key_configured !== true || (remote.value.config.webhooks?.length ?? 0) >= 5) return
-    editWebhook(null)
+    editWebhook(null, provider === 'bark' ? 'bark' : 'custom')
   }
   showAddChannel.value = false
 }

@@ -1,10 +1,10 @@
 <template>
-  <section class="space-y-4">
+  <section class="space-y-3">
     <button v-if="!single" type="button" class="text-xs text-primary-600 disabled:opacity-50" :disabled="modelValue.length >= 5 || !encryptionConfigured" data-testid="account-ops-add-webhook" @click="add">{{ t('accountOps.addRobot') }}</button>
-    <p class="text-xs leading-5 text-gray-500">{{ t('accountOps.robotHint') }}</p>
+    <p class="text-xs text-gray-500">{{ t('accountOps.robotHint') }}</p>
     <p v-if="!encryptionConfigured" role="alert" class="text-xs text-amber-700">{{ t('accountOps.encryptionMissing') }}</p>
     <div v-for="hook in modelValue" :key="hook.id" class="space-y-4">
-      <label class="block space-y-2 text-sm">
+      <label class="block space-y-1.5 text-sm">
         <span>{{ t('accountOps.channelName') }}</span>
         <input :value="hook.name ?? ''" type="text" maxlength="80" autocomplete="off" class="input w-full" :placeholder="t('accountOps.channelNamePlaceholder')" :data-testid="`account-ops-webhook-name-${hook.id}`" @input="patch(hook.id, { name: ($event.target as HTMLInputElement).value })" />
         <span class="block text-xs text-gray-500">{{ t('accountOps.channelNameHint') }}</span>
@@ -16,19 +16,19 @@
         </label>
         <button v-if="!single" type="button" class="text-xs text-red-600" :aria-label="t('accountOps.removeRobot')" @click="remove(hook.id)">{{ t('common.delete') }}</button>
       </div>
-      <label class="block space-y-2 text-sm">
+      <label class="block space-y-1.5 text-sm">
         <span>{{ t('accountOps.webhookUrl') }}</span>
         <input v-model.trim="inputs[hook.id]!.url" type="password" autocomplete="new-password" spellcheck="false" class="input w-full" :disabled="!encryptionConfigured" :placeholder="hook.url_configured ? t('accountOps.retainCredential') : t('accountOps.webhookPlaceholder')" :data-testid="`account-ops-webhook-url-${hook.id}`" />
       </label>
       <p v-if="inputs[hook.id]!.url || hook.url_configured" class="text-xs text-gray-500">{{ t('accountOps.detectedWebhook', { provider: t(`accountOps.providers.${detectedProvider(hook)}`) }) }}</p>
-      <label v-if="supportsSigning(hook)" class="block space-y-2 text-sm">
+      <label v-if="supportsSigning(hook)" class="block space-y-1.5 text-sm">
         <span>{{ t('accountOps.signingSecret') }}</span>
         <input v-model="inputs[hook.id]!.secret" type="password" autocomplete="new-password" spellcheck="false" class="input w-full" :disabled="!encryptionConfigured || inputs[hook.id]!.clearSecret" :placeholder="hook.secret_configured && !inputs[hook.id]!.url ? t('accountOps.retainCredential') : t('accountOps.optionalSecret')" :data-testid="`account-ops-webhook-secret-${hook.id}`" />
       </label>
       <label v-if="hook.secret_configured && supportsSigning(hook) && !inputs[hook.id]!.url" class="flex items-center gap-2 text-xs text-gray-500">
         <input v-model="inputs[hook.id]!.clearSecret" type="checkbox" :data-testid="`account-ops-webhook-clear-secret-${hook.id}`" />{{ t('accountOps.clearSecret') }}
       </label>
-      <details v-if="detectedProvider(hook) === 'custom'" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600" :open="!!hook.message_template">
+      <details v-if="detectedProvider(hook) === 'custom'" class="rounded-lg bg-gray-50/80 p-3 dark:bg-dark-800/60" :open="!!hook.message_template">
         <summary class="cursor-pointer text-sm font-medium">{{ t('accountOps.webhookTemplate') }}</summary>
         <div class="mt-3 space-y-3">
           <p class="text-xs leading-5 text-gray-500">{{ t('accountOps.webhookTemplateHint') }}</p>
@@ -70,6 +70,7 @@ function detectedProvider(hook: AccountOpsWebhook): AccountOpsWebhookProvider {
     if (hostname === 'qyapi.weixin.qq.com') return 'wecom'
     if (hostname === 'oapi.dingtalk.com') return 'dingtalk'
     if (hostname === 'open.feishu.cn') return 'feishu'
+    if (hostname === 'api.day.app') return 'bark'
   } catch { /* Server validation reports invalid addresses on save. */ }
   return 'custom'
 }

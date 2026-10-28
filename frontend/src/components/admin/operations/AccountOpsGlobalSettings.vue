@@ -1,5 +1,5 @@
 <template>
-  <form id="account-ops-global-form" class="border-b border-gray-100 bg-gray-50/60 px-5 py-4 dark:border-dark-700 dark:bg-dark-800/40" @submit.prevent="save">
+  <form id="account-ops-global-form" class="px-1 py-3" @submit.prevent="save">
     <fieldset :disabled="busy || disabled" class="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
       <div>
         <h4 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ t('accountOps.globalSettings') }}</h4>

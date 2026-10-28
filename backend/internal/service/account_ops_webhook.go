@@ -18,6 +18,8 @@ func accountOpsOfficialProvider(host string) string {
 		return "dingtalk"
 	case "open.feishu.cn":
 		return "feishu"
+	case "api.day.app":
+		return "bark"
 	default:
 		return ""
 	}
