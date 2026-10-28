@@ -171,7 +171,9 @@ func validateRecurringPeriods(in Input) error {
 				continue
 			}
 			segments = append(segments, recurringSegment{day: day, start: start, end: 24 * 60})
-			segments = append(segments, recurringSegment{day: (day + 1) % 7, start: 0, end: end})
+			if end > 0 {
+				segments = append(segments, recurringSegment{day: (day + 1) % 7, start: 0, end: end})
+			}
 		}
 	}
 	for day := 0; day < 7; day++ {

@@ -357,6 +357,7 @@ func TestIntegrationRecurringOutboxFailureRollsBackTransition(t *testing.T) {
 		t.Fatal("failed transaction leaked a transition, audit or publication")
 	}
 	s.Enqueue = original
+	*now = now.Add(PollInterval)
 	runRecurringFixture(t, s)
 	if scalar(t, s.DB, "SELECT count(*) FROM accounts WHERE id=7 AND schedulable") != 1 || scalar(t, s.DB, "SELECT count(*) FROM fixture_outbox") != 1 || notified.Load() != 1 {
 		t.Fatal("rolled-back recurring transition could not retry safely")
