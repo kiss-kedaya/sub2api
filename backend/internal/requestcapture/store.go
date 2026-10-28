@@ -45,7 +45,9 @@ func (s *SQLStore) SaveRecord(ctx context.Context, r *Record) error {
 	return err
 }
 func (s *SQLStore) Records(ctx context.Context, task, requestID string, onlyErrors bool, limit, offset int) ([]Record, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT data - 'parts' - 'attempts' - 'usage' FROM request_capture_records WHERE task_id=$1 AND ($2='' OR request_id=$2 OR data->>'client_request_id'=$2 OR data->>'session_id'=$2 OR data->>'thread_id'=$2 OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(data->'attempts','[]'::jsonb)) a WHERE a->>'upstream_request_id'=$2)) AND ($3=FALSE OR (is_error=TRUE AND data->>'finished_at' IS NOT NULL)) ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5`, task, requestID, onlyErrors, limit, offset)
+	// A nil Go slice is persisted as JSON null, not SQL NULL. Only expand actual
+	// arrays so one attempt-less or malformed legacy row cannot break ID search.
+	rows, err := s.DB.QueryContext(ctx, `SELECT data - 'parts' - 'attempts' - 'usage' FROM request_capture_records WHERE task_id=$1 AND ($2='' OR request_id=$2 OR data->>'client_request_id'=$2 OR data->>'session_id'=$2 OR data->>'thread_id'=$2 OR EXISTS(SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(data->'attempts')='array' THEN data->'attempts' ELSE '[]'::jsonb END) a WHERE a->>'upstream_request_id'=$2)) AND ($3=FALSE OR (is_error=TRUE AND data->>'finished_at' IS NOT NULL)) ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5`, task, requestID, onlyErrors, limit, offset)
 	if err != nil {
 		return nil, err
 	}
