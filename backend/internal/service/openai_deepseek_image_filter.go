@@ -53,13 +53,18 @@ func StripDeepSeekUnsupportedImageInputs(body []byte, endpoint string) ([]byte, 
 					removed++
 					continue
 				}
-				count, _ := stripContentField(item, "content")
-				removed += count
-				// Responses function_call_output may carry structured media
-				// in its protocol-level output array. Do not recurse into
-				// arbitrary tool arguments or schemas.
-				count, _ = stripContentField(item, "output")
-				removed += count
+				typeName, _ := item["type"].(string)
+				switch strings.ToLower(strings.TrimSpace(typeName)) {
+				case "message":
+					count, _ := stripContentField(item, "content")
+					removed += count
+				case "function_call_output":
+					// Only this protocol item has a structured media output
+					// array. Unknown item types may use the same field name for
+					// unrelated data and must pass through unchanged.
+					count, _ := stripContentField(item, "output")
+					removed += count
+				}
 				filtered = append(filtered, item)
 			}
 			if removed > 0 {

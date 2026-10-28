@@ -9,6 +9,36 @@ permissions:
   contents: read
 
 jobs:
+  account-timer-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: account_timer_review
+          POSTGRES_DB: schedulable_timer_fixture
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:15440:5432
+        options: >-
+          --health-cmd "pg_isready -U account_timer_review -d schedulable_timer_fixture"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Durable account schedule PostgreSQL 15 regression
+        working-directory: backend
+        env:
+          ACCOUNT_TIMER_TEST_DSN: postgres://account_timer_review@127.0.0.1:15440/schedulable_timer_fixture?sslmode=disable
+        run: go test -race -p 1 -tags=integration ./internal/accounttimer -count=1
+
   operator-storage-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 25

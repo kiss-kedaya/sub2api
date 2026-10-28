@@ -18,11 +18,18 @@ func TestStripDeepSeekUnsupportedImageInputsChatPreservesTextAndUnknownFields(t 
 	require.Contains(t, string(filtered), "business-value")
 	require.Contains(t, string(filtered), "9007199254740993")
 
-	var decoded map[string]any
+	var decoded struct {
+		Messages []struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
 	require.NoError(t, json.Unmarshal(filtered, &decoded))
-	content := decoded["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	require.Len(t, decoded.Messages, 1)
+	content := decoded.Messages[0].Content
 	require.Len(t, content, 1)
-	require.Equal(t, "keep", content[0].(map[string]any)["text"])
+	require.Equal(t, "keep", content[0].Text)
 }
 
 func TestStripDeepSeekUnsupportedImageInputsResponsesRemovesTopLevelAndContentImages(t *testing.T) {
@@ -35,16 +42,25 @@ func TestStripDeepSeekUnsupportedImageInputsResponsesRemovesTopLevelAndContentIm
 	require.NotContains(t, string(filtered), "example.invalid")
 	require.Contains(t, string(filtered), "also keep")
 
-	var decoded map[string]any
+	var decoded struct {
+		Input []struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+			Output []struct {
+				Text string `json:"text"`
+			} `json:"output"`
+		} `json:"input"`
+	}
 	require.NoError(t, json.Unmarshal(filtered, &decoded))
-	input := decoded["input"].([]any)
+	input := decoded.Input
 	require.Len(t, input, 3)
-	content := input[1].(map[string]any)["content"].([]any)
+	content := input[1].Content
 	require.Len(t, content, 1)
-	require.Equal(t, "also keep", content[0].(map[string]any)["text"])
-	output := input[2].(map[string]any)["output"].([]any)
+	require.Equal(t, "also keep", content[0].Text)
+	output := input[2].Output
 	require.Len(t, output, 1)
-	require.Equal(t, "tool text", output[0].(map[string]any)["text"])
+	require.Equal(t, "tool text", output[0].Text)
 }
 
 func TestStripDeepSeekUnsupportedImageInputsDoesNotTouchToolArgumentsOrOtherEndpoints(t *testing.T) {
@@ -61,4 +77,14 @@ func TestStripDeepSeekUnsupportedImageInputsDoesNotTouchToolArgumentsOrOtherEndp
 	require.False(t, changed)
 	require.Zero(t, removed)
 	require.JSONEq(t, `{"input":"plain text"}`, string(filtered))
+}
+
+func TestStripDeepSeekUnsupportedImageInputsPreservesUnknownResponsesItems(t *testing.T) {
+	body := []byte(`{"model":"deepseek-v4","input":[{"type":"custom_item","content":[{"type":"input_image","image_url":"keep-content-image"}],"output":[{"type":"input_image","image_url":"keep-output-image"}],"extra":{"keep":true}}]}`)
+
+	filtered, removed, changed, err := StripDeepSeekUnsupportedImageInputs(body, "responses")
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Zero(t, removed)
+	require.Equal(t, string(body), string(filtered))
 }

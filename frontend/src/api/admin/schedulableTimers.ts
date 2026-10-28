@@ -63,6 +63,8 @@ export interface RecurringSchedule {
   requested_by: number
   enabled: boolean
   updated_at: string
+  last_applied_state?: boolean | null
+  last_applied_at?: string | null
 }
 export const schedulableTimersAPI = {
   async list(id: number) {

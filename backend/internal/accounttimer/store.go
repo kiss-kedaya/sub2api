@@ -128,11 +128,17 @@ func audit(ctx context.Context, tx *sql.Tx, t Task, actor int64, now time.Time, 
 }
 func (s *Store) Save(ctx context.Context, id, actor int64, req SaveRequest) (Task, error) {
 	var zero Task
-	if id <= 0 || actor <= 0 || !actionValid(req.Action) || req.ExpectedVersion < 0 {
+	if id <= 0 || actor <= 0 || req.ExpectedVersion < 0 {
 		return zero, invalid("request")
 	}
 	if req.Mode == "recurring" || req.Action == "recurring" {
+		if req.Mode != "recurring" || req.Action != "recurring" {
+			return zero, invalid("mode")
+		}
 		return s.saveRecurring(ctx, id, actor, req)
+	}
+	if !actionValid(req.Action) {
+		return zero, invalid("request")
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -169,6 +175,9 @@ func (s *Store) Save(ctx context.Context, id, actor int64, req SaveRequest) (Tas
 	}
 	if conflict {
 		return zero, invalid("conflict")
+	}
+	if err = CancelRecurringPending(ctx, tx, id, now, actor, "one_shot_schedule_override"); err != nil {
+		return zero, err
 	}
 	t := Task{AccountID: id, Action: req.Action, Version: version + 1, ExecuteAt: preview.ExecuteAt, Timezone: req.Timezone, RequestedBy: actor, Status: "pending"}
 	_, err = tx.ExecContext(ctx, `INSERT INTO account_schedulable_timers
@@ -431,12 +440,10 @@ func CancelPending(ctx context.Context, exec Executor, id int64, now time.Time) 
 	if scope, ok := ctx.Value(manualAccountKey{}).(int64); ok && scope != id {
 		return nil
 	}
-	_, err := exec.ExecContext(ctx, `WITH cancelled AS (
- UPDATE account_schedulable_timers SET status='cancelled',version=version+1,actual_at=$3,reason='manual_override'
- WHERE account_id=$1 AND status='pending' RETURNING *)
- INSERT INTO account_schedulable_timer_audit (account_id,action,version,actor_id,execute_at,timezone,actual_at,result,reason)
- SELECT account_id,action,version-1,$2,execute_at,timezone,$3,'cancelled','manual_override' FROM cancelled`, id, actor, now)
-	return err
+	if err := CancelOneShotPending(ctx, exec, id, actor, now, "manual_override"); err != nil {
+		return err
+	}
+	return CancelRecurringPending(ctx, exec, id, now, actor, "manual_override")
 }
 
 // Manual atomically cancels both actions and applies the immediate switch.
@@ -460,9 +467,6 @@ func (s *Store) Manual(ctx context.Context, id, actor int64, open bool) error {
 	}
 	now := s.now()
 	if err = CancelPending(WithManualIntent(ctx, actor), tx, id, now); err != nil {
-		return err
-	}
-	if err = CancelRecurringPending(ctx, tx, id, now, actor); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, "UPDATE accounts SET schedulable=$1, updated_at=$2 WHERE id=$3 AND deleted_at IS NULL", open, now, id)

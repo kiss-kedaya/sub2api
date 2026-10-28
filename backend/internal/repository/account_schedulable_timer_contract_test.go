@@ -28,7 +28,9 @@ func TestSchedulableTimerManualOverrideUsesExistingAccountTransaction(t *testing
 			mock.ExpectBegin()
 			mock.ExpectQuery("SELECT id FROM accounts WHERE id=ANY").
 				WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
-			mock.ExpectExec("WITH cancelled AS").WithArgs(int64(7), int64(1), sqlmock.AnyArg()).
+			mock.ExpectExec("WITH cancelled AS").WithArgs(int64(7), int64(1), sqlmock.AnyArg(), "manual_override").
+				WillReturnResult(sqlmock.NewResult(0, 2))
+			mock.ExpectExec("WITH cancelled AS").WithArgs(int64(7), sqlmock.AnyArg(), "manual_override", int64(1)).
 				WillReturnResult(sqlmock.NewResult(0, 2))
 			mock.ExpectExec("UPDATE accounts SET").WillReturnResult(sqlmock.NewResult(0, 1))
 			event := mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox"))

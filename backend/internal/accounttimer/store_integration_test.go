@@ -23,7 +23,9 @@ const timerFixture = `
 CREATE TABLE accounts (
  id bigint PRIMARY KEY, status text NOT NULL DEFAULT 'active', schedulable boolean NOT NULL DEFAULT false,
  expires_at timestamptz, deleted_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now(),
- temp_unschedulable_until timestamptz, rate_limit_reset_at timestamptz,
+ auto_pause_on_expired boolean NOT NULL DEFAULT true,
+ temp_unschedulable_until timestamptz, temp_unschedulable_reason text, rate_limit_reset_at timestamptz,
+ overload_until timestamptz,
  quota_used numeric NOT NULL DEFAULT 17, quality_reason text NOT NULL DEFAULT 'quality-isolation', extra jsonb NOT NULL DEFAULT '{}'::jsonb,
  manual_ip_acl text NOT NULL DEFAULT 'deny-fixture', balance numeric NOT NULL DEFAULT 23
 );
@@ -40,6 +42,7 @@ CREATE TABLE account_schedulable_recurring (
  account_id bigint PRIMARY KEY, version bigint NOT NULL CHECK(version>0), timezone text NOT NULL,
  weekdays_only boolean NOT NULL DEFAULT false, periods jsonb NOT NULL, requested_by bigint NOT NULL,
  enabled boolean NOT NULL DEFAULT true, updated_at timestamptz NOT NULL DEFAULT now(),
+ next_check_at timestamptz NOT NULL DEFAULT now(), owns_pause boolean NOT NULL DEFAULT true,
  last_applied_state boolean, last_applied_at timestamptz, last_reason text NOT NULL DEFAULT ''
 );
 CREATE TABLE account_schedulable_timer_audit (
@@ -48,7 +51,7 @@ CREATE TABLE account_schedulable_timer_audit (
  actual_at timestamptz NOT NULL, result text NOT NULL, reason text NOT NULL DEFAULT ''
 );
 CREATE TABLE fixture_outbox(id bigserial PRIMARY KEY, account_id bigint NOT NULL);
-INSERT INTO accounts(id,temp_unschedulable_until,rate_limit_reset_at) VALUES(7,'2030-01-01Z','2030-01-02Z');
+INSERT INTO accounts(id,temp_unschedulable_until,rate_limit_reset_at,overload_until) VALUES(7,'2030-01-01Z','2030-01-02Z','2030-01-03Z');
 `
 
 func integrationStore(t *testing.T) (*Store, *time.Time, *atomic.Int64) {
