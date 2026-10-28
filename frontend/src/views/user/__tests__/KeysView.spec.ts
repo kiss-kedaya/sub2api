@@ -357,16 +357,26 @@ describe('user KeysView column settings', () => {
     const wrapper = await mountView()
     await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
     await wrapper.get('[data-tour="key-form-name"]').setValue('Web tools key')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
     const toggle = wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]')
     expect(toggle.attributes('aria-checked')).toBe('true')
     if (!enabled) await toggle.trigger('click')
-    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
-    await nextTick()
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('Web tools key', 3, undefined, [], [], 0, undefined,
       { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined, 'inherit',
       { deepseekToolInjectionEnabled: enabled })
+    wrapper.unmount()
+  })
+
+  it('hides DeepSeek tool injection for non-DeepSeek groups', async () => {
+    getAvailableGroups.mockResolvedValue([{ id: 4, name: 'OpenAI', platform: 'openai' }])
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 4)
+    await nextTick()
+    expect(wrapper.find('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -404,6 +414,10 @@ describe('user KeysView column settings', () => {
       deepseek_tool_injection_enabled: false,
     }))
     await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    // The switch only renders once a DeepSeek group is selected.
+    expect(wrapper.find('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]').exists()).toBe(false)
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
     expect(wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]')
       .attributes('aria-checked')).toBe('true')
     wrapper.unmount()
