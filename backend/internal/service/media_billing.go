@@ -511,7 +511,11 @@ func (s *OpenAIGatewayService) recoverMediaBillingJobs(ctx context.Context) {
 				return
 			}
 			workCtx, stop := context.WithTimeout(ctx, 30*time.Second)
-			if job.Intent != nil {
+			if job.Status == MediaBillingCreating && !job.CreatedAt.IsZero() && time.Since(job.CreatedAt) >= mediaBillingCreatingGrace {
+				// The freeze happened but the task was never submitted upstream;
+				// nothing was delivered, so return the whole reservation.
+				err = s.FailGrokVideoBillingJob(workCtx, job)
+			} else if job.Intent != nil {
 				err = s.settleMediaBillingJob(workCtx, job, nil)
 			} else if grokVideoAutomaticPollExpired(job, time.Now()) {
 				err = s.reconcileGrokVideoBillingJob(workCtx, job, "automatic_poll_expired")
@@ -536,6 +540,8 @@ const (
 	// until completion or failure is actually observed.
 	grokVideoAutomaticPollMaxAge = 24 * time.Hour
 	grokVideoMissingTaskGrace    = 5 * time.Minute
+	// A job stuck in "creating" never reached the provider; refund after this.
+	mediaBillingCreatingGrace = 10 * time.Minute
 )
 
 func grokVideoAutomaticPollExpired(job *MediaBillingJob, now time.Time) bool {
@@ -587,6 +593,34 @@ func (w *mediaStatusWriter) Write(body []byte) (int, error) {
 	}
 	w.body = append(w.body, body...)
 	return len(body), nil
+}
+
+
+// settleSucceededVideoStatus converts a terminal "succeeded" status into a
+// settlement. Some providers report success without embedding the asset URL, so
+// the previous implementation kept the hold until reconciliation even though
+// the video existed; this settles the actual duration and releases the rest.
+func (s *OpenAIGatewayService) settleSucceededVideoStatus(ctx context.Context, job *MediaBillingJob, body []byte) error {
+	var status struct {
+		Duration float64 `json:"duration"`
+		Seconds  float64 `json:"seconds"`
+		Usage    struct {
+			OutputTokens float64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &status); err != nil {
+		return err
+	}
+	seconds := int(status.Duration)
+	if seconds <= 0 {
+		seconds = int(status.Seconds)
+	}
+	result := &OpenAIForwardResult{VideoStatus: "succeeded", VideoCount: 1, VideoDurationSeconds: seconds}
+	if status.Usage.OutputTokens > 0 {
+		result.VideoTokenBilling = true
+		result.Usage.OutputTokens = int(status.Usage.OutputTokens)
+	}
+	return s.SettleGrokVideoBillingJob(ctx, job, result)
 }
 
 func (s *OpenAIGatewayService) pollGrokVideoBillingJob(ctx context.Context, job *MediaBillingJob) error {
@@ -641,7 +675,11 @@ func (s *OpenAIGatewayService) pollGrokVideoBillingJob(ctx context.Context, job 
 	case "failed", "cancelled", "canceled":
 		return s.FailGrokVideoBillingJob(ctx, job)
 	case "expired":
-		return errors.New("expired video requires billing reconciliation")
+		// The provider no longer holds the asset, so nothing can be delivered:
+		// release the hold instead of parking it in reconciliation forever.
+		return s.FailGrokVideoBillingJob(ctx, job)
+	case "succeeded", "success", "completed", "finished":
+		return s.settleSucceededVideoStatus(ctx, job, writer.body)
 	case "pending", "processing", "running", "queued", "in_progress", "":
 		return nil
 	default:
