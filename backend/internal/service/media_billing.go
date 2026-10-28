@@ -595,7 +595,6 @@ func (w *mediaStatusWriter) Write(body []byte) (int, error) {
 	return len(body), nil
 }
 
-
 // settleSucceededVideoStatus converts a terminal "succeeded" status into a
 // settlement. Some providers report success without embedding the asset URL, so
 // the previous implementation kept the hold until reconciliation even though
