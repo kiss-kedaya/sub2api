@@ -387,6 +387,66 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 	return result, nil
 }
 
+// GetAccountWindowStatsByStart returns window statistics for accounts whose
+// window starts differ. A single VALUES join replaces one aggregate query per
+// account on the admin account list.
+func (r *usageLogRepository) GetAccountWindowStatsByStart(ctx context.Context, starts map[int64]time.Time) (map[int64]*usagestats.AccountStats, error) {
+	result := make(map[int64]*usagestats.AccountStats, len(starts))
+	if len(starts) == 0 {
+		return result, nil
+	}
+	ids := make([]int64, 0, len(starts))
+	for id := range starts {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	var query strings.Builder
+	query.WriteString(`SELECT
+			u.account_id,
+			COUNT(*) AS requests,
+			COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_creation_tokens + u.cache_read_tokens), 0) AS tokens,
+			COALESCE(SUM(COALESCE(u.account_stats_cost, u.total_cost) * COALESCE(u.account_rate_multiplier, 1)), 0) AS cost,
+			COALESCE(SUM(u.total_cost), 0) AS standard_cost,
+			COALESCE(SUM(u.actual_cost), 0) AS user_cost
+		FROM usage_logs u
+		JOIN (VALUES `)
+	args := make([]any, 0, len(ids)*2)
+	for i, id := range ids {
+		if i > 0 {
+			query.WriteString(",")
+		}
+		fmt.Fprintf(&query, "($%d, $%d::timestamptz)", i*2+1, i*2+2)
+		args = append(args, id, starts[id])
+	}
+	query.WriteString(`) AS w(account_id, start_at) ON u.account_id = w.account_id
+		WHERE u.created_at >= w.start_at
+		GROUP BY u.account_id`)
+
+	rows, err := r.sql.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var accountID int64
+		stats := &usagestats.AccountStats{}
+		if err := rows.Scan(&accountID, &stats.Requests, &stats.Tokens, &stats.Cost, &stats.StandardCost, &stats.UserCost); err != nil {
+			return nil, err
+		}
+		result[accountID] = stats
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		if _, ok := result[id]; !ok {
+			result[id] = &usagestats.AccountStats{}
+		}
+	}
+	return result, nil
+}
+
 // GetAccountWindowCostsBatch returns only the standard (pre-multiplier)
 // window cost used by scheduler admission. Keeping this projection narrow
 // avoids aggregating request/token/user-cost columns on the gateway hot path.
