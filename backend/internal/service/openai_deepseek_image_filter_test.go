@@ -88,3 +88,24 @@ func TestStripDeepSeekUnsupportedImageInputsPreservesUnknownResponsesItems(t *te
 	require.Zero(t, removed)
 	require.Equal(t, string(body), string(filtered))
 }
+
+func TestShouldStripDeepSeekImagesRespectsModelVision(t *testing.T) {
+	cases := []struct {
+		platform string
+		model    string
+		want     bool
+	}{
+		{PlatformDeepseek, "deepseek-flash", false},
+		{PlatformDeepseek, "deepseek-v4.1-flash", false},
+		{PlatformDeepseek, "deepseek-v4-flash", false},
+		{PlatformDeepseek, "deepseek-v4-flash-vision-exp", false},
+		{PlatformDeepseek, "deepseek-v4-pro", true},
+		{PlatformDeepseek, "deepseek-v4-pro-0813", true},
+		{PlatformDeepseek, "", true},
+		{PlatformDeepseek, "unknown-model", true},
+		{PlatformOpenAI, "deepseek-flash", false},
+	}
+	for _, tc := range cases {
+		require.Equal(t, tc.want, ShouldStripDeepSeekImages(tc.platform, tc.model), "%s/%s", tc.platform, tc.model)
+	}
+}

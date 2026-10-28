@@ -202,7 +202,7 @@ func rewriteInboundDeepSeekCallIDs(apiKey *service.APIKey, model string, body []
 // resolved the effective target platform. DeepSeek text accounts cannot accept
 // image input; removing only known protocol image parts lets the text portion
 // continue while leaving other platforms and arbitrary tool arguments intact.
-func stripDeepSeekUnsupportedImages(c *gin.Context, apiKey *service.APIKey, body []byte, endpoint string) ([]byte, int) {
+func stripDeepSeekUnsupportedImages(c *gin.Context, apiKey *service.APIKey, model string, body []byte, endpoint string) ([]byte, int) {
 	platform := ""
 	if c != nil && c.Request != nil {
 		if resolved, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
@@ -212,7 +212,7 @@ func stripDeepSeekUnsupportedImages(c *gin.Context, apiKey *service.APIKey, body
 	if platform == "" && apiKey != nil && apiKey.Group != nil {
 		platform = apiKey.Group.Platform
 	}
-	if platform != service.PlatformDeepseek {
+	if !service.ShouldStripDeepSeekImages(platform, model) {
 		return body, 0
 	}
 	filtered, removed, changed, err := service.StripDeepSeekUnsupportedImageInputs(body, endpoint)
@@ -533,7 +533,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
 		return
 	}
-	if filtered, removed := stripDeepSeekUnsupportedImages(c, apiKey, body, "responses"); removed > 0 {
+	if filtered, removed := stripDeepSeekUnsupportedImages(c, apiKey, reqModel, body, "responses"); removed > 0 {
 		body = filtered
 		sessionHashBody = body
 		reqLog.Info("openai_responses.deepseek_images_removed", zap.Int("image_parts", removed))
@@ -1368,7 +1368,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
 		return
 	}
-	if filtered, removed := stripDeepSeekUnsupportedImages(c, apiKey, body, "messages"); removed > 0 {
+	if filtered, removed := stripDeepSeekUnsupportedImages(c, apiKey, reqModel, body, "messages"); removed > 0 {
 		body = filtered
 		reqLog.Info("openai_messages.deepseek_images_removed", zap.Int("image_parts", removed))
 	}

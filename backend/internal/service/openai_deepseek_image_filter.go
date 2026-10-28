@@ -128,3 +128,29 @@ func isImagePart(part map[string]any) bool {
 		return false
 	}
 }
+
+// DeepSeekModelSupportsImageInput reports whether the built-in DeepSeek model
+// catalogue says this model accepts image input. Unknown IDs keep the historic
+// conservative behavior: the caller strips images.
+func DeepSeekModelSupportsImageInput(modelID string) bool {
+	metadata, ok := builtinDeepSeekModelMetadata(modelID)
+	if !ok {
+		return false
+	}
+	for _, modality := range metadata.InputModalities {
+		if strings.EqualFold(strings.TrimSpace(modality), "image") {
+			return true
+		}
+	}
+	return false
+}
+
+// ShouldStripDeepSeekImages reports whether image content parts must be removed
+// for the resolved target platform and model. Text-only DeepSeek models keep the
+// historic stripping behavior; vision-capable Flash models are left untouched.
+func ShouldStripDeepSeekImages(platform, modelID string) bool {
+	if platform != PlatformDeepseek {
+		return false
+	}
+	return !DeepSeekModelSupportsImageInput(modelID)
+}
