@@ -131,7 +131,7 @@ func TestSavePersistsUTCAndOriginalZoneAndReplacesSameAction(t *testing.T) {
 			}
 			m.ExpectQuery("SELECT version FROM account_schedulable_timers").WithArgs(int64(7), "open").WillReturnRows(rows)
 			m.ExpectQuery("SELECT EXISTS").WithArgs(int64(7), "open", due).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-			m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), due, "one_shot_schedule_override", int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
+			m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), now, "one_shot_schedule_override", int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 			m.ExpectExec("INSERT INTO account_schedulable_timers").WithArgs(int64(7), "open", version+1, due, "Asia/Shanghai", int64(9)).WillReturnResult(sqlmock.NewResult(0, 1))
 			result := "scheduled"
 			if version > 0 {
