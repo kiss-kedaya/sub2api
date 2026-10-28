@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,28 @@ func TestAnthropicToChatCompletionsRequest_BasicText(t *testing.T) {
 	require.Equal(t, `"hello"`, string(out.Messages[0].Content))
 	require.NotNil(t, out.MaxCompletionTokens)
 	require.Equal(t, 1024, *out.MaxCompletionTokens)
+}
+
+func TestAnthropicToChatCompletionsRequest_PreservesTopLevelCacheControl(t *testing.T) {
+	req := &AnthropicRequest{
+		CacheControl: &AnthropicCacheControl{Type: "ephemeral", TTL: "1h"},
+		Model:        "claude-sonnet-4-20250514",
+		MaxTokens:    1024,
+		Messages: []AnthropicMessage{
+			{Role: "user", Content: json.RawMessage(`"hello"`)},
+		},
+	}
+
+	out, err := AnthropicToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.NotNil(t, out.CacheControl)
+	require.Equal(t, "ephemeral", out.CacheControl.Type)
+	require.Equal(t, "1h", out.CacheControl.TTL)
+
+	wire, err := json.Marshal(out)
+	require.NoError(t, err)
+	require.Equal(t, "ephemeral", gjson.GetBytes(wire, "cache_control.type").String())
+	require.Equal(t, "1h", gjson.GetBytes(wire, "cache_control.ttl").String())
 }
 
 func TestAnthropicToChatCompletionsRequest_SystemPrompt(t *testing.T) {
