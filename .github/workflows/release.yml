@@ -45,7 +45,7 @@ jobs:
   # events, where actions/checkout's implicit ref can be the default branch.
   resolve_release_ref:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, release-builder]
     outputs:
       commit_sha: ${{ steps.resolve.outputs.commit_sha }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
@@ -94,7 +94,7 @@ jobs:
     needs: [resolve_release_ref]
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, release-builder]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -124,7 +124,7 @@ jobs:
     needs: [resolve_release_ref]
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, release-builder]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -166,7 +166,7 @@ jobs:
       # GoReleaser creates the GitHub release and publishes GHCR images.
       contents: write
       packages: write
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, release-builder]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -396,7 +396,7 @@ jobs:
     permissions:
       # This maintenance job commits the released VERSION to the default branch.
       contents: write
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, release-builder]
     steps:
       # This maintenance job intentionally targets the default branch; it does
       # not contribute files to the release artifacts produced above.
