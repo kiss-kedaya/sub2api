@@ -506,18 +506,18 @@ onUnmounted(() => {
 <style scoped>
 .select-trigger {
   @apply flex w-full items-center justify-between gap-2;
-  @apply rounded-xl px-4 py-2.5 text-sm;
+  @apply rounded-[10px] px-4 py-2.5 text-sm;
   @apply bg-white dark:bg-dark-800;
   @apply border border-gray-200 dark:border-dark-600;
   @apply text-gray-900 dark:text-gray-100;
   @apply transition-all duration-200;
-  @apply focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30;
+  @apply focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-300/70 dark:focus:ring-dark-500;
   @apply hover:border-gray-300 dark:hover:border-dark-500;
   @apply cursor-pointer;
 }
 
 .select-trigger-open {
-  @apply border-primary-500 ring-2 ring-primary-500/30;
+  @apply border-gray-400 ring-1 ring-gray-300/70 dark:border-dark-500 dark:ring-dark-500;
 }
 
 .select-trigger-error {
@@ -549,7 +549,7 @@ onUnmounted(() => {
   @apply bg-white dark:bg-dark-800;
   @apply rounded-xl;
   @apply border border-gray-200 dark:border-dark-700;
-  @apply shadow-lg shadow-black/10 dark:shadow-black/30;
+  @apply shadow-sm;
   @apply overflow-hidden;
   pointer-events: auto !important;
 }
@@ -567,20 +567,20 @@ onUnmounted(() => {
 }
 
 .select-dropdown-portal .select-options {
-  @apply max-h-80 overflow-y-auto py-1 outline-none;
+  @apply max-h-64 overflow-y-auto py-1 outline-none;
 }
 
 .select-dropdown-portal .select-option {
   @apply flex items-center justify-between gap-2;
-  @apply px-4 py-2.5 text-sm;
+  @apply mx-1 rounded-lg px-3 py-2 text-sm;
   @apply text-gray-700 dark:text-gray-300;
   @apply cursor-pointer transition-colors duration-150;
-  @apply hover:bg-gray-50 dark:hover:bg-dark-700;
+  @apply hover:bg-gray-100/70 dark:hover:bg-dark-700;
   pointer-events: auto !important;
 }
 
 .select-dropdown-portal .select-option-selected {
-  @apply bg-primary-50 dark:bg-primary-900/20;
+  @apply bg-primary-50 font-medium dark:bg-primary-900/20;
   @apply text-primary-700 dark:text-primary-300;
 }
 
