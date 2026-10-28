@@ -170,32 +170,25 @@ func (s *OpenAIGatewayService) executeDeepSeekSearchCalls(
 		}
 		query, count := deepSeekSearchCallQuery(call.Arguments)
 		if query == "" {
+			// The model called an injected tool without a usable query. Pair the
+			// call with an error result so the next upstream turn never sees a
+			// tool call without its output.
+			results[call.CallID] = `{"error":"invalid_query","message":"search query was empty"}`
 			continue
 		}
 		payload, err := json.Marshal(map[string]any{"query": query, "count": clampDeepSeekSearchCount(count)})
 		if err != nil {
+			results[call.CallID] = `{"error":"invalid_query","message":"search query could not be encoded"}`
 			continue
 		}
-		// 搜索是主请求路径上的附加动作，必须设上限，避免拖住整个响应。
-		searchCtx, cancel := context.WithTimeout(ctx, deepSeekSearchToolTimeout)
-		recorder := httptest.NewRecorder()
-		shadow, _ := gin.CreateTestContext(recorder)
-		// c.Request 在某些内部路径下可能为空；用一个最小请求占位，
-		// ForwardDeepSeekTools 只用到 Host/Header，不依赖入站 body。
-		if c != nil && c.Request != nil {
-			shadow.Request = c.Request.Clone(searchCtx)
-		} else {
-			shadow.Request = httptest.NewRequest("POST", "/v1/tools/search", nil).WithContext(searchCtx)
+		content, ok := s.runDeepSeekSearchCall(ctx, c, account, group, payload)
+		if !ok {
+			// Retry once: hosted search failures are often transient.
+			time.Sleep(deepSeekSearchRetryDelay)
+			content, ok = s.runDeepSeekSearchCall(ctx, c, account, group, payload)
 		}
-		_, err = s.ForwardDeepSeekTools(searchCtx, shadow, account, group, DeepSeekToolsPathSearch, "", payload)
-		cancel()
-		if err != nil {
-			slog.Warn("deepseek search tool call failed", "account_id", account.ID, "error", err)
-			continue
-		}
-		content, err := buildDeepSeekSearchToolResult(recorder.Body.Bytes())
-		if err != nil {
-			continue
+		if !ok {
+			content = `{"error":"search_unavailable","message":"search tool failed after retry"}`
 		}
 		results[call.CallID] = content
 	}
@@ -204,6 +197,34 @@ func (s *OpenAIGatewayService) executeDeepSeekSearchCalls(
 	}
 	return results
 }
+
+// runDeepSeekSearchCall executes one injected search call with its own timeout.
+func (s *OpenAIGatewayService) runDeepSeekSearchCall(
+	ctx context.Context, c *gin.Context, account *Account, group *Group, payload []byte,
+) (string, bool) {
+	searchCtx, cancel := context.WithTimeout(ctx, deepSeekSearchToolTimeout)
+	defer cancel()
+	recorder := httptest.NewRecorder()
+	shadow, _ := gin.CreateTestContext(recorder)
+	// c.Request 在某些内部路径下可能为空；用一个最小请求占位，
+	// ForwardDeepSeekTools 只用到 Host/Header，不依赖入站 body。
+	if c != nil && c.Request != nil {
+		shadow.Request = c.Request.Clone(searchCtx)
+	} else {
+		shadow.Request = httptest.NewRequest("POST", "/v1/tools/search", nil).WithContext(searchCtx)
+	}
+	if _, err := s.ForwardDeepSeekTools(searchCtx, shadow, account, group, DeepSeekToolsPathSearch, "", payload); err != nil {
+		slog.Warn("deepseek search tool call failed", "account_id", account.ID, "error", err)
+		return "", false
+	}
+	content, err := buildDeepSeekSearchToolResult(recorder.Body.Bytes())
+	if err != nil {
+		return "", false
+	}
+	return content, true
+}
+
+const deepSeekSearchRetryDelay = 150 * time.Millisecond
 
 // clampDeepSeekSearchCount 把 count 收进官方允许的 1..50。
 func clampDeepSeekSearchCount(count int) int {

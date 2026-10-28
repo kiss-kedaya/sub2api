@@ -195,9 +195,10 @@ func deepSeekHostedSearchDescription(tool gjson.Result) (string, error) {
 	}
 	if access := tool.Get("external_web_access"); access.Exists() && (access.Type != gjson.True && access.Type != gjson.False) {
 		return "", fmt.Errorf("deepseek hosted search: external_web_access must be boolean")
-	} else if access.Type == gjson.False {
-		return "", fmt.Errorf("deepseek hosted search: external_web_access=false is not supported by live search")
 	}
+	// Clients such as Codex send external_web_access=false by default, but the
+	// live search provider always needs external access. Keep the request alive
+	// instead of failing the whole turn; the flag is ignored for this provider.
 	if indexed := tool.Get("indexed_web_access"); indexed.Exists() && indexed.Type != gjson.Null {
 		if indexed.Type != gjson.True && indexed.Type != gjson.False {
 			return "", fmt.Errorf("deepseek hosted search: indexed_web_access must be boolean")

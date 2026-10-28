@@ -101,8 +101,14 @@ func TestPrepareDeepSeekHostedSearchOptionsAreKeptOrExplicitlyRejected(t *testin
 	domains, err := deepSeekHostedSearchAllowedDomains(gjson.GetBytes(body, "tools.0"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"example.com", "docs.example.com"}, domains)
+	// Codex sends external_web_access=false by default; the live provider still
+	// needs external access, so the flag is tolerated instead of failing.
+	accepted := []byte(`{"tools":[{"type":"web_search","external_web_access":false}],"input":"news"}`)
+	_, acceptedChanged, acceptedErr := prepareDeepSeekHostedSearchRequest(accepted)
+	require.NoError(t, acceptedErr)
+	require.True(t, acceptedChanged)
 	for _, options := range []string{
-		`"external_web_access":false`, `"filters":{"blocked_domains":["example.com"]}`,
+		`"filters":{"blocked_domains":["example.com"]}`,
 		`"indexed_web_access":true`, `"indexed_web_access":"true"`,
 		`"search_context_size":"huge"`, `"user_location":"Tokyo"`, `"unrecognized":true`,
 		`"filters":{"allowed_domains":["example.com OR site:evil.com"]}`,

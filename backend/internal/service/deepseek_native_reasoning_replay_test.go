@@ -78,19 +78,29 @@ func TestDeepSeekNativeReasoningReplayAcrossInstances(t *testing.T) {
 			require.Equal(t, "/responses", nextUpstream.lastReq.URL.Path)
 			require.False(t, gjson.GetBytes(nextUpstream.lastBody, "messages").Exists())
 
+			// Reasoning items are keyed by API key + opaque item id (digest
+			// bound), so a new conversation id or a model alias must still
+			// restore the exact text instead of dropping it.
 			for _, tc := range []struct {
 				name, session, model string
 				keyID                int64
+				restore              bool
 			}{
-				{"other-key", "native-thread", "deepseek-v4.1-flash", 22},
-				{"other-conversation", "other-thread", "deepseek-v4.1-flash", 21},
-				{"other-model", "native-thread", "deepseek-v4-pro", 21},
+				{"other-key", "native-thread", "deepseek-v4.1-flash", 22, false},
+				{"other-conversation", "other-thread", "deepseek-v4.1-flash", 21, true},
+				{"other-model", "native-thread", "deepseek-v4-pro", 21, true},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					c, _ := deepSeekNativeReplayContext(tc.keyID, tc.session)
 					request, err := sjson.SetBytes(replay, "model", tc.model)
 					require.NoError(t, err)
-					require.Equal(t, request, next.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), request))
+					out := next.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), request)
+					if !tc.restore {
+						require.Equal(t, request, out)
+						return
+					}
+					require.Equal(t, "Only the genuine upstream reasoning.", gjson.GetBytes(out, "input.1.content.0.text").String())
+					require.Equal(t, "opaque-real", gjson.GetBytes(out, "input.1.encrypted_content").String())
 				})
 			}
 		})
@@ -157,14 +167,18 @@ func TestDeepSeekNativeReasoningReplayReusedContextRechecksIdentity(t *testing.T
 	svc.cache = &reasoningRecordingCache{getResp: cache.snapshotSets()}
 	request := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_reused"}]}`)
 	require.Equal(t, "this conversation only", gjson.GetBytes(svc.prepareDeepSeekNativeReasoningReplay(c, account, request), "input.0.content.0.text").String())
+	// The cache is keyed by API key + opaque reasoning item id, so session,
+	// thread and model changes must still restore the exact text. Only a
+	// different API key is denied.
 	for _, tc := range []struct {
 		name, session, model, thread string
 		keyID                        int64
+		restore                      bool
 	}{
-		{"changed-key", "initial-session", "deepseek-v4.1-flash", "", 22},
-		{"changed-model", "initial-session", "deepseek-v4-pro", "", 21},
-		{"changed-session", "different-session", "deepseek-v4.1-flash", "", 21},
-		{"changed-thread", "initial-session", "deepseek-v4.1-flash", "different-thread", 21},
+		{"changed-key", "initial-session", "deepseek-v4.1-flash", "", 22, false},
+		{"changed-model", "initial-session", "deepseek-v4-pro", "", 21, true},
+		{"changed-session", "different-session", "deepseek-v4.1-flash", "", 21, true},
+		{"changed-thread", "initial-session", "deepseek-v4.1-flash", "different-thread", 21, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Reuse the exact gin context, as a WS connection does between turns.
@@ -173,7 +187,12 @@ func TestDeepSeekNativeReasoningReplayReusedContextRechecksIdentity(t *testing.T
 			c.Request.Header.Set("thread-id", tc.thread)
 			body, err := sjson.SetBytes(request, "model", tc.model)
 			require.NoError(t, err)
-			require.Equal(t, body, svc.prepareDeepSeekNativeReasoningReplay(c, account, body))
+			out := svc.prepareDeepSeekNativeReasoningReplay(c, account, body)
+			if !tc.restore {
+				require.Equal(t, body, out)
+				return
+			}
+			require.Equal(t, "this conversation only", gjson.GetBytes(out, "input.0.content.0.text").String())
 		})
 	}
 	c.Set("api_key", &APIKey{ID: 21})
@@ -190,9 +209,6 @@ func TestDeepSeekNativeReasoningReplayHasTotalRestoreBudget(t *testing.T) {
 	account := deepSeekNativeReplayAccount()
 	c, _ := deepSeekNativeReplayContext(21, "large-history")
 	svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(`{"model":"deepseek-v4.1-flash","input":"question"}`))
-	value, _ := c.Get(deepSeekNativeReasoningScopeKey)
-	scope, ok := value.(string)
-	require.True(t, ok)
 	content, err := json.Marshal([]map[string]string{{"type": "reasoning_text", "text": strings.Repeat("r", 512<<10)}})
 	require.NoError(t, err)
 	entry, err := json.Marshal(deepSeekNativeReasoningEntry{Content: content})
@@ -203,7 +219,7 @@ func TestDeepSeekNativeReasoningReplayHasTotalRestoreBudget(t *testing.T) {
 	for i := 0; i < deepSeekNativeReasoningMaxItems; i++ {
 		id := fmt.Sprintf("rs_large_%d", i)
 		items = append(items, map[string]any{"type": "reasoning", "id": id, "summary": []any{}})
-		getResp[deepSeekNativeReasoningCacheKey(scope, id)] = entryText
+		getResp[deepSeekNativeReasoningCacheKey(21, id)] = entryText
 	}
 	request, err := json.Marshal(map[string]any{"model": "deepseek-v4.1-flash", "input": items, "opaque": json.Number("9007199254740993")})
 	require.NoError(t, err)
@@ -306,4 +322,64 @@ func TestDeepSeekNativeReasoningReplayCacheFailureStopsFurtherWrites(t *testing.
 	budgetRecorder.ObserveFrame(parseOpenAISSEDataFrame([]byte(`{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_budget","content":[{"type":"reasoning_text","text":"actual"}]}}`), ""))
 	require.Equal(t, 1, cache.writes)
 	require.True(t, budgetRecorder.cacheFailed)
+}
+
+// TestDeepSeekNativeReasoningReplayKeepsEveryTurnByteForByte proves that a
+// multi-turn replay forwards every user input, prompt, tool call, tool result
+// and model output unchanged, and only fills the missing reasoning text with
+// the exact bytes that were captured from the upstream response.
+func TestDeepSeekNativeReasoningReplayKeepsEveryTurnByteForByte(t *testing.T) {
+	cache := &reasoningRecordingCache{}
+	svc := &OpenAIGatewayService{cache: cache}
+	account := deepSeekNativeReplayAccount()
+	c, _ := deepSeekNativeReplayContext(21, "lossless-thread")
+	svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(`{"model":"deepseek-v4.1-flash","input":"anchor"}`))
+	firstThinking := "第一轮思考：保留 \"引号\"、反斜杠 \\ 与 emoji 🚀"
+	secondThinking := "second turn thinking, keep 100% bytes"
+	svc.cacheDeepSeekNativeReasoningBody(c, account, []byte(`{"output":[`+
+		`{"type":"reasoning","id":"rs_t1","encrypted_content":"opaque-1","content":[{"type":"reasoning_text","text":"第一轮思考：保留 \"引号\"、反斜杠 \\ 与 emoji 🚀"}]},`+
+		`{"type":"reasoning","id":"rs_t2","encrypted_content":"opaque-2","content":[{"type":"reasoning_text","text":"second turn thinking, keep 100% bytes"}]}]}`))
+	svc.cache = &reasoningRecordingCache{getResp: cache.snapshotSets()}
+
+	replay := []byte(`{
+		"model":"deepseek-v4.1-flash",
+		"instructions":"系统提示：不要丢任何字段。",
+		"input":[
+			{"role":"user","content":[{"type":"input_text","text":"第一问：😀 用户输入必须原样"}],"opaque_big":9007199254740993},
+			{"type":"reasoning","id":"rs_t1","summary":[{"type":"summary_text","text":"SUMMARY-KEEP"}],"encrypted_content":"opaque-1"},
+			{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"q\":\"中文 & <tag>\"}","status":"completed"},
+			{"type":"function_call_output","call_id":"call_1","output":"工具结果：原样保留 ✅"},
+			{"role":"assistant","content":[{"type":"output_text","text":"模型输出：保留\n换行与 emoji 🧠"}]},
+			{"role":"user","content":[{"type":"input_text","text":"第二问：继续"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]},
+			{"type":"reasoning","id":"rs_t2","summary":[],"encrypted_content":"opaque-2"}
+		],
+		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"q":{"type":"string"}}}}],
+		"metadata":{"trace":"keep-me"}
+	}`)
+
+	out := svc.prepareDeepSeekNativeReasoningReplay(c, account, replay)
+	require.Equal(t, firstThinking, gjson.GetBytes(out, "input.1.content.0.text").String())
+	require.Equal(t, secondThinking, gjson.GetBytes(out, "input.6.content.0.text").String())
+
+	var before, after map[string]any
+	require.NoError(t, json.Unmarshal(replay, &before))
+	require.NoError(t, json.Unmarshal(out, &after))
+	strip := func(doc map[string]any) {
+		for _, item := range doc["input"].([]any) {
+			entry := item.(map[string]any)
+			if entry["type"] == "reasoning" {
+				delete(entry, "content")
+			}
+		}
+	}
+	strip(before)
+	strip(after)
+	require.Equal(t, before, after, "only the missing reasoning content may change; every other byte must survive")
+
+	require.Len(t, after["input"].([]any), 7)
+	require.Equal(t, "第一问：😀 用户输入必须原样", gjson.GetBytes(out, "input.0.content.0.text").String())
+	require.Equal(t, "工具结果：原样保留 ✅", gjson.GetBytes(out, "input.3.output").String())
+	require.Equal(t, "模型输出：保留\n换行与 emoji 🧠", gjson.GetBytes(out, "input.4.content.0.text").String())
+	require.Equal(t, `{"q":"中文 & <tag>"}`, gjson.GetBytes(out, "input.2.arguments").String())
+	require.Equal(t, "keep-me", gjson.GetBytes(out, "metadata.trace").String())
 }

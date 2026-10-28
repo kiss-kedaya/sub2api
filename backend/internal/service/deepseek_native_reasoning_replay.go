@@ -97,7 +97,7 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		if lookups > deepSeekNativeReasoningMaxItems || ctx.Err() != nil {
 			break
 		}
-		cached, err := s.cache.GetReasoningContent(ctx, deepSeekNativeReasoningCacheKey(scopeString, item.Get("id").String()))
+		cached, err := s.cache.GetReasoningContent(ctx, deepSeekNativeReasoningCacheKey(source.keyID, item.Get("id").String()))
 		if err != nil || len(cached) > deepSeekNativeReasoningMaxBytes {
 			continue
 		}
@@ -156,8 +156,8 @@ func deepSeekNativeReasoningDigest(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func deepSeekNativeReasoningCacheKey(scope, itemID string) string {
-	return "deepseek-native-v1:" + scope + ":" + deepSeekNativeReasoningDigest(itemID)
+func deepSeekNativeReasoningCacheKey(keyID int64, itemID string) string {
+	return fmt.Sprintf("deepseek-native-v1:%d:%s", keyID, deepSeekNativeReasoningDigest(itemID))
 }
 
 type deepSeekNativeReasoningEntry struct {
@@ -190,6 +190,7 @@ type deepSeekNativeReasoningItem struct {
 type deepSeekNativeReasoningRecorder struct {
 	s              *OpenAIGatewayService
 	scope          string
+	keyID          int64
 	items          map[int]*deepSeekNativeReasoningItem
 	bytes          int
 	cacheWriteTime time.Duration
@@ -207,7 +208,7 @@ func (s *OpenAIGatewayService) newDeepSeekNativeReasoningRecorder(c *gin.Context
 	if scope == "" || !ok || source.keyID != getAPIKeyIDFromContext(c) {
 		return nil
 	}
-	return &deepSeekNativeReasoningRecorder{s: s, scope: scope, items: make(map[int]*deepSeekNativeReasoningItem)}
+	return &deepSeekNativeReasoningRecorder{s: s, scope: scope, keyID: source.keyID, items: make(map[int]*deepSeekNativeReasoningItem)}
 }
 
 func (r *deepSeekNativeReasoningRecorder) item(index int, id string) *deepSeekNativeReasoningItem {
@@ -346,7 +347,7 @@ func (r *deepSeekNativeReasoningRecorder) observeItem(index int, raw gjson.Resul
 		if item.stored[id] == digest {
 			continue
 		}
-		if err := r.s.cache.SetReasoningContent(ctx, deepSeekNativeReasoningCacheKey(r.scope, id), string(entry), responsesReasoningCacheTTL); err == nil {
+		if err := r.s.cache.SetReasoningContent(ctx, deepSeekNativeReasoningCacheKey(r.keyID, id), string(entry), responsesReasoningCacheTTL); err == nil {
 			item.stored[id] = digest
 		} else {
 			// The cache is best-effort. One failure disables writes for this
