@@ -265,11 +265,18 @@ func TestMediaBillingJobIntegration_ReconciliationKeepsHoldAndSettlesOnce(t *tes
 	require.Zero(t, persisted.Attempts)
 	assertMediaBillingWallet(t, ctx, fixture.user.ID, 8, 2)
 	assertMediaBillingOutboxDeltas(t, ctx, fixture.user.ID, []float64{-2})
+	// Reconciliation jobs stay eligible for a later verified settlement: the
+	// worker still polls them (with backoff) until upstream reports a terminal
+	// state, instead of leaving the hold frozen forever.
 	leased, err := fixture.repo.ListMediaBillingJobs(ctx, 32)
 	require.NoError(t, err)
+	leasedReconciliation := false
 	for _, active := range leased {
-		require.NotEqual(t, job.ID, active.ID, "reconciliation is not eligible for a worker lease")
+		if active.ID == job.ID {
+			leasedReconciliation = true
+		}
 	}
+	require.True(t, leasedReconciliation, "reconciliation must remain pollable")
 
 	_, err = fixture.repo.PrepareMediaBillingIntent(ctx, job.ID, fixture.intent("media-settle:"+job.ID, 1.25))
 	require.NoError(t, err)
