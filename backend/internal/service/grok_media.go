@@ -744,21 +744,50 @@ func StableGrokVideoBillingRequestID(taskRequestID string) string {
 // Request may include resolution ("480p"|"720p"|"1080p"); completed status does not
 // document a resolution field — bill resolution from the create-time request snapshot.
 
-// IsGrokVideoStatusBillable matches official success: status == "done" AND non-empty video.url.
-// pending / expired / failed, or done without a video URL, are not billable.
+// IsGrokVideoStatusBillable matches terminal success plus a retrievable asset.
+// Providers differ: official docs use status "done" + video.url, while the
+// Grok 1.5 relay returns status "completed" + data[].url. Both shapes must be
+// treated as billable, otherwise a finished video is never charged and its
+// reservation is parked until reconciliation.
 func IsGrokVideoStatusBillable(statusBody []byte) bool {
 	if len(statusBody) == 0 || !gjson.ValidBytes(statusBody) {
 		return false
 	}
-	if !isOfficialGrokVideoStatusDone(statusBody) {
+	if !isGrokVideoTerminalSuccess(statusBody) {
 		return false
 	}
-	return strings.TrimSpace(gjson.GetBytes(statusBody, "video.url").String()) != ""
+	return grokVideoStatusURL(statusBody) != ""
 }
 
-func isOfficialGrokVideoStatusDone(statusBody []byte) bool {
-	// Official enum: pending | done | expired | failed.
-	return strings.EqualFold(strings.TrimSpace(gjson.GetBytes(statusBody, "status").String()), "done")
+func isGrokVideoTerminalSuccess(statusBody []byte) bool {
+	switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(statusBody, "status").String())) {
+	case "done", "succeeded", "success", "completed", "finished":
+		return true
+	default:
+		return false
+	}
+}
+
+// grokVideoStatusURL returns the first retrievable asset URL across the shapes
+// used by the official API (video.url) and the Grok 1.5 relay (data[].url).
+func grokVideoStatusURL(statusBody []byte) string {
+	for _, path := range []string{"video.url", "data.0.url", "data.url", "url", "output.0.url", "output.url"} {
+		if u := strings.TrimSpace(gjson.GetBytes(statusBody, path).String()); u != "" {
+			return u
+		}
+	}
+	if data := gjson.GetBytes(statusBody, "data"); data.IsArray() {
+		found := ""
+		data.ForEach(func(_, item gjson.Result) bool {
+			if u := strings.TrimSpace(item.Get("url").String()); u != "" {
+				found = u
+				return false
+			}
+			return true
+		})
+		return found
+	}
+	return ""
 }
 
 // ExtractGrokVideoBillingFromStatusBody builds usage units from an official done status.
@@ -779,12 +808,17 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 	if gjson.ValidBytes(statusBody) {
 		// Official: top-level model.
 		model = strings.TrimSpace(gjson.GetBytes(statusBody, "model").String())
-		// Official: video.duration (number of seconds).
-		if v := gjson.GetBytes(statusBody, "video.duration"); v.Exists() && v.Type == gjson.Number {
-			durationSeconds = int(v.Int())
-			if durationSeconds == 0 && v.Float() > 0 {
-				// Sub-second values are unexpected for this API; still accept truncated int path above.
-				durationSeconds = int(v.Float())
+		// duration: official video.duration, or the relay's top-level seconds/duration.
+		for _, path := range []string{"video.duration", "seconds", "duration"} {
+			v := gjson.GetBytes(statusBody, path)
+			if v.Exists() && v.Type == gjson.Number {
+				durationSeconds = int(v.Int())
+				if durationSeconds == 0 && v.Float() > 0 {
+					durationSeconds = int(v.Float())
+				}
+				if durationSeconds > 0 {
+					break
+				}
 			}
 		}
 	}
