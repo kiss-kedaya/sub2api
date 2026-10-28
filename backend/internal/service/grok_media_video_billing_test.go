@@ -81,8 +81,8 @@ func TestIsGrokVideoStatusBillable(t *testing.T) {
 	// URL alone (legacy/non-official shapes) is not enough
 	require.False(t, IsGrokVideoStatusBillable([]byte(`{"url":"https://example.com/v.mp4"}`)))
 	require.False(t, IsGrokVideoStatusBillable([]byte(`{"download_url":"/v1/videos/task/content"}`)))
-	// "completed" is not the official enum value
-	require.False(t, IsGrokVideoStatusBillable([]byte(`{"status":"completed","video":{"url":"https://vidgen.x.ai/x.mp4"}}`)))
+	// The Grok 1.5 relay reports terminal success as "completed".
+	require.True(t, IsGrokVideoStatusBillable([]byte(`{"status":"completed","video":{"url":"https://vidgen.x.ai/x.mp4"}}`)))
 }
 
 func TestExtractGrokVideoBillingFromStatusBodyPrefersUpstreamParams(t *testing.T) {
@@ -136,7 +136,8 @@ func TestExtractGrokVideoBillingRejectsNonDoneStatus(t *testing.T) {
 		[]byte(`{"status":"pending","video":{"url":"https://vidgen.x.ai/x.mp4","duration":8}}`),
 		pending, "req",
 	))
-	require.Nil(t, ExtractGrokVideoBillingFromStatusBody(
+	// The Grok 1.5 relay reports terminal success as "completed"; it must settle.
+	require.NotNil(t, ExtractGrokVideoBillingFromStatusBody(
 		[]byte(`{"status":"completed","video":{"url":"https://vidgen.x.ai/x.mp4","duration":8}}`),
 		pending, "req",
 	))
@@ -177,5 +178,24 @@ func TestGrokMediaUsageFromResponseVideoStatusBillsOnOfficialDone(t *testing.T) 
 		GrokMediaRequestInfo{},
 		[]byte(`{"status":"completed","video":{"url":"https://vidgen.x.ai/a.mp4","duration":9}}`),
 	)
-	require.Equal(t, 0, completed.VideoCount)
+	// The Grok 1.5 relay returns "completed" for terminal success.
+	require.Equal(t, 1, completed.VideoCount)
+	require.Equal(t, 9, completed.VideoDurationSeconds)
+}
+
+func TestGrokVideoStatusBillableAcceptsRelayCompletedShape(t *testing.T) {
+	body := []byte(`{"completed_at":1793216053,"data":[{"url":"https://example.invalid/video.mp4"}],"id":"2244964e","model":"grok-imagine-video-1.5","object":"video","progress":100,"seconds":2,"status":"completed"}`)
+	require.True(t, IsGrokVideoStatusBillable(body))
+	billed := ExtractGrokVideoBillingFromStatusBody(body, nil, "2244964e")
+	require.NotNil(t, billed)
+	require.Equal(t, 1, billed.VideoCount)
+	require.Equal(t, 2, billed.VideoDurationSeconds)
+	require.Equal(t, "grok-imagine-video-1.5", billed.Model)
+
+	official := []byte(`{"status":"done","video":{"url":"https://example.invalid/v.mp4","duration":3},"model":"grok-imagine-video"}`)
+	require.True(t, IsGrokVideoStatusBillable(official))
+	require.Equal(t, 3, ExtractGrokVideoBillingFromStatusBody(official, nil, "").VideoDurationSeconds)
+
+	require.False(t, IsGrokVideoStatusBillable([]byte(`{"status":"completed","data":[]}`)), "a terminal state without an asset must not bill")
+	require.False(t, IsGrokVideoStatusBillable([]byte(`{"status":"failed","data":[{"url":"https://example.invalid/a"}]}`)), "failed tasks must not bill")
 }
