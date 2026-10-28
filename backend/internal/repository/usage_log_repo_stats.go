@@ -402,7 +402,7 @@ func (r *usageLogRepository) GetAccountWindowStatsByStart(ctx context.Context, s
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 
 	var query strings.Builder
-	query.WriteString(`SELECT
+	_, _ = query.WriteString(`SELECT
 			u.account_id,
 			COUNT(*) AS requests,
 			COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_creation_tokens + u.cache_read_tokens), 0) AS tokens,
@@ -414,12 +414,12 @@ func (r *usageLogRepository) GetAccountWindowStatsByStart(ctx context.Context, s
 	args := make([]any, 0, len(ids)*2)
 	for i, id := range ids {
 		if i > 0 {
-			query.WriteString(",")
+			_, _ = query.WriteString(",")
 		}
 		fmt.Fprintf(&query, "($%d, $%d::timestamptz)", i*2+1, i*2+2)
 		args = append(args, id, starts[id])
 	}
-	query.WriteString(`) AS w(account_id, start_at) ON u.account_id = w.account_id
+	_, _ = query.WriteString(`) AS w(account_id, start_at) ON u.account_id = w.account_id
 		WHERE u.created_at >= w.start_at
 		GROUP BY u.account_id`)
 
