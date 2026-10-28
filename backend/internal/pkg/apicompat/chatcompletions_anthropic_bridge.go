@@ -134,13 +134,10 @@ func AnthropicToChatCompletionsRequestWithOptions(req *AnthropicRequest, opts *A
 	return out, nil
 }
 
-// anthropicToChatMessages converts the Anthropic system field + message list
-// into Chat Completions messages. It mirrors convertAnthropicToResponsesInput +
-// responsesInputToChatMessages but produces ChatMessage directly.
-func anthropicToChatMessages(system json.RawMessage, msgs []AnthropicMessage) ([]ChatMessage, error) {
-	return anthropicToChatMessagesWithOptions(system, msgs, false)
-}
-
+// anthropicToChatMessagesWithOptions converts the Anthropic system field +
+// message list into Chat Completions messages. It mirrors
+// convertAnthropicToResponsesInput + responsesInputToChatMessages but produces
+// ChatMessage directly.
 func anthropicToChatMessagesWithOptions(system json.RawMessage, msgs []AnthropicMessage, preserveThinking bool) ([]ChatMessage, error) {
 	var messages []ChatMessage
 
@@ -171,14 +168,11 @@ func anthropicToChatMessagesWithOptions(system json.RawMessage, msgs []Anthropic
 	return normalizeChatMessages(messages), nil
 }
 
-// anthropicMsgToChatMessages converts one Anthropic message into one or more
-// Chat messages. tool_result blocks become standalone "tool" role messages
-// (the Chat Completions convention); text/image blocks stay in a user message;
-// assistant tool_use blocks become tool_calls on the assistant message.
-func anthropicMsgToChatMessages(m AnthropicMessage) ([]ChatMessage, error) {
-	return anthropicMsgToChatMessagesWithOptions(m, false)
-}
-
+// anthropicMsgToChatMessagesWithOptions converts one Anthropic message into
+// one or more Chat messages. tool_result blocks become standalone "tool" role
+// messages (the Chat Completions convention); text/image blocks stay in a user
+// message; assistant tool_use blocks become tool_calls on the assistant
+// message.
 func anthropicMsgToChatMessagesWithOptions(m AnthropicMessage, preserveThinking bool) ([]ChatMessage, error) {
 	switch m.Role {
 	case "assistant":
