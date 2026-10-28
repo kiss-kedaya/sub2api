@@ -9,6 +9,7 @@ export default {
     saved: 'Saved successfully',
     deleted: 'Deleted successfully',
     cancel: 'Cancel',
+    done: 'Done',
     delete: 'Delete',
     edit: 'Edit',
     create: 'Create',

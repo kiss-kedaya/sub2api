@@ -1,5 +1,7 @@
 // Adapted from ranxi2001/sub2api (LGPL-3.0); timer-only locale messages.
 export default {
+  "title": "定时开关",
+  "action": "操作",
   "open": "定时打开",
   "close": "定时关闭",
   "edit": "编辑",
