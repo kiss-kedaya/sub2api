@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 
@@ -234,6 +235,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		// 与 forward_as_chat_completions / forward_as_responses 路径对齐，
 		// 原生 /v1/messages 路径也走同一套可配置字段级改写。
 		if err := replaceBody(s.rewriteMessageCacheControlIfEnabled(ctx, body)); err != nil {
+			return nil, err
+		}
+
+		// Automatic (top-level) cache_control is not understood by
+		// Anthropic-compatible relays; convert it to an explicit block
+		// breakpoint so the prefix is actually cached.
+		if err := replaceBody(apicompat.ApplyAutomaticCacheControl(body)); err != nil {
 			return nil, err
 		}
 		if rw := buildToolNameRewriteFromBody(body); rw != nil {
