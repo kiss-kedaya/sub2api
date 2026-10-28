@@ -34,12 +34,13 @@ type Audit struct {
 	Reason    string    `json:"reason"`
 }
 type Snapshot struct {
-	Tasks            []Task    `json:"tasks"`
-	History          []Audit   `json:"history"`
-	ServerNow        time.Time `json:"server_now"`
-	PollSeconds      int       `json:"poll_seconds"`
-	OpenGraceSeconds int       `json:"open_grace_seconds"`
-	MaxDelayMinutes  int64     `json:"max_delay_minutes"`
+	Tasks            []Task             `json:"tasks"`
+	Recurring        *RecurringSchedule `json:"recurring,omitempty"`
+	History          []Audit            `json:"history"`
+	ServerNow        time.Time          `json:"server_now"`
+	PollSeconds      int                `json:"poll_seconds"`
+	OpenGraceSeconds int                `json:"open_grace_seconds"`
+	MaxDelayMinutes  int64              `json:"max_delay_minutes"`
 }
 type SaveRequest struct {
 	Input
@@ -87,7 +88,7 @@ func fillLocalTime(t *Task) {
 		t.Offset = local.Format("-07:00")
 	}
 }
-func actionValid(a string) bool { return a == "open" || a == "close" }
+func actionValid(a string) bool { return a == "open" || a == "close" || a == "recurring" }
 
 type scanner interface{ Scan(...any) error }
 
@@ -129,6 +130,9 @@ func (s *Store) Save(ctx context.Context, id, actor int64, req SaveRequest) (Tas
 	var zero Task
 	if id <= 0 || actor <= 0 || !actionValid(req.Action) || req.ExpectedVersion < 0 {
 		return zero, invalid("request")
+	}
+	if req.Mode == "recurring" || req.Action == "recurring" {
+		return s.saveRecurring(ctx, id, actor, req)
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -189,6 +193,9 @@ func (s *Store) Save(ctx context.Context, id, actor int64, req SaveRequest) (Tas
 	return t, nil
 }
 func (s *Store) Cancel(ctx context.Context, id, actor int64, action string, version int64) error {
+	if action == "recurring" {
+		return s.cancelRecurring(ctx, id, actor, version)
+	}
 	if id <= 0 || actor <= 0 || !actionValid(action) || version <= 0 {
 		return invalid("request")
 	}
@@ -240,6 +247,13 @@ func (s *Store) List(ctx context.Context, id int64) (Snapshot, error) {
 	_ = rows.Close()
 	if err != nil {
 		return out, err
+	}
+	recurring, recurringErr := scanRecurring(s.DB.QueryRowContext(ctx, "SELECT "+recurringColumns+" FROM account_schedulable_recurring WHERE account_id=$1", id))
+	if recurringErr != nil && !errors.Is(recurringErr, sql.ErrNoRows) {
+		return out, recurringErr
+	}
+	if recurringErr == nil {
+		out.Recurring = &recurring
 	}
 	rows, err = s.DB.QueryContext(ctx, `SELECT action,version,actor_id,execute_at,timezone,actual_at,result,reason FROM account_schedulable_timer_audit WHERE account_id=$1 ORDER BY id DESC LIMIT 20`, id)
 	if err != nil {
@@ -446,6 +460,9 @@ func (s *Store) Manual(ctx context.Context, id, actor int64, open bool) error {
 	}
 	now := s.now()
 	if err = CancelPending(WithManualIntent(ctx, actor), tx, id, now); err != nil {
+		return err
+	}
+	if err = CancelRecurringPending(ctx, tx, id, now, actor); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, "UPDATE accounts SET schedulable=$1, updated_at=$2 WHERE id=$3 AND deleted_at IS NULL", open, now, id)

@@ -36,6 +36,12 @@ CREATE TABLE account_schedulable_timers (
 );
 CREATE INDEX timer_fixture_due ON account_schedulable_timers(next_attempt_at,account_id) WHERE status='pending';
 CREATE UNIQUE INDEX timer_fixture_conflict ON account_schedulable_timers(account_id,execute_at) WHERE status='pending';
+CREATE TABLE account_schedulable_recurring (
+ account_id bigint PRIMARY KEY, version bigint NOT NULL CHECK(version>0), timezone text NOT NULL,
+ weekdays_only boolean NOT NULL DEFAULT false, periods jsonb NOT NULL, requested_by bigint NOT NULL,
+ enabled boolean NOT NULL DEFAULT true, updated_at timestamptz NOT NULL DEFAULT now(),
+ last_applied_state boolean, last_applied_at timestamptz, last_reason text NOT NULL DEFAULT ''
+);
 CREATE TABLE account_schedulable_timer_audit (
  id bigserial PRIMARY KEY, account_id bigint NOT NULL, action text NOT NULL, version bigint NOT NULL,
  actor_id bigint NOT NULL, execute_at timestamptz NOT NULL, timezone text NOT NULL,

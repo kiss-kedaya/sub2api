@@ -198,6 +198,30 @@ func rewriteInboundDeepSeekCallIDs(apiKey *service.APIKey, model string, body []
 	return service.RewriteInboundDeepSeekCallIDs(platform, model, body)
 }
 
+// stripDeepSeekUnsupportedImages applies only after composite routing has
+// resolved the effective target platform. DeepSeek text accounts cannot accept
+// image input; removing only known protocol image parts lets the text portion
+// continue while leaving other platforms and arbitrary tool arguments intact.
+func stripDeepSeekUnsupportedImages(c *gin.Context, apiKey *service.APIKey, body []byte, endpoint string) ([]byte, int) {
+	platform := ""
+	if c != nil && c.Request != nil {
+		if resolved, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
+			platform = resolved
+		}
+	}
+	if platform == "" && apiKey != nil && apiKey.Group != nil {
+		platform = apiKey.Group.Platform
+	}
+	if platform != service.PlatformDeepseek {
+		return body, 0
+	}
+	filtered, removed, changed, err := service.StripDeepSeekUnsupportedImageInputs(body, endpoint)
+	if err != nil || !changed {
+		return body, 0
+	}
+	return filtered, removed
+}
+
 func resolveOpenAIMessagesDispatchMappedModel(c *gin.Context, apiKey *service.APIKey, requestedModel string) string {
 	if apiKey == nil || apiKey.Group == nil {
 		return ""
@@ -508,6 +532,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
 		return
+	}
+	if filtered, removed := stripDeepSeekUnsupportedImages(c, apiKey, body, "responses"); removed > 0 {
+		body = filtered
+		sessionHashBody = body
+		reqLog.Info("openai_responses.deepseek_images_removed", zap.Int("image_parts", removed))
 	}
 	if cappedBody, changed, err := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body); err != nil {
 		respondOpenAIReasoningEffortPolicyError(c, err, h.errorResponse)
@@ -1338,6 +1367,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
 		return
+	}
+	if filtered, removed := stripDeepSeekUnsupportedImages(c, apiKey, body, "messages"); removed > 0 {
+		body = filtered
+		reqLog.Info("openai_messages.deepseek_images_removed", zap.Int("image_parts", removed))
 	}
 	bindOpenAIReasoningEffortPolicyForMessagesRequest(c, apiKey, body)
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)

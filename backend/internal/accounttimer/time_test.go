@@ -52,6 +52,32 @@ func TestNextEightCrossesLocalDay(t *testing.T) {
 		t.Fatalf("%+v %v", p, err)
 	}
 }
+func TestRecurringResolutionWeekdaysAndCrossMidnight(t *testing.T) {
+	now := time.Date(2026, 10, 24, 16, 30, 0, 0, time.UTC) // Sunday 00:30 in Shanghai
+	preview, err := Resolve(Input{Mode: "recurring", Timezone: "Asia/Shanghai", WeekdaysOnly: true, Periods: []Period{{Start: "23:00", End: "01:00"}}}, now, DefaultPolicy())
+	if err != nil || preview.Action != "open" || preview.LocalDate != "2026-10-26" || preview.LocalTime != "23:00" {
+		t.Fatalf("unexpected recurring preview: %+v %v", preview, err)
+	}
+}
+func TestRecurringPeriodsRejectOverlapAndEqualBounds(t *testing.T) {
+	for name, periods := range map[string][]Period{
+		"equal":   {{Start: "08:00", End: "08:00"}},
+		"overlap": {{Start: "08:00", End: "10:00"}, {Start: "09:00", End: "11:00"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Resolve(Input{Mode: "recurring", Timezone: "UTC", Periods: periods}, time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC), DefaultPolicy())
+			if ErrorCode(err) != "period" && ErrorCode(err) != "overlap" {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+func TestRecurringPeriodsRejectDSTAmbiguousTransition(t *testing.T) {
+	preview, err := Resolve(Input{Mode: "recurring", Timezone: "America/New_York", Periods: []Period{{Start: "01:30", End: "02:30"}}}, time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC), DefaultPolicy())
+	if err != nil || preview.LocalTime != "01:30" {
+		t.Fatalf("expected a valid pre-transition occurrence, got %+v %v", preview, err)
+	}
+}
 func TestExecutionPolicy(t *testing.T) {
 	now := time.Now()
 	p := DefaultPolicy()

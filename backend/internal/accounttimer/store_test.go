@@ -143,6 +143,7 @@ func TestManualOverrideCancelsBothActionsAndPublishesOnlyAfterCommit(t *testing.
 	m.ExpectBegin()
 	expectAccount(m, "active", false)
 	m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), int64(9), now).WillReturnResult(sqlmock.NewResult(0, 2))
+	m.ExpectExec("UPDATE account_schedulable_recurring").WithArgs(int64(7), now).WillReturnResult(sqlmock.NewResult(0, 0))
 	m.ExpectExec("UPDATE accounts SET schedulable").WithArgs(false, now, int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
 	m.ExpectExec("INSERT INTO fixture_outbox").WithArgs(int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
 	m.ExpectCommit()
@@ -160,6 +161,7 @@ func TestManualOutboxFailureRollsBackCancellationAndSwitch(t *testing.T) {
 	m.ExpectBegin()
 	expectAccount(m, "active", false)
 	m.ExpectExec("WITH cancelled AS").WillReturnResult(sqlmock.NewResult(0, 2))
+	m.ExpectExec("UPDATE account_schedulable_recurring").WillReturnResult(sqlmock.NewResult(0, 0))
 	m.ExpectExec("UPDATE accounts SET schedulable").WillReturnResult(sqlmock.NewResult(0, 1))
 	m.ExpectRollback()
 	if err := s.Manual(context.Background(), 7, 9, false); err == nil {
