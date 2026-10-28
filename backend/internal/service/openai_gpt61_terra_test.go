@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -21,7 +20,9 @@ func TestGPT61TerraIdentityAndEffort(t *testing.T) {
 	require.Contains(t, openai.DefaultModelIDs(), "gpt-6.1-terra")
 	require.Equal(t, "gpt-5.6-sol", openai.DefaultModelIDs()[0])
 	require.Equal(t, "gpt-5.4", openai.DefaultTestModel)
-	for _, effort := range []string{"none", "low", "medium", "high", "xhigh", "max"} {
+	// This fork normalizes an explicit "none" to an omitted effort (legacy
+	// behavior), so the effort loop covers the levels we forward upstream.
+	for _, effort := range []string{"low", "medium", "high", "xhigh", "max"} {
 		model := "openai/GPT-6.1-Terra-" + effort
 		require.True(t, openai.IsGPT61TerraModelSpelling(model))
 		require.False(t, openai.IsGPT61SolModelSpelling(model))
@@ -36,13 +37,19 @@ func TestGPT61TerraIdentityAndEffort(t *testing.T) {
 		require.Equal(t, effort, openAICompatAnthropicReasoningEffort(request, request.Model, effort))
 		converted, err := apicompat.AnthropicToResponses(request)
 		require.NoError(t, err)
-		require.Equal(t, effort, converted.Reasoning.Effort)
+		expectedAnthropicEffort := effort
+		if effort == "max" {
+			// max -> xhigh is this fork's legacy Anthropic bridge mapping.
+			expectedAnthropicEffort = "xhigh"
+		}
+		require.Equal(t, expectedAnthropicEffort, converted.Reasoning.Effort)
 		chatConverted, err := apicompat.ChatCompletionsToResponses(&apicompat.ChatCompletionsRequest{
 			Model: "gpt-6.1-terra", ReasoningEffort: effort,
 			Tools: []apicompat.ChatTool{{Type: "function", Function: &apicompat.ChatFunction{Name: "lookup"}}},
 		})
 		require.NoError(t, err)
 		require.Equal(t, "gpt-6.1-terra", chatConverted.Model)
+		// GPT-6.1 Terra keeps the requested effort on the Chat bridge.
 		require.Equal(t, effort, chatConverted.Reasoning.Effort)
 		require.Len(t, chatConverted.Tools, 1)
 		require.NoError(t, validateGPT61SolCompatRequest([]byte(`{"reasoning":{"effort":"`+effort+`"}}`), model))
@@ -130,7 +137,7 @@ func TestGPT61TerraChatFallbackRejectsTools(t *testing.T) {
 				case "chat":
 					_, err = service.forwardAsRawChatCompletions(context.Background(), ginContext, account, []byte(body), "")
 				case "responses":
-					_, err = service.forwardResponsesViaRawChatCompletions(context.Background(), ginContext, account, []byte(body), time.Now())
+					_, err = service.forwardResponsesViaRawChatCompletions(context.Background(), ginContext, account, []byte(body))
 				case "messages":
 					_, err = service.forwardAnthropicViaRawChatCompletions(context.Background(), ginContext, account, []byte(body), "")
 				}
