@@ -944,7 +944,7 @@
           <p class="input-hint">{{ t('keys.concurrencyLimitHint') }}</p>
         </div>
 
-        <div class="space-y-2">
+        <div v-if="showDeepSeekToolInjection" class="space-y-2">
           <div class="flex items-center justify-between gap-4">
             <span id="key-deepseek-tool-injection-label" class="input-label mb-0">
               {{ t('keys.deepseekToolInjection') }}
@@ -1626,6 +1626,17 @@ const groupOptions = computed(() =>
 )
 
 const groupOptionById = (id: number) => groupOptions.value.find((opt) => opt.value === id)
+
+// DeepSeek 工具注入只对 DeepSeek 平台的分组有意义：非该平台隐藏开关，
+// 后端也只在 DeepSeek 账号上执行注入。
+const selectedGroupIds = computed(() => {
+  const ids = formData.value.smart_routing ? formData.value.group_ids : []
+  if (ids.length > 0) return ids
+  return formData.value.group_id ? [formData.value.group_id] : []
+})
+const showDeepSeekToolInjection = computed(() =>
+  selectedGroupIds.value.some((id) => groupOptionById(id)?.platform === 'deepseek'),
+)
 
 type KeyProvider = 'anthropic' | 'openai' | 'cn' | 'other'
 
