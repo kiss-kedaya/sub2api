@@ -19,14 +19,15 @@ const SettingKeyRequestCapture = "request_capture_config"
 // CaptureSettings is independent of gateway and billing configuration. An
 // omitted setting never enables body collection on an existing installation.
 type CaptureSettings struct {
-	ID1DiagnosticEnabled bool  `json:"id1_diagnostic_enabled"`
-	Enabled              bool  `json:"enabled"`
-	QuotaMiB             int64 `json:"quota_mib"`
-	RetentionDays        int   `json:"retention_days"`
+	ID1DiagnosticEnabled bool    `json:"id1_diagnostic_enabled"`
+	DiagnosticUserIDs    []int64 `json:"diagnostic_user_ids,omitempty"`
+	Enabled              bool    `json:"enabled"`
+	QuotaMiB             int64   `json:"quota_mib"`
+	RetentionDays        int     `json:"retention_days"`
 }
 
 func (c CaptureSettings) captureConfig() requestcapture.Config {
-	return requestcapture.Config{Enabled: c.Enabled, QuotaMiB: c.QuotaMiB, RetentionDays: c.RetentionDays, ID1DiagnosticEnabled: c.ID1DiagnosticEnabled}
+	return requestcapture.Config{Enabled: c.Enabled, QuotaMiB: c.QuotaMiB, RetentionDays: c.RetentionDays, ID1DiagnosticEnabled: c.ID1DiagnosticEnabled, DiagnosticUserIDs: c.DiagnosticUserIDs}
 }
 
 func (s *SettingService) GetCaptureSettings(ctx context.Context) (CaptureSettings, error) {

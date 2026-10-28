@@ -74,7 +74,7 @@ export async function exportCapture(task: string, record?: string, authorize?: (
 }
 
 export interface CaptureConfig {
-  enabled: boolean; id1_diagnostic_enabled?: boolean; quota_mib: number; retention_days: number
+  enabled: boolean; id1_diagnostic_enabled?: boolean; diagnostic_user_ids?: number[]; quota_mib: number; retention_days: number
   diagnostic_retention_hours?: number; diagnostic_record_limit?: number; record_limit_mib?: number; instance_id?: string; storage_ready?: boolean
 }
 export async function getConfig(){const data=(await apiClient.get<CaptureConfig>(base+'/config')).data; selectedInstance=data.instance_id || ''; return data}

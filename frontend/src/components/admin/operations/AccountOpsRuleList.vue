@@ -1,9 +1,9 @@
 <template>
   <section
-    class="rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900"
+    class="rounded-xl bg-gray-50/40 dark:bg-dark-900/40"
     data-testid="account-ops-rules"
   >
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+    <div class="flex flex-wrap items-center justify-between gap-3 px-1 py-3">
       <div>
         <h3 class="text-sm font-semibold">{{ t('accountOps.accountRules') }}</h3>
         <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.rulesOnceSummary') }}</p>
@@ -23,7 +23,7 @@
       </div>
     </div>
     <slot name="global-settings" />
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-3 dark:border-dark-700">
+    <div class="flex flex-wrap items-center justify-between gap-3 px-1 py-3">
       <div class="min-w-0 space-y-1">
         <p class="text-sm font-medium" aria-live="polite">
           {{ t('accountOps.selectedGroups', { count: selectedGroups.length }) }}
@@ -38,7 +38,7 @@
     </div>
     <div class="overflow-x-auto">
       <table class="w-full min-w-[820px] text-left text-sm">
-        <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800">
+        <thead class="text-xs text-gray-500">
           <tr>
             <th class="w-12 py-3 pl-5 pr-2">
               <input type="checkbox" data-testid="select-visible-groups" :aria-label="t('accountOps.selectVisibleGroups')" :checked="allVisibleSelected" :indeterminate="selectedGroups.length > 0 && !allVisibleSelected" :disabled="selectionUnavailable || !filtered.length" @change="selectVisible(($event.target as HTMLInputElement).checked)" />
@@ -51,7 +51,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in filtered" :key="row.group.id" class="border-t border-gray-100 dark:border-dark-700" :data-testid="`rule-row-${row.group.id}`">
+          <tr v-for="row in filtered" :key="row.group.id" class="transition-colors hover:bg-white/70 dark:hover:bg-dark-800/50" :data-testid="`rule-row-${row.group.id}`">
             <td class="py-4 pl-5 pr-2">
               <input type="checkbox" :data-testid="`select-group-${row.group.id}`" :aria-label="t('accountOps.selectGroup', { name: row.group.name })" :checked="selectedIds.has(row.group.id)" :disabled="selectionUnavailable" @change="selectGroup(row.group.id, ($event.target as HTMLInputElement).checked)" />
             </td>

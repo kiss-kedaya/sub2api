@@ -2,14 +2,12 @@ package service
 
 import (
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timewindow"
 	"math"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
-
-var channelTimePricingLocations sync.Map
 
 type parsedChannelTimePeriod struct {
 	start      int
@@ -60,44 +58,24 @@ func (config *ChannelTimePricing) MultiplierAt(at time.Time) float64 {
 }
 
 func loadChannelTimePricingLocation(name string) (*time.Location, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("timezone is required")
+	if strings.TrimSpace(name) != name {
+		return nil, fmt.Errorf("timezone must not contain surrounding whitespace")
 	}
-	if name == "Local" {
-		return nil, fmt.Errorf("local is not a supported timezone")
-	}
-	if cached, ok := channelTimePricingLocations.Load(name); ok {
-		location, valid := cached.(*time.Location)
-		if valid && location != nil {
-			return location, nil
-		}
-		channelTimePricingLocations.Delete(name)
-	}
-	location, err := time.LoadLocation(name)
+	location, err := timewindow.LoadLocation(name)
 	if err != nil {
+		if strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("timezone is required")
+		}
+		if name == "Local" {
+			return nil, fmt.Errorf("local is not a supported timezone")
+		}
 		return nil, err
 	}
-	actual, _ := channelTimePricingLocations.LoadOrStore(name, location)
-	actualLocation, ok := actual.(*time.Location)
-	if !ok || actualLocation == nil {
-		return nil, fmt.Errorf("invalid cached timezone %q", name)
-	}
-	return actualLocation, nil
+	return location, nil
 }
 
 func parseChannelTime(value string, end bool) (int, error) {
-	if end && (value == "00:00" || value == "00:00:00") {
-		return 24 * 60 * 60, nil
-	}
-	layout := "15:04:05"
-	if len(value) == len("15:04") {
-		layout = "15:04"
-	}
-	parsed, err := time.Parse(layout, value)
-	if err != nil || parsed.Format(layout) != value {
-		return 0, fmt.Errorf("time %q must use HH:mm or HH:mm:ss format", value)
-	}
-	return parsed.Hour()*60*60 + parsed.Minute()*60 + parsed.Second(), nil
+	return timewindow.ParseClock(value, end)
 }
 
 func parseChannelTimePeriods(periods []ChannelTimePricingPeriod) ([]parsedChannelTimePeriod, error) {

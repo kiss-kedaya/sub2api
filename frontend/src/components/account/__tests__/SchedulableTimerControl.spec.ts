@@ -10,6 +10,21 @@ vi.mock('@/api/admin/schedulableTimers', () => ({ schedulableTimersAPI: api }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => toast }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/components/common/BaseDialog.vue', () => ({ default: { props: ['show'], template: '<div v-if="show"><slot /></div>' } }))
+const SelectStub = {
+  name: 'Select',
+  props: ['modelValue', 'options'],
+  emits: ['update:modelValue'],
+  template: '<button type="button" v-bind="$attrs" />'
+}
+const mountTimer = (props: { accountId: number; refreshKey?: number }) => mount(SchedulableTimerControl, {
+  props,
+  global: { stubs: { Select: SelectStub } }
+})
+function selectValue(wrapper: VueWrapper, testId: string, value: string | boolean) {
+  const select = wrapper.findAllComponents(SelectStub).find(component => component.attributes('data-test') === testId)
+  if (!select) throw new Error(`Select ${testId} not found`)
+  select.vm.$emit('update:modelValue', value)
+}
 const task = { account_id: 7, action: 'open', version: 3, execute_at: '2026-10-23T00:00:00Z', timezone: 'Asia/Shanghai', requested_by: 9, status: 'pending', attempts: 0, actual_at: null, reason: '' }
 const snapshot = () => ({ tasks: [], history: [], server_now: '2026-10-22T00:00:00Z', poll_seconds: 30, open_grace_seconds: 900, max_delay_minutes: 527040 })
 let wrapper: VueWrapper
@@ -23,12 +38,12 @@ beforeEach(() => {
 afterEach(() => wrapper?.unmount())
 describe('one-shot schedulable timer', () => {
   it('expands compact controls and saves 8h using server relative input', async () => {
-    wrapper = mount(SchedulableTimerControl, { props: { accountId: 7 } })
+    wrapper = mountTimer({ accountId: 7 })
     await flushPromises()
     expect(wrapper.find('[data-test="timer-form"]').exists()).toBe(false)
     await wrapper.get('[data-test="timer-open"]').trigger('click')
     await flushPromises()
-    expect(wrapper.get('[data-test="timer-zone"]').element).toHaveProperty('value', 'Asia/Shanghai')
+    expect(wrapper.findComponent(SelectStub).props('modelValue')).toBe('Asia/Shanghai')
     await wrapper.get('[data-test="timer-preview"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-test="timer-save"]').trigger('click')
@@ -37,7 +52,7 @@ describe('one-shot schedulable timer', () => {
     expect(toast.showSuccess).toHaveBeenCalled()
   })
   it('requires confirmation of the concrete local date, UTC offset and zone for HH:mm only', async () => {
-    wrapper = mount(SchedulableTimerControl, { props: { accountId: 7 } })
+    wrapper = mountTimer({ accountId: 7 })
     await flushPromises()
     await wrapper.get('[data-test="timer-close"]').trigger('click')
     await flushPromises()
@@ -55,7 +70,7 @@ describe('one-shot schedulable timer', () => {
   })
   it('reloads saved tasks, edits by version and cancels the chosen action', async () => {
     api.list.mockResolvedValue({ ...snapshot(), tasks: [task] })
-    wrapper = mount(SchedulableTimerControl, { props: { accountId: 7 } })
+    wrapper = mountTimer({ accountId: 7 })
     await flushPromises()
     expect(wrapper.text()).toContain('2026-10-23')
     await wrapper.get('[data-test="timer-open"]').trigger('click')
@@ -72,13 +87,14 @@ describe('one-shot schedulable timer', () => {
     expect(api.cancel).toHaveBeenCalledWith(7, 'open', 3)
   })
   it('shows translated validation errors and clears obsolete previews after editing', async () => {
-    wrapper = mount(SchedulableTimerControl, { props: { accountId: 7 } })
+    wrapper = mountTimer({ accountId: 7 })
     await flushPromises()
     await wrapper.get('[data-test="timer-open"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-test="timer-preview"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="timer-zone"]').setValue('Invalid/Zone')
+    selectValue(wrapper, 'timer-zone', 'Invalid/Zone')
+    await flushPromises()
     expect(wrapper.find('[data-test="timer-save"]').exists()).toBe(false)
     api.preview.mockRejectedValue({ response: { data: { reason: 'TIMER_timezone' } } })
     await wrapper.get('[data-test="timer-preview"]').trigger('click')
@@ -86,7 +102,7 @@ describe('one-shot schedulable timer', () => {
     expect(wrapper.text()).toContain('timer.errors.timezone')
   })
   it('refreshes after manual changes and keeps an accessible narrow-screen form', async () => {
-    wrapper = mount(SchedulableTimerControl, { props: { accountId: 7, refreshKey: 0 } })
+    wrapper = mountTimer({ accountId: 7, refreshKey: 0 })
     await flushPromises()
     await wrapper.setProps({ refreshKey: 1 })
     await flushPromises()
@@ -99,7 +115,7 @@ describe('one-shot schedulable timer', () => {
   })
   it('requests account reconciliation after a persisted execution changes the switch', async () => {
     api.list.mockResolvedValueOnce({ ...snapshot(), tasks: [task] })
-    wrapper = mount(SchedulableTimerControl, { props: { accountId: 7 } })
+    wrapper = mountTimer({ accountId: 7 })
     await flushPromises()
     api.list.mockResolvedValue({ ...snapshot(), tasks: [{ ...task, status: 'executed', actual_at: task.execute_at }] })
     await wrapper.setProps({ refreshKey: 1 })
@@ -107,8 +123,103 @@ describe('one-shot schedulable timer', () => {
     expect(wrapper.emitted('executed')).toHaveLength(1)
   })
 
+  it('refreshes the parent account row when a recurring schedule applies a new switch state', async () => {
+    const recurring = { account_id: 7, version: 1, timezone: 'Asia/Shanghai', weekdays_only: false, periods: [{ start: '08:00', end: '18:00' }], requested_by: 9, enabled: true, updated_at: task.execute_at, last_applied_state: null, last_applied_at: null }
+    api.list.mockResolvedValueOnce({ ...snapshot(), recurring })
+    wrapper = mountTimer({ accountId: 7 })
+    await flushPromises()
+    expect(wrapper.emitted('executed')).toBeUndefined()
+    api.list.mockResolvedValue({ ...snapshot(), recurring: { ...recurring, last_applied_state: true, last_applied_at: '2026-10-23T10:00:00Z' } })
+    await wrapper.setProps({ refreshKey: 1 })
+    await flushPromises()
+    expect(wrapper.emitted('executed')).toHaveLength(1)
+  })
+
+  it('releases the preview busy state when the account changes mid-request', async () => {
+    let resolvePreview!: (value: unknown) => void
+    api.preview.mockReturnValue(new Promise(resolve => { resolvePreview = resolve }))
+    wrapper = mountTimer({ accountId: 7 })
+    await flushPromises()
+    await wrapper.get('[data-test="timer-open"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="timer-preview"]').trigger('click')
+    expect(wrapper.get('[data-test="timer-preview"]').attributes('disabled')).toBeDefined()
+    await wrapper.setProps({ accountId: 8 })
+    await flushPromises()
+    expect(wrapper.find('[data-test="timer-form"]').exists()).toBe(false)
+    await wrapper.get('[data-test="timer-open"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="timer-preview"]').attributes('disabled')).toBeUndefined()
+    resolvePreview({ execute_at: task.execute_at, timezone: 'Asia/Shanghai', local_date: '2026-10-23', local_time: '08:00', offset: '+08:00', server_now: '2026-10-22T00:00:00Z' })
+    await flushPromises()
+    expect(wrapper.find('[data-test="timer-save"]').exists()).toBe(false)
+  })
+
+  it('previews and saves recurring windows with matching mode and action', async () => {
+    api.preview.mockResolvedValue({ execute_at: task.execute_at, action: 'open', timezone: 'Asia/Shanghai', local_date: '2026-10-23', local_time: '08:00', offset: '+08:00', server_now: '2026-10-22T00:00:00Z' })
+    wrapper = mountTimer({ accountId: 7 })
+    await flushPromises()
+    await wrapper.get('[data-test="timer-recurring"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="timer-mode"]').element).toHaveProperty('value', 'recurring')
+    expect(wrapper.findAllComponents(SelectStub).find(component => component.attributes('data-test') === 'timer-day-mode')?.props('modelValue')).toBe(false)
+    selectValue(wrapper, 'timer-day-mode', true)
+    await wrapper.get('[data-test="timer-preview"]').trigger('click')
+    await flushPromises()
+    expect(api.preview).toHaveBeenLastCalledWith(7, expect.objectContaining({
+      mode: 'recurring', weekdays_only: true,
+      periods: [{ start: '08:00', end: '18:00' }], timezone: 'Asia/Shanghai'
+    }))
+    await wrapper.get('[data-test="timer-save"]').trigger('click')
+    await flushPromises()
+    expect(api.save).toHaveBeenLastCalledWith(7, expect.objectContaining({ mode: 'recurring', action: 'recurring', weekdays_only: true }))
+  })
+
+  it('rejects invalid or overlapping recurring windows before preview and permits adding/removing periods', async () => {
+    wrapper = mountTimer({ accountId: 7 })
+    await flushPromises()
+    await wrapper.get('[data-test="timer-recurring"]').trigger('click')
+    await flushPromises()
+    selectValue(wrapper, 'timer-zone', 'Invalid/Zone')
+    await wrapper.get('[data-test="timer-preview"]').trigger('click')
+    expect(wrapper.text()).toContain('timer.errors.timezone')
+    expect(api.preview).not.toHaveBeenCalled()
+    selectValue(wrapper, 'timer-zone', 'Asia/Shanghai')
+    await wrapper.get('[data-test="timer-period-start"]').setValue('18:00')
+    await wrapper.get('[data-test="timer-preview"]').trigger('click')
+    expect(wrapper.text()).toContain('timer.errors.period')
+    expect(api.preview).not.toHaveBeenCalled()
+    await wrapper.get('[data-test="timer-period-start"]').setValue('08:00')
+    await wrapper.get('[data-test="timer-add-period"]').trigger('click')
+    expect(wrapper.findAll('[data-test="timer-period-start"]')).toHaveLength(2)
+    await wrapper.get('[data-test="timer-preview"]').trigger('click')
+    expect(wrapper.text()).toContain('timer.errors.overlap')
+    expect(api.preview).not.toHaveBeenCalled()
+    await wrapper.get('[data-test="timer-period-remove"]').trigger('click')
+    expect(wrapper.findAll('[data-test="timer-period-start"]')).toHaveLength(1)
+  })
+
+  it('restores the selected one-shot action when switching out of recurring mode and cancels unsaved edits', async () => {
+    wrapper = mountTimer({ accountId: 7 })
+    await flushPromises()
+    await wrapper.get('[data-test="timer-close"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="timer-mode"]').setValue('recurring')
+    expect(wrapper.get('[data-test="timer-mode"]').element).toHaveProperty('value', 'recurring')
+    await wrapper.get('[data-test="timer-mode"]').setValue('relative')
+    await wrapper.get('[data-test="timer-preview"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="timer-save"]').trigger('click')
+    await flushPromises()
+    expect(api.save).toHaveBeenLastCalledWith(7, expect.objectContaining({ mode: 'relative', action: 'close' }))
+    await wrapper.get('[data-test="timer-open"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="timer-form-cancel"]').trigger('click')
+    expect(wrapper.find('[data-test="timer-form"]').exists()).toBe(false)
+  })
+
   it('clears the old account preview before reusing the control for another account', async () => {
-    wrapper = mount(SchedulableTimerControl, { props: { accountId: 7 } })
+    wrapper = mountTimer({ accountId: 7 })
     await flushPromises()
     await wrapper.get('[data-test="timer-open"]').trigger('click')
     await flushPromises()

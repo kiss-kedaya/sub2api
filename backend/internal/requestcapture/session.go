@@ -120,13 +120,15 @@ func (m *Manager) Begin(meta Meta) *Session {
 		if t.task.Status != "running" || (t.task.Mode != ID1DiagnosticMode && !time.Now().Before(t.task.ExpiresAt)) {
 			continue
 		}
-		if t.task.Mode == ID1DiagnosticMode && (meta.UserID != 1 || !m.config.ID1DiagnosticEnabled) {
+		if t.task.Mode == ID1DiagnosticMode && (!m.isDiagnosticUser(meta.UserID) || !m.config.ID1DiagnosticEnabled) {
 			continue
 		}
 		if t.task.Mode != ID1DiagnosticMode && !m.config.Enabled {
 			continue
 		}
-		hit := t.task.TargetType == "user" && t.task.TargetID == meta.UserID || t.task.TargetType == "group" && t.task.TargetID == meta.GroupID
+		hit := t.task.TargetType == "user" && t.task.TargetID == meta.UserID ||
+			t.task.TargetType == "group" && t.task.TargetID == meta.GroupID ||
+			t.task.Mode == ID1DiagnosticMode && m.isDiagnosticUser(meta.UserID)
 		if hit || t.task.TargetType == "account" {
 			candidates = append(candidates, t)
 			matched[id] = hit
@@ -161,6 +163,18 @@ func (m *Manager) Begin(meta Meta) *Session {
 	}
 	m.sessions[s] = struct{}{}
 	return s
+}
+
+func (m *Manager) isDiagnosticUser(id int64) bool {
+	if id <= 0 {
+		return false
+	}
+	for _, target := range m.config.DiagnosticTargets() {
+		if target == id {
+			return true
+		}
+	}
+	return false
 }
 func bounded(v string, n int) string {
 	if len(v) > n {

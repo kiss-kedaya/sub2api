@@ -122,11 +122,12 @@ describe('account operations tabs and independent saves', () => {
     expect(wrapper.find('#account-ops-email').exists()).toBe(true)
     wrapper.unmount()
   })
-  it('offers only email and Webhook and opens an automatic Webhook editor', async () => {
+  it('offers email, Webhook and Bark and opens the selected editor', async () => {
     const wrapper = create(); await flushPromises()
     await wrapper.get('[data-testid="account-ops-add-channel"]').trigger('click'); await flushPromises()
-    expect(wrapper.findAll('[data-testid^="add-channel-"]')).toHaveLength(2)
-    await wrapper.get('[data-testid="add-channel-webhook"]').trigger('click'); await flushPromises()
+    expect(wrapper.findAll('[data-testid^="add-channel-"]')).toHaveLength(3)
+    expect(wrapper.get('[data-testid="add-channel-bark"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="add-channel-bark"]').trigger('click'); await flushPromises()
     expect(wrapper.find('[data-testid^="account-ops-webhook-provider-"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid^="account-ops-webhook-url-"]').exists()).toBe(true)
     wrapper.unmount()

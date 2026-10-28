@@ -160,6 +160,12 @@ func validateAccountOpsURL(provider, raw string) error {
 		valid = u.Host == "oapi.dingtalk.com" && u.Path == "/robot/send" && len(q) == 1 && len(q["access_token"]) == 1 && q.Get("access_token") != ""
 	case "feishu":
 		valid = u.Host == "open.feishu.cn" && strings.HasPrefix(u.Path, "/open-apis/bot/v2/hook/") && opsID.MatchString(strings.TrimPrefix(u.Path, "/open-apis/bot/v2/hook/")) && len(q) == 0
+	case "bark":
+		// Bark device keys are carried in the HTTPS path and must never be
+		// returned to the browser.  Restrict the official endpoint to a
+		// non-empty path and reject query parameters that could leak or alter
+		// delivery semantics.
+		valid = u.Host == "api.day.app" && strings.Trim(u.Path, "/") != "" && len(q) == 0
 	}
 	if !valid {
 		return errors.New("invalid official robot HTTPS URL")
@@ -187,7 +193,7 @@ func validateAccountOpsExtras(c AccountOpsConfig) error {
 			return errors.New("robot IDs must be unique and valid")
 		}
 		ids[w.ID] = true
-		if w.Provider != "wecom" && w.Provider != "dingtalk" && w.Provider != "feishu" && w.Provider != "custom" {
+		if w.Provider != "wecom" && w.Provider != "dingtalk" && w.Provider != "feishu" && w.Provider != "bark" && w.Provider != "custom" {
 			return errors.New("unsupported robot provider")
 		}
 		if len(w.URL) > 2048 || len(w.Secret) > 512 {
@@ -198,7 +204,7 @@ func validateAccountOpsExtras(c AccountOpsConfig) error {
 				return err
 			}
 		}
-		if (w.Provider == "wecom" || w.Provider == "custom") && (w.Secret != "" || w.SecretConfigured || w.secretCipher != "") {
+		if (w.Provider == "wecom" || w.Provider == "bark" || w.Provider == "custom") && (w.Secret != "" || w.SecretConfigured || w.secretCipher != "") {
 			return errors.New("this webhook provider does not support signing secrets")
 		}
 		if w.Provider == "custom" {

@@ -1,13 +1,16 @@
-// Package accounttimer implements one-shot scheduling without model calls or browser timers.
+// Package accounttimer implements schedulable account timing without model calls or browser timers.
 package accounttimer
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
-	_ "time/tzdata"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timewindow"
 )
 
 type Error struct{ Code string }
@@ -32,15 +35,22 @@ func DefaultPolicy() Policy { return Policy{366 * 24 * time.Hour, 15 * time.Minu
 const PollInterval = 30 * time.Second
 
 type Input struct {
-	Mode     string `json:"mode"`
-	Hours    int64  `json:"hours"`
-	Minutes  int64  `json:"minutes"`
-	Date     string `json:"date"`
-	Time     string `json:"time"`
-	Timezone string `json:"timezone"`
+	Mode         string   `json:"mode"`
+	Hours        int64    `json:"hours"`
+	Minutes      int64    `json:"minutes"`
+	Date         string   `json:"date"`
+	Time         string   `json:"time"`
+	Timezone     string   `json:"timezone"`
+	WeekdaysOnly bool     `json:"weekdays_only"`
+	Periods      []Period `json:"periods"`
+}
+type Period struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 type Preview struct {
 	ExecuteAt time.Time `json:"execute_at"`
+	Action    string    `json:"action,omitempty"`
 	Timezone  string    `json:"timezone"`
 	LocalDate string    `json:"local_date"`
 	LocalTime string    `json:"local_time"`
@@ -59,10 +69,10 @@ func ConfiguredPolicy() Policy {
 }
 func Resolve(in Input, now time.Time, p Policy) (Preview, error) {
 	var out Preview
-	if in.Timezone == "" || in.Timezone == "Local" || (in.Timezone != "UTC" && !strings.Contains(in.Timezone, "/")) {
+	if in.Timezone == "" || strings.TrimSpace(in.Timezone) != in.Timezone || in.Timezone == "Local" || (in.Timezone != "UTC" && !strings.Contains(in.Timezone, "/")) {
 		return out, invalid("timezone")
 	}
-	loc, err := time.LoadLocation(in.Timezone)
+	loc, err := timewindow.LoadLocation(in.Timezone)
 	if err != nil {
 		return out, invalid("timezone")
 	}
@@ -97,6 +107,13 @@ func Resolve(in Input, now time.Time, p Policy) (Preview, error) {
 				return out, err
 			}
 		}
+	case "recurring":
+		due, action, err := resolveRecurring(in, now, loc)
+		if err != nil {
+			return out, err
+		}
+		local := due.In(loc)
+		return Preview{ExecuteAt: due.UTC(), Action: action, Timezone: in.Timezone, LocalDate: local.Format("2006-01-02"), LocalTime: local.Format("15:04"), Offset: local.Format("-07:00"), ServerNow: now.UTC()}, nil
 	default:
 		return out, invalid("mode")
 	}
@@ -107,7 +124,166 @@ func Resolve(in Input, now time.Time, p Policy) (Preview, error) {
 		return out, invalid("duration")
 	}
 	local := due.In(loc)
-	return Preview{due.UTC(), in.Timezone, local.Format("2006-01-02"), local.Format("15:04"), local.Format("-07:00"), now.UTC()}, nil
+	return Preview{ExecuteAt: due.UTC(), Timezone: in.Timezone, LocalDate: local.Format("2006-01-02"), LocalTime: local.Format("15:04"), Offset: local.Format("-07:00"), ServerNow: now.UTC()}, nil
+}
+
+type recurringSegment struct{ day, start, end int }
+
+func parseClock(value string) (int, error) {
+	seconds, err := timewindow.ParseClock(value, false)
+	if err != nil || len(value) != len("15:04") {
+		return 0, invalid("period")
+	}
+	return seconds / 60, nil
+}
+
+func parseRecurringEnd(value string) (int, error) {
+	seconds, err := timewindow.ParseClock(value, true)
+	if err != nil || len(value) != len("15:04") {
+		return 0, invalid("period")
+	}
+	if seconds == 24*60*60 {
+		return 0, nil
+	}
+	return seconds / 60, nil
+}
+
+func validateRecurringPeriods(in Input) error {
+	if len(in.Periods) == 0 || len(in.Periods) > 24 {
+		return invalid("period")
+	}
+	segments := make([]recurringSegment, 0, len(in.Periods)*2*7)
+	for _, period := range in.Periods {
+		start, err := parseClock(period.Start)
+		if err != nil {
+			return err
+		}
+		end, err := parseRecurringEnd(period.End)
+		if err != nil || start == end {
+			return invalid("period")
+		}
+		for day := 0; day < 7; day++ {
+			if in.WeekdaysOnly && (day == int(time.Sunday) || day == int(time.Saturday)) {
+				continue
+			}
+			if end > start {
+				segments = append(segments, recurringSegment{day: day, start: start, end: end})
+				continue
+			}
+			segments = append(segments, recurringSegment{day: day, start: start, end: 24 * 60})
+			if end > 0 {
+				segments = append(segments, recurringSegment{day: (day + 1) % 7, start: 0, end: end})
+			}
+		}
+	}
+	for day := 0; day < 7; day++ {
+		daySegments := make([]recurringSegment, 0)
+		for _, segment := range segments {
+			if segment.day == day {
+				daySegments = append(daySegments, segment)
+			}
+		}
+		sort.Slice(daySegments, func(i, j int) bool { return daySegments[i].start < daySegments[j].start })
+		for i := 1; i < len(daySegments); i++ {
+			if daySegments[i].start < daySegments[i-1].end {
+				return invalid("overlap")
+			}
+		}
+	}
+	return nil
+}
+
+// recurringOccurrence resolves one complete local-day window. If either wall
+// boundary is missing or ambiguous at a DST change, that occurrence is skipped
+// entirely. Preview and execution use this same fail-closed policy.
+func recurringOccurrence(period Period, day time.Time, loc *time.Location) (time.Time, time.Time, bool) {
+	start, _ := parseClock(period.Start)
+	end, _ := parseRecurringEnd(period.End)
+	endDay := day
+	if end < start {
+		endDay = day.AddDate(0, 0, 1)
+	}
+	openAt, err := resolveWall(day.Format("2006-01-02"), fmt.Sprintf("%02d:%02d", start/60, start%60), loc)
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	closeAt, err := resolveWall(endDay.Format("2006-01-02"), fmt.Sprintf("%02d:%02d", end/60, end%60), loc)
+	if err != nil || !closeAt.After(openAt) {
+		return time.Time{}, time.Time{}, false
+	}
+	return openAt, closeAt, true
+}
+
+func recurringDayAllowed(day time.Time, weekdaysOnly bool) bool {
+	return !weekdaysOnly || (day.Weekday() != time.Saturday && day.Weekday() != time.Sunday)
+}
+
+func recurringActive(in Input, now time.Time, loc *time.Location) (bool, error) {
+	if err := validateRecurringPeriods(in); err != nil {
+		return false, err
+	}
+	local := now.In(loc)
+	// Calendar arithmetic uses a UTC date anchor so a midnight DST transition
+	// cannot normalize the anchor into the preceding local date.
+	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	for offset := -1; offset <= 0; offset++ {
+		startDay := day.AddDate(0, 0, offset)
+		if !recurringDayAllowed(startDay, in.WeekdaysOnly) {
+			continue
+		}
+		for _, period := range in.Periods {
+			openAt, closeAt, valid := recurringOccurrence(period, startDay, loc)
+			if valid && !now.Before(openAt) && now.Before(closeAt) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func resolveRecurring(in Input, now time.Time, loc *time.Location) (time.Time, string, error) {
+	if err := validateRecurringPeriods(in); err != nil {
+		return time.Time{}, "", err
+	}
+	local := now.In(loc)
+	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	var best time.Time
+	bestAction := ""
+	for offset := -1; offset <= 8; offset++ {
+		startDay := day.AddDate(0, 0, offset)
+		if !recurringDayAllowed(startDay, in.WeekdaysOnly) {
+			continue
+		}
+		for _, period := range in.Periods {
+			openAt, closeAt, valid := recurringOccurrence(period, startDay, loc)
+			if !valid {
+				continue
+			}
+			for _, candidate := range []time.Time{openAt, closeAt} {
+				if !candidate.After(now) {
+					continue
+				}
+				if !best.IsZero() && !candidate.Before(best) {
+					continue
+				}
+				before, _ := recurringActive(in, candidate.Add(-time.Second), loc)
+				after, _ := recurringActive(in, candidate, loc)
+				if before == after {
+					continue
+				}
+				best = candidate
+				if after {
+					bestAction = "open"
+				} else {
+					bestAction = "close"
+				}
+			}
+		}
+	}
+	if best.IsZero() {
+		return time.Time{}, "", invalid("recurring")
+	}
+	return best, bestAction, nil
 }
 
 // Enumerate offsets around the requested wall date, then round-trip every

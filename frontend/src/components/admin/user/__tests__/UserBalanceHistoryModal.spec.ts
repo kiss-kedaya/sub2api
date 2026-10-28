@@ -13,6 +13,9 @@ afterEach(() => vi.restoreAllMocks())
 function result(id: number) {
   return { items: [{ id, type: 'admin_balance', value: id, notes: `History ${id}` }], total: 1, total_recharged: id }
 }
+function cryptoResult() {
+  return { items: [{ id: 5, code: 'crypto-abc123', type: 'payment_balance', value: 6700, notes: '' }], total: 1, total_recharged: 6700 }
+}
 function deferred() {
   let resolve!: (value: ReturnType<typeof result>) => void
   let reject!: (reason: unknown) => void
@@ -29,6 +32,15 @@ async function openDialog() {
 }
 
 describe('UserBalanceHistoryModal request ordering', () => {
+  it('labels deterministic chain deposit balance entries instead of unknown', async () => {
+    mocks.getUserBalanceHistory.mockResolvedValueOnce(cryptoResult())
+    const wrapper = await openDialog()
+    await flushPromises()
+    expect(wrapper.text()).toContain('redeem.balanceAddedCrypto')
+    expect(wrapper.text()).not.toContain('common.unknown')
+    expect(wrapper.text()).toContain('+$6700.00')
+  })
+
   it('clears the previous user history when switching users without closing, even if the new request fails', async () => {
     mocks.getUserBalanceHistory.mockResolvedValueOnce(result(10)).mockRejectedValueOnce(new Error('Current failure'))
     const wrapper = await openDialog()

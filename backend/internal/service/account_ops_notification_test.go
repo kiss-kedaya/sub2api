@@ -83,11 +83,48 @@ func TestAccountOpsRobotNotificationContainsFourFields(t *testing.T) {
 	}
 }
 
+func TestAccountOpsBarkNotificationUsesEncryptedURLAndJSONBody(t *testing.T) {
+	svc := NewAccountOpsService(&accountOpsSettingsStub{}, &accountOpsRepoStub{}, nil)
+	svc.SetNotificationDependencies(nil, opsTestEncryptor{}, true, "Asia/Shanghai")
+	raw := "https://api.day.app/synthetic-device-key"
+	cipher, err := svc.encryptor.Encrypt(raw)
+	require.NoError(t, err)
+	called := false
+	svc.robotClient = &http.Client{Transport: opsRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		called = true
+		require.Equal(t, raw, req.URL.String())
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(req.Body).Decode(&payload))
+		require.Equal(t, "账号运维测试", payload["title"])
+		require.Equal(t, "账户：test", payload["body"])
+		require.Equal(t, "account-ops", payload["group"])
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"code":200}`)), Header: http.Header{}}, nil
+	})}
+	message := accountOpsMessage{robotTitle: "账号运维测试", plain: "账户：test"}
+	require.NoError(t, svc.sendRobot(context.Background(), AccountOpsWebhook{Provider: "bark", urlCipher: cipher}, message))
+	require.True(t, called)
+}
+
+func TestAccountOpsBarkRejectsOversizedResponse(t *testing.T) {
+	svc := NewAccountOpsService(&accountOpsSettingsStub{}, &accountOpsRepoStub{}, nil)
+	svc.SetNotificationDependencies(nil, opsTestEncryptor{}, true, "Asia/Shanghai")
+	cipher, err := svc.encryptor.Encrypt("https://api.day.app/synthetic-device-key")
+	require.NoError(t, err)
+	svc.robotClient = &http.Client{Transport: opsRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", 16385))), Header: http.Header{}}, nil
+	})}
+	err = svc.sendRobot(context.Background(), AccountOpsWebhook{Provider: "bark", urlCipher: cipher}, accountOpsMessage{robotTitle: "test", plain: "body"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Bark")
+}
+
 func TestAccountOpsOfficialURLs(t *testing.T) {
 	for _, raw := range []string{"http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fake", "https://qyapi.weixin.qq.com.evil.test/cgi-bin/webhook/send?key=fake", "https://qyapi.weixin.qq.com:443/cgi-bin/webhook/send?key=fake", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fake&redirect=evil"} {
 		require.Error(t, validateAccountOpsURL("wecom", raw))
 	}
 	require.NoError(t, validateAccountOpsURL("wecom", "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fake"))
+	require.NoError(t, validateAccountOpsURL("bark", "https://api.day.app/device-key"))
+	require.Error(t, validateAccountOpsURL("bark", "https://api.day.app/device-key?level=critical"))
 }
 func TestAccountOpsEncryptedRetainedRedactedConfig(t *testing.T) {
 	settings := &accountOpsSettingsStub{}

@@ -91,6 +91,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
 		return
 	}
+	if filtered, removed := stripDeepSeekUnsupportedImages(c, apiKey, body, "chat_completions"); removed > 0 {
+		body = filtered
+		reqLog.Info("openai_chat_completions.deepseek_images_removed", zap.Int("image_parts", removed))
+	}
 	if cappedBody, changed, err := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body); err != nil {
 		respondOpenAIReasoningEffortPolicyError(c, err, h.errorResponse)
 		return

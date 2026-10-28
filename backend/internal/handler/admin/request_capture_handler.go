@@ -107,7 +107,7 @@ func (h *RequestCaptureHandler) UpdateConfig(c *gin.Context) {
 }
 
 func captureConfigResponse(v service.CaptureSettings, instance string, ready bool) gin.H {
-	return gin.H{"enabled": v.Enabled, "id1_diagnostic_enabled": v.ID1DiagnosticEnabled, "diagnostic_retention_hours": 8, "diagnostic_record_limit": requestcapture.ID1DiagnosticRecordLimit, "record_limit_mib": requestcapture.RecordLimit >> 20, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": ready}
+	return gin.H{"enabled": v.Enabled, "id1_diagnostic_enabled": v.ID1DiagnosticEnabled, "diagnostic_user_ids": v.DiagnosticUserIDs, "diagnostic_retention_hours": 8, "diagnostic_record_limit": requestcapture.ID1DiagnosticRecordLimit, "record_limit_mib": requestcapture.RecordLimit >> 20, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": ready}
 }
 
 func (h *RequestCaptureHandler) requireInstance(c *gin.Context, required bool) bool {

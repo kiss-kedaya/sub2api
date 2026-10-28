@@ -1,16 +1,19 @@
 import { apiClient } from '../client'
 
-export type TimerAction = 'open' | 'close'
+export type TimerAction = 'open' | 'close' | 'recurring'
 export interface TimerInput {
-  mode: 'relative' | 'absolute'
+  mode: 'relative' | 'absolute' | 'recurring'
   hours: number
   minutes: number
   date: string
   time: string
   timezone: string
+  weekdays_only?: boolean
+  periods?: Array<{ start: string; end: string }>
 }
 export interface TimerPreview {
   execute_at: string
+  action?: 'open' | 'close'
   timezone: string
   local_date: string
   local_time: string
@@ -44,11 +47,24 @@ export interface TimerAudit {
 }
 export interface TimerSnapshot {
   tasks: SchedulableTimer[]
+  recurring?: RecurringSchedule | null
   history: TimerAudit[]
   server_now: string
   poll_seconds: number
   open_grace_seconds: number
   max_delay_minutes: number
+}
+export interface RecurringSchedule {
+  account_id: number
+  version: number
+  timezone: string
+  weekdays_only: boolean
+  periods: Array<{ start: string; end: string }>
+  requested_by: number
+  enabled: boolean
+  updated_at: string
+  last_applied_state?: boolean | null
+  last_applied_at?: string | null
 }
 export const schedulableTimersAPI = {
   async list(id: number) {

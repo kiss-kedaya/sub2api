@@ -77,6 +77,20 @@ func TestCancelVersionChecked(t *testing.T) {
 		t.Fatalf("want version, got %v", err)
 	}
 }
+
+func TestRecurringCancelReturnsDatabaseReadError(t *testing.T) {
+	s, m := testStore(t)
+	databaseErr := errors.New("fixture database read failure")
+	m.ExpectBegin()
+	expectAccount(m, "active", false)
+	m.ExpectQuery("SELECT version,timezone FROM account_schedulable_recurring").
+		WithArgs(int64(7)).WillReturnError(databaseErr)
+	m.ExpectRollback()
+	if err := s.Cancel(context.Background(), 7, 9, "recurring", 1); !errors.Is(err, databaseErr) {
+		t.Fatalf("database error must not be reported as version conflict: %v", err)
+	}
+}
+
 func taskRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{"account_id", "action", "version", "execute_at", "timezone", "requested_by", "status", "attempts", "actual_at", "reason"})
 }
@@ -117,6 +131,7 @@ func TestSavePersistsUTCAndOriginalZoneAndReplacesSameAction(t *testing.T) {
 			}
 			m.ExpectQuery("SELECT version FROM account_schedulable_timers").WithArgs(int64(7), "open").WillReturnRows(rows)
 			m.ExpectQuery("SELECT EXISTS").WithArgs(int64(7), "open", due).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+			m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), now, "one_shot_schedule_override", int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 			m.ExpectExec("INSERT INTO account_schedulable_timers").WithArgs(int64(7), "open", version+1, due, "Asia/Shanghai", int64(9)).WillReturnResult(sqlmock.NewResult(0, 1))
 			result := "scheduled"
 			if version > 0 {
@@ -142,7 +157,8 @@ func TestManualOverrideCancelsBothActionsAndPublishesOnlyAfterCommit(t *testing.
 	s.AfterCommit = func(context.Context, int64) { notified++ }
 	m.ExpectBegin()
 	expectAccount(m, "active", false)
-	m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), int64(9), now).WillReturnResult(sqlmock.NewResult(0, 2))
+	m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), int64(9), now, "manual_override").WillReturnResult(sqlmock.NewResult(0, 2))
+	m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), now, "manual_override", int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 	m.ExpectExec("UPDATE accounts SET schedulable").WithArgs(false, now, int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
 	m.ExpectExec("INSERT INTO fixture_outbox").WithArgs(int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
 	m.ExpectCommit()
@@ -159,7 +175,8 @@ func TestManualOutboxFailureRollsBackCancellationAndSwitch(t *testing.T) {
 	s.AfterCommit = func(context.Context, int64) { t.Error("cache must not change before commit") }
 	m.ExpectBegin()
 	expectAccount(m, "active", false)
-	m.ExpectExec("WITH cancelled AS").WillReturnResult(sqlmock.NewResult(0, 2))
+	m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), int64(9), s.now(), "manual_override").WillReturnResult(sqlmock.NewResult(0, 2))
+	m.ExpectExec("WITH cancelled AS").WithArgs(int64(7), s.now(), "manual_override", int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 	m.ExpectExec("UPDATE accounts SET schedulable").WillReturnResult(sqlmock.NewResult(0, 1))
 	m.ExpectRollback()
 	if err := s.Manual(context.Background(), 7, 9, false); err == nil {

@@ -95,4 +95,13 @@ func (s *AccountExpiryService) runTimers() {
 	if err := timers.RunDue(ctx); err != nil {
 		log.Printf("[AccountTimer] batch failed; pending rows will be reconsidered on next poll")
 	}
+	if recurring, ok := timers.(interface {
+		RunRecurringDue(context.Context) error
+	}); ok {
+		recurringCtx, recurringCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer recurringCancel()
+		if err := recurring.RunRecurringDue(recurringCtx); err != nil {
+			log.Printf("[AccountTimer] recurring batch failed; schedules will be reconsidered on next poll")
+		}
+	}
 }

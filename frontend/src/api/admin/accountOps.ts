@@ -1,5 +1,5 @@
 import { apiClient } from '../client'
-export type AccountOpsWebhookProvider = 'wecom' | 'dingtalk' | 'feishu' | 'custom'
+export type AccountOpsWebhookProvider = 'wecom' | 'dingtalk' | 'feishu' | 'bark' | 'custom'
 export interface AccountOpsWebhook {
   id: string
   name?: string

@@ -30,6 +30,19 @@ func TestAccountOpsFreshBalanceBoundary(t *testing.T) {
 	a.Type = AccountTypeOAuth
 	require.Nil(t, opsBalanceAccount(a, now).Balance)
 }
+
+func TestAccountOpsThresholdScanIsThrottledSeparatelyFromConfigRefresh(t *testing.T) {
+	svc := NewAccountOpsService(&accountOpsSettingsStub{}, &accountOpsRepoStub{}, nil)
+	first := time.Date(2026, 10, 28, 10, 0, 0, 0, time.UTC)
+	require.False(t, svc.thresholdScanDue(first), "no configured threshold should not scan")
+	cfg := defaultAccountOpsConfig()
+	cfg.BalanceThresholds = []AccountOpsBalanceRule{{AccountID: 1, Enabled: true, Threshold: 1, Unit: "USD"}}
+	svc.config.Store(cfg)
+	require.True(t, svc.thresholdScanDue(first))
+	require.False(t, svc.thresholdScanDue(first.Add(15*time.Second)), "15s config refresh must not repeat balance probes")
+	require.False(t, svc.thresholdScanDue(first.Add(59*time.Second)))
+	require.True(t, svc.thresholdScanDue(first.Add(time.Minute)))
+}
 func TestAccountOpsOAuthPercentNeedsFreshRealWindow(t *testing.T) {
 	now := time.Now()
 	a := &Account{ID: 2, Type: AccountTypeOAuth, Platform: PlatformOpenAI, Extra: map[string]any{"codex_usage_updated_at": now.Add(-time.Minute).Format(time.RFC3339), "codex_5h_used_percent": 80.0, "codex_5h_reset_at": now.Add(time.Hour).Format(time.RFC3339)}}
