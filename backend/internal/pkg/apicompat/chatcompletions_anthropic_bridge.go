@@ -50,9 +50,10 @@ func AnthropicToChatCompletionsRequest(req *AnthropicRequest) (*ChatCompletionsR
 	}
 
 	out := &ChatCompletionsRequest{
-		Model:    req.Model,
-		Messages: messages,
-		Stream:   req.Stream,
+		CacheControl: req.CacheControl,
+		Model:        req.Model,
+		Messages:     messages,
+		Stream:       req.Stream,
 	}
 
 	// Sampling params: reasoning models (gpt-5.x) reject temperature/top_p.
