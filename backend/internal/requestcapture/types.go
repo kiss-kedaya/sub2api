@@ -30,6 +30,9 @@ type Config struct {
 	QuotaMiB             int64
 	RetentionDays        int
 	ID1DiagnosticEnabled bool
+	// DiagnosticUserIDs limits the continuous diagnostic stream to these user
+	// IDs. An empty list preserves the historical ID 1 default.
+	DiagnosticUserIDs []int64
 }
 
 func (c Config) Validate() error {
@@ -39,7 +42,27 @@ func (c Config) Validate() error {
 	if c.RetentionDays < 1 || c.RetentionDays > 30 {
 		return errors.New("capture retention must be between 1 and 30 days")
 	}
+	if len(c.DiagnosticUserIDs) > 64 {
+		return errors.New("diagnostic user list must contain at most 64 IDs")
+	}
+	seen := make(map[int64]struct{}, len(c.DiagnosticUserIDs))
+	for _, id := range c.DiagnosticUserIDs {
+		if id <= 0 {
+			return errors.New("diagnostic user IDs must be positive")
+		}
+		if _, ok := seen[id]; ok {
+			return errors.New("diagnostic user IDs must be unique")
+		}
+		seen[id] = struct{}{}
+	}
 	return nil
+}
+
+func (c Config) DiagnosticTargets() []int64 {
+	if len(c.DiagnosticUserIDs) == 0 {
+		return []int64{1}
+	}
+	return append([]int64(nil), c.DiagnosticUserIDs...)
 }
 
 type Task struct {

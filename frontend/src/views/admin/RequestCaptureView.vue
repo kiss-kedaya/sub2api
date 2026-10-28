@@ -9,6 +9,7 @@
         </div>
         <div class="space-y-2 rounded-lg border border-blue-100 bg-blue-50/60 p-3 dark:border-blue-900 dark:bg-blue-950/30">
           <label class="flex items-center gap-2 font-medium"><input v-model="captureConfig.id1_diagnostic_enabled" type="checkbox" data-testid="id1-diagnostic-enabled" :disabled="!configLoaded || captureConfig.storage_ready === false" />{{ t('admin.requestCapture.diagnosticEnabled') }}</label>
+          <label class="block max-w-xl text-sm"><span class="input-label">{{ t('admin.requestCapture.diagnosticUsers') }}</span><input v-model="diagnosticUserIDsText" data-testid="diagnostic-user-ids" class="input mt-1 w-full" inputmode="numeric" placeholder="1, 5279" :disabled="!configLoaded || captureConfig.storage_ready === false" /></label>
           <p class="text-sm text-gray-600 dark:text-gray-300">{{ t('admin.requestCapture.diagnosticHint', { hours: captureConfig.diagnostic_retention_hours || 8 }) }}</p>
           <p class="text-xs text-gray-500">{{ t('admin.requestCapture.diagnosticLimits', { mib: captureConfig.record_limit_mib || 128, records: captureConfig.diagnostic_record_limit || 100000 }) }}</p>
         </div>
@@ -97,9 +98,15 @@ import zh from '@/i18n/locales/zh/admin/requestCapture'
 import en from '@/i18n/locales/en/admin/requestCapture'
 const { t } = useI18n({useScope:'local',messages:{zh:{admin:zh},en:{admin:en}},inheritLocale:true})
 const stepUp = useStepUp()
-const captureConfig=ref<api.CaptureConfig>({enabled:false,id1_diagnostic_enabled:false,quota_mib:1024,retention_days:7})
+const captureConfig=ref<api.CaptureConfig>({enabled:false,id1_diagnostic_enabled:false,diagnostic_user_ids:[],quota_mib:1024,retention_days:7})
+const diagnosticUserIDsText = ref('')
 const configLoaded = ref(false)
-async function saveConfig(){ if (!configLoaded.value) return; await action(async()=>{captureConfig.value=await api.saveConfig(captureConfig.value)}) }
+function parseDiagnosticUserIDs() {
+  const values = diagnosticUserIDsText.value.split(/[\s,，]+/).map(value => value.trim()).filter(Boolean).map(Number)
+  if (values.some(value => !Number.isInteger(value) || value <= 0) || new Set(values).size !== values.length || values.length > 64) throw new Error(t('admin.requestCapture.invalidDiagnosticUsers'))
+  return values
+}
+async function saveConfig(){ if (!configLoaded.value) return; await action(async()=>{captureConfig.value=await api.saveConfig({ ...captureConfig.value, diagnostic_user_ids: parseDiagnosticUserIDs() }); diagnosticUserIDsText.value=(captureConfig.value.diagnostic_user_ids || []).join(', ')}) }
 const kinds: CaptureTarget[] = ['user', 'account', 'group']
 const stages = ['client_request', 'upstream_request', 'upstream_response', 'client_response']
 const targetType = ref<CaptureTarget>('user'), targetID = ref(0), duration = ref(10), saveMedia = ref(false), search = ref('')
@@ -153,6 +160,6 @@ function selectStage(value: string) { stage.value = value; part.value = stagePar
 function selectPart(name: string) { part.value = stageParts.value.find(item => item.name === name); content.value = ''; contentVersion++; if (part.value && part.value.bytes > 0) void readContent(0) }
 async function readContent(offset: number) { if (!detail.value || !part.value || stepUp.visible.value) return; const version = ++contentVersion; const task = detail.value.task_id, record = detail.value.id, name = part.value.name; contentLoading.value = true; try { const result = await stepUp.run(() => api.getContent(task, record, name, offset)); if (version !== contentVersion || disposed) return; content.value = result.text; contentOffset.value = offset; nextOffset.value = result.next_offset; contentMore.value = result.has_more } catch (err) { report(err) } finally { if (version === contentVersion) contentLoading.value = false } }
 watch([targetType, search], () => { targetID.value = 0; clearTimeout(debounce); debounce = setTimeout(() => { void loadTargets(1) }, 250) })
-onMounted(() => { void api.getConfig().then(value=>{if(disposed)return;captureConfig.value=value;configLoaded.value=true;if(value.storage_ready !== false)void refresh()}).catch(report); void loadTargets(); poll = setInterval(() => { now.value = Date.now(); if(configLoaded.value && captureConfig.value.storage_ready !== false)void refresh() }, 3000) })
+onMounted(() => { void api.getConfig().then(value=>{if(disposed)return;captureConfig.value=value;diagnosticUserIDsText.value=(value.diagnostic_user_ids || []).join(', ');configLoaded.value=true;if(value.storage_ready !== false)void refresh()}).catch(report); void loadTargets(); poll = setInterval(() => { now.value = Date.now(); if(configLoaded.value && captureConfig.value.storage_ready !== false)void refresh() }, 3000) })
 onUnmounted(() => { disposed = true; stepUp.onCancel(); clearInterval(poll); clearTimeout(debounce); searchAbort?.abort(); detailVersion++; contentVersion++ })
 </script>

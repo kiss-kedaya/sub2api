@@ -199,3 +199,24 @@ func TestID1DiagnosticSwitchIsIndependentAndDefaultOff(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "stopped", tasks[0].Status)
 }
+
+func TestDiagnosticUserAllowlistCapturesMultipleUsers(t *testing.T) {
+	store := newMemoryStore()
+	m, err := New(store, t.TempDir(), Config{QuotaMiB: 8, RetentionDays: 7, ID1DiagnosticEnabled: true, DiagnosticUserIDs: []int64{1, 5279}})
+	require.NoError(t, err)
+	defer m.Close()
+	for _, userID := range []int64{1, 5279} {
+		s := m.Begin(Meta{UserID: userID, RequestID: uuid.NewString()})
+		require.NotNil(t, s)
+		s.ClientRequest([]byte(`{"input":"diagnostic"}`), "application/json", nil)
+		s.Finish(200)
+	}
+	require.Nil(t, m.Begin(Meta{UserID: 2, RequestID: uuid.NewString()}))
+	drain(t, m)
+	tasks, err := m.Tasks(context.Background(), 20, 0)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	records, err := m.Records(context.Background(), tasks[0].ID, "", false, 20, 0)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+}

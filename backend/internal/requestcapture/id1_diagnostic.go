@@ -192,7 +192,7 @@ func (m *Manager) syncID1Diagnostic(ctx context.Context) error {
 		return nil
 	}
 	m.mu.Unlock()
-	if !enabled || m.unhealthy.Load() || m.stopping.Load() {
+	if !enabled || len(m.config.DiagnosticTargets()) == 0 || m.unhealthy.Load() || m.stopping.Load() {
 		return nil
 	}
 	now := time.Now().UTC()
