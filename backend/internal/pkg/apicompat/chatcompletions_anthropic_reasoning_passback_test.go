@@ -150,6 +150,23 @@ func TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped(
 	require.NotContains(t, string(payload), "reasoning_content")
 }
 
+func TestAnthropicToChatCompletionsRequest_DeepSeekOptionPreservesPlainThinking(t *testing.T) {
+	req := &AnthropicRequest{
+		Model:     "deepseek-v4-flash",
+		MaxTokens: 100,
+		Messages: []AnthropicMessage{{Role: "assistant", Content: json.RawMessage(
+			`[{"type":"thinking","thinking":"carry this forward"},{"type":"text","text":"answer"}]`)}},
+	}
+
+	out, err := AnthropicToChatCompletionsRequestWithOptions(req, &AnthropicToChatCompletionsOptions{PreserveThinking: true})
+	require.NoError(t, err)
+	require.Len(t, out.Messages, 1)
+	require.Equal(t, "carry this forward", out.Messages[0].ReasoningContent)
+	payload, err := json.Marshal(out)
+	require.NoError(t, err)
+	require.Contains(t, string(payload), `"reasoning_content":"carry this forward"`)
+}
+
 func TestAnthropicThinkingToReasoningContent(t *testing.T) {
 	blocksOf := func(t *testing.T, raw string) []AnthropicContentBlock {
 		t.Helper()

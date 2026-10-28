@@ -53,7 +53,13 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	clientStream := anthropicReq.Stream
 
 	// 2. Anthropic → Chat Completions (direct, no Responses intermediary)
-	chatReq, err := apicompat.AnthropicToChatCompletionsRequest(&anthropicReq)
+	// DeepSeek's thinking-mode Chat API requires every echoed assistant
+	// thinking block to be sent back as reasoning_content, including a plain
+	// assistant turn without a tool call. Other compatible providers reject
+	// this vendor field, so keep the generic bridge default elsewhere.
+	chatReq, err := apicompat.AnthropicToChatCompletionsRequestWithOptions(&anthropicReq, &apicompat.AnthropicToChatCompletionsOptions{
+		PreserveThinking: account != nil && account.Platform == PlatformDeepseek,
+	})
 	if err != nil {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, fmt.Errorf("convert anthropic to chat completions: %w", err)
