@@ -28,17 +28,30 @@
       :close-on-escape="!busy" :close-on-click-outside="!busy" :show-close-button="!busy" @close="expanded = false">
     <div v-if="expanded" data-test="timer-form" class="max-w-full space-y-4 whitespace-normal">
       <fieldset :disabled="busy" class="min-w-0 space-y-2">
+        <div class="space-y-1">
+          <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.timer.mode') }}</span>
+          <div class="grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-800" role="tablist" :aria-label="t('admin.accounts.timer.mode')">
+            <button
+              v-for="option in modeOptions"
+              :key="option.value"
+              type="button"
+              role="tab"
+              :aria-selected="form.mode === option.value"
+              :data-test="`timer-mode-${option.value}`"
+              class="rounded-md px-2 py-1.5 text-xs font-medium transition-colors"
+              :class="form.mode === option.value
+                ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300'
+                : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+              @click="setMode(option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
         <label v-if="form.mode !== 'recurring'" class="block">{{ t('admin.accounts.timer.action') }}
           <select v-model="action" data-test="timer-action" class="input mt-1 w-full text-xs" @change="onActionChanged">
             <option value="open">{{ t('admin.accounts.timer.open') }}</option>
             <option value="close">{{ t('admin.accounts.timer.close') }}</option>
-          </select>
-        </label>
-        <label class="block">{{ t('admin.accounts.timer.mode') }}
-          <select v-model="form.mode" data-test="timer-mode" class="input mt-1 w-full text-xs" @change="modeChanged">
-            <option value="relative">{{ t('admin.accounts.timer.relative') }}</option>
-            <option value="absolute">{{ t('admin.accounts.timer.absolute') }}</option>
-            <option value="recurring">{{ t('admin.accounts.timer.recurring') }}</option>
           </select>
         </label>
         <div v-if="form.mode === 'relative'" class="space-y-1">
@@ -144,6 +157,11 @@ const timezoneOptions = COMMON_TIMEZONES.map(value => {
 const dayScopeOptions = computed(() => [
   { value: false, label: t('admin.accounts.timer.everyDay') },
   { value: true, label: t('admin.accounts.timer.weekdaysOnly') },
+])
+const modeOptions = computed<Array<{ value: TimerInput['mode']; label: string }>>(() => [
+  { value: 'relative', label: t('admin.accounts.timer.relative') },
+  { value: 'absolute', label: t('admin.accounts.timer.absolute') },
+  { value: 'recurring', label: t('admin.accounts.timer.recurring') },
 ])
 let epoch = 0
 let received = 0
@@ -256,6 +274,11 @@ function onActionChanged() {
   if (action.value !== 'open' && action.value !== 'close') return
   lastOneShotAction.value = action.value
   editVersion.value = snapshot.value?.tasks.find(item => item.action === action.value)?.version ?? 0
+}
+function setMode(mode: TimerInput['mode']) {
+  if (form.mode === mode) return
+  form.mode = mode
+  modeChanged()
 }
 function modeChanged() {
   if (form.mode === 'recurring') {
