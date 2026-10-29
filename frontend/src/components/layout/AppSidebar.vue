@@ -63,17 +63,24 @@
               </button>
               <!-- Children -->
               <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-gray-200 pl-2 dark:border-dark-600">
-                <router-link
-                  v-for="child in item.children"
-                  :key="child.path"
-                  :to="child.path"
-                  class="sidebar-link mb-0.5 py-1.5 text-sm"
-                  :class="{ 'sidebar-link-active': route.path === child.path }"
-                  @click="handleMenuItemClick(child.path)"
-                >
-                  <component :is="child.icon" class="h-4 w-4 flex-shrink-0" />
-                  <span>{{ child.label }}</span>
-                </router-link>
+                <template v-for="child in item.children" :key="child.path">
+                  <p
+                    v-if="child.section"
+                    class="sidebar-child-section px-2 pb-1 pt-2 text-[11px] font-semibold tracking-wide text-gray-400 dark:text-gray-500"
+                  >
+                    {{ child.label }}
+                  </p>
+                  <router-link
+                    v-else
+                    :to="child.path"
+                    class="sidebar-link mb-0.5 py-1.5 text-sm"
+                    :class="{ 'sidebar-link-active': route.path === child.path }"
+                    @click="handleMenuItemClick(child.path)"
+                  >
+                    <component :is="child.icon" class="h-4 w-4 flex-shrink-0" />
+                    <span>{{ child.label }}</span>
+                  </router-link>
+                </template>
               </div>
             </template>
             <!-- Normal item (no children) -->
@@ -208,6 +215,11 @@ interface NavItem {
   iconSvg?: string
   hideInSimpleMode?: boolean
   children?: NavItem[]
+  /**
+   * Section header rendered inside an expanded group. The item does not
+   * navigate; `path` is only a stable key.
+   */
+  section?: boolean
   /**
    * When true, the parent item only toggles the expand/collapse state and
    * does NOT navigate to its `path`. The `path` is purely a stable key.
@@ -816,7 +828,31 @@ const adminNavItems = computed((): NavItem[] => {
   }
   const baseItems: NavItem[] = [
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
-    { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon, featureFlag: flagOpsMonitoring },
+    {
+      path: '/admin/ops-center',
+      label: locale.value === 'zh' ? '运营中心' : 'Operations center',
+      icon: ChartIcon,
+      expandOnly: true,
+      children: [
+        { path: '/admin/ops-center', label: locale.value === 'zh' ? '运营总览' : 'Operations overview', icon: ChartIcon },
+        { path: '#ops-tier-accounts', label: locale.value === 'zh' ? '账号运营' : 'Account operations', icon: UsersIcon, section: true },
+        { path: '/admin/account-ops', label: locale.value === 'zh' ? '账号通知' : 'Account notifications', icon: BellIcon },
+        { path: '/admin/ops-automation', label: locale.value === 'zh' ? '账号自动化' : 'Account automation', icon: ChartIcon },
+        { path: '/admin/credential-guard', label: locale.value === 'zh' ? '凭证巡检' : 'Credential inspection', icon: ShieldIcon },
+        { path: '#ops-tier-channels', label: locale.value === 'zh' ? '渠道运营' : 'Channel operations', icon: ChannelIcon, section: true },
+        { path: '/admin/channel-operations', label: locale.value === 'zh' ? '渠道运维' : 'Channel operations', icon: ChannelIcon },
+        { path: '/admin/mihomo', label: locale.value === 'zh' ? '代理出口' : 'Managed proxies', icon: GlobeIcon },
+        { path: '#ops-tier-diagnostics', label: locale.value === 'zh' ? '监控诊断' : 'Monitoring and diagnostics', icon: SignalIcon, section: true },
+        { path: '/admin/ops', label: locale.value === 'zh' ? '渠道状态' : 'Channel status', icon: SignalIcon, featureFlag: flagOpsMonitoring },
+        { path: '/admin/connections', label: locale.value === 'zh' ? '连接诊断' : 'Connections', icon: ChartIcon },
+        { path: '/admin/group-cache-tests', label: locale.value === 'zh' ? '分组缓存测试' : 'Cache tests', icon: ChartIcon },
+        { path: '/admin/request-captures', label: locale.value === 'zh' ? '请求采集' : 'Request capture', icon: ChartIcon },
+        { path: '/admin/traffic', label: locale.value === 'zh' ? '用户流量' : 'User traffic', icon: ChartIcon },
+        { path: '#ops-tier-platform', label: locale.value === 'zh' ? '平台工具' : 'Platform tools', icon: GlobeIcon, section: true },
+        { path: '/admin/excel-grants', label: locale.value === 'zh' ? 'Excel 协议授权' : 'Excel authorization', icon: ShieldIcon },
+        { path: '/admin/serverless', label: locale.value === 'zh' ? '地区路由' : 'Regional routing', icon: GlobeIcon },
+      ],
+    },
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon },
     {
@@ -832,19 +868,6 @@ const adminNavItems = computed((): NavItem[] => {
     },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
-    {path:'/admin/diagnostics',label:locale.value==='zh'?'诊断与运维':'Diagnostics and operations',icon:ChartIcon,expandOnly:true,children:[
-      {path:'/admin/excel-grants',label:locale.value==='zh'?'Excel 协议授权':'Excel authorization',icon:ShieldIcon},
-        {path:'/admin/serverless',label:locale.value==='zh'?'地区路由':'Regional routing',icon:GlobeIcon},
-        {path:'/admin/ops-automation',label:locale.value==='zh'?'账号自动化':'Account automation',icon:ChartIcon},
-        {path:'/admin/credential-guard',label:locale.value==='zh'?'凭证巡检':'Credential inspection',icon:ShieldIcon},
-        {path:'/admin/account-ops',label:locale.value==='zh'?'账号通知':'Account notifications',icon:BellIcon},
-        {path:'/admin/channel-operations',label:locale.value==='zh'?'渠道运维':'Channel operations',icon:ChartIcon},
-        {path:'/admin/mihomo',label:locale.value==='zh'?'代理出口':'Managed proxies',icon:GlobeIcon},
-        {path:'/admin/connections',label:locale.value==='zh'?'连接诊断':'Connections',icon:ChartIcon},
-      {path:'/admin/group-cache-tests',label:locale.value==='zh'?'分组缓存测试':'Cache tests',icon:ChartIcon},
-      {path:'/admin/request-captures',label:locale.value==='zh'?'请求采集':'Request capture',icon:ChartIcon},
-      {path:'/admin/traffic',label:locale.value==='zh'?'用户流量':'User traffic',icon:ChartIcon},
-    ]},
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/tickets', label: t('tickets.adminTitle'), icon: { render: () => h(Icon, { name: 'chat' }) } },
@@ -956,7 +979,7 @@ function isActive(path: string): boolean {
 
 function isGroupActive(item: NavItem): boolean {
   if (!item.children) return false
-  return item.children.some(child => route.path === child.path)
+  return item.children.some(child => !child.section && route.path === child.path)
 }
 
 function isGroupExpanded(item: NavItem): boolean {
