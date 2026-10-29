@@ -144,14 +144,15 @@
         </div>
 
         <div class="overflow-x-auto">
-          <table v-if="pageRows.length" class="w-full min-w-[1000px] text-left text-sm">
+          <table v-if="pageRows.length" class="w-full min-w-[1120px] text-left text-sm">
             <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800">
               <tr>
                 <th class="px-5 py-3">{{ text('模型', 'Model') }}</th>
                 <th class="px-4 py-3">{{ text('最低价', 'Cheapest') }}</th>
                 <th class="px-4 py-3">{{ text('最高价', 'Most expensive') }}</th>
                 <th class="px-4 py-3">{{ text('价差', 'Spread') }}</th>
-                <th class="px-4 py-3">{{ text('最稳 / 最划算', 'Most stable / best value') }}</th>
+                <th class="px-4 py-3">{{ text('最划算', 'Best value') }}</th>
+                <th class="px-4 py-3">{{ text('最稳', 'Most stable') }}</th>
                 <th class="px-5 py-3"></th>
               </tr>
             </thead>
@@ -185,17 +186,20 @@
                     <span v-else class="text-gray-400">—</span>
                   </td>
                   <td class="px-4 py-3">
-                    <template v-if="row.bestStable">
-                      <p class="font-medium">{{ row.bestStable.groupName }}</p>
-                      <p class="mt-0.5 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ pricePair(row.bestStable) }}</p>
-                      <span class="badge badge-success mt-1">{{ text('检测正常', 'Healthy') }}</span>
-                    </template>
-                    <template v-else-if="row.bestValue">
+                    <template v-if="row.bestValue">
                       <p class="font-medium">{{ row.bestValue.groupName }}</p>
                       <p class="mt-0.5 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ pricePair(row.bestValue) }}</p>
                       <p class="mt-1 text-[11px] text-gray-400">{{ text('综合价最低', 'Lowest blended price') }}</p>
                     </template>
                     <span v-else class="text-gray-400">—</span>
+                  </td>
+                  <td class="px-4 py-3">
+                    <template v-if="row.bestStable">
+                      <p class="font-medium">{{ row.bestStable.groupName }}</p>
+                      <p class="mt-0.5 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ pricePair(row.bestStable) }}</p>
+                      <span class="badge badge-success mt-1">{{ text('检测正常', 'Healthy') }}</span>
+                    </template>
+                    <span v-else class="text-xs text-gray-400">{{ text('无检测正常分组', 'No healthy group') }}</span>
                   </td>
                   <td class="px-5 py-3 text-right">
                     <button type="button" class="inline-flex items-center gap-1 text-xs text-primary-600" @click="toggle(row.key)">
@@ -205,7 +209,7 @@
                   </td>
                 </tr>
                 <tr v-if="expanded.has(row.key)" class="bg-gray-50/60 dark:bg-dark-800/40">
-                  <td colspan="6" class="px-5 py-4">
+                  <td colspan="7" class="px-5 py-4">
                     <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900">
                       <table class="w-full min-w-[860px] text-left text-xs">
                         <thead class="bg-gray-50 text-gray-500 dark:bg-dark-800">
@@ -377,7 +381,7 @@ function toRow(model: ModelComparison): ComparisonRow {
     cheapest: model.cheapestInput ?? model.cheapestRequest,
     expensive: model.mostExpensiveInput ?? model.mostExpensiveRequest,
     spreadValue: model.spread ?? model.requestSpread,
-    bestValue: model.bestStable ?? model.cheapestBlended ?? model.cheapestRequest,
+    bestValue: model.cheapestBlended ?? model.cheapestRequest,
   }
 }
 
