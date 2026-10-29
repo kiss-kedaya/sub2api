@@ -162,7 +162,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	nativeCNResponses := account.usesNativeResponsesUpstream()
 	nativeDeepSeekResponses := account.Platform == PlatformDeepseek && nativeCNResponses
-	if account.Platform == PlatformDeepseek && !compactPath {
+	// OpenAI's Responses API also rejects a self-contained history when a
+	// custom_tool_call has no matching custom_tool_call_output (Codex's
+	// codex-auto-review emits ctc_ items this way after an interrupted tool).
+	// The synthetic-output repair is provider-neutral, so apply it to both
+	// native Responses platforms instead of only DeepSeek.
+	if (account.Platform == PlatformDeepseek || account.Platform == PlatformOpenAI) && !compactPath {
 		repairedBody, repaired, repairErr := repairDeepSeekMissingToolOutputs(body)
 		if repairErr != nil {
 			setOpsUpstreamError(c, http.StatusBadRequest, repairErr.Error(), "")
