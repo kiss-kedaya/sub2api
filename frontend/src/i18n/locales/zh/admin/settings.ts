@@ -978,6 +978,9 @@ export default {
         fromEmailPlaceholder: "noreply{'@'}example.com",
         fromName: '发件人名称',
         fromNamePlaceholder: 'Sub2API',
+        ticketAdminEmail: '工单通知邮箱',
+        ticketAdminEmailPlaceholder: 'support@example.com',
+        ticketAdminEmailHint: '用户新建或回复工单时发邮件到这里；留空则发给首个管理员账号邮箱。',
         useTls: '使用 TLS',
         useTlsHint: '为 SMTP 连接启用 TLS 加密'
       },

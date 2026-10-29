@@ -188,6 +188,7 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	"POST /api/v1/tickets":                                      {},
 	"POST /api/v1/tickets/:id/replies":                          {},
 	"POST /api/v1/admin/tickets/:id/replies":                    {},
+	"POST /api/v1/admin/tickets":                                {},
 	"POST /api/v1/auth/passkey/login/finish":                    {},
 	"POST /api/v1/user/passkeys/register/finish":                {},
 	"POST /api/v1/admin/accounts/import/codex-session":          {},

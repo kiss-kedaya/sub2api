@@ -74,6 +74,7 @@ export default {
     selectOption: '请选择',
     searchPlaceholder: '搜索...',
     noOptionsFound: '无匹配选项',
+    selectKeyboardHint: '↑↓ 选择 · Enter 确认 · Esc 关闭',
     noGroupsAvailable: '无可用分组',
     unknownError: '发生未知错误',
     saving: '保存中...',

@@ -57,7 +57,7 @@ func TestTicketReplyWakesOnlyCommittedAdminReply(t *testing.T) {
 		queued                                    int
 	}{
 		{"admin reply", true, false, false, false, 1},
-		{"user follow up", false, false, false, false, 0},
+		{"user follow up", false, false, false, false, 1},
 		{"idempotent replay", true, true, false, false, 0},
 		{"rolled back reply", true, false, true, false, 0},
 		{"detail read fails after commit", true, false, false, true, 1},
@@ -108,7 +108,7 @@ func TestTicketReplyEmailDeliversFullEscapedConversation(t *testing.T) {
 	}
 	repo := &ticketEmailRepoStub{conversation: detail}
 	service := ProvideTicketService(repo, &ticketUsersStub{user: &User{ID: 7, Email: "owner@example.com", Username: "小鸭"}}, nil, notifications)
-	require.NoError(t, service.sendTicketReplyEmail(ctx, 10, 60))
+	require.NoError(t, service.sendTicketEmail(ctx, 10, 60))
 	require.Equal(t, int64(1), smtp.messageCount())
 	message, err := mail.ReadMessage(strings.NewReader(smtp.lastMessage()))
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestTicketReplyEmailDeliversFullEscapedConversation(t *testing.T) {
 	require.NotContains(t, body, "<img src=x")
 	require.NotContains(t, body, "attacker@example.com")
 	require.NotContains(t, body, "stale@example.com")
-	require.NoError(t, service.sendTicketReplyEmail(ctx, 10, 60))
+	require.NoError(t, service.sendTicketEmail(ctx, 10, 60))
 	require.Equal(t, int64(1), smtp.messageCount())
 	if output := os.Getenv("TICKET_EMAIL_PREVIEW_DIR"); output != "" {
 		require.NoError(t, os.MkdirAll(output, 0o700))
@@ -140,8 +140,42 @@ func TestTicketReplyEmailDoesNotNotifyDeletedOrWrongOwner(t *testing.T) {
 	for _, owner := range []*User{nil, {ID: 8, Email: "other@example.com"}, {ID: 7, Email: "owner@example.com", DeletedAt: &now}, {ID: 7, Email: "invalid\r\nBcc: injected@example.com"}} {
 		repo := &ticketEmailRepoStub{conversation: &TicketDetail{Ticket: &Ticket{ID: 10, UserID: 7}}}
 		service := ProvideTicketService(repo, &ticketUsersStub{user: owner}, nil, NewNotificationEmailService(newNotificationEmailMemorySettingRepo(), nil))
-		require.Error(t, service.sendTicketReplyEmail(context.Background(), 10, 60))
+		require.Error(t, service.sendTicketEmail(context.Background(), 10, 60))
 	}
+}
+
+func TestTicketAdminNotifyEmailRoutesUserMessagesToSupportInbox(t *testing.T) {
+	ctx := context.Background()
+	settings := newNotificationEmailMemorySettingRepo()
+	smtp := startNotificationEmailTestSMTPServer(t)
+	require.NoError(t, settings.SetMultiple(ctx, smtp.settings()))
+	require.NoError(t, settings.Set(ctx, SettingKeyFrontendURL, "https://support.example.com/"))
+	require.NoError(t, settings.Set(ctx, SettingKeySiteName, "可达鸭"))
+	require.NoError(t, settings.Set(ctx, SettingKeyTicketAdminEmail, "support@example.com"))
+	notifications := NewNotificationEmailService(settings, NewEmailService(settings, nil))
+	owner := &User{ID: 7, Email: "owner@example.com", Username: "小鸭"}
+	detail := &TicketDetail{
+		Ticket: &Ticket{ID: 10, UserID: 7, Subject: "无法调用 API"},
+		Messages: []TicketMessage{
+			{ID: 1, TicketID: 10, AuthorRole: "user", AuthorName: "小鸭", Kind: "reply", Content: "请求一直返回 500", CreatedAt: time.Now()},
+		},
+	}
+	repo := &ticketEmailRepoStub{conversation: detail}
+	service := ProvideTicketService(repo, &ticketUsersStub{user: owner}, nil, notifications)
+
+	require.NoError(t, service.sendTicketEmail(ctx, 10, 1))
+	require.Equal(t, int64(1), smtp.messageCount())
+	message, err := mail.ReadMessage(strings.NewReader(smtp.lastMessage()))
+	require.NoError(t, err)
+	require.Equal(t, "<support@example.com>", message.Header.Get("To"))
+	subject, err := new(mime.WordDecoder).DecodeHeader(message.Header.Get("Subject"))
+	require.NoError(t, err)
+	require.Contains(t, subject, "工单有新消息")
+	body := smtp.lastMessageBody(t)
+	require.Contains(t, body, "无法调用 API")
+	require.Contains(t, body, "请求一直返回 500")
+	require.Contains(t, body, "https://support.example.com/admin/tickets/10")
+	require.Contains(t, body, "小鸭")
 }
 
 func TestTicketEmailURLPrefersFrontendAndRejectsUnsafeURL(t *testing.T) {
@@ -150,6 +184,7 @@ func TestTicketEmailURLPrefersFrontendAndRejectsUnsafeURL(t *testing.T) {
 	require.NoError(t, settings.Set(ctx, SettingKeyFrontendURL, "https://frontend.example.com/console/?tracking=1#old"))
 	require.NoError(t, settings.Set(ctx, SettingKeyAPIBaseURL, "https://api.example.com"))
 	require.Equal(t, "https://frontend.example.com/console/tickets/10", ticketEmailURL(ctx, settings, 10))
+	require.Equal(t, "https://frontend.example.com/console/admin/tickets/10", ticketAdminEmailURL(ctx, settings, 10))
 	require.NoError(t, settings.Set(ctx, SettingKeyFrontendURL, "javascript:alert(1)"))
 	require.Equal(t, "https://api.example.com/tickets/10", ticketEmailURL(ctx, settings, 10))
 	require.NoError(t, settings.Set(ctx, SettingKeyAPIBaseURL, "https://user:password@example.com"))

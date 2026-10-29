@@ -12,6 +12,7 @@
       :aria-describedby="ariaDescribedby"
       :class="[
         'select-trigger',
+        size === 'sm' && 'select-trigger-sm',
         isOpen && 'select-trigger-open',
         error && 'select-trigger-error',
         disabled && 'select-trigger-disabled'
@@ -74,6 +75,10 @@
           </div>
 
           <!-- Options list -->
+          <div v-if="menuTitle" class="select-popover-head">
+            <strong>{{ menuTitle }}</strong>
+            <span class="select-popover-count">{{ selectableCount }}</span>
+          </div>
           <div class="select-options" ref="optionsListRef">
             <div
               v-for="(option, index) in filteredOptions"
@@ -98,6 +103,7 @@
                   size="sm"
                   class="flex-shrink-0 text-gray-400"
                 />
+                <span v-if="getOptionFamily(option)" class="select-option-family">{{ getOptionFamily(option) }}</span>
                 <span class="select-option-label" :class="option._creatable && 'italic text-gray-500 dark:text-dark-300'">{{ getOptionLabel(option) }}</span>
                 <Icon
                   v-if="isSelected(option)"
@@ -113,6 +119,9 @@
             <div v-if="filteredOptions.length === 0" class="select-empty">
               {{ props.loading ? t('common.loading') : emptyTextDisplay }}
             </div>
+          </div>
+          <div v-if="showKeyboardHint" class="select-popover-foot">
+            {{ t('common.selectKeyboardHint') }}
           </div>
         </div>
       </Transition>
@@ -158,6 +167,14 @@ interface Props {
   remote?: boolean
   /** 远程搜索模式下的加载态：options 为空时下拉显示 loading 文案 */
   loading?: boolean
+  /** 弹层顶部标题，例如「模型库」；留空则不显示 */
+  menuTitle?: string
+  /** 选项对象中用作小标签的字段名，例如 family */
+  familyKey?: string
+  /** 弹层底部是否显示快捷键提示 */
+  showKeyboardHint?: boolean
+  /** 触发器尺寸 */
+  size?: 'sm' | 'md'
 }
 
 interface Emits {
@@ -176,7 +193,11 @@ const props = withDefaults(defineProps<Props>(), {
   valueKey: 'value',
   labelKey: 'label',
   remote: false,
-  loading: false
+  loading: false,
+  menuTitle: '',
+  familyKey: '',
+  showKeyboardHint: true,
+  size: 'md'
 })
 
 const emit = defineEmits<Emits>()
@@ -254,6 +275,11 @@ const getOptionLabel = (option: any): string => {
   return String(option ?? '')
 }
 
+const getOptionFamily = (option: any): string => {
+  if (!props.familyKey || typeof option !== 'object' || option === null) return ''
+  return String(option[props.familyKey] ?? '')
+}
+
 const isOptionDisabled = (option: any): boolean => {
   if (typeof option === 'object' && option !== null) {
     return !!option.disabled
@@ -312,6 +338,10 @@ const filteredOptions = computed(() => {
 const isSelected = (option: any): boolean => {
   return getOptionValue(option) === props.modelValue
 }
+
+const selectableCount = computed(
+  () => filteredOptions.value.filter((option) => !isGroupHeaderOption(option)).length
+)
 
 const findNextEnabledIndex = (startIndex: number): number => {
   const opts = filteredOptions.value
@@ -520,6 +550,10 @@ onUnmounted(() => {
   @apply border-gray-400 ring-1 ring-gray-300/70 dark:border-dark-500 dark:ring-dark-500;
 }
 
+.select-trigger-sm {
+  @apply rounded-md px-2.5 py-1 text-xs;
+}
+
 .select-trigger-error {
   @apply border-red-500 focus:border-red-500 focus:ring-red-500/30;
 }
@@ -547,11 +581,38 @@ onUnmounted(() => {
 .select-dropdown-portal {
   @apply w-max min-w-[200px];
   @apply bg-white dark:bg-dark-800;
-  @apply rounded-xl;
+  @apply rounded-[14px];
   @apply border border-gray-200 dark:border-dark-700;
-  @apply shadow-sm;
   @apply overflow-hidden;
+  box-shadow:
+    0 18px 44px -16px rgb(15 23 42 / 0.35),
+    0 2px 8px -2px rgb(15 23 42 / 0.12);
   pointer-events: auto !important;
+}
+
+.select-dropdown-portal .select-popover-head {
+  @apply flex items-center justify-between gap-3 px-3 pb-2 pt-2.5;
+  @apply border-b border-gray-100 dark:border-dark-700;
+}
+
+.select-dropdown-portal .select-popover-head strong {
+  @apply text-xs font-semibold uppercase tracking-wider;
+  @apply text-gray-500 dark:text-gray-400;
+}
+
+.select-dropdown-portal .select-popover-count {
+  @apply text-[11px] text-gray-400 dark:text-dark-400;
+}
+
+.select-dropdown-portal .select-option-family {
+  @apply inline-flex flex-shrink-0 items-center rounded-md px-1.5 py-0.5;
+  @apply bg-gray-100 text-[10px] font-semibold uppercase tracking-wide text-gray-500;
+  @apply dark:bg-dark-700 dark:text-gray-400;
+}
+
+.select-dropdown-portal .select-popover-foot {
+  @apply border-t border-gray-100 px-3 py-1.5 text-center text-[11px];
+  @apply text-gray-400 dark:border-dark-700 dark:text-dark-400;
 }
 
 .select-dropdown-portal .select-search {

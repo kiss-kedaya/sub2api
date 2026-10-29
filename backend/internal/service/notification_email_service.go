@@ -34,6 +34,7 @@ const (
 	NotificationEmailEventOpsAlert                    = "ops.alert"
 	NotificationEmailEventOpsScheduledReport          = "ops.scheduled_report"
 	NotificationEmailEventTicketReply                 = "ticket.reply"
+	NotificationEmailEventTicketAdminNotify           = "ticket.admin_notify"
 
 	notificationEmailTemplateKeyPrefix    = "notification_email_template:"
 	notificationEmailPreferenceKeyPrefix  = "notification_email_preference:"
@@ -393,7 +394,7 @@ func (s *NotificationEmailService) PreviewTemplate(ctx context.Context, input No
 		variables[key] = value
 	}
 	var rawHTML map[string]string
-	if normalizedEvent == NotificationEmailEventTicketReply {
+	if normalizedEvent == NotificationEmailEventTicketReply || normalizedEvent == NotificationEmailEventTicketAdminNotify {
 		if _, customConversation := input.Variables["conversation_html"]; !customConversation {
 			rawHTML = map[string]string{"conversation_html": ticketEmailPreviewConversation(normalizedLocale == notificationEmailLocaleChinese)}
 		}
@@ -800,7 +801,8 @@ func renderNotificationEmailString(event, raw string, variables map[string]strin
 
 func notificationEmailRawHTMLAllowed(event, placeholder string) bool {
 	return (event == NotificationEmailEventOpsScheduledReport && placeholder == "report_html") ||
-		(event == NotificationEmailEventTicketReply && placeholder == "conversation_html")
+		(event == NotificationEmailEventTicketReply && placeholder == "conversation_html") ||
+		(event == NotificationEmailEventTicketAdminNotify && placeholder == "conversation_html")
 }
 
 func notificationEmailAllowedPlaceholderSet(event string) map[string]struct{} {
@@ -1060,6 +1062,7 @@ func addNotificationEmailOpsSummarySampleVariables(variables map[string]string) 
 
 var notificationEmailEventOrder = []string{
 	NotificationEmailEventTicketReply,
+	NotificationEmailEventTicketAdminNotify,
 	NotificationEmailEventAuthVerifyCode,
 	NotificationEmailEventAuthPasswordReset,
 	NotificationEmailEventNotificationEmailVerifyCode,
@@ -1083,6 +1086,14 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 		Category:     "support",
 		Optional:     false,
 		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "ticket_id", "ticket_subject", "ticket_url", "ticket_link_display", "conversation_html"),
+	},
+	NotificationEmailEventTicketAdminNotify: {
+		Event:        NotificationEmailEventTicketAdminNotify,
+		Label:        "工单管理员通知",
+		Description:  "用户新建工单或回复工单时通知管理员邮箱，包含截至该条消息的完整对话记录。",
+		Category:     "support",
+		Optional:     false,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "ticket_id", "ticket_subject", "ticket_url", "ticket_link_display", "conversation_html", "requester_name", "requester_email"),
 	},
 	NotificationEmailEventAuthVerifyCode: {
 		Event:        NotificationEmailEventAuthVerifyCode,
@@ -1205,6 +1216,10 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 	NotificationEmailEventTicketReply: {
 		notificationEmailDefaultLocale: {Subject: "[{{site_name}}] New reply to ticket #{{ticket_id}} · {{ticket_subject}}", HTML: ticketReplyEmailTemplate(false)},
 		notificationEmailLocaleChinese: {Subject: "[{{site_name}}] 您的工单已有新的回复 · #{{ticket_id}} {{ticket_subject}}", HTML: ticketReplyEmailTemplate(true)},
+	},
+	NotificationEmailEventTicketAdminNotify: {
+		notificationEmailDefaultLocale: {Subject: "[{{site_name}}] Ticket #{{ticket_id}} has a new message · {{ticket_subject}}", HTML: ticketAdminNotifyEmailTemplate(false)},
+		notificationEmailLocaleChinese: {Subject: "[{{site_name}}] 工单有新消息 · #{{ticket_id}} {{ticket_subject}}", HTML: ticketAdminNotifyEmailTemplate(true)},
 	},
 	NotificationEmailEventAuthVerifyCode: {
 		notificationEmailDefaultLocale: {

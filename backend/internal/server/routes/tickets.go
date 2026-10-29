@@ -19,6 +19,7 @@ func registerTicketRoutes(authenticated *gin.RouterGroup, h *handler.TicketHandl
 func registerAdminTicketRoutes(admin *gin.RouterGroup, h *handler.TicketHandler) {
 	tickets := admin.Group("/tickets")
 	tickets.GET("", h.AdminList)
+	tickets.POST("", h.AdminCreate)
 	tickets.GET("/stats", h.AdminStats)
 	tickets.GET("/:id", h.AdminDetail)
 	tickets.POST("/:id/read", h.AdminMarkRead)
