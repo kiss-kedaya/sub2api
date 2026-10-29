@@ -992,7 +992,7 @@ export default {
         fromName: 'From Name',
         fromNamePlaceholder: 'Sub2API',
         ticketAdminEmail: 'Ticket notification inbox',
-        ticketAdminEmailPlaceholder: 'support@example.com',
+        ticketAdminEmailPlaceholder: "support{'@'}example.com",
         ticketAdminEmailHint: 'New tickets and user replies are emailed here. Leave blank to use the first admin account email.',
         useTls: 'Use TLS',
         useTlsHint: 'Enable TLS encryption for SMTP connection'
