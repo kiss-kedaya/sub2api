@@ -6584,6 +6584,111 @@
                           "
                         />
                       </div>
+                      <div
+                        class="sm:col-span-2 rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-dark-700 dark:bg-dark-800/40"
+                      >
+                        <div
+                          class="mb-2 flex flex-wrap items-center justify-between gap-2"
+                        >
+                          <span
+                            class="text-xs font-semibold text-gray-700 dark:text-gray-200"
+                          >
+                            {{
+                              t(
+                                "admin.settings.site.customEndpoints.visibilityTitle",
+                              )
+                            }}
+                          </span>
+                          <span
+                            class="text-[11px] font-medium text-gray-500 dark:text-gray-400"
+                          >
+                            {{
+                              Number(ep.min_recharge) > 0
+                                ? t(
+                                    "admin.settings.site.customEndpoints.visibilityTier",
+                                    { amount: ep.min_recharge },
+                                  )
+                                : t(
+                                    "admin.settings.site.customEndpoints.visibilityAll",
+                                  )
+                            }}
+                          </span>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
+                            :class="
+                              Number(ep.min_recharge) <= 0
+                                ? 'bg-primary-600 text-white shadow-sm'
+                                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-300 dark:ring-dark-600 dark:hover:bg-dark-600'
+                            "
+                            @click="ep.min_recharge = 0"
+                          >
+                            {{
+                              t(
+                                "admin.settings.site.customEndpoints.visibilityEveryone",
+                              )
+                            }}
+                          </button>
+                          <button
+                            type="button"
+                            class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
+                            :class="
+                              Number(ep.min_recharge) > 0
+                                ? 'bg-primary-600 text-white shadow-sm'
+                                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-300 dark:ring-dark-600 dark:hover:bg-dark-600'
+                            "
+                            @click="
+                              ep.min_recharge =
+                                Number(ep.min_recharge) > 0
+                                  ? ep.min_recharge
+                                  : 1000
+                            "
+                          >
+                            {{
+                              t(
+                                "admin.settings.site.customEndpoints.visibilityThreshold",
+                              )
+                            }}
+                          </button>
+                          <template v-if="Number(ep.min_recharge) > 0">
+                            <span
+                              class="text-xs text-gray-500 dark:text-gray-400"
+                            >
+                              {{
+                                t(
+                                  "admin.settings.site.customEndpoints.visibilityRechargePrefix",
+                                )
+                              }}
+                            </span>
+                            <input
+                              v-model.number="ep.min_recharge"
+                              type="number"
+                              min="1"
+                              step="1"
+                              class="input w-28 text-sm"
+                              @blur="normalizeEndpointThreshold(ep)"
+                            />
+                            <span
+                              class="text-xs text-gray-500 dark:text-gray-400"
+                            >
+                              {{
+                                t(
+                                  "admin.settings.site.customEndpoints.visibilityRechargeSuffix",
+                                )
+                              }}
+                            </span>
+                          </template>
+                        </div>
+                        <p class="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                          {{
+                            t(
+                              "admin.settings.site.customEndpoints.visibilityHint",
+                            )
+                          }}
+                        </p>
+                      </div>
                       <div class="sm:col-span-2">
                         <label
                           class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
@@ -6604,60 +6709,6 @@
                             )
                           "
                         />
-                      </div>
-                      <div class="sm:col-span-2">
-                        <label
-                          class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
-                        >
-                          {{
-                            t(
-                              "admin.settings.site.customEndpoints.minRecharge",
-                            )
-                          }}
-                        </label>
-                        <input
-                          v-model.number="ep.min_recharge"
-                          type="number"
-                          min="0"
-                          step="1"
-                          class="input text-sm"
-                          :placeholder="
-                            t(
-                              'admin.settings.site.customEndpoints.minRechargePlaceholder',
-                            )
-                          "
-                        />
-                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          {{
-                            t(
-                              "admin.settings.site.customEndpoints.minRechargeHint",
-                            )
-                          }}
-                        </p>
-                        <div class="mt-1 flex items-center gap-3">
-                          <button
-                            type="button"
-                            class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                            @click="ep.min_recharge = 0"
-                          >
-                            {{
-                              t(
-                                "admin.settings.site.customEndpoints.minRechargeAll",
-                              )
-                            }}
-                          </button>
-                          <button
-                            type="button"
-                            class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                            @click="ep.min_recharge = 1000"
-                          >
-                            {{
-                              t(
-                                "admin.settings.site.customEndpoints.minRechargeDefault",
-                              )
-                            }}
-                          </button>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -10931,6 +10982,11 @@ function moveMenuItem(index: number, direction: -1 | 1) {
 }
 
 // Custom endpoint management
+function normalizeEndpointThreshold(ep: { min_recharge?: number | null }) {
+  const value = Number(ep.min_recharge);
+  ep.min_recharge = Number.isFinite(value) && value > 0 ? value : 1000;
+}
+
 function addEndpoint() {
   form.custom_endpoints.push({
     name: "",

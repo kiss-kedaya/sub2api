@@ -845,6 +845,7 @@ const adminNavItems = computed((): NavItem[] => {
         { path: '/admin/mihomo', label: locale.value === 'zh' ? '代理出口' : 'Managed proxies', icon: GlobeIcon },
         { path: '#ops-tier-diagnostics', label: locale.value === 'zh' ? '监控诊断' : 'Monitoring and diagnostics', icon: SignalIcon, section: true },
         { path: '/admin/ops', label: locale.value === 'zh' ? '渠道状态' : 'Channel status', icon: SignalIcon, featureFlag: flagOpsMonitoring },
+        { path: '/admin/ops?alertRules=1', label: locale.value === 'zh' ? '告警阈值' : 'Alert thresholds', icon: BellIcon, featureFlag: flagOpsMonitoring },
         { path: '/admin/connections', label: locale.value === 'zh' ? '连接诊断' : 'Connections', icon: ChartIcon },
         { path: '/admin/group-cache-tests', label: locale.value === 'zh' ? '分组缓存测试' : 'Cache tests', icon: ChartIcon },
         { path: '/admin/request-captures', label: locale.value === 'zh' ? '请求采集' : 'Request capture', icon: ChartIcon },

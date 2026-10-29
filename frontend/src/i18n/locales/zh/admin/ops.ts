@@ -487,6 +487,13 @@ export default {
       alertRules: {
         title: '告警规则',
         description: '创建与管理系统阈值告警（仅邮件通知）',
+        quick: {
+          errorTitle: '错误率阈值',
+          errorHint: '5 分钟窗口内错误率超过此值时触发 P1 告警；保存后立即生效。',
+          successTitle: '成功率阈值',
+          successHint: '5 分钟窗口内成功率低于此值时触发 P0 告警；保存后立即生效。',
+          saved: '阈值已更新'
+        },
         loading: '加载中...',
         empty: '暂无告警规则',
         loadFailed: '加载告警规则失败',

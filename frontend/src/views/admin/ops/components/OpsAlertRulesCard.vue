@@ -43,6 +43,59 @@ const sortedRules = computed(() => {
   return [...rules.value].sort((a, b) => (b.id || 0) - (a.id || 0))
 })
 
+const quickSavingId = ref<number | null>(null)
+
+interface QuickRule {
+  rule: AlertRule
+  title: string
+  hint: string
+  unit: string
+  presets: number[]
+}
+
+const quickRules = computed<QuickRule[]>(() => {
+  const findRule = (metric: MetricType, nameHint: string) =>
+    rules.value.find((rule) => rule.metric_type === metric && rule.name.includes(nameHint)) ||
+    rules.value.find((rule) => rule.metric_type === metric)
+  const out: QuickRule[] = []
+  const errorRule = findRule('error_rate', '错误率过高')
+  if (errorRule) {
+    out.push({
+      rule: errorRule,
+      title: t('admin.ops.alertRules.quick.errorTitle'),
+      hint: t('admin.ops.alertRules.quick.errorHint'),
+      unit: '%',
+      presets: [5, 8, 10, 15]
+    })
+  }
+  const successRule = findRule('success_rate', '成功率过低')
+  if (successRule) {
+    out.push({
+      rule: successRule,
+      title: t('admin.ops.alertRules.quick.successTitle'),
+      hint: t('admin.ops.alertRules.quick.successHint'),
+      unit: '%',
+      presets: [95, 92, 90, 85]
+    })
+  }
+  return out
+})
+
+async function saveQuickThreshold(rule: AlertRule) {
+  if (!rule.id) return
+  quickSavingId.value = rule.id
+  try {
+    await opsAPI.updateAlertRule(rule.id, { threshold: Number(rule.threshold) })
+    await load()
+    appStore.showSuccess(t('admin.ops.alertRules.quick.saved'))
+  } catch (err: any) {
+    console.error('[OpsAlertRulesCard] Failed to update quick threshold', err)
+    appStore.showError(err?.response?.data?.detail || t('admin.ops.alertRules.saveFailed'))
+  } finally {
+    quickSavingId.value = null
+  }
+}
+
 const showEditor = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
@@ -532,6 +585,59 @@ function cancelDelete() {
           </svg>
           {{ t('common.refresh') }}
         </button>
+      </div>
+    </div>
+
+    <div v-if="quickRules.length" class="mb-4 grid gap-3 md:grid-cols-2">
+      <div
+        v-for="item in quickRules"
+        :key="item.rule.id"
+        class="rounded-2xl border border-gray-200 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-800/40"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-xs font-bold text-gray-900 dark:text-white">{{ item.title }}</p>
+            <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ item.hint }}</p>
+          </div>
+          <span
+            class="shrink-0 rounded-md bg-white px-2 py-1 font-mono text-[11px] font-bold text-gray-700 ring-1 ring-gray-200 dark:bg-dark-700 dark:text-gray-200 dark:ring-dark-600"
+          >
+            {{ item.rule.operator }} {{ item.rule.threshold }}{{ item.unit }}
+          </span>
+        </div>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            v-for="preset in item.presets"
+            :key="preset"
+            type="button"
+            class="rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors"
+            :class="
+              Number(item.rule.threshold) === preset
+                ? 'bg-primary-600 text-white shadow-sm'
+                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-300 dark:ring-dark-600 dark:hover:bg-dark-600'
+            "
+            @click="item.rule.threshold = preset"
+          >
+            {{ preset }}{{ item.unit }}
+          </button>
+          <div class="flex items-center gap-1.5">
+            <input
+              v-model.number="item.rule.threshold"
+              type="number"
+              min="0"
+              step="0.1"
+              class="input w-24 text-sm"
+            />
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              :disabled="quickSavingId === item.rule.id"
+              @click="saveQuickThreshold(item.rule)"
+            >
+              {{ quickSavingId === item.rule.id ? t('common.saving') : t('common.save') }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 

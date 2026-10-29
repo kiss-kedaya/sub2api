@@ -387,7 +387,7 @@ const detailReturnTarget = ref<DetailReturnTarget>(null)
 const resumeListState = ref(false)
 
 const showSettingsDialog = ref(false)
-const showAlertRulesCard = ref(false)
+const showAlertRulesCard = ref(route.query.alertRules === '1')
 
 applyRouteQueryToState()
 

@@ -487,6 +487,13 @@ export default {
       alertRules: {
         title: 'Alert Rules',
         description: 'Create and manage threshold-based system alerts (email-only)',
+        quick: {
+          errorTitle: 'Error-rate threshold',
+          errorHint: 'Fires a P1 alert when the 5-minute error rate exceeds this value. Takes effect immediately.',
+          successTitle: 'Success-rate threshold',
+          successHint: 'Fires a P0 alert when the 5-minute success rate falls below this value. Takes effect immediately.',
+          saved: 'Threshold updated'
+        },
         loading: 'Loading...',
         empty: 'No alert rules',
         loadFailed: 'Failed to load alert rules',
