@@ -51,6 +51,26 @@ describe('AppSidebar collapsible groups', () => {
   })
 })
 
+describe('AppSidebar operations center group', () => {
+  it('renders tier headers inside a collapsible group', () => {
+    expect(componentSource).toContain('v-if="child.section"')
+    expect(componentSource).toContain('sidebar-child-section')
+  })
+
+  it('groups account, channel and diagnostics entries under one expandable parent', () => {
+    expect(componentSource).toContain("path: '/admin/ops-center'")
+    expect(componentSource).toContain("label: locale.value === 'zh' ? '运营中心' : 'Operations center'")
+    expect(componentSource).toContain("path: '#ops-tier-accounts'")
+    expect(componentSource).toContain("path: '#ops-tier-channels'")
+    expect(componentSource).toContain("path: '#ops-tier-diagnostics'")
+    expect(componentSource).toContain("path: '#ops-tier-platform'")
+  })
+
+  it('no longer shows the standalone ops entry next to the group', () => {
+    expect(componentSource).not.toContain("{ path: '/admin/ops', label: t('nav.ops')")
+  })
+})
+
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
     const sidebarHeaderBlockMatch = styleSource.match(/\.sidebar-header\s*\{[\s\S]*?\n {2}\}/)

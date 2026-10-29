@@ -19,6 +19,7 @@ import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadEr
  * Route definitions with lazy loading
  */
 const routes: RouteRecordRaw[] = [
+  {path:'/admin/ops-center',name:'AdminOpsCenter',component:()=>import('@/views/admin/OpsCenterView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'运营中心'}},
   {path:'/admin/security-penalties',name:'AdminSecurityPenalties',component:()=>import('@/views/admin/SecurityPenaltiesView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'分层安全限制'}},
   {path:'/security',name:'SecurityRecords',component:()=>import('@/views/user/SecurityRecordsView.vue'),meta:{requiresAuth:true,title:'安全记录'}},
   {path:'/admin/serverless',name:'AdminServerless',component:()=>import('@/views/admin/ServerlessView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'地区路由'}},
