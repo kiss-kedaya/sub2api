@@ -395,7 +395,6 @@ function sortedOffers(model: ModelComparison): ModelOffer[] {
 
 function formatMoney(value: number | null | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
-  if (value >= 100) return `$${value.toFixed(0)}`
   if (value >= 1) return `$${value.toFixed(2)}`
   if (value >= 0.01) return `$${value.toFixed(3)}`
   return `$${value.toFixed(4)}`
@@ -403,7 +402,7 @@ function formatMoney(value: number | null | undefined): string {
 
 function formatRequest(value: number | null | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
-  return `$${value.toFixed(value >= 0.01 ? 2 : 4)}`
+  return `$${value.toFixed(value >= 1 ? 2 : 4)}`
 }
 
 function pricePair(offer: ModelOffer): string {
