@@ -217,6 +217,137 @@ func deepSeekReplayHostedSearchHistory(input []gjson.Result) ([]json.RawMessage,
 	return out, changed, nil
 }
 
+const deepSeekMissingToolOutput = `{"error":"tool_output_missing","message":"The client did not provide an output for this tool call; treat it as interrupted and continue."}`
+
+// repairDeepSeekMissingToolOutputs fills in a synthetic output for every tool
+// call that has no output anywhere in a self-contained request. DeepSeek
+// rejects such histories with 400 "No tool output found for tool call", which
+// makes the whole conversation unusable after an interrupted client tool call.
+// The synthetic result keeps the call and its output adjacent and gives the
+// model an explicit interrupted result; no client item is dropped.
+func repairDeepSeekMissingToolOutputs(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body, false, nil
+	}
+	if gjson.GetBytes(body, "previous_response_id").String() != "" {
+		// A continuation may resolve the call output from stored history.
+		return body, false, nil
+	}
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body, false, nil
+	}
+	paired, changed := deepSeekPairMissingToolOutputs(input.Array())
+	if !changed {
+		return body, false, nil
+	}
+	raw, err := json.Marshal(paired)
+	if err != nil {
+		return body, false, err
+	}
+	next, err := sjson.SetRawBytes(body, "input", raw)
+	if err != nil {
+		return body, false, err
+	}
+	return next, true, nil
+}
+
+func deepSeekPairMissingToolOutputs(input []gjson.Result) ([]json.RawMessage, bool) {
+	answered := make(map[string]struct{}, len(input))
+	for _, item := range input {
+		if !isDeepSeekToolOutputType(item.Get("type").String()) {
+			continue
+		}
+		if callID := item.Get("call_id").String(); callID != "" {
+			answered[callID] = struct{}{}
+		}
+	}
+
+	out := make([]json.RawMessage, 0, len(input))
+	type pendingCall struct {
+		callID   string
+		callType string
+	}
+	pending := make([]pendingCall, 0, 4)
+	flush := func() bool {
+		if len(pending) == 0 {
+			return false
+		}
+		for _, call := range pending {
+			raw, err := json.Marshal(map[string]string{
+				"type":    deepSeekToolOutputType(call.callType),
+				"call_id": call.callID,
+				"output":  deepSeekMissingToolOutput,
+			})
+			if err != nil {
+				continue
+			}
+			out = append(out, raw)
+		}
+		pending = pending[:0]
+		return true
+	}
+
+	changed := false
+	for _, item := range input {
+		itemType := item.Get("type").String()
+		if isDeepSeekToolCallType(itemType) {
+			out = append(out, json.RawMessage(item.Raw))
+			callID := item.Get("call_id").String()
+			if callID != "" {
+				if _, ok := answered[callID]; !ok {
+					answered[callID] = struct{}{}
+					pending = append(pending, pendingCall{callID: callID, callType: itemType})
+				}
+			}
+			continue
+		}
+		if isDeepSeekToolOutputType(itemType) {
+			out = append(out, json.RawMessage(item.Raw))
+			continue
+		}
+		if flush() {
+			changed = true
+		}
+		out = append(out, json.RawMessage(item.Raw))
+	}
+	if flush() {
+		changed = true
+	}
+	return out, changed
+}
+
+func isDeepSeekToolCallType(itemType string) bool {
+	switch itemType {
+	case "function_call", "custom_tool_call", "local_shell_call", "tool_search_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDeepSeekToolOutputType(itemType string) bool {
+	switch itemType {
+	case "function_call_output", "custom_tool_call_output", "local_shell_call_output", "tool_search_output":
+		return true
+	default:
+		return false
+	}
+}
+
+func deepSeekToolOutputType(callType string) string {
+	switch callType {
+	case "custom_tool_call":
+		return "custom_tool_call_output"
+	case "local_shell_call":
+		return "local_shell_call_output"
+	case "tool_search_call":
+		return "tool_search_output"
+	default:
+		return "function_call_output"
+	}
+}
+
 func deepSeekHostedSearchDescription(tool gjson.Result) (string, error) {
 	var unsupported string
 	tool.ForEach(func(key, value gjson.Result) bool {

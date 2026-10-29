@@ -255,3 +255,80 @@ func TestDeepSeekHostedSearchNextRequestRejectsDuplicateOwnedResults(t *testing.
 	_, err := deepSeekHostedSearchNextRequestWithFetch([]byte(`{"input":[{"type":"function_call_output","call_id":"same","output":"previous result"}]}`), []byte(`{"output":[`+call+`]}`), map[string]string{"same": "duplicate result"}, true)
 	require.ErrorContains(t, err, "completed owned search call")
 }
+
+func TestRepairDeepSeekMissingToolOutputsPairsMissingOutput(t *testing.T) {
+	body := []byte(`{"tools":[],"input":[
+		{"type":"message","role":"user","content":"run"},
+		{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{}"},
+		{"type":"function_call","call_id":"call_2","name":"exec_command","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_1","output":"ok"},
+		{"type":"message","role":"user","content":"continue"}
+	]}`)
+	next, changed, err := repairDeepSeekMissingToolOutputs(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	items := gjson.GetBytes(next, "input").Array()
+	require.Len(t, items, 6)
+	require.Equal(t, "function_call", items[1].Get("type").String())
+	require.Equal(t, "call_1", items[1].Get("call_id").String())
+	require.Equal(t, "function_call", items[2].Get("type").String())
+	require.Equal(t, "call_2", items[2].Get("call_id").String())
+	require.Equal(t, "function_call_output", items[3].Get("type").String())
+	require.Equal(t, "call_1", items[3].Get("call_id").String())
+	require.Equal(t, "function_call_output", items[4].Get("type").String())
+	require.Equal(t, "call_2", items[4].Get("call_id").String())
+	require.Contains(t, items[4].Get("output").String(), "tool_output_missing")
+	require.Equal(t, "message", items[5].Get("type").String())
+	require.Equal(t, "continue", items[5].Get("content").String())
+}
+
+func TestRepairDeepSeekMissingToolOutputsKeepsCompleteHistory(t *testing.T) {
+	body := []byte(`{"tools":[],"input":[
+		{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_1","output":"ok"},
+		{"type":"message","role":"user","content":"continue"}
+	]}`)
+	next, changed, err := repairDeepSeekMissingToolOutputs(body)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Len(t, gjson.GetBytes(next, "input").Array(), 3)
+}
+
+func TestRepairDeepSeekMissingToolOutputsSkipsContinuationAndMapsCustomTool(t *testing.T) {
+	continuation := []byte(`{"previous_response_id":"resp_1","input":[{"type":"function_call","call_id":"call_1","name":"exec_command"}]}`)
+	next, changed, err := repairDeepSeekMissingToolOutputs(continuation)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(continuation), string(next))
+
+	custom := []byte(`{"input":[{"type":"custom_tool_call","call_id":"ctc_1","name":"apply_patch"}]}`)
+	next, changed, err = repairDeepSeekMissingToolOutputs(custom)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "custom_tool_call_output", gjson.GetBytes(next, "input.1.type").String())
+	require.Equal(t, "ctc_1", gjson.GetBytes(next, "input.1.call_id").String())
+}
+
+func TestRepairThenPrepareDeepSeekHostedSearchPairsMissingOutputBeforeSearchReplay(t *testing.T) {
+	body := []byte(`{"tools":[],"input":[
+		{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{}"},
+		{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"open_page","url":"https://example.com/page"}}
+	]}`)
+	repaired, changed, err := repairDeepSeekMissingToolOutputs(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	next, changed, err := prepareDeepSeekHostedSearchRequest(repaired)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	items := gjson.GetBytes(next, "input").Array()
+	require.Len(t, items, 3)
+	require.Equal(t, "function_call", items[0].Get("type").String())
+	require.Equal(t, "function_call_output", items[1].Get("type").String())
+	require.Equal(t, "call_1", items[1].Get("call_id").String())
+	require.Contains(t, items[1].Get("output").String(), "tool_output_missing")
+	require.Equal(t, "message", items[2].Get("type").String())
+	require.Contains(t, items[2].Get("content.0.text").String(), "https://example.com/page")
+}
