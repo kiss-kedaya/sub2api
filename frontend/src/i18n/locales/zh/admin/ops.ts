@@ -258,6 +258,8 @@ export default {
         accountId: '账号 ID',
         status: '状态码',
         message: '响应内容',
+        requestId: '请求ID',
+        upstreamRequestId: '上游ID',
         ip: 'IP',
         latency: '请求时长',
         action: '操作',

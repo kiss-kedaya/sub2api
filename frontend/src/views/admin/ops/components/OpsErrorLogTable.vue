@@ -131,6 +131,24 @@
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
+        <template #cell-request_id="{ row }">
+          <span
+            v-if="row.request_id"
+            class="block max-w-[240px] truncate font-mono text-xs text-gray-600 dark:text-gray-400"
+            :title="row.request_id"
+          >{{ row.request_id }}</span>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
+        <template #cell-upstream_request_id="{ row }">
+          <span
+            v-if="row.upstream_request_id"
+            class="block max-w-[240px] truncate font-mono text-xs text-gray-600 dark:text-gray-400"
+            :title="row.upstream_request_id"
+          >{{ row.upstream_request_id }}</span>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
         <template #cell-user_agent="{ row }">
           <span
             v-if="row.user_agent"
@@ -208,6 +226,8 @@ const allColumns = computed<Column[]>(() => [
   { key: 'category', label: t('usage.errors.category') },
   { key: 'status', label: t('admin.ops.errorLog.status'), sortable: true },
   { key: 'message', label: t('admin.ops.errorLog.message') },
+  { key: 'request_id', label: t('admin.ops.errorLog.requestId') },
+  { key: 'upstream_request_id', label: t('admin.ops.errorLog.upstreamRequestId') },
   { key: 'created_at', label: t('admin.ops.errorLog.time'), sortable: true },
   { key: 'user_agent', label: t('usage.userAgent') },
   { key: 'client_ip', label: t('admin.ops.errorLog.ip') },
