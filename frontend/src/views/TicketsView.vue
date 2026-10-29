@@ -10,6 +10,7 @@
           <span v-if="syncFailed" class="tickets-sync tickets-sync-error" role="status"><span></span>{{ t('tickets.syncFailed') }}</span>
           <button class="ticket-icon-button" type="button" :disabled="refreshing" :title="t('tickets.refresh')" :aria-label="t('tickets.refresh')" @click="refresh(true)"><Icon name="refresh" size="sm" :class="{ 'animate-spin': refreshing }" /></button>
           <button v-if="!admin" class="ticket-button ticket-button-primary" type="button" :disabled="stats.can_create === false || loading" @click="newTicketOpen = true"><Icon name="plus" size="sm" />{{ t('tickets.newTicket') }}</button>
+          <button v-if="admin" class="ticket-button ticket-button-primary" type="button" @click="openProactive"><Icon name="plus" size="sm" />{{ t('tickets.proactiveNew') }}</button>
         </div>
       </header>
 
@@ -30,7 +31,7 @@
           <div class="tickets-list-tools">
             <label class="tickets-search"><Icon name="search" size="sm" /><input v-model="filters.search" type="search" maxlength="160" :aria-label="t('tickets.search')" :placeholder="t(admin ? 'tickets.adminSearch' : 'tickets.search')" /></label>
             <div class="tickets-list-filters">
-              <select v-model="filters.category" class="ticket-select" :aria-label="t('tickets.category')"><option value="">{{ t('tickets.allCategories') }}</option><option v-for="category in ticketCategories" :key="category" :value="category">{{ t(`tickets.categories.${category}`) }}</option></select>
+              <Select v-model="filters.category" :options="categoryOptions" :aria-label="t('tickets.category')" size="sm" class="min-w-[6.5rem]" />
             </div>
           </div>
 
@@ -103,12 +104,31 @@
       <form id="new-ticket-form" class="ticket-create-form" @submit.prevent="submitTicket">
         <div class="ticket-create-note"><Icon name="clock" size="sm" />{{ t('tickets.dailyLimit') }}</div>
         <label for="ticket-subject">{{ t('tickets.subject') }}<input id="ticket-subject" v-model="newTicket.subject" class="input" maxlength="160" required :placeholder="t('tickets.subjectPlaceholder')" :disabled="mutating" /></label>
-        <label for="ticket-category">{{ t('tickets.category') }}<select id="ticket-category" v-model="newTicket.category" class="input" :disabled="mutating"><option v-for="category in ticketCategories" :key="category" :value="category">{{ t(`tickets.categories.${category}`) }}</option></select></label>
+        <label for="ticket-category">{{ t('tickets.category') }}<Select id="ticket-category" v-model="newTicket.category" :options="newTicketCategoryOptions" :disabled="mutating" /></label>
         <label for="ticket-contact">{{ t('tickets.contact') }}<input id="ticket-contact" v-model="newTicket.contact" class="input" maxlength="200" :placeholder="t('tickets.contactPlaceholder')" :disabled="mutating" autocomplete="off" /></label>
         <label for="ticket-content">{{ t('tickets.content') }}<textarea id="ticket-content" v-model="newTicket.content" class="input" rows="6" maxlength="10000" required :placeholder="t('tickets.contentPlaceholder')" :disabled="mutating"></textarea></label>
         <span class="ticket-character-count">{{ newTicket.content.length }} / 10000</span>
       </form>
       <template #footer><button class="btn btn-secondary" type="button" :disabled="mutating" @click="newTicketOpen = false">{{ t('tickets.cancel') }}</button><button class="btn btn-primary" type="submit" form="new-ticket-form" :disabled="mutating || !newTicket.subject.trim() || !newTicket.content.trim() || stats.can_create === false"><Icon :name="mutating ? 'refresh' : 'plus'" size="sm" :class="{ 'animate-spin': mutating }" />{{ t('tickets.create') }}</button></template>
+    </BaseDialog>
+    <BaseDialog :show="proactiveOpen" :title="t('tickets.proactiveTitle')" width="normal" :close-on-escape="!proactiveSending" :show-close-button="!proactiveSending" @close="closeProactive">
+      <form id="proactive-ticket-form" class="ticket-create-form" @submit.prevent="submitProactiveTicket">
+        <div class="ticket-create-note"><Icon name="infoCircle" size="sm" />{{ t('tickets.proactiveHint') }}</div>
+        <label for="proactive-user">{{ t('tickets.proactiveUser') }}<input id="proactive-user" v-model="proactiveUserSearch" class="input" maxlength="120" :placeholder="t('tickets.proactiveUserPlaceholder')" :disabled="proactiveSending" autocomplete="off" @input="onProactiveSearchInput" /></label>
+        <div v-if="proactiveSearching" class="px-3 py-2 text-sm text-gray-500">{{ t('tickets.proactiveSearching') }}</div>
+        <div v-else-if="proactiveUsers.length" class="max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+          <button v-for="candidate in proactiveUsers" :key="candidate.id" type="button" class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800" @click="pickProactiveUser(candidate)">
+            <span class="min-w-0"><strong class="block truncate">{{ candidate.username || '#' + candidate.id }}</strong><span class="block truncate text-xs text-gray-500">{{ candidate.email }}</span></span>
+            <span class="shrink-0 text-xs text-gray-400">#{{ candidate.id }}</span>
+          </button>
+        </div>
+        <p v-else-if="proactiveSearched && proactiveUserSearch.trim()" class="px-3 text-sm text-gray-500">{{ t('tickets.proactiveNoUsers') }}</p>
+        <p v-if="proactiveUser" class="text-sm text-green-600 dark:text-green-400">{{ t('tickets.proactiveSelected', { user: proactiveUser.username || '#' + proactiveUser.id, email: proactiveUser.email }) }}</p>
+        <label for="proactive-subject">{{ t('tickets.proactiveSubject') }}<input id="proactive-subject" v-model="proactiveSubject" class="input" maxlength="160" :placeholder="t('tickets.proactiveSubjectPlaceholder')" :disabled="proactiveSending" /></label>
+        <label for="proactive-content">{{ t('tickets.proactiveContent') }}<textarea id="proactive-content" v-model="proactiveContent" class="input" rows="6" maxlength="10000" required :placeholder="t('tickets.proactiveContentPlaceholder')" :disabled="proactiveSending"></textarea></label>
+        <span class="ticket-character-count">{{ proactiveContent.length }} / 10000</span>
+      </form>
+      <template #footer><button class="btn btn-secondary" type="button" :disabled="proactiveSending" @click="closeProactive">{{ t('tickets.cancel') }}</button><button class="btn btn-primary" type="submit" form="proactive-ticket-form" :disabled="proactiveSending || !proactiveUser || !proactiveContent.trim()"><Icon :name="proactiveSending ? 'refresh' : 'arrowUp'" size="sm" :class="{ 'animate-spin': proactiveSending }" />{{ t('tickets.proactiveSend') }}</button></template>
     </BaseDialog>
     <ConfirmDialog :show="closeDialogOpen" :title="t('tickets.closeTitle')" :message="t('tickets.closeMessage')" :confirm-text="t('tickets.close')" @cancel="closeDialogOpen = false" @confirm="closeTicket" />
   </AppLayout>
@@ -122,10 +142,13 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import Select from '@/components/common/Select.vue'
 import TicketStatusBadge from '@/components/tickets/TicketStatusBadge.vue'
 import TicketTimeline from '@/components/tickets/TicketTimeline.vue'
 import { useTicketWorkspace } from '@/composables/useTicketWorkspace'
-import { newClientID, ticketCategories, type CreateTicket } from '@/api/tickets'
+import { newClientID, ticketsAPI, ticketCategories, type CreateTicket } from '@/api/tickets'
+import { usersAPI } from '@/api/admin/users'
+import type { AdminUser } from '@/types'
 import { formatCurrency, formatTokensK } from '@/utils/format'
 import { isComposerSendKey } from '@/utils/ticketComposer'
 import '@/styles/tickets.css'
@@ -137,7 +160,25 @@ const { filters, items, pages, stats, detail, selectedID, loading, detailLoading
   listError, detailError, syncFailed, revision, draft, refresh, older, markRead, send, update, create, resetFilters, select, back, changePage } = useTicketWorkspace(toRef(props, 'admin'))
 const statusTabs = ['', 'active', 'closed'] as const
 const hasFilters = computed(() => !!(filters.search || filters.status || filters.category))
+const categoryOptions = computed(() => [
+  { value: '', label: t('tickets.allCategories') },
+  ...ticketCategories.map((category) => ({ value: category, label: t(`tickets.categories.${category}`) }))
+])
+const newTicketCategoryOptions = computed(() =>
+  ticketCategories.map((category) => ({ value: category, label: t(`tickets.categories.${category}`) }))
+)
 const newTicketOpen = ref(false)
+const ticketAPI = ticketsAPI(props.admin)
+const proactiveOpen = ref(false)
+const proactiveUserSearch = ref('')
+const proactiveUsers = ref<AdminUser[]>([])
+const proactiveSearched = ref(false)
+const proactiveSearching = ref(false)
+const proactiveUser = ref<AdminUser | null>(null)
+const proactiveSubject = ref('')
+const proactiveContent = ref('')
+const proactiveSending = ref(false)
+let proactiveSearchTimer: number | undefined
 const closeDialogOpen = ref(false)
 const replyInput = ref<HTMLTextAreaElement | null>(null)
 const timeline = ref<InstanceType<typeof TicketTimeline> | null>(null)
@@ -189,6 +230,74 @@ function handleComposeKey(event: KeyboardEvent) {
   event.preventDefault()
   if (mutating.value || !draft.value.trim()) return
   void sendReply()
+}
+function openProactive() {
+  proactiveOpen.value = true
+  proactiveUsers.value = []
+  proactiveSearched.value = false
+}
+function closeProactive() {
+  if (!proactiveSending.value) proactiveOpen.value = false
+}
+function onProactiveSearchInput() {
+  proactiveUser.value = null
+  window.clearTimeout(proactiveSearchTimer)
+  proactiveSearchTimer = window.setTimeout(() => void searchProactiveUsers(), 300)
+}
+async function searchProactiveUsers() {
+  const query = proactiveUserSearch.value.trim()
+  proactiveSearched.value = false
+  if (!query) {
+    proactiveUsers.value = []
+    return
+  }
+  proactiveSearching.value = true
+  try {
+    const result = await usersAPI.list(1, 10, { search: query })
+    proactiveUsers.value = result.items || []
+    proactiveSearched.value = true
+  } catch {
+    proactiveUsers.value = []
+  } finally {
+    proactiveSearching.value = false
+  }
+}
+function pickProactiveUser(user: AdminUser) {
+  proactiveUser.value = user
+  proactiveUserSearch.value = `${user.username || '#' + user.id}${user.email ? ' · ' + user.email : ''}`
+  proactiveUsers.value = []
+  proactiveSearched.value = false
+}
+async function submitProactiveTicket() {
+  if (!proactiveUser.value) {
+    app.showError(t('tickets.proactiveSelectUser'))
+    return
+  }
+  if (!proactiveContent.value.trim()) {
+    app.showError(t('tickets.proactiveContentRequired'))
+    return
+  }
+  proactiveSending.value = true
+  try {
+    const created = await ticketAPI.proactiveCreate({
+      user_id: proactiveUser.value.id,
+      subject: proactiveSubject.value.trim(),
+      content: proactiveContent.value.trim()
+    })
+    proactiveOpen.value = false
+    proactiveUser.value = null
+    proactiveUserSearch.value = ''
+    proactiveUsers.value = []
+    proactiveSubject.value = ''
+    proactiveContent.value = ''
+    await refresh(true)
+    if (created?.ticket?.id) select(created.ticket.id)
+    app.showSuccess(t('tickets.proactiveCreated'))
+  } catch {
+    app.showError(t('tickets.failed'))
+  } finally {
+    proactiveSending.value = false
+  }
 }
 async function closeTicket() {
   closeDialogOpen.value = false

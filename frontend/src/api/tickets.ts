@@ -106,6 +106,11 @@ export interface TicketUpdate {
   priority?: TicketPriority
   assigned_to?: 'me' | 'unassigned'
 }
+export interface ProactiveTicketInput {
+  user_id: number
+  subject?: string
+  content: string
+}
 
 export function ticketsAPI(admin: boolean) {
   const base = admin ? '/admin/tickets' : '/tickets'
@@ -121,6 +126,9 @@ export function ticketsAPI(admin: boolean) {
     },
     async create(input: CreateTicket) {
       return (await apiClient.post<TicketDetail>('/tickets', input)).data
+    },
+    async proactiveCreate(input: ProactiveTicketInput) {
+      return (await apiClient.post<TicketDetail>('/admin/tickets', input)).data
     },
     async reply(id: number, input: TicketReply) {
       return (await apiClient.post<TicketDetail>(`${base}/${id}/replies`, input)).data

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"reflect"
 	"strconv"
 	"strings"
@@ -169,6 +170,7 @@ type UpdateSettingsRequest struct {
 	TablePageSizeOptions        []int                 `json:"table_page_size_options"`
 	CustomMenuItems             *[]dto.CustomMenuItem `json:"custom_menu_items"`
 	CustomEndpoints             *[]dto.CustomEndpoint `json:"custom_endpoints"`
+	TicketAdminEmail            string                `json:"ticket_admin_email"`
 
 	// 默认配置
 	DefaultConcurrency                        int                               `json:"default_concurrency"`
@@ -645,6 +647,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	req.SMTPPassword = strings.TrimSpace(req.SMTPPassword)
 	req.SMTPFrom = strings.TrimSpace(req.SMTPFrom)
 	req.SMTPFromName = strings.TrimSpace(req.SMTPFromName)
+	req.TicketAdminEmail = strings.TrimSpace(req.TicketAdminEmail)
+	if req.TicketAdminEmail != "" {
+		address, err := mail.ParseAddress(req.TicketAdminEmail)
+		if err != nil || !strings.EqualFold(address.Address, req.TicketAdminEmail) {
+			response.BadRequest(c, "ticket_admin_email must be a plain email address")
+			return
+		}
+	}
 	req.TencentCaptchaAppID = strings.TrimSpace(req.TencentCaptchaAppID)
 	req.TencentCaptchaAppSecretKey = strings.TrimSpace(req.TencentCaptchaAppSecretKey)
 	req.TencentCaptchaCloudSecretID = strings.TrimSpace(req.TencentCaptchaCloudSecretID)
@@ -1663,6 +1673,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		TablePageSizeOptions:                   req.TablePageSizeOptions,
 		CustomMenuItems:                        customMenuJSON,
 		CustomEndpoints:                        customEndpointsJSON,
+		TicketAdminEmail:                       req.TicketAdminEmail,
 		DefaultConcurrency:                     req.DefaultConcurrency,
 		DefaultBalance:                         req.DefaultBalance,
 		AffiliateRebateRate:                    affiliateRebateRate,

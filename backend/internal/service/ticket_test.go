@@ -23,16 +23,23 @@ func (s *ticketUsersStub) GetByID(context.Context, int64) (*User, error) { retur
 
 type ticketRepoStub struct {
 	TicketRepository
-	ticket   Ticket
-	messages []TicketMessage
-	created  *CreateTicketInput
-	hash     string
-	listed   bool
-	mutated  bool
+	ticket           Ticket
+	messages         []TicketMessage
+	created          *CreateTicketInput
+	hash             string
+	listed           bool
+	mutated          bool
+	proactiveUserID  int64
+	proactiveSubject string
+	proactiveContent string
 }
 
 func (r *ticketRepoStub) Create(_ context.Context, _ TicketActor, in CreateTicketInput, hash string) (int64, error) {
 	r.created, r.hash = &in, hash
+	return 10, nil
+}
+func (r *ticketRepoStub) CreateForUser(_ context.Context, _ TicketActor, userID int64, subject, content string) (int64, error) {
+	r.proactiveUserID, r.proactiveSubject, r.proactiveContent = userID, subject, content
 	return 10, nil
 }
 func (r *ticketRepoStub) Detail(context.Context, TicketActor, int64, int64) (*TicketDetail, error) {
@@ -61,6 +68,19 @@ func supportTicketTestService(admin bool) (*TicketService, *ticketRepoStub, Tick
 	repo := &ticketRepoStub{ticket: Ticket{ID: 10, UserID: 7, Status: "open", Priority: "normal"}}
 	s := NewTicketService(repo, &ticketUsersStub{user: &User{ID: 7, Status: StatusActive, Role: role}})
 	return s, repo, TicketActor{UserID: 7, Admin: admin}
+}
+
+func TestCreateForUserRequiresAdminAndDefaultsSubject(t *testing.T) {
+	service, repo, actor := supportTicketTestService(true)
+	detail, err := service.CreateForUser(context.Background(), actor, AdminCreateTicketInput{UserID: 7, Content: "我们检测到你的请求异常，请联系客服"})
+	require.NoError(t, err)
+	require.Equal(t, int64(10), detail.Ticket.ID)
+	require.Equal(t, int64(7), repo.proactiveUserID)
+	require.Equal(t, "客服消息", repo.proactiveSubject)
+	require.Equal(t, "我们检测到你的请求异常，请联系客服", repo.proactiveContent)
+
+	_, err = service.CreateForUser(context.Background(), TicketActor{UserID: 7}, AdminCreateTicketInput{UserID: 7, Content: "hello"})
+	require.Error(t, err)
 }
 
 func TestTicketCreateValidation(t *testing.T) {

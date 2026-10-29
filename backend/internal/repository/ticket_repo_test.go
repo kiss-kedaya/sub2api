@@ -247,6 +247,7 @@ func TestTicketRepositoryCreateAtomicAndUniqueConstraint(t *testing.T) {
 						message.WillReturnError(errors.New("disk full"))
 					} else {
 						message.WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(20, ticketSQLTime))
+						mock.ExpectExec("INSERT INTO settings").WithArgs("ticket_reply_email:20", `{"ticket_id":10,"message_id":20,"attempts":0}`).WillReturnResult(sqlmock.NewResult(0, 1))
 					}
 				}
 			}

@@ -168,6 +168,19 @@ func (h *TicketHandler) Create(c *gin.Context) {
 	ticketDetailResponse(c, detail, err, false)
 }
 
+func (h *TicketHandler) AdminCreate(c *gin.Context) {
+	actor, ok := ticketActor(c, true)
+	if !ok {
+		return
+	}
+	var in service.AdminCreateTicketInput
+	if !ticketBody(c, &in) {
+		return
+	}
+	detail, err := h.tickets.CreateForUser(c.Request.Context(), actor, in)
+	ticketDetailResponse(c, detail, err, true)
+}
+
 func (h *TicketHandler) reply(c *gin.Context, admin bool) {
 	actor, ok := ticketActor(c, admin)
 	if !ok {

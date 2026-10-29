@@ -8672,6 +8672,24 @@
                     :placeholder="t('admin.settings.smtp.fromNamePlaceholder')"
                   />
                 </div>
+                <div class="sm:col-span-2">
+                  <label
+                    class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.smtp.ticketAdminEmail") }}
+                  </label>
+                  <input
+                    v-model="form.ticket_admin_email"
+                    type="email"
+                    class="input"
+                    :placeholder="
+                      t('admin.settings.smtp.ticketAdminEmailPlaceholder')
+                    "
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.smtp.ticketAdminEmailHint") }}
+                  </p>
+                </div>
               </div>
 
               <!-- Use TLS Toggle -->
@@ -9855,6 +9873,7 @@ const form = reactive<SettingsForm>({
     description: string;
   }>,
   frontend_url: "",
+  ticket_admin_email: "",
   smtp_host: "",
   smtp_port: 587,
   smtp_username: "",
@@ -11499,6 +11518,7 @@ async function saveSettings() {
       table_page_size_options: form.table_page_size_options,
       custom_menu_items: form.custom_menu_items,
       custom_endpoints: form.custom_endpoints,
+      ticket_admin_email: form.ticket_admin_email,
       frontend_url: form.frontend_url,
       smtp_host: form.smtp_host,
       smtp_port: form.smtp_port,

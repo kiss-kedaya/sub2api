@@ -124,6 +124,12 @@ type CreateTicketInput struct {
 	ClientID string `json:"client_id"`
 }
 
+type AdminCreateTicketInput struct {
+	UserID  int64  `json:"user_id"`
+	Subject string `json:"subject"`
+	Content string `json:"content"`
+}
+
 type ReplyTicketInput struct {
 	Content  string  `json:"content"`
 	ClientID string  `json:"client_id"`
@@ -150,6 +156,7 @@ type TicketRepository interface {
 	EmailConversation(context.Context, int64, int64) (*TicketDetail, error)
 	ProcessPendingEmail(context.Context, func(context.Context, int64, int64) error) (bool, error)
 	Create(context.Context, TicketActor, CreateTicketInput, string) (int64, error)
+	CreateForUser(context.Context, TicketActor, int64, string, string) (int64, error)
 	Mutate(context.Context, TicketActor, int64, string, string, func(*Ticket) (*TicketChange, error)) error
 	MarkRead(context.Context, TicketActor, int64, int64) error
 }
@@ -272,6 +279,40 @@ func (s *TicketService) Create(ctx context.Context, actor TicketActor, in Create
 	if err != nil {
 		return nil, err
 	}
+	s.notifyTicketReply()
+	return s.repo.Detail(ctx, actor, id, 0)
+}
+
+// CreateForUser lets an admin start a conversation with a user without waiting
+// for the user to open a ticket first. When the user already has a ticket from
+// today, the message is appended to that ticket so the daily uniqueness rule is
+// preserved and the conversation stays in one place.
+func (s *TicketService) CreateForUser(ctx context.Context, actor TicketActor, in AdminCreateTicketInput) (*TicketDetail, error) {
+	if err := s.authorize(ctx, actor); err != nil {
+		return nil, err
+	}
+	if !actor.Admin {
+		return nil, infraerrors.Forbidden("FORBIDDEN", "admin access required")
+	}
+	subject := strings.TrimSpace(in.Subject)
+	if subject == "" {
+		subject = "客服消息"
+	}
+	if in.UserID <= 0 || !ticketText(subject, 160) || !ticketText(in.Content, 10000) {
+		return nil, ticketInvalid("user, subject or content is invalid")
+	}
+	target, err := s.users.GetByID(ctx, in.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if target == nil || target.DeletedAt != nil || !target.IsActive() {
+		return nil, ticketInvalid("target user is not active")
+	}
+	id, err := s.repo.CreateForUser(ctx, actor, target.ID, subject, in.Content)
+	if err != nil {
+		return nil, err
+	}
+	s.notifyTicketReply()
 	return s.repo.Detail(ctx, actor, id, 0)
 }
 
@@ -322,7 +363,7 @@ func (s *TicketService) Reply(ctx context.Context, actor TicketActor, id int64, 
 	if err != nil {
 		return nil, err
 	}
-	if actor.Admin && committedChange != nil {
+	if committedChange != nil {
 		for _, message := range committedChange.Messages {
 			if message.Kind == "reply" && message.ID > 0 {
 				s.notifyTicketReply()

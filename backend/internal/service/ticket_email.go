@@ -48,9 +48,9 @@ func (s *TicketService) runTicketEmailWorker(stop <-chan struct{}) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			processed, err := s.repo.ProcessPendingEmail(ctx, func(sendCtx context.Context, ticketID, messageID int64) error {
-				err := s.sendTicketReplyEmail(sendCtx, ticketID, messageID)
+				err := s.sendTicketEmail(sendCtx, ticketID, messageID)
 				if err != nil {
-					slog.Warn("ticket reply email deferred for retry", "ticket_id", ticketID, "message_id", messageID, "error_type", fmt.Sprintf("%T", err))
+					slog.Warn("ticket email deferred for retry", "ticket_id", ticketID, "message_id", messageID, "error_type", fmt.Sprintf("%T", err))
 				}
 				return err
 			})
@@ -71,7 +71,9 @@ func (s *TicketService) runTicketEmailWorker(stop <-chan struct{}) {
 	}
 }
 
-func (s *TicketService) sendTicketReplyEmail(ctx context.Context, ticketID, messageID int64) error {
+// sendTicketEmail routes one queued ticket message to the right audience:
+// admin replies notify the ticket owner, user messages notify the support inbox.
+func (s *TicketService) sendTicketEmail(ctx context.Context, ticketID, messageID int64) error {
 	detail, err := s.repo.EmailConversation(ctx, ticketID, messageID)
 	if err != nil {
 		return err
@@ -79,6 +81,24 @@ func (s *TicketService) sendTicketReplyEmail(ctx context.Context, ticketID, mess
 	if detail == nil || detail.Ticket == nil || detail.Ticket.ID != ticketID {
 		return ErrTicketNotFound
 	}
+	var latest *TicketMessage
+	for i := range detail.Messages {
+		if detail.Messages[i].ID == messageID {
+			latest = &detail.Messages[i]
+			break
+		}
+	}
+	if latest == nil || latest.Kind != "reply" {
+		return ErrTicketNotFound
+	}
+	if latest.AuthorRole == "admin" {
+		return s.sendTicketUserReplyEmail(ctx, detail, messageID)
+	}
+	return s.sendTicketAdminNotifyEmail(ctx, detail, messageID)
+}
+
+func (s *TicketService) sendTicketUserReplyEmail(ctx context.Context, detail *TicketDetail, messageID int64) error {
+	ticketID := detail.Ticket.ID
 	recipient, err := s.users.GetByID(ctx, detail.Ticket.UserID)
 	if err != nil {
 		return err
@@ -111,7 +131,88 @@ func (s *TicketService) sendTicketReplyEmail(ctx context.Context, ticketID, mess
 	return err
 }
 
+// sendTicketAdminNotifyEmail notifies the configured support inbox (or the
+// first admin account as a fallback) about a new ticket or a user reply.
+func (s *TicketService) sendTicketAdminNotifyEmail(ctx context.Context, detail *TicketDetail, messageID int64) error {
+	if s.notificationEmails == nil || s.notificationEmails.settingRepo == nil {
+		return fmt.Errorf("notification email service is not configured")
+	}
+	ticketID := detail.Ticket.ID
+	recipient, err := s.ticketAdminRecipient(ctx)
+	if err != nil {
+		return err
+	}
+	requester, err := s.users.GetByID(ctx, detail.Ticket.UserID)
+	if err != nil {
+		return err
+	}
+	if requester == nil || requester.DeletedAt != nil || requester.ID != detail.Ticket.UserID {
+		return ErrTicketNotFound
+	}
+	locale := notificationEmailLocaleChinese
+	link := ticketAdminEmailURL(ctx, s.notificationEmails.settingRepo, ticketID)
+	display := "table"
+	if link == "" {
+		display = "none"
+	}
+	requesterName := strings.TrimSpace(requester.Username)
+	if requesterName == "" {
+		requesterName = "#" + strconv.FormatInt(requester.ID, 10)
+	}
+	err = s.notificationEmails.Send(ctx, NotificationEmailSendInput{
+		Event: NotificationEmailEventTicketAdminNotify, Locale: locale,
+		RecipientEmail: recipient.Email, RecipientName: recipient.Username, UserID: recipient.ID,
+		SourceType: "support_ticket_admin_message", SourceID: strconv.FormatInt(messageID, 10),
+		Variables: map[string]string{
+			"ticket_id": strconv.FormatInt(ticketID, 10), "ticket_subject": detail.Ticket.Subject,
+			"ticket_url": link, "ticket_link_display": display,
+			"requester_name": requesterName, "requester_email": requester.Email,
+		},
+		RawHTMLVariables: map[string]string{"conversation_html": ticketAdminNotifyConversation(detail.Messages, messageID, true)},
+	})
+	var receiptErr notificationEmailReceiptError
+	if errors.As(err, &receiptErr) {
+		slog.Warn("ticket admin email delivered without receipt; completing outbox job", "ticket_id", ticketID, "message_id", messageID)
+		return nil
+	}
+	return err
+}
+
+func (s *TicketService) ticketAdminRecipient(ctx context.Context) (*User, error) {
+	if s.notificationEmails != nil && s.notificationEmails.settingRepo != nil {
+		raw, err := s.notificationEmails.settingRepo.GetValue(ctx, SettingKeyTicketAdminEmail)
+		if err != nil && !errors.Is(err, ErrSettingNotFound) {
+			return nil, err
+		}
+		if address := strings.TrimSpace(raw); address != "" {
+			if _, err := parseSMTPAddress(address, "recipient"); err != nil {
+				return nil, fmt.Errorf("ticket admin email is invalid")
+			}
+			return &User{ID: 0, Email: address, Username: "Support"}, nil
+		}
+	}
+	admin, err := s.users.GetFirstAdmin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if admin == nil || admin.DeletedAt != nil || !admin.IsAdmin() {
+		return nil, fmt.Errorf("no admin recipient for ticket notification")
+	}
+	if _, err := parseSMTPAddress(admin.Email, "recipient"); err != nil {
+		return nil, fmt.Errorf("ticket admin has no valid email address")
+	}
+	return admin, nil
+}
+
 func ticketEmailURL(ctx context.Context, settings SettingRepository, ticketID int64) string {
+	return ticketEmailLink(ctx, settings, "/tickets/"+strconv.FormatInt(ticketID, 10))
+}
+
+func ticketAdminEmailURL(ctx context.Context, settings SettingRepository, ticketID int64) string {
+	return ticketEmailLink(ctx, settings, "/admin/tickets/"+strconv.FormatInt(ticketID, 10))
+}
+
+func ticketEmailLink(ctx context.Context, settings SettingRepository, path string) string {
 	if settings == nil {
 		return ""
 	}
@@ -124,7 +225,7 @@ func ticketEmailURL(ctx context.Context, settings SettingRepository, ticketID in
 		if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 			continue
 		}
-		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/tickets/" + strconv.FormatInt(ticketID, 10)
+		parsed.Path = strings.TrimRight(parsed.Path, "/") + path
 		parsed.RawPath, parsed.RawQuery, parsed.Fragment = "", "", ""
 		return parsed.String()
 	}
@@ -132,15 +233,29 @@ func ticketEmailURL(ctx context.Context, settings SettingRepository, ticketID in
 }
 
 func ticketEmailConversation(messages []TicketMessage, latestID int64, chinese bool) string {
+	return ticketEmailConversationAs(messages, latestID, chinese, false)
+}
+
+func ticketAdminNotifyConversation(messages []TicketMessage, latestID int64, chinese bool) string {
+	return ticketEmailConversationAs(messages, latestID, chinese, true)
+}
+
+func ticketEmailConversationAs(messages []TicketMessage, latestID int64, chinese, forAdmin bool) string {
 	var body strings.Builder
 	zone := time.FixedZone("UTC+8", 8*60*60)
 	for _, message := range messages {
 		if message.ID > latestID {
 			continue
 		}
-		role, color, background := "You", "#475569", "#f8fafc"
+		role, color, background := "User", "#475569", "#f8fafc"
 		if chinese {
-			role = "您"
+			role = "用户"
+		}
+		if !forAdmin {
+			role = "You"
+			if chinese {
+				role = "您"
+			}
 		}
 		if message.AuthorRole == "admin" {
 			role, color, background = "Support", "#0f766e", "#f0fdfa"
@@ -182,6 +297,19 @@ func ticketReplyEmailTemplate(chinese bool) string {
 		title, intro, history, action, footer = "您的工单已有新的回复", "客服已回复您的工单。以下附上截至本次回复的完整对话，方便您随时查阅。", "完整对话记录", "前往工单中心", "如需继续沟通，请进入工单中心回复，无需直接回复此邮件。"
 	}
 	return fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>%s</title></head><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif;color:#0f172a"><div style="display:none;max-height:0;overflow:hidden;opacity:0">%s · {{ticket_subject}}</div><table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background:#f1f5f9"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:100%%;max-width:640px;table-layout:fixed;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px"><tr><td style="padding:28px 24px;background:#0f3d3a;border-radius:18px 18px 0 0;color:#ffffff;word-break:break-word"><p style="margin:0 0 22px;font-size:13px;letter-spacing:1px;color:#99f6e4">{{site_name}} · SUPPORT</p><h1 style="margin:0 0 12px;font-size:24px;line-height:1.4;color:#ffffff">%s</h1><p style="margin:0;font-size:14px;line-height:1.7;color:#ccfbf1">%s</p></td></tr><tr><td style="padding:24px;word-break:break-word;overflow-wrap:anywhere"><p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#0f766e">TICKET #{{ticket_id}}</p><h2 style="margin:0 0 20px;font-size:19px;line-height:1.5">{{ticket_subject}}</h2><table role="presentation" cellpadding="0" cellspacing="0" style="display:{{ticket_link_display}};margin:0 0 28px"><tr><td style="border-radius:8px;background:#0f766e"><a href="{{ticket_url}}" style="display:inline-block;padding:12px 20px;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700">%s →</a></td></tr></table><h3 style="margin:0 0 18px;padding-top:20px;border-top:1px solid #e2e8f0;font-size:14px;color:#475569">%s</h3>{{conversation_html}}</td></tr><tr><td style="padding:20px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;border-radius:0 0 18px 18px"><p style="margin:0;font-size:12px;line-height:1.8;color:#64748b">%s</p><p style="margin:8px 0 0;font-size:11px;color:#94a3b8">{{site_name}}</p></td></tr></table></td></tr></table></body></html>`, lang, title, title, title, intro, action, history, footer)
+}
+
+// ticketAdminNotifyEmailTemplate renders the support-inbox notification for a
+// new ticket or a user follow-up. It keeps the same card layout as the user
+// reply email but points the action at the admin ticket workspace.
+func ticketAdminNotifyEmailTemplate(chinese bool) string {
+	title, intro, history, action, footer := "A ticket has a new message", "A user has submitted a new message in the ticket center. Please review and reply.", "Conversation history", "Open the admin ticket center", "This message was sent because ticket notifications are enabled for the support inbox."
+	lang := "en"
+	if chinese {
+		lang = "zh-CN"
+		title, intro, history, action, footer = "工单有新消息", "用户在工单中心提交了新消息，请及时查看并回复。", "完整对话记录", "打开管理后台工单", "此邮件由工单通知设置发送给管理员邮箱。"
+	}
+	return fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>%s</title></head><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif;color:#0f172a"><div style="display:none;max-height:0;overflow:hidden;opacity:0">%s · {{ticket_subject}}</div><table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="background:#f1f5f9"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:100%%;max-width:640px;table-layout:fixed;background:#ffffff;border:1px solid #e2e8f0;border-radius:18px"><tr><td style="padding:28px 24px;background:#0f3d3a;border-radius:18px 18px 0 0;color:#ffffff;word-break:break-word"><p style="margin:0 0 22px;font-size:13px;letter-spacing:1px;color:#99f6e4">{{site_name}} · SUPPORT INBOX</p><h1 style="margin:0 0 12px;font-size:24px;line-height:1.4;color:#ffffff">%s</h1><p style="margin:0;font-size:14px;line-height:1.7;color:#ccfbf1">%s</p></td></tr><tr><td style="padding:24px;word-break:break-word;overflow-wrap:anywhere"><p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#0f766e">TICKET #{{ticket_id}}</p><h2 style="margin:0 0 12px;font-size:19px;line-height:1.5">{{ticket_subject}}</h2><p style="margin:0 0 20px;font-size:13px;line-height:1.6;color:#475569">{{requester_name}} · {{requester_email}}</p><table role="presentation" cellpadding="0" cellspacing="0" style="display:{{ticket_link_display}};margin:0 0 28px"><tr><td style="border-radius:8px;background:#0f766e"><a href="{{ticket_url}}" style="display:inline-block;padding:12px 20px;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700">%s →</a></td></tr></table><h3 style="margin:0 0 18px;padding-top:20px;border-top:1px solid #e2e8f0;font-size:14px;color:#475569">%s</h3>{{conversation_html}}</td></tr><tr><td style="padding:20px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;border-radius:0 0 18px 18px"><p style="margin:0;font-size:12px;line-height:1.8;color:#64748b">%s</p><p style="margin:8px 0 0;font-size:11px;color:#94a3b8">{{site_name}}</p></td></tr></table></td></tr></table></body></html>`, lang, title, title, title, intro, action, history, footer)
 }
 
 func ticketEmailPreviewConversation(chinese bool) string {

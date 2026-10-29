@@ -13,6 +13,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -445,6 +446,63 @@ func (r *ticketRepository) Create(ctx context.Context, actor service.TicketActor
 	return id, err
 }
 
+// CreateForUser starts or continues today's ticket for a target user. The daily
+// uniqueness rule means an admin cannot open a second ticket on the same day,
+// so an existing ticket is reopened and receives the new admin message.
+func (r *ticketRepository) CreateForUser(ctx context.Context, actor service.TicketActor, targetUserID int64, subject, content string) (int64, error) {
+	var id int64
+	err := r.transaction(ctx, func(tx *sql.Tx) error {
+		if err := ticketLockOwner(ctx, tx, targetUserID); err != nil {
+			return err
+		}
+		if err := ticketTakeRate(ctx, tx, actor, "write"); err != nil {
+			return err
+		}
+		err := tx.QueryRowContext(ctx, `SELECT id FROM support_tickets
+			WHERE user_id = $1 AND creation_day = (clock_timestamp() AT TIME ZONE 'Asia/Shanghai')::date
+			ORDER BY id DESC LIMIT 1 FOR UPDATE`, targetUserID).Scan(&id)
+		if err == nil {
+			ticket, err := getTicket(ctx, tx, actor, id, true)
+			if err != nil {
+				return err
+			}
+			messages := make([]service.TicketMessage, 0, 2)
+			if ticket.Status == "closed" {
+				messages = append(messages, service.TicketMessage{
+					AuthorID: &actor.UserID, AuthorRole: "admin", Kind: "event",
+					Content: "状态：已关闭 → 等待用户", EventType: "status_changed",
+					EventData: map[string]any{"from": "closed", "to": "waiting_user"},
+				})
+				ticket.Status = "waiting_user"
+			}
+			messages = append(messages, service.TicketMessage{AuthorID: &actor.UserID, AuthorRole: "admin", Kind: "reply", Content: content})
+			for i := range messages {
+				if err := ticketInsertMessage(ctx, tx, ticket, &messages[i], "", ""); err != nil {
+					return err
+				}
+			}
+			return ticketSave(ctx, tx, ticket)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		err = tx.QueryRowContext(ctx, `INSERT INTO support_tickets
+			(user_id, subject, contact, category, priority, status, client_id, request_hash)
+			VALUES ($1, $2, '', 'other', 'normal', 'waiting_user', $3, '') RETURNING id`,
+			targetUserID, subject, uuid.New().String()).Scan(&id)
+		if err != nil {
+			return err
+		}
+		ticket := &service.Ticket{ID: id, Status: "waiting_user", Priority: "normal"}
+		message := &service.TicketMessage{AuthorID: &actor.UserID, AuthorRole: "admin", Kind: "reply", Content: content}
+		if err := ticketInsertMessage(ctx, tx, ticket, message, "", ""); err != nil {
+			return err
+		}
+		return ticketSave(ctx, tx, ticket)
+	})
+	return id, err
+}
+
 func (r *ticketRepository) Mutate(ctx context.Context, actor service.TicketActor, id int64, clientID, hash string, change func(*service.Ticket) (*service.TicketChange, error)) error {
 	return r.transaction(ctx, func(tx *sql.Tx) error {
 		ticket, err := getTicket(ctx, tx, actor, id, true)
@@ -504,7 +562,7 @@ func ticketInsertMessage(ctx context.Context, tx *sql.Tx, ticket *service.Ticket
 	if err != nil {
 		return err
 	}
-	if m.AuthorRole == "admin" && m.Kind == "reply" {
+	if m.Kind == "reply" {
 		if err := queueTicketReplyEmail(ctx, tx, ticket.ID, m.ID); err != nil {
 			return err
 		}

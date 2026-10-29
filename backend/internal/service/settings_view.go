@@ -165,6 +165,7 @@ type SystemSettings struct {
 	TablePageSizeOptions        []int
 	CustomMenuItems             string // JSON array of custom menu items
 	CustomEndpoints             string // JSON array of custom endpoints
+	TicketAdminEmail            string // support inbox for new ticket notifications
 
 	DefaultConcurrency           int
 	DefaultBalance               float64

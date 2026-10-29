@@ -74,6 +74,7 @@ export default {
     selectOption: 'Select an option',
     searchPlaceholder: 'Search...',
     noOptionsFound: 'No options found',
+    selectKeyboardHint: '↑↓ select · Enter confirm · Esc close',
     noGroupsAvailable: 'No groups available',
     unknownError: 'Unknown error occurred',
     saving: 'Saving...',
