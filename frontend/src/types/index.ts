@@ -225,6 +225,7 @@ export interface CustomEndpoint {
   name: string
   endpoint: string
   description: string
+  min_recharge?: number | null
 }
 
 export interface LoginAgreementDocument {
