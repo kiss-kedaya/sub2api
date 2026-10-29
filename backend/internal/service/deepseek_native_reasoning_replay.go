@@ -158,8 +158,10 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 			break
 		}
 	}
+	thinkingMode := gjson.GetBytes(body, "reasoning").Exists() || gjson.GetBytes(body, "reasoning_effort").String() != ""
+	requiresReplay := hasReasoning || thinkingMode
 	needsRewrite := len(replacements) > 0 || len(removals) > 0
-	if !needsRewrite && hasReasoning {
+	if !needsRewrite && requiresReplay {
 		reasoningSinceUser := false
 		for _, item := range items {
 			kind := item.Get("type").String()
@@ -205,7 +207,7 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		if kind == "message" && item.Get("role").String() == "user" {
 			reasoningSinceUser = false
 		}
-		if kind == "message" && item.Get("role").String() == "assistant" && hasReasoning && !reasoningSinceUser &&
+		if kind == "message" && item.Get("role").String() == "assistant" && requiresReplay && !reasoningSinceUser &&
 			strings.TrimSpace(deepSeekNativeMessageText(item.Get("content"))) != "" {
 			if updated, err := sjson.SetBytes(raw, "role", "user"); err == nil {
 				raw = updated

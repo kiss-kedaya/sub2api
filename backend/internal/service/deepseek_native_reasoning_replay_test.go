@@ -462,3 +462,20 @@ func TestDeepSeekNativeReasoningReplayLeavesPlainConversationAlone(t *testing.T)
 
 	require.Equal(t, string(body), string(out), "requests without reasoning items keep their original roles")
 }
+
+func TestDeepSeekNativeReasoningReplayDemotesAssistantHistoryInThinkingMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{cache: &reasoningRecordingCache{}}
+	c, _ := deepSeekNativeReplayContext(21, "thread-thinking")
+	body := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"max"},"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer without reasoning"}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}
+	]}`)
+
+	out := svc.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), body)
+
+	require.Equal(t, "user", gjson.GetBytes(out, "input.1.role").String(),
+		"thinking mode requires reasoning_text on assistant history; demote instead of 400")
+	require.Equal(t, "answer without reasoning", gjson.GetBytes(out, "input.1.content.0.text").String())
+}
