@@ -146,12 +146,16 @@ func prepareDeepSeekHostedSearchRequestWithToolInjection(body []byte, injectTool
 	}
 	input := gjson.GetBytes(next, "input")
 	if input.IsArray() {
-		for i, item := range input.Array() {
-			if item.Get("type").String() != "web_search_call" {
-				continue
+		replayed, historyChanged, err := deepSeekReplayHostedSearchHistory(input.Array())
+		if err != nil {
+			return body, false, fmt.Errorf("deepseek hosted search: replay search history: %w", err)
+		}
+		if historyChanged {
+			raw, err := json.Marshal(replayed)
+			if err != nil {
+				return body, false, fmt.Errorf("deepseek hosted search: encode search history: %w", err)
 			}
-			var err error
-			next, err = sjson.SetBytes(next, fmt.Sprintf("input.%d", i), deepSeekHostedSearchHistoryMessage(item))
+			next, err = sjson.SetRawBytes(next, "input", raw)
 			if err != nil {
 				return body, false, fmt.Errorf("deepseek hosted search: replay search history: %w", err)
 			}
@@ -159,6 +163,58 @@ func prepareDeepSeekHostedSearchRequestWithToolInjection(body []byte, injectTool
 		}
 	}
 	return next, changed, nil
+}
+
+// deepSeekReplayHostedSearchHistory flattens Responses web_search_call items
+// into assistant messages. DeepSeek requires a function call and its output to
+// stay adjacent (parallel calls may share one output block, but no unrelated
+// item may appear between them). Codex can interleave a web search between an
+// exec_command call and its function_call_output, so emitting the replay
+// message in place would turn a valid history into an upstream 400 "No tool
+// output found for tool call". Buffer search messages while any call is
+// waiting for its output and flush them once the pending calls are answered.
+func deepSeekReplayHostedSearchHistory(input []gjson.Result) ([]json.RawMessage, bool, error) {
+	out := make([]json.RawMessage, 0, len(input))
+	pending := make(map[string]struct{})
+	var deferred []json.RawMessage
+	changed := false
+	flush := func() {
+		if len(deferred) == 0 {
+			return
+		}
+		out = append(out, deferred...)
+		deferred = nil
+	}
+	for _, item := range input {
+		itemType := item.Get("type").String()
+		if itemType == "web_search_call" {
+			raw, err := json.Marshal(deepSeekHostedSearchHistoryMessage(item))
+			if err != nil {
+				return nil, false, err
+			}
+			changed = true
+			if len(pending) == 0 {
+				out = append(out, raw)
+			} else {
+				deferred = append(deferred, raw)
+			}
+			continue
+		}
+		out = append(out, json.RawMessage(item.Raw))
+		switch itemType {
+		case "function_call", "custom_tool_call", "local_shell_call", "tool_search_call":
+			if callID := item.Get("call_id").String(); callID != "" {
+				pending[callID] = struct{}{}
+			}
+		case "function_call_output", "custom_tool_call_output", "local_shell_call_output", "tool_search_output":
+			delete(pending, item.Get("call_id").String())
+			if len(pending) == 0 {
+				flush()
+			}
+		}
+	}
+	flush()
+	return out, changed, nil
 }
 
 func deepSeekHostedSearchDescription(tool gjson.Result) (string, error) {
