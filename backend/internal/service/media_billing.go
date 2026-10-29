@@ -656,10 +656,18 @@ func (s *OpenAIGatewayService) pollGrokVideoBillingJob(ctx context.Context, job 
 		// task may be briefly inconsistent after creation; do not quarantine
 		// it during that grace period, and never infer a refund from a 404.
 		status := c.GetInt(OpsUpstreamStatusCodeKey)
-		if job.Status == MediaBillingSubmitted && job.Intent == nil &&
+		if job.Intent == nil &&
 			(status == http.StatusNotFound || status == http.StatusGone) &&
 			!job.CreatedAt.IsZero() && time.Since(job.CreatedAt) >= grokVideoMissingTaskGrace {
-			return s.reconcileGrokVideoBillingJob(ctx, job, "upstream_task_missing")
+			switch job.Status {
+			case MediaBillingSubmitted:
+				return s.reconcileGrokVideoBillingJob(ctx, job, "upstream_task_missing")
+			case MediaBillingReconciliation:
+				// A reconciled job whose upstream task is still missing has
+				// no completion evidence left to wait for. Release the hold
+				// instead of retrying the same 404 forever.
+				return s.FailGrokVideoBillingJob(ctx, job)
+			}
 		}
 		return err
 	}

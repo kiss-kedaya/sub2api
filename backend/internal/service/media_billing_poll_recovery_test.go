@@ -94,6 +94,48 @@ func TestMediaBillingRecoveryMissingVideoGraceAndTransientErrors(t *testing.T) {
 	}
 }
 
+func TestMediaBillingRecoveryReconciliationMissingTaskRefundsOnce(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			svc, repo, input, pending := newMediaBillingServiceTest(t)
+			ctx := context.Background()
+			job, err := svc.CreateGrokVideoBillingJob(ctx, input, pending)
+			require.NoError(t, err)
+			require.NoError(t, svc.SubmitGrokVideoBillingJob(ctx, job, "task_reconciliation_missing", pending))
+			require.NoError(t, repo.ReconcileMediaBillingJob(ctx, job.ID))
+			job, err = repo.GetMediaBillingJobByID(ctx, job.ID)
+			require.NoError(t, err)
+			require.Equal(t, MediaBillingReconciliation, job.Status)
+			repo.jobs[job.ID].CreatedAt = time.Now().Add(-10 * time.Minute)
+			job, err = repo.GetMediaBillingJobByID(ctx, job.ID)
+			require.NoError(t, err)
+
+			attempts := 1
+			if status == http.StatusNotFound {
+				// A 404 also probes the legacy generations-status URL.
+				attempts = 2
+			}
+			upstream := &httpUpstreamRecorder{}
+			for i := 0; i < attempts; i++ {
+				upstream.responses = append(upstream.responses, &http.Response{StatusCode: status,
+					Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"video unavailable"}}`))})
+			}
+			account := newOpenAIRejectedFieldTestAccount()
+			account.ID, account.Platform = input.Account.ID, PlatformGrok
+			account.Credentials["pool_mode"] = true
+			svc.accountRepo, svc.httpUpstream = mediaPollAccountRepo{mediaAccountRepo{account: account}}, upstream
+
+			require.NoError(t, svc.pollGrokVideoBillingJob(ctx, job))
+			stored, err := repo.GetMediaBillingJobByID(ctx, job.ID)
+			require.NoError(t, err)
+			require.Equal(t, MediaBillingFailed, stored.Status)
+			require.InDelta(t, 100.0, repo.balance, 1e-8)
+			require.Zero(t, repo.applied)
+			require.Len(t, upstream.requests, attempts)
+		})
+	}
+}
+
 func TestMediaBillingRecoveryKeepsOldPreparedChargesRecoverable(t *testing.T) {
 	svc, repo, input, pending := newMediaBillingServiceTest(t)
 	ctx := context.Background()
