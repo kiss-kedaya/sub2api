@@ -1416,6 +1416,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				response.BadRequest(c, "Custom endpoint description is too long (max 200 characters)")
 				return
 			}
+			if ep.MinRecharge != nil && (*ep.MinRecharge < 0 || *ep.MinRecharge > 10000000) {
+				response.BadRequest(c, "Custom endpoint minimum recharge must be between 0 and 10000000")
+				return
+			}
 		}
 		endpointBytes, err := json.Marshal(endpoints)
 		if err != nil {

@@ -6605,6 +6605,60 @@
                           "
                         />
                       </div>
+                      <div class="sm:col-span-2">
+                        <label
+                          class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                        >
+                          {{
+                            t(
+                              "admin.settings.site.customEndpoints.minRecharge",
+                            )
+                          }}
+                        </label>
+                        <input
+                          v-model.number="ep.min_recharge"
+                          type="number"
+                          min="0"
+                          step="1"
+                          class="input text-sm"
+                          :placeholder="
+                            t(
+                              'admin.settings.site.customEndpoints.minRechargePlaceholder',
+                            )
+                          "
+                        />
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {{
+                            t(
+                              "admin.settings.site.customEndpoints.minRechargeHint",
+                            )
+                          }}
+                        </p>
+                        <div class="mt-1 flex items-center gap-3">
+                          <button
+                            type="button"
+                            class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                            @click="ep.min_recharge = 0"
+                          >
+                            {{
+                              t(
+                                "admin.settings.site.customEndpoints.minRechargeAll",
+                              )
+                            }}
+                          </button>
+                          <button
+                            type="button"
+                            class="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                            @click="ep.min_recharge = 1000"
+                          >
+                            {{
+                              t(
+                                "admin.settings.site.customEndpoints.minRechargeDefault",
+                              )
+                            }}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -9853,6 +9907,7 @@ const form = reactive<SettingsForm>({
     name: string;
     endpoint: string;
     description: string;
+    min_recharge: number;
   }>,
   frontend_url: "",
   smtp_host: "",
@@ -10858,7 +10913,12 @@ function moveMenuItem(index: number, direction: -1 | 1) {
 
 // Custom endpoint management
 function addEndpoint() {
-  form.custom_endpoints.push({ name: "", endpoint: "", description: "" });
+  form.custom_endpoints.push({
+    name: "",
+    endpoint: "",
+    description: "",
+    min_recharge: 1000,
+  });
 }
 
 function removeEndpoint(index: number) {
@@ -11070,6 +11130,13 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.custom_endpoints = (form.custom_endpoints || []).map((ep) => ({
+      name: ep.name || "",
+      endpoint: ep.endpoint || "",
+      description: ep.description || "",
+      min_recharge:
+        typeof ep.min_recharge === "number" ? ep.min_recharge : 1000,
+    }));
     syncCaptchaProviderSelection();
     if (!form.claude_oauth_system_prompt_blocks?.trim()) {
       form.claude_oauth_system_prompt_blocks =
@@ -11498,7 +11565,16 @@ async function saveSettings() {
       table_default_page_size: form.table_default_page_size,
       table_page_size_options: form.table_page_size_options,
       custom_menu_items: form.custom_menu_items,
-      custom_endpoints: form.custom_endpoints,
+      custom_endpoints: form.custom_endpoints.map((ep) => ({
+        name: ep.name,
+        endpoint: ep.endpoint,
+        description: ep.description,
+        min_recharge:
+          typeof ep.min_recharge === "number" &&
+          Number.isFinite(ep.min_recharge)
+            ? ep.min_recharge
+            : 1000,
+      })),
       frontend_url: form.frontend_url,
       smtp_host: form.smtp_host,
       smtp_port: form.smtp_port,

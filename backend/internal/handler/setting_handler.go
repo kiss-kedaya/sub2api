@@ -154,17 +154,30 @@ func (h *SettingHandler) GetCustomEndpoints(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if user.TotalRecharged < service.CustomEndpointRechargeThreshold {
-		response.Success(c, []dto.CustomEndpoint{})
-		return
-	}
-
 	raw, err := h.settingService.GetConfiguredCustomEndpoints(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, dto.ParseCustomEndpoints(raw))
+	response.Success(c, filterCustomEndpointsByRecharge(dto.ParseCustomEndpoints(raw), user.TotalRecharged))
+}
+
+// filterCustomEndpointsByRecharge keeps only the endpoints whose per-endpoint
+// minimum recharge is satisfied by the user's lifetime recharge. Endpoints
+// without an explicit value keep the historical global threshold, while an
+// explicit 0 makes the endpoint visible to every user.
+func filterCustomEndpointsByRecharge(endpoints []dto.CustomEndpoint, totalRecharged float64) []dto.CustomEndpoint {
+	visible := make([]dto.CustomEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		threshold := service.CustomEndpointRechargeThreshold
+		if endpoint.MinRecharge != nil {
+			threshold = *endpoint.MinRecharge
+		}
+		if totalRecharged >= threshold {
+			visible = append(visible, endpoint)
+		}
+	}
+	return visible
 }
 
 // UnsubscribeNotificationEmail handles optional notification email opt-outs.
