@@ -206,6 +206,7 @@
               class="group relative"
               @mouseenter="showTokenTooltip($event, row)"
               @mouseleave="hideTokenTooltip"
+              @click.stop="showTokenTooltip($event, row)"
             >
               <div class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50">
                 <Icon name="infoCircle" size="xs" class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400" />
@@ -242,6 +243,7 @@
                 class="group relative"
                 @mouseenter="showTooltip($event, row)"
                 @mouseleave="hideTooltip"
+                @click.stop="showTooltip($event, row)"
               >
                 <div class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50">
                   <Icon name="infoCircle" size="xs" class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400" />
@@ -343,7 +345,7 @@
   <Teleport to="body">
     <div
       v-if="tokenTooltipVisible"
-      class="fixed z-[9999] pointer-events-none -translate-y-1/2"
+      class="usage-token-tooltip fixed z-[9999] pointer-events-none -translate-y-1/2"
       :style="{
         left: tokenTooltipPosition.x + 'px',
         top: tokenTooltipPosition.y + 'px'
@@ -418,6 +420,13 @@
             <span class="font-semibold text-blue-400">{{ ((tokenTooltipData?.input_tokens || 0) + (tokenTooltipData?.output_tokens || 0) + (tokenTooltipData?.cache_creation_tokens || 0) + (tokenTooltipData?.cache_read_tokens || 0)).toLocaleString() }}</span>
           </div>
         </div>
+        <button
+          type="button"
+          class="usage-tooltip-close"
+          @click="hideTokenTooltip"
+        >
+          {{ t("common.close") }}
+        </button>
         <div class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"></div>
       </div>
     </div>
@@ -427,7 +436,7 @@
   <Teleport to="body">
     <div
       v-if="tooltipVisible"
-      class="fixed z-[9999] pointer-events-none -translate-y-1/2"
+      class="usage-cost-tooltip fixed z-[9999] pointer-events-none -translate-y-1/2"
       :style="{
         left: tooltipPosition.x + 'px',
         top: tooltipPosition.y + 'px'
@@ -559,6 +568,13 @@
             </div>
           </template>
         </div>
+        <button
+          type="button"
+          class="usage-tooltip-close"
+          @click="hideTooltip"
+        >
+          {{ t("common.close") }}
+        </button>
         <div class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"></div>
       </div>
     </div>
@@ -813,12 +829,18 @@ const formatOutputRate = (
   return `${outputRate.toFixed(1)} t/s`
 }
 
+const clampTooltipX = (rect: DOMRect, width: number): number => {
+  const preferred = rect.right + 8
+  const max = window.innerWidth - width - 8
+  return Math.max(8, Math.min(preferred, max))
+}
+
 // Cost tooltip functions
 const showTooltip = (event: MouseEvent, row: AdminUsageLog) => {
   const target = event.currentTarget as HTMLElement
   const rect = target.getBoundingClientRect()
   tooltipData.value = row
-  tooltipPosition.value.x = rect.right + 8
+  tooltipPosition.value.x = clampTooltipX(rect, 380)
   tooltipPosition.value.y = rect.top + rect.height / 2
   tooltipVisible.value = true
 }
@@ -833,7 +855,7 @@ const showTokenTooltip = (event: MouseEvent, row: AdminUsageLog) => {
   const target = event.currentTarget as HTMLElement
   const rect = target.getBoundingClientRect()
   tokenTooltipData.value = row
-  tokenTooltipPosition.value.x = rect.right + 8
+  tokenTooltipPosition.value.x = clampTooltipX(rect, 320)
   tokenTooltipPosition.value.y = rect.top + rect.height / 2
   tokenTooltipVisible.value = true
 }
@@ -864,5 +886,45 @@ const hideTokenTooltip = () => {
 .usage-table :deep(td.usage-date-column) {
   min-width: 6.5rem;
   white-space: normal;
+}
+
+.usage-cost-tooltip > div,
+.usage-token-tooltip > div {
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+
+.usage-tooltip-close {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .usage-cost-tooltip,
+  .usage-token-tooltip {
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: 8px !important;
+    transform: none !important;
+    max-height: 70vh;
+    overflow-y: auto;
+    pointer-events: auto;
+  }
+
+  .usage-cost-tooltip > div,
+  .usage-token-tooltip > div {
+    max-width: none;
+    white-space: normal;
+  }
+
+  .usage-tooltip-close {
+    display: block;
+    width: 100%;
+    margin-top: 0.5rem;
+    border-top: 1px solid rgb(55 65 81);
+    padding-top: 0.5rem;
+    font-size: 0.75rem;
+    color: rgb(156 163 175);
+  }
 }
 </style>
