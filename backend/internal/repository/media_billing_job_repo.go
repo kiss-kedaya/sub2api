@@ -724,7 +724,7 @@ func (r *usageBillingRepository) ListMediaBillingJobs(ctx context.Context, limit
 		WITH picked AS (
 			SELECT id
 			FROM media_billing_jobs
-			WHERE status IN ('submitted', 'ready', 'billed')
+			WHERE status IN ('creating', 'submitted', 'reconciliation', 'ready', 'billed')
 				AND available_at <= NOW()
 			ORDER BY available_at, created_at
 			FOR UPDATE SKIP LOCKED

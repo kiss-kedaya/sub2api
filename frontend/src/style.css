@@ -18,10 +18,7 @@
 
   body {
     @apply min-h-screen text-gray-900 dark:text-gray-100;
-    background:
-      radial-gradient(circle at 8% -10%, rgba(147, 197, 253, 0.32), transparent 34rem),
-      radial-gradient(circle at 92% 0%, rgba(186, 230, 253, 0.28), transparent 30rem),
-      linear-gradient(180deg, #f8fbff 0%, #f1f7ff 52%, #f8fbff 100%);
+    background: #f8f7f4;
     background-attachment: fixed;
   }
 
@@ -83,18 +80,17 @@
   /* ============ 按钮样式 ============ */
   .btn {
     @apply inline-flex items-center justify-center gap-2;
-    @apply rounded-xl px-4 py-2.5 text-sm font-medium;
+    @apply rounded-lg px-4 py-2.5 text-sm font-medium;
     @apply transition-all duration-200 ease-out;
-    @apply focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:ring-offset-2;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:ring-offset-1;
     @apply disabled:transform-none disabled:cursor-not-allowed disabled:opacity-50;
     @apply active:scale-[0.98];
   }
 
   .btn-primary {
-    @apply bg-gradient-to-r from-primary-500 to-primary-600;
-    @apply text-white shadow-md shadow-primary-500/25;
-    @apply hover:from-primary-600 hover:to-primary-700 hover:shadow-lg hover:shadow-primary-500/30;
-    @apply dark:shadow-primary-500/20;
+    @apply bg-primary-600 text-white shadow-none;
+    @apply hover:bg-primary-700;
+    @apply dark:bg-primary-600 dark:hover:bg-primary-500;
   }
 
   .btn-secondary {
@@ -176,7 +172,7 @@
 
   /* ============ 输入框样式 ============ */
   .input {
-    @apply w-full rounded-xl px-4 py-2.5 text-sm;
+    @apply w-full rounded-[10px] px-4 py-2.5 text-sm;
     @apply bg-white dark:bg-dark-800;
     @apply border border-gray-200 dark:border-dark-600;
     @apply text-gray-900 dark:text-gray-100;
@@ -242,9 +238,9 @@
   /* ============ 卡片样式 ============ */
   .card {
     @apply bg-white dark:bg-dark-800/50;
-    @apply rounded-2xl;
-    @apply border border-gray-100 dark:border-dark-700/50;
-    @apply shadow-card;
+    @apply rounded-xl;
+    @apply border border-gray-200/70 dark:border-dark-700/60;
+    @apply shadow-none;
     @apply transition-all duration-300;
   }
 

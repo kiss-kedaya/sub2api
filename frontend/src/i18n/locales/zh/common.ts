@@ -9,6 +9,7 @@ export default {
     saved: '保存成功',
     deleted: '删除成功',
     cancel: '取消',
+    done: '完成',
     delete: '删除',
     edit: '编辑',
     create: '创建',

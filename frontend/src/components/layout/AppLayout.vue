@@ -5,7 +5,6 @@
   >
     <ConsoleAtmosphere v-if="isConsoleSignal" />
     <!-- Background Decoration -->
-    <div v-if="!isConsoleSignal" class="pointer-events-none fixed inset-0 bg-mesh-gradient"></div>
 
     <!-- Sidebar -->
     <AppSidebar />

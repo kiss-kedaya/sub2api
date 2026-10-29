@@ -146,6 +146,49 @@ func TestPrepareDeepSeekHostedSearchReplaysHistoryWithoutOrphanTools(t *testing.
 	require.Empty(t, gjson.GetBytes(next, "tools").Array(), "completed history alone must not enable a fresh search")
 }
 
+func TestPrepareDeepSeekHostedSearchReplaysHistoryAfterPendingToolOutput(t *testing.T) {
+	body := []byte(`{"tools":[],"input":[
+		{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{}"},
+		{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"open_page","url":"https://example.com/page"}},
+		{"type":"function_call_output","call_id":"call_1","output":"ok"},
+		{"type":"function_call","call_id":"call_2","name":"exec_command","arguments":"{}"},
+		{"type":"function_call","call_id":"call_3","name":"exec_command","arguments":"{}"},
+		{"type":"web_search_call","id":"ws_2","status":"completed","action":{"type":"search","query":"latest release"}},
+		{"type":"function_call_output","call_id":"call_2","output":"two"},
+		{"type":"function_call_output","call_id":"call_3","output":"three"},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+	]}`)
+	next, changed, err := prepareDeepSeekHostedSearchRequest(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	items := gjson.GetBytes(next, "input").Array()
+	require.Len(t, items, 9)
+	require.Equal(t, "function_call", items[0].Get("type").String())
+	require.Equal(t, "call_1", items[0].Get("call_id").String())
+	require.Equal(t, "function_call_output", items[1].Get("type").String())
+	require.Equal(t, "call_1", items[1].Get("call_id").String())
+	require.Equal(t, "message", items[2].Get("type").String())
+	require.Equal(t, "assistant", items[2].Get("role").String())
+	require.Contains(t, items[2].Get("content.0.text").String(), "[Previous web search]")
+	require.Contains(t, items[2].Get("content.0.text").String(), "https://example.com/page")
+
+	require.Equal(t, "function_call", items[3].Get("type").String())
+	require.Equal(t, "call_2", items[3].Get("call_id").String())
+	require.Equal(t, "function_call", items[4].Get("type").String())
+	require.Equal(t, "call_3", items[4].Get("call_id").String())
+	require.Equal(t, "function_call_output", items[5].Get("type").String())
+	require.Equal(t, "call_2", items[5].Get("call_id").String())
+	require.Equal(t, "function_call_output", items[6].Get("type").String())
+	require.Equal(t, "call_3", items[6].Get("call_id").String())
+	require.Equal(t, "message", items[7].Get("type").String())
+	require.Equal(t, "assistant", items[7].Get("role").String())
+	require.Contains(t, items[7].Get("content.0.text").String(), "latest release")
+
+	require.Equal(t, "user", items[8].Get("role").String())
+	require.Equal(t, "continue", items[8].Get("content.0.text").String())
+}
+
 func TestDeepSeekHostedSearchNextRequestPreservesNativeOutputAndOwnsOnlySearch(t *testing.T) {
 	request := []byte(`{"model":"deepseek-flash","input":"question","stream":true,"store":true,"previous_response_id":"resp_old","tool_choice":{"type":"function","name":"` + deepSeekHostedSearchToolName + `"},"tools":[{"type":"function","name":"` + deepSeekHostedSearchToolName + `"}],"metadata":{"keep":"opaque"}}`)
 	response := []byte(`{"output":[{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"opaque-cipher"},{"type":"function_call","id":"fc_1","call_id":"search1","name":"` + deepSeekHostedSearchToolName + `","arguments":"{\"query\":\"latest\"}"},{"type":"function_call","id":"fc_2","call_id":"local2","name":"client_tool","arguments":"{}"}]}`)

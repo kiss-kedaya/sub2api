@@ -511,10 +511,12 @@ func (s *OpenAIGatewayService) recoverMediaBillingJobs(ctx context.Context) {
 				return
 			}
 			workCtx, stop := context.WithTimeout(ctx, 30*time.Second)
-			if job.Status == MediaBillingCreating && !job.CreatedAt.IsZero() && time.Since(job.CreatedAt) >= mediaBillingCreatingGrace {
-				// The freeze happened but the task was never submitted upstream;
-				// nothing was delivered, so return the whole reservation.
-				err = s.FailGrokVideoBillingJob(workCtx, job)
+			if job.Status == MediaBillingCreating {
+				if !job.CreatedAt.IsZero() && time.Since(job.CreatedAt) >= mediaBillingCreatingGrace {
+					// The freeze happened but the task was never submitted upstream;
+					// nothing was delivered, so return the whole reservation.
+					err = s.FailGrokVideoBillingJob(workCtx, job)
+				}
 			} else if job.Intent != nil {
 				err = s.settleMediaBillingJob(workCtx, job, nil)
 			} else if grokVideoAutomaticPollExpired(job, time.Now()) {

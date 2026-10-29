@@ -1241,19 +1241,11 @@
           >
             <div>
               <label class="input-label">{{ t("admin.groups.peakRate.peakStart") }}</label>
-              <input
-                v-model="createForm.peak_start"
-                type="time"
-                class="input"
-              />
+              <TimeWheelPicker v-model="createForm.peak_start" />
             </div>
             <div>
               <label class="input-label">{{ t("admin.groups.peakRate.peakEnd") }}</label>
-              <input
-                v-model="createForm.peak_end"
-                type="time"
-                class="input"
-              />
+              <TimeWheelPicker v-model="createForm.peak_end" />
             </div>
             <div>
               <label class="input-label">{{ t("admin.groups.peakRate.peakMultiplier") }}</label>
@@ -2972,19 +2964,11 @@
           >
             <div>
               <label class="input-label">{{ t("admin.groups.peakRate.peakStart") }}</label>
-              <input
-                v-model="editForm.peak_start"
-                type="time"
-                class="input"
-              />
+              <TimeWheelPicker v-model="editForm.peak_start" />
             </div>
             <div>
               <label class="input-label">{{ t("admin.groups.peakRate.peakEnd") }}</label>
-              <input
-                v-model="editForm.peak_end"
-                type="time"
-                class="input"
-              />
+              <TimeWheelPicker v-model="editForm.peak_end" />
             </div>
             <div>
               <label class="input-label">{{ t("admin.groups.peakRate.peakMultiplier") }}</label>
@@ -4507,6 +4491,7 @@ import TablePageLayout from "@/components/layout/TablePageLayout.vue";
 import DataTable from "@/components/common/DataTable.vue";
 import Pagination from "@/components/common/Pagination.vue";
 import Toggle from "@/components/common/Toggle.vue";
+import TimeWheelPicker from '@/components/common/TimeWheelPicker.vue'
 import BaseDialog from "@/components/common/BaseDialog.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
