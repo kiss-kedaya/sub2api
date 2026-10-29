@@ -416,7 +416,7 @@ func TestDeepSeekNativeReasoningReplayDropsUnrecoverableHistory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{cache: &reasoningRecordingCache{}}
 	c, _ := deepSeekNativeReplayContext(21, "thread-drop")
-	body := []byte(`{"model":"deepseek-v4.1-flash","input":[
+	body := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"none"},"input":[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
 		{"type":"reasoning","id":"rs_missing","summary":[]},
 		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"old answer"}]},
@@ -452,7 +452,7 @@ func TestDeepSeekNativeReasoningReplayLeavesPlainConversationAlone(t *testing.T)
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{cache: &reasoningRecordingCache{}}
 	c, _ := deepSeekNativeReplayContext(21, "thread-plain")
-	body := []byte(`{"model":"deepseek-v4.1-flash","input":[
+	body := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"none"},"input":[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
 		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]},
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}

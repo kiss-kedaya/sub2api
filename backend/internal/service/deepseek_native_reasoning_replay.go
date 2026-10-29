@@ -158,7 +158,16 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 			break
 		}
 	}
-	thinkingMode := gjson.GetBytes(body, "reasoning").Exists() || gjson.GetBytes(body, "reasoning_effort").String() != ""
+	// DeepSeek's native Responses endpoint runs in thinking mode unless the
+	// caller explicitly disables it. Prefer the fail-safe default so a client
+	// that omits the reasoning block never forwards invalid assistant history.
+	thinkingMode := true
+	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
+		switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, path).String())) {
+		case "none", "minimal", "off", "disabled":
+			thinkingMode = false
+		}
+	}
 	requiresReplay := hasReasoning || thinkingMode
 	needsRewrite := len(replacements) > 0 || len(removals) > 0
 	if !needsRewrite && requiresReplay {
