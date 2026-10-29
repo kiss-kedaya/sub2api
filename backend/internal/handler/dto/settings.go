@@ -24,6 +24,10 @@ type CustomEndpoint struct {
 	Name        string `json:"name"`
 	Endpoint    string `json:"endpoint"`
 	Description string `json:"description"`
+	// MinRecharge is the lifetime recharge required to see this endpoint.
+	// nil means legacy data and falls back to the historical 1000 threshold;
+	// an explicit 0 makes the endpoint visible to every user.
+	MinRecharge *float64 `json:"min_recharge,omitempty"`
 }
 
 // SystemSettings represents the admin settings API response payload.
