@@ -175,6 +175,37 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 	})
 }
 
+// AdminGet 返回全部活跃分组与模型的实收定价，不做用户可见性裁剪。
+// 供后台「模型比价」使用：管理员需要看到专属分组，才能比较真实的全量价格。
+// GET /api/v1/admin/model-plaza
+func (h *ModelPlazaHandler) AdminGet(c *gin.Context) {
+	if h.plazaService == nil {
+		response.NotFound(c, "Model plaza service is not available")
+		return
+	}
+	groups, err := h.plazaService.ListGroups(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	// 降智检测状态仅是展示增强；查询失败时降级为不带徽章。
+	var qualityStatuses map[int64]*service.GroupQualityStatus
+	if h.gqcService != nil {
+		qualityStatuses, err = h.gqcService.ListGroupStatuses(c.Request.Context())
+		if err != nil {
+			slog.Warn("admin_model_plaza_quality_statuses_failed", "error", err)
+			qualityStatuses = nil
+		}
+	}
+
+	out := make([]modelPlazaGroup, 0, len(groups))
+	for i := range groups {
+		out = append(out, toModelPlazaGroupDTO(&groups[i], nil, qualityStatuses))
+	}
+	response.Success(c, modelPlazaResponse{Groups: out})
+}
+
 // filterPlazaVisibleGroups 按登录态裁剪分组可见性。
 // allowedGroups == nil 表示匿名（仅非专属）；非 nil 包含普通授权及有效订阅分组。
 // restrictPublicGroups 为 true 时，公开分组也必须落在 allowedGroups 内，否则用户会

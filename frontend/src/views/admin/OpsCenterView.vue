@@ -339,6 +339,7 @@ const tiers = computed<DirectoryTier[]>(() => [
       { to: '/admin/channels/pricing', label: text('渠道定价', 'Channel pricing'), note: text('模型价格与上游成本', 'Model prices and upstream cost'), icon: 'key' },
       { to: '/admin/channels/monitor', label: text('渠道监控', 'Channel monitor'), note: text('成功率、延迟与吞吐', 'Success rate, latency and throughput'), icon: 'chartBar' },
       { to: '/admin/channel-operations', label: text('渠道运维', 'Channel operations'), note: text('延迟、质量与错误下钻', 'Latency, quality and error drill-down'), icon: 'server' },
+      { to: '/admin/model-comparison', label: text('模型比价', 'Model comparison'), note: text('跨分组实付价与价差', 'Effective cross-group prices and spread'), icon: 'chartBar' },
       { to: '/admin/groups', label: text('分组与倍率', 'Groups and ratios'), note: text('分组倍率与模型映射', 'Group ratios and model mapping'), icon: 'users' },
       { to: '/admin/mihomo', label: text('代理出口', 'Managed proxies'), note: text('订阅、节点与动态代理', 'Subscriptions, nodes and dynamic proxies'), icon: 'globe' },
     ],
