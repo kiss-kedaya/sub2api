@@ -1280,7 +1280,7 @@ func normalizeOpenAIOAuthResponsesCompatibilityBody(body []byte) ([]byte, bool, 
 }
 
 func normalizeGPT6ResponsesSampling(body []byte, model string) ([]byte, bool, error) {
-	if (!openai.IsGPT6SolOrLunaModelSpelling(model) && !openai.IsGPT61SolModelSpelling(model)) || gjson.GetBytes(body, "reasoning.effort").String() == "none" {
+	if (!openai.IsGPT6SolOrLunaModelSpelling(model) && !openai.IsGPT61SolModelSpelling(model) && !openai.IsGPT61TerraModelSpelling(model)) || gjson.GetBytes(body, "reasoning.effort").String() == "none" {
 		return body, false, nil
 	}
 	out := body
@@ -1324,7 +1324,7 @@ func normalizeOpenAIResponsesReasoningMode(body []byte, model string) ([]byte, b
 	if strings.TrimSpace(target) == "" {
 		target = gjson.GetBytes(body, "model").String()
 	}
-	if openai.IsGPT6SolOrLunaModelSpelling(target) || openai.IsGPT61SolModelSpelling(target) {
+	if openai.IsGPT6SolOrLunaModelSpelling(target) || openai.IsGPT61SolModelSpelling(target) || openai.IsGPT61TerraModelSpelling(target) {
 		return normalizeGPT6ResponsesSampling(body, target)
 	}
 	// Astra 走请求体里的模型名判断，mode 原样保留。
@@ -2543,7 +2543,7 @@ func normalizeOpenAIReasoningEffortForModel(raw, model string) string {
 // supportsOpenAIReasoningEffortMax reports model families whose upstream scale
 // has a distinct max level. Other models keep the legacy max -> xhigh behavior.
 func supportsOpenAIReasoningEffortMax(model string) bool {
-	if isOpenAIGPT6AstraModel(model) || isOpenAIGPT56Model(model) || openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) {
+	if isOpenAIGPT6AstraModel(model) || isOpenAIGPT56Model(model) || openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model) {
 		return true
 	}
 
@@ -2567,7 +2567,7 @@ func supportsOpenAIReasoningEffortMax(model string) bool {
 // validateGPT61SolCompatRequest runs after model mapping, before conversion can
 // discard unsupported explicit effort selections or disabled thinking.
 func validateGPT61SolCompatRequest(body []byte, model string) error {
-	if !openai.IsGPT61SolModelSpelling(model) {
+	if !openai.IsGPT61SolModelSpelling(model) && !openai.IsGPT61TerraModelSpelling(model) {
 		return nil
 	}
 	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
