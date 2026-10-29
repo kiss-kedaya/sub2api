@@ -162,6 +162,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	nativeCNResponses := account.usesNativeResponsesUpstream()
 	nativeDeepSeekResponses := account.Platform == PlatformDeepseek && nativeCNResponses
+	if account.Platform == PlatformDeepseek && !compactPath {
+		repairedBody, repaired, repairErr := repairDeepSeekMissingToolOutputs(body)
+		if repairErr != nil {
+			setOpsUpstreamError(c, http.StatusBadRequest, repairErr.Error(), "")
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": repairErr.Error(), "param": "input",
+			}})
+			return nil, repairErr
+		}
+		if repaired {
+			body = repairedBody
+		}
+	}
 	// Own hosted search before any protocol fallback can discard server tools.
 	// Recursive turns keep the selected account's protocol; Chat Completions
 	// carries the bridge's function tool through the existing conversion path.
