@@ -24,9 +24,9 @@
 
   .dark body {
     background:
-      radial-gradient(circle at 8% -10%, rgba(30, 64, 175, 0.26), transparent 34rem),
-      radial-gradient(circle at 92% 0%, rgba(14, 116, 144, 0.18), transparent 30rem),
-      linear-gradient(180deg, #0f172a 0%, #111c35 52%, #0f172a 100%);
+      radial-gradient(circle at 8% -10%, rgba(139, 193, 166, 0.14), transparent 34rem),
+      radial-gradient(circle at 92% 0%, rgba(139, 193, 166, 0.08), transparent 30rem),
+      linear-gradient(180deg, #14201c 0%, #17251f 52%, #14201c 100%);
   }
 
   /* 自定义滚动条 - 仅针对 Firefox，避免 Chrome 取消 webkit 的全局定制 */
@@ -82,9 +82,10 @@
     @apply inline-flex items-center justify-center gap-2;
     @apply rounded-lg px-4 py-2.5 text-sm font-medium;
     @apply transition-all duration-200 ease-out;
+    @apply hover:-translate-y-px;
     @apply focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:ring-offset-1;
     @apply disabled:transform-none disabled:cursor-not-allowed disabled:opacity-50;
-    @apply active:scale-[0.98];
+    @apply active:scale-[0.97];
   }
 
   .btn-primary {
