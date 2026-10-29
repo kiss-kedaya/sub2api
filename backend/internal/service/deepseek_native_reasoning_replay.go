@@ -35,11 +35,22 @@ type deepSeekNativeReasoningSource struct {
 // to the authenticated key, conversation and requested model. Never read the
 // older unscoped Chat fallback cache and never substitute a summary for CoT.
 func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Context, account *Account, body []byte) []byte {
-	if s == nil || s.cache == nil || c == nil || account == nil || account.Platform != PlatformDeepseek || !account.UsesNativeCNResponses() {
+	if s == nil || c == nil || account == nil || account.Platform != PlatformDeepseek || !account.UsesNativeCNResponses() {
 		if c != nil {
 			c.Set(deepSeekNativeReasoningScopeKey, nil)
 			c.Set(deepSeekNativeReasoningSourceKey, nil)
 		}
+		return body
+	}
+	// Codex replays previous web search results as synthetic assistant messages
+	// ("[Previous web search] ..."). DeepSeek's native Responses endpoint rejects
+	// any assistant message without reasoning_text with HTTP 400, even though the
+	// message is client context rather than model output. Rewrite only these
+	// synthetic messages to the user role; real assistant turns keep their role.
+	body = sanitizeDeepSeekNativeResponsesInput(body)
+	if s.cache == nil {
+		c.Set(deepSeekNativeReasoningScopeKey, nil)
+		c.Set(deepSeekNativeReasoningSourceKey, nil)
 		return body
 	}
 	keyID := getAPIKeyIDFromContext(c)
@@ -175,6 +186,69 @@ func hasDeepSeekNativeReasoningText(content gjson.Result) bool {
 		}
 	}
 	return false
+}
+
+// sanitizeDeepSeekNativeResponsesInput rewrites synthetic assistant messages
+// that carry client-side context (normally "[Previous ...]" tool results) to
+// the user role. DeepSeek's native Responses API requires every assistant
+// message in thinking mode to carry reasoning_text; these messages never have
+// it because the client created them, not the model. Converting them preserves
+// the context and avoids inventing chain-of-thought.
+func sanitizeDeepSeekNativeResponsesInput(body []byte) []byte {
+	input := gjson.GetBytes(body, "input")
+	if !input.IsArray() {
+		return body
+	}
+	items := input.Array()
+	changed := false
+	for i, item := range items {
+		if item.Get("type").String() != "message" || item.Get("role").String() != "assistant" {
+			continue
+		}
+		text := strings.TrimSpace(deepSeekNativeMessageText(item.Get("content")))
+		if !strings.HasPrefix(text, "[Previous ") {
+			continue
+		}
+		updated, err := sjson.SetBytes([]byte(item.Raw), "role", "user")
+		if err != nil {
+			continue
+		}
+		items[i] = gjson.ParseBytes(updated)
+		changed = true
+	}
+	if !changed {
+		return body
+	}
+	var restored bytes.Buffer
+	restored.Grow(len(input.Raw))
+	_ = restored.WriteByte('[')
+	for i, item := range items {
+		if i > 0 {
+			_ = restored.WriteByte(',')
+		}
+		_, _ = restored.WriteString(item.Raw)
+	}
+	_ = restored.WriteByte(']')
+	if next, err := sjson.SetRawBytes(body, "input", restored.Bytes()); err == nil {
+		return next
+	}
+	return body
+}
+
+func deepSeekNativeMessageText(content gjson.Result) string {
+	if content.Type == gjson.String {
+		return content.String()
+	}
+	if !content.IsArray() {
+		return ""
+	}
+	var builder strings.Builder
+	for _, part := range content.Array() {
+		if part.Get("text").Type == gjson.String {
+			_, _ = builder.WriteString(part.Get("text").String())
+		}
+	}
+	return builder.String()
 }
 
 type deepSeekNativeReasoningItem struct {

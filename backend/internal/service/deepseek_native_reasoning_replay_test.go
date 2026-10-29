@@ -107,6 +107,26 @@ func TestDeepSeekNativeReasoningReplayAcrossInstances(t *testing.T) {
 	}
 }
 
+func TestSanitizeDeepSeekNativeResponsesInputRewritesPreviousAssistantMessages(t *testing.T) {
+	body := []byte(`{"model":"deepseek-flash","input":[
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"[Previous web search]\nStatus: completed"}]},
+		{"type":"message","role":"assistant","content":"[Previous fetch]\nStatus: completed"},
+		{"type":"message","role":"assistant","content":"normal answer"},
+		{"type":"message","role":"user","content":"hi"}
+	]}`)
+	out := sanitizeDeepSeekNativeResponsesInput(body)
+	require.Equal(t, "user", gjson.GetBytes(out, "input.0.role").String())
+	require.Equal(t, "user", gjson.GetBytes(out, "input.1.role").String())
+	require.Equal(t, "assistant", gjson.GetBytes(out, "input.2.role").String())
+	require.Equal(t, "user", gjson.GetBytes(out, "input.3.role").String())
+	require.Contains(t, gjson.GetBytes(out, "input.0.content.0.text").String(), "[Previous web search]")
+}
+
+func TestSanitizeDeepSeekNativeResponsesInputLeavesNormalRequestsUntouched(t *testing.T) {
+	body := []byte(`{"model":"deepseek-flash","input":[{"type":"message","role":"user","content":"hi"}]}`)
+	require.Equal(t, body, sanitizeDeepSeekNativeResponsesInput(body))
+}
+
 func TestDeepSeekNativeReasoningReplayCollectsDeltaAndSnapshotAlias(t *testing.T) {
 	cache := &reasoningRecordingCache{}
 	svc := &OpenAIGatewayService{cache: cache}
