@@ -94,6 +94,14 @@ export async function getModelPlaza(options?: { signal?: AbortSignal }): Promise
   return data
 }
 
-export const modelPlazaAPI = { getModelPlaza }
+/** 管理员：全量模型广场数据（包含专属分组，不做可见性裁剪）。 */
+export async function getAdminModelPlaza(options?: { signal?: AbortSignal }): Promise<ModelPlazaResponse> {
+  const { data } = await apiClient.get<ModelPlazaResponse>('/admin/model-plaza', {
+    signal: options?.signal
+  })
+  return data
+}
+
+export const modelPlazaAPI = { getModelPlaza, getAdminModelPlaza }
 
 export default modelPlazaAPI
