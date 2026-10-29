@@ -7,5 +7,23 @@ version: 1
 # 否则会给人「我们在跟踪」的假象。
 # SheetJS now uses the fixed official 0.20.3 tarball with lockfile integrity.
 # The unused icon dependency and its vulnerable transitive tree were removed.
-# No currently installed production dependency needs a vulnerability exception.
-exceptions: []
+# vue-i18n 9.x is EOL and will not receive the GHSA-83rm-6c8r-g728 fix.
+# The app does not enable escapeParameter and does not render $t() results with
+# v-html; translations are static files bundled in this repository. Keep this
+# scoped exception until the planned vue-i18n 11 migration.
+exceptions:
+  - package: vue-i18n
+    advisory: GHSA-83rm-6c8r-g728
+    severity: high
+    mitigation: No escapeParameter; no v-html rendering of translated messages; static bundled locales. Migration to vue-i18n 11 is tracked separately.
+    expires_on: 2026-11-30
+  - package: "@intlify/core-base"
+    advisory: GHSA-83rm-6c8r-g728
+    severity: high
+    mitigation: Same vue-i18n 9.x transitive dependency; no escapeParameter or v-html translation rendering. Migration to vue-i18n 11 is tracked separately.
+    expires_on: 2026-11-30
+  - package: "@intlify/shared"
+    advisory: GHSA-83rm-6c8r-g728
+    severity: high
+    mitigation: Same vue-i18n 9.x transitive dependency; no escapeParameter or v-html translation rendering. Migration to vue-i18n 11 is tracked separately.
+    expires_on: 2026-11-30
