@@ -245,7 +245,7 @@ func deepSeekNativeMessageText(content gjson.Result) string {
 	var builder strings.Builder
 	for _, part := range content.Array() {
 		if part.Get("text").Type == gjson.String {
-			builder.WriteString(part.Get("text").String())
+			_, _ = builder.WriteString(part.Get("text").String())
 		}
 	}
 	return builder.String()
