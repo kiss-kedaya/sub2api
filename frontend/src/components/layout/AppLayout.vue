@@ -1,7 +1,7 @@
 <template>
   <div
     class="min-h-screen"
-    :class="[isConsoleSignal ? 'console-signal' : 'bg-gray-50 dark:bg-dark-950', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
+    :class="[isConsoleSignal ? 'console-signal' : 'bg-[#f8f7f4] dark:bg-transparent', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
   >
     <ConsoleAtmosphere v-if="isConsoleSignal" />
     <!-- Background Decoration -->
