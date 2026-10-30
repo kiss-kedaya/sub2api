@@ -5,19 +5,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 主色调 - 雾蓝/宝石蓝，保持清爽但提升层次与质感
+        // 主色调 - 陶土橙，对齐 chanshui.dev 的暖色纸感
         primary: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          800: '#1e40af',
-          900: '#1e3a8a',
-          950: '#172554'
+          50: '#fbefe7',
+          100: '#f6ddcf',
+          200: '#ecc0a9',
+          300: '#e0a17f',
+          400: '#d2825c',
+          500: '#c9653f',
+          600: '#bd502f',
+          700: '#a3442a',
+          800: '#853622',
+          900: '#6b2c1d',
+          950: '#3a170f'
         },
         // 辅助色 - 深蓝灰
         accent: {
@@ -33,19 +33,19 @@ export default {
           900: '#0f172a',
           950: '#020617'
         },
-        // 深色模式背景
+        // 深色模式背景 - chanshui 暖炭色板
         dark: {
-          50: '#f8fafc',
-          100: '#f1f5f9',
-          200: '#e2e8f0',
-          300: '#cbd5e1',
-          400: '#94a3b8',
-          500: '#64748b',
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#0f172a',
-          950: '#020617'
+          50: '#f0f1e8',
+          100: '#e3e4d7',
+          200: '#c9cbbd',
+          300: '#b3b4a6',
+          400: '#8f9182',
+          500: '#6f7164',
+          600: '#56584c',
+          700: '#383b31',
+          800: '#22241f',
+          900: '#181917',
+          950: '#111210'
         }
       },
       fontFamily: {
@@ -67,20 +67,20 @@ export default {
       boxShadow: {
         glass: '0 8px 32px rgba(0, 0, 0, 0.08)',
         'glass-sm': '0 4px 16px rgba(0, 0, 0, 0.06)',
-        glow: '0 0 20px rgba(59, 130, 246, 0.22)',
-        'glow-lg': '0 0 40px rgba(37, 99, 235, 0.28)',
+        glow: '0 0 20px rgba(189, 80, 47, 0.22)',
+        'glow-lg': '0 0 40px rgba(163, 68, 42, 0.28)',
         card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
-        'card-hover': '0 10px 40px rgba(0, 0, 0, 0.08)',
+        'card-hover': '0 8px 16px rgba(23, 23, 22, 0.09), 0 0 0 1px rgba(23, 23, 22, 0.12)',
         'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)'
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-primary': 'linear-gradient(135deg, #60a5fa 0%, #2563eb 55%, #1d4ed8 100%)',
+        'gradient-primary': 'linear-gradient(135deg, #d2825c 0%, #bd502f 55%, #a3442a 100%)',
         'gradient-dark': 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
         'gradient-glass':
           'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
         'mesh-gradient':
-          'radial-gradient(at 40% 20%, rgba(96, 165, 250, 0.16) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(14, 165, 233, 0.10) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(37, 99, 235, 0.08) 0px, transparent 50%)'
+          'radial-gradient(at 40% 20%, rgba(210, 130, 92, 0.14) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(189, 80, 47, 0.10) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(163, 68, 42, 0.07) 0px, transparent 50%)'
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',
@@ -118,8 +118,8 @@ export default {
           '100%': { backgroundPosition: '200% 0' }
         },
         glow: {
-          '0%': { boxShadow: '0 0 20px rgba(59, 130, 246, 0.20)' },
-          '100%': { boxShadow: '0 0 30px rgba(37, 99, 235, 0.32)' }
+          '0%': { boxShadow: '0 0 20px rgba(189, 80, 47, 0.20)' },
+          '100%': { boxShadow: '0 0 30px rgba(163, 68, 42, 0.32)' }
         }
       },
       backdropBlur: {
