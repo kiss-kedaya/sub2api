@@ -313,7 +313,8 @@ SELECT
   COALESCE(
     NULLIF(e.upstream_response_headers->>'x-request-id', ''),
     NULLIF(e.upstream_response_headers->>'x-oneapi-request-id', ''),
-    NULLIF(e.upstream_request_headers->>'x-request-id', '')
+    NULLIF(e.upstream_request_headers->>'x-request-id', ''),
+    ''
   ),
   COALESCE(e.error_message, ''),
   e.user_id,
