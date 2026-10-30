@@ -122,6 +122,8 @@ func TestSanitizeDeepSeekNativeResponsesInputRewritesPreviousAssistantMessages(t
 	require.Equal(t, "assistant", gjson.GetBytes(out, "input.2.role").String())
 	require.Equal(t, "user", gjson.GetBytes(out, "input.3.role").String())
 	require.Contains(t, gjson.GetBytes(out, "input.0.content.0.text").String(), "[Previous web search]")
+	require.Equal(t, "input_text", gjson.GetBytes(out, "input.0.content.0.type").String(),
+		"DeepSeek rejects output_text on user-role messages")
 }
 
 func TestSanitizeDeepSeekNativeResponsesInputLeavesNormalRequestsUntouched(t *testing.T) {
@@ -478,4 +480,6 @@ func TestDeepSeekNativeReasoningReplayDemotesAssistantHistoryInThinkingMode(t *t
 	require.Equal(t, "user", gjson.GetBytes(out, "input.1.role").String(),
 		"thinking mode requires reasoning_text on assistant history; demote instead of 400")
 	require.Equal(t, "answer without reasoning", gjson.GetBytes(out, "input.1.content.0.text").String())
+	require.Equal(t, "input_text", gjson.GetBytes(out, "input.1.content.0.type").String(),
+		"DeepSeek rejects output_text on user-role messages")
 }
