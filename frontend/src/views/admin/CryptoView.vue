@@ -523,6 +523,40 @@
             </button>
           </div>
 
+          <div v-if="blockedSweeps.length" class="crypto-view__blocked" role="alert">
+            <div class="crypto-view__blocked-head">
+              <strong>{{ t('admin.crypto.blockedTitle') }}</strong>
+              <span class="crypto-view__hint">{{ t('admin.crypto.blockedHint') }}</span>
+            </div>
+            <table class="crypto-view__table">
+              <thead>
+                <tr>
+                  <th>{{ t('admin.crypto.chain') }}</th>
+                  <th>{{ t('admin.crypto.address') }}</th>
+                  <th>{{ t('common.status') }}</th>
+                  <th>{{ t('admin.crypto.blockedAge') }}</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="b in blockedSweeps" :key="b.job_id">
+                  <td>{{ b.chain }}</td>
+                  <td class="crypto-view__mono">#{{ b.job_id }} · {{ short(b.address) }}</td>
+                  <td>
+                    <span class="crypto-view__badge" :class="`crypto-view__badge--${b.status}`">{{ statusLabel(b.status) }}</span>
+                    <span v-if="b.error" class="crypto-view__hint">{{ b.error }}</span>
+                  </td>
+                  <td>{{ b.age_minutes }}m</td>
+                  <td>
+                    <button class="btn btn-secondary" :disabled="reconciling === b.job_id" @click="reconcileJob(b.job_id)">
+                      {{ reconciling === b.job_id ? t('common.loading') : t('admin.crypto.reconcile') }}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
           <div v-if="sweepSummary" class="crypto-view__plan">
             <p class="crypto-view__plan-total">
               {{ t('admin.crypto.planned') }}: <strong>{{ sweepSummary.planned }}</strong> ·
@@ -788,6 +822,8 @@ import {
   listAllAddresses,
   listDepositsPaged,
   listSweepRecords,
+  listBlockedSweeps,
+  reconcileSweep,
   runSweep,
   setAddressStatus,
   exportDepositsCSV,
@@ -807,6 +843,7 @@ import {
   type HotWalletStatus,
   type PoolStatus,
   type SweepPlan,
+  type BlockedSweep,
   type SweepRecord,
   type SweepSummary,
   type WalletSecurityStatus,
@@ -898,6 +935,8 @@ const addressTotalPages = computed(() =>
 
 const sweepPlan = ref<SweepPlan | null>(null)
 const sweepRecords = ref<SweepRecord[]>([])
+const blockedSweeps = ref<BlockedSweep[]>([])
+const reconciling = ref<number | null>(null)
 const sweepSummary = ref<SweepSummary | null>(null)
 const sweeping = ref(false)
 const channelConfirmOpen = ref(false)
@@ -1457,6 +1496,23 @@ function requestSweep() {
 
 async function loadSweepRecords() {
   sweepRecords.value = await listSweepRecords()
+  blockedSweeps.value = await listBlockedSweeps()
+}
+
+// Reconcile never signs a transaction: it only reads the chain and either
+// advances a confirmed job or releases an address whose tx never landed.
+async function reconcileJob(id: number) {
+  if (reconciling.value !== null) return
+  reconciling.value = id
+  try {
+    await withCryptoVerification(t('admin.crypto.reconcile'), async (verification) => {
+      const result = await reconcileSweep(id, verification)
+      appStore.showSuccess(result.message)
+    })
+    await Promise.all([loadSweepRecords(), loadSweepPlan()])
+  } finally {
+    reconciling.value = null
+  }
 }
 
 function fmtTime(value: string): string {
@@ -2127,6 +2183,26 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
   font-size: 0.8125rem;
   color: #16a34a;
 }
+.crypto-view__blocked {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--danger-500, #dc2626);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger-500, #dc2626) 8%, transparent);
+}
+
+.crypto-view__blocked-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.crypto-view__blocked .crypto-view__table {
+  margin: 0;
+}
+
 .crypto-view__plan {
   margin-bottom: 1rem;
 }

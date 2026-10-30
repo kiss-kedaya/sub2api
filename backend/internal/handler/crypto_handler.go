@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/sweeper"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -428,6 +429,47 @@ func (h *CryptoHandler) AdminSweepRecords(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": records})
+}
+
+// AdminReconcileSweep resolves one stuck sweep job against the chain.
+// POST /api/v1/admin/crypto/sweep/records/:id/reconcile
+// It never signs a transaction, so a blocked address can be cleared safely.
+func (h *CryptoHandler) AdminReconcileSweep(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "invalid sweep record id")
+		return
+	}
+	result, err := h.service.ReconcileSweep(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// AdminListBlockedSweeps lists jobs that hold a reserved transaction and are
+// therefore stopping the chain from sweeping further addresses.
+// GET /api/v1/admin/crypto/sweep/blocked
+func (h *CryptoHandler) AdminListBlockedSweeps(c *gin.Context) {
+	if h.service == nil {
+		response.BadRequest(c, "crypto channel unavailable")
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	list, err := h.service.ListBlockedSweeps(c.Request.Context(), limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if list == nil {
+		list = []sweeper.BlockedJob{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
 }
 
 // AdminListDeposits lists observed deposits for reconciliation.

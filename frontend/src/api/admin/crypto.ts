@@ -212,6 +212,38 @@ export async function runSweep(dryRun: boolean, verification?: CryptoVerificatio
 
 
 
+export interface BlockedSweep {
+  job_id: number
+  chain: string
+  address: string
+  status: string
+  error: string
+  age_minutes: number
+  can_reconcile: boolean
+}
+
+export interface ReconcileResult {
+  job_id: number
+  chain: string
+  status: string
+  action: 'confirmed' | 'released' | 'observed'
+  message: string
+}
+
+// listBlockedSweeps returns jobs that hold a reserved transaction and are
+// therefore stopping the chain from sweeping further addresses.
+export async function listBlockedSweeps(): Promise<BlockedSweep[]> {
+  const { data } = await apiClient.get('/admin/crypto/sweep/blocked')
+  return data
+}
+
+// reconcileSweep resolves one stuck job against the chain without signing
+// anything new: confirmed -> advances, absent/reverted -> releases the address.
+export async function reconcileSweep(jobId: number, verification?: CryptoVerification): Promise<ReconcileResult> {
+  const { data } = await apiClient.post(`/admin/crypto/sweep/records/${jobId}/reconcile`, null, cryptoRequestOptions(verification))
+  return data
+}
+
 export async function listSweepRecords(chain?: string): Promise<SweepRecord[]> {
   const { data } = await apiClient.get('/admin/crypto/sweep/records', { params: { chain } })
   return data.data ?? []
