@@ -120,6 +120,16 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		return nil, policyErr
 	}
 	upstreamBody = updatedBody
+	// DeepSeek 兼容中转与官方 CC 端点都只接受 type=function。客户端按
+	// Responses 习惯写 {"type":"web_search"} 时，这里换成网关自己的 function
+	// 工具；响应路径的 applyDeepSeekSearchResults 会执行这次搜索。
+	if account.Platform == PlatformDeepseek && deepSeekToolInjectionEnabled(c) {
+		if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled {
+			if prepared, changed := prepareDeepSeekChatSearchTools(upstreamBody); changed {
+				upstreamBody = prepared
+			}
+		}
+	}
 	// Keep the final outbound tier separate from the observed response tier so
 	// usage recording can apply the selected credential's response contract.
 	serviceTier := extractOpenAIServiceTierFromBody(upstreamBody)
