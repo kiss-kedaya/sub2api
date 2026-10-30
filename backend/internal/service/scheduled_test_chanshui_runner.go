@@ -41,7 +41,10 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 			report["verdict"] = data["verdict"]
 			report["probes"] = data["probes"]
 			report["audit_status"] = data["status"]
-			if data["status"] == "done" {
+			// Chanshui marks an audit "partial" when some probes failed but the
+			// report is final. Treat it as terminal so the decision runs on the
+			// evidence we do have instead of resubmitting a fresh audit forever.
+			if auditStatus := data["status"].(string); auditStatus == "done" || auditStatus == "partial" {
 				decision := ChanshuiDecision{Status: "unknown", Reason: "检测期间配置发生变化，下一轮按当前停止条件重新判断"}
 				if state != nil && state.DecisionConfigHash != "" && state.DecisionConfigHash == chanshuiDecisionConfigHash(plan) {
 					decision = chanshui.EvaluateStopCondition(plan.ModelID, plan.QualityConfig, data)
@@ -90,10 +93,10 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 		}
 		id, _ := data["id"].(string)
 		status, _ := data["status"].(string)
-		if id != state.ID || (status != "queued" && status != "running" && status != "done") {
+		if id != state.ID || !chanshuiPollStatusTerminal(status) {
 			return finish("unknown", "掺水返回了无法识别的任务状态。", nil, "")
 		}
-		if status != "done" {
+		if chanshuiPollStatusPending(status) {
 			state.Status = status
 			if err := repo.SetChanshuiAudit(ctx, plan.ID, state); err != nil {
 				return nil, 0, fmt.Errorf("cannot persist audit progress")
@@ -168,7 +171,7 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 	expires, _ := data["expires_at"].(float64)
 	status, _ := data["status"].(string)
 	pollURL, err := chanshui.PollURL(copyPlan.QualityConfig.BaseURL, poll, id)
-	if err != nil || expires <= float64(now.Unix()) || (status != "queued" && status != "running" && status != "done") {
+	if err != nil || expires <= float64(now.Unix()) || !chanshuiPollStatusTerminal(status) {
 		return finish("unknown", "掺水创建响应缺少有效的检测编号、轮询地址、状态或有效期；本轮不重复提交。", nil, key)
 	}
 	state = &ChanshuiAuditState{ID: id, PollURL: pollURL, ServiceURL: copyPlan.QualityConfig.BaseURL, StartedAt: now, ExpiresAt: int64(expires), KeyFingerprint: chanshui.Fingerprint(key), Status: status, Skipped: chanshui.Redact(data["skipped"], key, ""), DecisionConfigHash: chanshuiDecisionConfigHash(&copyPlan)}
@@ -176,4 +179,22 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 		return finish("unknown", "掺水已接受任务，但本地保存轮询状态失败；本轮不重复提交。", nil, key)
 	}
 	return nil, time.Minute, nil
+}
+
+// chanshuiPollStatus reports whether a poll status can be handled. "partial"
+// and the explicit failure statuses are terminal: the audit will never advance
+// again, so polling forever only hides the real reason.
+func chanshuiPollStatusTerminal(status string) bool {
+	switch status {
+	case "queued", "running", "done", "partial", "error", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+// chanshuiPollStatusPending reports whether a terminal-less status still needs
+// another poll round.
+func chanshuiPollStatusPending(status string) bool {
+	return status == "queued" || status == "running"
 }
