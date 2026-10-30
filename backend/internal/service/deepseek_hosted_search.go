@@ -581,6 +581,12 @@ func (w *deepSeekHostedRoundWriter) frame(frame []byte) error {
 	}
 	kind := gjson.GetBytes(raw, "type").String()
 	if kind == "" || (!strings.HasPrefix(kind, "response.") && kind != "error") {
+		// A bare upstream error object (no `response.` type) carries the real
+		// cause in `message`. Surface it so the failure is actionable instead of
+		// degrading to a generic hosted-search error.
+		if message := gjson.GetBytes(raw, "message").String(); message != "" {
+			return fmt.Errorf("deepseek upstream returned an unsupported SSE event: %s", message)
+		}
 		return errors.New("deepseek upstream returned an unsupported SSE event")
 	}
 	w.state.header = w.header.Clone()

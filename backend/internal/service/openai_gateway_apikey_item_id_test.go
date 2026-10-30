@@ -155,7 +155,11 @@ func TestOpenAIGatewayService_SetupTokenLegacy_SanitizesAndTransforms(t *testing
 	require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning.mode").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input.0.id").Exists())
-	require.Len(t, gjson.GetBytes(upstream.lastBody, "input").Array(), 1)
+	// The OpenAI Responses path now pairs an unanswered custom_tool_call with a
+	// synthetic custom_tool_call_output, so the orphan output is dropped and
+	// the call keeps the history usable.
+	require.Len(t, gjson.GetBytes(upstream.lastBody, "input").Array(), 2)
+	require.Equal(t, "custom_tool_call_output", gjson.GetBytes(upstream.lastBody, "input.1.type").String())
 }
 
 // TestOpenAIGatewayService_APIKeyPassthrough_StripsInvalidReasoningItemIDs

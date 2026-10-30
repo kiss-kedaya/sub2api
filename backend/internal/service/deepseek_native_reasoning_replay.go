@@ -218,9 +218,7 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		}
 		if kind == "message" && item.Get("role").String() == "assistant" && requiresReplay && !reasoningSinceUser &&
 			strings.TrimSpace(deepSeekNativeMessageText(item.Get("content"))) != "" {
-			if updated, err := sjson.SetBytes(raw, "role", "user"); err == nil {
-				raw = updated
-			}
+			raw = deepSeekNativeAsUserMessage(raw)
 		}
 		if !first {
 			_ = restored.WriteByte(',')
@@ -282,8 +280,8 @@ func sanitizeDeepSeekNativeResponsesInput(body []byte) []byte {
 		if !strings.HasPrefix(text, "[Previous ") {
 			continue
 		}
-		updated, err := sjson.SetBytes([]byte(item.Raw), "role", "user")
-		if err != nil {
+		updated := deepSeekNativeAsUserMessage([]byte(item.Raw))
+		if bytes.Equal(updated, []byte(item.Raw)) {
 			continue
 		}
 		items[i] = gjson.ParseBytes(updated)
@@ -306,6 +304,49 @@ func sanitizeDeepSeekNativeResponsesInput(body []byte) []byte {
 		return next
 	}
 	return body
+}
+
+// deepSeekNativeAsUserMessage rewrites a message to the user role and converts
+// output_text blocks to input_text. DeepSeek only accepts input_* content for
+// user-role messages and rejects a downgraded assistant message with
+// "Invalid content type: output_text" otherwise.
+func deepSeekNativeAsUserMessage(raw []byte) []byte {
+	updated, err := sjson.SetBytes(raw, "role", "user")
+	if err != nil {
+		return raw
+	}
+	content := gjson.GetBytes(updated, "content")
+	if !content.IsArray() {
+		return updated
+	}
+	parts := content.Array()
+	out := make([]json.RawMessage, 0, len(parts))
+	changed := false
+	for _, part := range parts {
+		if part.Get("type").String() == "output_text" {
+			block, marshalErr := json.Marshal(map[string]string{
+				"type": "input_text",
+				"text": part.Get("text").String(),
+			})
+			if marshalErr == nil {
+				out = append(out, block)
+				changed = true
+				continue
+			}
+		}
+		out = append(out, json.RawMessage(part.Raw))
+	}
+	if !changed {
+		return updated
+	}
+	rawContent, marshalErr := json.Marshal(out)
+	if marshalErr != nil {
+		return updated
+	}
+	if next, setErr := sjson.SetRawBytes(updated, "content", rawContent); setErr == nil {
+		return next
+	}
+	return updated
 }
 
 func deepSeekNativeMessageText(content gjson.Result) string {
