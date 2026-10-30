@@ -297,3 +297,23 @@ func TestChanshuiPersistFailureCannotChangeScheduling(t *testing.T) {
 	require.True(t, account.Schedulable)
 	require.Zero(t, accounts.changes)
 }
+
+// A partial audit is terminal: chanshui finished, some probes failed. It must
+// be decided on the evidence present instead of being resubmitted every round.
+func TestChanshuiPartialAuditIsTerminal(t *testing.T) {
+	runner, repo, results, plan, _ := newChanshuiTestRunner(func(req *http.Request) (*http.Response, error) {
+		t.Fatal("must not create a new audit for a terminal partial report")
+		return nil, nil
+	})
+	repo.state = &ChanshuiAuditState{ID: "partial-fixture", PollURL: "/api/v1/audits/partial-fixture", ServiceURL: "https://audit.example", Status: "running", StartedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour).Unix(), DecisionConfigHash: chanshuiDecisionConfigHash(plan)}
+	repo.state.PollURL = "https://audit.example/api/v1/audits/partial-fixture"
+	runner.chanshuiClient.Transport = chanshuiTestTransport(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodGet, req.Method)
+		return chanshuiTestResponse(200, `{"id":"partial-fixture","status":"partial","probes":[{"id":"fingerprint","status":"error","error":"HTTP 403"}],"verdict":{"fingerprint":{"top_model":"gpt-test"}}}`), nil
+	})
+	runner.runOnePlan(context.Background(), plan)
+	require.Zero(t, repo.reserves, "a partial audit must not trigger a new submission")
+	require.Len(t, results.results, 1)
+	require.Contains(t, results.results[0].ResponseText, "partial")
+	require.NotContains(t, results.results[0].ErrorMessage, "无法识别")
+}
