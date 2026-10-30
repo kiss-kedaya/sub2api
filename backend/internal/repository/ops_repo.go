@@ -310,6 +310,11 @@ SELECT
   COALESCE(u2.email, ''),
   COALESCE(e.client_request_id, ''),
   COALESCE(e.request_id, ''),
+  COALESCE(
+    NULLIF(e.upstream_response_headers->>'x-request-id', ''),
+    NULLIF(e.upstream_response_headers->>'x-oneapi-request-id', ''),
+    NULLIF(e.upstream_request_headers->>'x-request-id', '')
+  ),
   COALESCE(e.error_message, ''),
   e.user_id,
   COALESCE(u.email, ''),
@@ -386,6 +391,7 @@ ORDER BY ` + orderBy
 			&resolvedByName,
 			&item.ClientRequestID,
 			&item.RequestID,
+			&item.UpstreamRequestID,
 			&item.Message,
 			&userID,
 			&userEmail,
