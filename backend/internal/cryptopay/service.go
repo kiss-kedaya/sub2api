@@ -752,6 +752,34 @@ type SweepRecord struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+// ReconcileSweep resolves one stuck sweep job against the chain. It never
+// signs a new transaction, so an operator can safely clear a blocked address.
+func (s *Service) ReconcileSweep(ctx context.Context, jobID int64) (*sweeper.ReconcileResult, error) {
+	if jobID <= 0 {
+		return nil, fmt.Errorf("invalid sweep job id")
+	}
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
+	s.mu.RLock()
+	exec := s.executor
+	s.mu.RUnlock()
+	if exec == nil {
+		return nil, fmt.Errorf("cryptopay is disabled")
+	}
+	return exec.Reconcile(ctx, jobID)
+}
+
+// ListBlockedSweeps returns unfinished jobs holding a reserved transaction.
+func (s *Service) ListBlockedSweeps(ctx context.Context, limit int) ([]sweeper.BlockedJob, error) {
+	s.mu.RLock()
+	exec := s.executor
+	s.mu.RUnlock()
+	if exec == nil {
+		return nil, nil
+	}
+	return exec.ListBlocked(ctx, limit)
+}
+
 // ListSweepRecords returns recent sweep records, optionally filtered.
 func (s *Service) ListSweepRecords(ctx context.Context, chain string, limit int) ([]SweepRecord, error) {
 	if limit <= 0 || limit > 500 {

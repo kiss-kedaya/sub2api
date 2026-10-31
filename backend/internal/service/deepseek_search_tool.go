@@ -97,6 +97,65 @@ func injectDeepSeekSearchTool(body []byte) ([]byte, bool) {
 	return next, true
 }
 
+// prepareDeepSeekChatSearchTools rewrites a client's native hosted search
+// declaration into the gateway-owned Chat Completions function tool.
+//
+// Chat Completions upstreams (DeepSeek official and every DeepSeek-compatible
+// relay) only accept type=function. Forwarding {"type":"web_search"} verbatim
+// makes the upstream reject the whole request with
+// "tools[0].type is invalid or missing". The response path already executes
+// the injected tool via applyDeepSeekSearchResults, so only the declaration
+// has to be rewritten here.
+func prepareDeepSeekChatSearchTools(body []byte) ([]byte, bool) {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body, false
+	}
+	tools := gjson.GetBytes(body, "tools").Array()
+	if len(tools) == 0 {
+		return body, false
+	}
+	kept := make([]json.RawMessage, 0, len(tools))
+	changed := false
+	for _, tool := range tools {
+		if isDeepSeekHostedSearchToolType(tool.Get("type").String()) {
+			changed = true
+			continue
+		}
+		kept = append(kept, json.RawMessage(tool.Raw))
+	}
+	if !changed {
+		return body, false
+	}
+	declared := false
+	for _, raw := range kept {
+		item := gjson.ParseBytes(raw)
+		if item.Get("function.name").String() == deepSeekSearchToolName ||
+			item.Get("name").String() == deepSeekSearchToolName {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		schema, err := json.Marshal(deepSeekSearchToolSchema)
+		if err != nil {
+			return body, false
+		}
+		kept = append(kept, schema)
+	}
+	next, err := sjson.SetBytes(body, "tools", kept)
+	if err != nil {
+		return body, false
+	}
+	choice := gjson.GetBytes(next, "tool_choice")
+	if choice.IsObject() && isDeepSeekHostedSearchToolType(choice.Get("type").String()) {
+		if mapped, mapErr := sjson.SetBytes(next, "tool_choice",
+			map[string]any{"type": "function", "function": map[string]any{"name": deepSeekSearchToolName}}); mapErr == nil {
+			next = mapped
+		}
+	}
+	return next, true
+}
+
 // isDeepSeekSearchCall 判断某个 tool_call 是否是注入的搜索工具。
 func isDeepSeekSearchCall(name string) bool {
 	return strings.TrimSpace(name) == deepSeekSearchToolName
