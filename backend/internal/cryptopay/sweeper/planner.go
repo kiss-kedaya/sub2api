@@ -104,6 +104,15 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 		if err != nil {
 			return nil, fmt.Errorf("unswept balances %s: %w", chain, err)
 		}
+		// One gas quote per chain per run: asking the node once per address
+		// burns the public RPC budget and is what made whole runs fail with
+		// "all rpc endpoints failed". A failed quote is not retried per address.
+		var gasPrice *big.Int
+		if pool := p.pools[chain]; pool != nil {
+			if quote, err := pool.GasPrice(ctx); err == nil {
+				gasPrice = quote
+			}
+		}
 		for _, balance := range balances {
 			if balance.Raw == nil || balance.Raw.Sign() <= 0 {
 				continue
@@ -121,7 +130,7 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 				AmountDecimal:   amountDecimal,
 				Decimals:        balance.Decimals,
 			}
-			p.estimateGas(ctx, chain, &entry)
+			p.estimateGas(ctx, chain, &entry, gasPrice)
 			plan.Entries = append(plan.Entries, entry)
 			plan.TotalUSD += amountDecimal // stablecoin ~= USD
 		}
@@ -139,13 +148,9 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 // then uses the same budget rule as the executor. A chain that cannot be
 // read leaves the fields at their zero values; the executor re-checks at
 // execution time (the live balance may have changed).
-func (p *Planner) estimateGas(ctx context.Context, chain string, entry *PlanEntry) {
+func (p *Planner) estimateGas(ctx context.Context, chain string, entry *PlanEntry, gasPrice *big.Int) {
 	pool := p.pools[chain]
-	if pool == nil {
-		return
-	}
-	gasPrice, err := pool.GasPrice(ctx)
-	if err != nil {
+	if pool == nil || gasPrice == nil {
 		return
 	}
 	budget := transferGasBudget(gasPrice)
