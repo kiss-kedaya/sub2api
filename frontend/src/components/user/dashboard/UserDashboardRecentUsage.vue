@@ -1,25 +1,25 @@
 <template>
-  <section class="signal-recent">
-    <header class="signal-recent-heading">
-      <h2>{{ t('dashboard.recentUsage') }}</h2>
-      <span v-if="startDate && endDate">{{ startDate }} / {{ endDate }}</span>
+  <section class="signal-recent min-w-0 pt-4">
+    <header class="mb-3 flex items-baseline justify-between gap-3">
+      <h2 class="text-sm font-semibold text-highlighted">{{ t('dashboard.recentUsage') }}</h2>
+      <span v-if="startDate && endDate" class="text-xs text-muted tabular-nums">{{ startDate }} / {{ endDate }}</span>
     </header>
-    <div v-if="loading" class="signal-recent-loading"><LoadingSpinner size="lg" /></div>
-    <div v-else-if="data.length === 0" class="signal-recent-empty">
+    <div v-if="loading" class="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
+    <div v-else-if="data.length === 0" class="py-6">
       <EmptyState :title="t('dashboard.noUsageRecords')" :description="t('dashboard.startUsingApi')" />
     </div>
     <template v-else>
-      <ol class="signal-request-list">
+      <ol class="divide-y divide-default border-y border-default">
         <li v-for="log in data" :key="log.id" class="signal-request">
           <div class="signal-request-model">
-            <Icon name="beaker" size="md" />
-            <div>
-              <p>{{ log.model }}</p>
-              <time :datetime="log.created_at">{{ formatDateTime(log.created_at) }}</time>
+            <UIcon name="i-lucide-flask-conical" class="signal-request-icon size-5 shrink-0 text-muted" />
+            <div class="min-w-0">
+              <p class="text-[13px] font-medium text-highlighted break-all">{{ log.model }}</p>
+              <time class="mt-1 block text-[11px] text-muted" :datetime="log.created_at">{{ formatDateTime(log.created_at) }}</time>
             </div>
           </div>
           <div class="signal-request-tokens">
-            <span>{{ (log.input_tokens + log.output_tokens + (log.cache_read_tokens || 0) + (log.cache_creation_tokens || 0)).toLocaleString() }}</span>
+            <span class="text-highlighted">{{ (log.input_tokens + log.output_tokens + (log.cache_read_tokens || 0) + (log.cache_creation_tokens || 0)).toLocaleString() }}</span>
             <span class="signal-request-label">tokens</span>
           </div>
           <div class="signal-request-cost">
@@ -28,7 +28,9 @@
           </div>
         </li>
       </ol>
-      <router-link to="/usage" class="signal-view-all">{{ t('dashboard.viewAllUsage') }}<Icon name="arrowRight" size="sm" /></router-link>
+      <div class="flex justify-end pt-2">
+        <router-link to="/usage" class="signal-view-all">{{ t('dashboard.viewAllUsage') }}<UIcon name="i-lucide-arrow-right" class="size-4" /></router-link>
+      </div>
     </template>
   </section>
 </template>
@@ -37,7 +39,6 @@
 import { useI18n } from 'vue-i18n'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
 import type { UsageLog } from '@/types'
 
@@ -52,35 +53,25 @@ const formatCost = (c: number) => c.toFixed(4)
 </script>
 
 <style scoped>
-.signal-recent { min-width: 0; padding-top: 20px; }
-.signal-recent-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.signal-recent-heading h2 { font-size: 14px; font-weight: 600; }
-.signal-recent-heading > span { font-size: 12px; color: var(--signal-muted, #65716a); }
-.signal-recent-loading { display: flex; justify-content: center; padding: 48px 0; }
-.signal-recent-empty { padding: 24px 0; }
-.signal-request-list { border-top: 1px solid var(--signal-line, #dce2df); }
-.signal-request { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(100px, .5fr) minmax(180px, .65fr); gap: 20px; align-items: center; padding: 14px 12px; border-bottom: 1px solid var(--signal-line, #dce2df); font-variant-numeric: tabular-nums; }
-.signal-request:hover { background: var(--signal-surface, #fff); }
+.signal-request { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(100px, .5fr) minmax(180px, .65fr); gap: 20px; align-items: center; padding: 12px; font-variant-numeric: tabular-nums; transition: background-color 150ms ease; }
+.signal-request:hover { background: color-mix(in srgb, var(--ui-bg-elevated) 50%, transparent); }
 .signal-request-model { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.signal-request-model > :deep(svg) { flex-shrink: 0; color: var(--signal-muted, #65716a); }
-.signal-request-model > div { min-width: 0; }
-.signal-request-model p { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
-.signal-request-model time { display: block; margin-top: 4px; font-size: 11px; color: var(--signal-muted, #65716a); }
-.signal-request-tokens { display: flex; align-items: baseline; justify-content: flex-end; flex-wrap: wrap; gap: 5px; font-size: 13px; overflow-wrap: anywhere; min-width: 0; }
-.signal-request-label { font-size: 11px; color: var(--signal-muted, #65716a); }
+.signal-request-tokens { display: flex; align-items: baseline; justify-content: flex-end; flex-wrap: wrap; gap: 5px; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.signal-request-label { font-size: 11px; color: var(--ui-text-muted); }
 .signal-request-cost { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .signal-request-cost > div { display: flex; justify-content: flex-end; align-items: baseline; gap: 12px; font-size: 13px; }
 .signal-request-cost > div > span:last-child { min-width: 88px; text-align: right; overflow-wrap: anywhere; }
-.signal-actual { color: var(--signal-amber, #99640c); font-weight: 600; }
-.signal-standard { color: var(--signal-muted, #65716a); }
-.signal-view-all { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-height: 44px; padding-top: 8px; font-size: 12px; font-weight: 500; color: var(--signal-accent, #087f68); }
-.signal-view-all:focus-visible { outline: 2px solid var(--signal-accent, #087f68); outline-offset: 2px; }
+.signal-actual { color: var(--signal-amber, #906727); font-weight: 600; }
+.signal-standard { color: var(--ui-text-muted); }
+.signal-view-all { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 8px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--ui-text-highlighted); transition: background-color 150ms ease; }
+.signal-view-all:hover { background: var(--ui-bg-elevated); }
+.signal-view-all:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 2px; }
 @media (max-width: 640px) {
-  .signal-request { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; padding: 14px 0; }
+  .signal-request { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; }
   .signal-request-model { grid-column: 1 / -1; align-items: flex-start; }
-  .signal-request-model > :deep(svg) { margin-top: 2px; }
   .signal-request-tokens { justify-content: flex-start; padding-left: 32px; }
   .signal-request-cost > div { gap: 6px; }
   .signal-request-cost > div > span:last-child { min-width: 0; }
 }
+@media (prefers-reduced-motion: reduce) { .signal-request, .signal-view-all { transition: none; } }
 </style>
