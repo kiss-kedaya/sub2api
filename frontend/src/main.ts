@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import i18n, { initI18n } from './i18n'
+import nuxtUi from './plugins/nuxtUi'
 import { useAppStore } from '@/stores/app'
 import { updateFavicon } from '@/utils/branding'
 import { isIOSDevice } from '@/utils/device'
@@ -54,6 +55,8 @@ async function bootstrap() {
 
   app.use(router)
   app.use(i18n)
+  // Nuxt UI (Vue mode): head, router links, bundled icons and its color variables.
+  app.use(nuxtUi)
 
   // 等待路由器完成初始导航后再挂载，避免竞态条件导致的空白渲染
   await router.isReady()

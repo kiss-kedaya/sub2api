@@ -9,6 +9,7 @@ import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
+import { nuxtUiLocale } from '@/plugins/nuxtUi'
 
 const router = useRouter()
 const route = useRoute()
@@ -138,9 +139,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <NavigationProgress />
-  <RouterView />
-  <Toast />
-  <AnnouncementPopup />
-  <AdminComplianceDialog />
+  <!-- UApp provides Nuxt UI's tooltip/toast/overlay context; it renders no wrapper element.
+       The app's own Toast and dialogs keep working alongside it. -->
+  <UApp :locale="nuxtUiLocale">
+    <NavigationProgress />
+    <RouterView />
+    <Toast />
+    <AnnouncementPopup />
+    <AdminComplianceDialog />
+  </UApp>
 </template>

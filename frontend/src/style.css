@@ -1,7 +1,9 @@
 @import 'tailwindcss';
+@import '@nuxt/ui';
 @import './styles/tailwind-v3-compat.css';
 
-/* Same selector and specificity as v3 `darkMode: 'class'`: descendants of `.dark`. */
+/* Same selector and specificity as v3 `darkMode: 'class'`: descendants of `.dark`.
+   Declared after @nuxt/ui, which defines `dark` as `&:where(.dark, .dark *)`. */
 @custom-variant dark (&:is(.dark *));
 
 @theme {
