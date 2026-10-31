@@ -1,11 +1,9 @@
 <template>
   <div
     class="min-h-screen"
-    :class="[isConsoleSignal ? 'console-signal' : 'bg-[#f8f7f4] dark:bg-transparent', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
+    :class="[isConsoleSignal ? 'console-signal' : 'bg-[#ffffff] dark:bg-transparent', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
   >
-    <ConsoleAtmosphere v-if="isConsoleSignal" />
-    <!-- Background Decoration -->
-
+    <InkSakura v-if="isConsoleSignal" />
     <!-- Sidebar -->
     <AppSidebar />
 
@@ -30,6 +28,7 @@ import '@/styles/onboarding.css'
 import '@/styles/console-signal.css'
 import '@/styles/console-account.css'
 import '@/styles/console-studio.css'
+import '@/styles/console-elevation.css'
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
@@ -38,7 +37,7 @@ import { useOnboardingStore } from '@/stores/onboarding'
 import { useConsoleSignal } from '@/composables/useConsoleSignal'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
-import ConsoleAtmosphere from './ConsoleAtmosphere.vue'
+import InkSakura from './InkSakura.vue'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()

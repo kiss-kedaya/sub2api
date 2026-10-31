@@ -1,14 +1,15 @@
 <template>
-  <div class="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-    <!-- Background -->
+  <div class="auth-paper relative flex min-h-screen items-center justify-center overflow-hidden p-4">
+    <!-- Background: plain white paper by day; the night background and grid are unchanged -->
     <div
-      class="absolute inset-0 bg-gradient-to-br from-gray-50 via-primary-50/30 to-gray-100 dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
+      class="absolute inset-0 hidden bg-gradient-to-br dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
     ></div>
-
-    <!-- Decorative Elements -->
-    <div class="pointer-events-none absolute inset-0 overflow-hidden">
+    <div class="pointer-events-none absolute inset-0 hidden overflow-hidden dark:block">
       <div class="auth-grid absolute inset-0"></div>
     </div>
+
+    <!-- Ink-wash sakura on the right, above the background and below the form -->
+    <InkSakura front />
 
     <!-- Content Container -->
     <div class="relative z-10 w-full max-w-md">
@@ -17,7 +18,7 @@
         <!-- Custom Logo or Default Logo -->
         <template v-if="settingsLoaded">
           <div
-            class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl shadow-lg shadow-primary-500/30"
+            class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl dark:shadow-lg dark:shadow-primary-500/30"
           >
             <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
           </div>
@@ -31,7 +32,7 @@
       </div>
 
       <!-- Card Container -->
-      <div class="card-glass rounded-2xl p-8 shadow-glass">
+      <div class="auth-card rounded-2xl border border-[#ebe8e9] bg-white/85 p-8 dark:border-dark-700/50 dark:bg-dark-800/70 dark:shadow-glass dark:backdrop-blur-xl">
         <slot />
       </div>
 
@@ -56,6 +57,8 @@
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
+import InkSakura from './InkSakura.vue'
+import '@/styles/console-elevation.css'
 import { sanitizeUrl } from '@/utils/url'
 
 const appStore = useAppStore()
@@ -73,7 +76,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* Plain ink title by day; the night keeps its rose gradient. */
 .text-gradient {
+  color: #2f2a2c;
+}
+
+:global(html.dark) .text-gradient {
   @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
 }
 

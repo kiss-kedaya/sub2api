@@ -619,10 +619,11 @@ const renderedHelpText = computed(() => DOMPurify.sanitize(
 
 const rechargeCenterEnabled = computed(() => checkout.value.recharge_center_enabled === true)
 
+// Alipay / WeChat comes first in the tab bar; the page still opens on the balance top-up tab.
 const tabs = computed(() => {
   const result: { key: 'recharge' | 'rechargeCenter'; label: string }[] = []
-  if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
   if (rechargeCenterEnabled.value) result.push({ key: 'rechargeCenter', label: t('payment.tabRechargeCenter') })
+  if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
   return result
 })
 
