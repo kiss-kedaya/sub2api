@@ -1,32 +1,39 @@
-/* chanshui.dev mint: pale mint paper, deep green ink, charcoal-green sidebar. */
+/* Pink-white: blush paper, white cards, plum ink, rose accent, light blush sidebar. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #f3f7f6;
+  --signal-bg: #fdf7f8;
   --signal-surface: #ffffff;
-  --signal-raised: #eef4f1;
-  --signal-sidebar: #14231e;
-  --signal-line: #dde8e4;
-  --signal-text: #203d35;
-  --signal-muted: #678078;
-  --signal-accent: #247e68;
+  --signal-raised: #faf0f3;
+  --signal-sidebar: #fbf1f4;
+  --signal-line: #f0dfe5;
+  --signal-text: #3a2a30;
+  --signal-muted: #7d636c;
+  --signal-accent: #ad4467;
   --signal-amber: #906727;
-  --signal-hover: #eef5f2;
-  --signal-accent-soft: #e6f3ed;
+  --signal-hover: #fcf3f6;
+  --signal-accent-soft: #fbe9ef;
   --signal-on-accent: #ffffff;
-  --signal-control-line: #bcd3ca;
+  --signal-control-line: #e2c6d0;
   --signal-highlight: #ffffff;
-  --signal-inset: #f6f9f8;
-  --signal-divider: #e7efec;
+  --signal-inset: #fdf8f9;
+  --signal-divider: #f5e8ec;
   --signal-shadow: 0 0 #0000;
-  --signal-popover-shadow: 0 12px 32px #14231e1f;
-  --signal-command: #247e68;
+  --signal-popover-shadow: 0 12px 32px #3a2a301a;
+  --signal-command: #ad4467;
   --signal-command-text: #ffffff;
-  --signal-command-hover: #1c6855;
-  --signal-nav-text: #b9cdc4;
-  --signal-nav-muted: #7f9a8f;
-  --signal-nav-hover: #1c3029;
-  --signal-nav-active: #233f33;
-  --signal-nav-active-text: #c1e5d5;
-  --signal-nav-line: #22372f;
+  --signal-command-hover: #963a59;
+  --signal-nav-text: #5f4952;
+  --signal-nav-muted: #7d636c;
+  --signal-nav-hover: #f6e4ea;
+  --signal-nav-active: #f3d9e2;
+  --signal-nav-active-text: #963a59;
+  --signal-nav-line: #efdde3;
+  --signal-nav-strong: #3a2a30;
+  --signal-nav-brand: #3a2a30;
+  --signal-hero: #f6e4ea;
+  --signal-hero-text: #3a2a30;
+  --signal-hero-muted: #7d636c;
+  --signal-hero-mark: #ad4467;
+  --signal-hero-line: #e8cfd8;
   /* motion tokens: 独角兽级动效体系（统一 easing 与时长） */
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
@@ -40,33 +47,40 @@
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #14201c;
-  --signal-surface: #1b2b23;
-  --signal-raised: #22342b;
-  --signal-sidebar: #101a16;
-  --signal-line: #344638;
-  --signal-text: #e1e9df;
-  --signal-muted: #afc4b7;
-  --signal-accent: #8bc1a6;
+  --signal-bg: #1c1519;
+  --signal-surface: #261c21;
+  --signal-raised: #2e2228;
+  --signal-sidebar: #181215;
+  --signal-line: #3f2f37;
+  --signal-text: #f1e4e9;
+  --signal-muted: #c3a9b3;
+  --signal-accent: #e89ab3;
   --signal-amber: #c3af7c;
-  --signal-hover: #213329;
-  --signal-accent-soft: #283f31;
-  --signal-on-accent: #182015;
-  --signal-control-line: #4b6152;
+  --signal-hover: #30232a;
+  --signal-accent-soft: #3d2730;
+  --signal-on-accent: #2a1820;
+  --signal-control-line: #5e4651;
   --signal-highlight: #ffffff0a;
-  --signal-inset: #17231d;
-  --signal-divider: #2b3b30;
+  --signal-inset: #20171c;
+  --signal-divider: #33262d;
   --signal-shadow: 0 0 #0000;
   --signal-popover-shadow: 0 12px 32px #00000066;
-  --signal-command: #8bc1a6;
-  --signal-command-text: #182015;
-  --signal-command-hover: #9dcdb4;
-  --signal-nav-text: #b9cdc4;
-  --signal-nav-muted: #7f9a8f;
-  --signal-nav-hover: #1a2a24;
-  --signal-nav-active: #253f33;
-  --signal-nav-active-text: #c1e5d5;
-  --signal-nav-line: #1f312a;
+  --signal-command: #e89ab3;
+  --signal-command-text: #2a1820;
+  --signal-command-hover: #f0aec3;
+  --signal-nav-text: #d5c0c8;
+  --signal-nav-muted: #a88f99;
+  --signal-nav-hover: #261c21;
+  --signal-nav-active: #3d2730;
+  --signal-nav-active-text: #f6c9d8;
+  --signal-nav-line: #2e2228;
+  --signal-nav-strong: #ffffff;
+  --signal-nav-brand: #f6c9d8;
+  --signal-hero: #2e2228;
+  --signal-hero-text: #f6e9ee;
+  --signal-hero-muted: #c3a9b3;
+  --signal-hero-mark: #f0aec3;
+  --signal-hero-line: #4a3640;
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
@@ -100,11 +114,11 @@
   font-family: var(--signal-display-font);
   font-size: 21px;
   font-weight: 600;
-  color: var(--signal-nav-active-text);
+  color: var(--signal-nav-brand);
 }
 
 .console-signal .signal-sidebar .sidebar-brand-title:hover {
-  color: #ffffff;
+  color: var(--signal-accent);
 }
 
 .console-signal .sidebar-nav {
@@ -137,7 +151,7 @@
 
 .console-signal .signal-sidebar .sidebar-link:hover {
   background: var(--signal-nav-hover);
-  color: #ffffff;
+  color: var(--signal-nav-strong);
 }
 
 .console-signal .signal-sidebar .sidebar-link-active:hover {
@@ -646,22 +660,22 @@ body:has(.console-signal) > .select-dropdown-portal {
 }
 
 .console-signal .signal-dashboard .signal-metric--balance {
-  background: var(--signal-sidebar);
-  border-color: var(--signal-sidebar);
-  color: #ffffff;
+  background: var(--signal-hero);
+  border-color: var(--signal-hero);
+  color: var(--signal-hero-text);
 }
 
 .console-signal .signal-dashboard .signal-metric--balance :is(.signal-value, .signal-metric-foot strong) {
-  color: #ffffff;
+  color: var(--signal-hero-text);
 }
 
 .console-signal .signal-dashboard .signal-metric--balance :is(.signal-label, .signal-metric-foot) {
-  color: var(--signal-nav-text);
-  border-color: #ffffff24;
+  color: var(--signal-hero-muted);
+  border-color: var(--signal-hero-line);
 }
 
 .console-signal .signal-dashboard .signal-metric--balance .signal-label > span {
-  color: #8ed7ba;
+  color: var(--signal-hero-mark);
 }
 
 .console-signal .admin-overview-identity p {

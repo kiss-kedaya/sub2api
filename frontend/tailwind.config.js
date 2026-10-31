@@ -5,19 +5,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 主色调 - 薄荷绿，对齐 chanshui.dev 的 mint 主题（600 = chanshui --accent）
+        // 主色调 - 玫瑰粉（粉白主题，600 = 主按钮色）
         primary: {
-          50: '#f0f7f4',
-          100: '#e6f3ed',
-          200: '#c6e3d6',
-          300: '#9dcdb8',
-          400: '#6ca789',
-          500: '#3f9479',
-          600: '#247e68',
-          700: '#1c6855',
-          800: '#1a5344',
-          900: '#173f35',
-          950: '#0c231d'
+          50: '#fdf2f5',
+          100: '#fbe9ef',
+          200: '#f6d0dd',
+          300: '#eeaac1',
+          400: '#e082a2',
+          500: '#cc5e83',
+          600: '#ad4467',
+          700: '#963a59',
+          800: '#7b3149',
+          900: '#652a3e',
+          950: '#3a1522'
         },
         // 辅助色 - 深蓝灰
         accent: {
@@ -33,19 +33,19 @@ export default {
           900: '#0f172a',
           950: '#020617'
         },
-        // 深色模式背景 - chanshui 暖炭色板
+        // 深色模式背景 - 梅子炭色板（粉白主题暗色）
         dark: {
-          50: '#f0f1e8',
-          100: '#e3e4d7',
-          200: '#c9cbbd',
-          300: '#b3b4a6',
-          400: '#8f9182',
-          500: '#6f7164',
-          600: '#56584c',
-          700: '#383b31',
-          800: '#22241f',
-          900: '#181917',
-          950: '#111210'
+          50: '#f6eef1',
+          100: '#ecdfe4',
+          200: '#d8c4cc',
+          300: '#c3a9b3',
+          400: '#a08891',
+          500: '#7e6670',
+          600: '#5e4651',
+          700: '#3f2f37',
+          800: '#261c21',
+          900: '#1c1519',
+          950: '#140f12'
         }
       },
       fontFamily: {
@@ -67,20 +67,20 @@ export default {
       boxShadow: {
         glass: '0 8px 32px rgba(0, 0, 0, 0.08)',
         'glass-sm': '0 4px 16px rgba(0, 0, 0, 0.06)',
-        glow: '0 0 20px rgba(36, 126, 104, 0.22)',
-        'glow-lg': '0 0 40px rgba(28, 104, 85, 0.28)',
+        glow: '0 0 20px rgba(173, 68, 103, 0.22)',
+        'glow-lg': '0 0 40px rgba(150, 58, 89, 0.28)',
         card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
         'card-hover': '0 8px 16px rgba(23, 23, 22, 0.09), 0 0 0 1px rgba(23, 23, 22, 0.12)',
         'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)'
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-primary': 'linear-gradient(135deg, #3f9479 0%, #247e68 55%, #1c6855 100%)',
+        'gradient-primary': 'linear-gradient(135deg, #cc5e83 0%, #ad4467 55%, #963a59 100%)',
         'gradient-dark': 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
         'gradient-glass':
           'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
         'mesh-gradient':
-          'radial-gradient(at 40% 20%, rgba(108, 167, 137, 0.14) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(36, 126, 104, 0.10) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(28, 104, 85, 0.07) 0px, transparent 50%)'
+          'radial-gradient(at 40% 20%, rgba(224, 130, 162, 0.14) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(173, 68, 103, 0.10) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(150, 58, 89, 0.07) 0px, transparent 50%)'
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',
@@ -118,8 +118,8 @@ export default {
           '100%': { backgroundPosition: '200% 0' }
         },
         glow: {
-          '0%': { boxShadow: '0 0 20px rgba(36, 126, 104, 0.20)' },
-          '100%': { boxShadow: '0 0 30px rgba(28, 104, 85, 0.32)' }
+          '0%': { boxShadow: '0 0 20px rgba(173, 68, 103, 0.20)' },
+          '100%': { boxShadow: '0 0 30px rgba(150, 58, 89, 0.32)' }
         }
       },
       backdropBlur: {
