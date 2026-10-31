@@ -656,6 +656,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/panel-rate-limit", h.Admin.Setting.UpdatePanelRateLimitSettings)
 		adminSettings.GET("/gateway-ip-notice", h.Admin.Setting.GetGatewayIPNotice)
 		adminSettings.PUT("/gateway-ip-notice", h.Admin.Setting.UpdateGatewayIPNotice)
+		// 站点主题（主色/中性色/圆角/字体/默认明暗）
+		adminSettings.GET("/theme", h.Admin.Setting.GetSiteTheme)
+		adminSettings.PUT("/theme", h.Admin.Setting.UpdateSiteTheme)
 		// 流超时处理配置
 		adminSettings.GET("/stream-timeout", h.Admin.Setting.GetStreamTimeoutSettings)
 		adminSettings.PUT("/stream-timeout", h.Admin.Setting.UpdateStreamTimeoutSettings)
