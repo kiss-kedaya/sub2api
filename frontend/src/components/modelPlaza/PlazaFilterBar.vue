@@ -242,7 +242,7 @@ function onRateChange(value: string | number | boolean | null) {
 
 .plaza-seg-item[aria-checked='true'] {
   border-bottom-color: var(--signal-accent, #ad4467);
-  color: var(--signal-text, #3a2a30);
+  color: var(--signal-text, #2f2a2c);
 }
 
 .plaza-seg-item:disabled {

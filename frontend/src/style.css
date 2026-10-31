@@ -27,7 +27,7 @@
 
   body {
     @apply min-h-screen text-gray-900 dark:text-gray-100;
-    background: #fdf7f8;
+    background: #ffffff;
   }
 
   .dark body {
@@ -94,9 +94,9 @@
   }
 
   .btn-primary {
-    @apply bg-primary-600 text-white shadow-none;
-    @apply hover:bg-primary-700;
-    @apply dark:bg-primary-600 dark:hover:bg-primary-500;
+    @apply bg-[#f9d6e2] text-[#8f3554] shadow-none;
+    @apply hover:bg-[#f4c8d6];
+    @apply dark:bg-primary-600 dark:text-white dark:hover:bg-primary-500;
   }
 
   .btn-secondary {
@@ -273,7 +273,7 @@
 
   .card-hover {
     @apply hover:-translate-y-px hover:shadow-card-hover;
-    @apply hover:border-[#e2c6d0] dark:hover:border-dark-600;
+    @apply hover:border-[#ddd0d5] dark:hover:border-dark-600;
   }
 
   .card-glass {
@@ -357,7 +357,7 @@
   .table th {
     @apply px-4 py-3 text-left font-normal;
     @apply text-[11px] uppercase tracking-wide;
-    @apply text-[#7d636c] dark:text-dark-300;
+    @apply text-[#6f6468] dark:text-dark-300;
     @apply bg-transparent;
     @apply border-b border-[#f0dfe5] dark:border-dark-700;
   }
@@ -365,7 +365,7 @@
   .table td {
     @apply px-4 py-3;
     @apply text-gray-700 dark:text-gray-300;
-    @apply border-b border-[#f5e8ec] dark:border-dark-800;
+    @apply border-b border-[#f3eef0] dark:border-dark-800;
   }
 
   .table tr:last-child td {
@@ -374,7 +374,7 @@
 
   .table tbody tr {
     @apply transition-colors duration-150;
-    @apply hover:bg-[#fcf3f6] dark:hover:bg-dark-800/60;
+    @apply hover:bg-[#fdf6f8] dark:hover:bg-dark-800/60;
   }
 
   /* ============ 徽章样式 ============ */
@@ -647,8 +647,8 @@
   /* ============ 侧边栏 ============ */
   .sidebar {
     @apply fixed inset-y-0 left-0 z-40;
-    @apply w-64 bg-[#fbf1f4] text-[#5f4952];
-    @apply border-r border-[#efdde3];
+    @apply w-64 bg-[#ffffff] text-[#4f4649];
+    @apply border-r border-[#f1eaed];
     @apply flex flex-col;
     @apply transition-transform duration-300;
     transition-property: width, transform;
@@ -657,7 +657,7 @@
   .sidebar-header {
     @apply h-16 px-6;
     @apply flex items-center gap-3;
-    @apply border-b border-[#efdde3];
+    @apply border-b border-[#f1eaed];
     transition:
       padding 0.2s ease,
       gap 0.2s ease;
@@ -671,16 +671,16 @@
     @apply flex items-center gap-3 rounded-xl py-2.5;
     @apply overflow-hidden;
     @apply text-sm font-medium;
-    @apply text-[#5f4952];
+    @apply text-[#4f4649];
     @apply transition-all duration-200;
-    @apply hover:bg-[#f6e4ea] hover:text-[#3a2a30];
+    @apply hover:bg-[#faf5f7] hover:text-[#2f2a2c];
     padding-left: 1.0625rem;
     padding-right: 0.875rem;
   }
 
   .sidebar-link-active {
-    @apply bg-[#f3d9e2] text-[#963a59];
-    @apply hover:bg-[#efd0db] hover:text-[#86324f];
+    @apply bg-[#fbe3eb] text-[#963a59];
+    @apply hover:bg-[#f8d8e3] hover:text-[#86324f];
   }
 
   .sidebar-section {
@@ -690,7 +690,7 @@
   .sidebar-section-title {
     @apply mb-2 px-3;
     @apply text-xs font-semibold uppercase tracking-wider;
-    @apply text-[#7d636c];
+    @apply text-[#6f6468];
   }
 
   /* ============ 页面头部 ============ */

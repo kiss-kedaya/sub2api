@@ -1,39 +1,40 @@
-/* Pink-white: blush paper, white cards, plum ink, rose accent, light blush sidebar. */
+/* Mostly white: white page, sidebar and cards, neutral ink; pale pink only for
+   selected items, primary buttons and soft highlights; rose for small text accents. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #fdf7f8;
+  --signal-bg: #ffffff;
   --signal-surface: #ffffff;
-  --signal-raised: #faf0f3;
-  --signal-sidebar: #fbf1f4;
-  --signal-line: #f0dfe5;
-  --signal-text: #3a2a30;
-  --signal-muted: #7d636c;
+  --signal-raised: #faf7f8;
+  --signal-sidebar: #ffffff;
+  --signal-line: #eee6e9;
+  --signal-text: #2f2a2c;
+  --signal-muted: #6f6468;
   --signal-accent: #ad4467;
   --signal-amber: #906727;
-  --signal-hover: #fcf3f6;
-  --signal-accent-soft: #fbe9ef;
+  --signal-hover: #fdf6f8;
+  --signal-accent-soft: #fdeef3;
   --signal-on-accent: #ffffff;
-  --signal-control-line: #e2c6d0;
+  --signal-control-line: #ddd0d5;
   --signal-highlight: #ffffff;
-  --signal-inset: #fdf8f9;
-  --signal-divider: #f5e8ec;
+  --signal-inset: #faf8f9;
+  --signal-divider: #f3eef0;
   --signal-shadow: 0 0 #0000;
-  --signal-popover-shadow: 0 12px 32px #3a2a301a;
-  --signal-command: #ad4467;
-  --signal-command-text: #ffffff;
-  --signal-command-hover: #963a59;
-  --signal-nav-text: #5f4952;
-  --signal-nav-muted: #7d636c;
-  --signal-nav-hover: #f6e4ea;
-  --signal-nav-active: #f3d9e2;
+  --signal-popover-shadow: 0 12px 32px #2f2a2c14;
+  --signal-command: #f9d6e2;
+  --signal-command-text: #8f3554;
+  --signal-command-hover: #f4c8d6;
+  --signal-nav-text: #4f4649;
+  --signal-nav-muted: #6f6468;
+  --signal-nav-hover: #faf5f7;
+  --signal-nav-active: #fbe3eb;
   --signal-nav-active-text: #963a59;
-  --signal-nav-line: #efdde3;
-  --signal-nav-strong: #3a2a30;
-  --signal-nav-brand: #3a2a30;
-  --signal-hero: #f6e4ea;
-  --signal-hero-text: #3a2a30;
-  --signal-hero-muted: #7d636c;
+  --signal-nav-line: #f1eaed;
+  --signal-nav-strong: #2f2a2c;
+  --signal-nav-brand: #2f2a2c;
+  --signal-hero: #fdf0f4;
+  --signal-hero-text: #2f2a2c;
+  --signal-hero-muted: #6f6468;
   --signal-hero-mark: #ad4467;
-  --signal-hero-line: #e8cfd8;
+  --signal-hero-line: #f3dde5;
   /* motion tokens: 独角兽级动效体系（统一 easing 与时长） */
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-out-soft: cubic-bezier(0.22, 1, 0.36, 1);

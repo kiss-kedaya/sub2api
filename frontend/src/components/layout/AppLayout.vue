@@ -1,7 +1,7 @@
 <template>
   <div
     class="min-h-screen"
-    :class="[isConsoleSignal ? 'console-signal' : 'bg-[#fdf7f8] dark:bg-transparent', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
+    :class="[isConsoleSignal ? 'console-signal' : 'bg-[#ffffff] dark:bg-transparent', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
   >
     <!-- Sidebar -->
     <AppSidebar />

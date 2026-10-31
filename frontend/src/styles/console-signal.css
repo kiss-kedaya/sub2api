@@ -501,8 +501,8 @@ html .console-signal .signal-main :is(.date-picker-trigger, .date-picker-dropdow
 }
 
 .console-signal .signal-main .date-picker-apply {
-  background: var(--signal-accent);
-  color: var(--signal-on-accent);
+  background: var(--signal-command);
+  color: var(--signal-command-text);
 }
 
 @media (min-width: 768px) {

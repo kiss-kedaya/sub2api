@@ -19,7 +19,7 @@
       <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
         <router-link
           :to="homePath"
-          class="sidebar-brand-title text-lg font-bold text-[#3a2a30] transition-colors hover:text-[#ad4467]"
+          class="sidebar-brand-title text-lg font-bold text-[#2f2a2c] transition-colors hover:text-[#ad4467]"
           @click="handleMenuItemClick(homePath)"
         >
           {{ siteName }}
@@ -62,11 +62,11 @@
                 </span>
               </button>
               <!-- Children -->
-              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-[color:var(--signal-nav-line,#efdde3)] pl-2">
+              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-[color:var(--signal-nav-line,#f1eaed)] pl-2">
                 <template v-for="child in item.children" :key="child.path">
                   <p
                     v-if="child.section"
-                    class="sidebar-child-section px-2 pb-1 pt-2 text-[11px] font-semibold tracking-wide text-[#7d636c]"
+                    class="sidebar-child-section px-2 pb-1 pt-2 text-[11px] font-semibold tracking-wide text-[#6f6468]"
                   >
                     {{ child.label }}
                   </p>
