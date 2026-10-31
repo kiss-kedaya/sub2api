@@ -201,11 +201,11 @@
 }
 
 .theme-tour-popover .driver-popover-next-btn {
-  background-color: #fcdde4 !important;
-  color: #2f2a2c !important;
+  background-color: #171717 !important;
+  color: #ffffff !important;
   box-shadow: none !important;
 }
-.theme-tour-popover .driver-popover-next-btn:hover { background-color: #f9ccd6 !important; }
+.theme-tour-popover .driver-popover-next-btn:hover { background-color: #262626 !important; }
 .dark .theme-tour-popover .driver-popover-next-btn { background-color: #ad4467 !important; color: #ffffff !important; }
 .dark .theme-tour-popover .driver-popover-next-btn:hover { background-color: #963a59 !important; }
 

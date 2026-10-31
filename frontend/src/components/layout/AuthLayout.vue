@@ -1,5 +1,5 @@
 <template>
-  <div class="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
+  <div class="auth-paper relative flex min-h-screen items-center justify-center overflow-hidden p-4">
     <!-- Background: plain white paper by day; the night background and grid are unchanged -->
     <div
       class="absolute inset-0 hidden bg-gradient-to-br dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
@@ -32,7 +32,7 @@
       </div>
 
       <!-- Card Container -->
-      <div class="rounded-2xl border border-[#ebe8e9] bg-white/85 p-8 dark:border-dark-700/50 dark:bg-dark-800/70 dark:shadow-glass dark:backdrop-blur-xl">
+      <div class="auth-card rounded-2xl border border-[#ebe8e9] bg-white/85 p-8 dark:border-dark-700/50 dark:bg-dark-800/70 dark:shadow-glass dark:backdrop-blur-xl">
         <slot />
       </div>
 
@@ -58,6 +58,7 @@ import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import InkSakura from './InkSakura.vue'
+import '@/styles/console-elevation.css'
 import { sanitizeUrl } from '@/utils/url'
 
 const appStore = useAppStore()

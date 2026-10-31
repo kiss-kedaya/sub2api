@@ -11,10 +11,10 @@
     --cb-lift: -1px;
     --cb-press: 0.97;
     /* Primary scale: light = sakura tints (50-300) + ink (400-950); dark = unchanged rose. */
-    --c-primary-50: 254 245 247;
-    --c-primary-100: 253 236 240;
-    --c-primary-200: 251 221 228;
-    --c-primary-300: 246 196 207;
+    --c-primary-50: 250 250 250;
+    --c-primary-100: 245 245 245;
+    --c-primary-200: 229 229 229;
+    --c-primary-300: 212 212 212;
     --c-primary-400: 138 129 133;
     --c-primary-500: 107 98 102;
     --c-primary-600: 47 42 44;
@@ -117,8 +117,8 @@
   }
 
   .btn-primary {
-    @apply bg-[#fcdde4] text-[#2f2a2c] shadow-none;
-    @apply hover:bg-[#f9ccd6];
+    @apply bg-[#171717] text-white shadow-none;
+    @apply hover:bg-[#262626];
     @apply dark:bg-primary-600 dark:text-white dark:hover:bg-primary-500;
   }
 
@@ -702,8 +702,8 @@
   }
 
   .sidebar-link-active {
-    @apply bg-[#fdecf0] text-[#2f2a2c];
-    @apply hover:bg-[#fbe0e6] hover:text-[#1d1a1b];
+    @apply bg-[#f4f4f4] text-[#0a0a0a];
+    @apply hover:bg-[#ededed] hover:text-[#0a0a0a];
   }
 
   .sidebar-section {
