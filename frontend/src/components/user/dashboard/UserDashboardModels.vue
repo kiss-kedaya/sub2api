@@ -32,7 +32,7 @@ ChartJS.register(ArcElement, Tooltip)
 const props = defineProps<{ models: ModelStat[]; startDate: string; endDate: string; loading: boolean; error?: boolean }>()
 const { t } = useI18n()
 const motion = usePreferredReducedMotion()
-const colors = ['#9bc2ff', '#61b9a2', '#c7a768', '#b397b6', '#8195a6', '#a4aaa3']
+const colors = ['#d87a99', '#efb3c6', '#c7a768', '#a491b6', '#8195a6', '#a4aaa3']
 const rankedModels = computed(() => props.models.filter(model => Number.isFinite(model.total_tokens) && model.total_tokens > 0).slice().sort((a, b) => b.total_tokens - a.total_tokens))
 const totalTokens = computed(() => rankedModels.value.reduce((sum, model) => sum + model.total_tokens, 0))
 const modelData = computed(() => totalTokens.value > 0 ? {

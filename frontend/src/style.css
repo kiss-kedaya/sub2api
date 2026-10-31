@@ -27,17 +27,11 @@
 
   body {
     @apply min-h-screen text-gray-900 dark:text-gray-100;
-    background:
-      radial-gradient(circle at 8% -10%, rgba(189, 80, 47, 0.05), transparent 34rem),
-      #f8f7f4;
-    background-attachment: fixed;
+    background: #ffffff;
   }
 
   .dark body {
-    background:
-      radial-gradient(circle at 8% -10%, rgba(223, 160, 119, 0.1), transparent 34rem),
-      radial-gradient(circle at 92% 0%, rgba(189, 80, 47, 0.06), transparent 30rem),
-      #181917;
+    background: #1c1519;
   }
 
   /* 自定义滚动条 - 仅针对 Firefox，避免 Chrome 取消 webkit 的全局定制 */
@@ -100,9 +94,9 @@
   }
 
   .btn-primary {
-    @apply bg-primary-600 text-white shadow-none;
-    @apply hover:bg-primary-700;
-    @apply dark:bg-primary-600 dark:hover:bg-primary-500;
+    @apply bg-[#f9d6e2] text-[#8f3554] shadow-none;
+    @apply hover:bg-[#f4c8d6];
+    @apply dark:bg-primary-600 dark:text-white dark:hover:bg-primary-500;
   }
 
   .btn-secondary {
@@ -267,7 +261,7 @@
   .card {
     @apply bg-white dark:bg-dark-800;
     @apply rounded-xl;
-    @apply border border-[#e7e5df] dark:border-dark-700;
+    @apply border border-[#f0dfe5] dark:border-dark-700;
     box-shadow: 0 1px 2px rgba(23, 23, 22, 0.05), 0 0 0 1px rgba(23, 23, 22, 0.04);
     @apply transition-all duration-300;
     transition-timing-function: var(--cb-ease-out);
@@ -279,7 +273,7 @@
 
   .card-hover {
     @apply hover:-translate-y-px hover:shadow-card-hover;
-    @apply hover:border-[#dad7cd] dark:hover:border-dark-600;
+    @apply hover:border-[#ddd0d5] dark:hover:border-dark-600;
   }
 
   .card-glass {
@@ -363,15 +357,15 @@
   .table th {
     @apply px-4 py-3 text-left font-normal;
     @apply text-[11px] uppercase tracking-wide;
-    @apply text-[#9a8e72] dark:text-dark-300;
+    @apply text-[#6f6468] dark:text-dark-300;
     @apply bg-transparent;
-    @apply border-b border-[#e7e5df] dark:border-dark-700;
+    @apply border-b border-[#f0dfe5] dark:border-dark-700;
   }
 
   .table td {
     @apply px-4 py-3;
     @apply text-gray-700 dark:text-gray-300;
-    @apply border-b border-[#eeece2] dark:border-dark-800;
+    @apply border-b border-[#f3eef0] dark:border-dark-800;
   }
 
   .table tr:last-child td {
@@ -380,7 +374,7 @@
 
   .table tbody tr {
     @apply transition-colors duration-150;
-    @apply hover:bg-[#faf7ef] dark:hover:bg-dark-800/60;
+    @apply hover:bg-[#fdf6f8] dark:hover:bg-dark-800/60;
   }
 
   /* ============ 徽章样式 ============ */
@@ -418,7 +412,7 @@
     @apply absolute z-50;
     @apply bg-white dark:bg-dark-800;
     @apply rounded-[10px];
-    @apply border border-[#e7e5df] dark:border-dark-700;
+    @apply border border-[#f0dfe5] dark:border-dark-700;
     box-shadow: 0 8px 24px rgba(23, 23, 22, 0.14), 0 0 0 1px rgba(23, 23, 22, 0.06);
     @apply py-1;
     @apply origin-top-right animate-scale-in;
@@ -443,9 +437,9 @@
   .modal-content {
     @apply w-full;
     @apply max-h-[95vh] sm:max-h-[90vh];
-    @apply bg-[#fffdf9] dark:bg-dark-800;
+    @apply bg-[#ffffff] dark:bg-dark-800;
     @apply rounded-[15px];
-    @apply border border-[#eee9dc] dark:border-dark-700/70;
+    @apply border border-[#f0dfe5] dark:border-dark-700/70;
     @apply flex flex-col overflow-hidden;
     box-shadow:
       0 28px 80px rgba(23, 19, 11, 0.25),
@@ -653,8 +647,8 @@
   /* ============ 侧边栏 ============ */
   .sidebar {
     @apply fixed inset-y-0 left-0 z-40;
-    @apply w-64 bg-[#171716] text-[#dbd9d1];
-    @apply border-r border-black/40;
+    @apply w-64 bg-[#ffffff] text-[#4f4649];
+    @apply border-r border-[#f1eaed];
     @apply flex flex-col;
     @apply transition-transform duration-300;
     transition-property: width, transform;
@@ -663,7 +657,7 @@
   .sidebar-header {
     @apply h-16 px-6;
     @apply flex items-center gap-3;
-    @apply border-b border-white/5;
+    @apply border-b border-[#f1eaed];
     transition:
       padding 0.2s ease,
       gap 0.2s ease;
@@ -677,16 +671,16 @@
     @apply flex items-center gap-3 rounded-xl py-2.5;
     @apply overflow-hidden;
     @apply text-sm font-medium;
-    @apply text-[#c9c6bc];
+    @apply text-[#4f4649];
     @apply transition-all duration-200;
-    @apply hover:bg-[#2c2b26] hover:text-[#f8f5eb];
+    @apply hover:bg-[#faf5f7] hover:text-[#2f2a2c];
     padding-left: 1.0625rem;
     padding-right: 0.875rem;
   }
 
   .sidebar-link-active {
-    @apply bg-[#34312a] text-[#edc5a8];
-    @apply hover:bg-[#3a362d] hover:text-[#f3d2b8];
+    @apply bg-[#fbe3eb] text-[#963a59];
+    @apply hover:bg-[#f8d8e3] hover:text-[#86324f];
   }
 
   .sidebar-section {
@@ -696,7 +690,7 @@
   .sidebar-section-title {
     @apply mb-2 px-3;
     @apply text-xs font-semibold uppercase tracking-wider;
-    @apply text-[#96968d];
+    @apply text-[#6f6468];
   }
 
   /* ============ 页面头部 ============ */
