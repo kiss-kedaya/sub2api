@@ -12,12 +12,6 @@
       <Icon name="refresh" size="md" :class="[loading ? 'animate-spin' : '']" />
     </button>
     <slot name="after"></slot>
-    <slot name="beforeCreate"></slot>
-    <button type="button" class="btn btn-primary account-create-action" @click="$emit('create')">
-      <Icon name="plus" size="sm" />
-      <span>{{ t('admin.accounts.createAccount') }}</span>
-    </button>
-    <slot name="afterCreate"></slot>
   </div>
 </template>
 
@@ -25,8 +19,9 @@
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 
+// The create button lives in the page header (AccountsView); this is the toolbar's right side.
 defineProps(['loading'])
-defineEmits(['refresh', 'create'])
+defineEmits(['refresh'])
 
 const { t } = useI18n()
 </script>
@@ -46,13 +41,6 @@ const { t } = useI18n()
   padding-inline: 0;
 }
 
-.account-create-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-}
-
 @media (max-width: 767px) {
   .account-table-actions {
     width: 100%;
@@ -67,18 +55,11 @@ const { t } = useI18n()
     min-width: 44px;
   }
 
-  .account-create-action {
-    margin-left: auto;
-  }
 }
 
 @media (max-width: 359px) {
   .account-table-actions {
     gap: 4px;
-  }
-
-  .account-create-action {
-    padding-inline: 10px;
   }
 }
 </style>

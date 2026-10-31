@@ -1,0 +1,38 @@
+/* Admin pages, light mode only, in the Nuxt UI dashboard manner: status buttons are flat
+   fills with a hairline shadow (no gradients, no coloured glow). Scoped to the admin
+   console, so user pages and the night theme keep their current look. Loaded by
+   AdminPageHeader, which every migrated admin page renders. */
+html:not(.dark) .console-signal.signal-admin :is(.btn-danger, .btn-success, .btn-warning) {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
+  background-image: none;
+  color: #ffffff;
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-danger {
+  background-color: #dc2626;
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-danger:hover:not(:disabled) {
+  background-color: #b91c1c;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08);
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-success {
+  background-color: #16a34a;
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-success:hover:not(:disabled) {
+  background-color: #15803d;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08);
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-warning {
+  background-color: #d97706;
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-warning:hover:not(:disabled) {
+  background-color: #b45309;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08);
+}

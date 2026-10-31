@@ -1,6 +1,16 @@
 <template>
   <AppLayout>
     <TablePageLayout class="accounts-workspace">
+      <template #actions>
+        <AdminPageHeader :title="t('admin.accounts.title')" :description="t('admin.accounts.description')">
+          <template #actions>
+            <button type="button" class="btn btn-primary accounts-create-action" @click="showCreate = true">
+              <Icon name="plus" size="sm" />
+              <span>{{ t('admin.accounts.createAccount') }}</span>
+            </button>
+          </template>
+        </AdminPageHeader>
+      </template>
       <template #filters>
         <div class="accounts-command-bar">
           <AccountTableFilters
@@ -15,22 +25,20 @@
               <AccountTableActions
                 :loading="loading"
                 @refresh="handleManualRefresh"
-                @create="showCreate = true"
               >
                 <template #after>
               <!-- Auto Refresh Dropdown -->
-              <div class="relative" ref="autoRefreshDropdownRef">
+              <UDropdownMenu
+                v-model:open="showAutoRefreshDropdown"
+                :items="autoRefreshMenuItems"
+                :content="{ align: 'end' }"
+                :ui="{ content: 'w-56' }"
+              >
                 <button
                   type="button"
-                  @click="
-                    showAutoRefreshDropdown = !showAutoRefreshDropdown;
-                    showAccountToolsDropdown = false
-                  "
                   class="btn btn-secondary accounts-compact-action"
                   :title="t('admin.accounts.autoRefresh')"
                   :aria-label="t('admin.accounts.autoRefresh')"
-                  aria-haspopup="menu"
-                  :aria-expanded="showAutoRefreshDropdown"
                 >
                   <Icon name="refresh" size="sm" :class="[autoRefreshEnabled ? 'animate-spin' : '']" />
                   <span class="hidden md:inline">
@@ -41,148 +49,34 @@
                     }}
                   </span>
                 </button>
-                <div
-                  v-if="showAutoRefreshDropdown"
-                  class="account-popover absolute right-0 z-50 mt-2 w-56 origin-top-right"
-                  role="menu"
-                >
-                  <div class="account-popover-body">
-                    <button
-                      type="button"
-                      @click="setAutoRefreshEnabled(!autoRefreshEnabled)"
-                      class="account-popover-item"
-                      role="menuitemcheckbox"
-                      :aria-checked="autoRefreshEnabled"
-                    >
-                      <span>{{ t('admin.accounts.enableAutoRefresh') }}</span>
-                      <Icon v-if="autoRefreshEnabled" name="check" size="sm" class="text-primary-500" />
-                    </button>
-                    <div class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
-                    <button
-                      v-for="sec in autoRefreshIntervals"
-                      :key="sec"
-                      type="button"
-                      @click="setAutoRefreshInterval(sec)"
-                      class="account-popover-item"
-                      role="menuitemradio"
-                      :aria-checked="autoRefreshIntervalSeconds === sec"
-                    >
-                      <span>{{ autoRefreshIntervalLabel(sec) }}</span>
-                      <Icon v-if="autoRefreshIntervalSeconds === sec" name="check" size="sm" class="text-primary-500" />
-                    </button>
-                  </div>
-                </div>
-              </div>
+              </UDropdownMenu>
 
               <!-- More Tools Dropdown -->
-              <div class="relative" ref="accountToolsDropdownRef">
+              <UDropdownMenu
+                v-model:open="showAccountToolsDropdown"
+                :items="accountToolsMenuItems"
+                :content="{ align: 'end' }"
+                :ui="{ content: 'w-72' }"
+              >
                 <button
-                  ref="accountToolsTriggerRef"
                   type="button"
-                  @click="toggleAccountToolsDropdown"
                   class="btn btn-secondary accounts-compact-action"
                   :title="t('admin.accounts.moreActions')"
                   :aria-label="t('admin.accounts.moreActions')"
-                  aria-haspopup="menu"
-                  :aria-expanded="showAccountToolsDropdown"
                 >
                   <Icon name="more" size="sm" class="md:mr-1.5" />
                   <span class="hidden md:inline">{{ t('admin.accounts.moreActions') }}</span>
                   <Icon name="chevronDown" size="xs" class="ml-1 hidden md:inline" />
                 </button>
-                <Teleport to="body">
-                  <div
-                    v-if="showAccountToolsDropdown"
-                    class="account-popover fixed z-9999 origin-top-right overflow-hidden"
-                    :style="accountToolsDropdownStyle"
-                    role="menu"
-                    @click.stop
+                <template #export-trailing>
+                  <span
+                    v-if="selIds.length"
+                    class="rounded-full bg-elevated px-2 py-0.5 text-xs font-medium text-highlighted dark:bg-primary-900/40 dark:text-primary-300"
                   >
-                    <div class="account-tools-scroll" :style="{ maxHeight: `${accountToolsDropdownPosition.maxHeight}px` }">
-                      <div class="account-menu-heading">
-                        <div>
-                          {{ t('admin.accounts.dataActions') }}
-                        </div>
-                      </div>
-                      <button class="account-tools-menu-item" @click="openSyncFromCrs">
-                        <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
-                          <Icon name="sync" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.syncFromCrs') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" @click="openImportData">
-                        <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
-                          <Icon name="upload" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
-                        <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
-                          <Icon name="download" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">
-                          {{ selIds.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport') }}
-                        </span>
-                        <span
-                          v-if="selIds.length"
-                          class="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-medium text-primary-700 dark:bg-primary-900/40 dark:text-primary-300"
-                        >
-                          {{ t('admin.accounts.selectedCount', { count: selIds.length }) }}
-                        </span>
-                      </button>
-
-                      <div class="account-menu-divider"></div>
-                      <div class="account-menu-heading">
-                        <div>
-                          {{ t('admin.accounts.toolActions') }}
-                        </div>
-                      </div>
-                      <button class="account-tools-menu-item" @click="openErrorPassthrough">
-                        <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
-                          <Icon name="shield" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.errorPassthrough.title') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
-                        <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
-                          <Icon name="lock" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" @click="openBalanceAlert">
-                        <span class="account-tools-menu-icon bg-yellow-50 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-300">
-                          <Icon name="bell" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.balanceAlert.title') }}</span>
-                      </button>
-
-                      <div class="account-menu-divider"></div>
-                      <div class="account-menu-heading">
-                        <div class="flex items-center justify-between gap-3">
-                          <span>
-                            {{ t('admin.accounts.viewColumns') }}
-                          </span>
-                          <Icon name="grid" size="sm" class="text-gray-400" />
-                        </div>
-                      </div>
-                      <div class="grid grid-cols-1 gap-1">
-                        <button
-                          v-for="col in toggleableColumns"
-                          :key="col.key"
-                          type="button"
-                          @click="toggleColumn(col.key)"
-                          class="account-popover-item"
-                          role="menuitemcheckbox"
-                          :aria-checked="isColumnVisible(col.key)"
-                        >
-                          <span class="truncate">{{ col.label }}</span>
-                          <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="text-primary-500" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </Teleport>
-              </div>
+                    {{ t('admin.accounts.selectedCount', { count: selIds.length }) }}
+                  </span>
+                </template>
+              </UDropdownMenu>
                 </template>
               </AccountTableActions>
             </template>
@@ -474,19 +368,10 @@
             </div>
           </template>
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
-              <button @click="handleEdit(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
-                <span class="text-xs">{{ t('common.edit') }}</span>
-              </button>
-              <button @click="handleDelete(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-                <span class="text-xs">{{ t('common.delete') }}</span>
-              </button>
-              <button @click="openMenu(row, $event)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
-                <span class="text-xs">{{ t('common.more') }}</span>
-              </button>
+            <div class="flex items-center gap-0.5">
+              <AdminRowAction :label="t('common.edit')" icon="edit" tone="primary" @click="handleEdit(row)" />
+              <AdminRowAction :label="t('common.delete')" icon="trash" tone="danger" @click="handleDelete(row)" />
+              <AdminRowAction :label="t('common.more')" icon="more" @click="openMenu(row, $event)" />
             </div>
           </template>
         </DataTable>
@@ -584,6 +469,9 @@ import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
 
 // 弹窗只在点开时才需要：异步组件 + 模板里的 v-if 一起用，才能既拆出
@@ -609,7 +497,6 @@ import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { sanitizeUrl } from '@/utils/url'
-import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 
@@ -706,23 +593,8 @@ const upstreamBillingRateRefreshing = ref(false)
 let upstreamBillingRateAbortController: AbortController | null = null
 useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 
-// Account tools dropdown
+// Account tools dropdown (UDropdownMenu places, closes and scrolls it)
 const showAccountToolsDropdown = ref(false)
-const accountToolsDropdownRef = ref<HTMLElement | null>(null)
-const accountToolsTriggerRef = ref<HTMLElement | null>(null)
-const accountToolsDropdownPosition = reactive({
-  top: null as number | null,
-  bottom: null as number | null,
-  left: 16,
-  width: 320,
-  maxHeight: 0
-})
-const accountToolsDropdownStyle = computed(() => ({
-  top: accountToolsDropdownPosition.top == null ? 'auto' : `${accountToolsDropdownPosition.top}px`,
-  bottom: accountToolsDropdownPosition.bottom == null ? 'auto' : `${accountToolsDropdownPosition.bottom}px`,
-  left: `${accountToolsDropdownPosition.left}px`,
-  width: `${accountToolsDropdownPosition.width}px`
-}))
 const hiddenColumns = reactive<Set<string>>(new Set())
 const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
@@ -769,7 +641,6 @@ const sortState = reactive<AccountSortState>(loadInitialAccountSortState())
 
 // Auto refresh settings
 const showAutoRefreshDropdown = ref(false)
-const autoRefreshDropdownRef = ref<HTMLElement | null>(null)
 const AUTO_REFRESH_STORAGE_KEY = 'account-auto-refresh'
 const autoRefreshIntervals = [5, 10, 15, 30] as const
 const autoRefreshEnabled = ref(false)
@@ -1594,25 +1465,6 @@ const closeAccountToolsDropdown = () => {
   showAccountToolsDropdown.value = false
 }
 
-const updateAccountToolsDropdownPosition = () => {
-  const trigger = accountToolsTriggerRef.value
-  if (!trigger) return
-
-  const position = getFloatingPanelPosition(
-    trigger.getBoundingClientRect(),
-    document.documentElement.clientWidth || window.innerWidth,
-    window.innerHeight
-  )
-  Object.assign(accountToolsDropdownPosition, position)
-}
-
-const toggleAccountToolsDropdown = () => {
-  const nextVisible = !showAccountToolsDropdown.value
-  showAutoRefreshDropdown.value = false
-  if (nextVisible) updateAccountToolsDropdownPosition()
-  showAccountToolsDropdown.value = nextVisible
-}
-
 const openSyncFromCrs = () => {
   closeAccountToolsDropdown()
   showSync.value = true
@@ -1931,6 +1783,55 @@ const allColumns = computed(() => {
 const toggleableColumns = computed(() =>
   allColumns.value.filter(col => col.key !== 'select' && col.key !== 'name' && col.key !== 'actions')
 )
+
+// Toolbar menus: the same actions as before, as Nuxt UI dropdown items.
+// Toggles keep the menu open (the old popovers did too); actions close it.
+const keepMenuOpen = (event: Event) => event.preventDefault()
+const autoRefreshMenuItems = computed<DropdownMenuItem[][]>(() => [
+  [{
+    type: 'checkbox',
+    label: t('admin.accounts.enableAutoRefresh'),
+    checked: autoRefreshEnabled.value,
+    onUpdateChecked: () => setAutoRefreshEnabled(!autoRefreshEnabled.value),
+    onSelect: keepMenuOpen
+  }],
+  autoRefreshIntervals.map((sec) => ({
+    type: 'checkbox' as const,
+    label: autoRefreshIntervalLabel(sec),
+    checked: autoRefreshIntervalSeconds.value === sec,
+    onUpdateChecked: () => setAutoRefreshInterval(sec),
+    onSelect: keepMenuOpen
+  }))
+])
+const accountToolsMenuItems = computed<DropdownMenuItem[][]>(() => [
+  [
+    { type: 'label', label: t('admin.accounts.dataActions') },
+    { label: t('admin.accounts.syncFromCrs'), icon: 'i-lucide-refresh-cw', onSelect: openSyncFromCrs },
+    { label: t('admin.accounts.dataImport'), icon: 'i-lucide-upload', onSelect: openImportData },
+    {
+      label: selIds.value.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport'),
+      icon: 'i-lucide-download',
+      slot: 'export',
+      onSelect: openExportDataDialogFromMenu
+    }
+  ],
+  [
+    { type: 'label', label: t('admin.accounts.toolActions') },
+    { label: t('admin.errorPassthrough.title'), icon: 'i-lucide-shield', onSelect: openErrorPassthrough },
+    { label: t('admin.tlsFingerprintProfiles.title'), icon: 'i-lucide-lock', onSelect: openTLSFingerprintProfiles },
+    { label: t('admin.accounts.balanceAlert.title'), icon: 'i-lucide-bell', onSelect: openBalanceAlert }
+  ],
+  [
+    { type: 'label', label: t('admin.accounts.viewColumns') },
+    ...toggleableColumns.value.map((col) => ({
+      type: 'checkbox' as const,
+      label: col.label,
+      checked: isColumnVisible(col.key),
+      onUpdateChecked: () => toggleColumn(col.key),
+      onSelect: keepMenuOpen
+    }))
+  ]
+])
 
 // Filtered columns based on visibility
 const cols = computed(() =>
@@ -2633,26 +2534,10 @@ const proxyExpiryText = (p: AccountProxy): string => {
   return params ? t(key, params) : t(key)
 }
 
-// 表格滚动时关闭行操作菜单，并让顶部工具菜单继续贴紧触发按钮。
+// 表格滚动时关闭行操作菜单（顶部工具菜单由 UDropdownMenu 自己定位和关闭）。
 const handleScroll = (event: Event) => {
   if (event.target instanceof Element && event.target.closest('.action-menu-content')) return
   menu.show = false
-  if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
-}
-
-const handleViewportResize = () => {
-  if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
-}
-
-// 点击外部关闭顶部下拉菜单
-const handleClickOutside = (event: MouseEvent) => {
-  const target = event.target as HTMLElement
-  if (accountToolsDropdownRef.value && !accountToolsDropdownRef.value.contains(target)) {
-    showAccountToolsDropdown.value = false
-  }
-  if (autoRefreshDropdownRef.value && !autoRefreshDropdownRef.value.contains(target)) {
-    showAutoRefreshDropdown.value = false
-  }
 }
 
 onMounted(async () => {
@@ -2686,8 +2571,6 @@ onMounted(async () => {
     console.error('Failed to load groups:', groupsResult.reason)
   }
   window.addEventListener('scroll', handleScroll, true)
-  window.addEventListener('resize', handleViewportResize)
-  document.addEventListener('click', handleClickOutside)
 
   if (autoRefreshEnabled.value) {
     autoRefreshCountdown.value = autoRefreshIntervalSeconds.value
@@ -2706,8 +2589,6 @@ onUnmounted(() => {
   }
   pendingUsageBatchIds.clear()
   window.removeEventListener('scroll', handleScroll, true)
-  window.removeEventListener('resize', handleViewportResize)
-  document.removeEventListener('click', handleClickOutside)
   if (desktopViewportMediaQuery && desktopViewportListener) {
     if (typeof desktopViewportMediaQuery.removeEventListener === 'function') {
       desktopViewportMediaQuery.removeEventListener('change', desktopViewportListener)
@@ -2780,66 +2661,11 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-.account-popover {
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface, #ffffff);
-  color: var(--signal-text);
-  box-shadow: var(--signal-popover-shadow, var(--signal-shadow)), inset 0 1px 0 color-mix(in srgb, var(--signal-text) 7%, transparent);
-}
-
-.account-popover-body,
-.account-tools-scroll {
-  padding: 6px;
-}
-
-.account-tools-scroll {
-  overflow-y: auto;
-}
-
-.account-popover-item,
-.account-tools-menu-item {
-  display: flex;
-  width: 100%;
-  min-height: 38px;
+.accounts-create-action {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 7px 9px;
-  border-radius: 6px;
-  color: var(--signal-text);
-  font-size: 13px;
-  text-align: left;
-  transition: color 140ms ease, background-color 140ms ease;
-}
-
-.account-popover-item:hover,
-.account-tools-menu-item:hover {
-  background: var(--signal-hover);
-  color: var(--signal-accent);
-}
-
-.account-menu-heading {
-  padding: 7px 9px 5px;
-  color: var(--signal-muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.account-menu-divider {
-  height: 1px;
-  margin: 5px 8px;
-  background: var(--signal-line);
-}
-
-.account-tools-menu-icon {
-  display: flex;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
+  gap: 7px;
+  white-space: nowrap;
 }
 
 @media (max-width: 767px) {
@@ -2859,15 +2685,8 @@ onUnmounted(() => {
     flex-direction: column;
   }
 
-  .account-popover {
-    max-width: calc(100dvw - 16px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .account-popover-item,
-  .account-tools-menu-item {
-    transition: none;
+  .accounts-create-action {
+    min-height: 44px;
   }
 }
 </style>
