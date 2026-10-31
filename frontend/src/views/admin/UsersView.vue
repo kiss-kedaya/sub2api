@@ -3,6 +3,18 @@
     <TablePageLayout class="admin-users-workbench">
       <!-- Search, filters, view tools, and primary actions -->
       <template #filters>
+        <AdminPageHeader
+          class="users-page-header"
+          :title="t('admin.users.title')"
+          :description="t('admin.users.description')"
+        >
+          <template #actions>
+            <button @click="showCreateModal = true" class="btn btn-primary users-create-action">
+              <Icon name="plus" size="md" class="mr-2" />
+              {{ t('admin.users.createUser') }}
+            </button>
+          </template>
+        </AdminPageHeader>
         <div class="users-command-bar">
           <div class="users-query-zone">
             <!-- Search Box -->
@@ -125,6 +137,30 @@
           </div>
 
           <div class="users-action-zone">
+            <div v-if="selectedCount > 0" class="users-context-actions">
+              <button
+                v-if="selectedCount > 0"
+                class="btn btn-secondary flex-1 md:flex-initial"
+                data-test="bulk-edit-limits"
+                @click="showBulkEditModal = true"
+              >
+                <Icon name="users" size="md" class="mr-2" />
+                {{ t('admin.users.bulkLimits.action', { count: selectedCount }) }}
+              </button>
+
+              <button
+                v-if="selectedCount > 0"
+                class="btn btn-danger flex-1 md:flex-initial"
+                data-test="bulk-delete-users"
+                :disabled="bulkDeleting"
+                @click="bulkDeleteIds = [...selectedIds]"
+              >
+                <Icon name="trash" size="md" class="mr-2" />
+                {{ t('admin.users.bulkDelete.action', { count: selectedCount }) }}
+              </button>
+
+            </div>
+
             <div class="users-view-tools">
               <!-- Refresh Button -->
               <button
@@ -148,14 +184,14 @@
                 <!-- Dropdown menu -->
                 <div
                   v-if="showFilterDropdown"
-                  class="absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+                  class="admin-menu absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
                 >
                   <!-- Built-in filters -->
                   <button
                     v-for="filter in builtInFilters"
                     :key="filter.key"
                     @click="toggleBuiltInFilter(filter.key)"
-                    class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+                    class="admin-menu-item flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
                   >
                     <span>{{ filter.name }}</span>
                     <Icon
@@ -176,7 +212,7 @@
                     v-for="attr in filterableAttributes"
                     :key="attr.id"
                     @click="toggleAttributeFilter(attr)"
-                    class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+                    class="admin-menu-item flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
                   >
                     <span>{{ attr.name }}</span>
                     <Icon
@@ -204,7 +240,7 @@
                 <!-- Dropdown menu -->
                 <div
                   v-if="showColumnDropdown"
-                  class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+                  class="admin-menu absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
                 >
                   <button
                     v-for="col in toggleableColumns"
@@ -212,7 +248,7 @@
                     :disabled="isForcedVisibleColumn(col.key)"
                     @click="toggleColumn(col.key)"
                     :class="[
-                      'flex w-full items-center justify-between px-4 py-2 text-left text-sm',
+                      'admin-menu-item flex w-full items-center justify-between px-4 py-2 text-left text-sm',
                       isForcedVisibleColumn(col.key)
                         ? 'cursor-not-allowed text-gray-400 dark:text-gray-500'
                         : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700'
@@ -241,33 +277,6 @@
               </button>
             </div>
 
-            <div class="users-context-actions">
-              <button
-                v-if="selectedCount > 0"
-                class="btn btn-secondary flex-1 md:flex-initial"
-                data-test="bulk-edit-limits"
-                @click="showBulkEditModal = true"
-              >
-                <Icon name="users" size="md" class="mr-2" />
-                {{ t('admin.users.bulkLimits.action', { count: selectedCount }) }}
-              </button>
-
-              <button
-                v-if="selectedCount > 0"
-                class="btn btn-danger flex-1 md:flex-initial"
-                data-test="bulk-delete-users"
-                :disabled="bulkDeleting"
-                @click="bulkDeleteIds = [...selectedIds]"
-              >
-                <Icon name="trash" size="md" class="mr-2" />
-                {{ t('admin.users.bulkDelete.action', { count: selectedCount }) }}
-              </button>
-
-              <button @click="showCreateModal = true" class="btn btn-primary users-create-action">
-                <Icon name="plus" size="md" class="mr-2" />
-                {{ t('admin.users.createUser') }}
-              </button>
-            </div>
           </div>
         </div>
       </template>
@@ -611,41 +620,24 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
-              <!-- Edit Button -->
-              <button
-                @click="handleEdit(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
-              >
-                <Icon name="edit" size="sm" />
-                <span class="text-xs">{{ t('common.edit') }}</span>
-              </button>
-
+            <div class="flex items-center gap-0.5">
+              <AdminRowAction :label="t('common.edit')" icon="edit" tone="primary" @click="handleEdit(row)" />
               <!-- Toggle Status Button (not for admin) -->
-              <button
+              <AdminRowAction
                 v-if="row.role !== 'admin'"
+                :label="row.status === 'active' ? t('admin.users.disable') : t('admin.users.enable')"
+                :icon="row.status === 'active' ? 'ban' : 'checkCircle'"
+                :tone="row.status === 'active' ? 'warning' : 'success'"
                 @click="handleToggleStatus(row)"
-                :class="[
-                  'flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors',
-                  row.status === 'active'
-                    ? 'hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20 dark:hover:text-orange-400'
-                    : 'hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400'
-                ]"
-              >
-                <Icon v-if="row.status === 'active'" name="ban" size="sm" />
-                <Icon v-else name="checkCircle" size="sm" />
-                <span class="text-xs">{{ row.status === 'active' ? t('admin.users.disable') : t('admin.users.enable') }}</span>
-              </button>
-
+              />
               <!-- More Actions Menu Trigger -->
-              <button
+              <AdminRowAction
+                :label="t('common.more')"
+                icon="more"
+                class="action-menu-trigger"
+                :class="{ 'bg-gray-100 dark:bg-dark-700': activeMenuId === row.id }"
                 @click="openActionMenu(row, $event)"
-                class="action-menu-trigger flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
-                :class="{ 'bg-gray-100 text-gray-900 dark:bg-dark-700 dark:text-white': activeMenuId === row.id }"
-              >
-                <Icon name="more" size="sm" />
-                <span class="text-xs">{{ t('common.more') }}</span>
-              </button>
+              />
             </div>
           </template>
 
@@ -799,6 +791,8 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDateTime } from '@/utils/format'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 
 const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
@@ -1906,26 +1900,31 @@ onUnmounted(() => {
   --users-control-height: 38px;
 }
 
+.users-page-header {
+  margin-bottom: 16px;
+}
+
+/* One toolbar row: search and filters left, selection actions and view tools right. */
 .users-command-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px 20px;
-  padding: 14px;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 7%, transparent);
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
 }
 
 .users-query-zone {
   display: flex;
   min-width: 0;
-  flex-direction: column;
-  gap: 10px;
+  flex: 1 1 520px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .users-search {
-  width: min(100%, 30rem);
+  width: min(100%, 22rem);
 }
 
 .users-search :deep(.input),
@@ -1943,38 +1942,26 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.users-filter-row {
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--signal-line) 76%, transparent);
+.users-filter-row:empty {
+  display: none;
 }
 
 .users-action-zone {
   display: flex;
-  min-width: max-content;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .users-view-tools {
   justify-content: flex-end;
 }
 
-.users-context-actions {
-  justify-content: flex-end;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--signal-line) 76%, transparent);
-}
-
 .users-create-action {
   flex: 0 0 auto;
-}
-
-.admin-users-workbench :deep(.table-scroll-container) {
-  border-top: 1px solid var(--signal-line);
-  border-bottom: 1px solid var(--signal-line);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 5%, transparent);
 }
 
 .admin-users-workbench :deep(.table-wrapper th) {
@@ -1987,27 +1974,10 @@ onUnmounted(() => {
   padding-bottom: 10px;
 }
 
-.admin-users-workbench :deep(.table-body tr) {
-  transition: background-color 140ms ease, box-shadow 140ms ease;
-}
-
-.admin-users-workbench :deep(.table-body tr:hover) {
-  box-shadow: inset 2px 0 var(--signal-accent);
-}
-
-.admin-users-workbench :deep(.layout-section-fixed:last-child) {
-  padding-top: 2px;
-  border-top: 1px solid var(--signal-line);
-}
-
 @media (max-width: 1023px) {
-  .users-command-bar {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .users-action-zone {
-    min-width: 0;
-    align-items: stretch;
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .users-view-tools,
@@ -2026,10 +1996,11 @@ onUnmounted(() => {
 }
 
 @media (max-width: 639px) {
-  .users-command-bar {
-    padding: 12px;
+  .users-page-header {
+    margin-bottom: 12px;
   }
 
+  .users-search,
   .users-filter-row > *,
   .users-context-actions > * {
     width: 100%;
@@ -2037,6 +2008,7 @@ onUnmounted(() => {
 
   .users-view-tools {
     display: grid;
+    width: 100%;
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
@@ -2048,12 +2020,6 @@ onUnmounted(() => {
   .users-view-tools > .btn {
     width: 100%;
     justify-content: center;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .admin-users-workbench :deep(*) {
-    transition-duration: 0.01ms !important;
   }
 }
 </style>

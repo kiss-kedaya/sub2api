@@ -108,7 +108,7 @@
               </button>
               <div
                 v-if="showColumnDropdown"
-                class="groups-column-menu absolute right-0 top-full z-50 mt-2 max-h-80 w-52 overflow-y-auto"
+                class="groups-column-menu admin-menu absolute right-0 top-full z-50 mt-2 max-h-80 w-52 overflow-y-auto"
                 role="menu"
               >
                 <button
@@ -116,7 +116,7 @@
                   :key="col.key"
                   type="button"
                   @click="toggleColumn(col.key)"
-                  class="groups-column-menu-item"
+                  class="groups-column-menu-item admin-menu-item"
                   role="menuitemcheckbox"
                   :aria-checked="isColumnVisible(col.key)"
                 >
@@ -7262,26 +7262,6 @@ onUnmounted(() => {
 .groups-column-menu-item:hover {
   background: var(--signal-hover);
   color: var(--signal-accent);
-}
-
-/* Light mode: the Nuxt UI menu look (hairline ring, raised shadow, compact rows). */
-html:not(.dark) .groups-column-menu {
-  padding: 4px;
-  border-color: #e5e5e5;
-  border-radius: 6px;
-  box-shadow: 0 10px 15px -3px rgba(10, 10, 10, 0.08), 0 4px 6px -4px rgba(10, 10, 10, 0.06);
-}
-
-html:not(.dark) .groups-column-menu-item {
-  min-height: 34px;
-  padding: 6px 8px;
-  color: #404040;
-  font-size: 14px;
-}
-
-html:not(.dark) .groups-column-menu-item:hover {
-  background: #f4f4f4;
-  color: #171717;
 }
 
 @media (max-width: 1279px) {

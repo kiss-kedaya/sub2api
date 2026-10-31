@@ -36,3 +36,30 @@ html:not(.dark) .console-signal.signal-admin .btn-warning:hover:not(:disabled) {
   background-color: #b45309;
   box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08);
 }
+
+/* Hand-rolled toolbar menus (column/filter pickers): the Nuxt UI menu look in light mode.
+   The night theme keeps each menu's own classes. */
+html:not(.dark) .admin-menu {
+  padding: 4px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 15px -3px rgba(10, 10, 10, 0.08), 0 4px 6px -4px rgba(10, 10, 10, 0.06);
+}
+
+html:not(.dark) .admin-menu .admin-menu-item {
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: #404040;
+  font-size: 14px;
+}
+
+html:not(.dark) .admin-menu .admin-menu-item:hover:not(:disabled) {
+  background: #f4f4f4;
+  color: #171717;
+}
+
+html:not(.dark) .admin-menu .admin-menu-item:disabled {
+  color: #a3a3a3;
+}
