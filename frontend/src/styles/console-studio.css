@@ -280,6 +280,9 @@
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn:active:not(:disabled) {
   transform: translateY(1px);
+  /* Tailwind v4 lifts/presses with `translate`/`scale`; cancel them as `transform` did under v3. */
+  translate: none;
+  scale: none;
 }
 
 /* Floating controls need separation; page sections keep their own flat layout. */
@@ -435,10 +438,6 @@ body:has(.console-signal) > .select-dropdown-portal {
 .console-signal .signal-main .table-wrapper .sticky-col-right::before {
   width: 6px;
   opacity: 0.6;
-}
-
-.console-signal .table-body > tr + tr {
-  border-color: var(--signal-divider);
 }
 
 .console-signal .table-pagination {
@@ -738,7 +737,8 @@ body:has(.console-signal) > .select-dropdown-portal {
   .console-signal :is(.btn, .signal-actions button, .plaza-seg-item) {
     transition: transform var(--motion-dur-fast) var(--motion-out),
       background-color 160ms ease, color 160ms ease, border-color 160ms ease,
-      box-shadow var(--motion-dur-base) var(--motion-out);
+      box-shadow var(--motion-dur-base) var(--motion-out),
+      translate var(--motion-dur-fast) var(--motion-out), scale var(--motion-dur-fast) var(--motion-out);
   }
 
   .console-signal .signal-actions button > svg:last-child {
@@ -751,6 +751,8 @@ body:has(.console-signal) > .select-dropdown-portal {
 
   .console-signal :is(.btn, .signal-actions button):active:not(:disabled) {
     transform: translateY(1px) scale(0.985);
+    translate: none;
+    scale: none;
   }
 
   /* 卡片 hover：轻微上浮 + 边缘提亮 + 外发光一次到位 */
@@ -758,20 +760,23 @@ body:has(.console-signal) > .select-dropdown-portal {
   .console-signal .admin-metric-grid > .card,
   .console-signal .signal-dashboard .signal-platform {
     transition: transform var(--motion-dur-base) var(--motion-out),
-      border-color var(--motion-dur-base) ease, box-shadow var(--motion-dur-base) var(--motion-out);
+      border-color var(--motion-dur-base) ease, box-shadow var(--motion-dur-base) var(--motion-out),
+      translate var(--motion-dur-base) var(--motion-out);
   }
 
+  /* The trailing values cover the translate/scale entries added above; shorter lists ignore them. */
   .console-signal :is(.btn, .signal-actions button, .plaza-seg-item, .signal-sidebar .sidebar-link) {
-    transition-timing-function: var(--motion-out), ease, ease, ease;
+    transition-timing-function: var(--motion-out), ease, ease, ease, var(--motion-out), var(--motion-out), var(--motion-out);
   }
 
   @media (hover: hover) and (pointer: fine) {
     .console-signal .signal-sidebar .sidebar-link:hover > svg { transform: translateX(2px); }
     .console-signal .signal-actions button:hover > svg:last-child { transform: translateX(4px); }
-    .console-signal .btn-primary:hover:not(:disabled) { transform: translateY(-1px); }
+    .console-signal .btn-primary:hover:not(:disabled) { transform: translateY(-1px); translate: none; }
     .console-signal :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric:hover,
     .console-signal .admin-metric-grid > .card:hover {
       transform: translateY(-2px);
+      translate: none;
       border-color: var(--signal-control-line);
       box-shadow: 0 6px 16px #2024260d, 0 2px 4px #20242608;
     }

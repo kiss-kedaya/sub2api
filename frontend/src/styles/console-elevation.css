@@ -89,7 +89,7 @@ html:not(.dark) .console-signal .signal-dashboard .signal-metric {
   border-color: var(--ui-line);
   border-radius: var(--ui-radius);
   box-shadow: var(--ui-shadow-sm);
-  transition: box-shadow 200ms var(--ui-ease), transform 200ms var(--ui-ease), border-color 200ms var(--ui-ease);
+  transition: box-shadow 200ms var(--ui-ease), transform 200ms var(--ui-ease), translate 200ms var(--ui-ease), border-color 200ms var(--ui-ease);
 }
 
 html:not(.dark) .console-signal :is(.card-hover, .signal-dashboard .signal-metric):hover {
@@ -114,7 +114,7 @@ html:not(.dark) .auth-paper .btn-primary {
   background: var(--ui-btn);
   color: #ffffff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--ui-shadow-sm);
-  transition: background 150ms var(--ui-ease), box-shadow 150ms var(--ui-ease), transform 150ms var(--ui-ease);
+  transition: background 150ms var(--ui-ease), box-shadow 150ms var(--ui-ease), transform 150ms var(--ui-ease), translate 150ms var(--ui-ease), scale 150ms var(--ui-ease);
 }
 
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled),
@@ -131,7 +131,7 @@ html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay,
   background: #ffffff;
   color: #171717;
   box-shadow: var(--ui-shadow-xs);
-  transition: background-color 150ms var(--ui-ease), border-color 150ms var(--ui-ease), box-shadow 150ms var(--ui-ease), transform 150ms var(--ui-ease);
+  transition: background-color 150ms var(--ui-ease), border-color 150ms var(--ui-ease), box-shadow 150ms var(--ui-ease), transform 150ms var(--ui-ease), translate 150ms var(--ui-ease), scale 150ms var(--ui-ease);
 }
 
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.btn-secondary, .btn-icon:not(.btn-primary)):hover:not(:disabled) {
@@ -212,12 +212,16 @@ html:not(.dark) .auth-paper .auth-card {
 /* Motion: press feedback, a 1px lift on hover, and a short rise when page content appears.
    The rise uses a backwards fill, so no transform lingers on the content afterwards. */
 @media (prefers-reduced-motion: no-preference) {
+  /* `translate`/`scale: none` cancel the v4 utilities, as `transform` alone did under v3. */
   html:not(.dark) .console-signal :is(.card-hover, .signal-dashboard .signal-metric):hover {
     transform: translateY(-1px);
+    translate: none;
   }
 
   html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, .auth-paper) :is(.btn-primary, .btn-secondary):active:not(:disabled) {
     transform: scale(0.98);
+    translate: none;
+    scale: none;
   }
 
   html:not(.dark) .console-signal .signal-main > * {

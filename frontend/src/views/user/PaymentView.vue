@@ -1752,6 +1752,7 @@ onUnmounted(() => {
   border-radius: 6px;
   box-shadow: none;
   transform: none;
+  scale: none;
 }
 
 .recharge-center-shell:fullscreen {

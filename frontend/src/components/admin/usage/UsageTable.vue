@@ -906,6 +906,7 @@ const hideTokenTooltip = () => {
     top: auto !important;
     bottom: 8px !important;
     transform: none !important;
+    translate: none !important;
     max-height: 70vh;
     overflow-y: auto;
     pointer-events: auto;
