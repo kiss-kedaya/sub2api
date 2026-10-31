@@ -3,6 +3,7 @@
     class="min-h-screen"
     :class="[isConsoleSignal ? 'console-signal' : 'bg-[#ffffff] dark:bg-transparent', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
   >
+    <InkSakura v-if="isConsoleSignal" />
     <!-- Sidebar -->
     <AppSidebar />
 
@@ -35,6 +36,7 @@ import { useOnboardingStore } from '@/stores/onboarding'
 import { useConsoleSignal } from '@/composables/useConsoleSignal'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+import InkSakura from './InkSakura.vue'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()

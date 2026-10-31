@@ -5,19 +5,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 主色调 - 玫瑰粉（粉白主题，600 = 主按钮色）
+        // 主色调：浅色 = 樱花粉（50-300）+ 墨色（400-950），暗色 = 原玫瑰粉；数值在 style.css 的 --c-primary-*
         primary: {
-          50: '#fdf2f5',
-          100: '#fbe9ef',
-          200: '#f6d0dd',
-          300: '#eeaac1',
-          400: '#e082a2',
-          500: '#cc5e83',
-          600: '#ad4467',
-          700: '#963a59',
-          800: '#7b3149',
-          900: '#652a3e',
-          950: '#3a1522'
+          50: 'rgb(var(--c-primary-50) / <alpha-value>)',
+          100: 'rgb(var(--c-primary-100) / <alpha-value>)',
+          200: 'rgb(var(--c-primary-200) / <alpha-value>)',
+          300: 'rgb(var(--c-primary-300) / <alpha-value>)',
+          400: 'rgb(var(--c-primary-400) / <alpha-value>)',
+          500: 'rgb(var(--c-primary-500) / <alpha-value>)',
+          600: 'rgb(var(--c-primary-600) / <alpha-value>)',
+          700: 'rgb(var(--c-primary-700) / <alpha-value>)',
+          800: 'rgb(var(--c-primary-800) / <alpha-value>)',
+          900: 'rgb(var(--c-primary-900) / <alpha-value>)',
+          950: 'rgb(var(--c-primary-950) / <alpha-value>)'
         },
         // 辅助色 - 深蓝灰
         accent: {
@@ -67,15 +67,15 @@ export default {
       boxShadow: {
         glass: '0 8px 32px rgba(0, 0, 0, 0.08)',
         'glass-sm': '0 4px 16px rgba(0, 0, 0, 0.06)',
-        glow: '0 0 20px rgba(173, 68, 103, 0.22)',
-        'glow-lg': '0 0 40px rgba(150, 58, 89, 0.28)',
+        glow: '0 0 20px rgb(var(--c-primary-600) / 0.22)',
+        'glow-lg': '0 0 40px rgb(var(--c-primary-700) / 0.28)',
         card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
         'card-hover': '0 8px 16px rgba(23, 23, 22, 0.09), 0 0 0 1px rgba(23, 23, 22, 0.12)',
         'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)'
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-primary': 'linear-gradient(135deg, #cc5e83 0%, #ad4467 55%, #963a59 100%)',
+        'gradient-primary': 'linear-gradient(135deg, rgb(var(--c-primary-500)) 0%, rgb(var(--c-primary-600)) 55%, rgb(var(--c-primary-700)) 100%)',
         'gradient-dark': 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
         'gradient-glass':
           'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
@@ -118,8 +118,8 @@ export default {
           '100%': { backgroundPosition: '200% 0' }
         },
         glow: {
-          '0%': { boxShadow: '0 0 20px rgba(173, 68, 103, 0.20)' },
-          '100%': { boxShadow: '0 0 30px rgba(150, 58, 89, 0.32)' }
+          '0%': { boxShadow: '0 0 20px rgb(var(--c-primary-600) / 0.20)' },
+          '100%': { boxShadow: '0 0 30px rgb(var(--c-primary-700) / 0.32)' }
         }
       },
       backdropBlur: {

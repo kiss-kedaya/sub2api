@@ -22,9 +22,13 @@
 .driver-active-element {
   position: relative !important;
   z-index: 99999999 !important;
-  outline: 4px solid rgba(173, 68, 103, 0.2) !important;
+  outline: 4px solid rgba(47, 42, 44, 0.16) !important;
   border-radius: 4px !important;
 }
+
+.dark .driver-active-element { outline-color: rgba(173, 68, 103, 0.2) !important; }
+.theme-tour-popover { --tour-accent: #2f2a2c; }
+.dark .theme-tour-popover { --tour-accent: #e89ab3; }
 
 /* 2. Popover Container */
 .driver-popover.theme-tour-popover {
@@ -197,11 +201,11 @@
 }
 
 .theme-tour-popover .driver-popover-next-btn {
-  background-color: #f9d6e2 !important;
-  color: #8f3554 !important;
+  background-color: #fcdde4 !important;
+  color: #2f2a2c !important;
   box-shadow: none !important;
 }
-.theme-tour-popover .driver-popover-next-btn:hover { background-color: #f4c8d6 !important; }
+.theme-tour-popover .driver-popover-next-btn:hover { background-color: #f9ccd6 !important; }
 .dark .theme-tour-popover .driver-popover-next-btn { background-color: #ad4467 !important; color: #ffffff !important; }
 .dark .theme-tour-popover .driver-popover-next-btn:hover { background-color: #963a59 !important; }
 

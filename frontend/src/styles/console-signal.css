@@ -299,10 +299,11 @@
   outline-offset: 3px;
 }
 
+/* Page-level panels let the ink painting show through; popovers and sticky cells stay opaque. */
 .console-signal :is(.card, .glass-card, .card-glass, .table-container) {
   border-radius: 8px;
   border-color: var(--signal-line);
-  background: var(--signal-surface);
+  background: var(--signal-page-surface, var(--signal-surface));
   box-shadow: none;
   backdrop-filter: none;
 }
@@ -329,7 +330,7 @@
 .console-signal .signal-main .table-page-layout .table-scroll-container {
   border-inline: 0;
   border-radius: 0;
-  background: var(--signal-surface);
+  background: var(--signal-page-surface, var(--signal-surface));
   border-color: var(--signal-line);
   box-shadow: none;
 }
@@ -351,7 +352,7 @@
 }
 
 .console-signal .table-body {
-  background: var(--signal-surface);
+  background: var(--signal-page-surface, var(--signal-surface));
 }
 
 /* These cells have component-scoped backgrounds of their own. */

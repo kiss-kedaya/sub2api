@@ -1,40 +1,42 @@
-/* Mostly white: white page, sidebar and cards, neutral ink; pale pink only for
-   selected items, primary buttons and soft highlights; rose for small text accents. */
+/* Ink-wash: white paper, black-and-grey ink for text and lines; pale sakura pink only
+   for selected items, primary buttons and soft highlights (and the blossoms behind). */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
   --signal-bg: #ffffff;
   --signal-surface: #ffffff;
-  --signal-raised: #faf7f8;
+  --signal-page-surface: rgba(255, 255, 255, 0.55);
+  --signal-raised: #f8f7f7;
   --signal-sidebar: #ffffff;
-  --signal-line: #eee6e9;
+  --signal-line: #ebe8e9;
   --signal-text: #2f2a2c;
-  --signal-muted: #6f6468;
-  --signal-accent: #ad4467;
+  --signal-muted: #6b6266;
+  --signal-accent: #2f2a2c;
+  --signal-sakura: #f2b6c6;
   --signal-amber: #906727;
-  --signal-hover: #fdf6f8;
-  --signal-accent-soft: #fdeef3;
+  --signal-hover: #faf9f9;
+  --signal-accent-soft: #fdecf0;
   --signal-on-accent: #ffffff;
-  --signal-control-line: #ddd0d5;
+  --signal-control-line: #d6d2d4;
   --signal-highlight: #ffffff;
-  --signal-inset: #faf8f9;
-  --signal-divider: #f3eef0;
+  --signal-inset: #fafafa;
+  --signal-divider: #f2f0f1;
   --signal-shadow: 0 0 #0000;
   --signal-popover-shadow: 0 12px 32px #2f2a2c14;
-  --signal-command: #f9d6e2;
-  --signal-command-text: #8f3554;
-  --signal-command-hover: #f4c8d6;
-  --signal-nav-text: #4f4649;
-  --signal-nav-muted: #6f6468;
-  --signal-nav-hover: #faf5f7;
-  --signal-nav-active: #fbe3eb;
-  --signal-nav-active-text: #963a59;
-  --signal-nav-line: #f1eaed;
-  --signal-nav-strong: #2f2a2c;
+  --signal-command: #fcdde4;
+  --signal-command-text: #2f2a2c;
+  --signal-command-hover: #f9ccd6;
+  --signal-nav-text: #4a4346;
+  --signal-nav-muted: #6b6266;
+  --signal-nav-hover: #f7f6f6;
+  --signal-nav-active: #fdecf0;
+  --signal-nav-active-text: #2f2a2c;
+  --signal-nav-line: #efedee;
+  --signal-nav-strong: #1d1a1b;
   --signal-nav-brand: #2f2a2c;
-  --signal-hero: #fdf0f4;
+  --signal-hero: #fdf3f5;
   --signal-hero-text: #2f2a2c;
-  --signal-hero-muted: #6f6468;
-  --signal-hero-mark: #ad4467;
-  --signal-hero-line: #f3dde5;
+  --signal-hero-muted: #6b6266;
+  --signal-hero-mark: #e58fa7;
+  --signal-hero-line: #f5e3e8;
   /* motion tokens: 独角兽级动效体系（统一 easing 与时长） */
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
@@ -82,6 +84,8 @@
   --signal-hero-muted: #c3a9b3;
   --signal-hero-mark: #f0aec3;
   --signal-hero-line: #4a3640;
+  --signal-page-surface: rgba(38, 28, 33, 0.78);
+  --signal-sakura: #e89ab3;
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
@@ -646,7 +650,7 @@ body:has(.console-signal) > .select-dropdown-portal {
   width: 5px;
   height: 5px;
   flex-shrink: 0;
-  background: var(--signal-accent);
+  background: var(--signal-sakura, var(--signal-accent));
 }
 
 .console-signal .signal-editorial-heading > button {
