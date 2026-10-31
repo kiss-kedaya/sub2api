@@ -48,8 +48,10 @@ vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
+    // CopilotSDKFields / GeminiCacheAccountFields read locale.value for their copy.
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string) => key,
+      locale: { value: 'en' }
     })
   }
 })
@@ -198,7 +200,8 @@ function buildVertexAccount() {
     platform: 'gemini',
     type: 'service_account',
     credentials: {
-      service_account_json: '{"type":"service_account","client_email":"sa@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n"}',
+      // EditAccountModal only checks that legacy plaintext JSON is present; it never parses the key.
+      service_account_json: '{"type":"service_account","client_email":"sa@example.iam.gserviceaccount.com","private_key":"placeholder-not-a-real-key"}',
       project_id: 'demo-project',
       client_email: 'sa@example.iam.gserviceaccount.com',
       location: 'us-central1',

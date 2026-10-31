@@ -71,6 +71,16 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   })) as unknown as typeof window.matchMedia
 }
 
+// Mock Element.scrollIntoView (jsdom 未实现;TimeWheelPicker 等组件打开时滚动到选中项)
+// configurable,单个 spec 仍可用 Object.defineProperty 换成自己的 vi.fn() 做断言
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    writable: true,
+    value: vi.fn(),
+  })
+}
+
 // Mock IntersectionObserver
 class MockIntersectionObserver {
   observe = vi.fn()

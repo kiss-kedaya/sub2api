@@ -64,7 +64,8 @@ vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
-    useI18n: () => ({ t: (key: string) => key }),
+    // CopilotSDKFields / GeminiCacheAccountFields read locale.value for their copy.
+    useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
   }
 })
 
