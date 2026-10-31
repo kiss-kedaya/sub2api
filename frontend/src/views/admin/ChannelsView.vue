@@ -1,10 +1,21 @@
 <template>
   <AppLayout>
     <TablePageLayout>
+      <template #actions>
+        <AdminPageHeader
+          :title="t('admin.channels.title')"
+          :description="t('admin.channels.description')"
+        >
+          <template #actions>
+            <button @click="openCreateDialog" class="btn btn-primary">
+              <Icon name="plus" size="md" class="mr-2" />
+              {{ t('admin.channels.createChannel', 'Create Channel') }}
+            </button>
+          </template>
+        </AdminPageHeader>
+      </template>
       <template #filters>
-        <div class="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-          <!-- Left: Search + Filters -->
-          <div class="flex flex-1 flex-wrap items-center gap-3">
+        <AdminToolbar>
             <div class="relative w-full sm:w-64">
               <Icon
                 name="search"
@@ -27,24 +38,18 @@
               class="w-40"
               @change="loadChannels"
             />
-          </div>
-
-          <!-- Right: Actions -->
-          <div class="flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-3 lg:w-auto">
+          <template #end>
             <button
               @click="loadChannels"
               :disabled="loading"
               class="btn btn-secondary"
               :title="t('common.refresh', 'Refresh')"
+              :aria-label="t('common.refresh', 'Refresh')"
             >
               <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
             </button>
-            <button @click="openCreateDialog" class="btn btn-primary">
-              <Icon name="plus" size="md" class="mr-2" />
-              {{ t('admin.channels.createChannel', 'Create Channel') }}
-            </button>
-          </div>
-        </div>
+          </template>
+        </AdminToolbar>
       </template>
 
       <template #table>
@@ -97,21 +102,9 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
-              <button
-                @click="openEditDialog(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
-              >
-                <Icon name="edit" size="sm" />
-                <span class="text-xs">{{ t('common.edit', 'Edit') }}</span>
-              </button>
-              <button
-                @click="handleDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-              >
-                <Icon name="trash" size="sm" />
-                <span class="text-xs">{{ t('common.delete', 'Delete') }}</span>
-              </button>
+            <div class="flex items-center gap-0.5">
+              <AdminRowAction :label="t('common.edit', 'Edit')" icon="edit" tone="primary" @click="openEditDialog(row)" />
+              <AdminRowAction :label="t('common.delete', 'Delete')" icon="trash" tone="danger" @click="handleDelete(row)" />
             </div>
           </template>
 
@@ -648,6 +641,9 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import AdminToolbar from '@/components/admin/page/AdminToolbar.vue'
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import PricingEntryCard from '@/components/admin/channel/PricingEntryCard.vue'
