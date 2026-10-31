@@ -97,7 +97,7 @@
           <p class="text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.tempUnschedulable.errorMessage') }}
           </p>
-          <div class="mt-2 rounded bg-gray-50 p-2 text-xs text-gray-700 dark:bg-dark-700 dark:text-gray-300">
+          <div class="mt-2 rounded-sm bg-gray-50 p-2 text-xs text-gray-700 dark:bg-dark-700 dark:text-gray-300">
             {{ state?.error_message || '-' }}
           </div>
         </div>

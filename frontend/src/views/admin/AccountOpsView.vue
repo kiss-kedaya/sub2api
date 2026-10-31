@@ -65,7 +65,7 @@
                   <p class="font-medium">{{ event.group_name || event.account_name }}</p>
                   <p class="mt-1 text-xs text-gray-500">#{{ event.account_id }} · {{ t(`accountOps.${event.kind}`) }}</p>
                 </td>
-                <td class="px-4 py-4"><span class="rounded px-2 py-1 text-xs"
+                <td class="px-4 py-4"><span class="rounded-sm px-2 py-1 text-xs"
                     :class="event.phase === 'recovery' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'">{{ t(event.phase ? `accountOps.phases.${event.phase}` : 'accountOps.failureSignal') }}</span>
                 </td>
                 <td class="px-4 py-4 text-xs"><template v-if="event.kind === 'balance_threshold'">{{ event.details?.balance }}
@@ -109,7 +109,7 @@
             </div>
           </div>
           <div class="grid gap-2.5 p-4 sm:grid-cols-2 xl:grid-cols-3">
-            <div v-if="remote.config.recipient" class="rounded-lg bg-white/80 p-3 shadow-sm dark:bg-dark-900/70"
+            <div v-if="remote.config.recipient" class="rounded-lg bg-white/80 p-3 shadow-xs dark:bg-dark-900/70"
               data-testid="account-ops-email-channel">
               <div class="flex items-center justify-between"><span
                   class="min-w-0 truncate text-sm font-medium" :title="remote.config.email_name || t('accountOps.providers.email')">{{ remote.config.email_name || t('accountOps.providers.email') }}</span><span
@@ -122,7 +122,7 @@
                   @click="removeEmail">{{ t('common.delete') }}</button></div>
             </div>
             <div v-for="(hook, index) in remote.config.webhooks" :key="hook.id"
-              class="rounded-lg bg-white/80 p-3 shadow-sm dark:bg-dark-900/70">
+              class="rounded-lg bg-white/80 p-3 shadow-xs dark:bg-dark-900/70">
               <div class="flex items-center justify-between gap-2"><span
                   class="min-w-0 truncate text-sm font-medium" :title="hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}`">{{ hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}` }}</span><span class="text-xs"
                   :class="hook.enabled ? 'text-emerald-600' : 'text-gray-500'">{{ t(hook.enabled ? 'accountOps.channelEnabled' : 'accountOps.channelDisabled') }}</span>

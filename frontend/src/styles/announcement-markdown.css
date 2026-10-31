@@ -1,3 +1,5 @@
+@reference "../style.css";
+
 /* Shared rich-text styles for announcement popup and bell detail content. */
 .markdown-body {
   @apply text-[15px] leading-[1.75];
@@ -46,7 +48,12 @@
 }
 
 .markdown-body li::marker {
-  @apply text-blue-600 dark:text-blue-400;
+  @apply text-blue-600;
+}
+
+/* `dark:` inside a pseudo-element rule compiles to an invalid selector in v4. */
+.markdown-body li:is(.dark *)::marker {
+  @apply text-blue-400;
 }
 
 .markdown-body blockquote {
@@ -55,7 +62,11 @@
 
 .markdown-body blockquote::before {
   content: '"';
-  @apply absolute -left-1 top-0 font-serif text-5xl text-blue-500/20 dark:text-blue-400/20;
+  @apply absolute -left-1 top-0 font-serif text-5xl text-blue-500/20;
+}
+
+.markdown-body blockquote:is(.dark *)::before {
+  @apply text-blue-400/20;
 }
 
 .markdown-body code {

@@ -8,7 +8,7 @@
       <button
         :id="`${panelId}-heading`"
         type="button"
-        class="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-amber-50/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-amber-500 dark:hover:bg-amber-950/30"
+        class="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-amber-50/70 focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-amber-500 dark:hover:bg-amber-950/30"
         :aria-expanded="open"
         :aria-controls="panelId"
         data-testid="inflight-toggle"
@@ -26,7 +26,7 @@
       <button
         v-if="open"
         type="button"
-        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-white hover:text-amber-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500 disabled:cursor-wait disabled:opacity-50 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-amber-300"
+        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-white hover:text-amber-700 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-amber-500 disabled:cursor-wait disabled:opacity-50 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-amber-300"
         :disabled="loading"
         :title="t('usage.inflightRefresh')"
         :aria-label="t('usage.inflightRefresh')"
@@ -41,7 +41,7 @@
         {{ t('usage.inflightRunningHint') }}
       </p>
       <p v-if="error" role="alert" class="mx-4 my-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{{ error }}</p>
-      <div v-if="shown > 0" class="max-h-[32rem] overflow-auto overscroll-contain p-3 sm:p-0">
+      <div v-if="shown > 0" class="max-h-128 overflow-auto overscroll-contain p-3 sm:p-0">
         <slot />
       </div>
       <div v-else-if="loading" role="status" class="flex items-center justify-center gap-2 px-4 py-8 text-sm text-gray-500 dark:text-gray-400">

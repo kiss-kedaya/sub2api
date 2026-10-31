@@ -84,7 +84,7 @@ describe('OllamaCloudUsageCell', () => {
     const wrapper = mount(OllamaCloudUsageCell, { props: { account: account() } })
     const cell = wrapper.get('[data-testid="ollama-cloud-usage-cell"]')
     expect(cell.classes()).toEqual(expect.arrayContaining(['min-w-0', 'max-w-full']))
-    expect(cell.classes()).not.toContain('min-w-[12rem]')
+    expect(cell.classes()).not.toContain('min-w-48')
 
     const bars = wrapper.findAllComponents(UsageProgressBar)
     expect(bars).toHaveLength(2)

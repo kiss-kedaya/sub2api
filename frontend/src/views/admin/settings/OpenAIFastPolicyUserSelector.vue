@@ -18,7 +18,7 @@
         </span>
         <button
           type="button"
-          class="shrink-0 rounded text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+          class="shrink-0 rounded-sm text-gray-400 hover:text-red-600 dark:hover:text-red-400"
           :aria-label="t('admin.settings.openaiFastPolicy.removeUser')"
           :title="t('admin.settings.openaiFastPolicy.removeUser')"
           @click="removeUser(userId)"

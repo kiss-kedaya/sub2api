@@ -534,6 +534,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .select-trigger {
   @apply flex w-full items-center justify-between gap-2;
   @apply rounded-[10px] px-4 py-2.5 text-sm;
@@ -541,7 +542,7 @@ onUnmounted(() => {
   @apply border border-gray-200 dark:border-dark-600;
   @apply text-gray-900 dark:text-gray-100;
   @apply transition-all duration-200;
-  @apply focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-300/70 dark:focus:ring-dark-500;
+  @apply focus:border-gray-400 focus:outline-hidden focus:ring-1 focus:ring-gray-300/70 dark:focus:ring-dark-500;
   @apply hover:border-gray-300 dark:hover:border-dark-500;
   @apply cursor-pointer;
 }
@@ -578,6 +579,7 @@ onUnmounted(() => {
 </style>
 
 <style>
+@reference "../../style.css";
 .select-dropdown-portal {
   @apply w-max min-w-[200px];
   @apply bg-white dark:bg-dark-800;

@@ -13,7 +13,7 @@
         <div class="flex items-center gap-3">
           <div
             :class="[
-              'flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br',
+              'flex h-10 w-10 items-center justify-center rounded-lg bg-linear-to-br/srgb',
               isOpenAILike
                 ? 'from-green-500 to-green-600'
                 : isGemini

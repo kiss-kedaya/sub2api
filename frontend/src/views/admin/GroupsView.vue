@@ -308,7 +308,7 @@
                   >{{ row.active_account_count || 0 }}</span
                 >
                 <span
-                  class="ml-1 inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
+                  class="ml-1 inline-flex items-center rounded-sm bg-gray-100 px-1.5 py-0.5 font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
                   >{{ t("admin.groups.accountsUnit") }}</span
                 >
               </div>
@@ -321,7 +321,7 @@
                   >{{ row.rate_limited_account_count }}</span
                 >
                 <span
-                  class="ml-1 inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
+                  class="ml-1 inline-flex items-center rounded-sm bg-gray-100 px-1.5 py-0.5 font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
                   >{{ t("admin.groups.accountsUnit") }}</span
                 >
               </div>
@@ -334,7 +334,7 @@
                   >{{ row.account_count || 0 }}</span
                 >
                 <span
-                  class="ml-1 inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
+                  class="ml-1 inline-flex items-center rounded-sm bg-gray-100 px-1.5 py-0.5 font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
                   >{{ t("admin.groups.accountsUnit") }}</span
                 >
               </div>
@@ -698,7 +698,7 @@
                   <p class="mb-2 text-xs leading-relaxed text-gray-300">
                     {{ t("admin.groups.exclusiveTooltip.description") }}
                   </p>
-                  <div class="rounded bg-gray-800 p-2 dark:bg-gray-700">
+                  <div class="rounded-sm bg-gray-800 p-2 dark:bg-gray-700">
                     <p class="text-xs leading-relaxed text-gray-300">
                       <span
                         class="inline-flex items-center gap-1 text-primary-400"
@@ -849,14 +849,14 @@
               <div class="flex items-center gap-1.5">
                 <button
                   type="button"
-                  class="rounded px-2 py-1 font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
+                  class="rounded-sm px-2 py-1 font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
                   @click="selectAllModelAllowlistItems(createModelAllowlistState)"
                 >
                   {{ t("admin.groups.modelAllowlist.selectAll") }}
                 </button>
                 <button
                   type="button"
-                  class="rounded px-2 py-1 font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+                  class="rounded-sm px-2 py-1 font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
                   @click="invertModelAllowlistSelection(createModelAllowlistState)"
                 >
                   {{ t("admin.groups.modelAllowlist.invertSelection") }}
@@ -878,18 +878,18 @@
               <div
                 v-for="(item, index) in createModelAllowlistState.items"
                 :key="item.id"
-                class="flex items-center gap-2 rounded border border-gray-200 bg-white px-3 py-2 dark:border-dark-600 dark:bg-dark-800"
+                class="flex items-center gap-2 rounded-sm border border-gray-200 bg-white px-3 py-2 dark:border-dark-600 dark:bg-dark-800"
               >
                 <input
                   v-model="item.selected"
                   type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
                 />
                 <span class="min-w-0 flex-1 break-all text-sm text-gray-700 dark:text-gray-300">
                   {{ item.id }}
                   <span
                     v-if="item.id.endsWith('*')"
-                    class="ml-1 rounded bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
+                    class="ml-1 rounded-sm bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
                   >
                     {{ t("admin.groups.modelAllowlist.wildcardTag") }}
                   </span>
@@ -897,7 +897,7 @@
                 <button
                   type="button"
                   :disabled="index === 0"
-                  class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
+                  class="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
                   @click="moveCreateModelAllowlistItem(index, index - 1)"
                 >
                   <Icon name="arrowUp" size="sm" />
@@ -905,7 +905,7 @@
                 <button
                   type="button"
                   :disabled="index === createModelAllowlistState.items.length - 1"
-                  class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
+                  class="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
                   @click="moveCreateModelAllowlistItem(index, index + 1)"
                 >
                   <Icon name="arrowDown" size="sm" />
@@ -918,12 +918,12 @@
                   v-model="createAllowlistCustomEntry"
                   type="text"
                   :placeholder="t('admin.groups.modelAllowlist.customPlaceholder')"
-                  class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-none dark:border-dark-500 dark:bg-dark-700 dark:text-gray-200"
+                  class="min-w-0 flex-1 rounded-sm border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-hidden dark:border-dark-500 dark:bg-dark-700 dark:text-gray-200"
                   @keydown.enter.prevent="submitCreateAllowlistCustomEntry"
                 />
                 <button
                   type="button"
-                  class="rounded bg-primary-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+                  class="rounded-sm bg-primary-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                   @click="submitCreateAllowlistCustomEntry"
                 >
                   {{ t("admin.groups.modelAllowlist.addCustom") }}
@@ -957,7 +957,7 @@
               <input
                 v-model="createForm.allow_image_generation"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               {{ t(imagePricingI18nKey(createForm.platform, "allowImageGeneration")) }}
             </label>
@@ -965,7 +965,7 @@
               <input
                 v-model="createForm.image_rate_independent"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               {{ t(imagePricingI18nKey(createForm.platform, "independentMultiplier")) }}
             </label>
@@ -1044,7 +1044,7 @@
               <input
                 v-model="createForm.allow_batch_image_generation"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               {{ t("admin.groups.imagePricing.allowBatchImageGeneration") }}
             </label>
@@ -1110,7 +1110,7 @@
               <input
                 v-model="createForm.video_rate_independent"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               {{ t(videoPricingI18nKey("independentMultiplier")) }}
             </label>
@@ -1230,7 +1230,7 @@
               <input
                 v-model="createForm.peak_rate_enabled"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span>{{ t("admin.groups.peakRate.enable") }}</span>
             </label>
@@ -1268,7 +1268,7 @@
             <input
               v-model="createForm.profit_control_enabled"
               type="checkbox"
-              class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
             />
             <span>{{ t("admin.groups.profitControl.enable") }}</span>
           </label>
@@ -1348,7 +1348,7 @@
                 type="checkbox"
                 :checked="createForm.supported_model_scopes.includes('claude')"
                 @change="toggleCreateScope('claude')"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
+                class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
               />
               <span class="text-sm text-gray-700 dark:text-gray-300">{{
                 t("admin.groups.supportedScopes.claude")
@@ -1361,7 +1361,7 @@
                   createForm.supported_model_scopes.includes('gemini_text')
                 "
                 @change="toggleCreateScope('gemini_text')"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
+                class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
               />
               <span class="text-sm text-gray-700 dark:text-gray-300">{{
                 t("admin.groups.supportedScopes.geminiText")
@@ -1374,7 +1374,7 @@
                   createForm.supported_model_scopes.includes('gemini_image')
                 "
                 @change="toggleCreateScope('gemini_image')"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
+                class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
               />
               <span class="text-sm text-gray-700 dark:text-gray-300">{{
                 t("admin.groups.supportedScopes.geminiImage")
@@ -1749,7 +1749,7 @@
             class="mt-3"
           >
             <div
-              class="relative overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-600 dark:bg-dark-800"
+              class="relative overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xs dark:border-dark-600 dark:bg-dark-800"
             >
               <div
                 class="border-b border-gray-100 bg-gray-50/80 px-4 py-3 dark:border-dark-700 dark:bg-dark-700/50"
@@ -1813,7 +1813,7 @@
             </div>
 
             <div
-              class="mt-5 relative overflow-hidden rounded-xl border border-primary-200 bg-white shadow-sm dark:border-primary-900/50 dark:bg-dark-800"
+              class="mt-5 relative overflow-hidden rounded-xl border border-primary-200 bg-white shadow-xs dark:border-primary-900/50 dark:bg-dark-800"
             >
               <div
                 class="border-b border-primary-100 bg-primary-50/80 px-4 py-3 dark:border-primary-900/40 dark:bg-primary-900/20"
@@ -1860,7 +1860,7 @@
                   <div
                     v-for="row in createForm.exact_model_mappings"
                     :key="getCreateMessagesDispatchRowKey(row)"
-                    class="group relative rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-all hover:border-primary-300 hover:shadow-md dark:border-dark-600 dark:bg-dark-700 dark:hover:border-primary-700"
+                    class="group relative rounded-xl border border-gray-200 bg-white p-4 shadow-xs transition-all hover:border-primary-300 hover:shadow-md dark:border-dark-600 dark:bg-dark-700 dark:hover:border-primary-700"
                   >
                     <div class="flex items-center gap-4">
                       <div
@@ -2417,7 +2417,7 @@
                   <p class="mb-2 text-xs leading-relaxed text-gray-300">
                     {{ t("admin.groups.exclusiveTooltip.description") }}
                   </p>
-                  <div class="rounded bg-gray-800 p-2 dark:bg-gray-700">
+                  <div class="rounded-sm bg-gray-800 p-2 dark:bg-gray-700">
                     <p class="text-xs leading-relaxed text-gray-300">
                       <span
                         class="inline-flex items-center gap-1 text-primary-400"
@@ -2572,14 +2572,14 @@
               <div class="flex items-center gap-1.5">
                 <button
                   type="button"
-                  class="rounded px-2 py-1 font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
+                  class="rounded-sm px-2 py-1 font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/20"
                   @click="selectAllModelAllowlistItems(editModelAllowlistState)"
                 >
                   {{ t("admin.groups.modelAllowlist.selectAll") }}
                 </button>
                 <button
                   type="button"
-                  class="rounded px-2 py-1 font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+                  class="rounded-sm px-2 py-1 font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
                   @click="invertModelAllowlistSelection(editModelAllowlistState)"
                 >
                   {{ t("admin.groups.modelAllowlist.invertSelection") }}
@@ -2601,18 +2601,18 @@
               <div
                 v-for="(item, index) in editModelAllowlistState.items"
                 :key="item.id"
-                class="flex items-center gap-2 rounded border border-gray-200 bg-white px-3 py-2 dark:border-dark-600 dark:bg-dark-800"
+                class="flex items-center gap-2 rounded-sm border border-gray-200 bg-white px-3 py-2 dark:border-dark-600 dark:bg-dark-800"
               >
                 <input
                   v-model="item.selected"
                   type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
                 />
                 <span class="min-w-0 flex-1 break-all text-sm text-gray-700 dark:text-gray-300">
                   {{ item.id }}
                   <span
                     v-if="item.id.endsWith('*')"
-                    class="ml-1 rounded bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
+                    class="ml-1 rounded-sm bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:bg-primary-900/30 dark:text-primary-400"
                   >
                     {{ t("admin.groups.modelAllowlist.wildcardTag") }}
                   </span>
@@ -2620,7 +2620,7 @@
                 <button
                   type="button"
                   :disabled="index === 0"
-                  class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
+                  class="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
                   @click="moveEditModelAllowlistItem(index, index - 1)"
                 >
                   <Icon name="arrowUp" size="sm" />
@@ -2628,7 +2628,7 @@
                 <button
                   type="button"
                   :disabled="index === editModelAllowlistState.items.length - 1"
-                  class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
+                  class="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-200"
                   @click="moveEditModelAllowlistItem(index, index + 1)"
                 >
                   <Icon name="arrowDown" size="sm" />
@@ -2641,12 +2641,12 @@
                   v-model="editAllowlistCustomEntry"
                   type="text"
                   :placeholder="t('admin.groups.modelAllowlist.customPlaceholder')"
-                  class="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-none dark:border-dark-500 dark:bg-dark-700 dark:text-gray-200"
+                  class="min-w-0 flex-1 rounded-sm border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-hidden dark:border-dark-500 dark:bg-dark-700 dark:text-gray-200"
                   @keydown.enter.prevent="submitEditAllowlistCustomEntry"
                 />
                 <button
                   type="button"
-                  class="rounded bg-primary-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+                  class="rounded-sm bg-primary-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-700"
                   @click="submitEditAllowlistCustomEntry"
                 >
                   {{ t("admin.groups.modelAllowlist.addCustom") }}
@@ -2680,7 +2680,7 @@
               <input
                 v-model="editForm.allow_image_generation"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               {{ t(imagePricingI18nKey(editForm.platform, "allowImageGeneration")) }}
             </label>
@@ -2688,7 +2688,7 @@
               <input
                 v-model="editForm.image_rate_independent"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               {{ t(imagePricingI18nKey(editForm.platform, "independentMultiplier")) }}
             </label>
@@ -2767,7 +2767,7 @@
               <input
                 v-model="editForm.allow_batch_image_generation"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               {{ t("admin.groups.imagePricing.allowBatchImageGeneration") }}
             </label>
@@ -2833,7 +2833,7 @@
               <input
                 v-model="editForm.video_rate_independent"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               {{ t(videoPricingI18nKey("independentMultiplier")) }}
             </label>
@@ -2953,7 +2953,7 @@
               <input
                 v-model="editForm.peak_rate_enabled"
                 type="checkbox"
-                class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span>{{ t("admin.groups.peakRate.enable") }}</span>
             </label>
@@ -2991,7 +2991,7 @@
             <input
               v-model="editForm.profit_control_enabled"
               type="checkbox"
-              class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              class="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
             />
             <span>{{ t("admin.groups.profitControl.enable") }}</span>
           </label>
@@ -3071,7 +3071,7 @@
                 type="checkbox"
                 :checked="editForm.supported_model_scopes.includes('claude')"
                 @change="toggleEditScope('claude')"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
+                class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
               />
               <span class="text-sm text-gray-700 dark:text-gray-300">{{
                 t("admin.groups.supportedScopes.claude")
@@ -3084,7 +3084,7 @@
                   editForm.supported_model_scopes.includes('gemini_text')
                 "
                 @change="toggleEditScope('gemini_text')"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
+                class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
               />
               <span class="text-sm text-gray-700 dark:text-gray-300">{{
                 t("admin.groups.supportedScopes.geminiText")
@@ -3097,7 +3097,7 @@
                   editForm.supported_model_scopes.includes('gemini_image')
                 "
                 @change="toggleEditScope('gemini_image')"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
+                class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
               />
               <span class="text-sm text-gray-700 dark:text-gray-300">{{
                 t("admin.groups.supportedScopes.geminiImage")
@@ -3492,7 +3492,7 @@
             class="mt-3"
           >
             <div
-              class="relative overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-600 dark:bg-dark-800"
+              class="relative overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xs dark:border-dark-600 dark:bg-dark-800"
             >
               <div
                 class="border-b border-gray-100 bg-gray-50/80 px-4 py-3 dark:border-dark-700 dark:bg-dark-700/50"
@@ -3556,7 +3556,7 @@
             </div>
 
             <div
-              class="mt-5 relative overflow-hidden rounded-xl border border-primary-200 bg-white shadow-sm dark:border-primary-900/50 dark:bg-dark-800"
+              class="mt-5 relative overflow-hidden rounded-xl border border-primary-200 bg-white shadow-xs dark:border-primary-900/50 dark:bg-dark-800"
             >
               <div
                 class="border-b border-primary-100 bg-primary-50/80 px-4 py-3 dark:border-primary-900/40 dark:bg-primary-900/20"
@@ -3603,7 +3603,7 @@
                   <div
                     v-for="row in editForm.exact_model_mappings"
                     :key="getEditMessagesDispatchRowKey(row)"
-                    class="group relative rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-all hover:border-primary-300 hover:shadow-md dark:border-dark-600 dark:bg-dark-700 dark:hover:border-primary-700"
+                    class="group relative rounded-xl border border-gray-200 bg-white p-4 shadow-xs transition-all hover:border-primary-300 hover:shadow-md dark:border-dark-600 dark:bg-dark-700 dark:hover:border-primary-700"
                   >
                     <div class="flex items-center gap-4">
                       <div
@@ -4157,7 +4157,7 @@
                     :key="route.id"
                     :class="!route.enabled && 'opacity-60'"
                   >
-                    <td class="max-w-[15rem] px-3 py-2">
+                    <td class="max-w-60 px-3 py-2">
                       <div class="break-all font-medium text-gray-900 dark:text-white">
                         {{ route.public_model }}
                       </div>
@@ -4195,7 +4195,7 @@
                       <div class="flex justify-end gap-1">
                         <button
                           type="button"
-                          class="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                          class="rounded-sm p-1.5 text-gray-500 hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
                           :title="t('common.edit')"
                           @click="editCompositeRoute(route)"
                         >
@@ -4203,7 +4203,7 @@
                         </button>
                         <button
                           type="button"
-                          class="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                          class="rounded-sm p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                           :title="t('common.delete')"
                           @click="deleteCompositeRoute(route)"
                         >
@@ -4327,7 +4327,7 @@
                 <input
                   v-model="compositeRouteForm.enabled"
                   type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
+                  class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
                 />
                 {{ t("admin.groups.compositeRoutes.enabled") }}
               </label>

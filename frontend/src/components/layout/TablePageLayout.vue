@@ -44,6 +44,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 /* 桌面端：Flexbox 布局 */
 .table-page-layout {
   @apply flex flex-col gap-6;
@@ -76,7 +77,7 @@ onUnmounted(() => {
 }
 
 .table-scroll-container :deep(thead) {
-  @apply bg-gray-50/80 dark:bg-dark-800/80 backdrop-blur-sm;
+  @apply bg-gray-50/80 dark:bg-dark-800/80 backdrop-blur-xs;
 }
 
 .table-scroll-container :deep(tbody) {

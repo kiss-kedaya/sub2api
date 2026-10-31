@@ -3,7 +3,7 @@
     <label class="flex cursor-pointer items-start gap-3">
       <input
         type="checkbox"
-        class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600"
+        class="mt-1 h-4 w-4 rounded-sm border-gray-300 text-primary-600"
         :checked="modelValue.enabled"
         data-testid="gemini-explicit-cache-upstream"
         @change="updateEnabled"

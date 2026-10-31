@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vue from '@vitejs/plugin-vue'
+import tailwindcss from '@tailwindcss/vite'
 import type { InlineConfig, Plugin } from 'vite'
 import { DEMO_TOKEN, PREVIEW_LABEL, settings } from './fixtures'
 import { createMockApi, PreviewError } from './mock-api'
@@ -176,7 +177,7 @@ export function consolePreviewConfig(): InlineConfig {
     // Do not expose inherited VITE_* variables in this isolated mode either.
     envPrefix: '__CONSOLE_PREVIEW_NO_ENV__',
     cacheDir: resolve(root, 'dev/.cache/vite'),
-    plugins: [consolePreviewPlugin(), vue()],
+    plugins: [consolePreviewPlugin(), vue(), tailwindcss()],
     resolve: { alias: { '@': resolve(root, 'src'), 'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js' } },
     define: { __INTLIFY_JIT_COMPILATION__: true, 'import.meta.env.VITE_API_BASE_URL': JSON.stringify('/api/v1'),
       'import.meta.env.VITE_WS_BASE_URL': 'undefined', 'import.meta.env.VITE_INFINITE_CANVAS_URL': 'undefined' },

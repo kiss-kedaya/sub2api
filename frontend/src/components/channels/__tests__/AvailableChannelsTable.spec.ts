@@ -116,8 +116,8 @@ describe('AvailableChannelsTable responsive surfaces', () => {
 
     // TablePageLayout has a more-specific `display: table` rule for descendants,
     // so these display utilities must remain important at both breakpoints.
-    expect(desktop.classes()).toContain('!hidden')
-    expect(desktop.classes()).toContain('lg:!table')
+    expect(desktop.classes()).toContain('hidden!')
+    expect(desktop.classes()).toContain('lg:table!')
     expect(desktop.findAll('thead th')).toHaveLength(5)
     expect(desktop.text()).toContain('Primary channel')
     expect(desktop.text()).toContain('Fast and reliable access')

@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv, Plugin, searchForWorkspaceRoot } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import tailwindcss from '@tailwindcss/vite'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
 
@@ -90,6 +91,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       vue(),
+      tailwindcss(),
       checker({
         vueTsc: true
       }),

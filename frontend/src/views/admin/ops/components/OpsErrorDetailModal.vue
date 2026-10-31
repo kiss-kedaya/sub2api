@@ -87,7 +87,7 @@
         <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
           <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.status') }}</div>
           <div class="mt-1 flex flex-wrap items-center gap-2">
-            <span :class="['inline-flex items-center rounded-lg px-2 py-1 text-xs font-black ring-1 ring-inset shadow-sm', statusClass]">
+            <span :class="['inline-flex items-center rounded-lg px-2 py-1 text-xs font-black ring-1 ring-inset shadow-xs', statusClass]">
               {{ detail.status_code }}
             </span>
             <span
@@ -103,7 +103,7 @@
         <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
           <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.upstreamStatus') }}</div>
           <div class="mt-1">
-            <span :class="['inline-flex items-center rounded-lg px-2 py-1 text-xs font-black ring-1 ring-inset shadow-sm', upstreamStatusClass]">
+            <span :class="['inline-flex items-center rounded-lg px-2 py-1 text-xs font-black ring-1 ring-inset shadow-xs', upstreamStatusClass]">
               {{ detail.upstream_status_code ?? '—' }}
             </span>
           </div>
@@ -118,7 +118,7 @@
 
         <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-900">
           <div class="text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.ops.errorDetail.message') }}</div>
-          <div class="mt-1 break-words text-sm font-medium text-gray-900 dark:text-white" :title="rootCauseMessage">
+          <div class="mt-1 wrap-break-word text-sm font-medium text-gray-900 dark:text-white" :title="rootCauseMessage">
             {{ rootCauseMessage || '—' }}
           </div>
         </div>
@@ -134,7 +134,7 @@
 
       <div v-if="rootCauseMessage" class="rounded-xl bg-amber-50 p-6 dark:bg-amber-900/10">
         <h3 class="text-sm font-black uppercase tracking-wider text-amber-900 dark:text-amber-200">{{ t('admin.ops.errorDetail.rootCause') }}</h3>
-        <div class="mt-3 break-words text-sm font-medium text-amber-900 dark:text-amber-100">{{ rootCauseMessage }}</div>
+        <div class="mt-3 wrap-break-word text-sm font-medium text-amber-900 dark:text-amber-100">{{ rootCauseMessage }}</div>
       </div>
 
       <div v-if="headerSnapshotSections.length" class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900">
@@ -227,7 +227,7 @@
               </div>
             </div>
 
-            <div v-if="ev.message" class="mt-3 break-words text-sm font-medium text-gray-900 dark:text-white">{{ ev.message }}</div>
+            <div v-if="ev.message" class="mt-3 wrap-break-word text-sm font-medium text-gray-900 dark:text-white">{{ ev.message }}</div>
 
             <pre
               v-if="expandedUpstreamDetailIds.has(ev.id)"

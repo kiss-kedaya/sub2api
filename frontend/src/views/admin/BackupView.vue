@@ -212,7 +212,7 @@
                 <td class="py-3 pr-4 font-mono text-xs">{{ record.id }}</td>
                 <td class="py-3 pr-4">
                   <span
-                    class="rounded px-2 py-0.5 text-xs"
+                    class="rounded-sm px-2 py-0.5 text-xs"
                     :class="statusClass(record.status)"
                   >
                     {{ record.status === 'running' && record.progress
@@ -321,7 +321,7 @@
                 {{ t('admin.backup.r2Guide.step3.title') }}
               </h3>
               <p class="ml-8 text-sm text-gray-600 dark:text-gray-300">{{ t('admin.backup.r2Guide.step3.desc') }}</p>
-              <code class="ml-8 mt-1 block rounded bg-gray-100 px-3 py-2 text-xs text-gray-800 dark:bg-dark-700 dark:text-gray-200">https://&lt;{{ t('admin.backup.r2Guide.step3.accountId') }}&gt;.r2.cloudflarestorage.com</code>
+              <code class="ml-8 mt-1 block rounded-sm bg-gray-100 px-3 py-2 text-xs text-gray-800 dark:bg-dark-700 dark:text-gray-200">https://&lt;{{ t('admin.backup.r2Guide.step3.accountId') }}&gt;.r2.cloudflarestorage.com</code>
             </div>
 
             <!-- Step 4: Fill form -->

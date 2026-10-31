@@ -15,7 +15,7 @@
         <span v-if="currentVersion" class="font-medium">{{ displayCurrentVersion }}</span>
         <span
           v-else
-          class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
+          class="h-3 w-12 animate-pulse rounded-sm bg-gray-200 font-medium dark:bg-dark-600"
         ></span>
         <!-- Update indicator -->
         <span v-if="hasUpdate" class="relative flex h-2 w-2">
@@ -546,7 +546,7 @@
                           class="flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60"
                           :class="
                             selectedRollbackVersion === item.version
-                              ? 'border-amber-300 bg-amber-50 shadow-sm dark:border-amber-700 dark:bg-amber-900/20'
+                              ? 'border-amber-300 bg-amber-50 shadow-xs dark:border-amber-700 dark:bg-amber-900/20'
                               : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-dark-700 dark:hover:border-dark-600 dark:hover:bg-dark-700/40'
                           "
                         >
@@ -600,10 +600,10 @@
                                     v-for="tab in manualTabs"
                                     :key="tab.key"
                                     @click="manualTab = tab.key"
-                                    class="rounded px-2 py-0.5 text-[11px] font-medium transition-colors"
+                                    class="rounded-sm px-2 py-0.5 text-[11px] font-medium transition-colors"
                                     :class="
                                       manualTab === tab.key
-                                        ? 'bg-white text-gray-700 shadow-sm dark:bg-dark-800 dark:text-dark-100'
+                                        ? 'bg-white text-gray-700 shadow-xs dark:bg-dark-800 dark:text-dark-100'
                                         : 'text-gray-400 hover:text-gray-600 dark:text-dark-400 dark:hover:text-dark-200'
                                     "
                                   >
@@ -612,7 +612,7 @@
                                 </div>
                                 <button
                                   @click="copyToClipboard(activeManualCommand)"
-                                  class="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-dark-400 dark:hover:bg-dark-600 dark:hover:text-dark-200"
+                                  class="flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-dark-400 dark:hover:bg-dark-600 dark:hover:text-dark-200"
                                 >
                                   <Icon
                                     :name="copied ? 'check' : 'copy'"
@@ -651,7 +651,7 @@
                             <button
                               @click="handleRollback"
                               :disabled="rollingBack"
-                              class="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
+                              class="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <svg
                                 v-if="rollingBack"

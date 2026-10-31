@@ -37,7 +37,7 @@
               {{ t('accountOps.selectedAccounts', { count: section.accounts.length }) }}
             </summary>
             <ul class="mt-3 max-h-32 space-y-2 overflow-y-auto">
-              <li v-for="account in section.accounts" :key="account.account_id" class="break-words text-sm">
+              <li v-for="account in section.accounts" :key="account.account_id" class="wrap-break-word text-sm">
                 <span class="font-medium">{{ account.account_name }}</span>
                 <span class="ml-2 text-xs text-gray-500">
                   #{{ account.account_id }}<template v-if="account.type === 'apikey'"> · {{ account.unit }}</template>

@@ -14,10 +14,10 @@
           <div
             class="mt-3 flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-300"
           >
-            <span class="rounded bg-gray-100 px-2 py-1 dark:bg-dark-700">{{
+            <span class="rounded-sm bg-gray-100 px-2 py-1 dark:bg-dark-700">{{
               t("admin.plugins.onlyOpenAI")
             }}</span>
-            <span class="rounded bg-gray-100 px-2 py-1 dark:bg-dark-700">{{
+            <span class="rounded-sm bg-gray-100 px-2 py-1 dark:bg-dark-700">{{
               t("admin.plugins.noAccountCoupling")
             }}</span>
           </div>
@@ -104,7 +104,7 @@
                   >v{{ plugin.version }}</span
                 >
                 <span
-                  class="rounded px-2 py-0.5 text-xs font-medium"
+                  class="rounded-sm px-2 py-0.5 text-xs font-medium"
                   :class="stateClass(plugin.state)"
                 >
                   {{ t(`admin.plugins.${plugin.state}`) }}
@@ -138,7 +138,7 @@
               </p>
               <div class="mt-2 flex items-center gap-2">
                 <span
-                  class="rounded px-2 py-0.5 text-xs font-medium"
+                  class="rounded-sm px-2 py-0.5 text-xs font-medium"
                   :class="compatibilityClass(plugin.compatibility.status)"
                 >
                   {{ t(`admin.plugins.${plugin.compatibility.status}`) }}
@@ -148,7 +148,7 @@
                 }}</span>
               </div>
               <dl
-                class="mt-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs"
+                class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs"
               >
                 <dt class="text-gray-500">
                   {{ t("admin.plugins.currentVersion") }}
@@ -177,7 +177,7 @@
               </p>
               <div class="mt-2 flex flex-wrap gap-2 text-xs">
                 <span
-                  class="rounded px-2 py-0.5"
+                  class="rounded-sm px-2 py-0.5"
                   :class="
                     plugin.runtime_healthy
                       ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
@@ -191,7 +191,7 @@
                   }}
                 </span>
                 <span
-                  class="rounded bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-dark-700 dark:text-gray-300"
+                  class="rounded-sm bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-dark-700 dark:text-gray-300"
                 >
                   {{ t("admin.plugins.signature") }}:
                   {{ t(`admin.plugins.${plugin.signature_status}`) }}
@@ -199,13 +199,13 @@
               </div>
               <p
                 v-if="plugin.last_error"
-                class="mt-3 break-words text-xs text-red-600 dark:text-red-400"
+                class="mt-3 wrap-break-word text-xs text-red-600 dark:text-red-400"
               >
                 {{ plugin.last_error }}
               </p>
               <p
                 v-else-if="plugin.runtime_message"
-                class="mt-3 break-words text-xs text-gray-500"
+                class="mt-3 wrap-break-word text-xs text-gray-500"
               >
                 {{ plugin.runtime_message }}
               </p>

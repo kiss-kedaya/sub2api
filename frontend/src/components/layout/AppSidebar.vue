@@ -62,7 +62,7 @@
                 </span>
               </button>
               <!-- Children -->
-              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-[color:var(--signal-nav-line,#efedee)] pl-2">
+              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-(--signal-nav-line,#efedee) pl-2">
                 <template v-for="child in item.children" :key="child.path">
                   <p
                     v-if="child.section"

@@ -69,7 +69,7 @@
 
       <!-- Desktop pagination buttons -->
       <nav
-        class="relative z-0 inline-flex -space-x-px rounded-md shadow-sm"
+        class="relative z-0 inline-flex -space-x-px rounded-md shadow-xs"
         aria-label="Pagination"
       >
         <!-- Previous button -->
@@ -241,6 +241,7 @@ const submitJump = () => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .page-size-select :deep(.select-trigger) {
   @apply px-3 py-1.5 text-sm;
 }

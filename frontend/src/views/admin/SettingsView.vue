@@ -139,7 +139,7 @@
                       {{ t("admin.settings.adminApiKey.currentKey") }}
                     </label>
                     <code
-                      class="rounded bg-gray-100 px-2 py-1 font-mono text-sm text-gray-900 dark:bg-dark-700 dark:text-gray-100"
+                      class="rounded-sm bg-gray-100 px-2 py-1 font-mono text-sm text-gray-900 dark:bg-dark-700 dark:text-gray-100"
                     >
                       {{ adminApiKeyMasked }}
                     </code>
@@ -180,7 +180,7 @@
                   </p>
                   <div class="flex items-center gap-2">
                     <code
-                      class="flex-1 select-all break-all rounded border border-green-300 bg-white px-3 py-2 font-mono text-sm dark:border-green-700 dark:bg-dark-800"
+                      class="flex-1 select-all break-all rounded-sm border border-green-300 bg-white px-3 py-2 font-mono text-sm dark:border-green-700 dark:bg-dark-800"
                     >
                       {{ newAdminApiKey }}
                     </code>
@@ -829,7 +829,7 @@
                       {{ getBetaDisplayName(rule.beta_token) }}
                     </span>
                     <span
-                      class="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-dark-700 dark:text-gray-400"
+                      class="rounded-sm bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-dark-700 dark:text-gray-400"
                     >
                       {{ rule.beta_token }}
                     </span>
@@ -933,7 +933,7 @@
                       <button
                         type="button"
                         @click="rule.model_whitelist!.splice(index, 1)"
-                        class="shrink-0 rounded p-1 text-red-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                        class="shrink-0 rounded-sm p-1 text-red-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                       >
                         <svg
                           class="h-4 w-4"
@@ -985,7 +985,7 @@
                         v-for="pattern in commonModelPatterns"
                         :key="pattern"
                         type="button"
-                        class="rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 dark:border-dark-600 dark:text-gray-400 dark:hover:border-primary-700 dark:hover:bg-primary-900/30 dark:hover:text-primary-300"
+                        class="rounded-sm border border-gray-200 px-2 py-0.5 text-xs text-gray-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 dark:border-dark-600 dark:text-gray-400 dark:hover:border-primary-700 dark:hover:bg-primary-900/30 dark:hover:text-primary-300"
                         @click="addQuickPattern(rule, pattern)"
                       >
                         {{ pattern }}
@@ -1110,7 +1110,7 @@
                   <button
                     type="button"
                     @click="removeOpenAIFastPolicyRule(ruleIndex)"
-                    class="rounded p-1 text-red-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                    class="rounded-sm p-1 text-red-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                     :title="t('admin.settings.openaiFastPolicy.removeRule')"
                   >
                     <svg
@@ -1144,7 +1144,7 @@
                   </span>
                   <span aria-hidden="true">→</span>
                   <span
-                    class="inline-flex items-center rounded bg-primary-50 px-2 py-0.5 font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+                    class="inline-flex items-center rounded-sm bg-primary-50 px-2 py-0.5 font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
                   >
                     {{ openaiFastPolicyActionSummary(rule.action) }}
                   </span>
@@ -1159,7 +1159,7 @@
                     </span>
                     <span aria-hidden="true">→</span>
                     <span
-                      class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-medium text-gray-700 dark:bg-dark-600 dark:text-gray-300"
+                      class="inline-flex items-center rounded-sm bg-gray-100 px-2 py-0.5 font-medium text-gray-700 dark:bg-dark-600 dark:text-gray-300"
                     >
                       {{
                         openaiFastPolicyActionSummary(
@@ -1311,7 +1311,7 @@
                       @click="
                         removeOpenAIFastPolicyModelPattern(rule, patternIdx)
                       "
-                      class="shrink-0 rounded p-1 text-red-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                      class="shrink-0 rounded-sm p-1 text-red-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                     >
                       <svg
                         class="h-4 w-4"
@@ -1484,7 +1484,7 @@
                     <span
                       v-for="suffix in registrationEmailSuffixWhitelistTags"
                       :key="suffix"
-                      class="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs font-mono text-gray-700 dark:bg-dark-600 dark:text-gray-200"
+                      class="inline-flex items-center gap-1 rounded-sm bg-gray-100 px-2 py-1 text-xs font-mono text-gray-700 dark:bg-dark-600 dark:text-gray-200"
                     >
                       <span>{{ suffix }}</span>
                       <button
@@ -1504,12 +1504,12 @@
                     </span>
 
                     <div
-                      class="flex min-w-[220px] flex-1 items-center gap-1 rounded border border-transparent px-2 py-1 focus-within:border-primary-300 dark:focus-within:border-primary-700"
+                      class="flex min-w-[220px] flex-1 items-center gap-1 rounded-sm border border-transparent px-2 py-1 focus-within:border-primary-300 dark:focus-within:border-primary-700"
                     >
                       <input
                         v-model="registrationEmailSuffixWhitelistDraft"
                         type="text"
-                        class="w-full bg-transparent text-sm font-mono text-gray-900 outline-none placeholder:text-gray-400 dark:text-white dark:placeholder:text-gray-500"
+                        class="w-full bg-transparent text-sm font-mono text-gray-900 outline-hidden placeholder:text-gray-400 dark:text-white dark:placeholder:text-gray-500"
                         :placeholder="
                           t(
                             'admin.settings.registration.emailSuffixWhitelistPlaceholder',
@@ -1810,7 +1810,7 @@
                       v-for="header in form.forwarded_client_ip_headers"
                       :key="header"
                       data-testid="forwarded-client-ip-header-tag"
-                      class="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs font-mono text-gray-700 dark:bg-dark-600 dark:text-gray-200"
+                      class="inline-flex items-center gap-1 rounded-sm bg-gray-100 px-2 py-1 text-xs font-mono text-gray-700 dark:bg-dark-600 dark:text-gray-200"
                     >
                       <span>{{ header }}</span>
                       <button
@@ -1828,14 +1828,14 @@
                       </button>
                     </span>
                     <div
-                      class="flex min-w-[220px] flex-1 items-center gap-1 rounded border border-transparent px-2 py-1 focus-within:border-primary-300 dark:focus-within:border-primary-700"
+                      class="flex min-w-[220px] flex-1 items-center gap-1 rounded-sm border border-transparent px-2 py-1 focus-within:border-primary-300 dark:focus-within:border-primary-700"
                     >
                       <input
                         id="forwarded-client-ip-headers"
                         v-model="forwardedClientIpHeaderDraft"
                         data-testid="forwarded-client-ip-headers-input"
                         type="text"
-                        class="w-full bg-transparent text-sm font-mono text-gray-900 outline-none placeholder:text-gray-400 dark:text-white dark:placeholder:text-gray-500"
+                        class="w-full bg-transparent text-sm font-mono text-gray-900 outline-hidden placeholder:text-gray-400 dark:text-white dark:placeholder:text-gray-500"
                         :placeholder="t('admin.settings.apiKeyAcl.forwardedClientIpHeadersPlaceholder')"
                         @keydown="handleForwardedClientIpHeaderKeydown"
                         @blur="commitForwardedClientIpHeaderDraft"
@@ -2092,7 +2092,7 @@
                       class="inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
                       :class="
                         captchaProviderSelection === 'turnstile'
-                          ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                          ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                           : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                       "
                       @click="selectCaptchaProvider('turnstile')"
@@ -2105,7 +2105,7 @@
                       class="inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
                       :class="
                         captchaProviderSelection === 'tencent'
-                          ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                          ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                           : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                       "
                       @click="selectCaptchaProvider('tencent')"
@@ -2118,7 +2118,7 @@
                       class="inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
                       :class="
                         captchaProviderSelection === 'aliyun'
-                          ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                          ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                           : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                       "
                       @click="selectCaptchaProvider('aliyun')"
@@ -2194,7 +2194,7 @@
                         class="inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition"
                         :class="
                           form.tencent_captcha_region !== 'intl'
-                            ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                            ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                             : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                         "
                         @click="form.tencent_captcha_region = 'cn'"
@@ -2207,7 +2207,7 @@
                         class="inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition"
                         :class="
                           form.tencent_captcha_region === 'intl'
-                            ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                            ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                             : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                         "
                         @click="form.tencent_captcha_region = 'intl'"
@@ -2345,7 +2345,7 @@
                           class="inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition"
                           :class="
                             form.aliyun_captcha_region !== 'sgp'
-                              ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                              ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                               : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                           "
                           @click="form.aliyun_captcha_region = 'cn'"
@@ -2357,7 +2357,7 @@
                           class="inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition"
                           :class="
                             form.aliyun_captcha_region === 'sgp'
-                              ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                              ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                               : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                           "
                           @click="form.aliyun_captcha_region = 'sgp'"
@@ -2550,7 +2550,7 @@
                       </button>
                       <code
                         v-if="linuxdoRedirectUrlSuggestion"
-                        class="select-all break-all rounded bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
+                        class="select-all break-all rounded-sm bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
                       >
                         {{ linuxdoRedirectUrlSuggestion }}
                       </code>
@@ -2672,7 +2672,7 @@
                         </button>
                         <code
                           v-if="githubOAuthRedirectUrlSuggestion"
-                          class="select-all break-all rounded bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
+                          class="select-all break-all rounded-sm bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
                         >
                           {{ githubOAuthRedirectUrlSuggestion }}
                         </code>
@@ -2766,7 +2766,7 @@
                         </button>
                         <code
                           v-if="googleOAuthRedirectUrlSuggestion"
-                          class="select-all break-all rounded bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
+                          class="select-all break-all rounded-sm bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
                         >
                           {{ googleOAuthRedirectUrlSuggestion }}
                         </code>
@@ -3103,7 +3103,7 @@
                       </button>
                       <code
                         v-if="wechatRedirectUrlSuggestion"
-                        class="select-all break-all rounded bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
+                        class="select-all break-all rounded-sm bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
                       >
                         {{ wechatRedirectUrlSuggestion }}
                       </code>
@@ -3297,7 +3297,7 @@
                     </div>
                     <div v-if="form.dingtalk_connect_sync_display_name" class="space-y-2">
                       <div class="flex items-center gap-2">
-                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-[5rem]">
+                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-20">
                           {{ t("admin.settings.dingtalk.syncDisplayNameTarget") }}
                         </label>
                         <input
@@ -3308,7 +3308,7 @@
                         />
                       </div>
                       <div class="flex items-center gap-2">
-                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-[5rem]">
+                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-20">
                           {{ t("admin.settings.dingtalk.syncAttrDisplayName") }}
                         </label>
                         <input
@@ -3343,7 +3343,7 @@
                     </div>
                     <div v-if="form.dingtalk_connect_sync_corp_email" class="space-y-2">
                       <div class="flex items-center gap-2">
-                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-[5rem]">
+                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-20">
                           {{ t("admin.settings.dingtalk.syncCorpEmailTarget") }}
                         </label>
                         <input
@@ -3354,7 +3354,7 @@
                         />
                       </div>
                       <div class="flex items-center gap-2">
-                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-[5rem]">
+                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-20">
                           {{ t("admin.settings.dingtalk.syncAttrDisplayName") }}
                         </label>
                         <input
@@ -3389,7 +3389,7 @@
                     </div>
                     <div v-if="form.dingtalk_connect_sync_dept" class="space-y-2">
                       <div class="flex items-center gap-2">
-                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-[5rem]">
+                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-20">
                           {{ t("admin.settings.dingtalk.syncDeptTarget") }}
                         </label>
                         <input
@@ -3400,7 +3400,7 @@
                         />
                       </div>
                       <div class="flex items-center gap-2">
-                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-[5rem]">
+                        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap min-w-20">
                           {{ t("admin.settings.dingtalk.syncAttrDisplayName") }}
                         </label>
                         <input
@@ -3650,7 +3650,7 @@
                       </button>
                       <code
                         v-if="oidcRedirectUrlSuggestion"
-                        class="select-all break-all rounded bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
+                        class="select-all break-all rounded-sm bg-gray-50 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300"
                       >
                         {{ oidcRedirectUrlSuggestion }}
                       </code>
@@ -3735,7 +3735,7 @@
 
                 <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
                   <div
-                    class="flex items-center justify-between rounded border border-gray-200 px-4 py-3 dark:border-dark-700"
+                    class="flex items-center justify-between rounded-sm border border-gray-200 px-4 py-3 dark:border-dark-700"
                   >
                     <div>
                       <label class="font-medium text-gray-900 dark:text-white">
@@ -3749,7 +3749,7 @@
                   </div>
 
                   <div
-                    class="flex items-center justify-between rounded border border-gray-200 px-4 py-3 dark:border-dark-700"
+                    class="flex items-center justify-between rounded-sm border border-gray-200 px-4 py-3 dark:border-dark-700"
                   >
                     <div>
                       <label class="font-medium text-gray-900 dark:text-white">
@@ -3763,7 +3763,7 @@
                   </div>
 
                   <div
-                    class="flex items-center justify-between rounded border border-gray-200 px-4 py-3 dark:border-dark-700"
+                    class="flex items-center justify-between rounded-sm border border-gray-200 px-4 py-3 dark:border-dark-700"
                   >
                     <div>
                       <label class="font-medium text-gray-900 dark:text-white">
@@ -3926,7 +3926,7 @@
 
                 <div
                   v-if="form.default_subscriptions.length === 0"
-                  class="rounded border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400"
+                  class="rounded-sm border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400"
                 >
                   {{ t("admin.settings.defaults.defaultSubscriptionsEmpty") }}
                 </div>
@@ -3935,7 +3935,7 @@
                   <div
                     v-for="(item, index) in form.default_subscriptions"
                     :key="`default-sub-${index}`"
-                    class="grid grid-cols-1 gap-3 rounded border border-gray-200 p-3 md:grid-cols-[1fr_160px_auto] dark:border-dark-600"
+                    class="grid grid-cols-1 gap-3 rounded-sm border border-gray-200 p-3 md:grid-cols-[1fr_160px_auto] dark:border-dark-600"
                   >
                     <div>
                       <label
@@ -4120,7 +4120,7 @@
             </div>
             <div class="space-y-6 p-6">
               <div
-                class="flex items-center justify-between rounded border border-gray-200 px-4 py-3 dark:border-dark-700"
+                class="flex items-center justify-between rounded-sm border border-gray-200 px-4 py-3 dark:border-dark-700"
               >
                 <div>
                   <label class="font-medium text-gray-900 dark:text-white">
@@ -4202,7 +4202,7 @@
                     </div>
 
                     <div
-                      class="flex items-center justify-between rounded border border-gray-200 px-4 py-3 dark:border-dark-700"
+                      class="flex items-center justify-between rounded-sm border border-gray-200 px-4 py-3 dark:border-dark-700"
                     >
                       <div>
                         <label
@@ -4254,7 +4254,7 @@
                         authSourceDefaults[authSource.source].subscriptions
                           .length === 0
                       "
-                      class="rounded border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400"
+                      class="rounded-sm border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400"
                     >
                       {{ t("admin.settings.authSourceDefaults.noSourceSubscriptions") }}
                     </div>
@@ -4265,7 +4265,7 @@
                           authSource.source
                         ].subscriptions"
                         :key="`${authSource.source}-sub-${index}`"
-                        class="grid grid-cols-1 gap-3 rounded border border-gray-200 p-3 md:grid-cols-[1fr_160px_auto] dark:border-dark-600"
+                        class="grid grid-cols-1 gap-3 rounded-sm border border-gray-200 p-3 md:grid-cols-[1fr_160px_auto] dark:border-dark-600"
                       >
                         <div>
                           <label
@@ -5063,7 +5063,7 @@
                         </p>
                       </div>
                       <span
-                        class="rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
+                        class="rounded-sm bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300"
                       >
                         %
                       </span>
@@ -6055,7 +6055,7 @@
                         >
                           <button
                             type="button"
-                            class="rounded p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                            class="rounded-sm p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                             :title="
                               apiKeyVisible[pIdx]
                                 ? t(
@@ -6104,7 +6104,7 @@
                           </button>
                           <button
                             type="button"
-                            class="rounded p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                            class="rounded-sm p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                             :class="{
                               'opacity-30 cursor-not-allowed':
                                 !provider.api_key,
@@ -6529,7 +6529,7 @@
                       </span>
                       <button
                         type="button"
-                        class="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                        class="rounded-sm p-1 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                         @click="removeEndpoint(index)"
                       >
                         <svg
@@ -6620,7 +6620,7 @@
                             class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
                             :class="
                               Number(ep.min_recharge) <= 0
-                                ? 'bg-primary-600 text-white shadow-sm'
+                                ? 'bg-primary-600 text-white shadow-xs'
                                 : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-300 dark:ring-dark-600 dark:hover:bg-dark-600'
                             "
                             @click="ep.min_recharge = 0"
@@ -6636,7 +6636,7 @@
                             class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
                             :class="
                               Number(ep.min_recharge) > 0
-                                ? 'bg-primary-600 text-white shadow-sm'
+                                ? 'bg-primary-600 text-white shadow-xs'
                                 : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-300 dark:ring-dark-600 dark:hover:bg-dark-600'
                             "
                             @click="
@@ -6873,7 +6873,7 @@
                     <button
                       v-if="index > 0"
                       type="button"
-                      class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700"
+                      class="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700"
                       :title="t('admin.settings.customMenu.moveUp')"
                       @click="moveMenuItem(index, -1)"
                     >
@@ -6895,7 +6895,7 @@
                     <button
                       v-if="index < form.custom_menu_items.length - 1"
                       type="button"
-                      class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700"
+                      class="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700"
                       :title="t('admin.settings.customMenu.moveDown')"
                       @click="moveMenuItem(index, 1)"
                     >
@@ -6916,7 +6916,7 @@
                     <!-- Delete -->
                     <button
                       type="button"
-                      class="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                      class="rounded-sm p-1 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                       :title="t('admin.settings.customMenu.remove')"
                       @click="removeMenuItem(index)"
                     >
@@ -7084,7 +7084,7 @@
                       class="inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
                       :class="
                         form.login_agreement_mode === 'modal'
-                          ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                          ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                           : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                       "
                       @click="form.login_agreement_mode = 'modal'"
@@ -7097,7 +7097,7 @@
                       class="inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
                       :class="
                         form.login_agreement_mode === 'checkbox'
-                          ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                          ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                           : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                       "
                       @click="form.login_agreement_mode = 'checkbox'"
@@ -7231,7 +7231,7 @@
                           <input
                             v-model="doc.id"
                             type="text"
-                            class="min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-0 dark:text-white dark:placeholder:text-dark-500"
+                            class="min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-sm text-gray-900 outline-hidden placeholder:text-gray-400 focus:ring-0 dark:text-white dark:placeholder:text-dark-500"
                             placeholder="privacy"
                           />
                         </div>
@@ -7301,7 +7301,7 @@
                     class="inline-flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
                     :class="
                       form.channel_monitor_mode === 'v2'
-                        ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                        ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                         : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                     "
                     @click="form.channel_monitor_mode = 'v2'"
@@ -7313,7 +7313,7 @@
                     class="inline-flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
                     :class="
                       form.channel_monitor_mode === 'v1'
-                        ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                        ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-800 dark:text-primary-300'
                         : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                     "
                     @click="form.channel_monitor_mode = 'v1'"
@@ -7743,7 +7743,7 @@
                           {{ entry.aff_code }}
                           <span
                             v-if="entry.aff_code_custom"
-                            class="ml-1 inline-block rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+                            class="ml-1 inline-block rounded-sm bg-primary-100 px-1.5 py-0.5 text-[10px] font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
                           >{{ t('admin.settings.features.affiliate.customUsers.customBadge') }}</span>
                         </td>
                         <td class="px-3 py-2 text-sm">
@@ -7840,7 +7840,7 @@
                   />
                   <div
                     v-if="affiliateModal.userResults.length > 0"
-                    class="mt-1 max-h-40 overflow-y-auto rounded border border-gray-200 dark:border-dark-700"
+                    class="mt-1 max-h-40 overflow-y-auto rounded-sm border border-gray-200 dark:border-dark-700"
                   >
                     <button
                       v-for="u in affiliateModal.userResults"
@@ -8366,7 +8366,7 @@
                       <button
                         type="button"
                         :class="[
-                          'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                          'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
                           form.payment_cancel_rate_limit_enabled
                             ? 'bg-primary-500'
                             : 'bg-gray-300 dark:bg-dark-600',
@@ -8378,7 +8378,7 @@
                       >
                         <span
                           :class="[
-                            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
                             form.payment_cancel_rate_limit_enabled
                               ? 'translate-x-5'
                               : 'translate-x-0',
@@ -8456,7 +8456,7 @@
                       <button
                         type="button"
                         :class="[
-                          'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                          'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
                           form.payment_alipay_force_qrcode
                             ? 'bg-primary-500'
                             : 'bg-gray-300 dark:bg-dark-600',
@@ -8468,7 +8468,7 @@
                       >
                         <span
                           :class="[
-                            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
                             form.payment_alipay_force_qrcode
                               ? 'translate-x-5'
                               : 'translate-x-0',
@@ -8488,7 +8488,7 @@
                       <button
                         type="button"
                         :class="[
-                          'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                          'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
                           form.payment_alipay_mobile_precreate_deep_link
                             ? 'bg-primary-500'
                             : 'bg-gray-300 dark:bg-dark-600',
@@ -8500,7 +8500,7 @@
                       >
                         <span
                           :class="[
-                            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
                             form.payment_alipay_mobile_precreate_deep_link
                               ? 'translate-x-5'
                               : 'translate-x-0',
@@ -8527,7 +8527,7 @@
                       :class="[
                         'rounded-lg border px-3 py-1.5 text-sm font-medium transition-all',
                         isPaymentTypeEnabled(pt.value)
-                          ? 'border-primary-500 bg-primary-500 text-white shadow-sm'
+                          ? 'border-primary-500 bg-primary-500 text-white shadow-xs'
                           : 'border-gray-300 bg-white text-gray-600 hover:border-gray-400 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-dark-500',
                       ]"
                     >
@@ -9014,7 +9014,7 @@
                         class="sr-only peer"
                       />
                       <div
-                        class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-500 peer-checked:bg-primary-600"
+                        class="w-9 h-5 bg-gray-200 peer-focus:outline-hidden rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-500 peer-checked:bg-primary-600"
                       ></div>
                     </label>
                     <input
@@ -13486,6 +13486,7 @@ watch(
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .default-sub-group-select :deep(.select-trigger) {
   @apply h-[42px];
 }
@@ -13518,7 +13519,7 @@ watch(
 }
 
 .settings-tab {
-  @apply relative isolate flex h-10 min-w-[6.75rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-transparent px-3 text-sm font-medium text-gray-600 outline-none transition-colors duration-200 ease-out dark:text-gray-300;
+  @apply relative isolate flex h-10 min-w-27 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-transparent px-3 text-sm font-medium text-gray-600 outline-hidden transition-colors duration-200 ease-out dark:text-gray-300;
 }
 
 @media (min-width: 768px) {
@@ -13551,7 +13552,7 @@ watch(
 }
 
 .settings-tab-active {
-  @apply border-primary-200/80 bg-white text-primary-700 shadow-sm dark:border-primary-400/30 dark:bg-dark-700/95 dark:text-primary-200;
+  @apply border-primary-200/80 bg-white text-primary-700 shadow-xs dark:border-primary-400/30 dark:bg-dark-700/95 dark:text-primary-200;
   box-shadow:
     0 8px 18px rgb(15 23 42 / 0.08),
     0 1px 0 rgb(255 255 255 / 0.92) inset;

@@ -54,7 +54,7 @@
             id="deduct-balance"
             v-model="form.deduct_balance"
             type="checkbox"
-            class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
           />
           <label for="deduct-balance" class="text-sm text-gray-700 dark:text-gray-300">
             {{ t('payment.admin.deductBalance') }}
@@ -137,7 +137,7 @@
           id="force-refund"
           v-model="form.force"
           type="checkbox"
-          class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+          class="h-4 w-4 rounded-sm border-gray-300 text-red-600 focus:ring-red-500"
         />
         <label for="force-refund" class="text-sm font-medium text-red-600 dark:text-red-400">
           {{ t('payment.admin.forceRefund') }}
@@ -154,7 +154,7 @@
           type="submit"
           form="refund-form"
           :disabled="submitting || form.amount <= 0 || (requireForce && !form.force)"
-          class="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 dark:focus:ring-offset-dark-800"
+          class="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 focus:outline-hidden focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 dark:focus:ring-offset-dark-800"
         >
           {{ submitting ? t('common.processing') : t('payment.admin.confirmRefund') }}
         </button>

@@ -156,6 +156,7 @@ const filteredGroups = computed(() => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .model-plaza-content {
   min-width: 0;
   color: var(--signal-text, #1c1c1e);

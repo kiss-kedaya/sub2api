@@ -22,7 +22,7 @@
             <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
               <tr v-for="(rule, index) in rules" :key="rule.key" :data-testid="`risk-rule-row-${index}`">
                 <td class="px-4 py-3"><code class="break-all">{{ rule.network }}</code></td>
-                <td class="max-w-64 break-words px-4 py-3">{{ rule.note || '—' }}</td>
+                <td class="max-w-64 wrap-break-word px-4 py-3">{{ rule.note || '—' }}</td>
                 <td class="whitespace-nowrap px-4 py-3">
                   <span class="rounded-full px-2 py-1 text-xs" :class="rule.enabled ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-400'">{{ tr(rule.enabled ? 'protectionEnabled' : 'protectionDisabled') }}</span>
                 </td>

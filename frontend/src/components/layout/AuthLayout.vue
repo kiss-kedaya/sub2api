@@ -2,7 +2,7 @@
   <div class="auth-paper relative flex min-h-screen items-center justify-center overflow-hidden p-4">
     <!-- Background: plain white paper by day; the night background and grid are unchanged -->
     <div
-      class="absolute inset-0 hidden bg-gradient-to-br dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
+      class="absolute inset-0 hidden bg-linear-to-br/srgb dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
     ></div>
     <div class="pointer-events-none absolute inset-0 hidden overflow-hidden dark:block">
       <div class="auth-grid absolute inset-0"></div>
@@ -76,13 +76,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 /* Plain ink title by day; the night keeps its rose gradient. */
 .text-gradient {
   color: #2f2a2c;
 }
 
 :global(html.dark) .text-gradient {
-  @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
+  @apply bg-linear-to-r/srgb from-primary-600 to-primary-500 bg-clip-text text-transparent;
 }
 
 .auth-grid {

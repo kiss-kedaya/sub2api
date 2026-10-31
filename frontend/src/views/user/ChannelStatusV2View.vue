@@ -100,7 +100,7 @@
               v-for="option in ranges"
               :key="option.value"
               type="button"
-              class="tab !px-2 !py-1 text-xs sm:!px-2.5"
+              class="tab px-2! py-1! text-xs sm:px-2.5!"
               :class="filter.range === option.value ? 'tab-active' : ''"
               @click="setRange(option.value)"
             >
@@ -133,7 +133,7 @@
           />
           <button
             type="button"
-            class="btn btn-ghost btn-sm shrink-0 !px-2 !py-1 text-xs"
+            class="btn btn-ghost btn-sm shrink-0 px-2! py-1! text-xs"
             :disabled="!hasDimensionFilter"
             :class="!hasDimensionFilter ? 'opacity-40' : ''"
             @click="clearDimensions"
@@ -147,7 +147,7 @@
             v-model="matrixGroupBy"
             :options="matrixGroupOptions"
             :placeholder="t('channelMonitorV2.groupBy.label')"
-            class="monitor-toolbar-select w-[7.5rem] shrink-0 sm:w-[8.5rem]"
+            class="monitor-toolbar-select w-30 shrink-0 sm:w-34"
           />
 
           <div
@@ -157,7 +157,7 @@
           >
             <button
               type="button"
-              class="tab !px-2 !py-1 text-xs"
+              class="tab px-2! py-1! text-xs"
               :class="trendView === 'pulse' ? 'tab-active' : ''"
               @click="trendView = 'pulse'"
             >
@@ -165,7 +165,7 @@
             </button>
             <button
               type="button"
-              class="tab !px-2 !py-1 text-xs"
+              class="tab px-2! py-1! text-xs"
               :class="trendView === 'line' ? 'tab-active' : ''"
               @click="trendView = 'line'"
             >
@@ -183,7 +183,7 @@
               v-for="option in healthModeOptions"
               :key="option.value"
               type="button"
-              class="tab !px-2 !py-1 text-xs"
+              class="tab px-2! py-1! text-xs"
               :class="healthMode === option.value ? 'tab-active' : ''"
               @click="healthMode = option.value"
             >
@@ -354,12 +354,12 @@
               >
                 <span class="flex min-w-0 items-center gap-1.5 truncate text-gray-700 dark:text-gray-200">
                   <span class="truncate">{{ errorLabel(row.category) }}</span>
-                  <span v-if="row.ignored" class="badge badge-gray shrink-0 !px-1.5 !py-0 text-[10px]">{{ t('channelMonitorV2.ignored') }}</span>
+                  <span v-if="row.ignored" class="badge badge-gray shrink-0 px-1.5! py-0! text-[10px]">{{ t('channelMonitorV2.ignored') }}</span>
                 </span>
                 <span class="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
                   <i
                     class="block h-full rounded-full"
-                    :class="row.ignored ? 'bg-gray-400 dark:bg-gray-500' : 'bg-gradient-to-r from-red-400 to-red-500'"
+                    :class="row.ignored ? 'bg-gray-400 dark:bg-gray-500' : 'bg-linear-to-r/srgb from-red-400 to-red-500'"
                     :style="{ width: `${Math.max(2, row.rate * 100)}%` }"
                   ></i>
                 </span>
@@ -377,13 +377,13 @@
                     class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900/50 dark:text-dark-300"
                   >
                     <div class="mb-1 flex flex-wrap items-center gap-2">
-                      <span class="badge badge-gray !px-1.5 !py-0 text-[10px]">{{ detail.platform || '-' }}</span>
+                      <span class="badge badge-gray px-1.5! py-0! text-[10px]">{{ detail.platform || '-' }}</span>
                       <span class="truncate font-medium">{{ detail.model || '-' }}</span>
                       <span v-if="detail.status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.http', { code: detail.status_code }) }}</span>
                       <span v-if="detail.upstream_status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.upstream', { code: detail.upstream_status_code }) }}</span>
                       <span class="ml-auto text-gray-400">×{{ detail.count }}</span>
                     </div>
-                    <p class="break-words leading-relaxed">{{ detail.message || detail.error_type || t('channelMonitorV2.errorDetail.noMessage') }}</p>
+                    <p class="wrap-break-word leading-relaxed">{{ detail.message || detail.error_type || t('channelMonitorV2.errorDetail.noMessage') }}</p>
                   </div>
                 </template>
                 <p v-else class="text-xs text-gray-400">{{ t('channelMonitorV2.errorDetail.empty') }}</p>
@@ -421,7 +421,7 @@
                       {{ row.display_label }}
                       <span
                         v-if="row.is_self"
-                        class="badge badge-primary ml-2 !px-1.5 !py-0 text-[10px]"
+                        class="badge badge-primary ml-2 px-1.5! py-0! text-[10px]"
                       >{{ t('channelMonitorV2.currentUser') }}</span>
                     </strong>
                   </td>

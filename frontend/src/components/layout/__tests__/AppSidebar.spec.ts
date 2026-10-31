@@ -73,7 +73,8 @@ describe('AppSidebar operations center group', () => {
 
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
-    const sidebarHeaderBlockMatch = styleSource.match(/\.sidebar-header\s*\{[\s\S]*?\n {2}\}/)
+    // Tailwind v4: the component class is declared as `@utility sidebar-header { ... }`.
+    const sidebarHeaderBlockMatch = styleSource.match(/@utility sidebar-header\s*\{[\s\S]*?\n\}/)
     const sidebarBrandBlockMatch = componentSource.match(/\.sidebar-brand\s*\{[\s\S]*?\n\}/)
 
     expect(sidebarHeaderBlockMatch).not.toBeNull()

@@ -69,7 +69,7 @@
                   <legend class="crypto-view__label mb-2">{{ t('admin.crypto.chains') }}</legend>
                   <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                     <label v-for="network in depositNetworks" :key="network.id" class="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-                      <input v-model="config.chains" type="checkbox" :value="network.id" :data-testid="`crypto-chain-${network.id}`" class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" @change="syncRPCRows" />
+                      <input v-model="config.chains" type="checkbox" :value="network.id" :data-testid="`crypto-chain-${network.id}`" class="mt-1 h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500" @change="syncRPCRows" />
                       <span class="min-w-0">
                         <span class="block text-sm font-medium">{{ network.label }}</span>
                         <span class="block text-xs text-gray-500 dark:text-gray-400">{{ network.tokens }}</span>

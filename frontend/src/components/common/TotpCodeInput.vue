@@ -1,5 +1,5 @@
 <template>
-  <div class="totp-code-input relative mx-auto grid w-full max-w-[17.5rem] grid-cols-6 gap-2" dir="ltr">
+  <div class="totp-code-input relative mx-auto grid w-full max-w-70 grid-cols-6 gap-2" dir="ltr">
     <input
       v-bind="$attrs"
       ref="input"

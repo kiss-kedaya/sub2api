@@ -2,7 +2,7 @@
   <div v-if="snapshot" class="space-y-1" data-testid="monitor-quota-view">
     <!-- 套餐等级徽章（如智谱 plan level / Claude 订阅档） -->
     <div v-if="snapshot.plan_level" class="flex flex-wrap items-center gap-1.5">
-      <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-600 dark:text-gray-300">
+      <span class="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-600 dark:text-gray-300">
         {{ snapshot.plan_level }}
       </span>
     </div>

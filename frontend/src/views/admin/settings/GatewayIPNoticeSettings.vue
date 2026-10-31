@@ -13,7 +13,7 @@
           <label for="gateway-ip-notice-enabled" class="font-medium text-gray-900 dark:text-white">
             {{ t('admin.settings.gatewayIPNotice.enabled') }}
           </label>
-          <input id="gateway-ip-notice-enabled" v-model="form.enabled" type="checkbox" :disabled="saving || loadFailed" class="h-4 w-4 rounded" />
+          <input id="gateway-ip-notice-enabled" v-model="form.enabled" type="checkbox" :disabled="saving || loadFailed" class="h-4 w-4 rounded-sm" />
         </div>
         <div>
           <label for="gateway-ip-notice-ips" class="input-label">{{ t('admin.settings.gatewayIPNotice.ips') }}</label>
@@ -31,7 +31,7 @@
         </div>
         <div v-if="form.message" class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800">
           <p class="mb-2 text-xs font-medium text-gray-500">{{ t('admin.settings.gatewayIPNotice.preview') }}</p>
-          <p class="whitespace-pre-wrap break-words text-sm text-gray-900 dark:text-gray-100">{{ form.message }}</p>
+          <p class="whitespace-pre-wrap wrap-break-word text-sm text-gray-900 dark:text-gray-100">{{ form.message }}</p>
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.gatewayIPNotice.effectiveHint') }}</p>
         <p v-if="error" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>

@@ -69,7 +69,7 @@
             <input
               data-test="select-all-codes"
               type="checkbox"
-              class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              class="h-4 w-4 cursor-pointer rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
               :checked="allVisibleSelected"
               @click.stop
               @change="toggleSelectAllVisible($event)"
@@ -80,7 +80,7 @@
             <input
               data-test="select-code"
               type="checkbox"
-              class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              class="h-4 w-4 cursor-pointer rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
               :checked="selectedCodeIds.has(row.id)"
               @click.stop
               @change="toggleSelectRow(row.id, $event)"
@@ -434,7 +434,7 @@
                   data-test="batch-field-status"
                   v-model="batchUpdateForm.update_status"
                   type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
                 />
                 {{ t('admin.redeem.batchFields.status') }}
               </label>
@@ -451,7 +451,7 @@
                 <input
                   v-model="batchUpdateForm.update_expires_at"
                   type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
                 />
                 {{ t('admin.redeem.batchFields.expiresAt') }}
               </label>
@@ -475,7 +475,7 @@
                   data-test="batch-field-notes"
                   v-model="batchUpdateForm.update_notes"
                   type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
                 />
                 {{ t('admin.redeem.batchFields.notes') }}
               </label>
@@ -494,7 +494,7 @@
                 <input
                   v-model="batchUpdateForm.update_group_id"
                   type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
                 />
                 {{ t('admin.redeem.batchFields.group') }}
               </label>
@@ -574,7 +574,7 @@
                 readonly
                 :value="generatedCodesText"
                 :style="{ height: textareaHeight }"
-                class="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 p-3 font-mono text-sm text-gray-800 focus:outline-none dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200"
+                class="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 p-3 font-mono text-sm text-gray-800 focus:outline-hidden dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200"
               ></textarea>
             </div>
           </div>

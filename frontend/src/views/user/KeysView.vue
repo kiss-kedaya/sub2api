@@ -191,7 +191,7 @@
           <template #cell-current_concurrency="{ value, row }">
             <span
               :class="[
-                'inline-flex min-w-8 items-center justify-center rounded px-2 py-1 text-sm font-semibold tabular-nums',
+                'inline-flex min-w-8 items-center justify-center rounded-sm px-2 py-1 text-sm font-semibold tabular-nums',
                 (value ?? 0) > 0
                   ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-300 dark:ring-emerald-800'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-400'
@@ -334,7 +334,7 @@
               <button
                 v-if="row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0"
                 @click.stop="confirmResetRateLimitFromTable(row)"
-                class="mt-0.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                class="mt-0.5 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
                 :title="t('keys.resetRateLimitUsage')"
               >
                 <Icon name="refresh" size="xs" />
@@ -497,7 +497,7 @@
                 class="peer sr-only"
                 @change="selectKeyProvider(provider.value)"
               />
-              <span class="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-gray-300 px-2 py-3 text-sm font-semibold text-gray-800 transition-colors peer-enabled:cursor-pointer peer-enabled:hover:border-teal-400 peer-checked:border-teal-500 peer-checked:bg-teal-50 peer-checked:ring-1 peer-checked:ring-teal-500 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-teal-500 peer-disabled:cursor-not-allowed peer-disabled:opacity-40 dark:border-dark-500 dark:text-gray-100 dark:peer-checked:bg-teal-500/10">
+              <span class="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-gray-300 px-2 py-3 text-sm font-semibold text-gray-800 transition-colors peer-enabled:cursor-pointer hover:peer-enabled:border-teal-400 peer-checked:border-teal-500 peer-checked:bg-teal-50 peer-checked:ring-1 peer-checked:ring-teal-500 peer-focus-visible:outline-solid peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-teal-500 peer-disabled:cursor-not-allowed peer-disabled:opacity-40 dark:border-dark-500 dark:text-gray-100 dark:peer-checked:bg-teal-500/10">
                 <span class="flex h-8 items-center justify-center gap-1" aria-hidden="true">
                   <span
                     v-for="platform in provider.icons"
@@ -507,7 +507,7 @@
                     <PlatformIcon :platform="platform" size="lg" />
                   </span>
                 </span>
-                <span class="max-w-full break-words text-center">{{ provider.label }}</span>
+                <span class="max-w-full wrap-break-word text-center">{{ provider.label }}</span>
               </span>
               <span
                 v-if="activeKeyProvider === provider.value"
@@ -524,7 +524,7 @@
           <div class="mb-2 flex items-center justify-between gap-3">
             <label class="input-label mb-0">{{ t('keys.groupLabel') }}</label>
             <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
-              <input v-model="formData.smart_routing" type="checkbox" class="rounded border-gray-300" />
+              <input v-model="formData.smart_routing" type="checkbox" class="rounded-sm border-gray-300" />
               {{ t('keys.smartRouting') }}
             </label>
           </div>
@@ -617,13 +617,13 @@
               type="button"
               @click="formData.use_custom_key = !formData.use_custom_key"
               :class="[
-                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden',
                 formData.use_custom_key ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
               ]"
             >
               <span
                 :class="[
-                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
                   formData.use_custom_key ? 'translate-x-4' : 'translate-x-0'
                 ]"
               />
@@ -659,13 +659,13 @@
               type="button"
               @click="formData.enable_ip_restriction = !formData.enable_ip_restriction"
               :class="[
-                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden',
                 formData.enable_ip_restriction ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
               ]"
             >
               <span
                 :class="[
-                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
                   formData.enable_ip_restriction ? 'translate-x-4' : 'translate-x-0'
                 ]"
               />
@@ -707,13 +707,13 @@
               type="button"
               @click="formData.enable_quota = !formData.enable_quota"
               :class="[
-                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden',
                 formData.enable_quota ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
               ]"
             >
               <span
                 :class="[
-                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
                   formData.enable_quota ? 'translate-x-4' : 'translate-x-0'
                 ]"
               />
@@ -771,13 +771,13 @@
               type="button"
               @click="formData.enable_rate_limit = !formData.enable_rate_limit"
               :class="[
-                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden',
                 formData.enable_rate_limit ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
               ]"
             >
               <span
                 :class="[
-                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
                   formData.enable_rate_limit ? 'translate-x-4' : 'translate-x-0'
                 ]"
               />
@@ -980,13 +980,13 @@
               type="button"
               @click="formData.enable_expiration = !formData.enable_expiration"
               :class="[
-                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden',
                 formData.enable_expiration ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
               ]"
             >
               <span
                 :class="[
-                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
                   formData.enable_expiration ? 'translate-x-4' : 'translate-x-0'
                 ]"
               />
@@ -1054,7 +1054,7 @@
             form="key-form"
             type="submit"
             :disabled="submitting"
-            class="btn bg-teal-600 text-white shadow-sm hover:bg-teal-700 focus-visible:ring-teal-500/30 dark:bg-teal-500 dark:hover:bg-teal-600"
+            class="btn bg-teal-600 text-white shadow-xs hover:bg-teal-700 focus-visible:ring-teal-500/30 dark:bg-teal-500 dark:hover:bg-teal-600"
             data-tour="key-form-submit"
           >
             <svg
@@ -1202,7 +1202,7 @@
       <div
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
-        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 sm:min-w-[380px] dark:bg-dark-800 dark:ring-white/10"
+        class="animate-in fade-in slide-in-from-top-2 fixed z-100000020 w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 sm:min-w-[380px] dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important;"
         :style="{
           top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
@@ -1219,7 +1219,7 @@
             <input
               v-model="groupSearchQuery"
               type="text"
-              class="w-full rounded-lg border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300 dark:border-dark-600 dark:bg-dark-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-primary-600 dark:focus:ring-primary-600"
+              class="w-full rounded-lg border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-sm text-gray-900 placeholder-gray-400 outline-hidden focus:border-primary-300 focus:ring-1 focus:ring-primary-300 dark:border-dark-600 dark:bg-dark-700 dark:text-white dark:placeholder-gray-500 dark:focus:border-primary-600 dark:focus:ring-primary-600"
               :placeholder="t('keys.searchGroup')"
               @click.stop
             />
