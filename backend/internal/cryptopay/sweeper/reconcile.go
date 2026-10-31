@@ -6,17 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
-
-// staleGasGrace is how long a reserved gas transaction may stay unconfirmed
-// before an automatic run treats "receipt not found" as a dropped broadcast.
-// A mined transaction keeps blocking regardless of age; only an absent hash is
-// ever released, so no funds can move twice.
-const staleGasGrace = 30 * time.Minute
 
 // What a reconciliation did to a job.
 const (

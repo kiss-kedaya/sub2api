@@ -44,7 +44,7 @@ func (s *ScheduledTestRunnerService) runChanshuiPlan(ctx context.Context, plan *
 			// Chanshui marks an audit "partial" when some probes failed but the
 			// report is final. Treat it as terminal so the decision runs on the
 			// evidence we do have instead of resubmitting a fresh audit forever.
-			if auditStatus := data["status"].(string); auditStatus == "done" || auditStatus == "partial" {
+			if auditStatus, _ := data["status"].(string); auditStatus == "done" || auditStatus == "partial" {
 				decision := ChanshuiDecision{Status: "unknown", Reason: "检测期间配置发生变化，下一轮按当前停止条件重新判断"}
 				if state != nil && state.DecisionConfigHash != "" && state.DecisionConfigHash == chanshuiDecisionConfigHash(plan) {
 					decision = chanshui.EvaluateStopCondition(plan.ModelID, plan.QualityConfig, data)
