@@ -76,7 +76,7 @@
             <div class="flex items-center justify-between gap-3"><h2 id="cache-history-title" class="cache-heading">{{ t('admin.groupCacheTest.history') }}</h2><button class="text-sm text-gray-500 underline" :disabled="busy || !history.length" @click="clearHistory">{{ t('admin.groupCacheTest.clearHistory') }}</button></div>
             <p class="mt-2 cache-hint">{{ t('admin.groupCacheTest.historyHint') }}</p>
             <p v-if="!history.length" class="py-6 text-sm text-gray-500">{{ t('admin.groupCacheTest.noHistory') }}</p>
-            <ul v-else class="mt-3 divide-y divide-gray-100 dark:divide-dark-700"><li v-for="run in history" :key="run.id"><button class="flex w-full flex-wrap items-center gap-x-4 gap-y-1 rounded p-3 text-left text-sm hover:bg-gray-50 disabled:opacity-50 dark:hover:bg-dark-700" :class="selected?.id === run.id ? 'bg-gray-50 dark:bg-dark-700' : ''" :disabled="busy" :aria-pressed="selected?.id === run.id" @click="selected = run; detailIndex = null"><span class="min-w-32 font-medium">{{ run.groupName }}</span><span>{{ run.settings.model }}</span><span class="text-xs text-gray-500">{{ date(run.startedAt) }}</span><span class="ml-auto">{{ t('admin.groupCacheTest.status.' + run.status) }} · {{ run.rounds.length }} / {{ run.settings.rounds }}</span></button></li></ul>
+            <ul v-else class="mt-3 divide-y divide-gray-100 dark:divide-dark-700"><li v-for="run in history" :key="run.id"><button class="flex w-full flex-wrap items-center gap-x-4 gap-y-1 rounded-sm p-3 text-left text-sm hover:bg-gray-50 disabled:opacity-50 dark:hover:bg-dark-700" :class="selected?.id === run.id ? 'bg-gray-50 dark:bg-dark-700' : ''" :disabled="busy" :aria-pressed="selected?.id === run.id" @click="selected = run; detailIndex = null"><span class="min-w-32 font-medium">{{ run.groupName }}</span><span>{{ run.settings.model }}</span><span class="text-xs text-gray-500">{{ date(run.startedAt) }}</span><span class="ml-auto">{{ t('admin.groupCacheTest.status.' + run.status) }} · {{ run.rounds.length }} / {{ run.settings.rounds }}</span></button></li></ul>
           </section>
         </div>
       </div>
@@ -217,6 +217,7 @@ onBeforeUnmount(() => { alive = false; generation++; keysController?.abort(); ru
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .cache-panel { @apply min-w-0 rounded-xl border border-gray-200 bg-white p-5 dark:border-dark-700 dark:bg-dark-800; }
 .cache-heading { @apply text-base font-semibold text-gray-900 dark:text-gray-100; }
 .cache-field { @apply flex flex-col gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300; }
@@ -230,5 +231,5 @@ onBeforeUnmount(() => { alive = false; generation++; keysController?.abort(); ru
 .cache-table small { @apply mt-1 block text-xs text-gray-500; }
 .cache-details { @apply grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)]; }
 .cache-details dt { @apply text-gray-500; }
-.cache-details dd { @apply break-words text-gray-800 dark:text-gray-200; }
+.cache-details dd { @apply wrap-break-word text-gray-800 dark:text-gray-200; }
 </style>

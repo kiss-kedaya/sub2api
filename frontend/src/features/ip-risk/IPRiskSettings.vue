@@ -10,8 +10,8 @@
         <span v-if="snapshot" class="text-xs text-gray-500">{{ tr('currentIP') }}: {{ snapshot.current_ip }} · Redis: {{ snapshot.health.redis_available ? tr('available') : tr('unavailable') }}</span>
       </div>
       <template v-if="draft && snapshot">
-        <p v-if="snapshot.health.emergency_disabled" class="rounded bg-amber-50 p-3 text-sm text-amber-800">{{ tr('emergencyActive') }}</p>
-        <p v-if="!snapshot.trusted_proxies_configured" class="rounded bg-amber-50 p-3 text-sm text-amber-800">{{ tr('proxyWarning') }}</p>
+        <p v-if="snapshot.health.emergency_disabled" class="rounded-sm bg-amber-50 p-3 text-sm text-amber-800">{{ tr('emergencyActive') }}</p>
+        <p v-if="!snapshot.trusted_proxies_configured" class="rounded-sm bg-amber-50 p-3 text-sm text-amber-800">{{ tr('proxyWarning') }}</p>
         <p v-if="snapshot.health.config_error" class="text-sm text-amber-700">{{ tr('staleConfig') }}</p>
         <form class="space-y-5" @submit.prevent="save" @invalid.capture="revealInvalidField">
           <fieldset :disabled="busy" class="space-y-5">
@@ -90,7 +90,7 @@
             <input v-model="anonymousReleaseIP" class="input" :placeholder="tr('anonymousExactIP')" :aria-label="tr('anonymousExactIP')" data-testid="anonymous-release-ip" />
             <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !anonymousReleaseIP.trim()" data-testid="anonymous-release-manual" @click="unbanAnonymous(anonymousReleaseIP.trim())">{{ tr('anonymousUnban') }}</button>
           </div>
-          <div v-for="ban in anonymousBans" :key="ban.network" class="flex flex-wrap items-center justify-between gap-2 rounded border p-3 text-sm">
+          <div v-for="ban in anonymousBans" :key="ban.network" class="flex flex-wrap items-center justify-between gap-2 rounded-sm border p-3 text-sm">
             <span><code>{{ ban.network }}</code> · {{ label(ban.reason) }} · {{ tr('expiresAt') }} {{ date(ban.expires_at) }}</span>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" data-testid="anonymous-unban" @click="unbanAnonymous(ban.network)">{{ tr('anonymousUnban') }}</button>
           </div>
@@ -109,7 +109,7 @@
         <RiskSettingsSection :title="tr('bans')" :status="tr('banCount', { count: bans.length })" data-testid="risk-bans">
           <div class="flex justify-end"><button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="refreshRecords">{{ tr('refreshRecords') }}</button></div>
           <p class="text-xs text-gray-500">{{ tr('bansHint') }}</p>
-          <div v-for="ban in bans" :key="`${ban.observe_only}-${ban.network}`" class="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-200 p-3 text-sm dark:border-dark-700">
+          <div v-for="ban in bans" :key="`${ban.observe_only}-${ban.network}`" class="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-gray-200 p-3 text-sm dark:border-dark-700">
             <span><code>{{ ban.network }}</code> · {{ label(ban.reason) }} · {{ ban.observe_only ? tr('observeOnly') : tr('enforced') }} · {{ tr('expiresAt') }} {{ date(ban.expires_at) }}</span>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="unban(ban.network)">{{ tr('unban') }}</button>
           </div>

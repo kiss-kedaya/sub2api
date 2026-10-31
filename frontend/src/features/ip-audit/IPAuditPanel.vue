@@ -1,9 +1,9 @@
 <template>
   <section class="space-y-4 py-5" data-testid="ip-audit-panel">
     <p class="text-sm text-gray-500">{{ t('ipAudit.scopeHint') }}</p>
-    <p class="rounded bg-amber-50 p-3 text-sm text-amber-900" data-testid="host-disconnected">{{ t('ipAudit.externalHint') }}</p>
+    <p class="rounded-sm bg-amber-50 p-3 text-sm text-amber-900" data-testid="host-disconnected">{{ t('ipAudit.externalHint') }}</p>
     <button type="button" class="inline-block text-sm text-primary-600 underline" data-testid="ip-open-settings" @click="$emit('configure')">{{ t('ipAudit.settings') }}</button>
-    <details class="rounded border p-3" data-testid="ip-source-inventory">
+    <details class="rounded-sm border p-3" data-testid="ip-source-inventory">
       <summary class="cursor-pointer">{{ t('ipAudit.inventory') }}</summary>
       <ul class="mt-3 space-y-2 text-sm"><li v-for="item in inventory" :key="item.id">
         <strong>{{ sourceName(item.id) }}</strong> · {{ label(item.scope) }} · {{ label(item.storage) }} · {{ label(item.enumeration) }} · {{ t(item.can_release ? 'ipAudit.sourceManaged' : 'ipAudit.readOnly') }}
@@ -41,14 +41,14 @@
       </tr></tbody>
     </table><p v-if="!rows.length" class="p-4 text-sm text-gray-500">{{ t('ipAudit.empty') }}</p></div>
     <div class="flex justify-between"><button class="btn btn-secondary btn-sm" :disabled="loading || releasing || !previous.length" @click="previousPage">{{ t('ipAudit.previous') }}</button><button class="btn btn-secondary btn-sm" :disabled="loading || releasing || !hasMore" data-testid="audit-next" @click="nextPage">{{ t('ipAudit.next') }}</button></div>
-    <div v-if="confirmEntry" role="dialog" aria-modal="true" :aria-label="t('ipAudit.confirmTitle')" class="space-y-3 rounded border border-amber-300 p-4" data-testid="release-dialog">
+    <div v-if="confirmEntry" role="dialog" aria-modal="true" :aria-label="t('ipAudit.confirmTitle')" class="space-y-3 rounded-sm border border-amber-300 p-4" data-testid="release-dialog">
       <p>{{ t('ipAudit.confirmTitle') }} · {{ sourceName(confirmEntry.source) }} · <code>{{ confirmEntry.network || `UID ${confirmEntry.user_id}` }}</code></p>
       <p class="text-sm">{{ t(confirmEntry.scope === 'all_user_states' ? 'ipAudit.confirmUserScope' : 'ipAudit.confirmHint') }}</p>
       <label class="block text-sm">{{ t('ipAudit.reason') }}<select v-model="reason" class="input ml-2"><option v-for="r in reasons" :key="r" :value="r">{{ label(r) }}</option></select></label>
       <button type="button" class="btn btn-primary btn-sm" :disabled="releasing" data-testid="release-confirm" @click="release">{{ t('ipAudit.confirm') }}</button>
       <button type="button" class="btn btn-secondary btn-sm ml-2" :disabled="releasing" @click="confirmEntry = null">{{ t('common.cancel') }}</button>
     </div>
-    <div v-if="outcome" role="status" class="space-y-2 rounded border p-4" data-testid="release-outcome">
+    <div v-if="outcome" role="status" class="space-y-2 rounded-sm border p-4" data-testid="release-outcome">
       <p>{{ t(outcome.readback === 'released' ? 'ipAudit.released' : outcome.readback === 'still_present' ? 'ipAudit.stillRestricted' : 'ipAudit.unverified') }}</p>
       <p>{{ t('ipAudit.notUnrestricted') }}</p>
       <p v-if="outcome.remaining.length">{{ t('ipAudit.remaining') }}: {{ outcome.remaining.map(r => `${sourceName(r.source)} (${r.network})`).join(', ') }}</p>

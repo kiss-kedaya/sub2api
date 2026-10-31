@@ -237,7 +237,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
+  <div class="rounded-3xl bg-white p-6 shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
     <div class="mb-4 flex items-start justify-between gap-4">
       <div>
         <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('admin.ops.runtime.title') }}</h3>
@@ -396,7 +396,7 @@ onMounted(() => {
         <div class="mb-2 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.runtime.silencing.title') }}</div>
 
         <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-          <input v-model="draftAlert.silencing.enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+          <input v-model="draftAlert.silencing.enabled" type="checkbox" class="h-4 w-4 rounded-sm border-gray-300" />
           <span>{{ t('admin.ops.runtime.silencing.enabled') }}</span>
         </label>
 
@@ -504,7 +504,7 @@ onMounted(() => {
         <div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <label class="inline-flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-              <input v-model="draftAlert.distributed_lock.enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300" />
+              <input v-model="draftAlert.distributed_lock.enabled" type="checkbox" class="h-4 w-4 rounded-sm border-gray-300" />
               <span>{{ t('admin.ops.runtime.lockEnabled') }}</span>
             </label>
           </div>

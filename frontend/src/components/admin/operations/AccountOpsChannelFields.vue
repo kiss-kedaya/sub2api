@@ -33,7 +33,7 @@
         <div class="mt-3 space-y-3">
           <p class="text-xs leading-5 text-gray-500">{{ t('accountOps.webhookTemplateHint') }}</p>
           <textarea v-model="inputs[hook.id]!.template" rows="5" maxlength="16384" spellcheck="false" class="input w-full font-mono text-xs" :aria-label="t('accountOps.webhookTemplate')" :placeholder="defaultTemplate" :data-testid="`account-ops-webhook-template-${hook.id}`" />
-          <p class="break-words font-mono text-xs text-gray-500">{{ templateVariables }}</p>
+          <p class="wrap-break-word font-mono text-xs text-gray-500">{{ templateVariables }}</p>
         </div>
       </details>
       <div class="flex items-center justify-between gap-2 text-xs text-gray-500">

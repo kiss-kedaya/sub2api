@@ -94,18 +94,18 @@ const ACCENT_DEFAULT = '#14b8a6' // primary-500 (teal)
 
 // ── Accent bar (gradient) ───────────────────────────────────────────
 const ACCENT_BAR: Record<Platform, string> = {
-  anthropic: 'bg-gradient-to-r from-orange-400 to-orange-500',
-  openai: 'bg-gradient-to-r from-emerald-400 to-emerald-500',
-  antigravity: 'bg-gradient-to-r from-purple-400 to-purple-500',
-  gemini: 'bg-gradient-to-r from-blue-400 to-blue-500',
-  grok: 'bg-gradient-to-r from-zinc-700 to-zinc-900',
-  kimi: 'bg-gradient-to-r from-pink-400 to-pink-500',
-  zhipu: 'bg-gradient-to-r from-indigo-400 to-indigo-500',
-  deepseek: 'bg-gradient-to-r from-teal-400 to-teal-500',
-  minimax: 'bg-gradient-to-r from-rose-400 to-rose-500',
-  composite: 'bg-gradient-to-r from-slate-500 to-cyan-500',
+  anthropic: 'bg-linear-to-r/srgb from-orange-400 to-orange-500',
+  openai: 'bg-linear-to-r/srgb from-emerald-400 to-emerald-500',
+  antigravity: 'bg-linear-to-r/srgb from-purple-400 to-purple-500',
+  gemini: 'bg-linear-to-r/srgb from-blue-400 to-blue-500',
+  grok: 'bg-linear-to-r/srgb from-zinc-700 to-zinc-900',
+  kimi: 'bg-linear-to-r/srgb from-pink-400 to-pink-500',
+  zhipu: 'bg-linear-to-r/srgb from-indigo-400 to-indigo-500',
+  deepseek: 'bg-linear-to-r/srgb from-teal-400 to-teal-500',
+  minimax: 'bg-linear-to-r/srgb from-rose-400 to-rose-500',
+  composite: 'bg-linear-to-r/srgb from-slate-500 to-cyan-500',
 }
-const ACCENT_BAR_DEFAULT = 'bg-gradient-to-r from-primary-400 to-primary-500'
+const ACCENT_BAR_DEFAULT = 'bg-linear-to-r/srgb from-primary-400 to-primary-500'
 
 // ── Text (price, icon) ─────────────────────────────────────────────
 const TEXT: Record<Platform, string> = {

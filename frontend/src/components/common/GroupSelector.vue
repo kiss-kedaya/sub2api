@@ -13,7 +13,7 @@
         v-model="searchText"
         type="text"
         :placeholder="t('common.searchPlaceholder')"
-        class="flex-1 bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none dark:text-gray-100 dark:placeholder:text-dark-400"
+        class="flex-1 bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-hidden dark:text-gray-100 dark:placeholder:text-dark-400"
       />
     </div>
     <div
@@ -27,7 +27,7 @@
       <label
         v-for="group in filteredGroups"
         :key="group.id"
-        class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 transition-colors hover:bg-white dark:hover:bg-dark-700"
+        class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 transition-colors hover:bg-white dark:hover:bg-dark-700"
         :title="group.rate_multiplier == null ? group.name : t('admin.groups.rateAndAccounts', { rate: group.rate_multiplier, count: group.account_count || 0 })"
       >
         <input
@@ -35,7 +35,7 @@
           :value="group.id"
           :checked="modelValue.includes(group.id)"
           @change="handleChange(group.id, ($event.target as HTMLInputElement).checked)"
-          class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-primary-500 focus:ring-primary-500 dark:border-dark-500"
+          class="h-3.5 w-3.5 shrink-0 rounded-sm border-gray-300 text-primary-500 focus:ring-primary-500 dark:border-dark-500"
         />
         <GroupBadge
           :name="group.name"

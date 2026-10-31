@@ -1,15 +1,15 @@
 <template>
   <BaseDialog :show="show" :title="t('accountOps.addChannel')" width="normal" @close="emit('close')">
     <div class="grid gap-2 sm:grid-cols-3">
-      <button type="button" :disabled="emailConfigured" class="rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-800/70 dark:hover:bg-dark-800" data-testid="add-channel-email" @click="emit('select', 'email')">
+      <button type="button" :disabled="emailConfigured" class="rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-800/70 dark:hover:bg-dark-800" data-testid="add-channel-email" @click="emit('select', 'email')">
         <span class="text-sm font-medium">{{ t('accountOps.providers.email') }}</span>
         <span class="mt-1 block text-xs text-gray-500">{{ t(emailConfigured ? 'accountOps.channelAlreadyAdded' : 'accountOps.emailChannelHint') }}</span>
       </button>
-      <button type="button" :disabled="!encryptionConfigured || webhookCount >= 5" class="rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-800/70 dark:hover:bg-dark-800" data-testid="add-channel-webhook" @click="emit('select', 'webhook')">
+      <button type="button" :disabled="!encryptionConfigured || webhookCount >= 5" class="rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-800/70 dark:hover:bg-dark-800" data-testid="add-channel-webhook" @click="emit('select', 'webhook')">
         <span class="text-sm font-medium">Webhook</span>
         <span class="mt-1 block text-xs text-gray-500">{{ t('accountOps.robotChannelHint') }}</span>
       </button>
-      <button type="button" :disabled="!encryptionConfigured || webhookCount >= 5" class="rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-800/70 dark:hover:bg-dark-800" data-testid="add-channel-bark" @click="emit('select', 'bark')">
+      <button type="button" :disabled="!encryptionConfigured || webhookCount >= 5" class="rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-800/70 dark:hover:bg-dark-800" data-testid="add-channel-bark" @click="emit('select', 'bark')">
         <span class="text-sm font-medium">Bark</span>
         <span class="mt-1 block text-xs text-gray-500">{{ t('accountOps.barkChannelHint') }}</span>
       </button>

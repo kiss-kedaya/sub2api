@@ -12,7 +12,7 @@
     </button>
     <div
       v-if="open"
-      class="absolute z-30 mt-1 w-44 rounded-xl bg-white p-2 shadow-sm ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/5"
+      class="absolute z-30 mt-1 w-44 rounded-xl bg-white p-2 shadow-xs ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/5"
     >
       <div class="flex gap-1">
         <div ref="hourCol" class="max-h-40 flex-1 overflow-y-auto snap-y snap-mandatory">

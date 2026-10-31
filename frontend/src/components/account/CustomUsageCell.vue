@@ -1,5 +1,5 @@
 <template>
-  <div ref="root" class="min-w-[7rem]" :aria-busy="state?.loading || false" data-testid="custom-usage-cell">
+  <div ref="root" class="min-w-28" :aria-busy="state?.loading || false" data-testid="custom-usage-cell">
     <span v-if="!eligible" class="text-sm text-gray-400">—</span>
     <template v-else>
       <div class="flex items-start gap-1.5">
@@ -10,7 +10,7 @@
           <span v-else class="text-xs text-gray-400">—</span>
           <div v-if="state?.result?.configured && !state.result.enabled" class="text-xs text-gray-400">{{ t('admin.accounts.customUsage.disabled') }}</div>
         </div>
-        <button v-if="!state?.result || (state.result.enabled && state.result.configured)" type="button" class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-primary-600 disabled:cursor-wait dark:hover:bg-dark-700" :disabled="state?.loading" :aria-label="t('admin.accounts.customUsage.refresh')" :title="t('admin.accounts.customUsage.refresh')" data-testid="custom-usage-refresh" @click="emit('refresh')">
+        <button v-if="!state?.result || (state.result.enabled && state.result.configured)" type="button" class="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-primary-600 disabled:cursor-wait dark:hover:bg-dark-700" :disabled="state?.loading" :aria-label="t('admin.accounts.customUsage.refresh')" :title="t('admin.accounts.customUsage.refresh')" data-testid="custom-usage-refresh" @click="emit('refresh')">
           <Icon name="refresh" size="sm" :class="{ 'animate-spin motion-reduce:animate-none': state?.loading }" />
         </button>
       </div>

@@ -57,7 +57,7 @@
           <p class="mt-2 text-sm text-gray-600 dark:text-dark-300">
             {{ runtime.last_processed_at ? formatDate(runtime.last_processed_at) : t('admin.promptAudit.common.never') }}
           </p>
-          <p v-if="runtime.last_error_code" class="mt-1 break-words text-sm text-red-600 dark:text-red-300">
+          <p v-if="runtime.last_error_code" class="mt-1 wrap-break-word text-sm text-red-600 dark:text-red-300">
             {{ runtime.last_error_code }}<span v-if="runtime.last_error_message"> · {{ runtime.last_error_message }}</span>
           </p>
           <div v-if="Object.keys(runtime.endpoints).length" class="mt-3 flex flex-wrap gap-2">

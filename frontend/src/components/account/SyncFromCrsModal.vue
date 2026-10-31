@@ -62,7 +62,7 @@
           <input
             v-model="form.sync_proxies"
             type="checkbox"
-            class="rounded border-gray-300 dark:border-dark-600"
+            class="rounded-sm border-gray-300 dark:border-dark-600"
           />
           {{ t('admin.accounts.syncProxies') }}
         </label>
@@ -87,7 +87,7 @@
             class="flex items-center gap-2 py-0.5"
           >
             <span
-              class="inline-block rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+              class="inline-block rounded-sm bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
             >{{ acc.platform }} / {{ acc.type }}</span>
             <span class="truncate">{{ acc.name }}</span>
           </div>
@@ -120,16 +120,16 @@
           <label
             v-for="acc in previewResult.new_accounts"
             :key="acc.crs_account_id"
-            class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-dark-700/40"
+            class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-dark-700/40"
           >
             <input
               type="checkbox"
               :checked="selectedIds.has(acc.crs_account_id)"
-              class="rounded border-gray-300 dark:border-dark-600"
+              class="rounded-sm border-gray-300 dark:border-dark-600"
               @change="toggleSelect(acc.crs_account_id)"
             />
             <span
-              class="inline-block rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              class="inline-block rounded-sm bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
             >{{ acc.platform }} / {{ acc.type }}</span>
             <span class="truncate text-sm text-gray-700 dark:text-dark-300">{{ acc.name }}</span>
           </label>

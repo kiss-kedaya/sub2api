@@ -1,22 +1,24 @@
 /* Light mode in the manner of Nuxt UI: neutral surfaces, a black primary, hairline rings,
    soft layered shadows, small radii and quick, quiet motion. Sakura pink appears only as
    small dots (and in the painting). Everything is scoped to html:not(.dark): the night
-   theme is unchanged. No backdrop-filter on panels (keeps position:fixed children placed). */
+   theme is unchanged. No backdrop-filter on panels (keeps position:fixed children placed).
+   Tokens here are private (`--elev-*`); `--ui-*` belongs to Nuxt UI, whose `rounded-*`
+   scale is derived from `--ui-radius`. */
 html:not(.dark) {
-  --ui-line: #e5e5e5;
-  --ui-line-strong: #d4d4d4;
-  --ui-shadow-xs: 0 1px 2px rgba(10, 10, 10, 0.05);
-  --ui-shadow-sm: 0 1px 3px rgba(10, 10, 10, 0.06), 0 1px 2px -1px rgba(10, 10, 10, 0.06);
-  --ui-shadow-md: 0 4px 6px -1px rgba(10, 10, 10, 0.07), 0 2px 4px -2px rgba(10, 10, 10, 0.06);
-  --ui-shadow-lg: 0 10px 15px -3px rgba(10, 10, 10, 0.08), 0 4px 6px -4px rgba(10, 10, 10, 0.06);
-  --ui-shadow-xl: 0 20px 25px -5px rgba(10, 10, 10, 0.1), 0 8px 10px -6px rgba(10, 10, 10, 0.08);
-  --ui-radius: 8px;
-  --ui-radius-sm: 6px;
-  --ui-ease: cubic-bezier(0.2, 0, 0, 1);
-  --ui-sakura: #f2b6c6;
-  --ui-halo: 0 0 0 3px rgba(242, 182, 198, 0.5);
-  --ui-btn: linear-gradient(180deg, #262626 0%, #0a0a0a 100%);
-  --ui-btn-hover: linear-gradient(180deg, #333333 0%, #171717 100%);
+  --elev-line: #e5e5e5;
+  --elev-line-strong: #d4d4d4;
+  --elev-shadow-xs: 0 1px 2px rgba(10, 10, 10, 0.05);
+  --elev-shadow-sm: 0 1px 3px rgba(10, 10, 10, 0.06), 0 1px 2px -1px rgba(10, 10, 10, 0.06);
+  --elev-shadow-md: 0 4px 6px -1px rgba(10, 10, 10, 0.07), 0 2px 4px -2px rgba(10, 10, 10, 0.06);
+  --elev-shadow-lg: 0 10px 15px -3px rgba(10, 10, 10, 0.08), 0 4px 6px -4px rgba(10, 10, 10, 0.06);
+  --elev-shadow-xl: 0 20px 25px -5px rgba(10, 10, 10, 0.1), 0 8px 10px -6px rgba(10, 10, 10, 0.08);
+  --elev-radius: 8px;
+  --elev-radius-sm: 6px;
+  --elev-ease: cubic-bezier(0.2, 0, 0, 1);
+  --elev-sakura: #f2b6c6;
+  --elev-halo: 0 0 0 3px rgba(242, 182, 198, 0.5);
+  --elev-btn: linear-gradient(180deg, #262626 0%, #0a0a0a 100%);
+  --elev-btn-hover: linear-gradient(180deg, #333333 0%, #171717 100%);
 }
 
 /* Page: white at the top fading into neutral-50, so white panels sit one layer up. */
@@ -26,7 +28,7 @@ html:not(.dark) .console-signal {
 
 html:not(.dark) .console-signal .signal-header {
   background: #ffffff;
-  border-bottom-color: var(--ui-line);
+  border-bottom-color: var(--elev-line);
   box-shadow: none;
 }
 
@@ -46,14 +48,14 @@ html:not(.dark) .console-signal .signal-header {
 /* Sidebar: flat white with a hairline; the current page gets a soft pill and a sakura dot. */
 html:not(.dark) .console-signal .signal-sidebar {
   background: #ffffff;
-  border-right-color: var(--ui-line);
+  border-right-color: var(--elev-line);
   box-shadow: none;
 }
 
 html:not(.dark) .console-signal .signal-sidebar .sidebar-link {
-  border-radius: var(--ui-radius-sm);
+  border-radius: var(--elev-radius-sm);
   color: #404040;
-  transition: background-color 150ms var(--ui-ease), color 150ms var(--ui-ease);
+  transition: background-color 150ms var(--elev-ease), color 150ms var(--elev-ease);
 }
 
 html:not(.dark) .console-signal .signal-sidebar .sidebar-link:hover {
@@ -78,7 +80,7 @@ html:not(.dark) .console-signal:not(.signal-nav-collapsed) .signal-sidebar .side
   height: 6px;
   margin-top: -3px;
   border-radius: 999px;
-  background: var(--ui-sakura);
+  background: var(--elev-sakura);
   box-shadow: 0 0 0 3px rgba(242, 182, 198, 0.22);
 }
 
@@ -86,20 +88,20 @@ html:not(.dark) .console-signal:not(.signal-nav-collapsed) .signal-sidebar .side
 html:not(.dark) .console-signal :is(.card, .table-container),
 html:not(.dark) .console-signal.signal-admin .signal-main .table-page-layout .table-scroll-container,
 html:not(.dark) .console-signal .signal-dashboard .signal-metric {
-  border-color: var(--ui-line);
-  border-radius: var(--ui-radius);
-  box-shadow: var(--ui-shadow-sm);
-  transition: box-shadow 200ms var(--ui-ease), transform 200ms var(--ui-ease), border-color 200ms var(--ui-ease);
+  border-color: var(--elev-line);
+  border-radius: var(--elev-radius);
+  box-shadow: var(--elev-shadow-sm);
+  transition: box-shadow 200ms var(--elev-ease), transform 200ms var(--elev-ease), translate 200ms var(--elev-ease), border-color 200ms var(--elev-ease);
 }
 
 html:not(.dark) .console-signal :is(.card-hover, .signal-dashboard .signal-metric):hover {
-  border-color: var(--ui-line-strong);
-  box-shadow: var(--ui-shadow-md);
+  border-color: var(--elev-line-strong);
+  box-shadow: var(--elev-shadow-md);
 }
 
 html:not(.dark) .console-signal .signal-dashboard .signal-metric--balance {
   background: linear-gradient(135deg, #ffffff 0%, #fafafa 55%, #f2f2f2 100%);
-  border-color: var(--ui-line);
+  border-color: var(--elev-line);
 }
 
 html:not(.dark) .console-signal :is(.table th, .table-header th, .table-scroll-container thead th) {
@@ -110,48 +112,48 @@ html:not(.dark) .console-signal :is(.table th, .table-header th, .table-scroll-c
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary,
 html:not(.dark) .auth-paper .btn-primary {
   border: 1px solid #0a0a0a;
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-btn);
+  border-radius: var(--elev-radius-sm);
+  background: var(--elev-btn);
   color: #ffffff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--ui-shadow-sm);
-  transition: background 150ms var(--ui-ease), box-shadow 150ms var(--ui-ease), transform 150ms var(--ui-ease);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--elev-shadow-sm);
+  transition: background 150ms var(--elev-ease), box-shadow 150ms var(--elev-ease), transform 150ms var(--elev-ease), translate 150ms var(--elev-ease), scale 150ms var(--elev-ease);
 }
 
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled),
 html:not(.dark) .auth-paper .btn-primary:hover:not(:disabled) {
   border-color: #171717;
-  background: var(--ui-btn-hover);
+  background: var(--elev-btn-hover);
   color: #ffffff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), var(--ui-shadow-md);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), var(--elev-shadow-md);
 }
 
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.btn-secondary, .btn-icon:not(.btn-primary)) {
-  border-color: var(--ui-line);
-  border-radius: var(--ui-radius-sm);
+  border-color: var(--elev-line);
+  border-radius: var(--elev-radius-sm);
   background: #ffffff;
   color: #171717;
-  box-shadow: var(--ui-shadow-xs);
-  transition: background-color 150ms var(--ui-ease), border-color 150ms var(--ui-ease), box-shadow 150ms var(--ui-ease), transform 150ms var(--ui-ease);
+  box-shadow: var(--elev-shadow-xs);
+  transition: background-color 150ms var(--elev-ease), border-color 150ms var(--elev-ease), box-shadow 150ms var(--elev-ease), transform 150ms var(--elev-ease), translate 150ms var(--elev-ease), scale 150ms var(--elev-ease);
 }
 
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.btn-secondary, .btn-icon:not(.btn-primary)):hover:not(:disabled) {
-  border-color: var(--ui-line-strong);
+  border-color: var(--elev-line-strong);
   background: #fafafa;
 }
 
 /* Inputs: ink border and a sakura halo on focus. */
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.input, .select-trigger),
 html:not(.dark) .auth-paper .input {
-  border-color: var(--ui-line);
-  border-radius: var(--ui-radius-sm);
-  box-shadow: var(--ui-shadow-xs);
-  transition: border-color 150ms var(--ui-ease), box-shadow 150ms var(--ui-ease);
+  border-color: var(--elev-line);
+  border-radius: var(--elev-radius-sm);
+  box-shadow: var(--elev-shadow-xs);
+  transition: border-color 150ms var(--elev-ease), box-shadow 150ms var(--elev-ease);
 }
 
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.input:focus, .select-trigger-open),
 html:not(.dark) .auth-paper .input:focus {
   border-color: #171717;
-  box-shadow: var(--ui-halo);
+  box-shadow: var(--elev-halo);
 }
 
 /* Segmented tabs (e.g. the recharge centre): a neutral track with a raised white pill. */
@@ -160,7 +162,7 @@ html:not(.dark) .console-signal .console-tabs {
   gap: 4px;
   padding: 4px;
   border: 0;
-  border-radius: var(--ui-radius);
+  border-radius: var(--elev-radius);
   background: #f4f4f4;
 }
 
@@ -168,9 +170,9 @@ html:not(.dark) .console-signal .console-tabs button {
   min-height: 34px;
   padding: 6px 14px;
   border: 0;
-  border-radius: var(--ui-radius-sm);
+  border-radius: var(--elev-radius-sm);
   color: #737373;
-  transition: background-color 150ms var(--ui-ease), color 150ms var(--ui-ease), box-shadow 150ms var(--ui-ease);
+  transition: background-color 150ms var(--elev-ease), color 150ms var(--elev-ease), box-shadow 150ms var(--elev-ease);
 }
 
 html:not(.dark) .console-signal .console-tabs button:hover {
@@ -180,14 +182,14 @@ html:not(.dark) .console-signal .console-tabs button:hover {
 html:not(.dark) .console-signal .console-tabs button[aria-selected='true'] {
   background: #ffffff;
   color: #0a0a0a;
-  box-shadow: var(--ui-shadow-sm), 0 0 0 1px rgba(10, 10, 10, 0.04);
+  box-shadow: var(--elev-shadow-sm), 0 0 0 1px rgba(10, 10, 10, 0.04);
 }
 
 /* Floating layers: dialogs highest, then menus. Light overlay, no blur. */
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.modal-content, .dialog-container) {
-  border-color: var(--ui-line);
+  border-color: var(--elev-line);
   border-radius: 12px;
-  box-shadow: var(--ui-shadow-xl);
+  box-shadow: var(--elev-shadow-xl);
 }
 
 html:not(.dark) :is(.console-signal .modal-overlay, body:has(.console-signal) > .modal-overlay, .console-signal .dialog-overlay, body:has(.console-signal) > .dialog-overlay) {
@@ -196,32 +198,36 @@ html:not(.dark) :is(.console-signal .modal-overlay, body:has(.console-signal) > 
 
 html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .dropdown,
 html:not(.dark) body:has(.console-signal) > .select-dropdown-portal {
-  border-color: var(--ui-line);
-  border-radius: var(--ui-radius);
-  box-shadow: var(--ui-shadow-lg);
+  border-color: var(--elev-line);
+  border-radius: var(--elev-radius);
+  box-shadow: var(--elev-shadow-lg);
 }
 
 /* Login / register card. */
 html:not(.dark) .auth-paper .auth-card {
-  border-color: var(--ui-line);
+  border-color: var(--elev-line);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.9);
-  box-shadow: var(--ui-shadow-lg);
+  box-shadow: var(--elev-shadow-lg);
 }
 
 /* Motion: press feedback, a 1px lift on hover, and a short rise when page content appears.
    The rise uses a backwards fill, so no transform lingers on the content afterwards. */
 @media (prefers-reduced-motion: no-preference) {
+  /* `translate`/`scale: none` cancel the v4 utilities, as `transform` alone did under v3. */
   html:not(.dark) .console-signal :is(.card-hover, .signal-dashboard .signal-metric):hover {
     transform: translateY(-1px);
+    translate: none;
   }
 
   html:not(.dark) :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, .auth-paper) :is(.btn-primary, .btn-secondary):active:not(:disabled) {
     transform: scale(0.98);
+    translate: none;
+    scale: none;
   }
 
   html:not(.dark) .console-signal .signal-main > * {
-    animation: ui-rise 360ms var(--ui-ease) backwards;
+    animation: ui-rise 360ms var(--elev-ease) backwards;
   }
 }
 

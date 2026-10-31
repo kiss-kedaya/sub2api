@@ -7,14 +7,14 @@
         {{ t('admin.accounts.timer.title') }}
       </button>
     </div>
-    <div v-if="snapshot?.recurring?.enabled" class="mt-2 max-w-80 whitespace-normal break-words text-gray-600 dark:text-dark-300" aria-live="polite">
+    <div v-if="snapshot?.recurring?.enabled" class="mt-2 max-w-80 whitespace-normal wrap-break-word text-gray-600 dark:text-dark-300" aria-live="polite">
       <span>{{ recurringSummary }}</span>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="text-primary-600 hover:underline" :disabled="busy || loading" @click="begin('recurring')">{{ t('admin.accounts.timer.edit') }}</button>
         <button type="button" data-test="timer-cancel-recurring" class="text-red-600 hover:underline" :disabled="busy || loading" @click="cancelRecurring">{{ t('admin.accounts.timer.cancel') }}</button>
       </div>
     </div>
-    <div v-for="task in pending" :key="task.action" class="mt-1 max-w-80 whitespace-normal break-words text-gray-600 dark:text-dark-300" aria-live="polite">
+    <div v-for="task in pending" :key="task.action" class="mt-1 max-w-80 whitespace-normal wrap-break-word text-gray-600 dark:text-dark-300" aria-live="polite">
       <span>{{ t(`admin.accounts.timer.${task.action}`) }} · {{ taskLocalTime(task) }} · {{ countdown(task) }}</span>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="text-primary-600 hover:underline" :disabled="busy" @click="begin(task.action)">{{ t('admin.accounts.timer.edit') }}</button>
@@ -40,7 +40,7 @@
               :data-test="`timer-mode-${option.value}`"
               class="rounded-md px-2 py-1.5 text-xs font-medium transition-colors"
               :class="form.mode === option.value
-                ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300'
+                ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-700 dark:text-primary-300'
                 : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
               @click="setMode(option.value)"
             >
@@ -110,7 +110,7 @@
     </BaseDialog>
     <details v-if="snapshot?.history.length" class="mt-1 max-w-80 whitespace-normal text-gray-500 dark:text-dark-400">
       <summary class="cursor-pointer">{{ t('admin.accounts.timer.history') }} · {{ t(`admin.accounts.timer.results.${snapshot.history[0]?.result}`) }}<span v-if="snapshot.history[0]?.reason"> · {{ reasonText(snapshot.history[0].reason) }}</span></summary>
-      <p v-for="(item, index) in snapshot.history" :key="index" class="mt-1 break-words">
+      <p v-for="(item, index) in snapshot.history" :key="index" class="mt-1 wrap-break-word">
         {{ t(`admin.accounts.timer.${item.action}`) }} · {{ localTime(item.execute_at, item.timezone) }}<br />
         {{ t('admin.accounts.timer.actual') }} {{ localTime(item.actual_at, item.timezone) }} · {{ t(`admin.accounts.timer.results.${item.result}`) }}
         <span v-if="item.reason"> · {{ reasonText(item.reason) }}</span>

@@ -1,6 +1,6 @@
 <template>
   <div
-    class="stat-card !min-h-[6.5rem] !rounded-3xl !border-0 !p-4 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700"
+    class="stat-card min-h-26! rounded-3xl! border-0! p-4! shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800! dark:ring-dark-700"
     :title="title || undefined"
   >
     <div
@@ -12,7 +12,7 @@
     <div class="min-w-0 flex-1">
       <span class="stat-label text-[10px] font-bold uppercase tracking-wider text-gray-400">{{ label }}</span>
       <strong
-        class="stat-value mt-1 block overflow-visible text-xl tabular-nums leading-tight !text-clip !whitespace-normal"
+        class="stat-value mt-1 block overflow-visible text-xl tabular-nums leading-tight text-clip! whitespace-normal!"
         :class="stateClass"
       >{{ value }}</strong>
       <div

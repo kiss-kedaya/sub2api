@@ -142,6 +142,7 @@
 .console-signal .signal-channel-card-grid button.group:hover {
   z-index: 1;
   transform: none;
+  translate: none;
   background: var(--channel-surface-muted);
   box-shadow: inset 0 0 0 1px var(--channel-line-strong);
 }

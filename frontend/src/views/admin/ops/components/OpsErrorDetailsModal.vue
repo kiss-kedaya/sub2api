@@ -295,6 +295,7 @@ watch(
 </template>
 
 <style>
+@reference "../../../../style.css";
 .compact-select .select-trigger {
   @apply py-1.5 px-3 text-xs rounded-lg;
 }

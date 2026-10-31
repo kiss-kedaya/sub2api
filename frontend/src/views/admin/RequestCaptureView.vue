@@ -71,12 +71,12 @@
         <p v-if="detail.expires_at" class="text-xs text-gray-500">{{ t('admin.requestCapture.expiresAt') }}: {{ detail.expires_at }}</p>
         <p v-if="detail.is_error" class="text-sm text-red-600">HTTP {{ detail.status }} · {{ captureOutcome(detail) }}<span v-if="detail.error_code"> · {{ detail.error_code }}</span></p>
         <p v-if="detail.partial" class="text-sm text-amber-700">{{ t('admin.requestCapture.partial') }}: {{ detail.reason }}</p>
-        <details><summary class="cursor-pointer text-sm">{{ t('admin.requestCapture.metadata') }}</summary><pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-gray-50 p-3 text-xs dark:bg-dark-900">{{ metadata }}</pre></details>
+        <details><summary class="cursor-pointer text-sm">{{ t('admin.requestCapture.metadata') }}</summary><pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-gray-50 p-3 text-xs dark:bg-dark-900">{{ metadata }}</pre></details>
         <div class="flex flex-wrap gap-2"><button v-for="item in stages" :key="item" class="btn" :class="stage === item ? 'btn-primary' : 'btn-secondary'" @click="selectStage(item)">{{ t('admin.requestCapture.' + item) }}</button></div>
         <select v-if="stageParts.length" :value="part?.name" class="input" :aria-label="t('admin.requestCapture.segment')" @change="selectPart(($event.target as HTMLSelectElement).value)"><option v-for="item in stageParts" :key="item.name" :value="item.name">{{ item.name }} / {{ t('admin.requestCapture.attempt') }} {{ item.attempt }} / {{ t('admin.requestCapture.turn') }} {{ item.turn }} / {{ bytes(item.bytes) }}</option></select>
         <p v-else class="text-sm text-gray-500">{{ t('admin.requestCapture.noPart') }}</p>
         <p v-if="part?.omitted" class="text-sm text-amber-700">{{ t('admin.requestCapture.omitted') }}: {{ part.omitted }}</p>
-        <pre v-if="part" class="max-h-[36rem] overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-950 p-4 text-xs leading-5 text-gray-100">{{ content }}</pre>
+        <pre v-if="part" class="max-h-144 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-950 p-4 text-xs leading-5 text-gray-100">{{ content }}</pre>
         <div v-if="part" class="flex gap-3"><button class="btn btn-secondary" :disabled="contentOffset === 0 || contentLoading" @click="readContent(0)">{{ t('admin.requestCapture.firstSegment') }}</button><button class="btn btn-secondary" :disabled="!contentMore || contentLoading" @click="readContent(nextOffset)">{{ t('admin.requestCapture.nextSegment') }}</button></div>
       </section>
     </div>

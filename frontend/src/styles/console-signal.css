@@ -165,7 +165,8 @@
 .console-signal .signal-sidebar {
   background: var(--signal-sidebar);
   border-color: var(--signal-nav-line);
-  transition-property: transform;
+  /* The mobile slide uses the translate-x utilities, which animate `translate` in v4. */
+  transition-property: transform, translate;
   transition-duration: 180ms;
 }
 
@@ -310,6 +311,7 @@
 
 .console-signal .card-hover:hover {
   transform: none;
+  translate: none;
   border-color: var(--signal-control-line);
   box-shadow: none;
 }
@@ -346,9 +348,15 @@
   backdrop-filter: none;
 }
 
-.console-signal :is(.table td, .table-body, .table-body td) {
+.console-signal :is(.table td, .table-body td) {
   color: var(--signal-text);
   border-color: var(--signal-line);
+}
+
+/* .table-body (DataTable) always carries divide-* utilities, whose colour won here under v3's
+   specificity; with utilities now in a cascade layer this unlayered rule must not set it. */
+.console-signal .table-body {
+  color: var(--signal-text);
 }
 
 .console-signal .table-body {

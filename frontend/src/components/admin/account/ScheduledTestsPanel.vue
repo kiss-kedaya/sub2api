@@ -74,7 +74,7 @@
             <textarea
               v-model="newPlan.prompt_text"
               rows="4"
-              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-hidden transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
               :placeholder="t('admin.scheduledTests.promptPlaceholder')"
             />
             <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
@@ -319,7 +319,7 @@
                 <textarea
                   v-model="editForm.prompt_text"
                   rows="4"
-                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-hidden transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
                   :placeholder="t('admin.scheduledTests.promptPlaceholder')"
                 />
                 <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
@@ -427,8 +427,8 @@
             </div>
 
             <!-- Results History -->
-            <div v-else class="grid min-h-[28rem] grid-cols-1 gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]">
-              <div class="max-h-[32rem] space-y-2 overflow-y-auto pr-1">
+            <div v-else class="grid min-h-112 grid-cols-1 gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]">
+              <div class="max-h-128 space-y-2 overflow-y-auto pr-1">
                 <button
                   v-for="result in displayedResults"
                   :key="result.id"
@@ -491,7 +491,7 @@
                     <button
                       type="button"
                       class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-                      :class="previewMode === 'preview' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
+                      :class="previewMode === 'preview' ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
                       @click="previewMode = 'preview'"
                     >
                       {{ t('admin.scheduledTests.preview') }}
@@ -499,7 +499,7 @@
                     <button
                       type="button"
                       class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-                      :class="previewMode === 'source' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
+                      :class="previewMode === 'source' ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
                       @click="previewMode = 'source'"
                     >
                       {{ t('admin.scheduledTests.source') }}
@@ -522,14 +522,14 @@
                 <div v-else-if="previewMode === 'preview' && isPreviewable(selectedResult.response_text)" class="overflow-hidden rounded-b-xl bg-gray-100 dark:bg-dark-900">
                   <iframe
                     :srcdoc="selectedResult.response_text"
-                    class="h-[26rem] w-full border-0 bg-white"
+                    class="h-104 w-full border-0 bg-white"
                     sandbox="allow-scripts"
                     :title="t('admin.scheduledTests.preview')"
                   />
                 </div>
                 <pre
                   v-else
-                  class="max-h-[28rem] min-h-[16rem] overflow-auto whitespace-pre-wrap break-words rounded-b-xl bg-gray-950 p-4 text-xs leading-5 text-gray-200"
+                  class="max-h-112 min-h-64 overflow-auto whitespace-pre-wrap wrap-break-word rounded-b-xl bg-gray-950 p-4 text-xs leading-5 text-gray-200"
                 >{{ selectedResult.response_text || selectedResult.error_message || t('admin.scheduledTests.noResponse') }}</pre>
               </div>
             </div>

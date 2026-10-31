@@ -19,7 +19,7 @@
           <span
             v-for="(m, i) in entry.models.slice(0, 3)"
             :key="i"
-            class="inline-flex shrink-0 rounded px-1.5 py-0.5 text-xs"
+            class="inline-flex shrink-0 rounded-sm px-1.5 py-0.5 text-xs"
             :class="getPlatformTagClass(props.platform || '')"
           >
             {{ m }}
@@ -55,7 +55,7 @@
       <button
         type="button"
         @click.stop="emit('remove')"
-        class="flex-shrink-0 rounded p-1 text-gray-400 hover:text-red-500"
+        class="flex-shrink-0 rounded-sm p-1 text-gray-400 hover:text-red-500"
       >
         <Icon name="trash" size="sm" />
       </button>
@@ -224,7 +224,7 @@
               @remove="removeInterval(idx)"
             />
           </div>
-          <div v-else class="mt-2 rounded border border-dashed border-gray-300 p-3 text-center text-xs text-gray-400 dark:border-dark-500">
+          <div v-else class="mt-2 rounded-sm border border-dashed border-gray-300 p-3 text-center text-xs text-gray-400 dark:border-dark-500">
             {{ t('admin.channels.form.noTiersYet') }}
           </div>
         </div>

@@ -101,7 +101,7 @@
               {{ selectedEventMeta.label }}
             </div>
             <span
-              class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-600 shadow-sm ring-1 ring-gray-200 dark:bg-dark-800 dark:text-gray-300 dark:ring-dark-600"
+              class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-600 shadow-xs ring-1 ring-gray-200 dark:bg-dark-800 dark:text-gray-300 dark:ring-dark-600"
             >
               {{ selectedEventMeta.categoryLabel }}
             </span>
@@ -158,7 +158,7 @@
                 id="email-template-html"
                 v-model="html"
                 rows="18"
-                class="input min-h-[28rem] resize-y font-mono text-sm leading-6"
+                class="input min-h-112 resize-y font-mono text-sm leading-6"
                 :disabled="loadingTemplate"
                 :placeholder="t('admin.settings.emailTemplates.htmlPlaceholder')"
               ></textarea>
@@ -211,7 +211,7 @@
               </div>
               <div class="bg-gray-100 p-3 dark:bg-dark-900">
                 <iframe
-                  class="h-[36rem] w-full rounded-md border border-gray-200 bg-white dark:border-dark-700"
+                  class="h-144 w-full rounded-md border border-gray-200 bg-white dark:border-dark-700"
                   sandbox=""
                   :srcdoc="previewHtml"
                   :title="t('admin.settings.emailTemplates.livePreview')"

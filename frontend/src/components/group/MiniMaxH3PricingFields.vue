@@ -1,7 +1,7 @@
 <template>
   <section class="rounded-xl border border-gray-200 p-4 dark:border-dark-600">
     <label class="flex cursor-pointer items-start gap-3">
-      <input type="checkbox" class="mt-1 h-4 w-4 rounded text-primary-600" :checked="settings.enabled" data-testid="h3-enable" @change="update({ enabled: ($event.target as HTMLInputElement).checked })" />
+      <input type="checkbox" class="mt-1 h-4 w-4 rounded-sm text-primary-600" :checked="settings.enabled" data-testid="h3-enable" @change="update({ enabled: ($event.target as HTMLInputElement).checked })" />
       <span>
         <span class="block text-sm font-medium text-gray-900 dark:text-white">MiniMax-H3</span>
         <span class="mt-1 block text-xs leading-5 text-gray-500">{{ copy.hint }}</span>
