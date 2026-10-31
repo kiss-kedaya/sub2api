@@ -128,8 +128,12 @@ function swatch(palette: PaletteName, lightShade: PaletteShade, darkShade: Palet
   return { '--swatch-light': paletteHex(palette, lightShade), '--swatch-dark': paletteHex(palette, darkShade) }
 }
 
+// Black keeps the stylesheet's night theme in dark mode, whose accent is this rose.
+const NIGHT_ACCENT = '#e89ab3'
+
 function primarySwatch(value: ThemePrimary): Record<string, string> {
-  return value === 'black' ? swatch(draft.value.theme_neutral, 900, 100) : swatch(value, 500, 400)
+  if (value === 'black') return { '--swatch-light': paletteHex(draft.value.theme_neutral, 900), '--swatch-dark': NIGHT_ACCENT }
+  return swatch(value, 500, 400)
 }
 
 function colorLabel(name: string): string {
@@ -274,8 +278,9 @@ onBeforeUnmount(() => {
   background: var(--ui-primary, #171717);
   color: #ffffff;
 }
+/* Black writes no dark primary, so fall back to the stylesheet's night rose. */
 .dark .site-theme-preview-button {
-  background: var(--ui-primary, #f5f5f5);
+  background: var(--ui-primary, rgb(var(--c-primary-400)));
   color: var(--ui-color-neutral-900, #171717);
 }
 .site-theme-preview-badge {
@@ -285,7 +290,7 @@ onBeforeUnmount(() => {
   color: var(--ui-primary, #171717);
 }
 .dark .site-theme-preview-badge {
-  background: color-mix(in oklab, var(--ui-primary, #f5f5f5) 16%, transparent);
-  color: var(--ui-primary, #f5f5f5);
+  background: color-mix(in oklab, var(--ui-primary, rgb(var(--c-primary-400))) 16%, transparent);
+  color: var(--ui-primary, rgb(var(--c-primary-400)));
 }
 </style>

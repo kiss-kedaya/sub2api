@@ -99,19 +99,24 @@ function scale(prefix: string, palette: PaletteName, value: (palette: PaletteNam
 /**
  * Builds the theme stylesheet from allowlisted settings. Default values for
  * radius, font and the black primary write nothing that the existing
- * stylesheets define, so the default theme keeps the current look.
+ * stylesheets define, so the default theme keeps the current look. With the
+ * black primary, dark mode gets no primary variables at all: the night theme
+ * (rose buttons, dark --c-primary-*, --signal-accent) stays exactly as styled.
  */
 export function buildSiteThemeCss(input: unknown): string {
   const theme = normalizeSiteTheme(input)
   const neutral = theme.theme_neutral
   const chromatic: ChromaticPaletteName | null = theme.theme_primary === 'black' ? null : theme.theme_primary
   const primary: PaletteName = chromatic ?? neutral
-  const shared: Vars = {
+  const neutralScale = scale('--ui-color-neutral', neutral, paletteColor)
+  const light: Vars = {
     ...scale('--ui-color-primary', primary, paletteColor),
-    ...scale('--ui-color-neutral', neutral, paletteColor)
+    ...neutralScale,
+    '--ui-primary': chromatic ? 'var(--ui-color-primary-500)' : paletteColor(neutral, 900)
   }
-  const light: Vars = { ...shared, '--ui-primary': chromatic ? 'var(--ui-color-primary-500)' : paletteColor(neutral, 900) }
-  const dark: Vars = { ...shared, '--ui-primary': chromatic ? 'var(--ui-color-primary-400)' : paletteColor(neutral, 100) }
+  const dark: Vars = chromatic
+    ? { ...scale('--ui-color-primary', chromatic, paletteColor), ...neutralScale, '--ui-primary': 'var(--ui-color-primary-400)' }
+    : { ...neutralScale }
   if (theme.theme_radius !== DEFAULT_SITE_THEME.theme_radius) {
     light['--ui-radius'] = dark['--ui-radius'] = `${theme.theme_radius}rem`
   }

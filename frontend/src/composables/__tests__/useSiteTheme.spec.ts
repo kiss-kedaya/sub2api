@@ -18,6 +18,13 @@ function css(): string {
   return document.getElementById(SITE_THEME_STYLE_ID)?.textContent ?? ''
 }
 
+/** One rule of the generated stylesheet, from its selector to its closing brace. */
+function block(out: string, selector: string): string {
+  const start = out.indexOf(selector)
+  expect(start, selector).toBeGreaterThanOrEqual(0)
+  return out.slice(start, out.indexOf('}', start) + 1)
+}
+
 function prefersDark(matches: boolean) {
   vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches, media: query }) as MediaQueryList)
 }
@@ -35,33 +42,34 @@ describe('useSiteTheme', () => {
     document.getElementById(SITE_THEME_FONT_LINK_ID)?.remove()
   })
 
-  it('writes the Nuxt UI tokens for the default theme and leaves the legacy tokens alone', () => {
+  it('default theme: Nuxt UI tokens in light, no primary at all in dark, legacy tokens untouched', () => {
     const out = css()
-    const darkAt = out.indexOf('html:root.dark{')
-    const light = out.slice(0, darkAt)
-    const dark = out.slice(darkAt)
+    const light = block(out, 'html:root:not(.dark){')
+    const dark = block(out, 'html:root.dark{')
     expect(light.startsWith(`html:root:not(.dark){--ui-color-primary-50:${paletteColor('neutral', 50)};`)).toBe(true)
-    expect(out).toContain(`--ui-color-neutral-950:${paletteColor('neutral', 950)};`)
-    // black primary: near-black in light, near-white in dark
     expect(light).toContain(`--ui-primary:${paletteColor('neutral', 900)};`)
-    expect(dark).toContain(`--ui-primary:${paletteColor('neutral', 100)};`)
+    // Black keeps today's night theme: dark mode only gets the neutral scale.
+    expect(dark).toContain(`--ui-color-neutral-950:${paletteColor('neutral', 950)};`)
+    expect(dark).not.toContain('primary')
     for (const token of ['--c-primary-', '--signal-', '--ui-radius', '--font-sans', 'font-family']) {
       expect(out).not.toContain(token)
     }
     expect(document.getElementById(SITE_THEME_FONT_LINK_ID)).toBeNull()
   })
 
-  it('maps a chromatic primary onto Nuxt UI, the legacy --c-primary scale and the console tokens', () => {
+  it('applies a chromatic primary to both modes: Nuxt UI, the legacy --c-primary scale and the console tokens', () => {
     const out = buildSiteThemeCss({ ...DEFAULT_SITE_THEME, theme_primary: 'sakura', theme_neutral: 'zinc' })
-    expect(out).toContain(`--ui-color-primary-400:${paletteColor('sakura', 400)};`)
-    expect(out).toContain(`--ui-color-neutral-500:${paletteColor('zinc', 500)};`)
-    expect(out).toContain('--ui-primary:var(--ui-color-primary-500);')
-    expect(out).toContain('--ui-primary:var(--ui-color-primary-400);')
-    expect(out).toContain(`--c-primary-600:${paletteRgbChannels('sakura', 600)};`)
-    expect(out).toContain(`html:root:not(.dark) :is(.console-signal,`)
-    expect(out).toContain(`--signal-accent:${paletteHex('sakura', 600)};`)
-    expect(out).toContain(`html:root.dark :is(.console-signal,`)
-    expect(out).toContain(`--signal-accent:${paletteHex('sakura', 400)};`)
+    const light = block(out, 'html:root:not(.dark){')
+    const dark = block(out, 'html:root.dark{')
+    expect(light).toContain('--ui-primary:var(--ui-color-primary-500);')
+    expect(dark).toContain('--ui-primary:var(--ui-color-primary-400);')
+    for (const rule of [light, dark]) {
+      expect(rule).toContain(`--ui-color-primary-400:${paletteColor('sakura', 400)};`)
+      expect(rule).toContain(`--ui-color-neutral-500:${paletteColor('zinc', 500)};`)
+      expect(rule).toContain(`--c-primary-600:${paletteRgbChannels('sakura', 600)};`)
+    }
+    expect(block(out, 'html:root:not(.dark) :is(.console-signal,')).toContain(`--signal-accent:${paletteHex('sakura', 600)};`)
+    expect(block(out, 'html:root.dark :is(.console-signal,')).toContain(`--signal-accent:${paletteHex('sakura', 400)};`)
   })
 
   it('writes radius and font only when they differ from the default, and loads the web font', () => {
