@@ -1,34 +1,7 @@
-/* Tokens also reach body-level dialogs, only while a SIGNAL page is mounted. */
+/* Colour tokens live in console-studio.css; this layer only applies them. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #f2f2f7;
-  --signal-surface: #ffffff;
-  --signal-line: #dedee4;
-  --signal-text: #1c1c1e;
-  --signal-muted: #63636c;
-  --signal-accent: #0066d6;
-  --signal-amber: #a66a19;
-  --signal-hover: #e9e9ef;
-  --signal-accent-soft: #e3efff;
-  --signal-on-accent: #ffffff;
-  --signal-control-line: #c7c7ce;
-  --signal-shadow: 0 1px 3px #1c1c1e08, 0 6px 16px #1c1c1e05;
   letter-spacing: 0;
   color: var(--signal-text);
-}
-
-.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #111113;
-  --signal-surface: #1c1c1e;
-  --signal-line: #38383b;
-  --signal-text: #f2f2f7;
-  --signal-muted: #aeaeb2;
-  --signal-accent: #78b4ff;
-  --signal-amber: #e3b770;
-  --signal-hover: #303034;
-  --signal-accent-soft: #22364e;
-  --signal-on-accent: #10253d;
-  --signal-control-line: #545459;
-  --signal-shadow: 0 2px 4px #00000014, 0 8px 20px #0000000f;
 }
 
 .console-signal {
@@ -190,14 +163,14 @@
 }
 
 .console-signal .signal-sidebar {
-  background: var(--signal-surface);
-  border-color: var(--signal-line);
+  background: var(--signal-sidebar);
+  border-color: var(--signal-nav-line);
   transition-property: transform;
   transition-duration: 180ms;
 }
 
 .console-signal .signal-sidebar :is(.sidebar-header, .sidebar-footer) {
-  border-color: var(--signal-line);
+  border-color: var(--signal-nav-line);
 }
 
 .console-signal .signal-sidebar .sidebar-logo {
@@ -208,11 +181,11 @@
 .console-signal .signal-sidebar .sidebar-brand-title {
   font-size: 18px;
   font-weight: 600;
-  color: var(--signal-text);
+  color: var(--signal-nav-active-text);
 }
 
 .console-signal .signal-sidebar .sidebar-brand-title:hover {
-  color: var(--signal-accent);
+  color: #ffffff;
 }
 
 .console-signal .signal-sidebar .sidebar-nav {
@@ -223,38 +196,33 @@
   position: relative;
   min-height: 40px;
   border-radius: 6px;
-  color: var(--signal-muted);
+  color: var(--signal-nav-text);
   transition: color 120ms ease, background-color 120ms ease;
 }
 
 .console-signal .signal-sidebar .sidebar-link:hover {
-  background: var(--signal-hover);
-  color: var(--signal-text);
-  box-shadow: inset 1px 0 color-mix(in srgb, var(--signal-accent) 42%, transparent);
+  background: var(--signal-nav-hover);
+  color: #ffffff;
+  box-shadow: none;
 }
 
 .console-signal .signal-sidebar .sidebar-link-active {
-  background: var(--signal-accent-soft);
-  color: var(--signal-accent);
-  box-shadow: inset 1px 0 var(--signal-accent), inset 8px 0 16px -16px var(--signal-accent);
+  background: var(--signal-nav-active);
+  color: var(--signal-nav-active-text);
+  box-shadow: none;
 }
 
 .console-signal .signal-sidebar .sidebar-link-active::before {
-  position: absolute;
-  inset-block: 10px;
-  left: 0;
-  width: 2px;
-  background: var(--signal-accent);
-  content: '';
+  content: none;
 }
 
 .console-signal .signal-sidebar .sidebar-section-title {
-  color: var(--signal-muted);
+  color: var(--signal-nav-muted);
   letter-spacing: 0;
 }
 
 .console-signal .signal-sidebar .sidebar-section-title::after {
-  background: var(--signal-line);
+  background: var(--signal-nav-line);
 }
 
 .console-signal .signal-sidebar :is(.sidebar-label, .sidebar-brand) {

@@ -241,8 +241,8 @@ function onRateChange(value: string | number | boolean | null) {
 }
 
 .plaza-seg-item[aria-checked='true'] {
-  border-bottom-color: var(--signal-accent, #007db5);
-  color: var(--signal-text, #202426);
+  border-bottom-color: var(--signal-accent, #247e68);
+  color: var(--signal-text, #203d35);
 }
 
 .plaza-seg-item:disabled {

@@ -1,31 +1,32 @@
-/* Paper, ink and a restrained sky-blue accent across the working console. */
+/* chanshui.dev mint: pale mint paper, deep green ink, charcoal-green sidebar. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #f8f9f9;
+  --signal-bg: #f3f7f6;
   --signal-surface: #ffffff;
-  --signal-raised: #f2f5f6;
-  --signal-sidebar: #ffffff;
-  --signal-line: #dde2e4;
-  --signal-text: #202426;
-  --signal-muted: #657078;
-  --signal-accent: #007db5;
-  --signal-amber: #a66a19;
-  --signal-hover: #edf2f4;
-  --signal-accent-soft: #e6f4fc;
+  --signal-raised: #eef4f1;
+  --signal-sidebar: #14231e;
+  --signal-line: #dde8e4;
+  --signal-text: #203d35;
+  --signal-muted: #678078;
+  --signal-accent: #247e68;
+  --signal-amber: #906727;
+  --signal-hover: #eef5f2;
+  --signal-accent-soft: #e6f3ed;
   --signal-on-accent: #ffffff;
-  --signal-control-line: #b4c0c7;
+  --signal-control-line: #bcd3ca;
   --signal-highlight: #ffffff;
-  --signal-inset: #f4f6f7;
-  --signal-divider: #e9edef;
-  --signal-shadow: 0 2px 4px #20242603;
-  --signal-popover-shadow: 0 3px 10px #2024260a, 0 20px 56px #2024261f;
-  --signal-command: #202426;
+  --signal-inset: #f6f9f8;
+  --signal-divider: #e7efec;
+  --signal-shadow: 0 0 #0000;
+  --signal-popover-shadow: 0 12px 32px #14231e1f;
+  --signal-command: #247e68;
   --signal-command-text: #ffffff;
-  --signal-paper-image: url('../assets/console-paper.webp');
-  --signal-paper-blend: multiply;
-  --signal-paper-opacity: 0.46;
-  --signal-draft-opacity: 1;
-  --signal-draft-ink: #67879838;
-  --signal-draft-line: #348fbc52;
+  --signal-command-hover: #1c6855;
+  --signal-nav-text: #b9cdc4;
+  --signal-nav-muted: #7f9a8f;
+  --signal-nav-hover: #1c3029;
+  --signal-nav-active: #233f33;
+  --signal-nav-active-text: #c1e5d5;
+  --signal-nav-line: #22372f;
   /* motion tokens: 独角兽级动效体系（统一 easing 与时长） */
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
@@ -39,32 +40,33 @@
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #141718;
-  --signal-surface: #1e2224;
-  --signal-raised: #272d30;
-  --signal-sidebar: #181c1e;
-  --signal-line: #353e43;
-  --signal-text: #f1f5f6;
-  --signal-muted: #aab7be;
-  --signal-accent: #6dc7f2;
-  --signal-amber: #e3b770;
-  --signal-hover: #2c3438;
-  --signal-accent-soft: #203741;
-  --signal-on-accent: #10232c;
-  --signal-control-line: #586a74;
-  --signal-highlight: #ffffff0c;
-  --signal-inset: #191e20;
-  --signal-divider: #30383c;
-  --signal-shadow: 0 2px 4px #00000014, 0 8px 20px #0000000f;
-  --signal-popover-shadow: 0 4px 12px #00000029, 0 24px 64px #00000066;
-  --signal-command: #eef5f8;
-  --signal-command-text: #192125;
-  --signal-paper-image: url('../assets/console-paper-dark.webp');
-  --signal-paper-blend: screen;
-  --signal-paper-opacity: 0.32;
-  --signal-draft-opacity: 1;
-  --signal-draft-ink: #a0c7db30;
-  --signal-draft-line: #77bfdf48;
+  --signal-bg: #14201c;
+  --signal-surface: #1b2b23;
+  --signal-raised: #22342b;
+  --signal-sidebar: #101a16;
+  --signal-line: #344638;
+  --signal-text: #e1e9df;
+  --signal-muted: #afc4b7;
+  --signal-accent: #8bc1a6;
+  --signal-amber: #c3af7c;
+  --signal-hover: #213329;
+  --signal-accent-soft: #283f31;
+  --signal-on-accent: #182015;
+  --signal-control-line: #4b6152;
+  --signal-highlight: #ffffff0a;
+  --signal-inset: #17231d;
+  --signal-divider: #2b3b30;
+  --signal-shadow: 0 0 #0000;
+  --signal-popover-shadow: 0 12px 32px #00000066;
+  --signal-command: #8bc1a6;
+  --signal-command-text: #182015;
+  --signal-command-hover: #9dcdb4;
+  --signal-nav-text: #b9cdc4;
+  --signal-nav-muted: #7f9a8f;
+  --signal-nav-hover: #1a2a24;
+  --signal-nav-active: #253f33;
+  --signal-nav-active-text: #c1e5d5;
+  --signal-nav-line: #1f312a;
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
@@ -75,7 +77,8 @@
 
 .console-signal .signal-sidebar {
   background: var(--signal-sidebar);
-  border-color: var(--signal-line);
+  border-color: var(--signal-nav-line);
+  color: var(--signal-nav-text);
 }
 
 .console-signal {
@@ -97,6 +100,11 @@
   font-family: var(--signal-display-font);
   font-size: 21px;
   font-weight: 600;
+  color: var(--signal-nav-active-text);
+}
+
+.console-signal .signal-sidebar .sidebar-brand-title:hover {
+  color: #ffffff;
 }
 
 .console-signal .sidebar-nav {
@@ -108,32 +116,52 @@
   border: 1px solid transparent;
   padding: 8px 10px;
   font-size: 13px;
-  color: var(--signal-muted);
+  color: var(--signal-nav-text);
   transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
 .console-signal .signal-sidebar .sidebar-link-active {
-  background: var(--signal-accent-soft);
+  background: var(--signal-nav-active);
   border-color: transparent;
-  color: var(--signal-accent);
+  color: var(--signal-nav-active-text);
   box-shadow: none;
 }
 
 .console-signal .signal-sidebar .sidebar-link-active::before {
-  display: block;
-  width: 3px;
-  height: 14px;
-  border-radius: 0;
-  background: var(--signal-accent);
+  display: none;
 }
 
 .console-signal .signal-sidebar .sidebar-link-active > svg {
-  color: var(--signal-accent);
+  color: var(--signal-nav-active-text);
 }
 
 .console-signal .signal-sidebar .sidebar-link:hover {
-  background: var(--signal-hover);
-  color: var(--signal-text);
+  background: var(--signal-nav-hover);
+  color: #ffffff;
+}
+
+.console-signal .signal-sidebar .sidebar-link-active:hover {
+  background: var(--signal-nav-active);
+  color: var(--signal-nav-active-text);
+}
+
+.console-signal .signal-sidebar :is(.sidebar-section-title, .sidebar-child-section) {
+  color: var(--signal-nav-muted);
+}
+
+/* VersionBadge sits on the dark sidebar; keep its amber update state, recolour the rest. */
+.console-signal .signal-sidebar .sidebar-brand > .relative > button:not([class*='bg-amber']) {
+  background: var(--signal-nav-hover);
+  color: var(--signal-nav-muted);
+}
+
+.console-signal .signal-sidebar .sidebar-brand > .relative > button:not([class*='bg-amber']):hover {
+  background: var(--signal-nav-active);
+  color: var(--signal-nav-active-text);
+}
+
+.console-signal .signal-sidebar .sidebar-brand .animate-pulse {
+  background: var(--signal-nav-line);
 }
 
 .console-signal .signal-header {
@@ -213,7 +241,8 @@
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--signal-command) 88%, var(--signal-bg));
+  background: var(--signal-command-hover);
+  border-color: var(--signal-command-hover);
   color: var(--signal-command-text);
 }
 
@@ -602,7 +631,7 @@ body:has(.console-signal) > .select-dropdown-portal {
   width: 5px;
   height: 5px;
   flex-shrink: 0;
-  background: #00a8ed;
+  background: var(--signal-accent);
 }
 
 .console-signal .signal-editorial-heading > button {
@@ -617,8 +646,8 @@ body:has(.console-signal) > .select-dropdown-portal {
 }
 
 .console-signal .signal-dashboard .signal-metric--balance {
-  background: #202a30;
-  border-color: #202a30;
+  background: var(--signal-sidebar);
+  border-color: var(--signal-sidebar);
   color: #ffffff;
 }
 
@@ -627,12 +656,12 @@ body:has(.console-signal) > .select-dropdown-portal {
 }
 
 .console-signal .signal-dashboard .signal-metric--balance :is(.signal-label, .signal-metric-foot) {
-  color: #c1d5e0;
+  color: var(--signal-nav-text);
   border-color: #ffffff24;
 }
 
 .console-signal .signal-dashboard .signal-metric--balance .signal-label > span {
-  color: #84d9ff;
+  color: #8ed7ba;
 }
 
 .console-signal .admin-overview-identity p {

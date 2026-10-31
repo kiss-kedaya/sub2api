@@ -19,7 +19,7 @@
       <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
         <router-link
           :to="homePath"
-          class="sidebar-brand-title text-lg font-bold text-[#f8f5eb] transition-colors hover:text-[#edc5a8]"
+          class="sidebar-brand-title text-lg font-bold text-[#c1e5d5] transition-colors hover:text-[#ffffff]"
           @click="handleMenuItemClick(homePath)"
         >
           {{ siteName }}
@@ -66,7 +66,7 @@
                 <template v-for="child in item.children" :key="child.path">
                   <p
                     v-if="child.section"
-                    class="sidebar-child-section px-2 pb-1 pt-2 text-[11px] font-semibold tracking-wide text-[#96968d]"
+                    class="sidebar-child-section px-2 pb-1 pt-2 text-[11px] font-semibold tracking-wide text-[#7f9a8f]"
                   >
                     {{ child.label }}
                   </p>
