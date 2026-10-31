@@ -11,7 +11,6 @@ export default {
   previewButton: '按钮',
   previewBadge: '标签',
   modeHint: '默认模式只对没有自己切换过明暗的访客生效。',
-  fontHint: '网页字体从 Google Fonts 加载，无法访问时页面会回退到系统字体。',
   reset: '恢复默认',
   retry: '重试',
   saved: '站点主题已保存',

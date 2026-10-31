@@ -11,7 +11,6 @@ export default {
   previewButton: 'Button',
   previewBadge: 'Badge',
   modeHint: 'The default mode applies to visitors who have not switched light or dark themselves.',
-  fontHint: 'Web fonts load from Google Fonts. Where that is blocked, pages fall back to the system font.',
   reset: 'Reset to default',
   retry: 'Retry',
   saved: 'Site theme saved',

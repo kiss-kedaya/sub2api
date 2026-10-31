@@ -40,9 +40,16 @@ export const DEFAULT_SITE_THEME: Readonly<SiteThemeSettings> = Object.freeze({
   theme_default_mode: 'system'
 })
 
+// Same fallbacks as tailwind.config.js, ending in PingFang SC / Microsoft YaHei / sans-serif.
 const SYSTEM_FONT_STACK = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
 
-/** `system` writes nothing, so the stylesheet's own font stack stays in charge. */
+/**
+ * Font-family stacks only; nothing is downloaded (Google Fonts is blocked for
+ * mainland China visitors). Self-hosted @font-face files for Public Sans, Inter
+ * and Noto Sans SC are added at integration; until then a visitor without the
+ * font installed gets the system fallbacks. `system` writes nothing, so the
+ * stylesheet's own font stack stays in charge.
+ */
 export const THEME_FONT_STACKS: Readonly<Record<ThemeFont, string | null>> = {
   system: null,
   'public-sans': `'Public Sans', ${SYSTEM_FONT_STACK}`,
@@ -50,16 +57,7 @@ export const THEME_FONT_STACKS: Readonly<Record<ThemeFont, string | null>> = {
   'noto-sans-sc': `'Noto Sans SC', ${SYSTEM_FONT_STACK}`
 }
 
-// Origins already allowed by the default CSP (style-src / font-src).
-export const THEME_FONT_STYLESHEETS: Readonly<Record<ThemeFont, string | null>> = {
-  system: null,
-  'public-sans': 'https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap',
-  inter: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
-  'noto-sans-sc': 'https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap'
-}
-
 export const SITE_THEME_STYLE_ID = 'site-theme-vars'
-export const SITE_THEME_FONT_LINK_ID = 'site-theme-font'
 
 function pick<T extends string | number>(options: readonly T[], value: unknown, fallback: T): T {
   const index = options.indexOf(value as T)
@@ -172,19 +170,6 @@ function writeTheme(theme: SiteThemeSettings): void {
     document.head.appendChild(style)
   }
   style.textContent = buildSiteThemeCss(theme)
-
-  const href = THEME_FONT_STYLESHEETS[theme.theme_font]
-  const link = document.getElementById(SITE_THEME_FONT_LINK_ID)
-  if (!href) {
-    link?.remove()
-  } else if (!(link instanceof HTMLLinkElement) || link.getAttribute('href') !== href) {
-    link?.remove()
-    const next = document.createElement('link')
-    next.id = SITE_THEME_FONT_LINK_ID
-    next.rel = 'stylesheet'
-    next.href = href
-    document.head.appendChild(next)
-  }
 }
 
 function savedVisitorMode(): 'light' | 'dark' | null {

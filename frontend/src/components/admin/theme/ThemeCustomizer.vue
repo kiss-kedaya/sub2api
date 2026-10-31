@@ -64,7 +64,6 @@
         </div>
 
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.siteTheme.modeHint') }}</p>
-        <p v-if="draft.theme_font !== 'system'" class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.siteTheme.fontHint') }}</p>
         <p v-if="error" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
         <div class="flex justify-end gap-3 border-t border-gray-100 pt-4 dark:border-dark-700">
           <button v-if="loadFailed" type="button" class="btn btn-secondary btn-sm" data-testid="site-theme-retry" @click="load">{{ t('admin.settings.siteTheme.retry') }}</button>

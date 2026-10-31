@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_SITE_THEME,
-  SITE_THEME_FONT_LINK_ID,
   SITE_THEME_STYLE_ID,
-  THEME_FONT_STYLESHEETS,
   applySiteTheme,
   buildSiteThemeCss,
   normalizeSiteTheme,
@@ -25,6 +23,14 @@ function block(out: string, selector: string): string {
   return out.slice(start, out.indexOf('}', start) + 1)
 }
 
+/** Nothing may be fetched for fonts: no <link>, @import or url() anywhere. */
+function expectNoFontDownload(out: string) {
+  expect(document.querySelectorAll('link')).toHaveLength(0)
+  for (const fragment of ['googleapis', 'gstatic', '@import', 'url(', '@font-face']) {
+    expect(out).not.toContain(fragment)
+  }
+}
+
 function prefersDark(matches: boolean) {
   vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches, media: query }) as MediaQueryList)
 }
@@ -39,7 +45,6 @@ describe('useSiteTheme', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     document.getElementById(SITE_THEME_STYLE_ID)?.remove()
-    document.getElementById(SITE_THEME_FONT_LINK_ID)?.remove()
   })
 
   it('default theme: Nuxt UI tokens in light, no primary at all in dark, legacy tokens untouched', () => {
@@ -54,7 +59,7 @@ describe('useSiteTheme', () => {
     for (const token of ['--c-primary-', '--signal-', '--ui-radius', '--font-sans', 'font-family']) {
       expect(out).not.toContain(token)
     }
-    expect(document.getElementById(SITE_THEME_FONT_LINK_ID)).toBeNull()
+    expectNoFontDownload(out)
   })
 
   it('applies a chromatic primary to both modes: Nuxt UI, the legacy --c-primary scale and the console tokens', () => {
@@ -72,22 +77,21 @@ describe('useSiteTheme', () => {
     expect(block(out, 'html:root.dark :is(.console-signal,')).toContain(`--signal-accent:${paletteHex('sakura', 400)};`)
   })
 
-  it('writes radius and font only when they differ from the default, and loads the web font', () => {
+  it('writes radius and a font stack only when they differ from the default, without downloading fonts', () => {
     applySiteTheme({ ...DEFAULT_SITE_THEME, theme_radius: 0, theme_font: 'inter' })
     expect(css()).toContain('--ui-radius:0rem;')
     expect(css()).toContain("--font-sans:'Inter', system-ui")
+    expect(css()).toContain("'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;")
     expect(css()).toContain('html:root,html:root :is(.console-signal,')
-    const link = document.getElementById(SITE_THEME_FONT_LINK_ID) as HTMLLinkElement
-    expect(link.rel).toBe('stylesheet')
-    expect(link.getAttribute('href')).toBe(THEME_FONT_STYLESHEETS.inter)
+    expectNoFontDownload(css())
 
     applySiteTheme({ ...DEFAULT_SITE_THEME, theme_font: 'noto-sans-sc' })
     expect(document.querySelectorAll(`#${SITE_THEME_STYLE_ID}`)).toHaveLength(1)
-    expect(document.querySelectorAll(`#${SITE_THEME_FONT_LINK_ID}`)).toHaveLength(1)
-    expect(document.getElementById(SITE_THEME_FONT_LINK_ID)?.getAttribute('href')).toBe(THEME_FONT_STYLESHEETS['noto-sans-sc'])
+    expect(css()).toContain("--font-sans:'Noto Sans SC', system-ui")
+    expectNoFontDownload(css())
 
     applySiteTheme(DEFAULT_SITE_THEME)
-    expect(document.getElementById(SITE_THEME_FONT_LINK_ID)).toBeNull()
+    expect(css()).not.toContain('--font-sans')
   })
 
   it('never writes a value outside the allowlist', () => {
@@ -107,7 +111,7 @@ describe('useSiteTheme', () => {
     for (const fragment of ['display:none', 'javascript', 'evil.example', 'color:red']) {
       expect(out).not.toContain(fragment)
     }
-    expect(document.getElementById(SITE_THEME_FONT_LINK_ID)).toBeNull()
+    expectNoFontDownload(out)
   })
 
   it('previews without changing the remembered theme, and restore puts it back', () => {
