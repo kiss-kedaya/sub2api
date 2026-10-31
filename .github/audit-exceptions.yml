@@ -27,3 +27,9 @@ exceptions:
     severity: high
     mitigation: Same vue-i18n 9.x transitive dependency; no escapeParameter or v-html translation rendering. Migration to vue-i18n 11 is tracked separately.
     expires_on: 2026-11-30
+
+  - package: follow-redirects
+    advisory: GHSA-mrwp-f3q8-3g9p
+    severity: high
+    mitigation: Transitive dependency of axios. The panel only issues outbound HTTP to our own API origin, so there is no user-controlled redirect target and no cross-realm sensitiveHeaders reuse. Upgrade lands with the next axios bump.
+    expires_on: 2026-12-31
