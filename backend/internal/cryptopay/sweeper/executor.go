@@ -35,6 +35,11 @@ type TokenSpec struct {
 const selBalanceOf = "0x70a08231"
 const transferGasLimit = 65000
 
+// maxConsecutiveStorageFailures bounds how many persisted-state failures a
+// single run tolerates before giving up: one bad row must not abort the run,
+// but a broken database must not spin through every address.
+const maxConsecutiveStorageFailures = 5
+
 // Executor owns the database lock and the durable transaction state machine.
 // Signed bytes are committed before broadcast. Unknown outcomes never cause
 // a replacement signature or a fresh gas payment.
@@ -122,6 +127,7 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 	seen := make(map[string]bool)
 	blocked := make(map[string]bool)
 	var runErrors error
+	storageFailures := 0
 	if !dryRun {
 		jobs, loadErr := e.loadUnfinished(ctx)
 		if loadErr != nil {
@@ -138,7 +144,19 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 			if resumeErr != nil {
 				runErrors = joinErrors(runErrors, resumeErr)
 				var storage *persistenceError
-				if errors.As(resumeErr, &storage) || ctx.Err() != nil {
+				if errors.As(resumeErr, &storage) {
+					// One job whose state could not be persisted must not stop the
+					// other chains; it stays reserved and is observed again next run.
+					// Only a run of consecutive storage failures means the database
+					// itself is unusable.
+					storageFailures++
+					if storageFailures >= maxConsecutiveStorageFailures {
+						return summary, runErrors
+					}
+					continue
+				}
+				storageFailures = 0
+				if ctx.Err() != nil {
 					return summary, runErrors
 				}
 			}
@@ -164,7 +182,15 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 		if sweepErr != nil {
 			runErrors = joinErrors(runErrors, sweepErr)
 			var storage *persistenceError
-			if errors.As(sweepErr, &storage) || ctx.Err() != nil {
+			if errors.As(sweepErr, &storage) {
+				storageFailures++
+				if storageFailures >= maxConsecutiveStorageFailures {
+					return summary, runErrors
+				}
+				continue
+			}
+			storageFailures = 0
+			if ctx.Err() != nil {
 				return summary, runErrors
 			}
 		}
