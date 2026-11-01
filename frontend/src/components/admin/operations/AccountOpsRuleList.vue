@@ -1,99 +1,112 @@
 <template>
-  <section
-    class="rounded-xl bg-gray-50/40 dark:bg-dark-900/40"
-    data-testid="account-ops-rules"
-  >
-    <div class="flex flex-wrap items-center justify-between gap-3 px-1 py-3">
+  <section class="space-y-4" data-testid="account-ops-rules">
+    <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h3 class="text-sm font-semibold">{{ t('accountOps.accountRules') }}</h3>
-        <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.rulesOnceSummary') }}</p>
+        <h3 class="text-base font-semibold text-highlighted">{{ t('accountOps.accountRules') }}</h3>
+        <p class="mt-1 text-sm text-muted">{{ t('accountOps.rulesOnceSummary') }}</p>
       </div>
-      <div class="flex flex-wrap gap-2">
-        <input v-model="search" class="input w-48 text-sm" :placeholder="t('accountOps.search')" :aria-label="t('accountOps.search')" />
-        <select v-model="type" class="input w-auto text-sm" :aria-label="t('accountOps.accountType')">
-          <option value="all">{{ t('accountOps.allAccounts') }}</option>
-          <option value="apikey">API Key</option>
-          <option value="oauth">OAuth</option>
-          <option value="mixed">API Key + OAuth</option>
-        </select>
-        <select v-model="state" class="input w-auto text-sm" :aria-label="t('accountOps.ruleState')">
-          <option value="all">{{ t('accountOps.allStates') }}</option>
-          <option v-for="value in states" :key="value" :value="value">{{ t(`accountOps.ruleStates.${value}`) }}</option>
-        </select>
+      <div class="flex flex-wrap items-center gap-1.5">
+        <UInput v-model="search" icon="i-lucide-search" class="w-56" :placeholder="t('accountOps.search')" :aria-label="t('accountOps.search')" />
+        <USelect v-model="type" :items="typeItems" class="min-w-36" :aria-label="t('accountOps.accountType')" />
+        <USelect v-model="state" :items="stateItems" class="min-w-32" :aria-label="t('accountOps.ruleState')" />
       </div>
     </div>
     <slot name="global-settings" />
-    <div class="flex flex-wrap items-center justify-between gap-3 px-1 py-3">
-      <div class="min-w-0 space-y-1">
-        <p class="text-sm font-medium" aria-live="polite">
-          {{ t('accountOps.selectedGroups', { count: selectedGroups.length }) }}
-          <span v-if="selectedTypes.length" class="ml-2 text-xs text-gray-500">{{ selectedTypes.join(' / ') }}</span>
-        </p>
-        <p class="text-xs leading-5 text-gray-500">{{ t('accountOps.batchSelectionHint') }}</p>
-      </div>
-      <div class="flex shrink-0 items-center gap-3">
-        <button v-if="selectedGroups.length" type="button" class="text-sm text-gray-500 hover:underline" :disabled="busy" @click="clearSelection">{{ t('accountOps.clearSelection') }}</button>
-        <button type="button" class="btn btn-secondary text-sm" data-testid="batch-edit-rules" :disabled="selectionUnavailable || !selectedGroups.length || !selectedAccounts.length" @click="editBatch">{{ t('accountOps.batchEditRules') }}</button>
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-sm text-muted" aria-live="polite">
+        {{ t('accountOps.selectedGroups', { count: selectedGroups.length }) }}
+        <span v-if="selectedTypes.length" class="ml-2 text-xs">{{ selectedTypes.join(' / ') }}</span>
+        <span class="ml-2 text-xs text-dimmed">{{ t('accountOps.batchSelectionHint') }}</span>
+      </p>
+      <div class="flex shrink-0 items-center gap-1.5">
+        <UButton v-if="selectedGroups.length" color="neutral" variant="ghost" :disabled="busy" :label="t('accountOps.clearSelection')" @click="clearSelection" />
+        <UButton color="neutral" variant="outline" icon="i-lucide-list-checks" data-testid="batch-edit-rules" :disabled="selectionUnavailable || !selectedGroups.length || !selectedAccounts.length" @click="editBatch">
+          {{ t('accountOps.batchEditRules') }}
+          <template v-if="selectedGroups.length" #trailing>
+            <UBadge color="neutral" variant="subtle" size="sm" class="tabular-nums">{{ selectedGroups.length }}</UBadge>
+          </template>
+        </UButton>
       </div>
     </div>
+    <!-- Rule rows: a quiet list in the template table style (elevated header row, hairline row borders). -->
     <div class="overflow-x-auto">
-      <table class="w-full min-w-[820px] text-left text-sm">
-        <thead class="text-xs text-gray-500">
-          <tr>
-            <th class="w-12 py-3 pl-5 pr-2">
-              <input type="checkbox" data-testid="select-visible-groups" :aria-label="t('accountOps.selectVisibleGroups')" :checked="allVisibleSelected" :indeterminate="selectedGroups.length > 0 && !allVisibleSelected" :disabled="selectionUnavailable || !filtered.length" @change="selectVisible(($event.target as HTMLInputElement).checked)" />
-            </th>
-            <th class="px-3 py-3">{{ t('accountOps.accountGroup') }}</th>
-            <th class="px-4 py-3">{{ t('accountOps.metric') }}</th>
-            <th class="px-4 py-3">{{ t('accountOps.currentValue') }}</th>
-            <th class="px-4 py-3">{{ t('accountOps.ruleSummary') }}</th>
-            <th class="px-5 py-3 text-right">{{ t('common.actions') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in filtered" :key="row.group.id" class="transition-colors hover:bg-white/70 dark:hover:bg-dark-800/50" :data-testid="`rule-row-${row.group.id}`">
-            <td class="py-4 pl-5 pr-2">
-              <input type="checkbox" :data-testid="`select-group-${row.group.id}`" :aria-label="t('accountOps.selectGroup', { name: row.group.name })" :checked="selectedIds.has(row.group.id)" :disabled="selectionUnavailable" @change="selectGroup(row.group.id, ($event.target as HTMLInputElement).checked)" />
-            </td>
-            <td class="px-3 py-4">
-              <p class="font-medium text-gray-900 dark:text-gray-100">{{ row.group.name }}</p>
-              <p class="mt-1 text-xs text-gray-500">{{ row.group.site || row.group.provider || '—' }} · {{ t('accountOps.groupMemberCount', { count: row.accounts.length }) }}</p>
-              <p class="mt-1 max-w-72 truncate text-xs text-gray-500" :title="row.memberNames">{{ row.memberNames || t('accountOps.noAccountGroups') }}</p>
-            </td>
-            <td class="px-4 py-4 text-xs text-gray-500">
-              <span v-if="row.balanceAccounts.length" class="block">{{ t('accountOps.balanceMetric') }}</span>
-              <span v-if="row.quotaAccounts.length" class="mt-1 block">{{ t('accountOps.quotaMetric') }}</span>
-              <span v-if="!row.balanceAccounts.length && !row.quotaAccounts.length">—</span>
-              <span v-if="row.quotaWindow" class="mt-1 block">{{ row.quotaWindow }}</span>
-            </td>
-            <td class="px-4 py-4">
-              <p v-if="row.balanceValue" class="font-mono text-xs">{{ row.balanceValue }}</p>
-              <p v-if="row.quotaValue" class="mt-1 font-mono text-xs">{{ row.quotaValue }}</p>
-              <span class="mt-1 inline-block text-xs" :class="row.state === 'warning' ? 'text-amber-700 dark:text-amber-400' : row.state === 'normal' ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-500'">{{ t(`accountOps.ruleStates.${row.state}`) }}</span>
-            </td>
-            <td class="px-4 py-4">
-              <template v-if="row.balanceRule || row.quotaRule">
-                <p v-if="row.balanceRule" class="text-xs">≤ {{ row.balanceRule.threshold.toFixed(2) }} {{ row.balanceRule.unit }}</p>
-                <p v-if="row.quotaRule" class="mt-1 text-xs">≥ {{ row.quotaRule.threshold_percent }}%</p>
-                <p class="mt-1 text-xs text-gray-500">{{ policy(row) }}</p>
-              </template>
-              <span v-else class="text-xs text-gray-400">{{ t('accountOps.ruleStates.unconfigured') }}</span>
-            </td>
-            <td class="px-5 py-4">
-              <div class="flex items-center justify-end gap-4">
-                <label v-if="row.balanceRule || row.quotaRule" class="flex items-center gap-1.5 text-xs text-gray-500">
-                  <input type="checkbox" :checked="row.balanceRule?.enabled ?? row.quotaRule?.enabled" :disabled="busy" :aria-label="`${row.group.name} ${t('accountOps.ruleEnabled')}`" @change="emit('toggle', row.group, row.accounts, ($event.target as HTMLInputElement).checked)" />
-                  {{ t('accountOps.channelEnabled') }}
-                </label>
-                <button type="button" class="text-sm text-primary-600 hover:underline" :data-testid="`edit-rule-${row.group.id}`" @click="editRow(row)">{{ t('common.edit') }}</button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="min-w-[820px] text-sm">
+        <div class="rule-grid rounded-lg border border-default bg-elevated px-1 py-2 text-xs font-medium text-muted">
+          <div class="flex items-center pl-3">
+            <UCheckbox
+              data-testid="select-visible-groups"
+              :aria-label="t('accountOps.selectVisibleGroups')"
+              :model-value="allVisibleSelected ? true : selectedGroups.length > 0 ? 'indeterminate' : false"
+              :disabled="selectionUnavailable || !filtered.length"
+              @update:model-value="selectVisible($event === true)"
+            />
+          </div>
+          <div class="px-3">{{ t('accountOps.accountGroup') }}</div>
+          <div class="px-4">{{ t('accountOps.metric') }}</div>
+          <div class="px-4">{{ t('accountOps.currentValue') }}</div>
+          <div class="px-4">{{ t('accountOps.ruleSummary') }}</div>
+          <div class="px-4 text-right">{{ t('common.actions') }}</div>
+        </div>
+        <div
+          v-for="row in filtered"
+          :key="row.group.id"
+          class="rule-grid border-b border-default px-1 py-3 last:border-b-0"
+          :data-testid="`rule-row-${row.group.id}`"
+        >
+          <div class="flex items-start pl-3 pt-0.5">
+            <UCheckbox
+              :data-testid="`select-group-${row.group.id}`"
+              :aria-label="t('accountOps.selectGroup', { name: row.group.name })"
+              :model-value="selectedIds.has(row.group.id)"
+              :disabled="selectionUnavailable"
+              @update:model-value="selectGroup(row.group.id, $event === true)"
+            />
+          </div>
+          <div class="min-w-0 px-3">
+            <p class="font-medium text-highlighted">{{ row.group.name }}</p>
+            <p class="mt-1 text-xs text-muted">{{ row.group.site || row.group.provider || '—' }} · {{ t('accountOps.groupMemberCount', { count: row.accounts.length }) }}</p>
+            <p class="mt-1 max-w-72 truncate text-xs text-muted" :title="row.memberNames">{{ row.memberNames || t('accountOps.noAccountGroups') }}</p>
+          </div>
+          <div class="px-4 text-xs text-muted">
+            <span v-if="row.balanceAccounts.length" class="block">{{ t('accountOps.balanceMetric') }}</span>
+            <span v-if="row.quotaAccounts.length" class="mt-1 block">{{ t('accountOps.quotaMetric') }}</span>
+            <span v-if="!row.balanceAccounts.length && !row.quotaAccounts.length">—</span>
+            <span v-if="row.quotaWindow" class="mt-1 block">{{ row.quotaWindow }}</span>
+          </div>
+          <div class="px-4">
+            <p v-if="row.balanceValue" class="font-mono text-xs text-default">{{ row.balanceValue }}</p>
+            <p v-if="row.quotaValue" class="mt-1 font-mono text-xs text-default">{{ row.quotaValue }}</p>
+            <UBadge class="mt-1" :color="row.state === 'warning' ? 'warning' : row.state === 'normal' ? 'success' : 'neutral'" variant="subtle" size="sm">
+              {{ t(`accountOps.ruleStates.${row.state}`) }}
+            </UBadge>
+          </div>
+          <div class="px-4">
+            <template v-if="row.balanceRule || row.quotaRule">
+              <p v-if="row.balanceRule" class="text-xs text-default">≤ {{ row.balanceRule.threshold.toFixed(2) }} {{ row.balanceRule.unit }}</p>
+              <p v-if="row.quotaRule" class="mt-1 text-xs text-default">≥ {{ row.quotaRule.threshold_percent }}%</p>
+              <p class="mt-1 text-xs text-muted">{{ policy(row) }}</p>
+            </template>
+            <span v-else class="text-xs text-dimmed">{{ t('accountOps.ruleStates.unconfigured') }}</span>
+          </div>
+          <div class="px-4">
+            <div class="flex items-center justify-end gap-2">
+              <USwitch
+                v-if="row.balanceRule || row.quotaRule"
+                size="sm"
+                :model-value="(row.balanceRule?.enabled ?? row.quotaRule?.enabled) === true"
+                :disabled="busy"
+                :aria-label="`${row.group.name} ${t('accountOps.ruleEnabled')}`"
+                :title="t('accountOps.channelEnabled')"
+                @update:model-value="emit('toggle', row.group, row.accounts, $event === true)"
+              />
+              <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-pencil" :data-testid="`edit-rule-${row.group.id}`" :label="t('common.edit')" @click="editRow(row)" />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-    <p v-if="loading" role="status" class="p-8 text-center text-sm text-gray-500">{{ t('common.loading') }}</p>
-    <p v-else-if="!filtered.length && !error" class="p-8 text-center text-sm text-gray-500">{{ t('accountOps.noThresholdAccounts') }}</p>
+    <p v-if="loading" role="status" class="p-8 text-center text-sm text-muted">{{ t('common.loading') }}</p>
+    <p v-else-if="!filtered.length && !error" class="p-8 text-center text-sm text-muted">{{ t('accountOps.noThresholdAccounts') }}</p>
   </section>
 </template>
 
@@ -122,6 +135,13 @@ const emit = defineEmits<{ (event: 'batch-edit', accounts: AccountOpsThresholdAc
 const { t } = useI18n({ useScope: 'local', messages: accountOpsMessages })
 const search = ref(''), type = ref('all'), state = ref('all'), selectedIds = ref(new Set<string>())
 const states = ['warning', 'normal', 'unknown', 'unconfigured', 'disabled']
+const typeItems = computed(() => [
+  { value: 'all', label: t('accountOps.allAccounts') },
+  { value: 'apikey', label: 'API Key' },
+  { value: 'oauth', label: 'OAuth' },
+  { value: 'mixed', label: 'API Key + OAuth' }
+])
+const stateItems = computed(() => [{ value: 'all', label: t('accountOps.allStates') }, ...states.map(value => ({ value, label: t(`accountOps.ruleStates.${value}`) }))])
 const accountByID = computed(() => new Map(props.accounts.map(account => [account.account_id, account])))
 const groups = computed(() => {
   const result = props.groups.filter(group => group.mode === 'manual').map(group => ({ ...group, account_ids: Array.isArray(group.account_ids) ? [...group.account_ids] : [] }))
@@ -198,3 +218,12 @@ function editRow(row: GroupRow) {
 function editBatch() { if (!selectionUnavailable.value && selectedAccounts.value.length) emit('batch-edit', selectedAccounts.value) }
 defineExpose({ clearSelection })
 </script>
+
+<style scoped>
+/* One grid for the header row and every rule row, so the columns line up like a table. */
+.rule-grid {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(12rem, 1.6fr) minmax(6rem, 0.7fr) minmax(8rem, 0.9fr) minmax(9rem, 1fr) minmax(9rem, auto);
+  align-items: start;
+}
+</style>

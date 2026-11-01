@@ -24,10 +24,10 @@ describe('per-account transition policy', () => {
   it('defaults both notices on and can save a recovery-only amount rule', async () => {
     vi.mocked(saveAccountOpsRule).mockResolvedValue({ enabled: false, recipient: '', balance_low: true, weekly_quota: true, cooldown_minutes: 60 })
     const wrapper = create()
-    expect((wrapper.get('[data-testid="rule-notify-alert"]').element as HTMLInputElement).checked).toBe(true)
-    expect((wrapper.get('[data-testid="rule-notify-recovery"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.get('[data-testid="rule-notify-alert"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="rule-notify-recovery"]').attributes('aria-checked')).toBe('true')
     await wrapper.get('[data-testid="rule-threshold"]').setValue('5')
-    await wrapper.get('[data-testid="rule-notify-alert"]').setValue(false)
+    await wrapper.get('[data-testid="rule-notify-alert"]').trigger('click')
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(saveAccountOpsRule).toHaveBeenCalledWith(1, { metric: 'balance', enabled: true, threshold: 5, unit: 'USD', notify_alert: false, notify_recovery: true })
     expect(wrapper.emitted('saved')).toHaveLength(1)

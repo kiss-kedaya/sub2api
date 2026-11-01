@@ -2,28 +2,27 @@
   <BaseDialog :show="show" :title="t(config.recipient ? 'accountOps.editEmail' : 'accountOps.addEmail')" width="normal" @close="close">
     <form id="account-ops-email-form" class="space-y-4" @submit.prevent="save">
       <fieldset :disabled="busy" class="space-y-4">
-        <label class="block space-y-2 text-sm" for="account-ops-email-name">
-          <span>{{ t('accountOps.channelName') }}</span>
-          <input id="account-ops-email-name" v-model.trim="name" type="text" maxlength="80" autocomplete="off" :placeholder="t('accountOps.channelNamePlaceholder')" class="input w-full" />
-          <span class="block text-xs text-gray-500">{{ t('accountOps.channelNameHint') }}</span>
-        </label>
-        <label class="block space-y-2 text-sm" for="account-ops-email">
-          <span>{{ t('accountOps.recipient') }}</span>
-          <input id="account-ops-email" v-model.trim="recipient" type="email" maxlength="254" required autocomplete="email" placeholder="ops@example.com" class="input w-full" />
-        </label>
-        <p class="text-xs leading-5 text-gray-500">{{ t('accountOps.recipientHint') }}</p>
-        <div v-if="recipient" class="flex items-center justify-between gap-2 text-xs text-gray-500">
+        <UFormField :label="t('accountOps.channelName')" :help="t('accountOps.channelNameHint')">
+          <UInput id="account-ops-email-name" v-model.trim="name" maxlength="80" autocomplete="off" :placeholder="t('accountOps.channelNamePlaceholder')" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('accountOps.recipient')" :help="t('accountOps.recipientHint')" required>
+          <UInput id="account-ops-email" v-model.trim="recipient" type="email" maxlength="254" required autocomplete="email" placeholder="ops@example.com" class="w-full" />
+        </UFormField>
+        <div v-if="recipient" class="flex items-center justify-between gap-2 text-xs text-muted">
           <span>{{ t(smtpConfigured ? 'accountOps.smtpReady' : 'accountOps.smtpMissing') }}</span>
-          <a href="/admin/settings" class="text-primary-600">{{ t('accountOps.mailSettings') }}</a>
+          <a href="/admin/settings" class="text-primary hover:underline">{{ t('accountOps.mailSettings') }}</a>
         </div>
       </fieldset>
     </form>
     <template #footer>
-      <button type="button" class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
-      <button type="submit" form="account-ops-email-form" :disabled="busy" class="btn btn-primary">{{ t(busy ? 'common.loading' : 'accountOps.saveChannel') }}</button>
+      <div class="flex justify-end gap-2">
+        <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="close" />
+        <UButton type="submit" form="account-ops-email-form" :disabled="busy" :label="t(busy ? 'common.loading' : 'accountOps.saveChannel')" />
+      </div>
     </template>
   </BaseDialog>
 </template>
+
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

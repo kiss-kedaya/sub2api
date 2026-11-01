@@ -1,48 +1,87 @@
 <template>
-  <section class="space-y-3">
-    <button v-if="!single" type="button" class="text-xs text-primary-600 disabled:opacity-50" :disabled="modelValue.length >= 5 || !encryptionConfigured" data-testid="account-ops-add-webhook" @click="add">{{ t('accountOps.addRobot') }}</button>
-    <p class="text-xs text-gray-500">{{ t('accountOps.robotHint') }}</p>
-    <p v-if="!encryptionConfigured" role="alert" class="text-xs text-amber-700">{{ t('accountOps.encryptionMissing') }}</p>
+  <section class="space-y-4">
+    <UButton v-if="!single" variant="link" size="xs" icon="i-lucide-plus" class="p-0" :disabled="modelValue.length >= 5 || !encryptionConfigured" data-testid="account-ops-add-webhook" :label="t('accountOps.addRobot')" @click="add" />
+    <p class="text-xs text-muted">{{ t('accountOps.robotHint') }}</p>
+    <p v-if="!encryptionConfigured" role="alert" class="text-xs text-warning">{{ t('accountOps.encryptionMissing') }}</p>
     <div v-for="hook in modelValue" :key="hook.id" class="space-y-4">
-      <label class="block space-y-1.5 text-sm">
-        <span>{{ t('accountOps.channelName') }}</span>
-        <input :value="hook.name ?? ''" type="text" maxlength="80" autocomplete="off" class="input w-full" :placeholder="t('accountOps.channelNamePlaceholder')" :data-testid="`account-ops-webhook-name-${hook.id}`" @input="patch(hook.id, { name: ($event.target as HTMLInputElement).value })" />
-        <span class="block text-xs text-gray-500">{{ t('accountOps.channelNameHint') }}</span>
-      </label>
+      <UFormField :label="t('accountOps.channelName')" :help="t('accountOps.channelNameHint')">
+        <UInput
+          :model-value="hook.name ?? ''"
+          maxlength="80"
+          autocomplete="off"
+          class="w-full"
+          :placeholder="t('accountOps.channelNamePlaceholder')"
+          :data-testid="`account-ops-webhook-name-${hook.id}`"
+          @update:model-value="patch(hook.id, { name: String($event ?? '') })"
+        />
+      </UFormField>
       <div class="flex items-center justify-between gap-2">
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" :checked="hook.enabled" :data-testid="`account-ops-webhook-enabled-${hook.id}`" @change="patch(hook.id, { enabled: ($event.target as HTMLInputElement).checked })" />
-          {{ t('accountOps.channelEnabled') }}
-        </label>
-        <button v-if="!single" type="button" class="text-xs text-red-600" :aria-label="t('accountOps.removeRobot')" @click="remove(hook.id)">{{ t('common.delete') }}</button>
+        <UCheckbox
+          :model-value="hook.enabled"
+          :label="t('accountOps.channelEnabled')"
+          :data-testid="`account-ops-webhook-enabled-${hook.id}`"
+          @update:model-value="patch(hook.id, { enabled: $event === true })"
+        />
+        <UButton v-if="!single" color="error" variant="ghost" size="xs" :aria-label="t('accountOps.removeRobot')" :label="t('common.delete')" @click="remove(hook.id)" />
       </div>
-      <label class="block space-y-1.5 text-sm">
-        <span>{{ t('accountOps.webhookUrl') }}</span>
-        <input v-model.trim="inputs[hook.id]!.url" type="password" autocomplete="new-password" spellcheck="false" class="input w-full" :disabled="!encryptionConfigured" :placeholder="hook.url_configured ? t('accountOps.retainCredential') : t('accountOps.webhookPlaceholder')" :data-testid="`account-ops-webhook-url-${hook.id}`" />
-      </label>
-      <p v-if="inputs[hook.id]!.url || hook.url_configured" class="text-xs text-gray-500">{{ t('accountOps.detectedWebhook', { provider: t(`accountOps.providers.${detectedProvider(hook)}`) }) }}</p>
-      <label v-if="supportsSigning(hook)" class="block space-y-1.5 text-sm">
-        <span>{{ t('accountOps.signingSecret') }}</span>
-        <input v-model="inputs[hook.id]!.secret" type="password" autocomplete="new-password" spellcheck="false" class="input w-full" :disabled="!encryptionConfigured || inputs[hook.id]!.clearSecret" :placeholder="hook.secret_configured && !inputs[hook.id]!.url ? t('accountOps.retainCredential') : t('accountOps.optionalSecret')" :data-testid="`account-ops-webhook-secret-${hook.id}`" />
-      </label>
-      <label v-if="hook.secret_configured && supportsSigning(hook) && !inputs[hook.id]!.url" class="flex items-center gap-2 text-xs text-gray-500">
-        <input v-model="inputs[hook.id]!.clearSecret" type="checkbox" :data-testid="`account-ops-webhook-clear-secret-${hook.id}`" />{{ t('accountOps.clearSecret') }}
-      </label>
-      <details v-if="detectedProvider(hook) === 'custom'" class="rounded-lg bg-gray-50/80 p-3 dark:bg-dark-800/60" :open="!!hook.message_template">
-        <summary class="cursor-pointer text-sm font-medium">{{ t('accountOps.webhookTemplate') }}</summary>
-        <div class="mt-3 space-y-3">
-          <p class="text-xs leading-5 text-gray-500">{{ t('accountOps.webhookTemplateHint') }}</p>
-          <textarea v-model="inputs[hook.id]!.template" rows="5" maxlength="16384" spellcheck="false" class="input w-full font-mono text-xs" :aria-label="t('accountOps.webhookTemplate')" :placeholder="defaultTemplate" :data-testid="`account-ops-webhook-template-${hook.id}`" />
-          <p class="wrap-break-word font-mono text-xs text-gray-500">{{ templateVariables }}</p>
-        </div>
-      </details>
-      <div class="flex items-center justify-between gap-2 text-xs text-gray-500">
+      <UFormField :label="t('accountOps.webhookUrl')">
+        <UInput
+          v-model.trim="inputs[hook.id]!.url"
+          type="password"
+          autocomplete="new-password"
+          spellcheck="false"
+          class="w-full"
+          :disabled="!encryptionConfigured"
+          :placeholder="hook.url_configured ? t('accountOps.retainCredential') : t('accountOps.webhookPlaceholder')"
+          :data-testid="`account-ops-webhook-url-${hook.id}`"
+        />
+      </UFormField>
+      <p v-if="inputs[hook.id]!.url || hook.url_configured" class="text-xs text-muted">{{ t('accountOps.detectedWebhook', { provider: t(`accountOps.providers.${detectedProvider(hook)}`) }) }}</p>
+      <UFormField v-if="supportsSigning(hook)" :label="t('accountOps.signingSecret')">
+        <UInput
+          v-model="inputs[hook.id]!.secret"
+          type="password"
+          autocomplete="new-password"
+          spellcheck="false"
+          class="w-full"
+          :disabled="!encryptionConfigured || inputs[hook.id]!.clearSecret"
+          :placeholder="hook.secret_configured && !inputs[hook.id]!.url ? t('accountOps.retainCredential') : t('accountOps.optionalSecret')"
+          :data-testid="`account-ops-webhook-secret-${hook.id}`"
+        />
+      </UFormField>
+      <UCheckbox
+        v-if="hook.secret_configured && supportsSigning(hook) && !inputs[hook.id]!.url"
+        v-model="inputs[hook.id]!.clearSecret"
+        :label="t('accountOps.clearSecret')"
+        :data-testid="`account-ops-webhook-clear-secret-${hook.id}`"
+      />
+      <UCollapsible v-if="detectedProvider(hook) === 'custom'" :default-open="!!hook.message_template" :unmount-on-hide="false">
+        <UButton color="neutral" variant="link" class="p-0 font-medium" trailing-icon="i-lucide-chevron-down" :label="t('accountOps.webhookTemplate')" />
+        <template #content>
+          <div class="mt-3 space-y-3">
+            <p class="text-xs leading-5 text-muted">{{ t('accountOps.webhookTemplateHint') }}</p>
+            <UTextarea
+              v-model="inputs[hook.id]!.template"
+              :rows="5"
+              maxlength="16384"
+              spellcheck="false"
+              class="w-full font-mono"
+              :aria-label="t('accountOps.webhookTemplate')"
+              :placeholder="defaultTemplate"
+              :data-testid="`account-ops-webhook-template-${hook.id}`"
+            />
+            <p class="wrap-break-word font-mono text-xs text-muted">{{ templateVariables }}</p>
+          </div>
+        </template>
+      </UCollapsible>
+      <div class="flex items-center justify-between gap-2 text-xs text-muted">
         <span>{{ t(hook.url_configured ? 'accountOps.credentialSaved' : 'accountOps.saveBeforeTest') }}</span>
-        <button type="button" class="text-primary-600 disabled:opacity-40" :disabled="!canTest(hook)" :data-testid="`account-ops-webhook-test-${hook.id}`" @click="emit('test', hook.id)">{{ t(testingId === hook.id ? 'common.loading' : 'accountOps.testRobot') }}</button>
+        <UButton color="neutral" variant="outline" size="xs" :disabled="!canTest(hook)" :data-testid="`account-ops-webhook-test-${hook.id}`" :label="t(testingId === hook.id ? 'common.loading' : 'accountOps.testRobot')" @click="emit('test', hook.id)" />
       </div>
     </div>
   </section>
 </template>
+
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
