@@ -87,7 +87,8 @@ const totalLabel = computed(() => {
 .signal-trend { min-width: 0; max-width: 100%; overflow: hidden; }
 .signal-trend :deep(canvas) { max-width: 100%; }
 /* The trend component brings its own card and title; inside this card it is just the chart. */
-.signal-trend :deep(.card) { padding: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; transform: none !important; }
+/* `.card` is a layered utility, so this unlayered rule wins without !important. */
+.signal-trend :deep(.card) { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .signal-trend :deep(.card > h3) { display: none; }
 .signal-trend :deep(.h-48) { height: 280px; }
 @media (max-width: 639px) {

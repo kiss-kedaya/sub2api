@@ -5,8 +5,7 @@
         <template #title>{{ t('dashboard.balance') }} <span class="signal-unit">USD</span></template>
         <template #value>$<AnimatedNumber :value="balance" :format="formatBalance" /></template>
         <template #sub>
-          {{ t('dashboard.recentTotal') }} / {{ t('dashboard.actual') }} <span class="text-highlighted">${{ formatCost(stats?.total_actual_cost || 0) }}</span>
-          · {{ t('dashboard.standard') }} ${{ formatCost(stats?.total_cost || 0) }}
+          <div class="flex flex-wrap gap-x-3"><span>{{ t('dashboard.recentTotal') }} / {{ t('dashboard.actual') }} <span class="text-highlighted">${{ formatCost(stats?.total_actual_cost || 0) }}</span></span> <span>{{ t('dashboard.standard') }} ${{ formatCost(stats?.total_cost || 0) }}</span></div>
         </template>
       </DashboardStat>
       <DashboardStat icon="i-lucide-circle-dollar-sign" :title="t('dashboard.todayCost')" class="signal-metric signal-metric--cost" :class="corner('cost')">
@@ -16,8 +15,7 @@
       <DashboardStat icon="i-lucide-coins" :title="t('dashboard.todayTokens')" class="signal-metric signal-metric--tokens" :class="corner('tokens')">
         <template #value><AnimatedNumber :value="stats?.today_tokens || 0" :format="formatTokens" /></template>
         <template #sub>
-          {{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} / {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }}
-          · {{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}
+          <div class="flex flex-wrap gap-x-3"><span>{{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }}</span> <span>{{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }}</span> <span>{{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}</span></div>
         </template>
       </DashboardStat>
       <DashboardStat icon="i-lucide-chart-column" :title="t('dashboard.todayRequests')" class="signal-metric" :class="corner('requests')">

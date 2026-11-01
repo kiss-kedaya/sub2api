@@ -53,17 +53,13 @@
 
           <DashboardStat icon="i-lucide-box" :title="t('admin.dashboard.todayTokens')" :value="formatTokens(stats.today_tokens)" :class="corner(4)">
             <template #sub>
-              {{ t('admin.dashboard.actual') }} <span class="text-highlighted">${{ formatCost(stats.today_actual_cost) }}</span>
-              · {{ t('admin.dashboard.accountCost') }} <span class="text-highlighted">${{ formatCost(stats.today_account_cost) }}</span>
-              · {{ t('admin.dashboard.standard') }} ${{ formatCost(stats.today_cost) }}
+              <div class="flex flex-wrap gap-x-3"><span>{{ t('admin.dashboard.actual') }} <span class="text-highlighted">${{ formatCost(stats.today_actual_cost) }}</span></span> <span>{{ t('admin.dashboard.accountCost') }} <span class="text-highlighted">${{ formatCost(stats.today_account_cost) }}</span></span> <span>{{ t('admin.dashboard.standard') }} ${{ formatCost(stats.today_cost) }}</span></div>
             </template>
           </DashboardStat>
 
           <DashboardStat icon="i-lucide-database" :title="t('admin.dashboard.totalTokens')" :value="formatTokens(stats.total_tokens)" :class="corner(5)">
             <template #sub>
-              {{ t('admin.dashboard.actual') }} <span class="text-highlighted">${{ formatCost(stats.total_actual_cost) }}</span>
-              · {{ t('admin.dashboard.accountCost') }} <span class="text-highlighted">${{ formatCost(stats.total_account_cost) }}</span>
-              · {{ t('admin.dashboard.standard') }} ${{ formatCost(stats.total_cost) }}
+              <div class="flex flex-wrap gap-x-3"><span>{{ t('admin.dashboard.actual') }} <span class="text-highlighted">${{ formatCost(stats.total_actual_cost) }}</span></span> <span>{{ t('admin.dashboard.accountCost') }} <span class="text-highlighted">${{ formatCost(stats.total_account_cost) }}</span></span> <span>{{ t('admin.dashboard.standard') }} ${{ formatCost(stats.total_cost) }}</span></div>
             </template>
           </DashboardStat>
 
@@ -567,17 +563,15 @@ onMounted(() => {
 
 <style scoped>
 /* The shared trend and model components bring their own `.card`; inside these Nuxt UI cards
-   they are only content. !important beats the console's global `.card` rules. */
-.admin-trend-card :deep(.card),
-.admin-model-card :deep(.card) {
-  border: 0 !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  transform: none !important;
+   they are only content. The doubled class outranks the admin skin's `.console-signal.signal-admin .card`. */
+.admin-trend-card.admin-trend-card :deep(.card),
+.admin-model-card.admin-model-card :deep(.card) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.admin-trend-card :deep(.card) { padding: 0 !important; }
+.admin-trend-card.admin-trend-card :deep(.card) { padding: 0; }
 .admin-trend-card :deep(.card > h3) { display: none; }
 .admin-trend-card :deep(.h-48) { height: 280px; }
 
