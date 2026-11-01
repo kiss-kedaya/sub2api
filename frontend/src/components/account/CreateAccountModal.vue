@@ -12,26 +12,26 @@
           <div
             :class="[
               'flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold',
-              step >= 1 ? 'bg-primary-500 text-white' : 'bg-gray-200 text-gray-500 dark:bg-dark-600'
+              step >= 1 ? 'bg-primary text-inverted' : 'bg-accented text-muted'
             ]"
           >
             1
           </div>
-          <span class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">{{
+          <span class="ml-2 text-sm font-medium text-toned">{{
             t('admin.accounts.oauth.authMethod')
           }}</span>
         </div>
-        <div class="h-0.5 w-8 bg-gray-300 dark:bg-dark-600" />
+        <div class="h-0.5 w-8 bg-accented" />
         <div class="flex items-center">
           <div
             :class="[
               'flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold',
-              step >= 2 ? 'bg-primary-500 text-white' : 'bg-gray-200 text-gray-500 dark:bg-dark-600'
+              step >= 2 ? 'bg-primary text-inverted' : 'bg-accented text-muted'
             ]"
           >
             2
           </div>
-          <span class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">{{
+          <span class="ml-2 text-sm font-medium text-toned">{{
             oauthStepTitle
           }}</span>
         </div>
@@ -43,10 +43,281 @@
       v-if="step === 1"
       id="create-account-form"
       @submit.prevent="handleSubmit"
-      class="space-y-5"
+      class="space-y-6"
     >
+      <h4 class="text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.platform') }}</h4>
+      <!-- Platform Selection - Segmented Control Style -->
       <div>
-        <label class="input-label">{{ t('admin.accounts.accountName') }}</label>
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.platform') }}</label>
+        <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5" data-tour="account-form-platform">
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'anthropic'"
+            :aria-pressed="form.platform === 'anthropic'"
+            title="Anthropic"
+            :ui="choiceCardUi"
+            @click="form.platform = 'anthropic'"
+          >
+            <template #leading><PlatformIcon platform="anthropic" size="lg" /></template>
+          </UPageCard>
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'openai'"
+            :aria-pressed="form.platform === 'openai'"
+            title="OpenAI"
+            :ui="choiceCardUi"
+            @click="form.platform = 'openai'"
+          >
+            <template #leading><PlatformIcon platform="openai" size="lg" /></template>
+          </UPageCard>
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'gemini'"
+            :aria-pressed="form.platform === 'gemini'"
+            title="Gemini"
+            :ui="choiceCardUi"
+            @click="form.platform = 'gemini'"
+          >
+            <template #leading><PlatformIcon platform="gemini" size="lg" /></template>
+          </UPageCard>
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'antigravity'"
+            :aria-pressed="form.platform === 'antigravity'"
+            title="Antigravity"
+            :ui="choiceCardUi"
+            @click="form.platform = 'antigravity'"
+          >
+            <template #leading><PlatformIcon platform="antigravity" size="lg" /></template>
+          </UPageCard>
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'grok'"
+            :aria-pressed="form.platform === 'grok'"
+            title="Grok"
+            :ui="choiceCardUi"
+            @click="form.platform = 'grok'"
+          >
+            <template #leading><PlatformIcon platform="grok" size="lg" /></template>
+          </UPageCard>
+        </div>
+        <!-- CN providers row: Kimi / Zhipu GLM / DeepSeek -->
+        <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'kimi'"
+            :aria-pressed="form.platform === 'kimi'"
+            title="Kimi"
+            :ui="choiceCardUi"
+            @click="selectCNPlatform('kimi')"
+          >
+            <template #leading><PlatformIcon platform="kimi" size="lg" /></template>
+          </UPageCard>
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'zhipu'"
+            :aria-pressed="form.platform === 'zhipu'"
+            title="Zhipu GLM"
+            :ui="choiceCardUi"
+            @click="selectCNPlatform('zhipu')"
+          >
+            <template #leading><PlatformIcon platform="zhipu" size="lg" /></template>
+          </UPageCard>
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'deepseek'"
+            :aria-pressed="form.platform === 'deepseek'"
+            title="DeepSeek"
+            :ui="choiceCardUi"
+            @click="selectCNPlatform('deepseek')"
+          >
+            <template #leading><PlatformIcon platform="deepseek" size="lg" /></template>
+          </UPageCard>
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'minimax'"
+            :aria-pressed="form.platform === 'minimax'"
+            title="MiniMax"
+            :ui="choiceCardUi"
+            @click="selectCNPlatform('minimax')"
+          >
+            <template #leading><PlatformIcon platform="minimax" size="lg" /></template>
+          </UPageCard>
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="form.platform === 'typesafe'"
+            :aria-pressed="form.platform === 'typesafe'"
+            icon="i-lucide-shield-check"
+            title="TypeSafe / Jev"
+            :ui="choiceCardUi"
+            @click="selectTypeSafePlatform()"
+          />
+        </div>
+      </div>
+
+      <!-- Account Type Selection (Anthropic) -->
+      <div v-if="form.platform === 'anthropic'">
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4" data-tour="account-form-type">
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'oauth-based'"
+            :aria-pressed="accountCategory === 'oauth-based'"
+            icon="i-lucide-sparkles"
+            :title="t('admin.accounts.claudeCode')"
+            :description="t('admin.accounts.oauthSetupToken')"
+            :ui="choiceCardUi"
+            @click="accountCategory = 'oauth-based'"
+          />
+
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'apikey'"
+            :aria-pressed="accountCategory === 'apikey'"
+            icon="i-lucide-key"
+            :title="t('admin.accounts.claudeConsole')"
+            :description="t('admin.accounts.apiKey')"
+            :ui="choiceCardUi"
+            @click="accountCategory = 'apikey'"
+          />
+
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'bedrock'"
+            :aria-pressed="accountCategory === 'bedrock'"
+            icon="i-lucide-cloud"
+            :title="t('admin.accounts.bedrockLabel')"
+            :description="t('admin.accounts.bedrockDesc')"
+            :ui="choiceCardUi"
+            @click="accountCategory = 'bedrock'"
+          />
+
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'service_account'"
+            :aria-pressed="accountCategory === 'service_account'"
+            icon="i-lucide-cloud"
+            :title="'Vertex'"
+            :description="'Service Account'"
+            :ui="choiceCardUi"
+            @click="accountCategory = 'service_account'"
+          />
+
+        </div>
+
+        <UAlert v-if="accountCategory === 'service_account'" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.vertexAnthropicHint')" class="mt-3" />
+      </div>
+
+      <!-- Account Type Selection (OpenAI) -->
+      <div v-if="form.platform === 'openai'">
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3" data-tour="account-form-type">
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'oauth-based'"
+            :aria-pressed="accountCategory === 'oauth-based'"
+            icon="i-lucide-key"
+            :title="'OAuth'"
+            :description="t('admin.accounts.types.chatgptOauth')"
+            :ui="choiceCardUi"
+            @click="accountCategory = 'oauth-based'"
+          />
+
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'apikey'"
+            :aria-pressed="accountCategory === 'apikey'"
+            icon="i-lucide-key"
+            :title="'API Key'"
+            :description="t('admin.accounts.types.responsesApi')"
+            :ui="choiceCardUi"
+            @click="accountCategory = 'apikey'"
+          />
+
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'cloudflare'"
+            :aria-pressed="accountCategory === 'cloudflare'"
+            icon="i-lucide-cloud"
+            :title="'Cloudflare'"
+            :description="t('admin.accounts.types.cloudflareWorkers')"
+            :ui="choiceCardUi"
+            @click="accountCategory = 'cloudflare'"
+          />
+
+        </div>
+      </div>
+
+      <!-- Account Type Selection (Grok) -->
+      <div v-if="form.platform === 'grok'">
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-type">
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'oauth-based'"
+            :aria-pressed="accountCategory === 'oauth-based'"
+            :title="'OAuth'"
+            :description="t('admin.accounts.types.grokOauth')"
+            :ui="choiceCardUi"
+            @click="accountCategory = 'oauth-based'"
+          >
+            <template #leading><PlatformIcon platform="grok" size="lg" /></template>
+          </UPageCard>
+
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="accountCategory === 'apikey'"
+            :aria-pressed="accountCategory === 'apikey'"
+            icon="i-lucide-key"
+            :title="'API Key'"
+            :description="t('admin.accounts.types.responsesApi')"
+            :ui="choiceCardUi"
+            data-testid="grok-account-type-api-key"
+            @click="accountCategory = 'apikey'"
+          />
+        </div>
+      </div>
+
+      <h4 class="text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.basic') }}</h4>
+      <UFormField :label="t('admin.accounts.accountName')">
         <UInput
           v-model="form.name"
           type="text"
@@ -55,554 +326,76 @@
           data-tour="account-form-name"
           class="w-full"
         />
-      </div>
-      <div>
-        <label class="input-label">{{ t('admin.accounts.notes') }}</label>
+      </UFormField>
+      <UFormField :label="t('admin.accounts.notes')" :help="t('admin.accounts.notesHint')">
         <UTextarea
           :rows="3"
           v-model="form.notes"
           :placeholder="t('admin.accounts.notesPlaceholder')"
           class="w-full"
         ></UTextarea>
-        <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
-      </div>
-
-      <!-- Platform Selection - Segmented Control Style -->
-      <div>
-        <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
-          <button
-            type="button"
-            @click="form.platform = 'anthropic'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'anthropic'
-                ? 'bg-white text-orange-600 shadow-xs dark:bg-dark-600 dark:text-orange-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <Icon name="sparkles" size="sm" />
-            Anthropic
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'openai'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'openai'
-                ? 'bg-white text-green-600 shadow-xs dark:bg-dark-600 dark:text-green-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <svg
-              class="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.5"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"
-              />
-            </svg>
-            OpenAI
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'gemini'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'gemini'
-                ? 'bg-white text-blue-600 shadow-xs dark:bg-dark-600 dark:text-blue-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <svg
-              class="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.5"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5L12 2z"
-              />
-            </svg>
-            Gemini
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'antigravity'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'antigravity'
-                ? 'bg-white text-purple-600 shadow-xs dark:bg-dark-600 dark:text-purple-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <Icon name="cloud" size="sm" />
-            Antigravity
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'grok'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'grok'
-                ? 'bg-white text-zinc-900 shadow-xs dark:bg-dark-600 dark:text-zinc-100'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <PlatformIcon platform="grok" size="sm" />
-            Grok
-          </button>
-        </div>
-        <!-- CN providers row: Kimi / Zhipu GLM / DeepSeek -->
-        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700">
-          <button
-            type="button"
-            @click="selectCNPlatform('kimi')"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'kimi'
-                ? 'bg-white text-pink-600 shadow-xs dark:bg-dark-600 dark:text-pink-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <PlatformIcon platform="kimi" size="sm" />
-            Kimi
-          </button>
-          <button
-            type="button"
-            @click="selectCNPlatform('zhipu')"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'zhipu'
-                ? 'bg-white text-indigo-600 shadow-xs dark:bg-dark-600 dark:text-indigo-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <PlatformIcon platform="zhipu" size="sm" />
-            Zhipu GLM
-          </button>
-          <button
-            type="button"
-            @click="selectCNPlatform('deepseek')"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'deepseek'
-                ? 'bg-white text-teal-600 shadow-xs dark:bg-dark-600 dark:text-teal-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <PlatformIcon platform="deepseek" size="sm" />
-            DeepSeek
-          </button>
-          <button
-            type="button"
-            @click="selectCNPlatform('minimax')"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'minimax'
-                ? 'bg-white text-rose-600 shadow-xs dark:bg-dark-600 dark:text-rose-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <PlatformIcon platform="minimax" size="sm" />
-            MiniMax
-          </button>
-          <button
-            type="button"
-            @click="selectTypeSafePlatform()"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'typesafe'
-                ? 'bg-white text-sky-600 shadow-xs dark:bg-dark-600 dark:text-sky-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <PlatformIcon platform="typesafe" size="sm" />
-            TypeSafe / Jev
-          </button>
-        </div>
-      </div>
-
-      <!-- Account Type Selection (Anthropic) -->
-      <div v-if="form.platform === 'anthropic'">
-        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4" data-tour="account-form-type">
-          <button
-            type="button"
-            @click="accountCategory = 'oauth-based'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based'
-                ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
-                : 'border-gray-200 hover:border-orange-300 dark:border-dark-600 dark:hover:border-orange-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based'
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="sparkles" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{
-                t('admin.accounts.claudeCode')
-              }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{
-                t('admin.accounts.oauthSetupToken')
-              }}</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            @click="accountCategory = 'apikey'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'apikey'
-                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'apikey'
-                  ? 'bg-purple-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{
-                t('admin.accounts.claudeConsole')
-              }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{
-                t('admin.accounts.apiKey')
-              }}</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            @click="accountCategory = 'bedrock'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'bedrock'
-                ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
-                : 'border-gray-200 hover:border-amber-300 dark:border-dark-600 dark:hover:border-amber-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'bedrock'
-                  ? 'bg-amber-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="cloud" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{
-                t('admin.accounts.bedrockLabel')
-              }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{
-                t('admin.accounts.bedrockDesc')
-              }}</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            @click="accountCategory = 'service_account'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'service_account'
-                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
-                : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'service_account'
-                  ? 'bg-sky-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="cloud" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">Vertex</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">Service Account</span>
-            </div>
-          </button>
-
-        </div>
-
-        <div
-          v-if="accountCategory === 'service_account'"
-          class="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-800/40 dark:bg-sky-900/20 dark:text-sky-200"
-        >
-          <p>{{ t('admin.accounts.vertexAnthropicHint') }}</p>
-        </div>
-      </div>
-
-      <!-- Account Type Selection (OpenAI) -->
-      <div v-if="form.platform === 'openai'">
-        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3" data-tour="account-form-type">
-          <button
-            type="button"
-            @click="accountCategory = 'oauth-based'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based'
-                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based'
-                  ? 'bg-green-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.chatgptOauth') }}</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            @click="accountCategory = 'apikey'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'apikey'
-                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'apikey'
-                  ? 'bg-purple-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.responsesApi') }}</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            @click="accountCategory = 'cloudflare'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'cloudflare'
-                ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
-                : 'border-gray-200 hover:border-orange-300 dark:border-dark-600 dark:hover:border-orange-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'cloudflare'
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="cloud" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">Cloudflare</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.cloudflareWorkers') }}</span>
-            </div>
-          </button>
-
-        </div>
-      </div>
-
-      <!-- Account Type Selection (Grok) -->
-      <div v-if="form.platform === 'grok'">
-        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-type">
-          <button
-            type="button"
-            @click="accountCategory = 'oauth-based'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based'
-                ? 'border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30'
-                : 'border-gray-200 hover:border-zinc-400 dark:border-dark-600 dark:hover:border-zinc-600'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based'
-                  ? 'bg-zinc-900 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <PlatformIcon platform="grok" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.grokOauth') }}</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            data-testid="grok-account-type-api-key"
-            @click="accountCategory = 'apikey'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'apikey'
-                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'apikey'
-                  ? 'bg-purple-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.responsesApi') }}</span>
-            </div>
-          </button>
-        </div>
-      </div>
+      </UFormField>
 
       <!-- Account Mode Selection (Kimi / Zhipu / DeepSeek) -->
       <div v-if="isCNPlatform">
-        <label class="input-label">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-mode">
           <!-- Pay-as-you-go (token balance) -->
-          <button
+          <UPageCard
+            as="button"
             type="button"
+            variant="outline"
+            :highlight="accountMode === 'payg'"
+            :aria-pressed="accountMode === 'payg'"
+            icon="i-lucide-credit-card"
+            :title="t('admin.accounts.cnProviders.accountMode.payg')"
+            :description="t('admin.accounts.cnProviders.accountMode.paygDesc')"
+            :ui="choiceCardUi"
             @click="accountMode = 'payg'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountMode === 'payg'
-                ? cnAccentActiveClass
-                : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountMode === 'payg'
-                  ? cnAccentIconClass
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="creditCard" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.cnProviders.accountMode.payg') }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.cnProviders.accountMode.paygDesc') }}</span>
-            </div>
-          </button>
+          />
           <!-- Coding Plan (kimi / zhipu only — DeepSeek has no coding plan) -->
-          <button
-            v-if="form.platform !== 'deepseek'"
+          <UPageCard
+            as="button"
             type="button"
+            variant="outline"
+            :highlight="accountMode === 'coding'"
+            :aria-pressed="accountMode === 'coding'"
+            icon="i-lucide-zap"
+            :title="t('admin.accounts.cnProviders.accountMode.coding')"
+            :description="t('admin.accounts.cnProviders.accountMode.codingDesc')"
+            :ui="choiceCardUi"
+            v-if="form.platform !== 'deepseek'"
             @click="accountMode = 'coding'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountMode === 'coding'
-                ? cnAccentActiveClass
-                : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountMode === 'coding'
-                  ? cnAccentIconClass
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="bolt" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.cnProviders.accountMode.coding') }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.cnProviders.accountMode.codingDesc') }}</span>
-            </div>
-          </button>
+          />
         </div>
       </div>
 
       <!-- API Protocol Selection (Kimi / Zhipu / DeepSeek) -->
       <div v-if="isAdaptiveProtocolAccount" class="mt-4">
-        <label class="input-label">{{ t('admin.accounts.cnProviders.apiProtocol.title') }}</label>
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.cnProviders.apiProtocol.title') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <button
+          <UPageCard
+            as="button"
+            type="button"
+            variant="outline"
+            :highlight="apiProtocol === opt.value"
+            :aria-pressed="apiProtocol === opt.value"
+            :title="t(`admin.accounts.cnProviders.apiProtocol.${opt.labelKey}`)"
+            :description="t(`admin.accounts.cnProviders.apiProtocol.${opt.labelKey}Desc`)"
+            :ui="choiceCardUi"
             v-for="opt in cnProtocolOptions"
             :key="opt.value"
-            type="button"
             @click="apiProtocol = opt.value"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              apiProtocol === opt.value
-                ? cnAccentActiveClass
-                : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
-            ]"
           >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                apiProtocol === opt.value
-                  ? cnAccentIconClass
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon :name="opt.value === 'adaptive' ? 'swap' : opt.value === 'anthropic' ? 'sparkles' : opt.value === 'responses' ? 'terminal' : 'chat'" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t(`admin.accounts.cnProviders.apiProtocol.${opt.labelKey}`) }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t(`admin.accounts.cnProviders.apiProtocol.${opt.labelKey}Desc`) }}</span>
-            </div>
-          </button>
+            <template #leading><Icon :name="opt.value === 'adaptive' ? 'swap' : opt.value === 'anthropic' ? 'sparkles' : opt.value === 'responses' ? 'terminal' : 'chat'" size="sm" /></template>
+          </UPageCard>
         </div>
       </div>
 
       <!-- Zhipu 团队版 Coding Plan：组织/项目 ID（可选，填写后额度探测走团队版端点） -->
       <div v-if="form.platform === 'zhipu' && accountMode === 'coding'" class="mt-4">
         <div class="flex items-center">
-          <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.title') }}</label>
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.cnProviders.zhipuTeam.title') }}</label>
           <HelpTooltip trigger="click" width-class="w-80">
             <p class="mb-1 font-medium">{{ t('admin.accounts.cnProviders.zhipuTeam.help.title') }}</p>
             <ol class="list-decimal space-y-1 pl-4">
@@ -611,152 +404,85 @@
               <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step3') }}</li>
               <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step4') }}</li>
             </ol>
-            <p class="mt-2 break-all rounded-sm bg-black/20 p-1.5 font-mono text-[11px] leading-relaxed">
+            <p class="mt-2 break-all rounded-sm bg-inverted p-1.5 font-mono text-[11px] leading-relaxed">
               {{ t('admin.accounts.cnProviders.zhipuTeam.help.example') }}
             </p>
           </HelpTooltip>
         </div>
         <div class="mt-2 grid gap-4 sm:grid-cols-2">
-          <div>
-            <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.organization') }}</label>
+          <UFormField :label="t('admin.accounts.cnProviders.zhipuTeam.organization')">
             <UInput v-model="zhipuOrganization" type="text" :placeholder="t('admin.accounts.cnProviders.zhipuTeam.organizationPlaceholder')" class="w-full" />
-          </div>
-          <div>
-            <label class="input-label">{{ t('admin.accounts.cnProviders.zhipuTeam.project') }}</label>
+          </UFormField>
+          <UFormField :label="t('admin.accounts.cnProviders.zhipuTeam.project')">
             <UInput v-model="zhipuProject" type="text" :placeholder="t('admin.accounts.cnProviders.zhipuTeam.projectPlaceholder')" class="w-full" />
-          </div>
+          </UFormField>
         </div>
-        <p class="input-hint mt-2">{{ t('admin.accounts.cnProviders.zhipuTeam.hint') }}</p>
+        <p class="mt-1.5 text-xs text-muted mt-2">{{ t('admin.accounts.cnProviders.zhipuTeam.hint') }}</p>
       </div>
 
       <!-- Account Type Selection (Gemini) -->
       <div v-if="form.platform === 'gemini'">
         <div class="flex items-center justify-between">
-          <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-          <button
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.accountType') }}</label>
+          <UButton
+            color="primary"
+            variant="link"
+            size="xs"
+            icon="i-lucide-circle-help"
             type="button"
             @click="showGeminiHelpDialog = true"
-            class="flex items-center gap-1 rounded-sm px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
-          >
-            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
-            </svg>
-            {{ t('admin.accounts.gemini.helpButton') }}
-          </button>
+          >{{ t('admin.accounts.gemini.helpButton') }}</UButton>
         </div>
         <div class="mt-2 grid grid-cols-2 gap-3 lg:grid-cols-3" data-tour="account-form-type">
-          <button
+          <UPageCard
+            as="button"
             type="button"
+            variant="outline"
+            :highlight="accountCategory === 'oauth-based'"
+            :aria-pressed="accountCategory === 'oauth-based'"
+            icon="i-lucide-key"
+            :title="t('admin.accounts.gemini.accountType.oauthTitle')"
+            :description="t('admin.accounts.gemini.accountType.oauthDesc')"
+            :ui="choiceCardUi"
             @click="accountCategory = 'oauth-based'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based'
-                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                : 'border-gray-200 hover:border-blue-300 dark:border-dark-600 dark:hover:border-blue-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                {{ t('admin.accounts.gemini.accountType.oauthTitle') }}
-              </span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.gemini.accountType.oauthDesc') }}
-              </span>
-            </div>
-          </button>
+          />
 
-          <button
+          <UPageCard
+            as="button"
             type="button"
+            variant="outline"
+            :highlight="accountCategory === 'apikey'"
+            :aria-pressed="accountCategory === 'apikey'"
+            icon="i-lucide-key-round"
+            :title="t('admin.accounts.gemini.accountType.apiKeyTitle')"
+            :description="t('admin.accounts.gemini.accountType.apiKeyDesc')"
+            :ui="choiceCardUi"
             @click="accountCategory = 'apikey'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'apikey'
-                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'apikey'
-                  ? 'bg-purple-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <svg
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1721.75 8.25z"
-                />
-              </svg>
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                {{ t('admin.accounts.gemini.accountType.apiKeyTitle') }}
-              </span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.gemini.accountType.apiKeyDesc') }}
-              </span>
-            </div>
-          </button>
+          />
 
-          <button
+          <UPageCard
+            as="button"
             type="button"
+            variant="outline"
+            :highlight="accountCategory === 'service_account'"
+            :aria-pressed="accountCategory === 'service_account'"
+            icon="i-lucide-cloud"
+            :title="'Vertex'"
+            :description="'Service Account'"
+            :ui="choiceCardUi"
             @click="accountCategory = 'service_account'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'service_account'
-                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
-                : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'service_account'
-                  ? 'bg-sky-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="cloud" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                Vertex
-              </span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">
-                Service Account
-              </span>
-            </div>
-          </button>
+          />
         </div>
 
         <div
           v-if="accountCategory === 'apikey'"
-          class="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-800 dark:border-purple-800/40 dark:bg-purple-900/20 dark:text-purple-200"
+          class="mt-3 rounded-lg border border-default bg-elevated px-3 py-2 text-xs text-highlighted"
         >
           <p>{{ t('admin.accounts.gemini.accountType.apiKeyNote') }}</p>
           <div class="mt-2 flex flex-wrap gap-2">
             <a
               :href="geminiHelpLinks.apiKey"
-              class="font-medium text-blue-600 hover:underline dark:text-blue-400"
+              class="font-medium text-primary hover:underline"
               target="_blank"
               rel="noreferrer"
             >
@@ -765,131 +491,81 @@
           </div>
         </div>
 
-        <div
-          v-if="accountCategory === 'service_account'"
-          class="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-800/40 dark:bg-sky-900/20 dark:text-sky-200"
-        >
-          <p>{{ t('admin.accounts.vertexGeminiHint') }}</p>
-        </div>
+        <UAlert v-if="accountCategory === 'service_account'" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.vertexGeminiHint')" class="mt-3" />
 
         <!-- OAuth Type Selection (only show when oauth-based is selected) -->
         <div v-if="accountCategory === 'oauth-based'" class="mt-4">
-          <label class="input-label">{{ t('admin.accounts.oauth.gemini.oauthTypeLabel') }}</label>
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.oauth.gemini.oauthTypeLabel') }}</label>
           <div class="mt-2 grid grid-cols-2 gap-3">
             <!-- Google One OAuth -->
-            <button
+            <UPageCard
+              as="button"
               type="button"
+              variant="outline"
+              :highlight="geminiOAuthType === 'google_one'"
+              :aria-pressed="geminiOAuthType === 'google_one'"
+              icon="i-lucide-user"
+              :title="'Google One'"
+              :description="t('admin.accounts.gemini.oauthType.googleOneDesc')"
+              :ui="choiceCardUi"
               @click="handleSelectGeminiOAuthType('google_one')"
-              :class="[
-                'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-                geminiOAuthType === 'google_one'
-                  ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                  : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-              ]"
             >
-              <div
-                :class="[
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                  geminiOAuthType === 'google_one'
-                    ? 'bg-purple-500 text-white'
-                    : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-                ]"
-              >
-                <Icon name="user" size="sm" />
-              </div>
-              <div class="min-w-0">
-                <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                  Google One
-                </span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.oauthType.googleOneDesc') }}
-                </span>
-                <div class="mt-2 flex flex-wrap gap-1">
-                  <span
-                    class="rounded-sm bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
-                  >
+              <template #default><div class="ms-8 mt-2"><div class="mt-2 flex flex-wrap gap-1">
+                  <UBadge color="neutral" variant="subtle" size="sm">
                     {{ t('admin.accounts.gemini.oauthType.badges.individuals') }}
-                  </span>
-                  <span
-                    class="rounded-sm bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                  >
+                  </UBadge>
+                  <UBadge color="neutral" variant="subtle" size="sm">
                     {{ t('admin.accounts.gemini.oauthType.badges.noGcp') }}
-                  </span>
-                </div>
-              </div>
-            </button>
+                  </UBadge>
+                </div></div></template>
+            </UPageCard>
 
             <!-- GCP Code Assist OAuth -->
-            <button
+            <UPageCard
+              as="button"
               type="button"
+              variant="outline"
+              :highlight="geminiOAuthType === 'code_assist'"
+              :aria-pressed="geminiOAuthType === 'code_assist'"
+              icon="i-lucide-cloud"
+              :title="'GCP Code Assist'"
+              :description="t('admin.accounts.gemini.oauthType.codeAssistDesc')"
+              :ui="choiceCardUi"
               @click="handleSelectGeminiOAuthType('code_assist')"
-              :class="[
-                'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-                geminiOAuthType === 'code_assist'
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                  : 'border-gray-200 hover:border-blue-300 dark:border-dark-600 dark:hover:border-blue-700'
-              ]"
             >
-              <div
-                :class="[
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                  geminiOAuthType === 'code_assist'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-                ]"
-              >
-                <Icon name="cloud" size="sm" />
-              </div>
-              <div class="min-w-0">
-                <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                  GCP Code Assist
-                </span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.oauthType.codeAssistDesc') }}
-                </span>
-                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              <template #default><div class="ms-8 mt-2"><div class="mt-1 text-xs text-muted">
                   {{ t('admin.accounts.gemini.oauthType.codeAssistRequirement') }}
                   <a
                     :href="geminiHelpLinks.gcpProject"
-                    class="ml-1 text-blue-600 hover:underline dark:text-blue-400"
+                    class="ml-1 text-primary hover:underline"
                     target="_blank"
                     rel="noreferrer"
                   >
                     {{ t('admin.accounts.gemini.oauthType.gcpProjectLink') }}
                   </a>
                 </div>
-                <div class="mt-2 flex flex-wrap gap-1">
-                  <span
-                    class="rounded-sm bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-                  >
+<div class="mt-2 flex flex-wrap gap-1">
+                  <UBadge color="neutral" variant="subtle" size="sm">
                     {{ t('admin.accounts.gemini.oauthType.badges.enterprise') }}
-                  </span>
-                  <span
-                    class="rounded-sm bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                  >
+                  </UBadge>
+                  <UBadge color="neutral" variant="subtle" size="sm">
                     {{ t('admin.accounts.gemini.oauthType.badges.highConcurrency') }}
-                  </span>
-                </div>
-              </div>
-            </button>
+                  </UBadge>
+                </div></div></template>
+            </UPageCard>
           </div>
 
           <!-- Advanced Options Toggle -->
           <div class="mt-3">
-            <button
+            <UButton
+              color="neutral"
+              variant="link"
+              size="sm"
+              class="px-0"
               type="button"
               @click="showAdvancedOAuth = !showAdvancedOAuth"
-              class="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
             >
-              <svg
-                :class="['h-4 w-4 transition-transform', showAdvancedOAuth ? 'rotate-90' : '']"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
+              <UIcon name="i-lucide-chevron-right" :class="['size-4 transition-transform', showAdvancedOAuth ? 'rotate-90' : '']" />
               <span>
                 {{
                   showAdvancedOAuth
@@ -897,79 +573,47 @@
                     : t('admin.accounts.gemini.oauthType.showAdvanced')
                 }}
               </span>
-            </button>
+            </UButton>
           </div>
 
           <!-- Custom OAuth Client (Advanced) -->
           <div v-if="showAdvancedOAuth" class="mt-3 group relative">
-            <button
+            <UPageCard
+              as="button"
               type="button"
+              variant="outline"
+              :highlight="geminiOAuthType === 'ai_studio'"
+              :aria-pressed="geminiOAuthType === 'ai_studio'"
+              icon="i-lucide-sparkles"
+              :title="t('admin.accounts.gemini.oauthType.customTitle')"
+              :description="t('admin.accounts.gemini.oauthType.customDesc')"
+              :ui="choiceCardUi"
+              class="disabled:cursor-not-allowed disabled:opacity-60"
               :disabled="!geminiAIStudioOAuthEnabled"
               @click="handleSelectGeminiOAuthType('ai_studio')"
-              :class="[
-                'flex w-full items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-                !geminiAIStudioOAuthEnabled ? 'cursor-not-allowed opacity-60' : '',
-                geminiOAuthType === 'ai_studio'
-                  ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
-                  : 'border-gray-200 hover:border-amber-300 dark:border-dark-600 dark:hover:border-amber-700'
-              ]"
             >
-              <div
-                :class="[
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                  geminiOAuthType === 'ai_studio'
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-                ]"
-              >
-                <svg
-                  class="h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
-                  />
-                </svg>
-              </div>
-              <div class="min-w-0">
-                <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                  {{ t('admin.accounts.gemini.oauthType.customTitle') }}
-                </span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.oauthType.customDesc') }}
-                </span>
-                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              <template #default><div class="ms-8 mt-2"><div class="mt-1 text-xs text-muted">
                   {{ t('admin.accounts.gemini.oauthType.customRequirement') }}
                 </div>
-                <div class="mt-2 flex flex-wrap gap-1">
-                  <span
-                    class="rounded-sm bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                  >
+<div class="mt-2 flex flex-wrap gap-1">
+                  <UBadge color="neutral" variant="subtle" size="sm">
                     {{ t('admin.accounts.gemini.oauthType.badges.orgManaged') }}
-                  </span>
-                  <span
-                    class="rounded-sm bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                  >
+                  </UBadge>
+                  <UBadge color="neutral" variant="subtle" size="sm">
                     {{ t('admin.accounts.gemini.oauthType.badges.adminRequired') }}
-                  </span>
+                  </UBadge>
                 </div>
-              </div>
-              <span
+<span
                 v-if="!geminiAIStudioOAuthEnabled"
-                class="ml-auto shrink-0 rounded-sm bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                class="ml-auto shrink-0 rounded-sm bg-warning/10 px-2 py-0.5 text-xs text-warning"
               >
                 {{ t('admin.accounts.oauth.gemini.aiStudioNotConfiguredShort') }}
-              </span>
-            </button>
+              </span></div></template>
+            </UPageCard>
 
             <div
               v-if="!geminiAIStudioOAuthEnabled"
-              class="pointer-events-none absolute right-0 top-full z-50 mt-2 w-80 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
+              class="pointer-events-none absolute right-0 top-full z-50 mt-2 w-80 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
             >
               {{ t('admin.accounts.oauth.gemini.aiStudioNotConfiguredTip') }}
             </div>
@@ -978,100 +622,73 @@
 
         <!-- Tier selection (used as fallback when auto-detection is unavailable/fails) -->
         <div v-if="accountCategory !== 'service_account'" class="mt-4">
-          <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <div class="mt-2">
-            <select
+            <Select
               v-if="geminiOAuthType === 'google_one'"
               v-model="geminiTierGoogleOne"
-              class="input"
-            >
-              <option value="google_one_free">{{ t('admin.accounts.gemini.tier.googleOne.free') }}</option>
-              <option value="google_ai_pro">{{ t('admin.accounts.gemini.tier.googleOne.pro') }}</option>
-              <option value="google_ai_ultra">{{ t('admin.accounts.gemini.tier.googleOne.ultra') }}</option>
-            </select>
+              :options="[
+                { value: 'google_one_free', label: t('admin.accounts.gemini.tier.googleOne.free') },
+                { value: 'google_ai_pro', label: t('admin.accounts.gemini.tier.googleOne.pro') },
+                { value: 'google_ai_ultra', label: t('admin.accounts.gemini.tier.googleOne.ultra') }
+              ]"
+            />
 
-            <select
+            <Select
               v-else-if="geminiOAuthType === 'code_assist'"
               v-model="geminiTierGcp"
-              class="input"
-            >
-              <option value="gcp_standard">{{ t('admin.accounts.gemini.tier.gcp.standard') }}</option>
-              <option value="gcp_enterprise">{{ t('admin.accounts.gemini.tier.gcp.enterprise') }}</option>
-            </select>
+              :options="[
+                { value: 'gcp_standard', label: t('admin.accounts.gemini.tier.gcp.standard') },
+                { value: 'gcp_enterprise', label: t('admin.accounts.gemini.tier.gcp.enterprise') }
+              ]"
+            />
 
-            <select
+            <Select
               v-else
               v-model="geminiTierAIStudio"
-              class="input"
-            >
-              <option value="aistudio_free">{{ t('admin.accounts.gemini.tier.aiStudio.free') }}</option>
-              <option value="aistudio_paid">{{ t('admin.accounts.gemini.tier.aiStudio.paid') }}</option>
-            </select>
+              :options="[
+                { value: 'aistudio_free', label: t('admin.accounts.gemini.tier.aiStudio.free') },
+                { value: 'aistudio_paid', label: t('admin.accounts.gemini.tier.aiStudio.paid') }
+              ]"
+            />
           </div>
-          <p class="input-hint">{{ t('admin.accounts.gemini.tier.hint') }}</p>
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.gemini.tier.hint') }}</p>
         </div>
       </div>
 
       <!-- Account Type Selection (Antigravity - OAuth or Upstream) -->
       <div v-if="form.platform === 'antigravity'">
-        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.accountType') }}</label>
         <div class="mt-2 grid grid-cols-2 gap-3">
-          <button
+          <UPageCard
+            as="button"
             type="button"
+            variant="outline"
+            :highlight="antigravityAccountType === 'oauth'"
+            :aria-pressed="antigravityAccountType === 'oauth'"
+            icon="i-lucide-key"
+            :title="'OAuth'"
+            :description="t('admin.accounts.types.antigravityOauth')"
+            :ui="choiceCardUi"
             @click="antigravityAccountType = 'oauth'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              antigravityAccountType === 'oauth'
-                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                antigravityAccountType === 'oauth'
-                  ? 'bg-purple-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.antigravityOauth') }}</span>
-            </div>
-          </button>
+          />
 
-          <button
+          <UPageCard
+            as="button"
             type="button"
+            variant="outline"
+            :highlight="antigravityAccountType === 'upstream'"
+            :aria-pressed="antigravityAccountType === 'upstream'"
+            icon="i-lucide-cloud"
+            :title="'API Key'"
+            :description="t('admin.accounts.types.antigravityApikey')"
+            :ui="choiceCardUi"
             @click="antigravityAccountType = 'upstream'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              antigravityAccountType === 'upstream'
-                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                antigravityAccountType === 'upstream'
-                  ? 'bg-purple-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="cloud" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.antigravityApikey') }}</span>
-            </div>
-          </button>
+          />
         </div>
       </div>
 
-      <div v-if="form.platform === 'antigravity' && antigravityAccountType === 'oauth'">
-        <label class="input-label">{{ t('admin.accounts.antigravityProjectIdLabel') }}</label>
+      <UFormField v-if="form.platform === 'antigravity' && antigravityAccountType === 'oauth'" :label="t('admin.accounts.antigravityProjectIdLabel')" :help="t('admin.accounts.antigravityProjectIdHint')">
         <UInput
           v-model="antigravityProjectId"
           data-testid="antigravity-project-id-input"
@@ -1079,13 +696,11 @@
           :placeholder="t('admin.accounts.antigravityProjectIdPlaceholder')"
           class="w-full font-mono"
         />
-        <p class="input-hint">{{ t('admin.accounts.antigravityProjectIdHint') }}</p>
-      </div>
+      </UFormField>
 
       <!-- Upstream config (only for Antigravity upstream type) -->
       <div v-if="form.platform === 'antigravity' && antigravityAccountType === 'upstream'" class="space-y-4">
-        <div>
-          <label class="input-label">{{ t('admin.accounts.upstream.baseUrl') }}</label>
+        <UFormField :label="t('admin.accounts.upstream.baseUrl')" :help="t('admin.accounts.upstream.baseUrlHint')">
           <UInput
             v-model="upstreamBaseUrl"
             type="text"
@@ -1093,10 +708,8 @@
             placeholder="https://cloudcode-pa.googleapis.com"
             class="w-full"
           />
-          <p class="input-hint">{{ t('admin.accounts.upstream.baseUrlHint') }}</p>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.upstream.apiKey') }}</label>
+        </UFormField>
+        <UFormField :label="t('admin.accounts.upstream.apiKey')" :help="t('admin.accounts.upstream.apiKeyHint')">
           <UInput
             v-model="upstreamApiKey"
             type="password"
@@ -1104,13 +717,12 @@
             placeholder="sk-..."
             class="w-full font-mono"
           />
-          <p class="input-hint">{{ t('admin.accounts.upstream.apiKeyHint') }}</p>
-        </div>
+        </UFormField>
         <!-- 上游倍率自动探测：antigravity upstream 也是 API-key 账号 -->
-        <div class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="flex items-center justify-between gap-4 pt-2">
           <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.upstreamBilling.autoProbe') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.upstreamBilling.autoProbe') }}</label>
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.upstreamBilling.autoProbeHint') }}
             </p>
           </div>
@@ -1125,7 +737,7 @@
       <!-- Vertex Service Account -->
       <div v-if="(form.platform === 'gemini' || form.platform === 'anthropic') && accountCategory === 'service_account'" class="space-y-4">
         <div>
-          <label class="input-label">Service Account JSON</label>
+          <label class="mb-1.5 block text-sm font-medium text-default">Service Account JSON</label>
           <input
             ref="vertexServiceAccountFileInput"
             type="file"
@@ -1137,8 +749,8 @@
             :class="[
               'rounded-lg border-2 border-dashed px-4 py-5 transition-colors',
               vertexServiceAccountDragActive
-                ? 'border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-900/20'
-                : 'border-gray-300 bg-gray-50 hover:border-sky-400 hover:bg-sky-50/60 dark:border-dark-500 dark:bg-dark-700/40 dark:hover:border-sky-600 dark:hover:bg-sky-900/10'
+                ? 'border-primary bg-elevated'
+                : 'border-accented bg-elevated'
             ]"
             @dragenter.prevent="vertexServiceAccountDragActive = true"
             @dragover.prevent="vertexServiceAccountDragActive = true"
@@ -1147,11 +759,11 @@
           >
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div class="min-w-0">
-                <div class="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
+                <div class="flex items-center gap-2 text-sm font-medium text-highlighted">
                   <Icon name="upload" size="sm" />
                   <span>{{ vertexClientEmail ? t('admin.accounts.vertexSaJsonLoaded') : t('admin.accounts.vertexSaJsonDrop') }}</span>
                 </div>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                <p class="mt-1 text-xs text-muted">
                   {{ vertexClientEmail ? t('admin.accounts.vertexSaJsonKeyHidden') : t('admin.accounts.vertexSaJsonDropHint') }}
                 </p>
               </div>
@@ -1168,18 +780,17 @@
             </div>
             <div
               v-if="vertexClientEmail"
-              class="mt-3 rounded-md border border-sky-200 bg-white px-3 py-2 text-xs text-sky-900 dark:border-sky-800/50 dark:bg-dark-800 dark:text-sky-200"
+              class="mt-3 rounded-md border border-default bg-default px-3 py-2 text-xs text-highlighted"
             >
               <div class="truncate">Project ID: <span class="font-mono">{{ vertexProjectId }}</span></div>
               <div class="truncate">Client Email: <span class="font-mono">{{ vertexClientEmail }}</span></div>
             </div>
           </div>
-          <p class="input-hint">{{ t('admin.accounts.vertexSaJsonUploadHint') }}</p>
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.vertexSaJsonUploadHint') }}</p>
         </div>
 
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label class="input-label">Project ID</label>
+          <UFormField :label="'Project ID'">
             <UInput
               v-model="vertexProjectId"
               type="text"
@@ -1187,45 +798,27 @@
               :placeholder="t('admin.accounts.vertexProjectIdPlaceholder')"
               class="w-full font-mono"
             />
-          </div>
-          <div>
-            <label class="input-label">Location</label>
-            <select
+          </UFormField>
+          <UFormField :label="'Location'" :help="t('admin.accounts.vertexLocationHint')">
+            <Select
               v-model="vertexLocation"
               required
-              class="input font-mono"
-            >
-              <optgroup
-                v-for="group in VERTEX_LOCATION_OPTIONS"
-                :key="group.label"
-                :label="group.label"
-              >
-                <option
-                  v-for="option in group.options"
-                  :key="option.value"
-                  :value="option.value"
-                >
-                  {{ option.label }}
-                </option>
-              </optgroup>
-            </select>
-            <p class="input-hint">{{ t('admin.accounts.vertexLocationHint') }}</p>
-          </div>
+              :options="[
+                ...VERTEX_LOCATION_OPTIONS.flatMap((group) => [{ value: `__group:${group.label}`, label: group.label, kind: 'group', disabled: true }, ...group.options.map((option) => ({ value: option.value, label: option.label }))])
+              ]"
+            />
+          </UFormField>
         </div>
       </div>
 
       <!-- Antigravity model restriction (applies to OAuth + Upstream) -->
       <!-- Antigravity 只支持模型映射模式，不支持白名单模式 -->
-      <div v-if="form.platform === 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
+      <div v-if="form.platform === 'antigravity'" class="pt-2">
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.modelRestriction') }}</label>
 
         <!-- Mapping Mode Only (no toggle for Antigravity) -->
         <div>
-          <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
-            <p class="text-xs text-purple-700 dark:text-purple-400">
-              {{ t('admin.accounts.mapRequestModels') }}
-            </p>
-          </div>
+          <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.mapRequestModels')" class="mb-3" />
           <ModelWhitelistSelector
             sync-only
             :model-value="antigravityMappingFromKeys"
@@ -1241,108 +834,73 @@
               class="space-y-1"
             >
               <div class="flex items-center gap-2">
-                <input
-                  v-model="mapping.from"
-                  type="text"
-                  :class="[
-                    'input flex-1',
-                    !isValidWildcardPattern(mapping.from) ? 'border-red-500 dark:border-red-500' : ''
-                  ]"
-                  :placeholder="t('admin.accounts.requestModel')"
-                />
-                <svg class="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                </svg>
-                <input
-                  v-model="mapping.to"
-                  type="text"
-                  :class="[
-                    'input flex-1',
-                    mapping.to.includes('*') ? 'border-red-500 dark:border-red-500' : ''
-                  ]"
-                  :placeholder="t('admin.accounts.actualModel')"
-                />
-                <button
+                <UInput v-model="mapping.from" type="text" :placeholder="t('admin.accounts.requestModel')" :color="!isValidWildcardPattern(mapping.from) ? 'error' : undefined" :highlight="!isValidWildcardPattern(mapping.from)" class="flex-1" />
+                <UIcon name="i-lucide-arrow-right" class="size-4 flex-shrink-0 text-muted" />
+                <UInput v-model="mapping.to" type="text" :placeholder="t('admin.accounts.actualModel')" :color="mapping.to.includes('*') ? 'error' : undefined" :highlight="mapping.to.includes('*')" class="flex-1" />
+                <UButton
+                  color="error"
+                  variant="ghost"
+                  square
+                  size="sm"
+                  icon="i-lucide-trash-2"
+                  :aria-label="t('admin.accounts.formActions.remove')"
                   type="button"
                   @click="removeAntigravityModelMapping(index)"
-                  class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                >
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
-                </button>
+                />
               </div>
               <!-- 校验错误提示 -->
-              <p v-if="!isValidWildcardPattern(mapping.from)" class="text-xs text-red-500">
+              <p v-if="!isValidWildcardPattern(mapping.from)" class="text-xs text-error">
                 {{ t('admin.accounts.wildcardOnlyAtEnd') }}
               </p>
-              <p v-if="mapping.to.includes('*')" class="text-xs text-red-500">
+              <p v-if="mapping.to.includes('*')" class="text-xs text-error">
                 {{ t('admin.accounts.targetNoWildcard') }}
               </p>
             </div>
           </div>
 
-          <button
+          <UButton
+            color="neutral"
+            variant="soft"
+            block
+            icon="i-lucide-plus"
+            class="mb-3"
             type="button"
             @click="addAntigravityModelMapping"
-            class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
-          >
-            <svg class="mr-1 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-            </svg>
-            {{ t('admin.accounts.addMapping') }}
-          </button>
+          >{{ t('admin.accounts.addMapping') }}</UButton>
 
           <div class="flex flex-wrap gap-2">
-            <button
+            <UButton
+              color="neutral"
+              variant="soft"
+              size="xs"
               v-for="preset in antigravityPresetMappings"
               :key="preset.label"
               type="button"
               @click="addAntigravityPresetMapping(preset.from, preset.to)"
-              :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
             >
               + {{ preset.label }}
-            </button>
+            </UButton>
           </div>
         </div>
       </div>
 
       <!-- Add Method (only for Anthropic OAuth-based type) -->
-      <div v-if="form.platform === 'anthropic' && isOAuthFlow">
-        <label class="input-label">{{ t('admin.accounts.addMethod') }}</label>
-        <div class="mt-2 flex gap-4">
-          <label class="flex cursor-pointer items-center">
-            <input
-              v-model="addMethod"
-              type="radio"
-              value="oauth"
-              class="mr-2 text-primary-600 focus:ring-primary-500"
-            />
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.types.oauth') }}</span>
-          </label>
-          <label class="flex cursor-pointer items-center">
-            <input
-              v-model="addMethod"
-              type="radio"
-              value="setup-token"
-              class="mr-2 text-primary-600 focus:ring-primary-500"
-            />
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{
-              t('admin.accounts.setupTokenLongLived')
-            }}</span>
-          </label>
-        </div>
-      </div>
+      <UFormField v-if="form.platform === 'anthropic' && isOAuthFlow" :label="t('admin.accounts.addMethod')">
+        <URadioGroup
+          v-model="addMethod"
+          :items="[
+            { label: t('admin.accounts.types.oauth'), value: 'oauth' },
+            { label: t('admin.accounts.setupTokenLongLived'), value: 'setup-token' }
+          ]"
+          orientation="horizontal"
+          :ui="{ fieldset: 'flex-wrap gap-x-4 gap-y-2' }"
+          class="mt-2"
+        />
+      </UFormField>
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="(form.type === 'apikey' || form.type === 'cloudflare') && form.platform !== 'antigravity'" class="space-y-4">
-        <div v-if="form.type === 'cloudflare'">
-          <label class="input-label">{{ t('admin.accounts.openai.cloudflareAccountId') }}</label>
+        <UFormField v-if="form.type === 'cloudflare'" :label="t('admin.accounts.openai.cloudflareAccountId')" :help="t('admin.accounts.openai.cloudflareAccountIdHint')">
           <UInput
             v-model="cloudflareAccountID"
             type="text"
@@ -1350,17 +908,16 @@
             :placeholder="t('admin.accounts.openai.cloudflareAccountIdPlaceholder')"
             class="w-full font-mono"
           />
-          <p class="input-hint">{{ t('admin.accounts.openai.cloudflareAccountIdHint') }}</p>
-        </div>
+        </UFormField>
         <div v-else-if="!isAdaptiveProtocolAccount || apiProtocol !== 'adaptive'">
-          <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.baseUrl') }}</label>
           <UInput
             v-model="apiKeyBaseUrl"
             type="text"
             :placeholder="apiKeyBaseUrlPlaceholder"
             class="w-full"
           />
-          <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
+          <p v-if="baseUrlHint" class="mt-1.5 text-xs text-muted">{{ baseUrlHint }}</p>
           <GrokBaseUrlPresets
             v-if="form.platform === 'grok'"
             class="mt-2"
@@ -1377,10 +934,10 @@
           />
         </div>
         <div v-else>
-          <label class="input-label">{{ t('admin.accounts.cnProviders.apiProtocol.endpoints') }}</label>
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.cnProviders.apiProtocol.endpoints') }}</label>
           <div class="mt-2 space-y-3">
             <div v-for="item in adaptiveProtocolEndpointOptions" :key="item.value">
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+              <label class="mb-1 block text-xs font-medium text-toned">
                 {{ t(`admin.accounts.cnProviders.apiProtocol.${item.labelKey}`) }}
               </label>
               <UInput
@@ -1391,12 +948,11 @@
               />
             </div>
           </div>
-          <p v-if="!cnSupportsNativeResponses(form.platform)" class="input-hint">
+          <p v-if="!cnSupportsNativeResponses(form.platform)" class="mt-1.5 text-xs text-muted">
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
+        <UFormField :label="t('admin.accounts.apiKeyRequired')">
           <UInput
             v-model="apiKeyValue"
             type="password"
@@ -1404,18 +960,17 @@
             :placeholder="apiKeyValuePlaceholder"
             class="w-full font-mono"
           />
-          <p v-if="apiKeyHint" class="input-hint">{{ apiKeyHint }}</p>
-          <p v-if="form.type === 'cloudflare'" class="input-hint">{{ t('admin.accounts.openai.cloudflareApiTokenHint') }}</p>
-        </div>
+          <template #help><span v-if="apiKeyHint" class="block">{{ apiKeyHint }}</span><span v-if="form.type === 'cloudflare'" class="block">{{ t('admin.accounts.openai.cloudflareApiTokenHint') }}</span></template>
+        </UFormField>
 
         <!-- 上游倍率自动探测：Cloudflare 没有这套探测接口 -->
         <div
           v-if="form.type !== 'cloudflare'"
-          class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
+          class="flex items-center justify-between gap-4 pt-2"
         >
           <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.upstreamBilling.autoProbe') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.upstreamBilling.autoProbe') }}</label>
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.upstreamBilling.autoProbeHint') }}
             </p>
           </div>
@@ -1426,14 +981,8 @@
           />
         </div>
 
-        <div v-if="form.platform === 'gemini' && accountCategory === 'apikey'" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-          <label class="flex cursor-pointer items-start gap-2">
-            <input v-model="geminiUseCustomProtocol" type="checkbox" class="mt-1 h-4 w-4 rounded-sm border-gray-300 text-primary-600" />
-            <span>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.accounts.gemini.accountType.customProtocolTitle') }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.gemini.accountType.customProtocolDesc') }}</span>
-            </span>
-          </label>
+        <div v-if="form.platform === 'gemini' && accountCategory === 'apikey'" class="rounded-lg border border-default p-3">
+          <UCheckbox v-model="geminiUseCustomProtocol" data-testid="gemini-custom-protocol" :label="t('admin.accounts.gemini.accountType.customProtocolTitle')" :description="t('admin.accounts.gemini.accountType.customProtocolDesc')" />
         </div>
 
         <CopilotSDKFields v-if="form.platform === 'openai' && accountCategory === 'apikey'" v-model="copilotSDKEnabled" />
@@ -1443,81 +992,45 @@
         />
 
         <!-- Gemini API Key tier selection -->
-        <div v-if="form.platform === 'gemini' && accountCategory === 'apikey' && !geminiUseCustomProtocol">
-          <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
-          <select v-model="geminiTierAIStudio" class="input">
-            <option value="aistudio_free">{{ t('admin.accounts.gemini.tier.aiStudio.free') }}</option>
-            <option value="aistudio_paid">{{ t('admin.accounts.gemini.tier.aiStudio.paid') }}</option>
-          </select>
-          <p class="input-hint">{{ t('admin.accounts.gemini.tier.aiStudioHint') }}</p>
-        </div>
+        <UFormField v-if="form.platform === 'gemini' && accountCategory === 'apikey' && !geminiUseCustomProtocol" :label="t('admin.accounts.gemini.tier.label')" :help="t('admin.accounts.gemini.tier.aiStudioHint')">
+          <Select
+            v-model="geminiTierAIStudio"
+            :options="[
+              { value: 'aistudio_free', label: t('admin.accounts.gemini.tier.aiStudio.free') },
+              { value: 'aistudio_paid', label: t('admin.accounts.gemini.tier.aiStudio.paid') }
+            ]"
+          />
+        </UFormField>
 
         <!-- Model Restriction Section (Antigravity 已在上层条件排除) -->
-        <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-          <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
+        <div class="pt-2">
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.modelRestriction') }}</label>
 
-          <div
-            v-if="isOpenAIModelRestrictionDisabled"
-            class="mb-3 rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20"
-          >
-            <p class="text-xs text-amber-700 dark:text-amber-400">
-              {{ t('admin.accounts.openai.modelRestrictionDisabledByPassthrough') }}
-            </p>
-          </div>
+          <UAlert v-if="isOpenAIModelRestrictionDisabled" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.openai.modelRestrictionDisabledByPassthrough')" class="mb-3" />
 
           <template v-else>
             <!-- Mode Toggle -->
-            <div class="mb-4 flex gap-2">
-              <button
+            <div class="mb-4 flex gap-1 rounded-lg bg-elevated p-1">
+              <UButton
+                :color="modelRestrictionMode === 'whitelist' ? 'primary' : 'neutral'"
+                :variant="modelRestrictionMode === 'whitelist' ? 'solid' : 'ghost'"
+                size="sm"
+                icon="i-lucide-circle-check"
+                block
+                class="flex-1"
                 type="button"
                 @click="modelRestrictionMode = 'whitelist'"
-                :class="[
-                  'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                  modelRestrictionMode === 'whitelist'
-                    ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                ]"
-              >
-                <svg
-                  class="mr-1.5 inline h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-                {{ t('admin.accounts.modelWhitelist') }}
-              </button>
-              <button
+              >{{ t('admin.accounts.modelWhitelist') }}</UButton>
+              <UButton
+                :color="modelRestrictionMode === 'mapping' ? 'primary' : 'neutral'"
+                :variant="modelRestrictionMode === 'mapping' ? 'solid' : 'ghost'"
+                size="sm"
+                icon="i-lucide-arrow-left-right"
+                block
+                class="flex-1"
                 type="button"
                 @click="modelRestrictionMode = 'mapping'"
-                :class="[
-                  'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                  modelRestrictionMode === 'mapping'
-                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                ]"
-              >
-                <svg
-                  class="mr-1.5 inline h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-                  />
-                </svg>
-                {{ t('admin.accounts.modelMapping') }}
-              </button>
+              >{{ t('admin.accounts.modelMapping') }}</UButton>
             </div>
 
             <!-- Whitelist Mode -->
@@ -1529,7 +1042,7 @@
                 @upstream-models="importUpstreamModelsToMapping"
                 @upstream-synced="upstreamModelsPreviewed = true"
               />
-              <p class="text-xs text-gray-500 dark:text-gray-400">
+              <p class="text-xs text-muted">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0">{{
                   t('admin.accounts.supportsAllModels')
@@ -1539,24 +1052,7 @@
 
             <!-- Mapping Mode -->
             <div v-else>
-              <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
-                <p class="text-xs text-purple-700 dark:text-purple-400">
-                  <svg
-                    class="mr-1 inline h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  {{ t('admin.accounts.mapRequestModels') }}
-                </p>
-              </div>
+              <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.mapRequestModels')" class="mb-3" />
               <ModelWhitelistSelector
                 sync-only
                 :model-value="modelMappingFromKeys"
@@ -1578,112 +1074,54 @@
                   :placeholder="t('admin.accounts.requestModel')"
                   class="flex-1"
                 />
-                <svg
-                  class="h-4 w-4 flex-shrink-0 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M14 5l7 7m0 0l-7 7m7-7H3"
-                  />
-                </svg>
+                <UIcon name="i-lucide-arrow-right" class="size-4 flex-shrink-0 text-muted" />
                 <UInput
                   v-model="mapping.to"
                   type="text"
                   :placeholder="t('admin.accounts.actualModel')"
                   class="flex-1"
                 />
-                <button
+                <UButton
+                  color="error"
+                  variant="ghost"
+                  square
+                  size="sm"
+                  icon="i-lucide-trash-2"
+                  :aria-label="t('admin.accounts.formActions.remove')"
                   type="button"
                   @click="removeModelMapping(index)"
-                  class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                >
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
-                </button>
+                />
               </div>
             </div>
 
-            <button
-              type="button"
-              @click="addModelMapping"
-              class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
-            >
-              <svg
-                class="mr-1 inline h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-              {{ t('admin.accounts.addMapping') }}
-            </button>
+            <UButton color="neutral" variant="soft" block icon="i-lucide-plus" class="mb-3" type="button" @click="addModelMapping">{{ t('admin.accounts.addMapping') }}</UButton>
 
               <!-- Quick Add Buttons -->
               <div class="flex flex-wrap gap-2">
-                <button
+                <UButton
+                  color="neutral"
+                  variant="soft"
+                  size="xs"
                   v-for="preset in presetMappings"
                   :key="preset.label"
                   type="button"
                   @click="addPresetMapping(preset.from, preset.to)"
-                  :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
                 >
                   + {{ preset.label }}
-                </button>
+                </UButton>
               </div>
             </div>
           </template>
         </div>
 
         <!-- Pool Mode Section -->
-        <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-          <div class="mb-3 flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.poolMode') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.poolModeHint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="poolModeEnabled = !poolModeEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                poolModeEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  poolModeEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
-          <div v-if="poolModeEnabled" class="rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-            <p class="text-xs text-blue-700 dark:text-blue-400">
-              <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
-              {{ t('admin.accounts.poolModeInfo') }}
-            </p>
-          </div>
+        <div class="pt-2">
+          <UFormField :label="t('admin.accounts.poolMode')" :description="t('admin.accounts.poolModeHint')" class="flex items-center justify-between gap-4 mb-3">
+            <Toggle v-model="poolModeEnabled" />
+          </UFormField>
+          <UAlert v-if="poolModeEnabled" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.poolModeInfo')" />
           <div v-if="poolModeEnabled" class="mt-3">
-            <label class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</label>
+            <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryCount') }}</label>
             <UInput
               v-model.number="poolModeRetryCount"
               type="number"
@@ -1692,7 +1130,7 @@
               step="1"
               class="w-full"
             />
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{
                 t('admin.accounts.poolModeRetryCountHint', {
                   default: DEFAULT_POOL_MODE_RETRY_COUNT,
@@ -1702,69 +1140,39 @@
             </p>
           </div>
           <div v-if="poolModeEnabled" class="mt-3">
-            <label class="input-label">{{ t('admin.accounts.poolModeRetryStatusCodes') }}</label>
+            <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryStatusCodes') }}</label>
             <UInput
               v-model="poolModeRetryStatusCodesInput"
               type="text"
               :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
               class="w-full"
             />
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') }) }}
             </p>
           </div>
         </div>
 
         <!-- Custom Error Codes Section -->
-        <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-          <div class="mb-3 flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.customErrorCodes') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.customErrorCodesHint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="customErrorCodesEnabled = !customErrorCodesEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                customErrorCodesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  customErrorCodesEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+        <div class="pt-2">
+          <UFormField :label="t('admin.accounts.customErrorCodes')" :description="t('admin.accounts.customErrorCodesHint')" class="flex items-center justify-between gap-4 mb-3">
+            <Toggle v-model="customErrorCodesEnabled" />
+          </UFormField>
 
           <div v-if="customErrorCodesEnabled" class="space-y-3">
-            <div class="rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20">
-              <p class="text-xs text-amber-700 dark:text-amber-400">
-                <Icon name="exclamationTriangle" size="sm" class="mr-1 inline" :stroke-width="2" />
-                {{ t('admin.accounts.customErrorCodesWarning') }}
-              </p>
-            </div>
+            <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.customErrorCodesWarning')" />
 
             <!-- Error Code Buttons -->
             <div class="flex flex-wrap gap-2">
-              <button
+              <UButton
+                :color="selectedErrorCodes.includes(code.value) ? 'error' : 'neutral'"
+                :variant="selectedErrorCodes.includes(code.value) ? 'soft' : 'outline'"
+                size="sm"
                 v-for="code in commonErrorCodes"
                 :key="code.value"
                 type="button"
                 @click="toggleErrorCode(code.value)"
-                :class="[
-                  'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
-                  selectedErrorCodes.includes(code.value)
-                    ? 'bg-red-100 text-red-700 ring-1 ring-red-500 dark:bg-red-900/30 dark:text-red-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                ]"
-              >
-                {{ code.value }} {{ code.label }}
-              </button>
+              >{{ code.value }} {{ code.label }}</UButton>
             </div>
 
             <!-- Manual input -->
@@ -1779,14 +1187,7 @@
                 class="flex-1"
               />
               <UButton color="neutral" variant="outline" type="button" @click="addCustomErrorCode" class="px-3">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
+                <UIcon name="i-lucide-plus" class="size-4" />
               </UButton>
             </div>
 
@@ -1795,18 +1196,22 @@
               <span
                 v-for="code in selectedErrorCodes.sort((a, b) => a - b)"
                 :key="code"
-                class="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-sm font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                class="inline-flex items-center gap-1 rounded-full bg-error/10 px-2.5 py-0.5 text-sm font-medium text-error"
               >
                 {{ code }}
-                <button
+                <UButton
+                  color="neutral"
+                  variant="link"
+                  square
+                  size="xs"
+                  icon="i-lucide-x"
+                  :aria-label="t('admin.accounts.formActions.remove')"
+                  class="-me-1 p-0"
                   type="button"
                   @click="removeErrorCode(code)"
-                  class="hover:text-red-900 dark:hover:text-red-300"
-                >
-                  <Icon name="x" size="sm" :stroke-width="2" />
-                </button>
+                />
               </span>
-              <span v-if="selectedErrorCodes.length === 0" class="text-xs text-gray-400">
+              <span v-if="selectedErrorCodes.length === 0" class="text-xs text-muted">
                 {{ t('admin.accounts.noneSelectedUsesDefault') }}
               </span>
             </div>
@@ -1816,39 +1221,14 @@
         <!-- Header Override Section (eligible API-key platforms) -->
         <div
           v-if="isHeaderOverrideCapable(form.platform, 'apikey')"
-          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+          class="pt-2"
         >
-          <div class="mb-3 flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.headerOverride.title') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.headerOverride.hint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="headerOverrideEnabled = !headerOverrideEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                headerOverrideEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  headerOverrideEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+          <UFormField :label="t('admin.accounts.headerOverride.title')" :description="t('admin.accounts.headerOverride.hint')" class="flex items-center justify-between gap-4 mb-3">
+            <Toggle v-model="headerOverrideEnabled" />
+          </UFormField>
 
           <div v-if="headerOverrideEnabled" class="space-y-3">
-            <div class="rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-              <p class="text-xs text-blue-700 dark:text-blue-400">
-                <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
-                {{ t('admin.accounts.headerOverride.info') }}
-              </p>
-            </div>
+            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
 
             <HeaderOverrideEditor
               :rows="headerOverrideRows"
@@ -1862,34 +1242,22 @@
       <!-- Bedrock credentials (only for Anthropic Bedrock type) -->
       <div v-if="form.platform === 'anthropic' && accountCategory === 'bedrock'" class="space-y-4">
         <!-- Auth Mode Radio -->
-        <div>
-          <label class="input-label">{{ t('admin.accounts.bedrockAuthMode') }}</label>
-          <div class="mt-2 flex gap-4">
-            <label class="flex cursor-pointer items-center">
-              <input
-                v-model="bedrockAuthMode"
-                type="radio"
-                value="sigv4"
-                class="mr-2 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.bedrockAuthModeSigv4') }}</span>
-            </label>
-            <label class="flex cursor-pointer items-center">
-              <input
-                v-model="bedrockAuthMode"
-                type="radio"
-                value="apikey"
-                class="mr-2 text-primary-600 focus:ring-primary-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.bedrockAuthModeApikey') }}</span>
-            </label>
-          </div>
-        </div>
+        <UFormField :label="t('admin.accounts.bedrockAuthMode')">
+          <URadioGroup
+            v-model="bedrockAuthMode"
+            :items="[
+              { label: t('admin.accounts.bedrockAuthModeSigv4'), value: 'sigv4' },
+              { label: t('admin.accounts.bedrockAuthModeApikey'), value: 'apikey' }
+            ]"
+            orientation="horizontal"
+            :ui="{ fieldset: 'flex-wrap gap-x-4 gap-y-2' }"
+            class="mt-2"
+          />
+        </UFormField>
 
         <!-- SigV4 fields -->
         <template v-if="bedrockAuthMode === 'sigv4'">
-          <div>
-            <label class="input-label">{{ t('admin.accounts.bedrockAccessKeyId') }}</label>
+          <UFormField :label="t('admin.accounts.bedrockAccessKeyId')">
             <UInput
               v-model="bedrockAccessKeyId"
               type="text"
@@ -1897,122 +1265,101 @@
               placeholder="AKIA..."
               class="w-full font-mono"
             />
-          </div>
-          <div>
-            <label class="input-label">{{ t('admin.accounts.bedrockSecretAccessKey') }}</label>
+          </UFormField>
+          <UFormField :label="t('admin.accounts.bedrockSecretAccessKey')">
             <UInput
               v-model="bedrockSecretAccessKey"
               type="password"
               required
               class="w-full font-mono"
             />
-          </div>
-          <div>
-            <label class="input-label">{{ t('admin.accounts.bedrockSessionToken') }}</label>
+          </UFormField>
+          <UFormField :label="t('admin.accounts.bedrockSessionToken')" :help="t('admin.accounts.bedrockSessionTokenHint')">
             <UInput
               v-model="bedrockSessionToken"
               type="password"
               class="w-full font-mono"
             />
-            <p class="input-hint">{{ t('admin.accounts.bedrockSessionTokenHint') }}</p>
-          </div>
+          </UFormField>
         </template>
 
         <!-- API Key field -->
-        <div v-if="bedrockAuthMode === 'apikey'">
-          <label class="input-label">{{ t('admin.accounts.bedrockApiKeyInput') }}</label>
+        <UFormField v-if="bedrockAuthMode === 'apikey'" :label="t('admin.accounts.bedrockApiKeyInput')">
           <UInput
             v-model="bedrockApiKeyValue"
             type="password"
             required
             class="w-full font-mono"
           />
-        </div>
+        </UFormField>
 
         <!-- Shared: Region -->
-        <div>
-          <label class="input-label">{{ t('admin.accounts.bedrockRegion') }}</label>
-          <select v-model="bedrockRegion" class="input">
-            <optgroup label="US">
-              <option value="us-east-1">us-east-1 (N. Virginia)</option>
-              <option value="us-east-2">us-east-2 (Ohio)</option>
-              <option value="us-west-1">us-west-1 (N. California)</option>
-              <option value="us-west-2">us-west-2 (Oregon)</option>
-              <option value="us-gov-east-1">us-gov-east-1 (GovCloud US-East)</option>
-              <option value="us-gov-west-1">us-gov-west-1 (GovCloud US-West)</option>
-            </optgroup>
-            <optgroup label="Europe">
-              <option value="eu-west-1">eu-west-1 (Ireland)</option>
-              <option value="eu-west-2">eu-west-2 (London)</option>
-              <option value="eu-west-3">eu-west-3 (Paris)</option>
-              <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
-              <option value="eu-central-2">eu-central-2 (Zurich)</option>
-              <option value="eu-south-1">eu-south-1 (Milan)</option>
-              <option value="eu-south-2">eu-south-2 (Spain)</option>
-              <option value="eu-north-1">eu-north-1 (Stockholm)</option>
-            </optgroup>
-            <optgroup label="Asia Pacific">
-              <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
-              <option value="ap-northeast-2">ap-northeast-2 (Seoul)</option>
-              <option value="ap-northeast-3">ap-northeast-3 (Osaka)</option>
-              <option value="ap-south-1">ap-south-1 (Mumbai)</option>
-              <option value="ap-south-2">ap-south-2 (Hyderabad)</option>
-              <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
-              <option value="ap-southeast-2">ap-southeast-2 (Sydney)</option>
-            </optgroup>
-            <optgroup label="Canada">
-              <option value="ca-central-1">ca-central-1 (Canada)</option>
-            </optgroup>
-            <optgroup label="South America">
-              <option value="sa-east-1">sa-east-1 (São Paulo)</option>
-            </optgroup>
-          </select>
-          <p class="input-hint">{{ t('admin.accounts.bedrockRegionHint') }}</p>
-        </div>
+        <UFormField :label="t('admin.accounts.bedrockRegion')" :help="t('admin.accounts.bedrockRegionHint')">
+          <Select
+            v-model="bedrockRegion"
+            :options="[
+              { value: `__group:${'US'}`, label: 'US', kind: 'group', disabled: true },
+              { value: 'us-east-1', label: 'us-east-1 (N. Virginia)' },
+              { value: 'us-east-2', label: 'us-east-2 (Ohio)' },
+              { value: 'us-west-1', label: 'us-west-1 (N. California)' },
+              { value: 'us-west-2', label: 'us-west-2 (Oregon)' },
+              { value: 'us-gov-east-1', label: 'us-gov-east-1 (GovCloud US-East)' },
+              { value: 'us-gov-west-1', label: 'us-gov-west-1 (GovCloud US-West)' },
+              { value: `__group:${'Europe'}`, label: 'Europe', kind: 'group', disabled: true },
+              { value: 'eu-west-1', label: 'eu-west-1 (Ireland)' },
+              { value: 'eu-west-2', label: 'eu-west-2 (London)' },
+              { value: 'eu-west-3', label: 'eu-west-3 (Paris)' },
+              { value: 'eu-central-1', label: 'eu-central-1 (Frankfurt)' },
+              { value: 'eu-central-2', label: 'eu-central-2 (Zurich)' },
+              { value: 'eu-south-1', label: 'eu-south-1 (Milan)' },
+              { value: 'eu-south-2', label: 'eu-south-2 (Spain)' },
+              { value: 'eu-north-1', label: 'eu-north-1 (Stockholm)' },
+              { value: `__group:${'Asia Pacific'}`, label: 'Asia Pacific', kind: 'group', disabled: true },
+              { value: 'ap-northeast-1', label: 'ap-northeast-1 (Tokyo)' },
+              { value: 'ap-northeast-2', label: 'ap-northeast-2 (Seoul)' },
+              { value: 'ap-northeast-3', label: 'ap-northeast-3 (Osaka)' },
+              { value: 'ap-south-1', label: 'ap-south-1 (Mumbai)' },
+              { value: 'ap-south-2', label: 'ap-south-2 (Hyderabad)' },
+              { value: 'ap-southeast-1', label: 'ap-southeast-1 (Singapore)' },
+              { value: 'ap-southeast-2', label: 'ap-southeast-2 (Sydney)' },
+              { value: `__group:${'Canada'}`, label: 'Canada', kind: 'group', disabled: true },
+              { value: 'ca-central-1', label: 'ca-central-1 (Canada)' },
+              { value: `__group:${'South America'}`, label: 'South America', kind: 'group', disabled: true },
+              { value: 'sa-east-1', label: 'sa-east-1 (São Paulo)' }
+            ]"
+          />
+        </UFormField>
 
         <!-- Shared: Force Global -->
         <div>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              v-model="bedrockForceGlobal"
-              type="checkbox"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500"
-            />
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.bedrockForceGlobal') }}</span>
-          </label>
-          <p class="input-hint mt-1">{{ t('admin.accounts.bedrockForceGlobalHint') }}</p>
+          <UCheckbox v-model="bedrockForceGlobal" :label="t('admin.accounts.bedrockForceGlobal')" />
+          <p class="mt-1.5 text-xs text-muted mt-1">{{ t('admin.accounts.bedrockForceGlobalHint') }}</p>
         </div>
 
         <!-- Model Restriction Section for Bedrock -->
-        <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-          <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
+        <div class="pt-2">
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.modelRestriction') }}</label>
 
           <!-- Mode Toggle -->
-          <div class="mb-4 flex gap-2">
-            <button
+          <div class="mb-4 flex gap-1 rounded-lg bg-elevated p-1">
+            <UButton
+              :color="modelRestrictionMode === 'whitelist' ? 'primary' : 'neutral'"
+              :variant="modelRestrictionMode === 'whitelist' ? 'solid' : 'ghost'"
+              size="sm"
+              block
+              class="flex-1"
               type="button"
               @click="modelRestrictionMode = 'whitelist'"
-              :class="[
-                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                modelRestrictionMode === 'whitelist'
-                  ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
-            >
-              {{ t('admin.accounts.modelWhitelist') }}
-            </button>
-            <button
+            >{{ t('admin.accounts.modelWhitelist') }}</UButton>
+            <UButton
+              :color="modelRestrictionMode === 'mapping' ? 'primary' : 'neutral'"
+              :variant="modelRestrictionMode === 'mapping' ? 'solid' : 'ghost'"
+              size="sm"
+              block
+              class="flex-1"
               type="button"
               @click="modelRestrictionMode = 'mapping'"
-              :class="[
-                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                modelRestrictionMode === 'mapping'
-                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
-            >
-              {{ t('admin.accounts.modelMapping') }}
-            </button>
+            >{{ t('admin.accounts.modelMapping') }}</UButton>
           </div>
 
           <!-- Whitelist Mode -->
@@ -2024,7 +1371,7 @@
               @upstream-models="importUpstreamModelsToMapping"
               @upstream-synced="upstreamModelsPreviewed = true"
             />
-            <p class="text-xs text-gray-500 dark:text-gray-400">
+            <p class="text-xs text-muted">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
             </p>
@@ -2041,63 +1388,47 @@
             />
             <div v-for="(mapping, index) in modelMappings" :key="index" class="flex items-center gap-2">
               <UInput v-model="mapping.from" type="text" :placeholder="t('admin.accounts.fromModel')" class="flex-1" />
-              <span class="text-gray-400">→</span>
+              <span class="text-muted">→</span>
               <UInput v-model="mapping.to" type="text" :placeholder="t('admin.accounts.toModel')" class="flex-1" />
-              <button type="button" @click="modelMappings.splice(index, 1)" class="text-red-500 hover:text-red-700">
-                <Icon name="trash" size="sm" />
-              </button>
+              <UButton
+                color="error"
+                variant="ghost"
+                square
+                size="sm"
+                icon="i-lucide-trash-2"
+                :aria-label="t('admin.accounts.formActions.remove')"
+                type="button"
+                @click="modelMappings.splice(index, 1)"
+              />
             </div>
             <UButton color="neutral" variant="outline" type="button" @click="modelMappings.push({ from: '', to: '' })" class="text-sm">
               + {{ t('admin.accounts.addMapping') }}
             </UButton>
             <!-- Bedrock Preset Mappings -->
             <div class="flex flex-wrap gap-2">
-              <button
+              <UButton
+                color="neutral"
+                variant="soft"
+                size="xs"
                 v-for="preset in bedrockPresets"
                 :key="preset.from"
                 type="button"
                 @click="addPresetMapping(preset.from, preset.to)"
-                :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
               >
                 + {{ preset.label }}
-              </button>
+              </UButton>
             </div>
           </div>
         </div>
 
         <!-- Pool Mode Section for Bedrock -->
-        <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-          <div class="mb-3 flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.poolMode') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.poolModeHint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="poolModeEnabled = !poolModeEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                poolModeEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  poolModeEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
-          <div v-if="poolModeEnabled" class="rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-            <p class="text-xs text-blue-700 dark:text-blue-400">
-              <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
-              {{ t('admin.accounts.poolModeInfo') }}
-            </p>
-          </div>
+        <div class="pt-2">
+          <UFormField :label="t('admin.accounts.poolMode')" :description="t('admin.accounts.poolModeHint')" class="flex items-center justify-between gap-4 mb-3">
+            <Toggle v-model="poolModeEnabled" />
+          </UFormField>
+          <UAlert v-if="poolModeEnabled" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.poolModeInfo')" />
           <div v-if="poolModeEnabled" class="mt-3">
-            <label class="input-label">{{ t('admin.accounts.poolModeRetryCount') }}</label>
+            <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryCount') }}</label>
             <UInput
               v-model.number="poolModeRetryCount"
               type="number"
@@ -2106,7 +1437,7 @@
               step="1"
               class="w-full"
             />
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{
                 t('admin.accounts.poolModeRetryCountHint', {
                   default: DEFAULT_POOL_MODE_RETRY_COUNT,
@@ -2116,14 +1447,14 @@
             </p>
           </div>
           <div v-if="poolModeEnabled" class="mt-3">
-            <label class="input-label">{{ t('admin.accounts.poolModeRetryStatusCodes') }}</label>
+            <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryStatusCodes') }}</label>
             <UInput
               v-model="poolModeRetryStatusCodesInput"
               type="text"
               :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
               class="w-full"
             />
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') }) }}
             </p>
           </div>
@@ -2133,11 +1464,11 @@
       <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
       <div
         v-if="form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
+        class="pt-2 space-y-4"
       >
         <div class="mb-3">
-          <h3 class="input-label mb-0 text-base font-semibold">{{ t('admin.accounts.quotaControl.title') }}</h3>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          <h3 class="block text-sm font-medium text-default text-base font-semibold">{{ t('admin.accounts.quotaControl.title') }}</h3>
+          <p class="mt-1 text-xs text-muted">
             {{ t('admin.accounts.quotaControl.hint') }}
           </p>
         </div>
@@ -2185,11 +1516,11 @@
       <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
       <div
         v-else-if="form.type === 'apikey' || form.type === 'cloudflare' || form.type === 'bedrock'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
+        class="pt-2 space-y-4"
       >
         <div class="mb-3">
-          <h3 class="input-label mb-0 text-base font-semibold">{{ t('admin.accounts.quotaControl.title') }}</h3>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          <h3 class="block text-sm font-medium text-default text-base font-semibold">{{ t('admin.accounts.quotaControl.title') }}</h3>
+          <p class="mt-1 text-xs text-muted">
             {{ t('admin.accounts.quotaLimitHint') }}
           </p>
         </div>
@@ -2237,32 +1568,11 @@
       <!-- Grok OAuth Custom Upstream URL (仅改写转发端点，OAuth 授权/刷新不受影响) -->
       <div
         v-if="form.platform === 'grok' && isOAuthFlow"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <div class="mb-3 flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.grokCustomBaseUrl.title') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.grokCustomBaseUrl.hint') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            data-testid="grok-custom-base-url-toggle"
-            @click="grokOAuthCustomBaseUrlEnabled = !grokOAuthCustomBaseUrlEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              grokOAuthCustomBaseUrlEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                grokOAuthCustomBaseUrlEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.grokCustomBaseUrl.title')" :description="t('admin.accounts.grokCustomBaseUrl.hint')" class="flex items-center justify-between gap-4 mb-3">
+          <Toggle v-model="grokOAuthCustomBaseUrlEnabled" data-testid="grok-custom-base-url-toggle" />
+        </UFormField>
         <div v-if="grokOAuthCustomBaseUrlEnabled" class="space-y-2">
           <UInput
             v-model="grokOAuthBaseUrl"
@@ -2278,39 +1588,14 @@
       <!-- Grok OAuth Header Override (OAuth 类型没有 apikey 容器，需要独立区域) -->
       <div
         v-if="form.platform === 'grok' && isOAuthFlow"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <div class="mb-3 flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.headerOverride.title') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.headerOverride.hint') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="headerOverrideEnabled = !headerOverrideEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              headerOverrideEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                headerOverrideEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.headerOverride.title')" :description="t('admin.accounts.headerOverride.hint')" class="flex items-center justify-between gap-4 mb-3">
+          <Toggle v-model="headerOverrideEnabled" />
+        </UFormField>
 
         <div v-if="headerOverrideEnabled" class="space-y-3">
-          <div class="rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-            <p class="text-xs text-blue-700 dark:text-blue-400">
-              <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
-              {{ t('admin.accounts.headerOverride.info') }}
-            </p>
-          </div>
+          <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
 
           <HeaderOverrideEditor
             :rows="headerOverrideRows"
@@ -2322,46 +1607,33 @@
       <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
       <div
         v-if="(form.platform === 'openai' || form.platform === 'grok') && isOAuthFlow"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.modelRestriction') }}</label>
 
-        <div
-          v-if="isOpenAIModelRestrictionDisabled"
-          class="mb-3 rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20"
-        >
-          <p class="text-xs text-amber-700 dark:text-amber-400">
-            {{ t('admin.accounts.openai.modelRestrictionDisabledByPassthrough') }}
-          </p>
-        </div>
+        <UAlert v-if="isOpenAIModelRestrictionDisabled" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.openai.modelRestrictionDisabledByPassthrough')" class="mb-3" />
 
         <template v-else>
           <!-- Mode Toggle -->
-          <div class="mb-4 flex gap-2">
-            <button
+          <div class="mb-4 flex gap-1 rounded-lg bg-elevated p-1">
+            <UButton
+              :color="modelRestrictionMode === 'whitelist' ? 'primary' : 'neutral'"
+              :variant="modelRestrictionMode === 'whitelist' ? 'solid' : 'ghost'"
+              size="sm"
+              block
+              class="flex-1"
               type="button"
               @click="modelRestrictionMode = 'whitelist'"
-              :class="[
-                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                modelRestrictionMode === 'whitelist'
-                  ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
-            >
-              {{ t('admin.accounts.modelWhitelist') }}
-            </button>
-            <button
+            >{{ t('admin.accounts.modelWhitelist') }}</UButton>
+            <UButton
+              :color="modelRestrictionMode === 'mapping' ? 'primary' : 'neutral'"
+              :variant="modelRestrictionMode === 'mapping' ? 'solid' : 'ghost'"
+              size="sm"
+              block
+              class="flex-1"
               type="button"
               @click="modelRestrictionMode = 'mapping'"
-              :class="[
-                'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                modelRestrictionMode === 'mapping'
-                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
-            >
-              {{ t('admin.accounts.modelMapping') }}
-            </button>
+            >{{ t('admin.accounts.modelMapping') }}</UButton>
           </div>
 
           <!-- Whitelist Mode -->
@@ -2373,7 +1645,7 @@
               @upstream-models="importUpstreamModelsToMapping"
               @upstream-synced="upstreamModelsPreviewed = true"
             />
-            <p class="text-xs text-gray-500 dark:text-gray-400">
+            <p class="text-xs text-muted">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0">{{
                 t('admin.accounts.supportsAllModels')
@@ -2383,11 +1655,7 @@
 
           <!-- Mapping Mode -->
           <div v-else>
-            <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
-              <p class="text-xs text-purple-700 dark:text-purple-400">
-                {{ t('admin.accounts.mapRequestModels') }}
-              </p>
-            </div>
+            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.mapRequestModels')" class="mb-3" />
             <ModelWhitelistSelector
               sync-only
               :model-value="modelMappingFromKeys"
@@ -2408,61 +1676,43 @@
                   :placeholder="t('admin.accounts.requestModel')"
                   class="flex-1"
                 />
-                <svg
-                  class="h-4 w-4 flex-shrink-0 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M14 5l7 7m0 0l-7 7m7-7H3"
-                  />
-                </svg>
+                <UIcon name="i-lucide-arrow-right" class="size-4 flex-shrink-0 text-muted" />
                 <UInput
                   v-model="mapping.to"
                   type="text"
                   :placeholder="t('admin.accounts.actualModel')"
                   class="flex-1"
                 />
-                <button
+                <UButton
+                  color="error"
+                  variant="ghost"
+                  square
+                  size="sm"
+                  icon="i-lucide-trash-2"
+                  :aria-label="t('admin.accounts.formActions.remove')"
                   type="button"
                   @click="removeModelMapping(index)"
-                  class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                >
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
-                </button>
+                />
               </div>
             </div>
 
-            <button
-              type="button"
-              @click="addModelMapping"
-              class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
-            >
+            <UButton color="neutral" variant="soft" block icon="i-lucide-plus" class="mb-3" type="button" @click="addModelMapping">
               + {{ t('admin.accounts.addMapping') }}
-            </button>
+            </UButton>
 
             <!-- Quick Add Buttons -->
             <div class="flex flex-wrap gap-2">
-              <button
+              <UButton
+                color="neutral"
+                variant="soft"
+                size="xs"
                 v-for="preset in presetMappings"
                 :key="'oauth-' + preset.label"
                 type="button"
                 @click="addPresetMapping(preset.from, preset.to)"
-                :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
               >
                 + {{ preset.label }}
-              </button>
+              </UButton>
             </div>
           </div>
         </template>
@@ -2470,7 +1720,7 @@
 
       <div>
         <div class="mb-1 flex items-center gap-2">
-          <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
+          <label class="block text-sm font-medium text-default">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
@@ -2483,8 +1733,7 @@
       />
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div>
-          <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
+        <UFormField :label="t('admin.accounts.concurrency')">
           <UInput
             v-model.number="form.concurrency"
             type="number"
@@ -2492,9 +1741,8 @@
             @input="form.concurrency = Math.max(1, form.concurrency || 1)"
             class="w-full"
           />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.loadFactor') }}</label>
+        </UFormField>
+        <UFormField :label="t('admin.accounts.loadFactor')" :help="t('admin.accounts.loadFactorHint')">
           <UInput
             v-model.number="form.load_factor"
             type="number"
@@ -2503,10 +1751,8 @@
             @input="form.load_factor = (form.load_factor &amp;&amp; form.load_factor >= 1) ? form.load_factor : null"
             class="w-full"
           />
-          <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.priority') }}</label>
+        </UFormField>
+        <UFormField :label="t('admin.accounts.priority')" :help="t('admin.accounts.priorityHint')">
           <UInput
             v-model.number="form.priority"
             type="number"
@@ -2515,16 +1761,13 @@
             data-tour="account-form-priority"
             class="w-full"
           />
-          <p class="input-hint">{{ t('admin.accounts.priorityHint') }}</p>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.accounts.billingRateMultiplier') }}</label>
+        </UFormField>
+        <UFormField :label="t('admin.accounts.billingRateMultiplier')" :help="t('admin.accounts.billingRateMultiplierHint')">
           <UInput v-model.number="form.rate_multiplier" type="number" min="0" step="0.001" class="w-full" />
-          <p class="input-hint">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
-        </div>
+        </UFormField>
       </div>
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
+      <div class="pt-2">
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.expiresAt') }}</label>
         <UInput v-model="expiresAtInput" type="datetime-local" class="w-full" />
         <div class="mt-2 flex gap-2">
           <UButton color="neutral" variant="outline" size="sm" type="button" @click="form.expires_at = getAccountExpiryTimestamp(1)">
@@ -2534,103 +1777,84 @@
             {{ t('payment.oneYear') }}
           </UButton>
         </div>
-        <p class="input-hint">
+        <p class="mt-1.5 text-xs text-muted">
           {{ t('admin.accounts.expiresAtHint') }}
           {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
         </p>
       </div>
 
-      <details class="account-advanced">
-        <summary class="account-advanced-summary">{{ t('admin.accounts.advancedOptions') }}</summary>
-        <div class="account-advanced-body space-y-5">
-      <!-- Temp Unschedulable Rules -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4">
-        <div class="mb-3 flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.tempUnschedulable.title') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.tempUnschedulable.hint') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="tempUnschedEnabled = !tempUnschedEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              tempUnschedEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                tempUnschedEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+      <UCollapsible :unmount-on-hide="false">
+        <UButton type="button" color="neutral" variant="ghost" :label="t('admin.accounts.advancedOptions')" trailing-icon="i-lucide-chevron-down" class="group -ms-2.5 font-semibold text-highlighted" :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }" />
+        <template #content>
+          <div class="space-y-6 pt-4">
+            <div class="pt-2 space-y-4">
+        <UFormField :label="t('admin.accounts.tempUnschedulable.title')" :description="t('admin.accounts.tempUnschedulable.hint')" class="flex items-center justify-between gap-4 mb-3">
+          <Toggle v-model="tempUnschedEnabled" />
+        </UFormField>
 
         <div v-if="tempUnschedEnabled" class="space-y-3">
-          <div class="rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-              <p class="text-xs text-blue-700 dark:text-blue-400">
-                <Icon name="exclamationTriangle" size="sm" class="mr-1 inline" :stroke-width="2" />
-                {{ t('admin.accounts.tempUnschedulable.notice') }}
-              </p>
-            </div>
+          <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.tempUnschedulable.notice')" />
 
           <div class="flex flex-wrap gap-2">
-            <button
+            <UButton
+              color="neutral"
+              variant="soft"
+              size="xs"
               v-for="preset in tempUnschedPresets"
               :key="preset.label"
               type="button"
               @click="addTempUnschedRule(preset.rule)"
-              class="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500"
             >
               + {{ preset.label }}
-            </button>
+            </UButton>
           </div>
 
           <div v-if="tempUnschedRules.length > 0" class="space-y-3">
             <div
               v-for="(rule, index) in tempUnschedRules"
               :key="getTempUnschedRuleKey(rule)"
-              class="rounded-lg border border-gray-200 p-3 dark:border-dark-600"
+              class="rounded-lg border border-default p-3"
             >
               <div class="mb-2 flex items-center justify-between">
-                <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
+                <span class="text-xs font-medium text-muted">
                   {{ t('admin.accounts.tempUnschedulable.ruleIndex', { index: index + 1 }) }}
                 </span>
                 <div class="flex items-center gap-2">
-                  <button
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    square
+                    size="xs"
+                    icon="i-lucide-chevron-up"
                     type="button"
                     :disabled="index === 0"
                     @click="moveTempUnschedRule(index, -1)"
-                    class="rounded-sm p-1 text-gray-400 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
-                  >
-                    <Icon name="chevronUp" size="sm" :stroke-width="2" />
-                  </button>
-                  <button
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    square
+                    size="xs"
+                    icon="i-lucide-chevron-down"
                     type="button"
                     :disabled="index === tempUnschedRules.length - 1"
                     @click="moveTempUnschedRule(index, 1)"
-                    class="rounded-sm p-1 text-gray-400 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-gray-200"
-                  >
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  <button
+                  />
+                  <UButton
+                    color="error"
+                    variant="ghost"
+                    square
+                    size="xs"
+                    icon="i-lucide-x"
+                    :aria-label="t('admin.accounts.formActions.remove')"
                     type="button"
                     @click="removeTempUnschedRule(index)"
-                    class="rounded-sm p-1 text-red-500 transition-colors hover:text-red-600"
-                  >
-                    <Icon name="x" size="sm" :stroke-width="2" />
-                  </button>
+                  />
                 </div>
               </div>
 
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label class="input-label">{{ t('admin.accounts.tempUnschedulable.errorCode') }}</label>
+                <UFormField :label="t('admin.accounts.tempUnschedulable.errorCode')">
                   <UInput
                     v-model.number="rule.error_code"
                     type="number"
@@ -2639,9 +1863,8 @@
                     :placeholder="t('admin.accounts.tempUnschedulable.errorCodePlaceholder')"
                     class="w-full"
                   />
-                </div>
-                <div>
-                  <label class="input-label">{{ t('admin.accounts.tempUnschedulable.durationMinutes') }}</label>
+                </UFormField>
+                <UFormField :label="t('admin.accounts.tempUnschedulable.durationMinutes')">
                   <UInput
                     v-model.number="rule.duration_minutes"
                     type="number"
@@ -2649,123 +1872,64 @@
                     :placeholder="t('admin.accounts.tempUnschedulable.durationPlaceholder')"
                     class="w-full"
                   />
-                </div>
-                <div class="sm:col-span-2">
-                  <label class="input-label">{{ t('admin.accounts.tempUnschedulable.keywords') }}</label>
+                </UFormField>
+                <UFormField class="sm:col-span-2" :label="t('admin.accounts.tempUnschedulable.keywords')" :help="t('admin.accounts.tempUnschedulable.keywordsHint')">
                   <UInput
                     v-model="rule.keywords"
                     type="text"
                     :placeholder="t('admin.accounts.tempUnschedulable.keywordsPlaceholder')"
                     class="w-full"
                   />
-                  <p class="input-hint">{{ t('admin.accounts.tempUnschedulable.keywordsHint') }}</p>
-                </div>
-                <div class="sm:col-span-2">
-                  <label class="input-label">{{ t('admin.accounts.tempUnschedulable.description') }}</label>
+                </UFormField>
+                <UFormField class="sm:col-span-2" :label="t('admin.accounts.tempUnschedulable.description')">
                   <UInput
                     v-model="rule.description"
                     type="text"
                     :placeholder="t('admin.accounts.tempUnschedulable.descriptionPlaceholder')"
                     class="w-full"
                   />
-                </div>
+                </UFormField>
               </div>
             </div>
           </div>
 
-          <button
-            type="button"
-            @click="addTempUnschedRule()"
-            class="w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-sm text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
-          >
-            <svg
-              class="mr-1 inline h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-            </svg>
-            {{ t('admin.accounts.tempUnschedulable.addRule') }}
-          </button>
+          <UButton color="neutral" variant="soft" block icon="i-lucide-plus" type="button" @click="addTempUnschedRule()">{{ t('admin.accounts.tempUnschedulable.addRule') }}</UButton>
         </div>
       </div>
 
       <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
       <div
         v-if="form.platform === 'anthropic' || form.platform === 'antigravity'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <div class="flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{
-              t('admin.accounts.interceptWarmupRequests')
-            }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.interceptWarmupRequestsDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="interceptWarmupRequests = !interceptWarmupRequests"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              interceptWarmupRequests ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                interceptWarmupRequests ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.interceptWarmupRequests')" :description="t('admin.accounts.interceptWarmupRequestsDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="interceptWarmupRequests" />
+        </UFormField>
       </div>
 
       <!-- 配额控制 (Anthropic OAuth/SetupToken: 亲和 + 窗口费用 + 会话 + RPM 等) -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'oauth-based'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
+        class="pt-2 space-y-4"
       >
         <div class="mb-3">
-          <h3 class="input-label mb-0 text-base font-semibold">{{ t('admin.accounts.quotaControl.title') }}</h3>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          <h3 class="block text-sm font-medium text-default text-base font-semibold">{{ t('admin.accounts.quotaControl.title') }}</h3>
+          <p class="mt-1 text-xs text-muted">
             {{ t('admin.accounts.quotaControl.hint') }}
           </p>
         </div>
 
         <!-- Window Cost Limit -->
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-          <div class="mb-3 flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.quotaControl.windowCost.label') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.quotaControl.windowCost.hint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="windowCostEnabled = !windowCostEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                windowCostEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  windowCostEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+        <div class="rounded-lg border border-default p-4">
+          <UFormField :label="t('admin.accounts.quotaControl.windowCost.label')" :description="t('admin.accounts.quotaControl.windowCost.hint')" class="flex items-center justify-between gap-4 mb-3">
+            <Toggle v-model="windowCostEnabled" />
+          </UFormField>
 
           <div v-if="windowCostEnabled" class="grid grid-cols-2 gap-4">
             <div>
-              <label class="input-label">{{ t('admin.accounts.quotaControl.windowCost.limit') }}</label>
+              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.windowCost.limit') }}</label>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
                 <UInput
                   v-model.number="windowCostLimit"
                   type="number"
@@ -2775,12 +1939,12 @@
                   class="w-full"
                 />
               </div>
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.windowCost.limitHint') }}</p>
+              <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.quotaControl.windowCost.limitHint') }}</p>
             </div>
             <div>
-              <label class="input-label">{{ t('admin.accounts.quotaControl.windowCost.stickyReserve') }}</label>
+              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.windowCost.stickyReserve') }}</label>
               <div class="relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400">$</span>
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
                 <UInput
                   v-model.number="windowCostStickyReserve"
                   type="number"
@@ -2790,40 +1954,19 @@
                   class="w-full"
                 />
               </div>
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.windowCost.stickyReserveHint') }}</p>
+              <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.quotaControl.windowCost.stickyReserveHint') }}</p>
             </div>
           </div>
         </div>
 
         <!-- Session Limit -->
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-          <div class="mb-3 flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.quotaControl.sessionLimit.label') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.quotaControl.sessionLimit.hint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="sessionLimitEnabled = !sessionLimitEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                sessionLimitEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  sessionLimitEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+        <div class="rounded-lg border border-default p-4">
+          <UFormField :label="t('admin.accounts.quotaControl.sessionLimit.label')" :description="t('admin.accounts.quotaControl.sessionLimit.hint')" class="flex items-center justify-between gap-4 mb-3">
+            <Toggle v-model="sessionLimitEnabled" />
+          </UFormField>
 
           <div v-if="sessionLimitEnabled" class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="input-label">{{ t('admin.accounts.quotaControl.sessionLimit.maxSessions') }}</label>
+            <UFormField :label="t('admin.accounts.quotaControl.sessionLimit.maxSessions')" :help="t('admin.accounts.quotaControl.sessionLimit.maxSessionsHint')">
               <UInput
                 v-model.number="maxSessions"
                 type="number"
@@ -2832,10 +1975,9 @@
                 :placeholder="t('admin.accounts.quotaControl.sessionLimit.maxSessionsPlaceholder')"
                 class="w-full"
               />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.sessionLimit.maxSessionsHint') }}</p>
-            </div>
+            </UFormField>
             <div>
-              <label class="input-label">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeout') }}</label>
+              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeout') }}</label>
               <div class="relative">
                 <UInput
                   v-model.number="sessionIdleTimeout"
@@ -2845,42 +1987,21 @@
                   :placeholder="t('admin.accounts.quotaControl.sessionLimit.idleTimeoutPlaceholder')"
                   class="w-full"
                 />
-                <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400">{{ t('common.minutes') }}</span>
+                <span class="absolute right-3 top-1/2 -translate-y-1/2 text-muted">{{ t('common.minutes') }}</span>
               </div>
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeoutHint') }}</p>
+              <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeoutHint') }}</p>
             </div>
           </div>
         </div>
 
         <!-- RPM Limit -->
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-          <div class="mb-3 flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.quotaControl.rpmLimit.label') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.quotaControl.rpmLimit.hint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="rpmLimitEnabled = !rpmLimitEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                rpmLimitEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  rpmLimitEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+        <div class="rounded-lg border border-default p-4">
+          <UFormField :label="t('admin.accounts.quotaControl.rpmLimit.label')" :description="t('admin.accounts.quotaControl.rpmLimit.hint')" class="flex items-center justify-between gap-4 mb-3">
+            <Toggle v-model="rpmLimitEnabled" />
+          </UFormField>
 
           <div v-if="rpmLimitEnabled" class="space-y-4">
-            <div>
-              <label class="input-label">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpm') }}</label>
+            <UFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :help="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
               <UInput
                 v-model.number="baseRpm"
                 type="number"
@@ -2890,47 +2011,43 @@
                 :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
                 class="w-full"
               />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpmHint') }}</p>
-            </div>
+            </UFormField>
 
             <div>
-              <label class="input-label">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
-              <div class="flex gap-2">
-                <button
+              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
+              <div class="flex gap-1 rounded-lg bg-elevated p-1">
+                <UButton
+                  :color="rpmStrategy === 'tiered' ? 'primary' : 'neutral'"
+                  :variant="rpmStrategy === 'tiered' ? 'solid' : 'ghost'"
+                  size="sm"
+                  block
+                  class="flex-1"
                   type="button"
                   @click="rpmStrategy = 'tiered'"
-                  :class="[
-                    'flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-                    rpmStrategy === 'tiered'
-                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                  ]"
                 >
                   <div class="text-center">
                     <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}</div>
                     <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyTieredHint') }}</div>
                   </div>
-                </button>
-                <button
+                </UButton>
+                <UButton
+                  :color="rpmStrategy === 'sticky_exempt' ? 'primary' : 'neutral'"
+                  :variant="rpmStrategy === 'sticky_exempt' ? 'solid' : 'ghost'"
+                  size="sm"
+                  block
+                  class="flex-1"
                   type="button"
                   @click="rpmStrategy = 'sticky_exempt'"
-                  :class="[
-                    'flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-                    rpmStrategy === 'sticky_exempt'
-                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                  ]"
                 >
                   <div class="text-center">
                     <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}</div>
                     <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExemptHint') }}</div>
                   </div>
-                </button>
+                </UButton>
               </div>
             </div>
 
-            <div v-if="rpmStrategy === 'tiered'">
-              <label class="input-label">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBuffer') }}</label>
+            <UFormField v-if="rpmStrategy === 'tiered'" :label="t('admin.accounts.quotaControl.rpmLimit.stickyBuffer')" :help="t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint')">
               <UInput
                 v-model.number="rpmStickyBuffer"
                 type="number"
@@ -2939,159 +2056,78 @@
                 :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
                 class="w-full"
               />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint') }}</p>
-            </div>
+            </UFormField>
 
           </div>
 
           <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
           <div class="mt-4">
-            <label class="input-label">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 mb-2">
+            <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}</label>
+            <p class="mt-1 text-xs text-muted mb-2">
               {{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}
             </p>
             <div class="flex space-x-2">
-              <button type="button" v-for="opt in umqModeOptions" :key="opt.value"
+              <UButton
+                :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
+                :variant="userMsgQueueMode === opt.value ? 'solid' : 'outline'"
+                size="sm"
+                type="button"
+                v-for="opt in umqModeOptions"
+                :key="opt.value"
                 @click="userMsgQueueMode = opt.value"
-                :class="[
-                  'px-3 py-1.5 text-sm rounded-md border transition-colors',
-                  userMsgQueueMode === opt.value
-                    ? 'bg-primary-600 text-white border-primary-600'
-                    : 'bg-white dark:bg-dark-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-dark-500 hover:bg-gray-50 dark:hover:bg-dark-600'
-                ]">
-                {{ opt.label }}
-              </button>
+              >{{ opt.label }}</UButton>
             </div>
           </div>
         </div>
 
         <!-- TLS Fingerprint -->
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.quotaControl.tlsFingerprint.label') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.quotaControl.tlsFingerprint.hint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="tlsFingerprintEnabled = !tlsFingerprintEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                tlsFingerprintEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  tlsFingerprintEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+        <div class="rounded-lg border border-default p-4">
+          <UFormField :label="t('admin.accounts.quotaControl.tlsFingerprint.label')" :description="t('admin.accounts.quotaControl.tlsFingerprint.hint')" class="flex items-center justify-between gap-4">
+            <Toggle v-model="tlsFingerprintEnabled" />
+          </UFormField>
           <!-- Profile selector -->
           <div v-if="tlsFingerprintEnabled" class="mt-3">
-            <select v-model="tlsFingerprintProfileId" class="input">
-              <option :value="null">{{ t('admin.accounts.quotaControl.tlsFingerprint.defaultProfile') }}</option>
-              <option v-if="tlsFingerprintProfiles.length > 0" :value="-1">{{ t('admin.accounts.quotaControl.tlsFingerprint.randomProfile') }}</option>
-              <option v-for="p in tlsFingerprintProfiles" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
+            <Select
+              v-model="tlsFingerprintProfileId"
+              :options="[
+                { value: null, label: t('admin.accounts.quotaControl.tlsFingerprint.defaultProfile') },
+                ...(tlsFingerprintProfiles.length > 0 ? [{ value: -1, label: t('admin.accounts.quotaControl.tlsFingerprint.randomProfile') }] : []),
+                ...tlsFingerprintProfiles.map((p) => ({ value: p.id, label: p.name }))
+              ]"
+            />
           </div>
         </div>
 
         <!-- Session ID Masking -->
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.quotaControl.sessionIdMasking.label') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.quotaControl.sessionIdMasking.hint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="sessionIdMaskingEnabled = !sessionIdMaskingEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                sessionIdMaskingEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  sessionIdMaskingEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+        <div class="rounded-lg border border-default p-4">
+          <UFormField :label="t('admin.accounts.quotaControl.sessionIdMasking.label')" :description="t('admin.accounts.quotaControl.sessionIdMasking.hint')" class="flex items-center justify-between gap-4">
+            <Toggle v-model="sessionIdMaskingEnabled" />
+          </UFormField>
         </div>
 
         <!-- Cache TTL Override -->
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.quotaControl.cacheTTLOverride.label') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.quotaControl.cacheTTLOverride.hint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="cacheTTLOverrideEnabled = !cacheTTLOverrideEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                cacheTTLOverrideEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  cacheTTLOverrideEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+        <div class="rounded-lg border border-default p-4">
+          <UFormField :label="t('admin.accounts.quotaControl.cacheTTLOverride.label')" :description="t('admin.accounts.quotaControl.cacheTTLOverride.hint')" class="flex items-center justify-between gap-4">
+            <Toggle v-model="cacheTTLOverrideEnabled" />
+          </UFormField>
           <div v-if="cacheTTLOverrideEnabled" class="mt-3">
-            <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.cacheTTLOverride.target') }}</label>
-            <select
+            <label class="mb-1.5 block text-sm font-medium text-default text-xs">{{ t('admin.accounts.quotaControl.cacheTTLOverride.target') }}</label>
+            <Select
               v-model="cacheTTLOverrideTarget"
-              class="mt-1 block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-xs focus:border-primary-500 focus:outline-hidden focus:ring-1 focus:ring-primary-500 dark:border-dark-500 dark:bg-dark-700 dark:text-white"
-            >
-              <option value="5m">5m</option>
-              <option value="1h">1h</option>
-            </select>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              :options="[{ value: '5m', label: '5m' }, { value: '1h', label: '1h' }]"
+              class="mt-1"
+            />
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.quotaControl.cacheTTLOverride.targetHint') }}
             </p>
           </div>
         </div>
 
         <!-- Custom Base URL Relay -->
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="input-label mb-0">{{ t('admin.accounts.quotaControl.customBaseUrl.label') }}</label>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.quotaControl.customBaseUrl.hint') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              @click="customBaseUrlEnabled = !customBaseUrlEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                customBaseUrlEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  customBaseUrlEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
+        <div class="rounded-lg border border-default p-4">
+          <UFormField :label="t('admin.accounts.quotaControl.customBaseUrl.label')" :description="t('admin.accounts.quotaControl.customBaseUrl.hint')" class="flex items-center justify-between gap-4">
+            <Toggle v-model="customBaseUrlEnabled" />
+          </UFormField>
           <div v-if="customBaseUrlEnabled" class="mt-3">
             <UInput
               v-model="customBaseUrl"
@@ -3107,77 +2143,36 @@
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
         v-if="form.platform === 'openai'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <div class="flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.oauthPassthrough') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.oauthPassthroughDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="openaiPassthroughEnabled = !openaiPassthroughEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiPassthroughEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.openai.oauthPassthrough')" :description="t('admin.accounts.openai.oauthPassthroughDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="openaiPassthroughEnabled" />
+        </UFormField>
       </div>
 
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
       <div
         v-if="form.platform === 'openai' && form.type === 'oauth'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <div class="flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.flattenNamespaces') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            data-testid="create-openai-flatten-namespaces-toggle"
-            @click="openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiFlattenNamespacesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openaiFlattenNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.openai.flattenNamespaces')" :description="t('admin.accounts.openai.flattenNamespacesDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="openaiFlattenNamespacesEnabled" data-testid="create-openai-flatten-namespaces-toggle" />
+        </UFormField>
       </div>
 
       <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         data-testid="create-openai-ws-mode"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
         <div class="flex items-center justify-between">
           <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.wsMode') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.wsMode') }}</label>
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.wsModeDesc') }}
             </p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t(openAIWSModeConcurrencyHintKey) }}
             </p>
           </div>
@@ -3190,168 +2185,90 @@
       <!-- Anthropic API Key 自动透传开关 -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <div class="flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.apiKeyPassthrough') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.anthropic.apiKeyPassthroughDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="anthropicPassthroughEnabled = !anthropicPassthroughEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              anthropicPassthroughEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                anthropicPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.anthropic.apiKeyPassthrough')" :description="t('admin.accounts.anthropic.apiKeyPassthroughDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="anthropicPassthroughEnabled" />
+        </UFormField>
       </div>
 
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
         <div class="flex items-center justify-between gap-4">
           <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.apiKeyAuthScheme') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.anthropic.apiKeyAuthScheme') }}</label>
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.anthropic.apiKeyAuthSchemeDesc') }}
             </p>
           </div>
-          <select v-model="anthropicAPIKeyAuthScheme" class="input w-52 text-sm">
-            <option value="x_api_key">{{ t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey') }}</option>
-            <option value="authorization_bearer">{{ t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') }}</option>
-          </select>
+          <Select
+            v-model="anthropicAPIKeyAuthScheme"
+            :options="[
+              { value: 'x_api_key', label: t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey') },
+              { value: 'authorization_bearer', label: t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') }
+            ]"
+            class="w-52"
+          />
         </div>
       </div>
 
       <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey' && webSearchGlobalEnabled"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
         <div class="flex items-center justify-between">
           <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.webSearchEmulation') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.anthropic.webSearchEmulation') }}</label>
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.anthropic.webSearchEmulationDesc') }}
             </p>
           </div>
-          <select v-model="webSearchEmulationMode" class="input w-24 text-sm">
-            <option value="default">{{ t('admin.accounts.anthropic.webSearchDefault') }}</option>
-            <option value="enabled">{{ t('admin.accounts.anthropic.webSearchEnabled') }}</option>
-            <option value="disabled">{{ t('admin.accounts.anthropic.webSearchDisabled') }}</option>
-          </select>
+          <Select
+            v-model="webSearchEmulationMode"
+            :options="[
+              { value: 'default', label: t('admin.accounts.anthropic.webSearchDefault') },
+              { value: 'enabled', label: t('admin.accounts.anthropic.webSearchEnabled') },
+              { value: 'disabled', label: t('admin.accounts.anthropic.webSearchDisabled') }
+            ]"
+            class="w-24"
+          />
         </div>
       </div>
 
       <!-- OpenAI API 长上下文计费开关 -->
       <div
         v-if="form.platform === 'openai' && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.longContextBilling') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.longContextBillingDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            data-testid="openai-long-context-billing-toggle"
-            role="switch"
-            :aria-checked="openAILongContextBillingEnabled"
-            @click="toggleOpenAILongContextBilling"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openAILongContextBillingEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openAILongContextBillingEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.openai.longContextBilling')" :description="t('admin.accounts.openai.longContextBillingDesc')" class="flex items-center justify-between gap-4">
+          <Toggle :model-value="openAILongContextBillingEnabled" @update:model-value="toggleOpenAILongContextBilling()" data-testid="openai-long-context-billing-toggle" />
+        </UFormField>
       </div>
 
       <div
         v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
-        <div class="flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.codexCLIOnly') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.codexCLIOnlyDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="codexCLIOnlyEnabled = !codexCLIOnlyEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              codexCLIOnlyEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                codexCLIOnlyEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
-        <div
-          v-if="codexCLIOnlyEnabled"
-          class="mt-4 flex items-center justify-between border-l-2 border-gray-200 pl-4 dark:border-dark-600"
-        >
-          <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.codexCLIOnlyAppServer') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.codexCLIOnlyAppServerDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="codexCLIOnlyAppServerEnabled = !codexCLIOnlyAppServerEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              codexCLIOnlyAppServerEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                codexCLIOnlyAppServerEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.openai.codexCLIOnly')" :description="t('admin.accounts.openai.codexCLIOnlyDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="codexCLIOnlyEnabled" />
+        </UFormField>
+        <UFormField v-if="codexCLIOnlyEnabled" :label="t('admin.accounts.openai.codexCLIOnlyAppServer')" :description="t('admin.accounts.openai.codexCLIOnlyAppServerDesc')" class="flex items-center justify-between gap-4 mt-4">
+          <Toggle v-model="codexCLIOnlyAppServerEnabled" />
+        </UFormField>
       </div>
 
       <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
       <div
         v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.codexFingerprintModeDesc') }}
             </p>
           </div>
@@ -3364,12 +2281,12 @@
       <!-- OpenAI Compact 能力配置 -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
+        class="pt-2 space-y-4"
       >
         <div class="flex items-center justify-between">
           <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.compactMode') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactMode') }}</label>
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.compactModeDesc') }}
             </p>
           </div>
@@ -3378,8 +2295,8 @@
           </div>
         </div>
         <div>
-          <label class="input-label">{{ t('admin.accounts.openai.compactModelMapping') }}</label>
-          <p class="input-hint">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</p>
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactModelMapping') }}</label>
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</p>
           <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
             <div
               v-for="(mapping, index) in openAICompactModelMappings"
@@ -3387,11 +2304,18 @@
               class="flex items-center gap-2"
             >
               <UInput v-model="mapping.from" type="text" :placeholder="t('admin.accounts.fromModel')" class="flex-1" />
-              <span class="text-gray-400">→</span>
+              <span class="text-muted">→</span>
               <UInput v-model="mapping.to" type="text" :placeholder="t('admin.accounts.toModel')" class="flex-1" />
-              <button type="button" @click="removeOpenAICompactModelMapping(index)" class="text-red-500 hover:text-red-700">
-                <Icon name="trash" size="sm" />
-              </button>
+              <UButton
+                color="error"
+                variant="ghost"
+                square
+                size="sm"
+                icon="i-lucide-trash-2"
+                :aria-label="t('admin.accounts.formActions.remove')"
+                type="button"
+                @click="removeOpenAICompactModelMapping(index)"
+              />
             </div>
           </div>
           <UButton color="neutral" variant="outline" type="button" @click="addOpenAICompactModelMapping" class="text-sm">
@@ -3403,12 +2327,12 @@
       <!-- OpenAI APIKey Responses API support mode -->
       <div
         v-if="form.platform === 'openai' && accountCategory === 'apikey'"
-        class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="space-y-4 pt-2"
       >
         <div class="flex items-center justify-between gap-4">
           <div>
-            <label class="input-label mb-0">{{ t('admin.accounts.openai.responsesMode') }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.responsesMode') }}</label>
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.responsesModeDesc') }}
             </p>
           </div>
@@ -3423,147 +2347,76 @@
         </div>
         <p
           v-if="!openAITextGenerationCapabilityEnabled"
-          class="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          class="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
           data-testid="openai-responses-mode-not-applicable"
         >
           {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
         </p>
         <div>
-          <label class="input-label mb-2 block">{{ t('admin.accounts.openai.endpointCapabilities') }}</label>
+          <label class="mb-1.5 block text-sm font-medium text-default mb-2">{{ t('admin.accounts.openai.endpointCapabilities') }}</label>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <label
+            <UCheckbox
               v-for="option in openAIEndpointCapabilityOptions"
               :key="option.value"
-              class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600"
-            >
-              <input
-                type="checkbox"
-                class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500"
-                :data-testid="`openai-endpoint-capability-${option.value}`"
-                :checked="openAIEndpointCapabilities.includes(option.value)"
-                @change="toggleOpenAIEndpointCapability(option.value, $event)"
-              />
-              <span class="text-gray-700 dark:text-gray-200">{{ option.label }}</span>
-            </label>
+              :data-testid="`openai-endpoint-capability-${option.value}`"
+              :model-value="openAIEndpointCapabilities.includes(option.value)"
+              @update:model-value="toggleOpenAIEndpointCapability(option.value)"
+              :label="option.label"
+            />
           </div>
-          <p class="input-hint">{{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}</p>
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}</p>
         </div>
       </div>
 
       <!-- OpenAI APIKey images: backfill b64_json from url -->
-      <div
-        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
-        class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
-      >
-        <div>
-          <label class="input-label mb-0">{{ t('admin.accounts.openai.imagesUrlToB64Json') }}</label>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            {{ t('admin.accounts.openai.imagesUrlToB64JsonDesc') }}
-          </p>
-        </div>
-        <button
-          type="button"
-          data-testid="openai-images-url-to-b64-json-toggle"
-          role="switch"
-          :aria-checked="openAIImagesUrlToB64JsonEnabled"
-          @click="openAIImagesUrlToB64JsonEnabled = !openAIImagesUrlToB64JsonEnabled"
-          :class="[
-            'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-            openAIImagesUrlToB64JsonEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-          ]"
-        >
-          <span
-            :class="[
-              'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-              openAIImagesUrlToB64JsonEnabled ? 'translate-x-5' : 'translate-x-0'
-            ]"
-          />
-        </button>
-      </div>
+      <UFormField v-if="form.platform === 'openai' && accountCategory === 'apikey'" :label="t('admin.accounts.openai.imagesUrlToB64Json')" :description="t('admin.accounts.openai.imagesUrlToB64JsonDesc')" class="flex items-center justify-between gap-4">
+        <Toggle v-model="openAIImagesUrlToB64JsonEnabled" data-testid="openai-images-url-to-b64-json-toggle" />
+      </UFormField>
 
       <div>
-        <div class="flex items-center justify-between">
-          <div>
-            <label class="input-label mb-0">{{
-              t('admin.accounts.autoPauseOnExpired')
-            }}</label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.autoPauseOnExpiredDesc') }}
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="autoPauseOnExpired = !autoPauseOnExpired"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              autoPauseOnExpired ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                autoPauseOnExpired ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
+        <UFormField :label="t('admin.accounts.autoPauseOnExpired')" :description="t('admin.accounts.autoPauseOnExpiredDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="autoPauseOnExpired" />
+        </UFormField>
       </div>
-        </div>
-      </details>
+          </div>
+        </template>
+      </UCollapsible>
 
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div class="pt-2">
         <!-- Mixed Scheduling (only for antigravity accounts) -->
         <div v-if="form.platform === 'antigravity'" class="flex items-center gap-2">
-          <label class="flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              v-model="mixedScheduling"
-              class="h-4 w-4 rounded-sm border-gray-300 text-primary-500 focus:ring-primary-500 dark:border-dark-500"
-            />
-            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-              {{ t('admin.accounts.mixedScheduling') }}
-            </span>
-          </label>
+          <UCheckbox v-model="mixedScheduling" :label="t('admin.accounts.mixedScheduling')" />
           <div class="group relative">
             <span
-              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-200 text-xs text-gray-500 hover:bg-gray-300 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500"
+              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-accented text-xs text-muted hover:bg-elevated"
             >
               ?
             </span>
             <!-- Tooltip（向下显示避免被弹窗裁剪） -->
             <div
-              class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-gray-900 px-3 py-2 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700"
+              class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
             >
               {{ t('admin.accounts.mixedSchedulingTooltip') }}
               <div
-                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900 dark:border-b-gray-700"
+                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900"
               ></div>
             </div>
           </div>
         </div>
         <div v-if="form.platform === 'antigravity'" class="mt-3 flex items-center gap-2">
-          <label class="flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              v-model="allowOverages"
-              class="h-4 w-4 rounded-sm border-gray-300 text-primary-500 focus:ring-primary-500 dark:border-dark-500"
-            />
-            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-              {{ t('admin.accounts.allowOverages') }}
-            </span>
-          </label>
+          <UCheckbox v-model="allowOverages" :label="t('admin.accounts.allowOverages')" />
           <div class="group relative">
             <span
-              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-200 text-xs text-gray-500 hover:bg-gray-300 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500"
+              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-accented text-xs text-muted hover:bg-elevated"
             >
               ?
             </span>
             <div
-              class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-gray-900 px-3 py-2 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700"
+              class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
             >
               {{ t('admin.accounts.allowOveragesTooltip') }}
               <div
-                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900 dark:border-b-gray-700"
+                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900"
               ></div>
             </div>
           </div>
@@ -3631,28 +2484,8 @@
           type="submit"
           form="create-account-form"
           :disabled="submitting"
-          data-tour="account-form-submit"
+          data-tour="account-form-submit" :loading="submitting"
         >
-          <svg
-            v-if="submitting"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
           {{
             isOAuthFlow
               ? t('common.next')
@@ -3672,28 +2505,8 @@
           v-if="isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"
-          @click="handleExchangeCode"
+          @click="handleExchangeCode" :loading="currentOAuthLoading"
         >
-          <svg
-            v-if="currentOAuthLoading"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
           {{
             currentOAuthLoading
               ? t('admin.accounts.oauth.verifying')
@@ -3714,24 +2527,24 @@
     <div class="space-y-6">
       <!-- Setup Guide Section -->
       <div>
-        <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+        <h3 class="mb-3 text-sm font-semibold text-highlighted">
           {{ t('admin.accounts.gemini.setupGuide.title') }}
         </h3>
         <div class="space-y-4">
           <div>
-            <p class="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <p class="mb-2 text-sm font-medium text-toned">
               {{ t('admin.accounts.gemini.setupGuide.checklistTitle') }}
             </p>
-            <ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+            <ul class="list-inside list-disc space-y-1 text-sm text-toned">
               <li>{{ t('admin.accounts.gemini.setupGuide.checklistItems.usIp') }}</li>
               <li>{{ t('admin.accounts.gemini.setupGuide.checklistItems.age') }}</li>
             </ul>
           </div>
           <div>
-            <p class="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <p class="mb-2 text-sm font-medium text-toned">
               {{ t('admin.accounts.gemini.setupGuide.activationTitle') }}
             </p>
-            <ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+            <ul class="list-inside list-disc space-y-1 text-sm text-toned">
               <li>{{ t('admin.accounts.gemini.setupGuide.activationItems.geminiWeb') }}</li>
               <li>{{ t('admin.accounts.gemini.setupGuide.activationItems.gcpProject') }}</li>
             </ul>
@@ -3740,34 +2553,34 @@
                 href="https://policies.google.com/terms"
                 target="_blank"
                 rel="noreferrer"
-                class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+                class="text-sm text-primary hover:underline"
               >
                 {{ t('admin.accounts.gemini.setupGuide.links.countryCheck') }}
               </a>
-              <span class="text-gray-400">·</span>
+              <span class="text-muted">·</span>
               <a
                 href="https://policies.google.com/country-association-form"
                 target="_blank"
                 rel="noreferrer"
-                class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+                class="text-sm text-primary hover:underline"
               >
                 {{ t('admin.accounts.gemini.setupGuide.links.countryChange') }}
               </a>
-              <span class="text-gray-400">·</span>
+              <span class="text-muted">·</span>
               <a
                 href="https://gemini.google.com/gems/create?hl=en-US&pli=1"
                 target="_blank"
                 rel="noreferrer"
-                class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+                class="text-sm text-primary hover:underline"
               >
                 {{ t('admin.accounts.gemini.setupGuide.links.geminiWebActivation') }}
               </a>
-              <span class="text-gray-400">·</span>
+              <span class="text-muted">·</span>
               <a
                 href="https://console.cloud.google.com"
                 target="_blank"
                 rel="noreferrer"
-                class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+                class="text-sm text-primary hover:underline"
               >
                 {{ t('admin.accounts.gemini.setupGuide.links.gcpProject') }}
               </a>
@@ -3777,93 +2590,26 @@
       </div>
 
       <!-- Quota Policy Section -->
-      <div class="border-t border-gray-200 pt-6 dark:border-dark-600">
-        <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+      <div class="border-t border-default pt-6">
+        <h3 class="mb-3 text-sm font-semibold text-highlighted">
           {{ t('admin.accounts.gemini.quotaPolicy.title') }}
         </h3>
-        <p class="mb-4 text-xs text-amber-600 dark:text-amber-400">
+        <p class="mb-4 text-xs text-warning">
           {{ t('admin.accounts.gemini.quotaPolicy.note') }}
         </p>
         <div class="overflow-x-auto">
-          <table class="w-full text-xs">
-            <thead class="bg-gray-50 dark:bg-dark-600">
-              <tr>
-                <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('admin.accounts.gemini.quotaPolicy.columns.channel') }}
-                </th>
-                <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('admin.accounts.gemini.quotaPolicy.columns.account') }}
-                </th>
-                <th class="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('admin.accounts.gemini.quotaPolicy.columns.limits') }}
-                </th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 dark:divide-dark-600">
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.googleOne.channel') }}
-                </td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Free</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsFree') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white"></td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Pro</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsPro') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white"></td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Ultra</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsUltra') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.gcp.channel') }}
-                </td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Standard</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.gcp.limitsStandard') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white"></td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Enterprise</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.gcp.limitsEnterprise') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.aiStudio.channel') }}
-                </td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Free</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.aiStudio.limitsFree') }}
-                </td>
-              </tr>
-              <tr>
-                <td class="px-3 py-2 text-gray-900 dark:text-white"></td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Paid</td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.aiStudio.limitsPaid') }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <UTable
+            :data="geminiQuotaPolicyRows"
+            :columns="geminiQuotaPolicyColumns"
+            :ui="{ th: 'px-3 py-2 text-xs font-medium text-toned', td: 'px-3 py-2 text-xs text-toned whitespace-normal' }"
+          />
         </div>
         <div class="mt-4 flex flex-wrap gap-3">
           <a
             :href="geminiQuotaDocs.codeAssist"
             target="_blank"
             rel="noreferrer"
-            class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+            class="text-sm text-primary hover:underline"
           >
             {{ t('admin.accounts.gemini.quotaPolicy.docs.codeAssist') }}
           </a>
@@ -3871,7 +2617,7 @@
             :href="geminiQuotaDocs.aiStudio"
             target="_blank"
             rel="noreferrer"
-            class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+            class="text-sm text-primary hover:underline"
           >
             {{ t('admin.accounts.gemini.quotaPolicy.docs.aiStudio') }}
           </a>
@@ -3879,7 +2625,7 @@
             :href="geminiQuotaDocs.vertex"
             target="_blank"
             rel="noreferrer"
-            class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+            class="text-sm text-primary hover:underline"
           >
             {{ t('admin.accounts.gemini.quotaPolicy.docs.vertex') }}
           </a>
@@ -3887,8 +2633,8 @@
       </div>
 
       <!-- API Key Links Section -->
-      <div class="border-t border-gray-200 pt-6 dark:border-dark-600">
-        <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+      <div class="border-t border-default pt-6">
+        <h3 class="mb-3 text-sm font-semibold text-highlighted">
           {{ t('admin.accounts.gemini.helpDialog.apiKeySection') }}
         </h3>
         <div class="flex flex-wrap gap-3">
@@ -3896,7 +2642,7 @@
             :href="geminiHelpLinks.apiKey"
             target="_blank"
             rel="noreferrer"
-            class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+            class="text-sm text-primary hover:underline"
           >
             {{ t('admin.accounts.gemini.accountType.apiKeyLink') }}
           </a>
@@ -3904,7 +2650,7 @@
             :href="geminiHelpLinks.aiStudioPricing"
             target="_blank"
             rel="noreferrer"
-            class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+            class="text-sm text-primary hover:underline"
           >
             {{ t('admin.accounts.gemini.accountType.quotaLink') }}
           </a>
@@ -4030,6 +2776,24 @@ import {
   type OpenAIWSMode
 } from '@/utils/openaiWsMode'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
+
+// Compact selectable UPageCard (platform / type pickers): selection shows as the primary ring.
+const choiceCardUi = { root: 'cursor-pointer text-start hover:bg-elevated/50 focus-visible:outline-2 focus-visible:outline-primary', container: 'p-3 sm:p-3 gap-0 lg:flex', wrapper: 'flex-row items-center gap-3', leading: 'mb-0', leadingIcon: 'size-5 text-muted', title: 'text-sm font-medium', description: 'mt-0.5 text-xs text-muted' }
+// Gemini help dialog: quota policy per channel (channel shown on the first row of each group).
+const geminiQuotaPolicyColumns = computed(() => [
+  { accessorKey: 'channel', header: t('admin.accounts.gemini.quotaPolicy.columns.channel'), meta: { class: { td: 'font-medium text-highlighted' } } },
+  { accessorKey: 'account', header: t('admin.accounts.gemini.quotaPolicy.columns.account') },
+  { accessorKey: 'limits', header: t('admin.accounts.gemini.quotaPolicy.columns.limits') }
+])
+const geminiQuotaPolicyRows = computed(() => [
+  { channel: t('admin.accounts.gemini.quotaPolicy.rows.googleOne.channel'), account: 'Free', limits: t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsFree') },
+  { channel: '', account: 'Pro', limits: t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsPro') },
+  { channel: '', account: 'Ultra', limits: t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsUltra') },
+  { channel: t('admin.accounts.gemini.quotaPolicy.rows.gcp.channel'), account: 'Standard', limits: t('admin.accounts.gemini.quotaPolicy.rows.gcp.limitsStandard') },
+  { channel: '', account: 'Enterprise', limits: t('admin.accounts.gemini.quotaPolicy.rows.gcp.limitsEnterprise') },
+  { channel: t('admin.accounts.gemini.quotaPolicy.rows.aiStudio.channel'), account: 'Free', limits: t('admin.accounts.gemini.quotaPolicy.rows.aiStudio.limitsFree') },
+  { channel: '', account: 'Paid', limits: t('admin.accounts.gemini.quotaPolicy.rows.aiStudio.limitsPaid') }
+])
 
 // Type for exposed OAuthAuthorizationFlow component
 // Note: defineExpose automatically unwraps refs, so we use the unwrapped types
@@ -4265,35 +3029,6 @@ const adaptiveProtocolEndpointOptions = computed<Array<{ value: CnNativeApiProto
 function resetAdaptiveBaseUrls(platform: AdaptiveProtocolPlatform, mode: CnAccountMode) {
   adaptiveBaseUrls.value = defaultCNAdaptiveBaseUrls(platform, mode)
 }
-// 当前选中平台的品牌色（选中卡片描边 / 图标底色），与 platformColors 取色一致。
-const cnAccentActiveClass = computed(() => {
-  switch (form.platform) {
-    case 'kimi':
-      return 'border-pink-500 bg-pink-50 dark:bg-pink-900/20'
-    case 'zhipu':
-      return 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
-    case 'deepseek':
-      return 'border-teal-500 bg-teal-50 dark:bg-teal-900/20'
-    case 'minimax':
-      return 'border-rose-500 bg-rose-50 dark:bg-rose-900/20'
-    default:
-      return 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-  }
-})
-const cnAccentIconClass = computed(() => {
-  switch (form.platform) {
-    case 'kimi':
-      return 'bg-pink-500 text-white'
-    case 'zhipu':
-      return 'bg-indigo-500 text-white'
-    case 'deepseek':
-      return 'bg-teal-500 text-white'
-    case 'minimax':
-      return 'bg-rose-500 text-white'
-    default:
-      return 'bg-primary-500 text-white'
-  }
-})
 // 切换国产供应商平台：强制 apikey 类型，deepseek 无 coding 套餐故锁定 payg，
 // 协议回落 adaptive，并把 base url 重置为该平台默认端点。
 function selectCNPlatform(platform: CnProviderPlatform) {

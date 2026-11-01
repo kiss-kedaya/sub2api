@@ -471,7 +471,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const wrapper = mountModal([{ id: 9, platform: 'gemini' }])
     await selectButtonByText(wrapper, 'Gemini')
     await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.apiKeyTitle')
-    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await wrapper.get('[data-testid="gemini-custom-protocol"]').trigger('click')
     await flushPromises()
     await selectButtonByText(wrapper, 'admin.accounts.cnProviders.apiProtocol.responses')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('Gemini Responses')
