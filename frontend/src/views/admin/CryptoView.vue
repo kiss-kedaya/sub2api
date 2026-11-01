@@ -32,7 +32,7 @@
         class="crypto-view__tabs w-full gap-4 sm:gap-6"
         :ui="{ list: 'border-b border-default', trigger: 'grow-0' }"
         :aria-label="t('admin.crypto.title')"
-        @update:model-value="value => switchTab(String(value))"
+        @update:model-value="(value: string | number) => switchTab(String(value))"
       >
         <!-- Configuration -->
         <template #config>
