@@ -67,6 +67,11 @@ func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account) bool {
 	if account == nil {
 		return false
 	}
+	// DeepSeek native Responses accepts none as an explicit thinking switch.
+	// Omitting it enables thinking and can make a forced function call invalid.
+	if account.Platform == PlatformDeepseek && account.UsesNativeCNResponses() {
+		return true
+	}
 	if account.IsOpenAIPassthroughEnabled() {
 		return true
 	}
