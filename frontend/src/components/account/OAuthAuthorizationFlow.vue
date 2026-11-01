@@ -162,12 +162,12 @@
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedRefreshTokenCount }) }}
                 </span>
               </label>
-              <textarea
+              <UTextarea
+                :rows="3"
                 v-model="refreshTokenInput"
-                rows="3"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t(getOAuthKey('refreshTokenPlaceholder'))"
-              ></textarea>
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
               <p
                 v-if="parsedRefreshTokenCount > 1"
                 class="mt-1 text-xs text-blue-600 dark:text-blue-400"
@@ -187,11 +187,13 @@
             </div>
 
             <!-- Validate Button -->
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !refreshTokenInput.trim()"
               @click="handleValidateRefreshToken"
+              class="w-full"
             >
               <svg
                 v-if="loading"
@@ -219,7 +221,7 @@
                   ? t(getOAuthKey('validating'))
                   : t(getOAuthKey('validateAndCreate'))
               }}
-            </button>
+            </UButton>
           </div>
         </div>
 
@@ -245,13 +247,13 @@
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedSSOCount }) }}
                 </span>
               </label>
-              <textarea
+              <UTextarea
+                :rows="5"
                 v-model="ssoCookieInput"
-                rows="5"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t(getOAuthKey('ssoCookiePlaceholder'))"
                 spellcheck="false"
-              ></textarea>
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
               <p class="mt-1 text-xs text-blue-600 dark:text-blue-400">
                 {{ t(getOAuthKey('ssoCookieHint')) }}
               </p>
@@ -266,11 +268,13 @@
               </p>
             </div>
 
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !ssoCookieInput.trim()"
               @click="handleImportSSO"
+              class="w-full"
             >
               <svg
                 v-if="loading"
@@ -294,7 +298,7 @@
               </svg>
               <Icon v-else name="sparkles" size="sm" class="mr-2" />
               {{ loading ? t(getOAuthKey('convertingSSO')) : t(getOAuthKey('convertSSOAndCreate')) }}
-            </button>
+            </UButton>
           </div>
         </div>
 
@@ -319,14 +323,14 @@
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedEmailPasswordCount }) }}
                 </span>
               </label>
-              <textarea
+              <UTextarea
+                :rows="4"
                 v-model="emailPasswordInput"
-                rows="4"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t(getOAuthKey('emailPasswordPlaceholder'))"
                 spellcheck="false"
                 autocomplete="off"
-              ></textarea>
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
               <p class="mt-1 text-xs text-blue-600 dark:text-blue-400">
                 {{ t(getOAuthKey('emailPasswordHint')) }}
               </p>
@@ -339,11 +343,13 @@
                 {{ error }}
               </p>
             </div>
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !emailPasswordInput.trim()"
               @click="handleAuthorizePassword"
+              class="w-full"
             >
               <svg
                 v-if="loading"
@@ -367,7 +373,7 @@
               </svg>
               <Icon v-else name="sparkles" size="sm" class="mr-2" />
               {{ loading ? t(getOAuthKey('validating')) : t(getOAuthKey('validateAndCreate')) }}
-            </button>
+            </UButton>
           </div>
         </div>
 
@@ -393,13 +399,13 @@
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedCodexSessionCount }) }}
                 </span>
               </label>
-              <textarea
+              <UTextarea
+                :rows="8"
                 v-model="codexSessionInput"
-                rows="8"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t(isAgentIdentityInput ? 'admin.accounts.oauth.openai.agentIdentityPlaceholder' : 'admin.accounts.oauth.openai.codexSessionPlaceholder')"
                 spellcheck="false"
-              ></textarea>
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
               <p class="mt-1 text-xs text-blue-600 dark:text-blue-400">
                 {{ t(isAgentIdentityInput ? 'admin.accounts.oauth.openai.agentIdentityHint' : 'admin.accounts.oauth.openai.codexSessionHint') }}
               </p>
@@ -414,11 +420,13 @@
               </p>
             </div>
 
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !codexSessionInput.trim()"
               @click="handleImportCodexSession"
+              class="w-full"
             >
               <svg
                 v-if="loading"
@@ -446,7 +454,7 @@
                   ? t('admin.accounts.oauth.openai.validating')
                   : t('admin.accounts.oauth.openai.codexSessionImportAndCreate')
               }}
-            </button>
+            </UButton>
           </div>
         </div>
 
@@ -466,13 +474,13 @@
                 <Icon name="key" size="sm" class="text-blue-500" />
                 {{ t('admin.accounts.oauth.openai.codexPatInputLabel') }}
               </label>
-              <textarea
+              <UTextarea
+                :rows="3"
                 v-model="codexPATInput"
-                rows="3"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t('admin.accounts.oauth.openai.codexPatPlaceholder')"
                 spellcheck="false"
-              ></textarea>
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
               <p class="mt-1 text-xs text-blue-600 dark:text-blue-400">
                 {{ t('admin.accounts.oauth.openai.codexPatHint') }}
               </p>
@@ -487,11 +495,13 @@
               </p>
             </div>
 
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !codexPATInput.trim()"
               @click="handleImportCodexPAT"
+              class="w-full"
             >
               <svg
                 v-if="loading"
@@ -519,7 +529,7 @@
                   ? t('admin.accounts.oauth.openai.validating')
                   : t('admin.accounts.oauth.openai.codexPatImportAndCreate')
               }}
-            </button>
+            </UButton>
           </div>
         </div>
 
@@ -566,16 +576,16 @@
                   </svg>
                 </button>
               </label>
-              <textarea
+              <UTextarea
+                :rows="3"
                 v-model="sessionKeyInput"
-                rows="3"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="
                   allowMultiple
                     ? t('admin.accounts.oauth.sessionKeyPlaceholder')
                     : t('admin.accounts.oauth.sessionKeyPlaceholderSingle')
                 "
-              ></textarea>
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
               <p
                 v-if="parsedKeyCount > 1 && allowMultiple"
                 class="mt-1 text-xs text-blue-600 dark:text-blue-400"
@@ -619,11 +629,13 @@
             </div>
 
             <!-- Auth Button -->
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !sessionKeyInput.trim()"
               @click="handleCookieAuth"
+              class="w-full"
             >
               <svg
                 v-if="loading"
@@ -651,7 +663,7 @@
                   ? t('admin.accounts.oauth.authorizing')
                   : t('admin.accounts.oauth.startAutoAuth')
               }}
-            </button>
+            </UButton>
           </div>
         </div>
 
@@ -690,22 +702,24 @@
                       {{ t('admin.accounts.oauth.gemini.howToGetProjectId') }}
                     </a>
                   </label>
-                  <input
+                  <UInput
                     v-model="projectId"
                     type="text"
-                    class="input w-full font-mono text-sm"
                     :placeholder="t('admin.accounts.oauth.gemini.projectIdPlaceholder')"
+                    class="w-full font-mono text-sm"
                   />
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     {{ t('admin.accounts.oauth.gemini.projectIdHint') }}
                   </p>
                 </div>
-                <button
+                <UButton
+                  color="primary"
+                  variant="solid"
                   v-if="!authUrl"
                   type="button"
                   :disabled="loading"
-                  class="btn btn-primary text-sm"
                   @click="handleGenerateUrl"
+                  class="text-sm"
                 >
                   <svg
                     v-if="loading"
@@ -729,20 +743,22 @@
                   </svg>
                   <Icon v-else name="link" size="sm" class="mr-2" />
                   {{ loading ? t('admin.accounts.oauth.generating') : oauthGenerateAuthUrl }}
-                </button>
+                </UButton>
                 <div v-else class="space-y-3">
                   <div class="flex items-center gap-2">
-                    <input
+                    <UInput
                       :value="authUrl"
                       readonly
                       type="text"
-                      class="input flex-1 bg-gray-50 font-mono text-xs dark:bg-gray-700"
+                      class="flex-1 bg-gray-50 font-mono text-xs dark:bg-gray-700"
                     />
-                    <button
+                    <UButton
+                      color="neutral"
+                      variant="outline"
                       type="button"
-                      class="btn btn-secondary p-2"
                       title="Copy URL"
                       @click="handleCopyUrl"
+                      class="p-2"
                     >
                       <svg
                         v-if="!copied"
@@ -765,7 +781,7 @@
                         class="text-green-500"
                         :stroke-width="2"
                       />
-                    </button>
+                    </UButton>
                   </div>
                   <button
                     type="button"
@@ -844,12 +860,12 @@
                     <Icon name="key" size="sm" class="mr-1 inline text-blue-500" />
                     {{ oauthAuthCode }}
                   </label>
-                  <textarea
+                  <UTextarea
+                    :rows="3"
                     v-model="authCodeInput"
-                    rows="3"
-                    class="input w-full resize-none font-mono text-sm"
                     :placeholder="oauthAuthCodePlaceholder"
-                  ></textarea>
+                    class="w-full resize-none font-mono text-sm"
+                  ></UTextarea>
                   <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                     <Icon name="infoCircle" size="xs" class="mr-1 inline" />
                     {{ oauthAuthCodeHint }}

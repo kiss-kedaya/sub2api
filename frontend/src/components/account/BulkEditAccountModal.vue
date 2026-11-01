@@ -220,11 +220,11 @@
                   :key="index"
                   class="flex items-center gap-2"
                 >
-                  <input
+                  <UInput
                     v-model="mapping.from"
                     type="text"
-                    class="input flex-1"
                     :placeholder="t('admin.accounts.requestModel')"
+                    class="flex-1"
                   />
                   <svg
                     class="h-4 w-4 flex-shrink-0 text-gray-400"
@@ -239,11 +239,11 @@
                       d="M14 5l7 7m0 0l-7 7m7-7H3"
                     />
                   </svg>
-                  <input
+                  <UInput
                     v-model="mapping.to"
                     type="text"
-                    class="input flex-1"
                     :placeholder="t('admin.accounts.actualModel')"
+                    class="flex-1"
                   />
                   <button
                     type="button"
@@ -701,18 +701,18 @@
 
           <!-- Manual input -->
           <div class="flex items-center gap-2">
-            <input
+            <UInput
               v-model="customErrorCodeInput"
               id="bulk-edit-custom-error-code-input"
               type="number"
               min="100"
               max="599"
-              class="input flex-1"
               :placeholder="t('admin.accounts.enterErrorCode')"
               aria-labelledby="bulk-edit-custom-error-codes-label"
               @keyup.enter="addCustomErrorCode"
+              class="flex-1"
             />
-            <button type="button" class="btn btn-secondary px-3" @click="addCustomErrorCode">
+            <UButton color="neutral" variant="outline" type="button" @click="addCustomErrorCode" class="px-3">
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   stroke-linecap="round"
@@ -721,7 +721,7 @@
                   d="M12 4v16m8-8H4"
                 />
               </svg>
-            </button>
+            </UButton>
           </div>
 
           <!-- Selected codes summary -->
@@ -1236,20 +1236,20 @@
               :key="index"
               class="flex items-center gap-2"
             >
-              <input
+              <UInput
                 v-model="mapping.from"
                 type="text"
-                class="input flex-1"
                 :placeholder="t('admin.accounts.fromModel')"
                 data-testid="bulk-edit-openai-compact-model-mapping-input"
+                class="flex-1"
               />
               <span class="text-gray-400">→</span>
-              <input
+              <UInput
                 v-model="mapping.to"
                 type="text"
-                class="input flex-1"
                 :placeholder="t('admin.accounts.toModel')"
                 data-testid="bulk-edit-openai-compact-model-mapping-input"
+                class="flex-1"
               />
               <button
                 type="button"
@@ -1318,14 +1318,14 @@
           <div v-if="rpmLimitEnabled" class="space-y-3">
             <div>
               <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpm') }}</label>
-              <input
+              <UInput
                 v-model.number="bulkBaseRpm"
                 type="number"
                 min="1"
                 max="1000"
                 step="1"
-                class="input"
                 :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
+                class="w-full"
               />
               <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpmHint') }}</p>
             </div>
@@ -1362,13 +1362,13 @@
 
             <div v-if="bulkRpmStrategy === 'tiered'">
               <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBuffer') }}</label>
-              <input
+              <UInput
                 v-model.number="bulkRpmStickyBuffer"
                 type="number"
                 min="1"
                 step="1"
-                class="input"
                 :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
+                class="w-full"
               />
               <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint') }}</p>
             </div>
@@ -1429,14 +1429,15 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button type="button" class="btn btn-secondary" @click="handleClose">
+        <UButton color="neutral" variant="outline" type="button" @click="handleClose">
           {{ t('common.cancel') }}
-        </button>
-        <button
+        </UButton>
+        <UButton
+          color="primary"
+          variant="solid"
           type="submit"
           form="bulk-edit-account-form"
           :disabled="submitting"
-          class="btn btn-primary"
         >
           <svg
             v-if="submitting"
@@ -1461,7 +1462,7 @@
           {{
             submitting ? t('admin.accounts.bulkEdit.updating') : t('admin.accounts.bulkEdit.submit')
           }}
-        </button>
+        </UButton>
       </div>
     </template>
   </BaseDialog>
