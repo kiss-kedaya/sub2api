@@ -1,15 +1,12 @@
 <template>
-  <section class="mt-3 border-t border-gray-200 pt-3 dark:border-dark-600">
+  <section class="mt-4 space-y-3">
     <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
       <div class="min-w-0 flex-1 sm:max-w-2xl">
-        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400">
+        <h5 class="text-xs font-medium text-highlighted">
           {{ t('admin.channels.form.timePricing') }}
-        </label>
+        </h5>
         <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <div class="min-w-0">
-            <label class="block text-xs text-gray-400">
-              {{ t('admin.channels.form.timezone') }}
-            </label>
+          <UFormField :label="t('admin.channels.form.timezone')" size="xs" :ui="fieldUi" class="min-w-0">
             <Select
               :model-value="modelValue.timezone"
               :options="timezoneOptions"
@@ -17,100 +14,95 @@
               data-testid="time-pricing-timezone"
               searchable
               creatable
-              class="mt-1 w-full"
+              class="w-full"
               @update:model-value="updateTimezone"
             />
-          </div>
-          <div class="min-w-0">
-            <label class="block text-xs text-gray-400">
-              {{ t('admin.channels.form.timePricingDayScope') }}
-            </label>
+          </UFormField>
+          <UFormField :label="t('admin.channels.form.timePricingDayScope')" size="xs" :ui="fieldUi" class="min-w-0">
             <Select
               :model-value="modelValue.weekdays_only"
               :options="dayScopeOptions"
               :aria-label="t('admin.channels.form.timePricingDayScope')"
               data-testid="time-pricing-day-scope"
-              class="mt-1 w-full"
+              class="w-full"
               @update:model-value="updateDayScope"
             />
-          </div>
+          </UFormField>
         </div>
       </div>
-      <button
-        type="button"
-        class="self-start text-xs text-primary-600 hover:text-primary-700 sm:self-end sm:pb-2"
+      <UButton
+        icon="i-lucide-plus"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        class="self-start sm:self-end sm:mb-1"
         data-testid="add-time-period"
+        :label="t('admin.channels.form.addTimePeriod')"
         @click="addPeriod"
-      >
-        + {{ t('admin.channels.form.addTimePeriod') }}
-      </button>
+      />
     </div>
 
-    <div v-if="modelValue.periods.length > 0" class="mt-3 space-y-3">
+    <div v-if="modelValue.periods.length > 0" class="space-y-2">
       <div
         v-for="(period, index) in modelValue.periods"
         :key="index"
-        class="grid grid-cols-1 gap-2 border-t border-gray-200 pt-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_2rem] sm:items-end dark:border-dark-600"
+        class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_2rem] sm:items-end"
       >
-        <div class="min-w-0">
-          <label :for="`${inputIdPrefix}-start-${index}`" class="block text-xs text-gray-400">
-            {{ t('admin.channels.form.startTime') }}
-          </label>
-          <input
+        <UFormField :label="t('admin.channels.form.startTime')" size="xs" :ui="fieldUi" class="min-w-0">
+          <UInput
             :id="`${inputIdPrefix}-start-${index}`"
-            :value="period.start_time"
+            :model-value="period.start_time"
             type="text"
             inputmode="numeric"
             maxlength="8"
             placeholder="HH:mm:ss"
             pattern="[0-9]{2}:[0-9]{2}:[0-9]{2}"
             autocomplete="off"
-            class="input mt-1 w-full text-sm"
+            size="sm"
+            class="w-full"
             @input="updatePeriod(index, 'start_time', normalizeClockTime(($event.target as HTMLInputElement).value))"
           />
-        </div>
-        <div class="min-w-0">
-          <label :for="`${inputIdPrefix}-end-${index}`" class="block text-xs text-gray-400">
-            {{ t('admin.channels.form.endTime') }}
-          </label>
-          <input
+        </UFormField>
+        <UFormField :label="t('admin.channels.form.endTime')" size="xs" :ui="fieldUi" class="min-w-0">
+          <UInput
             :id="`${inputIdPrefix}-end-${index}`"
-            :value="period.end_time"
+            :model-value="period.end_time"
             type="text"
             inputmode="numeric"
             maxlength="8"
             placeholder="HH:mm:ss"
             pattern="[0-9]{2}:[0-9]{2}:[0-9]{2}"
             autocomplete="off"
-            class="input mt-1 w-full text-sm"
+            size="sm"
+            class="w-full"
             @input="updatePeriod(index, 'end_time', normalizeClockTime(($event.target as HTMLInputElement).value))"
           />
-        </div>
-        <div class="min-w-0">
-          <label :for="`${inputIdPrefix}-multiplier-${index}`" class="block text-xs text-gray-400">
-            {{ t('admin.channels.form.multiplier') }}
-          </label>
-          <input
+        </UFormField>
+        <UFormField :label="t('admin.channels.form.multiplier')" size="xs" :ui="fieldUi" class="min-w-0">
+          <UInput
             :id="`${inputIdPrefix}-multiplier-${index}`"
-            :value="period.multiplier"
+            :model-value="String(period.multiplier)"
             type="number"
             min="0.01"
             step="0.01"
-            class="input mt-1 w-full text-sm"
+            size="sm"
+            class="w-full"
             @input="updatePeriod(index, 'multiplier', ($event.target as HTMLInputElement).value)"
             @blur="formatMultiplier(index, ($event.target as HTMLInputElement).value)"
           />
-        </div>
-        <button
-          type="button"
-          class="flex h-8 w-8 items-center justify-center rounded-sm text-gray-400 hover:text-red-500"
+        </UFormField>
+        <UButton
+          icon="i-lucide-trash-2"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          square
+          class="justify-center"
           :title="t('admin.channels.form.removeTimePeriod')"
           :aria-label="t('admin.channels.form.removeTimePeriod')"
           :data-testid="`remove-time-period-${index}`"
           @click="removePeriod(index)"
-        >
-          <Icon name="trash" size="sm" />
-        </button>
+        />
       </div>
     </div>
   </section>
@@ -120,7 +112,6 @@
 import { computed, getCurrentInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
-import Icon from '@/components/icons/Icon.vue'
 import {
   COMMON_TIMEZONES,
   formatTimezoneOffset,
@@ -134,6 +125,7 @@ const { t } = useI18n()
 const props = defineProps<{ modelValue: TimePricingFormEntry }>()
 const emit = defineEmits<{ 'update:modelValue': [value: TimePricingFormEntry] }>()
 const inputIdPrefix = `time-pricing-${getCurrentInstance()?.uid}`
+const fieldUi = { label: 'font-normal text-muted', container: 'mt-1' }
 
 const timezoneOptions = COMMON_TIMEZONES.map(value => {
   const offset = formatTimezoneOffset(value)

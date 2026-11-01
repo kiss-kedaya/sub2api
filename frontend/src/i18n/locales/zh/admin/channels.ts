@@ -54,6 +54,7 @@ export default {
       allStatus: '全部状态',
       groupsUnit: '个分组',
       pricingUnit: '条定价',
+      displayColumns: '显示列',
       noChannelsYet: '暂无渠道',
       createFirstChannel: '创建第一个渠道来管理模型定价',
       loadError: '加载渠道列表失败',
