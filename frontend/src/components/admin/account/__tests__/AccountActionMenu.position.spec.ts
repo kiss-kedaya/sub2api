@@ -16,10 +16,15 @@ const account = {
   rate_limit_reset_at: '2099-01-01T00:00:00Z'
 } as Account
 
-// The menu is a UDropdownMenu teleported to <body>; floating-ui places it against the
-// trigger rect (virtual reference), flips it above near the viewport bottom and keeps it
-// inside an 8px margin. Specs assert that configuration plus the rendered menu.
+// The menu is a UDropdownMenu teleported to <body>; an invisible fixed anchor sits on the
+// trigger rect and floating-ui places the menu against it, flips it above near the viewport
+// bottom and keeps it inside an 8px margin. Specs assert that configuration plus the menu.
 const getMenu = () => document.body.querySelector<HTMLElement>('.action-menu-content')
+const getAnchor = () => document.body.querySelector<HTMLElement>('.action-menu-anchor')
+const anchorRect = () => {
+  const style = getAnchor()!.style
+  return new DOMRect(parseFloat(style.left), parseFloat(style.top), parseFloat(style.width), parseFloat(style.height))
+}
 const menuItems = () => Array.from(document.body.querySelectorAll<HTMLElement>('.action-menu-content [role="menuitem"]'))
 
 async function mountMenu(anchorRect = new DOMRect(950, 720, 32, 24)) {
@@ -38,7 +43,6 @@ const contentOf = (wrapper: Awaited<ReturnType<typeof mountMenu>>) =>
     sideOffset: number
     collisionPadding: number
     avoidCollisions: boolean
-    reference?: { getBoundingClientRect: () => DOMRect }
   }
 
 enableAutoUnmount(afterEach)
@@ -48,7 +52,9 @@ describe('AccountActionMenu viewport positioning', () => {
     const wrapper = await mountMenu()
 
     const content = contentOf(wrapper)
-    expect(content.reference?.getBoundingClientRect()).toEqual(new DOMRect(950, 720, 32, 24))
+    expect(content).toMatchObject({ side: 'bottom', align: 'end' })
+    expect(anchorRect()).toEqual(new DOMRect(950, 720, 32, 24))
+    expect(getAnchor()!.className).toContain('fixed')
     expect(getMenu()).not.toBeNull()
     expect(getMenu()!.textContent).toContain('admin.accounts.recoverState')
   })
@@ -69,7 +75,7 @@ describe('AccountActionMenu viewport positioning', () => {
     const wrapper = await mountMenu(new DOMRect(x, 100, 24, 24))
 
     expect(contentOf(wrapper).collisionPadding).toBe(8)
-    expect(contentOf(wrapper).reference?.getBoundingClientRect().x).toBe(x)
+    expect(anchorRect().x).toBe(x)
   })
 
   it('limits an oversized menu to the available height, scrolls it and preserves the recover-state action', async () => {
@@ -96,7 +102,8 @@ describe('AccountActionMenu viewport positioning', () => {
     await flushPromises()
 
     expect(getMenu()).not.toBeNull()
-    expect(contentOf(wrapper).reference?.getBoundingClientRect()).toEqual(new DOMRect(400, 100, 32, 24))
+    expect(contentOf(wrapper)).toMatchObject({ side: 'bottom', align: 'end' })
+    expect(anchorRect()).toEqual(new DOMRect(400, 100, 32, 24))
   })
 
   it('still closes on Escape', async () => {

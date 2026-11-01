@@ -1,13 +1,18 @@
 <template>
-  <!-- One shared row menu for the whole table: the row's "..." button passes its rect, the menu
-       anchors to it (virtual reference), so virtualised rows can unmount without closing it. -->
-  <UDropdownMenu
-    :open="open"
-    :items="items"
-    :content="contentProps"
-    :ui="{ content: 'action-menu-content w-52' }"
-    @update:open="onOpenChange"
-  />
+  <!-- One shared row menu for the whole table: the row's "..." button passes its rect and an
+       invisible fixed anchor sits on it, so virtualised rows can unmount without closing the menu.
+       Teleported to <body> so no transformed ancestor shifts the fixed anchor. -->
+  <Teleport to="body">
+    <UDropdownMenu
+      :open="open"
+      :items="items"
+      :content="contentProps"
+      :ui="{ content: 'action-menu-content w-52' }"
+      @update:open="onOpenChange"
+    >
+      <span class="action-menu-anchor pointer-events-none fixed" :style="anchorStyle" aria-hidden="true" />
+    </UDropdownMenu>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -26,17 +31,17 @@ const open = computed(() => props.show && !!props.anchorRect && !!props.account)
 // Menu placement: below the trigger, right edges aligned; it flips above near the bottom
 // and stays 8px inside the viewport (floating-ui collision handling).
 const VIEWPORT_PADDING = 8
-const anchor = computed(() => {
+const anchorStyle = computed(() => {
   const rect = props.anchorRect
-  return rect ? { getBoundingClientRect: () => rect } : undefined
+  if (!rect) return { display: 'none' }
+  return { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` }
 })
 const contentProps = computed(() => ({
   side: 'bottom' as const,
   align: 'end' as const,
   sideOffset: 4,
   collisionPadding: VIEWPORT_PADDING,
-  avoidCollisions: true,
-  reference: anchor.value
+  avoidCollisions: true
 }))
 
 // Selecting an item or dismissing (Escape, outside click) closes through update:open.

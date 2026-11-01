@@ -140,8 +140,9 @@
           </UFormField>
           <UFormField :label="t('admin.tlsFingerprintProfiles.form.description')">
             <UInput
-              v-model="form.description"
+              :model-value="form.description ?? ''"
               class="w-full"
+              @update:model-value="form.description = $event ? String($event) : null"
               :placeholder="t('admin.tlsFingerprintProfiles.form.descriptionPlaceholder')"
             />
           </UFormField>

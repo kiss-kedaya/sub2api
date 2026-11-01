@@ -189,8 +189,9 @@
 
         <UFormField :label="t('admin.errorPassthrough.form.description')">
           <UInput
-            v-model="form.description"
+            :model-value="form.description ?? ''"
             class="w-full"
+            @update:model-value="form.description = $event ? String($event) : null"
             :placeholder="t('admin.errorPassthrough.form.descriptionPlaceholder')"
           />
         </UFormField>
@@ -220,7 +221,7 @@
         </UFormField>
 
         <UFormField :label="t('admin.errorPassthrough.form.platforms')" :help="t('admin.errorPassthrough.form.platformsHint')">
-          <UCheckboxGroup v-model="form.platforms" :items="platformOptions" orientation="horizontal" :ui="{ fieldset: 'flex-wrap gap-x-4 gap-y-2' }" />
+          <UCheckboxGroup v-model="form.platforms" :items="platformItems" orientation="horizontal" :ui="{ fieldset: 'flex-wrap gap-x-4 gap-y-2' }" />
         </UFormField>
 
         <USeparator :label="t('admin.errorPassthrough.form.responseBehavior')" :ui="{ label: 'text-xs font-medium text-muted' }" />
@@ -236,8 +237,9 @@
             <UCheckbox v-model="form.passthrough_body" :label="t('admin.errorPassthrough.form.passthroughBody')" />
             <UFormField v-if="!form.passthrough_body" :label="t('admin.errorPassthrough.form.customMessage')">
               <UInput
-                v-model="form.custom_message"
+                :model-value="form.custom_message ?? ''"
                 class="w-full"
+                @update:model-value="form.custom_message = $event ? String($event) : null"
                 :placeholder="t('admin.errorPassthrough.form.customMessagePlaceholder')"
               />
             </UFormField>
@@ -337,6 +339,8 @@ const matchModeOptions = computed(() => [
 ])
 
 const platformOptions = CONCRETE_PLATFORM_OPTIONS
+// Plain string values, so the checkbox group binds to form.platforms (string[]).
+const platformItems: Array<{ value: string; label: string }> = platformOptions.map(option => ({ value: option.value, label: option.label }))
 
 // Rule list in the template's table style: elevated header row, hairline row borders.
 const ruleColumns = computed<TableColumn<ErrorPassthroughRule>[]>(() => [
