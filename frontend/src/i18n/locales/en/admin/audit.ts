@@ -1,5 +1,6 @@
 export default {
   audit: {
+    displayColumns: 'Columns',
     title: 'Audit Logs',
     description: 'Records management-plane operations by admins and users. Header credentials keep only their first/last characters and request bodies are redacted. Entries cannot be deleted individually; clearing all requires two-factor verification.',
     clearAll: 'Clear All',

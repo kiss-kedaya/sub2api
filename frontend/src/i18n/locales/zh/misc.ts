@@ -534,6 +534,7 @@ export default {
     perMonth: '月',
     perYear: '年',
     admin: {
+      displayColumns: '显示列',
       tabs: {
         overview: '概览',
         orders: '订单管理',
