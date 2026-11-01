@@ -3,27 +3,27 @@
     <div class="space-y-6">
       <AdminPageHeader :title="t('nav.paymentDashboard')">
         <template #actions>
-          <div class="flex rounded-lg border border-gray-200 dark:border-dark-600">
-            <button
-              v-for="d in DAYS_OPTIONS"
-              :key="d"
-              type="button"
-              class="px-3 py-1.5 text-xs font-medium transition-colors first:rounded-l-lg last:rounded-r-lg"
-              :class="days === d
-                ? 'bg-primary-600 text-white'
-                : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700'"
-              @click="days = d"
-            >
-              {{ d }}{{ t('payment.admin.daySuffix') }}
-            </button>
-          </div>
-          <button @click="loadDashboard" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')">
-            <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-          </button>
+          <UTabs
+            :model-value="String(days)"
+            :items="daysTabs"
+            :content="false"
+            size="xs"
+            @update:model-value="(value: string | number) => (days = Number(value))"
+          />
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            square
+            :disabled="loading"
+            :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            @click="loadDashboard"
+          />
         </template>
       </AdminPageHeader>
 
-      <!-- Dashboard Content -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <LoadingSpinner />
       </div>
@@ -31,38 +31,42 @@
         <OrderStatsCards :stats="stats" />
         <DailyRevenueChart :data="stats.daily_series || []" :loading="loading" />
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div class="card p-4">
-            <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.admin.paymentDistribution') }}</h3>
-            <div v-if="!stats.payment_methods?.length" class="flex h-32 items-center justify-center text-sm text-gray-500 dark:text-gray-400">{{ t('payment.admin.noData') }}</div>
+          <UCard :ui="{ header: 'p-4 sm:px-6', body: 'p-4 sm:p-6' }">
+            <template #header>
+              <p class="text-sm font-semibold text-highlighted">{{ t('payment.admin.paymentDistribution') }}</p>
+            </template>
+            <p v-if="!stats.payment_methods?.length" class="flex h-32 items-center justify-center text-sm text-muted">{{ t('payment.admin.noData') }}</p>
+            <ul v-else class="space-y-3">
+              <li v-for="method in stats.payment_methods" :key="method.type" class="flex items-center justify-between gap-3">
+                <span class="flex items-center gap-2 text-sm text-default">
+                  <span :class="['inline-block size-2.5 rounded-full', methodColor(method.type)]"></span>
+                  {{ t('payment.methods.' + method.type, method.type) }}
+                </span>
+                <span class="text-right">
+                  <span v-for="[currency, amount] in sortedAmounts(method.amount)" :key="currency" class="block text-sm font-medium tabular-nums text-highlighted">{{ formatMoney(currency, amount) }}</span>
+                  <span class="text-xs text-muted">({{ method.count }})</span>
+                </span>
+              </li>
+            </ul>
+          </UCard>
+          <UCard :ui="{ header: 'p-4 sm:px-6', body: 'p-4 sm:p-6' }">
+            <template #header>
+              <p class="text-sm font-semibold text-highlighted">{{ t('payment.admin.topUsers') }}</p>
+            </template>
+            <p v-if="!hasTopUsers(stats.top_users)" class="flex h-32 items-center justify-center text-sm text-muted">{{ t('payment.admin.noData') }}</p>
             <div v-else class="space-y-3">
-              <div v-for="method in stats.payment_methods" :key="method.type" class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span :class="['inline-block h-3 w-3 rounded-full', methodColor(method.type)]"></span>
-                  <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('payment.methods.' + method.type, method.type) }}</span>
-                </div>
-                <div class="space-y-1 text-right">
-                  <span v-for="[currency, amount] in sortedAmounts(method.amount)" :key="currency" class="block text-sm font-medium text-gray-900 dark:text-white">{{ formatMoney(currency, amount) }}</span>
-                  <span class="ml-2 text-xs text-gray-500 dark:text-gray-400">({{ method.count }})</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="card p-4">
-            <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('payment.admin.topUsers') }}</h3>
-            <div v-if="!hasTopUsers(stats.top_users)" class="flex h-32 items-center justify-center text-sm text-gray-500 dark:text-gray-400">{{ t('payment.admin.noData') }}</div>
-            <div v-else class="space-y-2">
-              <div v-for="[currency, users] in sortedTopUsers(stats.top_users)" :key="currency" class="space-y-2">
-                <p class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ currency }}</p>
-                <div v-for="(user, idx) in users" :key="user.user_id" class="flex items-center justify-between rounded-lg px-3 py-2 hover:bg-gray-50 dark:hover:bg-dark-700">
-                  <div class="flex items-center gap-3">
-                    <span :class="['flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold', rankClass(idx)]">{{ idx + 1 }}</span>
-                    <span class="text-sm text-gray-700 dark:text-gray-300">{{ user.email }}</span>
-                  </div>
-                  <span class="text-sm font-medium text-gray-900 dark:text-white">{{ formatMoney(currency, user.amount) }}</span>
+              <div v-for="[currency, users] in sortedTopUsers(stats.top_users)" :key="currency" class="space-y-1">
+                <p class="text-xs font-medium text-muted">{{ currency }}</p>
+                <div v-for="(user, idx) in users" :key="user.user_id" class="flex items-center justify-between gap-3 py-1.5">
+                  <span class="flex min-w-0 items-center gap-3">
+                    <UBadge :color="idx === 0 ? 'primary' : 'neutral'" :variant="idx < 3 ? 'subtle' : 'outline'" size="sm" class="w-6 justify-center tabular-nums" :label="String(idx + 1)" />
+                    <span class="truncate text-sm text-default">{{ user.email }}</span>
+                  </span>
+                  <span class="text-sm font-medium tabular-nums text-highlighted">{{ formatMoney(currency, user.amount) }}</span>
                 </div>
               </div>
             </div>
-          </div>
+          </UCard>
         </div>
       </template>
     </div>
@@ -70,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminPaymentAPI } from '@/api/admin/payment'
@@ -79,7 +83,6 @@ import type { CurrencyAmounts, DashboardStats, TopUserPaymentStats } from '@/typ
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import Icon from '@/components/icons/Icon.vue'
 import OrderStatsCards from '@/components/admin/payment/OrderStatsCards.vue'
 import DailyRevenueChart from '@/components/admin/payment/DailyRevenueChart.vue'
 
@@ -88,6 +91,7 @@ const appStore = useAppStore()
 
 const DAYS_OPTIONS = [7, 30, 90] as const
 const days = ref<number>(30)
+const daysTabs = computed(() => DAYS_OPTIONS.map((d) => ({ label: d + t('payment.admin.daySuffix'), value: String(d) })))
 const loading = ref(false)
 const stats = ref<DashboardStats | null>(null)
 
@@ -98,13 +102,6 @@ function methodColor(type: string): string {
     stripe: 'bg-purple-500',
   }
   return c[type] || 'bg-gray-400'
-}
-
-function rankClass(idx: number): string {
-  if (idx === 0) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-  if (idx === 1) return 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-  if (idx === 2) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-  return 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400'
 }
 
 function sortedAmounts(amounts: CurrencyAmounts): [string, number][] {

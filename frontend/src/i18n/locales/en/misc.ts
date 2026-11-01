@@ -511,6 +511,7 @@ export default {
     perYear: 'year',
     admin: {
       displayColumns: 'Columns',
+      advancedOptions: 'Advanced options',
       tabs: {
         overview: 'Overview',
         orders: 'Orders',
