@@ -16,7 +16,9 @@ const { appStore } = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('vue-router', () => ({
+// Keep the real exports (Nuxt UI links import RouterLink from vue-router); only the route is faked.
+vi.mock('vue-router', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-router')>(),
   useRoute: () => route,
 }))
 

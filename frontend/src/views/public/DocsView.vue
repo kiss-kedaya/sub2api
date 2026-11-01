@@ -1,117 +1,204 @@
 <template>
-  <div class="api-docs min-h-screen bg-white text-slate-900 dark:bg-dark-950 dark:text-slate-100">
-    <a href="#docs-content" class="sr-only z-60 rounded-md bg-blue-600 px-4 py-3 text-sm text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">{{ t('docs.skipToContent') }}</a>
-    <header class="docs-header sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur-sm dark:border-dark-700 dark:bg-dark-950/95">
-      <div class="flex h-14 items-center justify-between gap-4 px-5 sm:px-7">
-        <router-link to="/home" class="flex min-w-0 items-center gap-2.5 font-semibold tracking-tight">
-          <img :src="siteLogo || '/logo.svg'" alt="" class="h-7 w-7 shrink-0 object-contain" />
-          <span class="truncate">{{ siteName }}</span>
-        </router-link>
-        <nav class="flex shrink-0 items-center gap-4 text-sm" :aria-label="t('docs.title')">
-          <router-link :to="consolePath" class="hidden text-slate-500 hover:text-slate-900 dark:hover:text-white sm:block">{{ t('docs.api') }}</router-link>
-          <router-link v-if="showModels" to="/model-plaza" class="hidden text-slate-500 hover:text-slate-900 dark:hover:text-white sm:block">{{ t('docs.models') }}</router-link>
-          <span class="hidden font-medium sm:block" aria-current="page">{{ t('nav.docs') }}</span>
-          <LocaleSwitcher />
-          <button type="button" class="rounded-md p-2 text-slate-500 hover:bg-slate-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800" :aria-label="t('docs.theme')" @click="toggleTheme">
-            <Icon :name="isDark ? 'sun' : 'moon'" size="sm" />
-          </button>
-        </nav>
-      </div>
-      <div class="flex h-12 items-center gap-5 overflow-x-auto border-t border-slate-100 px-5 text-sm dark:border-dark-800 sm:px-7">
-        <button type="button" class="inline-flex shrink-0 items-center gap-2 font-semibold lg:pointer-events-none" :aria-expanded="mobileOpen" aria-controls="docs-sidebar" :aria-label="mobileOpen ? t('docs.closeNavigation') : t('docs.openNavigation')" @click="mobileOpen = !mobileOpen">
-          <Icon name="menu" size="sm" class="lg:hidden" />
-          <Icon name="book" size="sm" class="hidden text-blue-600 lg:block" />
-          <span>{{ t('docs.title') }}</span>
-        </button>
-        <router-link v-for="category in categories" :key="category" :to="docLocation(firstInCategory(category))" class="docs-category flex h-full shrink-0 items-center border-b-2 px-0.5" :class="page.category === category ? 'border-blue-600 font-medium text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-current="page.category === category ? 'page' : undefined">
-          {{ t(`docs.category.${category}`) }}
-        </router-link>
-      </div>
-    </header>
+  <div class="api-docs min-h-screen bg-default text-default">
+    <a href="#docs-content" class="sr-only z-60 rounded-md bg-inverted px-4 py-3 text-sm text-inverted focus:not-sr-only focus:fixed focus:left-4 focus:top-4">{{ t('docs.skipToContent') }}</a>
 
-    <button v-if="mobileOpen" class="fixed inset-0 z-40 bg-slate-900/30 lg:hidden" :aria-label="t('docs.closeNavigation')" @click="mobileOpen = false"></button>
-    <aside id="docs-sidebar" class="docs-sidebar fixed bottom-0 left-0 top-[105px] z-50 flex w-[260px] flex-col border-r border-slate-200 bg-white px-4 py-5 transition-transform dark:border-dark-700 dark:bg-dark-950 lg:z-30 lg:translate-x-0" :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'" :inert="!mobileOpen && !wideLayout" :aria-label="t('docs.navigation')">
-      <label class="relative block">
-        <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-2.5 text-slate-400" />
-        <input v-model="search" data-testid="docs-search" type="search" class="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-hidden transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-dark-700 dark:bg-dark-900 dark:focus:ring-blue-900/30" :placeholder="t('docs.search')" :aria-label="t('docs.search')" />
-      </label>
-      <nav class="mt-6 flex-1 space-y-7 overflow-y-auto pr-1">
-        <div v-for="group in navigationGroups" :key="group.category">
-          <h2 class="mb-2 px-2 text-xs font-semibold tracking-wide text-slate-900 dark:text-slate-100">{{ t(`docs.category.${group.category}`) }}</h2>
-          <router-link v-for="entry in group.pages" :key="entry.id" :to="docLocation(entry.id)" class="mb-0.5 flex min-h-9 items-center rounded-lg px-2.5 py-2 text-[13px] leading-5" :class="entry.id === page.id ? 'bg-blue-50 font-medium text-blue-600 dark:bg-blue-500/10 dark:text-blue-400' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-dark-900 dark:hover:text-white'" :aria-current="entry.id === page.id ? 'page' : undefined" @click="mobileOpen = false">
-            {{ entry.title }}
-          </router-link>
-        </div>
-        <p v-if="!navigationGroups.length" class="px-2 text-sm text-slate-500">{{ t('docs.noResults') }}</p>
-      </nav>
-      <div class="mt-5 flex items-center gap-2.5 border-t border-slate-100 pt-4 text-[11px] leading-5 text-slate-500 dark:border-dark-800">
-        <img :src="siteLogo || '/logo.svg'" alt="" class="h-8 w-8 object-contain" />
-        <span>{{ t('docs.sidebarNote') }}</span>
-      </div>
-    </aside>
+    <PublicHeader :site-name="siteName" :logo="siteLogo" brand-to="/home" :section="t('docs.title')">
+      <template #leading>
+        <UButton
+          icon="i-lucide-menu"
+          color="neutral"
+          variant="ghost"
+          square
+          class="-ms-1.5 lg:hidden"
+          aria-controls="docs-sidebar"
+          :aria-expanded="mobileOpen"
+          :aria-label="mobileOpen ? t('docs.closeNavigation') : t('docs.openNavigation')"
+          @click="mobileOpen = !mobileOpen"
+        />
+      </template>
 
-    <div class="lg:pl-[260px]">
-      <main id="docs-content" class="mx-auto grid max-w-[1330px] grid-cols-1 gap-12 px-6 py-9 sm:px-12 sm:py-11 xl:grid-cols-[minmax(0,780px)_170px] xl:gap-14 xl:px-12">
-        <article :key="page.id" class="min-w-0 max-w-[780px]" data-testid="docs-article">
-          <div class="mb-8">
-            <p class="mb-3 text-xs font-medium tracking-wide text-blue-600 dark:text-blue-400">{{ t(`docs.category.${page.category}`) }}</p>
-            <h1 class="text-[30px] font-semibold leading-tight tracking-tight sm:text-[34px]">{{ page.title }}</h1>
-            <p class="mt-5 text-[15px] leading-8 text-slate-600 dark:text-slate-300">{{ page.description }}</p>
-          </div>
+      <UNavigationMenu :items="categoryItems" variant="link" :aria-label="t('docs.title')" />
 
-          <section v-for="section in page.sections" :id="section.id" :key="section.id" class="docs-section mb-10 scroll-mt-36">
-            <h2 class="mb-4 text-xl font-semibold tracking-tight">
-              <a :href="`#${section.id}`" class="group" @click.prevent="jumpTo(section.id)">{{ section.title }}<span class="ml-2 text-blue-400 opacity-0 transition group-hover:opacity-100" aria-hidden="true">#</span></a>
-            </h2>
-            <p v-for="paragraph in section.paragraphs" :key="paragraph" class="my-3 text-sm leading-8 text-slate-600 dark:text-slate-300">{{ paragraph }}</p>
-            <div v-if="section.note" class="my-5 flex gap-3 rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm leading-7 text-blue-700 dark:border-blue-800 dark:bg-blue-500/10 dark:text-blue-300">
-              <Icon name="infoCircle" size="sm" class="mt-1 shrink-0" />
-              <p>{{ section.note }}</p>
+      <template #actions>
+        <UButton :to="consolePath" :label="t('docs.api')" color="neutral" variant="ghost" class="hidden sm:inline-flex" />
+        <UButton v-if="showModels" to="/model-plaza" :label="t('docs.models')" color="neutral" variant="ghost" class="hidden sm:inline-flex" />
+        <LocaleSwitcher />
+        <ThemeToggleButton :label="t('docs.theme')" />
+      </template>
+    </PublicHeader>
+
+    <div v-if="mobileOpen" class="fixed inset-0 top-16 z-40 bg-elevated/75 lg:hidden" aria-hidden="true" @click="mobileOpen = false"></div>
+
+    <UContainer>
+      <UPage>
+        <template #left>
+          <aside
+            id="docs-sidebar"
+            class="docs-sidebar fixed bottom-0 start-0 top-16 z-50 flex w-72 flex-col border-e border-default bg-default px-4 py-5 transition-transform lg:sticky lg:top-16 lg:bottom-auto lg:z-auto lg:h-[calc(100vh-4rem)] lg:w-auto lg:translate-x-0 lg:border-e-0 lg:bg-transparent lg:px-0 lg:py-8"
+            :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'"
+            :inert="!mobileOpen && !wideLayout"
+            :aria-label="t('docs.navigation')"
+          >
+            <UInput
+              v-model="search"
+              data-testid="docs-search"
+              type="search"
+              icon="i-lucide-search"
+              :placeholder="t('docs.search')"
+              :aria-label="t('docs.search')"
+              class="w-full"
+            />
+            <div class="mt-5 min-h-0 flex-1 overflow-y-auto pe-1">
+              <UNavigationMenu
+                v-if="navigationGroups.length"
+                :items="sidebarItems"
+                orientation="vertical"
+                :ui="{ separator: 'my-2 bg-transparent', label: 'px-2.5 pt-3 pb-1 text-xs' }"
+              />
+              <p v-else class="px-2 text-sm text-muted">{{ t('docs.noResults') }}</p>
             </div>
-
-            <div v-if="section.fields" class="my-5 overflow-x-auto rounded-xl border border-slate-200 dark:border-dark-700">
-              <table class="w-full border-collapse text-left text-[13px]">
-                <thead class="bg-slate-50 text-xs text-slate-500 dark:bg-dark-900"><tr><th class="w-1/4 px-4 py-3 font-medium">{{ t('docs.field') }}</th><th class="px-4 py-3 font-medium">{{ t('docs.description') }}</th></tr></thead>
-                <tbody>
-                  <tr v-for="field in section.fields" :key="field.name" class="border-t border-slate-200 align-top dark:border-dark-700">
-                    <td class="px-4 py-4"><code class="rounded-sm bg-slate-100 px-1.5 py-1 font-mono text-[12px] dark:bg-dark-800">{{ field.name }}</code><div class="mt-2 text-[11px] text-slate-400">{{ field.type }}<span v-if="field.required" class="ml-1.5 text-rose-500">{{ t('docs.required') }}</span></div></td>
-                    <td class="wrap-break-word px-4 py-4 leading-7 text-slate-600 dark:text-slate-300">{{ field.description }}</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="mt-4 flex items-center gap-2.5 border-t border-default pt-4 text-xs leading-5 text-muted">
+              <img :src="siteLogo || '/logo.svg'" alt="" class="size-7 shrink-0 object-contain" />
+              <span>{{ t('docs.sidebarNote') }}</span>
             </div>
+          </aside>
+        </template>
 
-            <div v-if="section.examples" class="docs-code my-5 overflow-hidden rounded-xl border border-slate-200 bg-[#f8f9fb] dark:border-dark-700 dark:bg-dark-900">
-              <div class="flex min-h-11 items-center justify-between gap-3 border-b border-slate-200 px-3 dark:border-dark-700">
-                <div class="flex min-w-0 gap-1 overflow-x-auto" role="group" :aria-label="section.title">
-                  <button v-for="language in languages(section)" :key="language" type="button" class="rounded-md px-2.5 py-1.5 font-mono text-[11px] transition" :class="selectedLanguage(section) === language ? 'bg-white font-medium text-blue-600 shadow-xs dark:bg-dark-800 dark:text-blue-400' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-pressed="selectedLanguage(section) === language" @click="selectedLanguages[section.id] = language">{{ languageLabels[language] }}</button>
+        <main id="docs-content">
+          <article :key="page.id" class="min-w-0" data-testid="docs-article">
+            <UPageHeader
+              :headline="t(`docs.category.${page.category}`)"
+              :title="page.title"
+              :description="page.description"
+              :ui="{ description: 'text-base leading-7' }"
+            />
+
+            <UPageBody class="space-y-10">
+              <section v-for="section in page.sections" :id="section.id" :key="section.id" class="docs-section scroll-mt-24">
+                <h2 class="mb-3 text-xl font-semibold tracking-tight text-highlighted">
+                  <a :href="`#${section.id}`" class="group" @click.prevent="jumpTo(section.id)">{{ section.title }}<span class="ms-2 text-primary opacity-0 transition group-hover:opacity-100" aria-hidden="true">#</span></a>
+                </h2>
+                <p v-for="paragraph in section.paragraphs" :key="paragraph" class="my-3 text-sm leading-7 text-default">{{ paragraph }}</p>
+
+                <UAlert
+                  v-if="section.note"
+                  :description="section.note"
+                  icon="i-lucide-info"
+                  color="neutral"
+                  variant="subtle"
+                  class="my-5"
+                />
+
+                <UTable
+                  v-if="section.fields"
+                  :data="section.fields"
+                  :columns="fieldColumns"
+                  class="my-5 rounded-lg border border-default"
+                  :ui="{ thead: 'bg-elevated/50', th: 'py-3 text-xs font-medium text-muted', td: 'whitespace-normal align-top py-4' }"
+                >
+                  <template #name-cell="{ row }">
+                    <code class="rounded-sm bg-elevated px-1.5 py-1 font-mono text-xs text-highlighted">{{ row.original.name }}</code>
+                    <div class="mt-2 text-xs text-dimmed">
+                      {{ row.original.type }}<UBadge v-if="row.original.required" :label="t('docs.required')" color="error" variant="subtle" size="sm" class="ms-1.5" />
+                    </div>
+                  </template>
+                  <template #description-cell="{ row }">
+                    <span class="wrap-break-word leading-6 text-default">{{ row.original.description }}</span>
+                  </template>
+                </UTable>
+
+                <div v-if="section.examples" class="docs-code my-5 overflow-hidden rounded-lg border border-default bg-muted">
+                  <div class="flex min-h-11 items-center justify-between gap-3 border-b border-default px-2">
+                    <div class="flex min-w-0 gap-1 overflow-x-auto" role="group" :aria-label="section.title">
+                      <UButton
+                        v-for="language in languages(section)"
+                        :key="language"
+                        :label="languageLabels[language]"
+                        :color="selectedLanguage(section) === language ? 'primary' : 'neutral'"
+                        :variant="selectedLanguage(section) === language ? 'soft' : 'ghost'"
+                        size="xs"
+                        class="font-mono"
+                        :aria-pressed="selectedLanguage(section) === language"
+                        @click="selectedLanguages[section.id] = language"
+                      />
+                    </div>
+                    <UButton
+                      :data-testid="`docs-copy-${section.id}`"
+                      :icon="copiedSection === section.id ? 'i-lucide-check' : 'i-lucide-copy'"
+                      :label="copiedSection === section.id ? t('docs.copied') : t('docs.copy')"
+                      color="neutral"
+                      variant="ghost"
+                      size="xs"
+                      :title="t('docs.copy')"
+                      :aria-label="t('docs.copy')"
+                      :ui="{ label: 'hidden sm:inline' }"
+                      @click="copyExample(section)"
+                    />
+                  </div>
+                  <pre class="overflow-x-auto p-5 text-xs leading-6 text-default"><code>{{ example(section) }}</code></pre>
                 </div>
-                <button type="button" :data-testid="`docs-copy-${section.id}`" class="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800 dark:hover:text-white" :title="t('docs.copy')" :aria-label="t('docs.copy')" @click="copyExample(section)">
-                  <Icon :name="copiedSection === section.id ? 'check' : 'copy'" size="sm" />
-                  <span class="hidden sm:inline">{{ copiedSection === section.id ? t('docs.copied') : t('docs.copy') }}</span>
-                </button>
-              </div>
-              <pre class="overflow-x-auto p-5 text-[12px] leading-7 text-slate-700 dark:text-slate-200"><code>{{ example(section) }}</code></pre>
+
+                <UButton
+                  v-for="link in section.links"
+                  :key="link.href"
+                  :href="link.href"
+                  external
+                  target="_blank"
+                  :label="link.label"
+                  trailing-icon="i-lucide-external-link"
+                  color="primary"
+                  variant="link"
+                  class="mt-2 px-0"
+                />
+              </section>
+            </UPageBody>
+
+            <USeparator class="mt-12" />
+            <nav class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2" :aria-label="t('docs.navigation')">
+              <UPageCard
+                v-if="previousPage"
+                :to="docLocation(previousPage.id)"
+                :title="previousPage.title"
+                :description="t('docs.previous')"
+                icon="i-lucide-arrow-left"
+                variant="outline"
+                :ui="{ leadingIcon: 'size-4 text-muted', title: 'text-sm', description: 'text-xs' }"
+              />
+              <span v-else class="hidden sm:block"></span>
+              <UPageCard
+                v-if="nextPage"
+                :to="docLocation(nextPage.id)"
+                :title="nextPage.title"
+                :description="t('docs.next')"
+                icon="i-lucide-arrow-right"
+                variant="outline"
+                class="text-right"
+                :ui="{ wrapper: 'items-end', leadingIcon: 'size-4 text-muted', title: 'text-sm', description: 'text-xs' }"
+              />
+            </nav>
+            <footer class="mt-10 flex flex-wrap items-center justify-between gap-3 pb-10 text-xs text-dimmed">
+              <span>{{ siteName }} · {{ t('docs.title') }}</span>
+              <span class="font-mono">{{ origin }}</span>
+            </footer>
+          </article>
+        </main>
+
+        <template #right>
+          <nav class="sticky top-16 hidden self-start py-8 text-sm lg:block" :aria-label="t('docs.onThisPage')">
+            <p class="mb-3 text-sm font-semibold text-highlighted">{{ t('docs.onThisPage') }}</p>
+            <div class="space-y-1 border-s border-default">
+              <a
+                v-for="section in page.sections"
+                :key="section.id"
+                :href="`#${section.id}`"
+                class="-ms-px block border-s border-transparent py-1 ps-4 text-muted transition-colors hover:border-accented hover:text-default"
+                @click.prevent="jumpTo(section.id)"
+              >{{ section.title }}</a>
             </div>
-
-            <a v-for="link in section.links" :key="link.href" :href="link.href" target="_blank" rel="noopener noreferrer" class="mt-3 inline-flex items-center gap-1.5 text-sm text-blue-600 underline decoration-blue-200 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400">{{ link.label }}<Icon name="externalLink" size="xs" /></a>
-          </section>
-
-          <nav class="mt-12 grid grid-cols-2 gap-4 border-t border-slate-200 pt-6 dark:border-dark-700" :aria-label="t('docs.navigation')">
-            <router-link v-if="previousPage" :to="docLocation(previousPage.id)" class="rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/30 dark:border-dark-700 dark:hover:bg-blue-500/5"><span class="mb-1 block text-[11px] text-slate-400">{{ t('docs.previous') }}</span><span class="text-sm font-medium">{{ previousPage.title }}</span></router-link><span v-else></span>
-            <router-link v-if="nextPage" :to="docLocation(nextPage.id)" class="rounded-xl border border-slate-200 p-4 text-right transition hover:border-blue-300 hover:bg-blue-50/30 dark:border-dark-700 dark:hover:bg-blue-500/5"><span class="mb-1 block text-[11px] text-slate-400">{{ t('docs.next') }}</span><span class="text-sm font-medium">{{ nextPage.title }}</span></router-link>
           </nav>
-          <footer class="mt-10 flex flex-wrap items-center justify-between gap-3 pb-4 text-[11px] text-slate-400"><span>{{ siteName }} · {{ t('docs.title') }}</span><span class="font-mono">{{ origin }}</span></footer>
-        </article>
-
-        <aside class="hidden xl:block">
-          <nav class="sticky top-36 text-xs" :aria-label="t('docs.onThisPage')">
-            <p class="mb-4 font-medium text-slate-500">{{ t('docs.onThisPage') }}</p>
-            <div class="space-y-3 border-l border-slate-200 py-1 pl-4 dark:border-dark-700"><a v-for="section in page.sections" :key="section.id" :href="`#${section.id}`" class="block leading-5 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400" @click.prevent="jumpTo(section.id)">{{ section.title }}</a></div>
-          </nav>
-        </aside>
-      </main>
-    </div>
+        </template>
+      </UPage>
+    </UContainer>
   </div>
 </template>
 
@@ -119,13 +206,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import Icon from '@/components/icons/Icon.vue'
+import type { NavigationMenuItem, TableColumn } from '@nuxt/ui'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import PublicHeader from '@/views/public/components/PublicHeader.vue'
+import ThemeToggleButton from '@/views/public/components/ThemeToggleButton.vue'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useClipboard } from '@/composables/useClipboard'
 import { sanitizeUrl } from '@/utils/url'
-import { getApiDocs, resolveDocsOrigin, resolveDocsPage, type DocsCategory, type DocsLanguage, type DocsSection } from '@/data/apiDocs'
+import { getApiDocs, resolveDocsOrigin, resolveDocsPage, type DocsCategory, type DocsField, type DocsLanguage, type DocsSection } from '@/data/apiDocs'
 
 const route = useRoute()
 const router = useRouter()
@@ -145,7 +234,6 @@ const search = ref('')
 const mobileOpen = ref(false)
 const wideQuery = window.matchMedia('(min-width: 1024px)')
 const wideLayout = ref(wideQuery.matches)
-const isDark = ref(document.documentElement.classList.contains('dark'))
 const selectedLanguages = reactive<Record<string, DocsLanguage>>({})
 const copiedSection = ref('')
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
@@ -164,11 +252,27 @@ const languages = (section: DocsSection) => Object.keys(section.examples || {}) 
 const selectedLanguage = (section: DocsSection) => languages(section).includes(selectedLanguages[section.id]) ? selectedLanguages[section.id] : languages(section)[0]
 const example = (section: DocsSection) => section.examples?.[selectedLanguage(section)] || ''
 
-function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
-}
+// Every docs link shares the /docs path, so the current page and category are marked explicitly.
+const categoryItems = computed<NavigationMenuItem[]>(() => categories.map(category => ({
+  label: t(`docs.category.${category}`),
+  to: docLocation(firstInCategory(category)),
+  active: page.value.category === category,
+})))
+
+const sidebarItems = computed<NavigationMenuItem[][]>(() => navigationGroups.value.map(group => [
+  { label: t(`docs.category.${group.category}`), type: 'label' as const },
+  ...group.pages.map(entry => ({
+    label: entry.title,
+    to: docLocation(entry.id),
+    active: entry.id === page.value.id,
+    onSelect: () => { mobileOpen.value = false },
+  })),
+]))
+
+const fieldColumns: TableColumn<DocsField>[] = [
+  { id: 'name', header: () => t('docs.field'), meta: { class: { th: 'w-1/4', td: 'w-1/4' } } },
+  { id: 'description', header: () => t('docs.description') },
+]
 
 function syncWideLayout(event: MediaQueryListEvent) { wideLayout.value = event.matches }
 function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') mobileOpen.value = false }
@@ -193,6 +297,7 @@ watch(() => route.query.page, async () => {
 })
 watch([() => page.value.title, siteName], () => { document.title = `${page.value.title} · ${t('docs.title')} - ${siteName.value}` }, { immediate: true })
 onMounted(() => {
+  // Light/dark follows the shared site theme (main.ts + ThemeToggleButton), including "system".
   wideQuery.addEventListener?.('change', syncWideLayout)
   document.addEventListener('keydown', closeOnEscape)
   if (!appStore.publicSettingsLoaded) void appStore.fetchPublicSettings().catch(() => {})
@@ -206,7 +311,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.api-docs { font-family: ui-sans-serif, system-ui, sans-serif; }
 .docs-code pre { tab-size: 2; }
 .docs-code code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 @media (prefers-reduced-motion: reduce) { .docs-sidebar { transition: none; } }
