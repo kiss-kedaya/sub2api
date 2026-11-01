@@ -55,6 +55,8 @@ const props = defineProps<{
   loading?: boolean
   animationDuration?: number
   mode?: 'total' | 'breakdown'
+  /** Hex color of the single series in total mode (e.g. the theme primary); default stays text gray. */
+  color?: string
 }>()
 
 const isDarkMode = ref(document.documentElement.classList.contains('dark'))
@@ -72,9 +74,12 @@ const chartColors = computed(() => ({
   cacheHitRate: '#8b5cf6'
 }))
 
+const totalColor = computed(() => props.color || chartColors.value.text)
+
 // 纵向渐变：峰顶约 18% 透明度，往下淡出到 2%，谷底透明。宽 1px 足够采样。
-const gradientCache = new WeakMap<object, CanvasGradient>()
+// 每种颜色单独缓存：明暗切换只换颜色、不换 chartArea 时也不会沿用旧颜色的渐变。
 function makeAreaGradient(color: string) {
+  const gradientCache = new WeakMap<object, CanvasGradient>()
   return (context: { chart: { chartArea?: { top: number; bottom: number; left: number; right: number }; canvas: HTMLCanvasElement } }) => {
     const { chartArea, canvas } = context.chart
     if (!chartArea || !canvas) return `${color}0c`
@@ -99,13 +104,13 @@ const chartData = computed(() => {
     datasets: props.mode === 'total' ? [{
       label: t('dashboard.totalUsage'),
       data: props.trendData.map(d => d.total_tokens),
-      borderColor: chartColors.value.text,
+      borderColor: totalColor.value,
       // 纵向渐变填充：峰顶浓、谷底透明，比平铺低透明度更有深度
-      backgroundColor: makeAreaGradient(chartColors.value.text),
+      backgroundColor: makeAreaGradient(totalColor.value),
       borderWidth: 2,
       pointRadius: 2,
       pointHoverRadius: 4,
-      pointBackgroundColor: chartColors.value.text,
+      pointBackgroundColor: totalColor.value,
       fill: true,
       tension: 0.25,
     }] : [
