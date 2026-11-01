@@ -19,7 +19,7 @@
         <UInput v-model="form.username" maxlength="50" class="w-full" :placeholder="t('admin.users.enterUsername')" />
       </UFormField>
       <UFormField :label="t('admin.users.form.roleLabel')">
-        <USelect v-model="form.role" :items="roleItems" class="w-full" />
+        <USelect v-model="form.role" name="role" :items="roleItems" class="w-full" />
       </UFormField>
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <UFormField :label="t('admin.users.columns.balance')">
