@@ -3,6 +3,11 @@
     <TablePageLayout>
       <!-- Filters -->
       <template #filters>
+        <AdminPageHeader
+          class="mb-4"
+          :title="t('admin.audit.title')"
+          :description="t('admin.audit.description')"
+        />
         <div class="card p-4 sm:p-6">
           <div class="flex flex-wrap items-end justify-between gap-4">
             <!-- Left: filter fields -->
@@ -365,6 +370,7 @@ import Select from '@/components/common/Select.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import { useAppStore } from '@/stores'
 
 const { t } = useI18n()

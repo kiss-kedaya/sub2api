@@ -2,6 +2,18 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
+        <AdminPageHeader
+          class="mb-4"
+          :title="t('admin.subscriptions.title')"
+          :description="t('admin.subscriptions.description')"
+        >
+          <template #actions>
+            <button @click="showAssignModal = true" class="btn btn-primary">
+              <Icon name="plus" size="md" class="mr-2" />
+              {{ t('admin.subscriptions.assignSubscription') }}
+            </button>
+          </template>
+        </AdminPageHeader>
         <!-- Top Toolbar: Left (search + filters) / Right (actions) -->
         <div class="flex flex-wrap items-start justify-between gap-4">
           <!-- Left: Fuzzy user search + filters (wrap to multiple lines) -->
@@ -116,7 +128,7 @@
               <!-- Dropdown menu -->
               <div
                 v-if="showColumnDropdown"
-                class="absolute right-0 z-50 mt-2 w-48 origin-top-right rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
+                class="admin-menu absolute right-0 z-50 mt-2 w-48 origin-top-right rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-700 dark:bg-dark-800"
               >
                 <div class="p-2">
                   <!-- User column mode selection -->
@@ -126,14 +138,14 @@
                     </div>
                     <button
                       @click="setUserColumnMode('email')"
-                      class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                      class="admin-menu-item flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
                     >
                       <span>{{ t('admin.users.columns.email') }}</span>
                       <Icon v-if="userColumnMode === 'email'" name="check" size="sm" class="text-primary-500" />
                     </button>
                     <button
                       @click="setUserColumnMode('username')"
-                      class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                      class="admin-menu-item flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
                     >
                       <span>{{ t('admin.users.columns.username') }}</span>
                       <Icon v-if="userColumnMode === 'username'" name="check" size="sm" class="text-primary-500" />
@@ -144,7 +156,7 @@
                     v-for="col in toggleableColumns"
                     :key="col.key"
                     @click="toggleColumn(col.key)"
-                    class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
+                    class="admin-menu-item flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700"
                   >
                     <span>{{ col.label }}</span>
                     <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="text-primary-500" />
@@ -158,10 +170,6 @@
               :title="t('admin.subscriptions.guide.showGuide')"
             >
               <Icon name="questionCircle" size="md" />
-            </button>
-            <button @click="showAssignModal = true" class="btn btn-primary">
-              <Icon name="plus" size="md" class="mr-2" />
-              {{ t('admin.subscriptions.assignSubscription') }}
             </button>
           </div>
         </div>
@@ -387,39 +395,10 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <button
-                v-if="row.status === 'active' || row.status === 'expired'"
-                @click="handleExtend(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-              >
-                <Icon name="calendar" size="sm" />
-                <span class="text-xs">{{ t('admin.subscriptions.adjust') }}</span>
-              </button>
-              <button
-                v-if="row.status === 'active'"
-                @click="handleResetQuota(row)"
-                :disabled="resettingQuota && resettingSubscription?.id === row.id"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20 dark:hover:text-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Icon name="refresh" size="sm" />
-                <span class="text-xs">{{ t('admin.subscriptions.resetQuota') }}</span>
-              </button>
-              <button
-                v-if="row.status === 'active'"
-                @click="handleRevoke(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-              >
-                <Icon name="ban" size="sm" />
-                <span class="text-xs">{{ t('admin.subscriptions.revoke') }}</span>
-              </button>
-              <button
-                v-if="row.status === 'revoked'"
-                @click="handleRestore(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400"
-              >
-                <Icon name="refresh" size="sm" />
-                <span class="text-xs">{{ t('admin.subscriptions.restore') }}</span>
-              </button>
+              <AdminRowAction v-if="row.status === 'active' || row.status === 'expired'" @click="handleExtend(row)" :label="t('admin.subscriptions.adjust')" icon="calendar" />
+              <AdminRowAction v-if="row.status === 'active'" @click="handleResetQuota(row)" :disabled="resettingQuota && resettingSubscription?.id === row.id" :label="t('admin.subscriptions.resetQuota')" icon="refresh" tone="warning" />
+              <AdminRowAction v-if="row.status === 'active'" @click="handleRevoke(row)" :label="t('admin.subscriptions.revoke')" icon="ban" tone="danger" />
+              <AdminRowAction v-if="row.status === 'revoked'" @click="handleRestore(row)" :label="t('admin.subscriptions.restore')" icon="refresh" tone="success" />
             </div>
           </template>
 
@@ -785,6 +764,8 @@ import Select from '@/components/common/Select.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import {
   getRemainingDurationParts,
   getRemainingExpiryDuration,
