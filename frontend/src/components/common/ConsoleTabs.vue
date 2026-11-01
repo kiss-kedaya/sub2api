@@ -67,4 +67,33 @@ function onKeydown(event: KeyboardEvent, index: number) {
 @media (prefers-reduced-motion: reduce) {
   .console-tabs button { transition: none; }
 }
+
+</style>
+
+<style>
+/* Light theme: Nuxt UI's pill tabs, a neutral track with a raised white segment and no
+   underline. The night theme keeps the underline tabs above. */
+html:not(.dark) .console-tabs.console-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 0;
+  border-radius: calc(var(--ui-radius) * 2);
+  background: var(--ui-bg-elevated);
+}
+html:not(.dark) .console-tabs.console-tabs button {
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: calc(var(--ui-radius) * 1.5);
+  color: var(--ui-text-muted);
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+html:not(.dark) .console-tabs.console-tabs button:hover { color: var(--ui-text-highlighted); }
+html:not(.dark) .console-tabs.console-tabs button[aria-selected='true'] {
+  background: var(--ui-bg);
+  color: var(--ui-text-highlighted);
+  box-shadow: 0 1px 3px rgb(10 10 10 / 0.06), 0 1px 2px -1px rgb(10 10 10 / 0.06), 0 0 0 1px rgb(10 10 10 / 0.04);
+}
+html:not(.dark) .console-tabs.console-tabs button:focus-visible { outline-color: var(--ui-border-inverted); }
 </style>
