@@ -660,8 +660,7 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		// recorded here; credit still needs finality and a security-scanned
 		// block in retryPending. A failure never blocks the cursor scan.
 		if err := w.observeHead(ctx, pool, chain, head); err != nil {
-			failure := &scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err}
-			slog.Warn("[cryptopay] head observation incomplete", failure.logAttrs()...)
+			w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err})
 		}
 	}
 	if head <= chain.Confirmations {
@@ -865,6 +864,26 @@ func (w *Worker) processTransfer(ctx context.Context, pool *rpc.Pool, chain Chai
 		w.markCreditedConfirmations(ctx, chain, transfer)
 	}
 	return nil
+}
+
+// reportObserveFailure logs at error level (production keeps only errors),
+// at most once per chain per minute, and never joins the pass result: head
+// observation is best effort and must not fail the scan.
+func (w *Worker) reportObserveFailure(failure *scanStageError) {
+	key := failure.chain + "|observe"
+	now := time.Now()
+	w.replayMu.Lock()
+	if w.chainFailureAt == nil {
+		w.chainFailureAt = make(map[string]time.Time)
+	}
+	report := now.Sub(w.chainFailureAt[key]) >= time.Minute
+	if report {
+		w.chainFailureAt[key] = now
+	}
+	w.replayMu.Unlock()
+	if report {
+		slog.Error("[cryptopay] head observation incomplete; cursor scan unaffected", failure.logAttrs()...)
+	}
 }
 
 // observeHeadCap bounds the unconfirmed window: at most the chain's own
