@@ -23,6 +23,21 @@ export default {
       formActions: {
         remove: 'Remove',
       },
+      // Create dialog steps and edit dialog section nav.
+      wizard: {
+        platform: 'Platform and type',
+        credentials: 'Connection',
+        modelsSchedule: 'Models and schedule',
+        limitsNetwork: 'Limits and network',
+        confirm: 'Confirm',
+        confirmHint: 'Check the details, then create. OAuth accounts continue to authorization.',
+        summaryPlatform: 'Platform and type',
+        summaryGroups: 'Groups',
+      },
+      editSections: {
+        network: 'Network and schedule',
+        forwarding: 'Forwarding and errors',
+      },
       autoRefresh: 'Auto Refresh',
       enableAutoRefresh: 'Enable auto refresh',
       refreshInterval5s: '5 seconds',

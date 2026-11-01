@@ -23,6 +23,21 @@ export default {
       formActions: {
         remove: '移除',
       },
+      // Create dialog steps and edit dialog section nav.
+      wizard: {
+        platform: '平台与类型',
+        credentials: '连接与凭据',
+        modelsSchedule: '模型与调度',
+        limitsNetwork: '配额与网络',
+        confirm: '确认',
+        confirmHint: '核对以下信息后创建；OAuth 账号下一步进入授权。',
+        summaryPlatform: '平台与类型',
+        summaryGroups: '分组数',
+      },
+      editSections: {
+        network: '网络与调度',
+        forwarding: '转发与错误',
+      },
       autoRefresh: '自动刷新',
       enableAutoRefresh: '启用自动刷新',
       refreshInterval5s: '5 秒',
