@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   account-timer-integration:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     timeout-minutes: 20
     services:
       postgres:
@@ -45,7 +45,7 @@ jobs:
         run: go test -race -p 1 -tags=integration ./internal/accounttimer -count=1
 
   operator-storage-integration:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
@@ -64,7 +64,7 @@ jobs:
         run: go test -race -p 1 -tags=integration ./internal/repository -run '^TestRequestCaptureSQLStore' -count=1
 
   deepseek-native-replay:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -77,7 +77,7 @@ jobs:
         run: go test -race -p 1 -tags=unit ./internal/service -run '^TestDeepSeekNativeReasoningReplay' -count=1
 
   copilot-adapter:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -90,7 +90,7 @@ jobs:
           "$RUNNER_TEMP/copilot-adapter/.venv/bin/python" -m pip install pytest pytest-asyncio pytest-socket
           PYTHONPATH="$RUNNER_TEMP/copilot-adapter" "$RUNNER_TEMP/copilot-adapter/.venv/bin/python" -m pytest --disable-socket --allow-unix-socket -q deploy/copilot-sdk/test_server.py deploy/copilot-sdk/test_adapter_contract.py
   client-error-privacy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -118,7 +118,7 @@ jobs:
           /bin/sh deploy/test-caddyfile-cache.sh
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -195,7 +195,7 @@ jobs:
         run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository ./internal/handler ./internal/handler/dto ./internal/handler/admin ./internal/server/middleware -run '^Test(UsageInflight|TrackUsageInflight|UsageLogFromInflight|SetOpsSelectedAccount|IndependentInflight|AcquireUserSlot_ConcurrencyLimits|UserConcurrency|LiveLease)' -count=1
 
   crypto-sweep-integration:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     services:
       postgres:
         image: postgres:16-alpine
@@ -225,7 +225,7 @@ jobs:
         run: go test -tags=integration ./internal/cryptopay ./internal/cryptopay/sweeper -run '^TestPostgres' -count=1
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     steps:
       - uses: actions/checkout@v6
       - name: Setup pnpm
@@ -271,7 +271,7 @@ jobs:
 
   build:
     needs: frontend
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -301,7 +301,7 @@ jobs:
 
   deepseek-search-probe:
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/fix/deepseek-search-provider'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -325,7 +325,7 @@ jobs:
           retention-days: 3
 
   golangci-lint:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, release-builder]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
