@@ -29,7 +29,7 @@ export async function list(
   options?: RequestOptions
 ): Promise<AnnouncementListItem[]> {
   const { data } = await apiClient.get<AnnouncementListItem[]>('/announcements', {
-    params: unreadOnly ? { unread_only: 1 } : {},
+    params: unreadOnly ? { unread_only: 1, compact: 1 } : { compact: 1 },
     signal: options?.signal
   })
   return data

@@ -122,8 +122,8 @@ function swatch(palette: PaletteName, lightShade: PaletteShade, darkShade: Palet
   return { '--swatch-light': paletteHex(palette, lightShade), '--swatch-dark': paletteHex(palette, darkShade) }
 }
 
-// Black keeps the stylesheet's night theme in dark mode, whose accent is this rose.
-const NIGHT_ACCENT = '#e89ab3'
+// Black keeps the sakura night accent when the visitor chooses a neutral daytime primary.
+const NIGHT_ACCENT = paletteHex('sakura', 400)
 
 function primarySwatch(value: ThemePrimary): Record<string, string> {
   if (value === 'black') return { '--swatch-light': paletteHex(draft.value.theme_neutral, 900), '--swatch-dark': NIGHT_ACCENT }
@@ -272,7 +272,7 @@ onBeforeUnmount(() => {
   background: var(--ui-primary, #171717);
   color: #ffffff;
 }
-/* Black writes no dark primary, so fall back to the stylesheet's night rose. */
+/* Neutral daytime primary keeps the night preview on sakura. */
 .dark .site-theme-preview-button {
   background: var(--ui-primary, rgb(var(--c-primary-400)));
   color: var(--ui-color-neutral-900, #171717);

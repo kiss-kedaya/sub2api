@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { adminAPI } from '@/api'
 import type { CustomMenuItem } from '@/types'
+import type { SystemSettings } from '@/api/admin/settings'
 
 export const useAdminSettingsStore = defineStore('adminSettings', () => {
   const loaded = ref(false)
@@ -109,6 +110,15 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
     loaded.value = true
   }
 
+  /** Merge the save response locally instead of fetching the full settings again. */
+  function patchFromSettings(settings: Partial<SystemSettings>) {
+    if (settings.ops_monitoring_enabled !== undefined) setOpsMonitoringEnabledLocal(settings.ops_monitoring_enabled)
+    if (settings.ops_realtime_monitoring_enabled !== undefined) setOpsRealtimeMonitoringEnabledLocal(settings.ops_realtime_monitoring_enabled)
+    if (settings.ops_query_mode_default !== undefined) setOpsQueryModeDefaultLocal(settings.ops_query_mode_default)
+    if (settings.custom_menu_items !== undefined) customMenuItems.value = settings.custom_menu_items ?? []
+    if (settings.payment_enabled !== undefined) setPaymentEnabledLocal(settings.payment_enabled)
+  }
+
   // Keep UI consistent if we learn that ops is disabled via feature-gated 404s.
   // (event is dispatched from the axios interceptor)
   let eventHandlerCleanup: (() => void) | null = null
@@ -145,6 +155,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
     setOpsMonitoringEnabledLocal,
     setOpsRealtimeMonitoringEnabledLocal,
     setPaymentEnabledLocal,
-    setOpsQueryModeDefaultLocal
+    setOpsQueryModeDefaultLocal,
+    patchFromSettings
   }
 })

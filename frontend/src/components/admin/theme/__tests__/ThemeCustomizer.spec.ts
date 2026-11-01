@@ -83,7 +83,7 @@ describe('ThemeCustomizer', () => {
     const wrapper = await render()
     await wrapper.get('[data-testid="site-theme-reset"]').trigger('click')
     expect(updateTheme).not.toHaveBeenCalled()
-    expect(wrapper.get('[data-value="black"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-value="sakura"]').attributes('aria-checked')).toBe('true')
     expect(css()).toContain(`--ui-color-neutral-500:${paletteColor('neutral', 500)};`)
     await wrapper.get('[data-testid="site-theme-save"]').trigger('click')
     await flushPromises()

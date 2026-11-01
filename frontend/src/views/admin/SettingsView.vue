@@ -8,16 +8,16 @@
       </div>
 
       <!-- Settings Form -->
-      <UForm v-else :state="form" class="space-y-6" novalidate @submit="saveSettings">
+      <UForm v-else :state="form" :disabled="saving" class="space-y-6" novalidate @submit="saveSettings">
         <!-- Toolbar: tab bar on the left, the form save action on the right (template settings toolbar) -->
-        <div class="sticky top-16 z-20 flex items-center gap-3 border-b border-default bg-default">
+        <div class="settings-toolbar relative z-10 flex min-h-14 flex-wrap items-center gap-3 border-b border-default bg-(--ui-bg) px-1 py-1">
           <UTabs
             :model-value="activeTab"
             :items="settingsTabItems"
             :content="false"
             variant="link"
             size="sm"
-            class="min-w-0 flex-1"
+            class="settings-toolbar-tabs min-w-0 flex-1 basis-[40rem]"
             :ui="{
               list: 'overflow-x-auto overflow-y-hidden border-b-0 p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
               trigger: 'shrink-0 py-3',
@@ -34,7 +34,7 @@
             type="submit"
             :loading="saving"
             :disabled="saving || loadFailed"
-            class="shrink-0"
+            class="settings-toolbar-save ml-auto shrink-0"
           >
             {{ saving ? t("admin.settings.saving") : t("admin.settings.saveSettings") }}
           </UButton>
@@ -46,6 +46,7 @@
           <GatewayIPNoticeSettings />
           <!-- Admin API Key Settings -->
           <SettingsSection
+            id="settings-admin-api-key"
             :title="t('admin.settings.adminApiKey.title')"
             :description="t('admin.settings.adminApiKey.description')"
           >
@@ -818,6 +819,7 @@
         <div v-show="activeTab === 'security'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
           <!-- Registration Settings -->
           <SettingsSection
+            id="settings-registration"
             :title="t('admin.settings.registration.title')"
             :description="t('admin.settings.registration.description')"
           >
@@ -1198,6 +1200,7 @@
 
           <!-- 人机验证 Settings -->
           <SettingsSection
+            id="settings-captcha"
             :title="t('admin.settings.captcha.title')"
             :description="t('admin.settings.captcha.description')"
           >
@@ -1480,9 +1483,19 @@
           </SettingsSection>
           <!-- LinuxDo Connect OAuth 登录 -->
           <SettingsSection
+            id="settings-linuxdo"
             :title="t('admin.settings.linuxdo.title')"
             :description="t('admin.settings.linuxdo.description')"
           >
+            <template #actions>
+              <span class="inline-flex size-9 items-center justify-center rounded-lg bg-elevated" aria-hidden="true">
+                <svg class="size-5" viewBox="0 0 16 16">
+                  <path fill="#EFEFEF" d="m7.44,0s.09,0,.13,0c.09,0,.19,0,.28,0,.14,0,.29,0,.43,0,.09,0,.18,0,.27,0q.12,0,.25,0t.26.08c.15.03.29.06.44.08,1.97.38,3.78,1.47,4.95,3.11.04.06.09.12.13.18.67.96,1.15,2.11,1.3,3.28q0,.19.09.26c0,.15,0,.29,0,.44,0,.04,0,.09,0,.13,0,.09,0,.19,0,.28,0,.14,0,.29,0,.43,0,.09,0,.18,0,.27,0,.08,0,.17,0,.25q0,.19-.08.26c-.03.15-.06.29-.08.44-.38,1.97-1.47,3.78-3.11,4.95-.06.04-.12.09-.18.13-.96.67-2.11,1.15-3.28,1.3q-.19,0-.26.09c-.15,0-.29,0-.44,0-.04,0-.09,0-.13,0-.09,0-.19,0-.28,0-.14,0-.29,0-.43,0-.09,0-.18,0-.27,0-.08,0-.17,0-.25,0q-.19,0-.26-.08c-.15-.03-.29-.06-.44-.08-1.97-.38-3.78-1.47-4.95-3.11q-.07-.09-.13-.18c-.67-.96-1.15-2.11-1.3-3.28q0-.19-.09-.26c0-.15,0-.29,0-.44,0-.04,0-.09,0-.13,0-.09,0-.19,0-.28,0-.14,0-.29,0-.43,0-.09,0-.18,0-.27,0-.08,0-.17,0-.25q0-.19.08-.26c.03-.15.06-.29.08-.44.38-1.97,1.47-3.78,3.11-4.95.06-.04.12-.09.18-.13C4.42.73,5.57.26,6.74.1,7,.07,7.15,0,7.44,0Z" />
+                  <path fill="#FEB005" d="m1.27,11.33h13.45c-.94,1.89-2.51,3.21-4.51,3.88-1.99.59-3.96.37-5.8-.57-1.25-.7-2.67-1.9-3.14-3.3Z" />
+                  <path fill="#1D1D1F" d="m12.54,1.99c.87.7,1.82,1.59,2.18,2.68H1.27c.87-1.74,2.33-3.13,4.2-3.78,2.44-.79,5-.47,7.07,1.1Z" />
+                </svg>
+              </span>
+            </template>
             <UFormField
               :label="t('admin.settings.linuxdo.enable')"
               :description="t('admin.settings.linuxdo.enableHint')"
@@ -1564,12 +1577,23 @@
 
           <!-- GitHub / Google 邮箱快捷登录 -->
           <SettingsSection
+            id="settings-email-oauth"
             :title="localText('邮箱快捷登录', 'Email OAuth Sign-in')"
             :description="localText(
                     '开启 GitHub 或 Google 邮箱授权登录后，系统会读取已验证邮箱，存在则直接登录，不存在则自动注册。',
                     'After GitHub or Google email OAuth is enabled, the system reads a verified email, signs in matching users, and auto-registers missing users.',
                   )"
           >
+            <template #actions>
+              <span class="flex items-center gap-1.5">
+                <span class="inline-flex size-9 items-center justify-center rounded-lg bg-elevated" aria-hidden="true">
+                  <GitHubMark class="size-5" />
+                </span>
+                <span class="inline-flex size-9 items-center justify-center rounded-lg bg-elevated" aria-hidden="true">
+                  <GoogleMark class="size-5" />
+                </span>
+              </span>
+            </template>
             <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
               <div class="">
                 <UFormField
@@ -1755,9 +1779,18 @@
 
           <!-- WeChat Connect OAuth 登录 -->
           <SettingsSection
+            id="settings-wechat"
             :title="t('admin.settings.wechatConnect.title')"
             :description="t('admin.settings.wechatConnect.description')"
           >
+            <template #actions>
+              <span class="inline-flex size-9 items-center justify-center rounded-lg bg-elevated" aria-hidden="true">
+                <svg class="size-5" viewBox="0 0 24 24">
+                  <path fill="#07C160" d="M9.4 3.6c-4.3 0-7.8 2.9-7.8 6.5 0 2.1 1.2 4 3.1 5.2l-.8 2.4 2.7-1.4c.8.2 1.7.4 2.6.4h.4a5.4 5.4 0 0 1-.2-1.4c0-3.4 3.2-6.1 7.2-6.1h.5c-.8-3.2-3.9-5.6-7.7-5.6Z" />
+                  <path fill="#07C160" opacity=".85" d="M15.8 10.1c-3.4 0-6.2 2.2-6.2 5s2.8 5 6.2 5c.7 0 1.4-.1 2.1-.3l2.2 1.1-.6-1.9c1.2-1 1.9-2.3 1.9-3.9 0-2.8-2.8-5-5.6-5Z" />
+                </svg>
+              </span>
+            </template>
             <UFormField
               :label="t('admin.settings.wechatConnect.enabledLabel')"
               :description="t('admin.settings.wechatConnect.enabledHint')"
@@ -1988,9 +2021,18 @@
 
           <!-- DingTalk Connect OAuth 登录 -->
           <SettingsSection
+            id="settings-dingtalk"
             :title="t('admin.settings.dingtalk.title')"
             :description="t('admin.settings.dingtalk.description')"
           >
+            <template #actions>
+              <span class="inline-flex size-9 items-center justify-center rounded-lg bg-elevated" aria-hidden="true">
+                <svg class="size-5" viewBox="0 0 24 24">
+                  <rect width="24" height="24" rx="6" fill="#1677FF" />
+                  <path fill="#FFFFFF" d="M7.4 6.2h5a4.2 4.2 0 0 1 0 8.4h-2.2v3.2H7.4V6.2Zm2.8 2.4v3.6h2a1.8 1.8 0 0 0 0-3.6h-2Z" />
+                </svg>
+              </span>
+            </template>
             <UFormField
               :label="t('admin.settings.dingtalk.enable')"
               :description="t('admin.settings.dingtalk.enableHint')"
@@ -2182,7 +2224,12 @@
           </SettingsSection>
 
           <!-- Generic OIDC OAuth 登录 -->
-          <SettingsSection :title="t('admin.settings.oidc.title')" :description="t('admin.settings.oidc.description')">
+          <SettingsSection id="settings-oidc" :title="t('admin.settings.oidc.title')" :description="t('admin.settings.oidc.description')">
+            <template #actions>
+              <span class="inline-flex size-9 items-center justify-center rounded-lg bg-elevated" aria-hidden="true">
+                <UIcon name="i-lucide-fingerprint" class="size-5 text-muted" />
+              </span>
+            </template>
             <UFormField
               :label="t('admin.settings.oidc.enable')"
               :description="t('admin.settings.oidc.enableHint')"
@@ -2450,6 +2497,7 @@
         <div v-show="activeTab === 'users'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
           <!-- Default Settings -->
           <SettingsSection
+            id="settings-defaults"
             :title="t('admin.settings.defaults.title')"
             :description="t('admin.settings.defaults.description')"
           >
@@ -3379,6 +3427,7 @@
 
           <!-- Gateway Forwarding Behavior -->
           <SettingsSection
+            id="settings-gateway-forwarding"
             :title="t('admin.settings.gatewayForwarding.title')"
             :description="t('admin.settings.gatewayForwarding.description')"
           >
@@ -4074,7 +4123,7 @@
         <!-- Tab: General -->
         <div v-show="activeTab === 'general'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
           <!-- Site Settings -->
-          <SettingsSection :title="t('admin.settings.site.title')" :description="t('admin.settings.site.description')">
+          <SettingsSection id="settings-site" :title="t('admin.settings.site.title')" :description="t('admin.settings.site.description')">
             <!-- Backend Mode -->
             <UFormField
               :label="t('admin.settings.site.backendMode')"
@@ -4362,6 +4411,7 @@
 
           <!-- Custom Menu Items -->
           <SettingsSection
+            id="settings-custom-menu"
             :title="t('admin.settings.customMenu.title')"
             :description="t('admin.settings.customMenu.description')"
           >
@@ -4474,7 +4524,7 @@
         <!-- /Tab: General -->
 
         <!-- Tab: Login Agreement -->
-        <div v-show="activeTab === 'agreement'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
+        <div v-show="activeTab === 'agreement'" id="settings-agreement" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
 	          <SettingsSection>
              <template #actions>
                <UFormField
@@ -4628,7 +4678,7 @@
 
         <!-- Tab: Features (功能开关) -->
         <div v-show="activeTab === 'features'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
-        <SettingsSection :title="t('admin.settings.features.channelMonitor.title')">
+        <SettingsSection id="settings-features-channel-monitor" :title="t('admin.settings.features.channelMonitor.title')">
           <template #description>
             <span class="block">
               {{ t('admin.settings.features.channelMonitor.description') }}
@@ -5255,7 +5305,7 @@
         <!-- Tab: Payment -->
         <div v-show="activeTab === 'payment'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
           <!-- Payment System Settings -->
-          <SettingsSection :title="t('admin.settings.payment.title')">
+          <SettingsSection id="settings-payment" :title="t('admin.settings.payment.title')">
             <template #description>
               <span>
                 {{ t("admin.settings.payment.description") }}
@@ -5539,6 +5589,7 @@
           <!-- SMTP Settings - Only show when email verification is enabled -->
           <SettingsSection
             v-if="form.email_verify_enabled"
+            id="settings-smtp"
             :title="t('admin.settings.smtp.title')"
             :description="t('admin.settings.smtp.description')"
           >
@@ -5787,7 +5838,7 @@
         <!-- /Tab: Email -->
 
         <!-- Tab: Backup -->
-        <div v-show="activeTab === 'backup'">
+        <div v-show="activeTab === 'backup'" id="settings-backup">
           <BackupSettings />
         </div>
 
@@ -5836,7 +5887,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from "vue";
+import { ref, reactive, computed, getCurrentInstance, nextTick, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { TableColumn, TabsItem } from "@nuxt/ui";
 import { adminAPI } from "@/api";
@@ -5888,6 +5939,8 @@ import BackupSettings from "@/views/admin/BackupView.vue";
 import ThemeCustomizer from "@/components/admin/theme/ThemeCustomizer.vue";
 import AdminPageHeader from "@/components/admin/page/AdminPageHeader.vue";
 import SettingsSection from "@/views/admin/settings/SettingsSection.vue";
+import GitHubMark from "@/components/auth/GitHubMark.vue";
+import GoogleMark from "@/components/auth/GoogleMark.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import GatewayIPNoticeSettings from "@/views/admin/settings/GatewayIPNoticeSettings.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
@@ -5988,6 +6041,48 @@ function selectSettingsTab(tab: SettingsTab): void {
   activeTab.value = tab;
 }
 
+// ── Command-palette deep links: /admin/settings?tab=security&section=settings-linuxdo ──
+// The palette passes the tab and the section id; the section is scrolled into view
+// and briefly outlined. Without a router (unit tests, embedded preview) this is a no-op.
+const settingsInstance = getCurrentInstance();
+const knownSettingsTabs = new Set<SettingsTab>(settingsTabs.map((tab) => tab.key));
+
+function currentSettingsRoute():
+  | { query?: Record<string, unknown>; fullPath?: string }
+  | undefined {
+  return settingsInstance?.appContext.config.globalProperties.$route as
+    | { query?: Record<string, unknown>; fullPath?: string }
+    | undefined;
+}
+
+function applySettingsDeepLink(): void {
+  const route = currentSettingsRoute();
+  if (!route) return;
+  const query = route.query ?? {};
+  const tab = typeof query.tab === "string" ? query.tab : "";
+  const section = typeof query.section === "string" ? query.section : "";
+  if (knownSettingsTabs.has(tab as SettingsTab)) {
+    activeTab.value = tab as SettingsTab;
+  }
+  if (!section) return;
+  void nextTick(() => {
+    const target = document.getElementById(section);
+    if (!target) return;
+    target.classList.add("settings-section-highlight");
+    try {
+      target.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    } catch {
+      // jsdom and other layouts without scrolling still get the highlight.
+    }
+    window.setTimeout(() => target.classList.remove("settings-section-highlight"), 1600);
+  });
+}
+
+onMounted(applySettingsDeepLink);
+watch(
+  () => currentSettingsRoute()?.fullPath,
+  () => applySettingsDeepLink(),
+);
 // Platform quota matrices (users tab: system defaults and per auth source).
 const platformQuotaRows = (["anthropic", "openai", "gemini", "antigravity", "grok"] as const).map((platform) => ({ platform }));
 const platformQuotaColumns = computed<TableColumn<(typeof platformQuotaRows)[number]>[]>(() => [
@@ -6001,7 +6096,15 @@ const { copyToClipboard } = useClipboard();
 
 const loading = ref(true);
 const loadFailed = ref(false);
+
+// The section DOM is behind the initial settings request. Retry once the form
+// becomes visible so a Ctrl+K deep link never loses its highlight on first load.
+watch(loading, (ready) => {
+  if (!ready) applySettingsDeepLink();
+});
 const saving = ref(false);
+const loadedSettingsSnapshot = ref<Record<string, unknown>>({});
+const loadedSettingsPayload = ref<Record<string, unknown>>({});
 const testingSmtp = ref(false);
 const sendingTestEmail = ref(false);
 const smtpPasswordManuallyEdited = ref(false);
@@ -7094,6 +7197,16 @@ const webSearchConfig = reactive<WebSearchEmulationConfig>({
   enabled: false,
   providers: [],
 });
+const loadedWebSearchSnapshot = ref('');
+
+function stableSettingsValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSettingsValue).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${stableSettingsValue(object[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
 
 const expandedProviders = reactive<Record<number, boolean>>({});
 const apiKeyVisible = reactive<Record<number, boolean>>({});
@@ -7214,6 +7327,7 @@ async function testWebSearchProvider() {
 }
 
 async function loadWebSearchConfig() {
+  loadedWebSearchSnapshot.value = JSON.stringify({ enabled: false, providers: [] });
   try {
     const [resp, proxiesResp] = await Promise.all([
       adminAPI.settings.getWebSearchEmulationConfig(),
@@ -7222,6 +7336,7 @@ async function loadWebSearchConfig() {
     if (resp) {
       webSearchConfig.enabled = resp.enabled || false;
       webSearchConfig.providers = resp.providers || [];
+      loadedWebSearchSnapshot.value = JSON.stringify({ enabled: webSearchConfig.enabled, providers: webSearchConfig.providers });
     }
     webSearchProxies.value = proxiesResp.items || [];
   } catch (err: unknown) {
@@ -7233,7 +7348,7 @@ async function loadWebSearchConfig() {
   }
 }
 
-async function saveWebSearchConfig(): Promise<boolean> {
+async function saveWebSearchConfig(): Promise<"saved" | "unchanged" | "failed"> {
   try {
     for (const p of webSearchConfig.providers) {
       const raw = p.quota_limit;
@@ -7241,7 +7356,7 @@ async function saveWebSearchConfig(): Promise<boolean> {
         appStore.showError(
           t("admin.settings.webSearchEmulation.quotaLimitMustBePositive"),
         );
-        return false;
+        return "failed";
       }
     }
     const providers = webSearchConfig.providers.map(
@@ -7250,14 +7365,17 @@ async function saveWebSearchConfig(): Promise<boolean> {
         quota_limit: Number(p.quota_limit) > 0 ? Number(p.quota_limit) : null,
       }),
     );
+    const nextSnapshot = JSON.stringify({ enabled: webSearchConfig.enabled, providers });
+    if (nextSnapshot === loadedWebSearchSnapshot.value) return "unchanged";
     await adminAPI.settings.updateWebSearchEmulationConfig({
       enabled: webSearchConfig.enabled,
       providers,
     });
-    return true;
+    loadedWebSearchSnapshot.value = nextSnapshot;
+    return "saved";
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t("common.error")));
-    return false;
+    return "failed";
   }
 }
 
@@ -7882,6 +8000,7 @@ async function loadSettings() {
   loadFailed.value = false;
   try {
     const settings = await adminAPI.settings.getSettings();
+    loadedSettingsSnapshot.value = JSON.parse(JSON.stringify(settings)) as Record<string, unknown>;
     settings.payment_load_balance_strategy =
       settings.payment_load_balance_strategy || "round-robin";
     // Only assign non-null values from backend (null means unconfigured, keep defaults)
@@ -8052,6 +8171,10 @@ async function loadSettings() {
 
     // Load web search emulation config separately
     await loadWebSearchConfig();
+    // Build the incremental baseline from the same normalisation the save path uses;
+    // otherwise a save without edits would still look dirty (e.g. login documents).
+    form.login_agreement_documents = normalizeLoginAgreementDocumentsForSave();
+    loadedSettingsPayload.value = JSON.parse(JSON.stringify(buildSettingsPayload())) as Record<string, unknown>;
   } catch (error: unknown) {
     loadFailed.value = true;
     appStore.showError(
@@ -8130,149 +8253,10 @@ function findDuplicateDefaultSubscription(
   });
 }
 
-async function saveSettings() {
-  saving.value = true;
-  try {
-    const normalizedTableDefaultPageSize = parseTableDefaultPageSizeInput(form.table_default_page_size);
-    if (normalizedTableDefaultPageSize === null) {
-      appStore.showError(
-        t("admin.settings.site.tableDefaultPageSizeRangeError", {
-          min: tablePageSizeMin,
-          max: tablePageSizeMax,
-        }),
-      );
-      return;
-    }
-
-    const normalizedTablePageSizeOptions = parseTablePageSizeOptionsInput(
-      tablePageSizeOptionsInput.value,
-    );
-    if (!normalizedTablePageSizeOptions) {
-      appStore.showError(
-        t("admin.settings.site.tablePageSizeOptionsFormatError", {
-          min: tablePageSizeMin,
-          max: tablePageSizeMax,
-        }),
-      );
-      return;
-    }
-
-    form.table_default_page_size = normalizedTableDefaultPageSize;
-    form.table_page_size_options = normalizedTablePageSizeOptions;
-
-    const normalizedLoginAgreementDocuments =
-      normalizeLoginAgreementDocumentsForSave();
-    if (form.login_agreement_enabled && normalizedLoginAgreementDocuments.length === 0) {
-      appStore.showError(
-        localText(
-          "启用登录条款确认时，至少需要保留一份文档。",
-          "At least one document is required when login agreement is enabled.",
-        ),
-      );
-      return;
-    }
-    const emptyTitleDocument = normalizedLoginAgreementDocuments.find(
-      (doc) => !doc.title,
-    );
-    if (emptyTitleDocument) {
-      appStore.showError(
-        localText(
-          "登录条款文档名称不能为空。",
-          "Login agreement document title cannot be empty.",
-        ),
-      );
-      return;
-    }
-    const duplicateLoginAgreementDocumentId =
-      findDuplicateLoginAgreementDocumentId(normalizedLoginAgreementDocuments);
-    if (duplicateLoginAgreementDocumentId) {
-      appStore.showError(
-        localText(
-          `登录条款文档路由不能重复：/legal/${duplicateLoginAgreementDocumentId}`,
-          `Login agreement document routes cannot be duplicated: /legal/${duplicateLoginAgreementDocumentId}`,
-        ),
-      );
-      return;
-    }
-    form.login_agreement_mode =
-      form.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
-    form.login_agreement_documents = normalizedLoginAgreementDocuments;
-    form.forwarded_client_ip_headers = normalizeForwardedClientIpHeaders(
-      form.forwarded_client_ip_headers,
-    );
-
-    const normalizedDefaultSubscriptions = normalizeDefaultSubscriptionSettings(
-      form.default_subscriptions,
-    );
-    const duplicateDefaultSubscription = findDuplicateDefaultSubscription(
-      normalizedDefaultSubscriptions,
-    );
-    if (duplicateDefaultSubscription) {
-      appStore.showError(
-        t("admin.settings.defaults.defaultSubscriptionsDuplicate", {
-          groupId: duplicateDefaultSubscription.group_id,
-        }),
-      );
-      return;
-    }
-
-    for (const authSource of authSourceDefaultsMeta.value) {
-      authSourceDefaults[authSource.source].subscriptions =
-        normalizeDefaultSubscriptionSettings(
-          authSourceDefaults[authSource.source].subscriptions,
-        );
-      const duplicate = findDuplicateDefaultSubscription(
-        authSourceDefaults[authSource.source].subscriptions,
-      );
-      if (duplicate) {
-        appStore.showError(
-          `${authSource.title}: ${t(
-            "admin.settings.defaults.defaultSubscriptionsDuplicate",
-            {
-              groupId: duplicate.group_id,
-            },
-          )}`,
-        );
-        return;
-      }
-    }
-
-    if (form.wechat_connect_mp_enabled && form.wechat_connect_mobile_enabled) {
-      appStore.showError(
-        localText(
-          "公众号和移动应用不能同时启用。",
-          "Official Account and Mobile App cannot be enabled at the same time.",
-        ),
-      );
-      return;
-    }
-    // Validate URL fields — novalidate disables browser-native checks, so we validate here
-    const isValidHttpUrl = (url: string): boolean => {
-      if (!url) return true;
-      try {
-        const u = new URL(url);
-        return u.protocol === "http:" || u.protocol === "https:";
-      } catch {
-        return false;
-      }
-    };
-    // Optional URL fields: auto-clear invalid values so they don't cause backend 400 errors
-    if (!isValidHttpUrl(form.frontend_url)) form.frontend_url = "";
-    if (!isValidHttpUrl(form.doc_url)) form.doc_url = "";
-    syncWeChatConnectMode();
-    const wechatStoredMode = deriveWeChatConnectStoredMode(
-      form.wechat_connect_open_enabled,
-      form.wechat_connect_mp_enabled,
-      form.wechat_connect_mobile_enabled,
-      form.wechat_connect_mode,
-    );
-    const claudeOAuthSystemPromptBlocksJSON =
-      serializeClaudeOAuthSystemPromptBlocksToJSON(
-        claudeOAuthSystemPromptBlocks.value,
-      );
-    form.claude_oauth_system_prompt_blocks =
-      claudeOAuthSystemPromptBlocksJSON;
-
+function buildSettingsPayload(): UpdateSettingsRequest {
+  const normalizedDefaultSubscriptions = normalizeDefaultSubscriptionSettings(form.default_subscriptions);
+  const wechatStoredMode = deriveWeChatConnectStoredMode(form.wechat_connect_open_enabled, form.wechat_connect_mp_enabled, form.wechat_connect_mobile_enabled, form.wechat_connect_mode);
+  const claudeOAuthSystemPromptBlocksJSON = serializeClaudeOAuthSystemPromptBlocksToJSON(claudeOAuthSystemPromptBlocks.value);
     const payload: UpdateSettingsRequest = {
       registration_enabled: form.registration_enabled,
       email_verify_enabled: form.email_verify_enabled,
@@ -8653,9 +8637,160 @@ async function saveSettings() {
     );
     appendAuthSourceDefaultsToUpdateRequest(payload, authSourceDefaults);
 
-    const updated = await settingsStepUp.run(() =>
-      adminAPI.settings.updateSettings(payload),
+  return payload;
+}
+
+async function saveSettings() {
+  if (saving.value || loading.value || loadFailed.value) return;
+  saving.value = true;
+  try {
+    const normalizedTableDefaultPageSize = parseTableDefaultPageSizeInput(form.table_default_page_size);
+    if (normalizedTableDefaultPageSize === null) {
+      appStore.showError(
+        t("admin.settings.site.tableDefaultPageSizeRangeError", {
+          min: tablePageSizeMin,
+          max: tablePageSizeMax,
+        }),
+      );
+      return;
+    }
+
+    const normalizedTablePageSizeOptions = parseTablePageSizeOptionsInput(
+      tablePageSizeOptionsInput.value,
     );
+    if (!normalizedTablePageSizeOptions) {
+      appStore.showError(
+        t("admin.settings.site.tablePageSizeOptionsFormatError", {
+          min: tablePageSizeMin,
+          max: tablePageSizeMax,
+        }),
+      );
+      return;
+    }
+
+    form.table_default_page_size = normalizedTableDefaultPageSize;
+    form.table_page_size_options = normalizedTablePageSizeOptions;
+
+    const normalizedLoginAgreementDocuments =
+      normalizeLoginAgreementDocumentsForSave();
+    if (form.login_agreement_enabled && normalizedLoginAgreementDocuments.length === 0) {
+      appStore.showError(
+        localText(
+          "启用登录条款确认时，至少需要保留一份文档。",
+          "At least one document is required when login agreement is enabled.",
+        ),
+      );
+      return;
+    }
+    const emptyTitleDocument = normalizedLoginAgreementDocuments.find(
+      (doc) => !doc.title,
+    );
+    if (emptyTitleDocument) {
+      appStore.showError(
+        localText(
+          "登录条款文档名称不能为空。",
+          "Login agreement document title cannot be empty.",
+        ),
+      );
+      return;
+    }
+    const duplicateLoginAgreementDocumentId =
+      findDuplicateLoginAgreementDocumentId(normalizedLoginAgreementDocuments);
+    if (duplicateLoginAgreementDocumentId) {
+      appStore.showError(
+        localText(
+          `登录条款文档路由不能重复：/legal/${duplicateLoginAgreementDocumentId}`,
+          `Login agreement document routes cannot be duplicated: /legal/${duplicateLoginAgreementDocumentId}`,
+        ),
+      );
+      return;
+    }
+    form.login_agreement_mode =
+      form.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
+    form.login_agreement_documents = normalizedLoginAgreementDocuments;
+    form.forwarded_client_ip_headers = normalizeForwardedClientIpHeaders(
+      form.forwarded_client_ip_headers,
+    );
+
+    const normalizedDefaultSubscriptions = normalizeDefaultSubscriptionSettings(
+      form.default_subscriptions,
+    );
+    const duplicateDefaultSubscription = findDuplicateDefaultSubscription(
+      normalizedDefaultSubscriptions,
+    );
+    if (duplicateDefaultSubscription) {
+      appStore.showError(
+        t("admin.settings.defaults.defaultSubscriptionsDuplicate", {
+          groupId: duplicateDefaultSubscription.group_id,
+        }),
+      );
+      return;
+    }
+
+    for (const authSource of authSourceDefaultsMeta.value) {
+      authSourceDefaults[authSource.source].subscriptions =
+        normalizeDefaultSubscriptionSettings(
+          authSourceDefaults[authSource.source].subscriptions,
+        );
+      const duplicate = findDuplicateDefaultSubscription(
+        authSourceDefaults[authSource.source].subscriptions,
+      );
+      if (duplicate) {
+        appStore.showError(
+          `${authSource.title}: ${t(
+            "admin.settings.defaults.defaultSubscriptionsDuplicate",
+            {
+              groupId: duplicate.group_id,
+            },
+          )}`,
+        );
+        return;
+      }
+    }
+
+    if (form.wechat_connect_mp_enabled && form.wechat_connect_mobile_enabled) {
+      appStore.showError(
+        localText(
+          "公众号和移动应用不能同时启用。",
+          "Official Account and Mobile App cannot be enabled at the same time.",
+        ),
+      );
+      return;
+    }
+    // Validate URL fields — novalidate disables browser-native checks, so we validate here
+    const isValidHttpUrl = (url: string): boolean => {
+      if (!url) return true;
+      try {
+        const u = new URL(url);
+        return u.protocol === "http:" || u.protocol === "https:";
+      } catch {
+        return false;
+      }
+    };
+    // Optional URL fields: auto-clear invalid values so they don't cause backend 400 errors
+    if (!isValidHttpUrl(form.frontend_url)) form.frontend_url = "";
+    if (!isValidHttpUrl(form.doc_url)) form.doc_url = "";
+    syncWeChatConnectMode();
+    const claudeOAuthSystemPromptBlocksJSON =
+      serializeClaudeOAuthSystemPromptBlocksToJSON(
+        claudeOAuthSystemPromptBlocks.value,
+      );
+    form.claude_oauth_system_prompt_blocks =
+      claudeOAuthSystemPromptBlocksJSON;
+
+    const payload = buildSettingsPayload();
+
+    const changedPayload = Object.fromEntries(
+      Object.entries(payload).filter(([key, value]) =>
+        stableSettingsValue(value) !== stableSettingsValue(loadedSettingsPayload.value[key]),
+      ),
+    ) as UpdateSettingsRequest;
+    const hasSettingsChanges = Object.keys(changedPayload).length > 0;
+    // No-op: skip the PUT entirely and keep the previous baseline so the next
+    // real edit still diffs against what the server last confirmed.
+    const updated = hasSettingsChanges
+      ? await settingsStepUp.run(() => adminAPI.settings.updateSettings(changedPayload))
+      : (loadedSettingsSnapshot.value as unknown as SystemSettings);
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
       if (value !== null && value !== undefined) {
@@ -8728,12 +8863,34 @@ async function saveSettings() {
         }));
       openaiFastPolicyLoaded.value = true;
     }
+    // The baseline only moves once the response has been applied to the form, so a
+    // failed save can be retried with the same diff instead of sending nothing.
+    if (hasSettingsChanges) {
+      loadedSettingsSnapshot.value = { ...loadedSettingsSnapshot.value, ...updated };
+      loadedSettingsPayload.value = JSON.parse(JSON.stringify(buildSettingsPayload())) as Record<string, unknown>;
+    }
+
     // Save web search emulation config separately (errors handled internally)
-    const wsOk = await saveWebSearchConfig();
-    // Refresh cached settings so sidebar/header update immediately
-    await appStore.fetchPublicSettings(true);
-    await adminSettingsStore.fetch(true);
-    if (wsOk) {
+    const wsResult = await saveWebSearchConfig();
+    if (hasSettingsChanges) {
+      // Merge the returned values locally; avoid two extra full-page settings requests.
+      // Only keys already cached as public are accepted, so no secret can leak in.
+      const publicPatch: Record<string, unknown> = {};
+      const cached = appStore.cachedPublicSettings;
+      if (cached) {
+        for (const key of Object.keys(cached)) {
+          if (!Object.prototype.hasOwnProperty.call(updated, key)) continue;
+          const value = (updated as unknown as Record<string, unknown>)[key];
+          if (value !== undefined) publicPatch[key] = value;
+        }
+        if (Array.isArray(updated.custom_menu_items)) {
+          publicPatch.custom_menu_items = updated.custom_menu_items.filter((item) => item.visibility === "user");
+        }
+      }
+      appStore.patchPublicSettings(publicPatch);
+      adminSettingsStore.patchFromSettings(updated);
+    }
+    if (hasSettingsChanges || wsResult === "saved") {
       appStore.showSuccess(t("admin.settings.settingsSaved"));
     }
   } catch (error: unknown) {
@@ -10181,6 +10338,10 @@ watch(
 
 <style scoped>
 @reference "../../style.css";
+/* Command-palette deep links briefly outline the section they jump to. */
+.settings-section-highlight {
+  @apply rounded-2xl ring-2 ring-primary/60;
+}
 .default-sub-group-select :deep(.select-trigger) {
   @apply h-[42px];
 }
@@ -10196,6 +10357,21 @@ watch(
   box-shadow:
     0 12px 28px rgb(15 23 42 / 0.07),
     0 1px 0 rgb(255 255 255 / 0.9) inset;
+}
+
+.settings-toolbar {
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  .settings-toolbar-tabs {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  .settings-toolbar-save {
+    min-height: 40px;
+  }
 }
 
 .settings-tabs-scroll {

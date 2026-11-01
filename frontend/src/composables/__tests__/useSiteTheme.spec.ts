@@ -52,16 +52,16 @@ describe('useSiteTheme', () => {
     document.getElementById(SITE_THEME_STYLE_ID)?.remove()
   })
 
-  it('default theme: Nuxt UI tokens in light, no primary at all in dark, legacy tokens untouched', () => {
+  it('default theme: Nuxt UI tokens in light and sakura primary in dark', () => {
     const out = css()
     const light = block(out, 'html:root:not(.dark){')
     const dark = block(out, 'html:root.dark{')
-    expect(light.startsWith(`html:root:not(.dark){--ui-color-primary-50:${paletteColor('neutral', 50)};`)).toBe(true)
-    expect(light).toContain(`--ui-primary:${paletteColor('neutral', 900)};`)
-    // Black keeps today's night theme: dark mode only gets the neutral scale.
+    expect(light.startsWith(`html:root:not(.dark){--ui-color-primary-50:${paletteColor('sakura', 50)};`)).toBe(true)
+    expect(light).toContain('--ui-primary:var(--ui-color-primary-500);')
+    // The default night theme is visibly sakura even when the daytime primary is neutral.
     expect(dark).toContain(`--ui-color-neutral-950:${paletteColor('neutral', 950)};`)
-    expect(dark).not.toContain('primary')
-    for (const token of ['--c-primary-', '--signal-', '--ui-radius', '--font-sans', 'font-family']) {
+    expect(dark).toContain(`--ui-color-primary-400:${paletteColor('sakura', 400)};`)
+    for (const token of ['--ui-radius', '--font-sans', 'font-family']) {
       expect(out).not.toContain(token)
     }
     expectNoFontDownload(out)

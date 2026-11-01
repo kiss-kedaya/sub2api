@@ -34,6 +34,7 @@ func (h *AnnouncementHandler) List(c *gin.Context) {
 	}
 
 	unreadOnly := parseBoolQuery(c.Query("unread_only"))
+	compact := parseBoolQuery(c.Query("compact"))
 
 	items, err := h.announcementService.ListForUser(c.Request.Context(), subject.UserID, unreadOnly)
 	if err != nil {
@@ -43,7 +44,11 @@ func (h *AnnouncementHandler) List(c *gin.Context) {
 
 	out := make([]dto.UserAnnouncement, 0, len(items))
 	for i := range items {
-		out = append(out, *dto.UserAnnouncementListFromService(&items[i]))
+		if compact {
+			out = append(out, *dto.UserAnnouncementListFromService(&items[i]))
+		} else {
+			out = append(out, *dto.UserAnnouncementFromService(&items[i]))
+		}
 	}
 	response.Success(c, out)
 }

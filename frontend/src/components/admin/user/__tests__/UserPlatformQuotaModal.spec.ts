@@ -7,6 +7,7 @@ const apiMocks = vi.hoisted(() => ({
   getPlatformQuotas: vi.fn(),
   updatePlatformQuotas: vi.fn(),
   resetPlatformQuotaWindow: vi.fn(),
+  listByUser: vi.fn(),
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -15,6 +16,9 @@ vi.mock('@/api/admin', () => ({
       getPlatformQuotas: apiMocks.getPlatformQuotas,
       updatePlatformQuotas: apiMocks.updatePlatformQuotas,
       resetPlatformQuotaWindow: apiMocks.resetPlatformQuotaWindow,
+    },
+    subscriptions: {
+      listByUser: apiMocks.listByUser,
     },
   },
 }))
@@ -73,6 +77,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   apiMocks.getPlatformQuotas.mockResolvedValue({ platform_quotas: [] })
+  apiMocks.listByUser.mockResolvedValue([])
   apiMocks.updatePlatformQuotas.mockResolvedValue({ platform_quotas: [] })
   apiMocks.resetPlatformQuotaWindow.mockResolvedValue({ platform_quotas: [] })
 })
@@ -101,7 +106,7 @@ describe('UserPlatformQuotaModal', () => {
 
   it('挂载并 show=true 时调用 getPlatformQuotas', async () => {
     await mountAndOpen()
-    expect(apiMocks.getPlatformQuotas).toHaveBeenCalledWith(99)
+    expect(apiMocks.getPlatformQuotas).toHaveBeenCalledWith(99, expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('空数据渲染全部 12 个 platform 行', async () => {
@@ -212,57 +217,45 @@ describe('UserPlatformQuotaModal', () => {
   })
 
   describe('subscription warning banner', () => {
-    it('displays subscription warning when user has active subscription', async () => {
+    const activeSubscription = {
+      id: 1, user_id: 99, group_id: 1, status: 'active',
+      starts_at: '2026-01-01T00:00:00Z', expires_at: null,
+      daily_usage_usd: 0, weekly_usage_usd: 0, monthly_usage_usd: 0,
+      daily_window_start: null, weekly_window_start: null, monthly_window_start: null,
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    } as UserSubscription
+
+    it('loads warning data lazily when the quota modal opens', async () => {
+      apiMocks.listByUser.mockResolvedValueOnce([activeSubscription])
       const w = mount(UserPlatformQuotaModal, {
-        props: {
-          show: true,
-          user: makeUser({
-            subscriptions: [
-              {
-                id: 1, user_id: 99, group_id: 1, status: 'active',
-                starts_at: '2026-01-01T00:00:00Z', expires_at: null,
-                daily_usage_usd: 0, weekly_usage_usd: 0, monthly_usage_usd: 0,
-                daily_window_start: null, weekly_window_start: null, monthly_window_start: null,
-                created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-              } as UserSubscription,
-            ],
-          }),
-        },
+        props: { show: false, user: makeUser() },
       })
+      expect(apiMocks.listByUser).not.toHaveBeenCalled()
+      await w.setProps({ show: true })
       await flushPromises()
+      expect(apiMocks.listByUser).toHaveBeenCalledWith(99, expect.objectContaining({ signal: expect.any(AbortSignal) }))
       expect(w.html()).toContain('admin.users.platformQuota.subscriptionWarning')
     })
 
-    it('hides subscription warning when user has only expired subscriptions', async () => {
-      const w = mount(UserPlatformQuotaModal, {
-        props: {
-          show: true,
-          user: makeUser({
-            subscriptions: [
-              {
-                id: 2, user_id: 99, group_id: 1, status: 'expired',
-                starts_at: '2025-01-01T00:00:00Z', expires_at: '2025-12-31T00:00:00Z',
-                daily_usage_usd: 0, weekly_usage_usd: 0, monthly_usage_usd: 0,
-                daily_window_start: null, weekly_window_start: null, monthly_window_start: null,
-                created_at: '2025-01-01T00:00:00Z', updated_at: '2025-12-31T00:00:00Z',
-              } as UserSubscription,
-            ],
-          }),
-        },
-      })
+    it('hides the warning when only expired subscriptions exist', async () => {
+      apiMocks.listByUser.mockResolvedValueOnce([{ ...activeSubscription, status: 'expired' }])
+      const w = mount(UserPlatformQuotaModal, { props: { show: true, user: makeUser() } })
       await flushPromises()
       expect(w.html()).not.toContain('admin.users.platformQuota.subscriptionWarning')
     })
 
-    it('hides subscription warning when subscriptions is empty array', async () => {
-      const w = mount(UserPlatformQuotaModal, {
-        props: {
-          show: true,
-          user: makeUser({ subscriptions: [] }),
-        },
+    it('aborts secondary loads when closed', async () => {
+      let capturedSignal: AbortSignal | undefined
+      apiMocks.listByUser.mockImplementationOnce((_id: number, options?: { signal?: AbortSignal }) => {
+        capturedSignal = options?.signal
+        return new Promise(() => {})
       })
+      const w = mount(UserPlatformQuotaModal, { props: { show: false, user: makeUser() } })
+      await w.setProps({ show: true })
       await flushPromises()
-      expect(w.html()).not.toContain('admin.users.platformQuota.subscriptionWarning')
+      expect(capturedSignal?.aborted).toBe(false)
+      await w.setProps({ show: false })
+      expect(capturedSignal?.aborted).toBe(true)
     })
   })
 })

@@ -44,7 +44,7 @@ type SiteThemeSettings struct {
 // DefaultSiteThemeSettings matches the look the site shipped with before the
 // theme became configurable.
 func DefaultSiteThemeSettings() SiteThemeSettings {
-	return SiteThemeSettings{Primary: "black", Neutral: "neutral", Radius: 0.375, Font: "system", DefaultMode: "system"}
+	return SiteThemeSettings{Primary: "sakura", Neutral: "neutral", Radius: 0.375, Font: "system", DefaultMode: "system"}
 }
 
 // SiteThemePatch carries the fields of one update; nil leaves a field unchanged.

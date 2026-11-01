@@ -950,6 +950,8 @@ export default {
       rateAndAccounts: '{rate}x 费率 · {count} 个账号',
       accountsCount: '{count} 个账号',
       rateLabel: '倍率',
+      capacityRuntimeHint: '账号侧实时负载：并发槽位 / 会话 / RPM；不是当前使用该分组的用户数。',
+      capacityUnknownHint: '实时计数暂不可用；— 表示读取失败或未配置，不代表 0。',
       accountFilters: {
         title: '账号过滤控制',
         oauthOnly: '仅允许 OAuth 账号',

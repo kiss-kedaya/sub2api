@@ -664,7 +664,10 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key)
   }
   saveColumnsToStorage()
-  if (wasHidden && (key === 'usage' || key.startsWith('usage_') || key.startsWith('attr_') || key === 'balance_platform_quota')) {
+  if (wasHidden && key === 'balance_platform_quota') {
+    // 配额内联在列表响应里：重新显示时重拉当前页（1 次请求），不再逐行请求。
+    loadUsers()
+  } else if (wasHidden && (key === 'usage' || key.startsWith('usage_') || key.startsWith('attr_'))) {
     refreshCurrentPageSecondaryData()
   }
   if (key === 'subscriptions') {
@@ -1070,6 +1073,32 @@ const closePlatformQuotaModal = () => {
 let abortController: AbortController | null = null
 let secondaryDataSeq = 0
 
+const isStaleSecondary = (signal?: AbortSignal, expectedSeq?: number) =>
+  Boolean(signal?.aborted) || (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq)
+
+const currentUserIdSet = (userIds: number[]) => new Set(userIds.map((id) => String(id)))
+
+// 把二级数据裁剪到当前页，避免大 pageSize 反复翻页时 map 只增不减。
+function keepOnly<T>(map: Record<string, T>, keep: Set<string>): Record<string, T> {
+  const out: Record<string, T> = {}
+  for (const key of Object.keys(map)) {
+    if (keep.has(key)) out[key] = map[key]
+  }
+  return out
+}
+
+// 平台配额改为列表接口内联返回（include_platform_quotas），这里只做一次映射。
+const collectInlinePlatformQuotas = (items: AdminUser[]) => {
+  const quotas: Record<number, PlatformQuotaItem[]> = {}
+  if (!hasVisiblePlatformQuotaColumn.value) return quotas
+  for (const user of items) {
+    if (user.platform_quotas && user.platform_quotas.length > 0) {
+      quotas[user.id] = user.platform_quotas
+    }
+  }
+  return quotas
+}
+
 const loadUsersSecondaryData = async (
   userIds: number[],
   signal?: AbortSignal,
@@ -1077,70 +1106,40 @@ const loadUsersSecondaryData = async (
 ) => {
   if (userIds.length === 0) return
 
+  const idSet = currentUserIdSet(userIds)
   const tasks: Promise<void>[] = []
 
   if (hasVisibleUsageColumn.value) {
     tasks.push(
       (async () => {
         try {
-          const usageResponse = await adminAPI.dashboard.getBatchUsersUsage(userIds)
-          if (signal?.aborted) return
-          if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
-          usageStats.value = usageResponse.stats
+          const usageResponse = await adminAPI.dashboard.getBatchUsersUsage(userIds, { signal })
+          if (isStaleSecondary(signal, expectedSeq)) return
+          usageStats.value = keepOnly(usageResponse.stats, idSet)
         } catch (e) {
-          if (signal?.aborted) return
+          if (isStaleSecondary(signal, expectedSeq)) return
           console.error('Failed to load usage stats:', e)
         }
       })()
     )
   }
 
-  if (attributeDefinitions.value.length > 0 && hasVisibleAttributeColumns.value) {
-    tasks.push(
-      (async () => {
-        try {
-          const attrResponse = await adminAPI.userAttributes.getBatchUserAttributes(userIds)
-          if (signal?.aborted) return
-          if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
-          userAttributeValues.value = attrResponse.attributes
-        } catch (e) {
-          if (signal?.aborted) return
-          console.error('Failed to load user attribute values:', e)
-        }
-      })()
-    )
-  }
-
-  if (hasVisiblePlatformQuotaColumn.value) {
-    tasks.push(
-      (async () => {
-        try {
-          // 无批量端点：对当前页用户逐个拉取，分块并发（每批 6），批间检查中止条件，避免大 pageSize 时请求洪峰
-          const CHUNK = 6
-          for (let i = 0; i < userIds.length; i += CHUNK) {
-            if (signal?.aborted) return
-            if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
-            const chunk = userIds.slice(i, i + CHUNK)
-            const results = await Promise.allSettled(
-              chunk.map((id) => adminAPI.users.getPlatformQuotas(id))
-            )
-            if (signal?.aborted) return
-            if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
-            const merged = { ...platformQuotaStats.value }
-            results.forEach((r, idx) => {
-              if (r.status === 'fulfilled') {
-                merged[chunk[idx]] = r.value.platform_quotas || []
-              }
-            })
-            platformQuotaStats.value = merged
-          }
-        } catch (e) {
-          if (signal?.aborted) return
-          console.error('Failed to load platform quotas:', e)
-        }
-      })()
-    )
-  }
+  tasks.push(
+    (async () => {
+      try {
+        // 属性定义与用户列表并行加载：首屏不再被这个请求串行挡住。
+        await ensureAttributeDefinitions()
+        if (isStaleSecondary(signal, expectedSeq)) return
+        if (!hasVisibleAttributeColumns.value) return
+        const attrResponse = await adminAPI.userAttributes.getBatchUserAttributes(userIds, { signal })
+        if (isStaleSecondary(signal, expectedSeq)) return
+        userAttributeValues.value = attrResponse.attributes
+      } catch (e) {
+        if (isStaleSecondary(signal, expectedSeq)) return
+        console.error('Failed to load user attribute values:', e)
+      }
+    })()
+  )
 
   if (tasks.length > 0) {
     await Promise.allSettled(tasks)
@@ -1151,7 +1150,8 @@ const refreshCurrentPageSecondaryData = () => {
   const userIds = users.value.map((u) => u.id)
   if (userIds.length === 0) return
   const seq = ++secondaryDataSeq
-  void loadUsersSecondaryData(userIds, undefined, seq)
+  // 复用列表请求的 AbortSignal：翻页/筛选会真正取消在途的二级请求。
+  void loadUsersSecondaryData(userIds, abortController?.signal, seq)
 }
 
 // Row "…" menu (UDropdownMenu handles positioning, outside click, Escape and scroll)
@@ -1218,10 +1218,24 @@ const loadAttributeDefinitions = async () => {
   }
 }
 
+// 属性定义只拉一次；首屏与用户列表并行，不再串行 await。
+let attributeDefinitionsPromise: Promise<void> | null = null
+const ensureAttributeDefinitions = (): Promise<void> => {
+  if (!attributeDefinitionsPromise) {
+    attributeDefinitionsPromise = loadAttributeDefinitions()
+  }
+  return attributeDefinitionsPromise
+}
+
+const reloadAttributeDefinitions = async () => {
+  attributeDefinitionsPromise = loadAttributeDefinitions()
+  await attributeDefinitionsPromise
+}
+
 // Handle attributes modal close - reload definitions and users
 const handleAttributesModalClose = async () => {
   showAttributesModal.value = false
-  await loadAttributeDefinitions()
+  await reloadAttributeDefinitions()
   loadUsers()
 }
 
@@ -1250,8 +1264,11 @@ const loadUsers = async () => {
         group_name: filters.group || undefined,
         api_key_group_id: filters.apiKeyGroup ?? undefined,
         attributes: Object.keys(attrFilters).length > 0 ? attrFilters : undefined,
-        // 始终请求 subscriptions：列隐藏时仍需用于 UserPlatformQuotaModal 的 active-subscription 警示 banner
-        include_subscriptions: true,
+        // 订阅、可用分组只在对应列表列可见时联表批量加载。
+        include_subscriptions: !hiddenColumns.has('subscriptions'),
+        include_allowed_groups: hasVisibleGroupsColumn.value,
+        // 配额列可见时让后端一次批量内联，替代逐行 GET /admin/users/:id/platform-quotas
+        include_platform_quotas: hasVisiblePlatformQuotaColumn.value,
         sort_by: sortState.sort_by,
         sort_order: sortState.sort_order
       },
@@ -1263,9 +1280,11 @@ const loadUsers = async () => {
     users.value = response.items
     pagination.total = response.total
     pagination.pages = response.pages
+    // 清空上一页二级数据，避免同 ID 更新或请求失败时短暂展示过期数字。
     usageStats.value = {}
     userAttributeValues.value = {}
-    platformQuotaStats.value = {}
+    // 配额随列表响应一起到达，不再逐行发请求。
+    platformQuotaStats.value = collectInlinePlatformQuotas(response.items)
 
     // Defer heavy secondary data so table can render first.
     if (response.items.length > 0) {
@@ -1515,10 +1534,11 @@ const handleWithdrawFromHistory = () => {
   }
 }
 
-onMounted(async () => {
-  await loadAttributeDefinitions()
+onMounted(() => {
   loadSavedFilters()
   loadSavedColumns()
+  // 属性定义与用户列表并行：首屏不再等一个次要请求。
+  void ensureAttributeDefinitions()
   loadUsers()
   if (hasVisibleGroupsColumn.value || visibleFilters.has('group')) {
     loadAllGroups()

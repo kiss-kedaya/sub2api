@@ -1,5 +1,8 @@
 export default {
     settings: {
+      search: {
+        emailOAuth: 'Email OAuth sign-in',
+      },
       gatewayIPNotice: {
         title: 'IP notices and rate limits',
         description: 'Add conversation notices and independent request limits only for the listed source IPs.',

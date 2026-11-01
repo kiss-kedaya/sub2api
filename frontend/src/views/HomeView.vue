@@ -485,7 +485,7 @@ const isHomeContentUrl = computed(() => {
 })
 
 // Theme
-const isDark = ref(document.documentElement.classList.contains('dark'))
+const isDark = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 
 // GitHub URL
 const githubUrl = 'https://github.com/Wei-Shaw/sub2api'

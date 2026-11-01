@@ -40,7 +40,9 @@ interface Destination {
   path: string
   label: string
   icon: string
-  group: 'admin' | 'personal'
+  group: 'admin' | 'personal' | 'settings'
+  /** Extra search terms (brand names, aliases) that are not part of the label. */
+  keywords?: string[]
 }
 
 // The same permission and feature-flag rules as before; only the presentation changed.
@@ -71,10 +73,40 @@ const destinations = computed((): Destination[] => {
   return auth.isSimpleMode ? admin.filter(item => item.path !== '/admin/users') : [...admin, ...personal]
 })
 
-// Plain substring match on label and path, as before (a path such as /admin/accounts works too).
+// Settings sub-sections (brand logins, captcha, payment, ...). Only the full
+// administrators can open /admin/settings, and every entry deep-links to its tab.
+const settingsDestinations = computed((): Destination[] => {
+  if (auth.user?.role !== 'admin' || auth.isAdminObserver) return []
+  const link = (tab: string, section: string) => `/admin/settings?tab=${tab}&section=${section}`
+  return [
+    { path: link('security', 'settings-admin-api-key'), label: t('admin.settings.adminApiKey.title'), icon: 'i-lucide-key-round', group: 'settings', keywords: ['api key', 'admin key', '管理员密钥'] },
+    { path: link('security', 'settings-registration'), label: t('admin.settings.registration.title'), icon: 'i-lucide-user-plus', group: 'settings', keywords: ['register', 'signup', '注册'] },
+    { path: link('security', 'settings-captcha'), label: t('admin.settings.captcha.title'), icon: 'i-lucide-shield-check', group: 'settings', keywords: ['captcha', 'turnstile', 'tencent', 'aliyun', '人机验证', '天御', '阿里云', '腾讯'] },
+    { path: link('security', 'settings-linuxdo'), label: t('admin.settings.linuxdo.title'), icon: 'i-lucide-globe', group: 'settings', keywords: ['linuxdo', 'linux do', 'oauth', '第三方登录'] },
+    { path: link('security', 'settings-email-oauth'), label: t('admin.settings.search.emailOAuth'), icon: 'i-lucide-mail', group: 'settings', keywords: ['github', 'google', 'oauth', 'email', '邮箱快捷登录', '谷歌'] },
+    { path: link('security', 'settings-wechat'), label: t('admin.settings.wechatConnect.title'), icon: 'i-lucide-message-circle', group: 'settings', keywords: ['wechat', 'weixin', '微信', '公众号', '小程序'] },
+    { path: link('security', 'settings-dingtalk'), label: t('admin.settings.dingtalk.title'), icon: 'i-lucide-message-square', group: 'settings', keywords: ['dingtalk', 'ding', '钉钉'] },
+    { path: link('security', 'settings-oidc'), label: t('admin.settings.oidc.title'), icon: 'i-lucide-fingerprint', group: 'settings', keywords: ['oidc', 'openid', 'sso', '单点登录', '统一认证'] },
+    { path: link('users', 'settings-defaults'), label: t('admin.settings.defaults.title'), icon: 'i-lucide-users', group: 'settings', keywords: ['defaults', '默认', '订阅默认值'] },
+    { path: link('gateway', 'settings-gateway-forwarding'), label: t('admin.settings.gatewayForwarding.title'), icon: 'i-lucide-arrow-left-right', group: 'settings', keywords: ['cache', 'ttl', 'cache_control', 'antigravity', 'claude oauth', '转发'] },
+    { path: link('general', 'settings-site'), label: t('admin.settings.site.title'), icon: 'i-lucide-house', group: 'settings', keywords: ['site', '站点', '名称', 'logo'] },
+    { path: link('general', 'settings-custom-menu'), label: t('admin.settings.customMenu.title'), icon: 'i-lucide-list', group: 'settings', keywords: ['menu', '自定义菜单', '导航'] },
+    { path: link('features', 'settings-features-channel-monitor'), label: t('admin.settings.features.channelMonitor.title'), icon: 'i-lucide-activity', group: 'settings', keywords: ['monitor', '监控', '渠道状态'] },
+    { path: link('payment', 'settings-payment'), label: t('admin.settings.payment.title'), icon: 'i-lucide-credit-card', group: 'settings', keywords: ['payment', '充值', '支付', '支付宝', '微信支付'] },
+    { path: link('email', 'settings-smtp'), label: t('admin.settings.smtp.title'), icon: 'i-lucide-mail', group: 'settings', keywords: ['smtp', 'mail', '邮件', '邮箱'] },
+    { path: link('backup', 'settings-backup'), label: t('admin.settings.tabs.backup'), icon: 'i-lucide-database', group: 'settings', keywords: ['backup', '备份', '恢复'] },
+    { path: link('agreement', 'settings-agreement'), label: t('admin.settings.tabs.agreement'), icon: 'i-lucide-file-text', group: 'settings', keywords: ['agreement', 'terms', '条款', '协议'] },
+  ]
+})
+
+// Plain substring match on label, path and keywords (a path such as /admin/accounts works too).
 const results = computed(() => {
   const term = query.value.trim().toLocaleLowerCase()
-  return destinations.value.filter(item => !term || (item.label + ' ' + item.path).toLocaleLowerCase().includes(term))
+  const all = [...destinations.value, ...settingsDestinations.value]
+  if (!term) return all
+  return all.filter(item =>
+    (item.label + ' ' + item.path + ' ' + (item.keywords?.join(' ') ?? '')).toLocaleLowerCase().includes(term)
+  )
 })
 
 const MODE_ICONS: Record<ThemeMode, string> = {
@@ -90,9 +122,13 @@ const groups = computed((): CommandPaletteGroup<CommandPaletteItem>[] => {
     class: 'console-search-result',
     onSelect: () => navigate(item.path)
   })
-  const navigation = ['admin', 'personal'].map((group) => ({
+  const navigation = ['admin', 'personal', 'settings'].map((group) => ({
     id: `nav-${group}`,
-    label: group === 'personal' && results.value.some(item => item.group === 'admin') ? t('nav.myAccount') : undefined,
+    label: group === 'personal' && results.value.some(item => item.group === 'admin')
+      ? t('nav.myAccount')
+      : group === 'settings'
+        ? t('admin.settings.title')
+        : undefined,
     // Already filtered above; Fuse must not drop or reorder these.
     ignoreFilter: true,
     items: results.value.filter(item => item.group === group).map(toItem)

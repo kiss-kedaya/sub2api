@@ -736,7 +736,7 @@ const exportToExcel = async () => {
       if (p > 1 && res.page_size && res.page_size !== pageSize) throw new Error('Pagination size changed during export')
       pageSize = res.page_size || pageSize
       const rows = (res.items || []).map((log: AdminUsageLog) => [
-        log.created_at, log.user?.email || '', log.api_key?.name || '', log.account?.name || '', log.model,
+        log.created_at, (log.user?.email || log.user_summary?.email || ''), (log.api_key?.name || log.api_key_summary?.name || ''), log.account?.name || log.account_summary?.name || '', log.model,
         log.upstream_model || log.model, log.upstream_response_model || '', log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'), formatReasoningEffort(log.reasoning_effort), formatReasoningEffort(log.upstream_reasoning_effort || log.reasoning_effort), log.group?.name || '',
         log.inbound_endpoint || '', log.upstream_endpoint || '', getRequestTypeLabel(log),
         log.input_tokens, log.output_tokens, log.cache_read_tokens, log.cache_creation_tokens,

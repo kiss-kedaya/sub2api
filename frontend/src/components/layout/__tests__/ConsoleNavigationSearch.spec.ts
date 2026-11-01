@@ -121,6 +121,35 @@ describe('console navigation search', () => {
     expect(wrapper.find('input').exists()).toBe(true)
   })
 
+  it('finds settings sub-sections by brand keyword and deep-links to the section', async () => {
+    const { wrapper, push } = await render('admin')
+    await search('linuxdo')
+    const item = wrapper
+      .findAll('[data-slot="item"]')
+      .find((node) => node.text().includes('admin.settings.linuxdo.title'))
+    expect(item).toBeTruthy()
+    await item!.trigger('click')
+    await flushPromises()
+    expect(push).toHaveBeenCalledWith('/admin/settings?tab=security&section=settings-linuxdo')
+    expect(wrapper.find('[data-test="palette"]').exists()).toBe(false)
+  })
+
+  it('matches Chinese provider keywords in the settings group', async () => {
+    const { wrapper } = await render('admin')
+    await search('微信')
+    const labels = wrapper.findAll('[data-slot="item"]').map((node) => node.text())
+    expect(labels.some((label) => label.includes('admin.settings.wechatConnect.title'))).toBe(true)
+    expect(labels.some((label) => label.includes('admin.settings.payment.title'))).toBe(true)
+  })
+
+  it('does not expose settings sub-sections to users or observers', async () => {
+    const { wrapper } = await render('user')
+    await search('linuxdo')
+    const labels = wrapper.findAll('[data-slot="item"]').map((node) => node.text())
+    expect(labels.some((label) => label.includes('admin.settings.linuxdo.title'))).toBe(false)
+    expect(labels.some((label) => label.includes('admin.settings.wechatConnect.title'))).toBe(false)
+  })
+
   it('switches the theme from the palette and closes it', async () => {
     const { wrapper, push } = await render('user')
     const dark = wrapper.findAll('[data-slot="item"]').find((item) => item.text().includes('admin.settings.siteTheme.modes.dark'))

@@ -16,6 +16,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
+      "@runtime/context": ["./src/runtime/context.ts"],
       "@/*": ["./src/*"]
     },
     "types": ["vite/client"]

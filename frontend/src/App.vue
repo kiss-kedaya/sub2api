@@ -11,10 +11,12 @@ import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, 
 import { useTicketNotificationStore } from '@/stores/ticketNotifications'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
-import { nuxtUiLocale } from '@/plugins/nuxtUi'
+import { applyPlatformProfile } from '@/utils/platform'
+import { useNuxtUiLocale } from '@/plugins/nuxtUiLocale'
 import { applySiteTheme, normalizeSiteTheme, useSiteTheme } from '@/composables/useSiteTheme'
 
 const router = useRouter()
+const nuxtUiLocale = useNuxtUiLocale()
 const route = useRoute()
 const appStore = useAppStore()
 const authStore = useAuthStore()
@@ -25,6 +27,7 @@ const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 
 function updateDocumentTitle() {
+  if (typeof document === 'undefined') return
   const customMenuItems = [
     ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
     ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
@@ -95,6 +98,7 @@ function onAdminComplianceRequired(event: Event) {
 watch(
   () => authStore.isAuthenticated,
   (isAuthenticated, oldValue) => {
+    if (typeof document === 'undefined') return
     if (isAuthenticated) {
       if (authStore.isAdmin && !authStore.isAdminObserver) {
         adminComplianceStore.fetchStatus().catch((error) => {
@@ -142,11 +146,13 @@ router.afterEach(() => {
 })
 
 onBeforeUnmount(() => {
+  if (typeof document === 'undefined') return
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
 })
 
 onMounted(async () => {
+  applyPlatformProfile()
   window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
 
   // Check if setup is needed
@@ -173,7 +179,9 @@ onMounted(async () => {
        The app's own Toast and dialogs keep working alongside it. -->
   <UApp :locale="nuxtUiLocale">
     <NavigationProgress />
-    <RouterView />
+    <Transition name="page" mode="out-in">
+      <slot><RouterView /></slot>
+    </Transition>
     <Toast />
     <AnnouncementPopup />
     <AdminComplianceDialog />

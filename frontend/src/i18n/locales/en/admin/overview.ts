@@ -856,6 +856,8 @@ export default {
       rateAndAccounts: '{rate}x rate · {count} accounts',
       accountsCount: '{count} accounts',
       rateLabel: 'rate',
+      capacityRuntimeHint: 'Live account-side load: concurrency slots / sessions / RPM. This is not the number of users using this group.',
+      capacityUnknownHint: 'Live counters are unavailable. — means missing or failed, not zero.',
       accountFilters: {
         title: 'Account Filter Controls',
         oauthOnly: 'Only allow OAuth accounts',

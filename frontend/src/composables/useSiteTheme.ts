@@ -1,44 +1,16 @@
 import { computed, readonly, ref } from 'vue'
 import {
-  CHROMATIC_PALETTE_NAMES,
-  NEUTRAL_PALETTE_NAMES,
   PALETTE_SHADES,
   paletteColor,
   paletteHex,
   paletteRgbChannels,
   type ChromaticPaletteName,
-  type NeutralPaletteName,
   type PaletteName,
   type PaletteShade
 } from '@/theme/palettes'
-
-export const THEME_PRIMARY_OPTIONS = ['black', ...CHROMATIC_PALETTE_NAMES] as const
-export const THEME_NEUTRAL_OPTIONS = NEUTRAL_PALETTE_NAMES
-export const THEME_RADIUS_OPTIONS = [0, 0.125, 0.25, 0.375, 0.5] as const
-export const THEME_FONT_OPTIONS = ['system', 'public-sans', 'inter', 'noto-sans-sc'] as const
-export const THEME_MODE_OPTIONS = ['system', 'light', 'dark'] as const
-
-export type ThemePrimary = (typeof THEME_PRIMARY_OPTIONS)[number]
-export type ThemeRadius = (typeof THEME_RADIUS_OPTIONS)[number]
-export type ThemeFont = (typeof THEME_FONT_OPTIONS)[number]
-export type ThemeMode = (typeof THEME_MODE_OPTIONS)[number]
-
-/** Same field names as the public settings and /admin/settings/theme responses. */
-export interface SiteThemeSettings {
-  theme_primary: ThemePrimary
-  theme_neutral: NeutralPaletteName
-  theme_radius: ThemeRadius
-  theme_font: ThemeFont
-  theme_default_mode: ThemeMode
-}
-
-export const DEFAULT_SITE_THEME: Readonly<SiteThemeSettings> = Object.freeze({
-  theme_primary: 'black',
-  theme_neutral: 'neutral',
-  theme_radius: 0.375,
-  theme_font: 'system',
-  theme_default_mode: 'system'
-})
+import { DEFAULT_SITE_THEME, THEME_MODE_OPTIONS, normalizeSiteTheme, pick, type SiteThemeSettings, type ThemeFont, type ThemeMode } from '@/theme/settings'
+import { getAppRuntimeContext } from '@runtime/context'
+export * from '@/theme/settings'
 
 // Same fallbacks as tailwind.config.js, ending in PingFang SC / Microsoft YaHei / sans-serif.
 const SYSTEM_FONT_STACK = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
@@ -59,22 +31,22 @@ export const THEME_FONT_STACKS: Readonly<Record<ThemeFont, string | null>> = {
 }
 
 export const SITE_THEME_STYLE_ID = 'site-theme-vars'
+const THEME_TRANSITION_CLASS = 'theme-transitioning'
+const THEME_TRANSITION_MS = 240
+let themeTransitionTimer: ReturnType<typeof setTimeout> | null = null
 
-function pick<T extends string | number>(options: readonly T[], value: unknown, fallback: T): T {
-  const index = options.indexOf(value as T)
-  return index >= 0 ? options[index] : fallback
-}
-
-/** Keeps only allowlisted values; anything else (or a missing field) becomes the default. */
-export function normalizeSiteTheme(input: unknown): SiteThemeSettings {
-  const source = (input !== null && typeof input === 'object' ? input : {}) as Record<string, unknown>
-  return {
-    theme_primary: pick(THEME_PRIMARY_OPTIONS, source.theme_primary, DEFAULT_SITE_THEME.theme_primary),
-    theme_neutral: pick(THEME_NEUTRAL_OPTIONS, source.theme_neutral, DEFAULT_SITE_THEME.theme_neutral),
-    theme_radius: pick(THEME_RADIUS_OPTIONS, source.theme_radius, DEFAULT_SITE_THEME.theme_radius),
-    theme_font: pick(THEME_FONT_OPTIONS, source.theme_font, DEFAULT_SITE_THEME.theme_font),
-    theme_default_mode: pick(THEME_MODE_OPTIONS, source.theme_default_mode, DEFAULT_SITE_THEME.theme_default_mode)
-  }
+function animateThemeChange(): void {
+  if (typeof document === 'undefined' || document.documentElement.classList.contains('motion-reduce')) return
+  const root = document.documentElement
+  root.classList.remove(THEME_TRANSITION_CLASS)
+  // Force a new animation window when a user changes mode twice quickly.
+  void root.offsetWidth
+  root.classList.add(THEME_TRANSITION_CLASS)
+  if (themeTransitionTimer) clearTimeout(themeTransitionTimer)
+  themeTransitionTimer = setTimeout(() => {
+    root.classList.remove(THEME_TRANSITION_CLASS)
+    themeTransitionTimer = null
+  }, THEME_TRANSITION_MS)
 }
 
 // The console's --signal-* tokens live on these elements (styles/console-studio.css),
@@ -97,25 +69,23 @@ function scale(prefix: string, palette: PaletteName, value: (palette: PaletteNam
 
 /**
  * Builds the theme stylesheet from allowlisted settings. Default values for
- * radius, font and the black primary write nothing that the existing
- * stylesheets define, so the default theme keeps the current look. With the
- * black primary, dark mode gets no primary variables at all: the night theme
- * (rose buttons, dark --c-primary-*, --signal-accent) stays exactly as styled.
+ * radius and font are optional overrides. The shipped primary is sakura. If an
+ * administrator selects black for daytime, dark mode still keeps sakura as
+ * the night accent unless another chromatic palette is explicitly selected.
  */
 export function buildSiteThemeCss(input: unknown): string {
   const theme = normalizeSiteTheme(input)
   const neutral = theme.theme_neutral
   const chromatic: ChromaticPaletteName | null = theme.theme_primary === 'black' ? null : theme.theme_primary
   const primary: PaletteName = chromatic ?? neutral
+  const darkChromatic: ChromaticPaletteName = chromatic ?? 'sakura'
   const neutralScale = scale('--ui-color-neutral', neutral, paletteColor)
   const light: Vars = {
     ...scale('--ui-color-primary', primary, paletteColor),
     ...neutralScale,
     '--ui-primary': chromatic ? 'var(--ui-color-primary-500)' : paletteColor(neutral, 900)
   }
-  const dark: Vars = chromatic
-    ? { ...scale('--ui-color-primary', chromatic, paletteColor), ...neutralScale, '--ui-primary': 'var(--ui-color-primary-400)' }
-    : { ...neutralScale }
+  const dark: Vars = { ...scale('--ui-color-primary', darkChromatic, paletteColor), ...neutralScale, '--ui-primary': 'var(--ui-color-primary-400)' }
   if (theme.theme_radius !== DEFAULT_SITE_THEME.theme_radius) {
     light['--ui-radius'] = dark['--ui-radius'] = `${theme.theme_radius}rem`
   }
@@ -123,46 +93,61 @@ export function buildSiteThemeCss(input: unknown): string {
   if (fontStack) light['--font-sans'] = dark['--font-sans'] = fontStack
 
   const rules: string[] = []
-  if (chromatic) {
-    const hex = (shade: PaletteShade) => paletteHex(chromatic, shade)
-    const rgb = (shade: PaletteShade, alpha: number) => `rgb(${paletteRgbChannels(chromatic, shade)} / ${alpha})`
-    const legacy = scale('--c-primary', chromatic, paletteRgbChannels)
-    Object.assign(light, legacy, {
-      '--ui-sakura': hex(400),
-      '--ui-halo': `0 0 0 3px ${rgb(400, 0.5)}`,
-      '--ui-btn': `linear-gradient(180deg, ${hex(600)} 0%, ${hex(700)} 100%)`,
-      '--ui-btn-hover': `linear-gradient(180deg, ${hex(500)} 0%, ${hex(600)} 100%)`
-    })
-    Object.assign(dark, legacy)
-    rules.push(rule(`${LIGHT} ${CONSOLE_SCOPE}`, {
-      '--signal-accent': hex(600),
-      '--signal-command': hex(600),
-      '--signal-command-hover': hex(700),
-      '--signal-sakura': hex(400),
-      '--signal-hero-mark': hex(500)
-    }))
+  {
+    const darkHex = (shade: PaletteShade) => paletteHex(darkChromatic, shade)
+    const darkRgb = (shade: PaletteShade, alpha: number) => `rgb(${paletteRgbChannels(darkChromatic, shade)} / ${alpha})`
+    Object.assign(dark, scale('--c-primary', darkChromatic, paletteRgbChannels))
+    if (chromatic) {
+      const lightHex = (shade: PaletteShade) => paletteHex(chromatic, shade)
+      const lightRgb = (shade: PaletteShade, alpha: number) => `rgb(${paletteRgbChannels(chromatic, shade)} / ${alpha})`
+      Object.assign(light, scale('--c-primary', chromatic, paletteRgbChannels), {
+        '--ui-sakura': lightHex(400),
+        '--ui-halo': `0 0 0 3px ${lightRgb(400, 0.5)}`,
+        '--ui-btn': `linear-gradient(180deg, ${lightHex(600)} 0%, ${lightHex(700)} 100%)`,
+        '--ui-btn-hover': `linear-gradient(180deg, ${lightHex(500)} 0%, ${lightHex(600)} 100%)`
+      })
+      rules.push(rule(`${LIGHT} ${CONSOLE_SCOPE}`, {
+        '--signal-accent': lightHex(600),
+        '--signal-command': lightHex(600),
+        '--signal-command-hover': lightHex(700),
+        '--signal-sakura': lightHex(400),
+        '--signal-hero-mark': lightHex(500)
+      }))
+    }
     rules.push(rule(`${DARK} ${CONSOLE_SCOPE}`, {
-      '--signal-accent': hex(400),
-      '--signal-on-accent': hex(950),
-      '--signal-accent-soft': rgb(400, 0.16),
-      '--signal-command': hex(400),
-      '--signal-command-text': hex(950),
-      '--signal-command-hover': hex(300),
-      '--signal-nav-active': rgb(400, 0.16),
-      '--signal-nav-active-text': hex(200),
-      '--signal-nav-brand': hex(200),
-      '--signal-hero-mark': hex(300),
-      '--signal-sakura': hex(400)
+      '--signal-accent': darkHex(400),
+      '--signal-on-accent': darkHex(950),
+      '--signal-accent-soft': darkRgb(400, 0.16),
+      '--signal-command': darkHex(400),
+      '--signal-command-text': darkHex(950),
+      '--signal-command-hover': darkHex(300),
+      '--signal-nav-active': darkRgb(400, 0.16),
+      '--signal-nav-active-text': darkHex(200),
+      '--signal-nav-brand': darkHex(200),
+      '--signal-hero-mark': darkHex(300),
+      '--signal-sakura': darkHex(400)
     }))
   }
   rules.unshift(rule(LIGHT, light), rule(DARK, dark))
   if (fontStack) rules.push(`html:root,html:root ${CONSOLE_SCOPE}{font-family:var(--font-sans);}`)
   return rules.join('\n')
 }
-const appliedTheme = ref<SiteThemeSettings>({ ...DEFAULT_SITE_THEME })
+const standaloneTheme = ref<SiteThemeSettings>({ ...DEFAULT_SITE_THEME })
+const standaloneVisitorMode = ref<ThemeMode | null>(savedVisitorMode())
+
+function currentTheme() {
+  const runtime = getAppRuntimeContext()
+  return runtime ? (runtime.siteTheme ??= ref({ ...DEFAULT_SITE_THEME })) : standaloneTheme
+}
+
+function currentVisitorMode() {
+  const runtime = getAppRuntimeContext()
+  return runtime ? (runtime.visitorMode ??= ref<ThemeMode | null>(savedVisitorMode())) : standaloneVisitorMode
+}
 
 function writeTheme(theme: SiteThemeSettings): void {
   if (typeof document === 'undefined') return
+  animateThemeChange()
   let style = document.getElementById(SITE_THEME_STYLE_ID)
   if (!(style instanceof HTMLStyleElement)) {
     style?.remove()
@@ -204,11 +189,11 @@ export function resolveSiteThemeDark(theme: SiteThemeSettings): boolean {
 // Mirror of the real `dark` class on <html>, so toggles show the mode actually in
 // force, whoever set it (startup, a preview, or a page with its own toggle).
 const htmlDark = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
-const visitorMode = ref<ThemeMode | null>(savedVisitorMode())
 let colorModeWatched = false
 
 function setDark(dark: boolean): void {
   if (typeof document === 'undefined') return
+  if (document.documentElement.classList.contains('dark') !== dark) animateThemeChange()
   document.documentElement.classList.toggle('dark', dark)
   htmlDark.value = dark
 }
@@ -226,7 +211,7 @@ function watchColorMode(): void {
   // With "system" in force, follow the OS switching between light and dark.
   const query = typeof window.matchMedia === 'function' ? window.matchMedia(DARK_QUERY) : null
   query?.addEventListener?.('change', () => {
-    if ((savedVisitorMode() ?? appliedTheme.value.theme_default_mode) === 'system') setDark(systemPrefersDark())
+    if ((savedVisitorMode() ?? currentTheme().value.theme_default_mode) === 'system') setDark(systemPrefersDark())
   })
 }
 
@@ -241,11 +226,11 @@ export interface ApplySiteThemeOptions {
 /** Applies and remembers the site theme, e.g. from appStore.cachedPublicSettings. */
 export function applySiteTheme(input: unknown, options: ApplySiteThemeOptions = {}): SiteThemeSettings {
   const theme = normalizeSiteTheme(input)
-  appliedTheme.value = theme
+  currentTheme().value = theme
   writeTheme(theme)
   if (options.colorMode) {
     watchColorMode()
-    visitorMode.value = savedVisitorMode()
+    currentVisitorMode().value = savedVisitorMode()
     setDark(resolveSiteThemeDark(theme))
   }
   return theme
@@ -265,12 +250,12 @@ export function previewSiteThemeMode(mode: unknown): void {
 
 /** Undoes previews by re-applying the remembered theme. */
 export function restoreSiteTheme(options: ApplySiteThemeOptions = {}): SiteThemeSettings {
-  return applySiteTheme(appliedTheme.value, options)
+  return applySiteTheme(currentTheme().value, options)
 }
 
 export function useSiteTheme() {
   return {
-    theme: readonly(appliedTheme),
+    theme: readonly(currentTheme()),
     apply: applySiteTheme,
     preview: previewSiteTheme,
     previewMode: previewSiteThemeMode,
@@ -283,10 +268,11 @@ export function setColorModePreference(mode: ThemeMode): void {
   const next = pick(THEME_MODE_OPTIONS, mode, DEFAULT_SITE_THEME.theme_default_mode)
   try {
     localStorage.setItem('theme', next)
+    document.cookie = `theme=${next}; Path=/; SameSite=Lax; Max-Age=31536000`
   } catch {
     // Private mode: the choice still applies to this page.
   }
-  visitorMode.value = next
+  currentVisitorMode().value = next
   setDark(modeIsDark(next))
 }
 
@@ -303,10 +289,10 @@ export function toggleColorMode(): void {
 export function useSiteColorMode() {
   watchColorMode()
   // Pages with their own toggle write localStorage directly; pick that up here.
-  visitorMode.value = savedVisitorMode()
+  currentVisitorMode().value = savedVisitorMode()
   return {
     isDark: readonly(htmlDark),
-    preference: computed<ThemeMode>(() => visitorMode.value ?? appliedTheme.value.theme_default_mode),
+    preference: computed<ThemeMode>(() => currentVisitorMode().value ?? currentTheme().value.theme_default_mode),
     setPreference: setColorModePreference,
     toggle: toggleColorMode
   }

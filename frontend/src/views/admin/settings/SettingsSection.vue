@@ -9,6 +9,7 @@
     <UPageCard
       :title="title"
       :description="description"
+      :icon="icon"
       variant="naked"
       :orientation="$slots.actions ? 'horizontal' : 'vertical'"
       :ui="{ container: $slots.actions ? 'lg:flex lg:flex-row lg:items-center lg:justify-between' : undefined, wrapper: 'min-w-0 flex-1' }"
@@ -42,6 +43,8 @@ import { useI18n } from 'vue-i18n'
 defineProps<{
   title?: string
   description?: string
+  /** Optional Nuxt UI icon used to make long settings pages scannable. */
+  icon?: string
   /** Shows a loading row instead of the body (sections that fetch their own endpoint). */
   loading?: boolean
 }>()

@@ -1,5 +1,8 @@
 export default {
     settings: {
+      search: {
+        emailOAuth: '邮箱快捷登录',
+      },
       gatewayIPNotice: {
         title: '指定 IP 提示与限流',
         description: '仅对列表中的来源 IP 添加对话提示，并按 IP 独立限制请求频率。',

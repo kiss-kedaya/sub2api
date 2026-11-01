@@ -437,6 +437,58 @@ describe('useAppStore', () => {
       expect(store.cachedPublicSettings).toBeNull()
     })
 
+    it('patchPublicSettings 只合并传入的公开字段且不回源', async () => {
+      vi.mocked(getPublicSettings).mockResolvedValueOnce(createPublicSettings({ site_name: 'Loaded' }))
+      const store = useAppStore()
+      await store.fetchPublicSettings(true)
+      vi.mocked(getPublicSettings).mockClear()
+
+      store.patchPublicSettings({
+        site_name: 'Patched',
+        site_subtitle: 'Sub',
+        site_logo: undefined,
+      } as Partial<PublicSettings>)
+
+      expect(store.siteName).toBe('Patched')
+      expect(store.cachedPublicSettings?.site_subtitle).toBe('Sub')
+      // undefined 视为"不修改"：保留缓存里的旧值
+      expect(store.cachedPublicSettings?.site_logo).toBe('')
+      expect(getPublicSettings).not.toHaveBeenCalled()
+    })
+
+    it('早于本地补丁返回的 GET 不会覆盖补丁', async () => {
+      vi.mocked(getPublicSettings).mockResolvedValueOnce(createPublicSettings({ site_name: 'Loaded' }))
+      const store = useAppStore()
+      await store.fetchPublicSettings(true)
+
+      const deferred = createDeferred<PublicSettings>()
+      vi.mocked(getPublicSettings).mockReturnValueOnce(deferred.promise as never)
+      const pending = store.fetchPublicSettings(true)
+
+      store.patchPublicSettings({ site_name: 'Patched' })
+      expect(store.siteName).toBe('Patched')
+
+      deferred.resolve(createPublicSettings({ site_name: 'Stale' }))
+      await pending
+
+      expect(store.siteName).toBe('Patched')
+      expect(store.cachedPublicSettings?.site_name).toBe('Patched')
+    })
+
+    it('没有 window 时 initFromInjectedConfig 直接返回 false（SSR）', async () => {
+      vi.stubGlobal('window', undefined)
+      try {
+        const store = useAppStore()
+        expect(store.initFromInjectedConfig()).toBe(false)
+        expect(store.publicSettingsLoaded).toBe(false)
+
+        vi.mocked(getPublicSettings).mockResolvedValueOnce(createPublicSettings({ site_name: 'SSR' }))
+        await expect(store.fetchPublicSettings()).resolves.toMatchObject({ site_name: 'SSR' })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
     it('fetchPublicSettings(force) 会同步更新运行时注入配置', async () => {
       vi.mocked(getPublicSettings).mockResolvedValue({
         registration_enabled: false,

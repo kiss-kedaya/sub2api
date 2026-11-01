@@ -55,6 +55,9 @@ type UserPlatformQuotaRepository interface {
 	IncrementUsageWithReset(ctx context.Context, userID int64, platform string, cost float64, now time.Time) error
 	// ListByUser 查询用户的所有平台配额记录。
 	ListByUser(ctx context.Context, userID int64) ([]UserPlatformQuotaRecord, error)
+	// ListByUsers 批量查询多个用户的平台配额记录，返回 userID -> 记录切片。
+	// 单次 IN 查询实现，供后台用户列表页避免逐行 N+1 请求/查询。
+	ListByUsers(ctx context.Context, userIDs []int64) (map[int64][]UserPlatformQuotaRecord, error)
 	// UpsertForUser 全量替换该用户所有平台限额配置（事务内）：
 	//   1. 软删除未在 records 中出现的所有 active 行
 	//   2. 对 records 中每条：UPDATE 已存在的（含重新激活软删行）；UPDATE 未命中时 INSERT

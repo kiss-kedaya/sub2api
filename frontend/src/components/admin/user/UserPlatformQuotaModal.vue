@@ -138,9 +138,7 @@ interface QuotaRow {
   monthly_usage_usd: number
 }
 
-const hasActiveSubscription = computed(() =>
-  props.user?.subscriptions?.some((s) => s.status === 'active') ?? false
-)
+const hasActiveSubscription = ref(false)
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -189,23 +187,51 @@ function formatUsage(n: number): string {
   return n.toFixed(2)
 }
 
+let loadController: AbortController | null = null
+
 async function load() {
   if (!props.user) return
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
+  const userId = props.user.id
   loading.value = true
   try {
-    const data = await adminAPI.users.getPlatformQuotas(props.user.id)
-    quotas.value = normalize(data.platform_quotas || [])
-  } catch {
-    appStore.showError(t('admin.users.platformQuota.loadFailed'))
-    quotas.value = PLATFORMS.map(emptyRow)
+    const inlineQuotas = Array.isArray(props.user.platform_quotas) ? props.user.platform_quotas : null
+    const [quotaResult, subscriptionResult] = await Promise.allSettled([
+      inlineQuotas ? Promise.resolve({ platform_quotas: inlineQuotas }) : adminAPI.users.getPlatformQuotas(userId, { signal: controller.signal }),
+      adminAPI.subscriptions.listByUser(userId, { signal: controller.signal })
+    ])
+    if (controller.signal.aborted || props.user?.id !== userId || !props.show) return
+
+    if (quotaResult.status === 'fulfilled') {
+      quotas.value = normalize(quotaResult.value.platform_quotas || [])
+    } else {
+      appStore.showError(t('admin.users.platformQuota.loadFailed'))
+      quotas.value = PLATFORMS.map(emptyRow)
+    }
+    hasActiveSubscription.value = subscriptionResult.status === 'fulfilled'
+      && subscriptionResult.value.some((subscription) => subscription.status === 'active')
   } finally {
-    loading.value = false
+    if (loadController === controller) {
+      loading.value = false
+      loadController = null
+    }
   }
 }
 
 watch(
   () => props.show,
-  (s) => { if (s && props.user) load() },
+  (show) => {
+    if (show && props.user) {
+      void load()
+    } else {
+      loadController?.abort()
+      loadController = null
+      loading.value = false
+    }
+  },
+  { immediate: true },
 )
 
 async function onClearAll() {

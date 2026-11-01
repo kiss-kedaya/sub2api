@@ -296,6 +296,7 @@
               :sessions-max="capacityMap.get(row.id)!.sessionsMax"
               :rpm-used="capacityMap.get(row.id)!.rpmUsed"
               :rpm-max="capacityMap.get(row.id)!.rpmMax"
+              :runtime-known="capacityMap.get(row.id)!.runtimeKnown"
             />
             <span v-else class="text-xs text-dimmed">—</span>
           </template>
@@ -3977,6 +3978,7 @@ const capacityMap = ref<
       sessionsMax: number;
       rpmUsed: number;
       rpmMax: number;
+      runtimeKnown: boolean;
     }
   >
 >(new Map());
@@ -4913,6 +4915,7 @@ const loadCapacitySummary = async () => {
         sessionsMax: number;
         rpmUsed: number;
         rpmMax: number;
+        runtimeKnown: boolean;
       }
     >();
     for (const item of data) {
@@ -4923,6 +4926,7 @@ const loadCapacitySummary = async () => {
         sessionsMax: item.sessions_max,
         rpmUsed: item.rpm_used,
         rpmMax: item.rpm_max,
+        runtimeKnown: item.runtime_known !== false,
       });
     }
     capacityMap.value = map;

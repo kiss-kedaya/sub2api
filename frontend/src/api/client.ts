@@ -14,18 +14,10 @@ import {
 } from './adminUIRequest'
 import { refreshAuthTokens } from './tokenRefresh'
 import { getAPIBaseURL } from './url'
+import { getAppRuntimeContext, type AppRuntimeContext } from '@runtime/context'
 export { buildApiUrl, buildGatewayUrl } from './url'
 
 // ==================== Axios Instance Configuration ====================
-
-export const apiClient: AxiosInstance = axios.create({
-  baseURL: getAPIBaseURL(),
-  withCredentials: true,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-})
 
 // Heavy usage/report endpoints can legitimately scan a large usage history.
 // Keep the normal API budget at 30s, but give report requests the same 180s
@@ -48,6 +40,12 @@ const longRunningReportPath = (url: string): boolean => {
 
 // ==================== Request Interceptor ====================
 
+function createApiClient(context?: AppRuntimeContext): AxiosInstance {
+const apiClient = axios.create({
+  baseURL: getAPIBaseURL(), withCredentials: true, timeout: 30000,
+  headers: { 'Content-Type': 'application/json' },
+})
+
 // Get user's timezone
 const getUserTimezone = (): string => {
   try {
@@ -59,6 +57,8 @@ const getUserTimezone = (): string => {
 
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    const runtime = context ?? getAppRuntimeContext()
+    if (runtime?.apiAdapter) config.adapter = runtime.apiAdapter
     const requestURL = String(config.url || '')
     if (longRunningReportPath(requestURL)) {
       // Respect an explicitly larger caller timeout, while ensuring report
@@ -67,7 +67,8 @@ apiClient.interceptors.request.use(
     }
 
     // Attach token from localStorage
-    const token = localStorage.getItem('auth_token')
+    const token = !runtime?.cookieSession && typeof localStorage !== 'undefined'
+      ? localStorage.getItem('auth_token') : null
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -185,6 +186,20 @@ apiClient.interceptors.response.use(
         })
       }
 
+      const cookieSession = Boolean(context?.cookieSession || getAppRuntimeContext()?.cookieSession)
+      if (cookieSession && status === 401 && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('auth-session-expired'))
+        if (!window.location.pathname.includes('/login')) window.location.href = '/login'
+      }
+
+      // Server rendering must never touch browser storage or redirect a global window.
+      // The BFF owns HttpOnly session rotation; browser cookie expiry is handled above.
+      if (typeof window === 'undefined' || cookieSession) {
+        return Promise.reject({ status, code: apiData.code, reason: apiData.reason,
+          error: apiData.error, message: apiData.message || apiData.detail || error.message,
+          metadata: apiData.metadata })
+      }
+
       // 401: Try to refresh the token if we have a refresh token
       // This handles TOKEN_EXPIRED, INVALID_TOKEN, TOKEN_REVOKED, etc.
       if (status === 401 && !originalRequest._retry) {
@@ -298,4 +313,24 @@ apiClient.interceptors.response.use(
   }
 )
 
+return apiClient
+}
+
+const standaloneClient = createApiClient()
+function currentClient(): AxiosInstance {
+  const runtime = getAppRuntimeContext()
+  if (!runtime) return standaloneClient
+  return runtime.apiClient ??= createApiClient(runtime)
+}
+
+// Capture the app at invocation, not in Axios's deferred interceptor microtask.
+// Each SSR request gets its own instance; no cookie/token can cross requests.
+export const apiClient = new Proxy(standaloneClient, {
+  get(_target, key) {
+    const client = currentClient()
+    const value = Reflect.get(client, key, client)
+    return typeof value === 'function' ? value.bind(client) : value
+  },
+  apply(_target, thisArg, args) { return Reflect.apply(currentClient(), thisArg, args) },
+})
 export default apiClient

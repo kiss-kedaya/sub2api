@@ -60,6 +60,13 @@ export function petalPath(ctx: CanvasRenderingContext2D, len: number, wid: numbe
   ctx.closePath()
 }
 
+/** The same hand-painted contour as the tree blossoms, formatted for tiny SVG accents. */
+export function petalPathData(len: number, wid: number, notch: number, point = 0): string {
+  const tip = lerp(0.2, 0.05, point)
+  const shoulder = lerp(1.03, 0.82, point)
+  return `M0 0 C${len * 0.28} ${-wid * 0.6} ${len * shoulder} ${-wid * 0.58} ${len} ${-wid * tip} Q${len - notch} 0 ${len} ${wid * tip} C${len * shoulder} ${wid * 0.58} ${len * 0.28} ${wid * 0.6} 0 0Z`
+}
+
 function drawFlower(ctx: CanvasRenderingContext2D, b: Blossom, open: number, pal: BlossomPalette, rng: Rng) {
   const jitter = Array.from({ length: 5 }, () => gauss(rng, 0.1))
   // Closed: petals fold into a plump teardrop along the stalk axis.

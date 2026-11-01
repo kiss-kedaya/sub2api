@@ -5,6 +5,7 @@
   >
     <!-- Nuxt UI dashboard: UDashboardGroup > sidebar + one panel (navbar, optional toolbar,
          body). The panel body is the scroll container; the sakura canvas sits behind. -->
+    <SakuraPetalField v-if="isConsoleSignal" />
     <InkSakura v-if="isConsoleSignal" />
     <UDashboardGroup unit="rem" storage="local" storage-key="sub2api-console">
       <AppSidebar />
@@ -31,7 +32,7 @@ import '@/styles/onboarding.css'
 import '@/styles/console-signal.css'
 import '@/styles/console-account.css'
 import '@/styles/console-studio.css'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
 import { useOnboardingTour } from '@/composables/useOnboardingTour'
@@ -41,6 +42,7 @@ import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
 import ConsoleNavigationSearch from './ConsoleNavigationSearch.vue'
 import InkSakura from './InkSakura.vue'
+import SakuraPetalField from './SakuraPetalField.vue'
 import { provideDashboardFrame } from './dashboardFrame'
 import { usePanelScroll } from './panelScroll'
 
@@ -54,6 +56,8 @@ const isAdmin = computed(() => authStore.user?.role === 'admin')
 provideDashboardFrame()
 
 const mainRef = ref<HTMLElement | null>(null)
+let petalEnableTimer = 0
+let petalEnableIdleId = 0
 usePanelScroll(computed(() => mainRef.value?.parentElement ?? null))
 
 const { replayTour } = useOnboardingTour({
@@ -65,6 +69,19 @@ const onboardingStore = useOnboardingStore()
 
 onMounted(() => {
   onboardingStore.setReplayCallback(replayTour)
+  if (isConsoleSignal.value) {
+    const enable = () => document.documentElement.classList.add('console-petals-ready')
+    const idleWindow = window as unknown as { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number }
+    petalEnableIdleId = idleWindow.requestIdleCallback?.(enable, { timeout: 1500 }) ?? 0
+    if (!petalEnableIdleId) petalEnableTimer = window.setTimeout(enable, 500)
+  }
+})
+
+onBeforeUnmount(() => {
+  document.documentElement.classList.remove('console-petals-ready')
+  window.clearTimeout(petalEnableTimer)
+  const idleWindow = window as unknown as { cancelIdleCallback?: (id: number) => void }
+  if (petalEnableIdleId) idleWindow.cancelIdleCallback?.(petalEnableIdleId)
 })
 
 defineExpose({ replayTour })

@@ -214,6 +214,13 @@ type UsageLog struct {
 
 	CreatedAt time.Time
 
+	// AssociationsCompact marks association objects as display summaries only.
+	// When true, User/APIKey/Group/Subscription carry just the fields needed for
+	// list rendering, and the admin DTO emits *_summary fields instead of the
+	// full embedded objects.
+	AssociationsCompact bool
+	AccountNameOnly     bool
+
 	User         *User
 	APIKey       *APIKey
 	Account      *Account

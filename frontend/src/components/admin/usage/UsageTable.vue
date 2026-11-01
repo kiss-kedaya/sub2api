@@ -13,15 +13,15 @@
         <template #cell-user="{ row }">
           <div class="text-sm">
             <button
-              v-if="row.user?.email && !observer"
+              v-if="displayUser(row)?.email && !observer"
               class="font-medium text-primary-600 underline decoration-dashed underline-offset-2 transition-colors hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-              @click="$emit('userClick', row.user_id, row.user?.email)"
+              @click="$emit('userClick', row.user_id, displayUser(row)?.email)"
               :title="t('admin.usage.clickToViewBalance')"
             >
-              {{ row.user.email }}
+              {{ displayUser(row)?.email }}
             </button>
-            <span v-else class="font-medium text-gray-900 dark:text-white">{{ row.user?.email || '-' }}</span>
-            <span v-if="row.user?.deleted_at" class="ml-1 inline-flex items-center rounded-sm px-1 py-px text-[10px] font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30">
+            <span v-else class="font-medium text-gray-900 dark:text-white">{{ displayUser(row)?.email || '-' }}</span>
+            <span v-if="displayUser(row)?.deleted_at" class="ml-1 inline-flex items-center rounded-sm px-1 py-px text-[10px] font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30">
               {{ t('admin.usage.userDeletedBadge') }}
             </span>
             <span class="ml-1 text-gray-500 dark:text-gray-400">#{{ row.user_id }}</span>
@@ -29,11 +29,11 @@
         </template>
 
         <template #cell-api_key="{ row }">
-          <span class="text-sm text-gray-900 dark:text-white">{{ row.api_key?.name || '-' }}</span>
+          <span class="text-sm text-gray-900 dark:text-white">{{ displayApiKey(row)?.name || '-' }}</span>
         </template>
 
         <template #cell-account="{ row }">
-          <span v-if="row.account?.name || row.account_id" class="text-sm text-gray-900 dark:text-white">{{ row.account?.name || `#${row.account_id}` }}</span>
+          <span v-if="displayAccount(row)?.name || row.account_id" class="text-sm text-gray-900 dark:text-white">{{ displayAccount(row)?.name || `#${row.account_id}` }}</span>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">{{ row.inflight ? t('usage.inflightScheduling') : '-' }}</span>
         </template>
 
@@ -111,8 +111,8 @@
         </template>
 
         <template #cell-group="{ row }">
-          <span v-if="row.group?.name || row.group_id" class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-            {{ row.group?.name || `#${row.group_id}` }}
+          <span v-if="displayGroup(row)?.name || row.group_id" class="inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+            {{ displayGroup(row)?.name || `#${row.group_id}` }}
           </span>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">{{ row.inflight ? t('usage.inflightGroupPending') : '-' }}</span>
         </template>
@@ -656,6 +656,10 @@ const emit = defineEmits<{
   sort: [key: string, order: 'asc' | 'desc']
 }>()
 const { t } = useI18n()
+const displayUser = (row: AdminUsageLog) => row.user ?? row.user_summary
+const displayApiKey = (row: AdminUsageLog) => row.api_key ?? row.api_key_summary
+const displayGroup = (row: AdminUsageLog) => row.group ?? row.group_summary
+const displayAccount = (row: AdminUsageLog) => row.account ?? row.account_summary
 const displayDuration = (row: { duration_ms?: number | null }) => row.duration_ms
 const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling

@@ -216,6 +216,17 @@ describe('preview server isolation', () => {
     expect(outbound).not.toHaveBeenCalled()
   })
 
+  it('previews and persists a local theme without a backend request', async () => {
+    const read = async (path: string) => JSON.parse((await http(path)).text).data
+    expect(await read('/api/v1/admin/settings/theme')).toMatchObject({ theme_primary: 'sakura' })
+    const response = await http('/api/v1/admin/settings/theme', 'PUT', { 'Content-Type': 'application/json' }, JSON.stringify({ theme_primary: 'green', theme_radius: 0.5 }))
+    expect(response.status).toBe(200)
+    expect(await read('/api/v1/admin/settings/theme')).toMatchObject({ theme_primary: 'green', theme_radius: 0.5 })
+    expect(await read('/api/v1/settings/public')).toMatchObject({ theme_primary: 'green', site_name: 'kedaya.ai' })
+    await http('/api/v1/admin/settings/theme', 'PUT', { 'Content-Type': 'application/json' }, JSON.stringify({ theme_primary: 'sakura', theme_radius: 0.375 }))
+    expect(outbound).not.toHaveBeenCalled()
+  })
+
   it('rejects public binding even if a caller overrides the config', async () => {
     const config = consolePreviewConfig()
     await expect(createServer({ ...config, configFile: false, mode: PREVIEW_MODE,

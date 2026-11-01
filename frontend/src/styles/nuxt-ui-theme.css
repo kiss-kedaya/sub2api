@@ -3,48 +3,55 @@
   - Light: Nuxt UI's own defaults (text / bg / border derived from --ui-color-neutral-*), so
     the admin's Appearance settings (neutral palette, primary, radius, font) drive the whole
     light theme. useSiteTheme writes the palette and --ui-primary on html:root:not(.dark).
-  - Dark: today's plum-charcoal palette, written out, so the night theme keeps its colours
-    (rose primary unless the admin picks another one; useSiteTheme overrides it then).
+  - Dark: neutral ink-black surfaces with sakura primary, independently of the daytime neutral.
   Nuxt UI declares its defaults in `@layer theme`; these rules are unlayered, so they win.
   Keep `--ui-radius` at 0.25rem: Nuxt UI derives the whole `rounded-*` scale from it, and
   0.25rem reproduces Tailwind's default radii (the Appearance radius overrides it).
 */
 :root {
   --ui-radius: 0.25rem;
-  /* Fallback until useSiteTheme runs (it writes the black / chromatic primary). */
-  --ui-primary: var(--ui-color-neutral-900);
+  /* Fallback until useSiteTheme runs: the shipped accent is sakura. */
+  --ui-primary: #d987a2;
 
   /* Frame surfaces: the page behind the panel and the sidebar (template: bg-elevated/25). */
   --app-page-bg: var(--ui-bg);
   --app-sidebar-bg: color-mix(in oklab, var(--ui-bg-elevated) 25%, var(--ui-bg));
+
+  /* Quiet depth, not a glow: the border defines the edge, the shadow separates planes. */
+  --app-shadow-card: 0 1px 2px rgb(35 24 32 / 0.035), 0 4px 12px -8px rgb(35 24 32 / 0.14);
+  --app-shadow-popover: 0 3px 8px -4px rgb(35 24 32 / 0.12), 0 12px 28px -12px rgb(35 24 32 / 0.18);
+  --app-shadow-dialog: 0 8px 20px -10px rgb(35 24 32 / 0.16), 0 24px 64px -24px rgb(35 24 32 / 0.22);
 }
 
 .dark {
-  --ui-primary: #e89ab3;
-  --ui-secondary: #60a5fa;
-  --ui-success: #4ade80;
-  --ui-info: #60a5fa;
-  --ui-warning: #facc15;
-  --ui-error: #f87171;
+  --ui-primary: #f2b6c6;
+  --ui-secondary: #c4a7d8;
+  --ui-success: #9bd4b3;
+  --ui-info: #a8c6dc;
+  --ui-warning: #e5c58b;
+  --ui-error: #e3a0aa;
 
-  --ui-text-dimmed: #a08891;
-  --ui-text-muted: #c3a9b3;
-  --ui-text-toned: #d5c0c8;
-  --ui-text: #e3d3d9;
-  --ui-text-highlighted: #f1e4e9;
-  --ui-text-inverted: #2a1820;
+  --ui-text-dimmed: #a994a3;
+  --ui-text-muted: #c9b6c2;
+  --ui-text-toned: #ddcbd5;
+  --ui-text: #eadde5;
+  --ui-text-highlighted: #fff4f8;
+  --ui-text-inverted: #211820;
 
-  --ui-bg: #261c21;
-  --ui-bg-muted: #2e2228;
-  --ui-bg-elevated: #30232a;
-  --ui-bg-accented: #3f2f37;
-  --ui-bg-inverted: #f1e4e9;
+  --ui-bg: #181719;
+  --ui-bg-muted: #201e21;
+  --ui-bg-elevated: #282529;
+  --ui-bg-accented: #353137;
+  --ui-bg-inverted: #fff4f8;
 
-  --ui-border: #3f2f37;
-  --ui-border-muted: #33262d;
-  --ui-border-accented: #5e4651;
-  --ui-border-inverted: #f1e4e9;
+  --ui-border: #3d383f;
+  --ui-border-muted: #2b282d;
+  --ui-border-accented: #554d58;
+  --ui-border-inverted: #fff4f8;
 
-  --app-page-bg: #1c1519;
-  --app-sidebar-bg: #181215;
+  --app-page-bg: #111012;
+  --app-sidebar-bg: #0c0b0d;
+  --app-shadow-card: 0 1px 2px rgb(0 0 0 / 0.12), 0 5px 14px -9px rgb(0 0 0 / 0.3);
+  --app-shadow-popover: 0 4px 10px -5px rgb(0 0 0 / 0.25), 0 14px 32px -14px rgb(0 0 0 / 0.38);
+  --app-shadow-dialog: 0 10px 24px -12px rgb(0 0 0 / 0.3), 0 28px 64px -24px rgb(0 0 0 / 0.45);
 }

@@ -24,8 +24,8 @@
   --signal-inset: var(--ui-bg);
   --signal-divider: var(--ui-border);
   --signal-table-head: var(--ui-bg-muted);
-  --signal-shadow: 0 0 #0000;
-  --signal-popover-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.06);
+  --signal-shadow: var(--app-shadow-card);
+  --signal-popover-shadow: var(--app-shadow-popover);
   --signal-command: var(--ui-primary);
   --signal-command-text: var(--ui-text-inverted);
   --signal-command-hover: color-mix(in oklab, var(--ui-primary) 75%, var(--ui-bg));
@@ -54,43 +54,43 @@
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #1c1519;
-  --signal-surface: #261c21;
-  --signal-raised: #2e2228;
-  --signal-sidebar: #181215;
-  --signal-line: #3f2f37;
-  --signal-text: #f1e4e9;
-  --signal-muted: #c3a9b3;
-  --signal-accent: #e89ab3;
-  --signal-amber: #c3af7c;
-  --signal-hover: #30232a;
-  --signal-accent-soft: #3d2730;
-  --signal-on-accent: #2a1820;
-  --signal-control-line: #5e4651;
+  --signal-bg: #111012;
+  --signal-surface: #181719;
+  --signal-raised: #201e21;
+  --signal-sidebar: #0c0b0d;
+  --signal-line: #3d383f;
+  --signal-text: #fff4f8;
+  --signal-muted: #c9b6c2;
+  --signal-accent: #f2b6c6;
+  --signal-amber: #e5c58b;
+  --signal-hover: #282529;
+  --signal-accent-soft: #382a32;
+  --signal-on-accent: #211820;
+  --signal-control-line: #554d58;
   --signal-highlight: #ffffff0a;
-  --signal-inset: #20171c;
-  --signal-divider: #33262d;
-  --signal-table-head: #1c1519;
-  --signal-shadow: 0 0 #0000;
-  --signal-popover-shadow: 0 12px 32px #00000066;
-  --signal-command: #e89ab3;
-  --signal-command-text: #2a1820;
-  --signal-command-hover: #f0aec3;
-  --signal-nav-text: #d5c0c8;
-  --signal-nav-muted: #a88f99;
-  --signal-nav-hover: #261c21;
-  --signal-nav-active: #3d2730;
-  --signal-nav-active-text: #f6c9d8;
-  --signal-nav-line: #2e2228;
-  --signal-nav-strong: #ffffff;
-  --signal-nav-brand: #f6c9d8;
-  --signal-hero: #2e2228;
-  --signal-hero-text: #f6e9ee;
-  --signal-hero-muted: #c3a9b3;
-  --signal-hero-mark: #f0aec3;
-  --signal-hero-line: #4a3640;
-  --signal-page-surface: rgba(38, 28, 33, 0.78);
-  --signal-sakura: #e89ab3;
+  --signal-inset: #161517;
+  --signal-divider: #2b282d;
+  --signal-table-head: #111012;
+  --signal-shadow: var(--app-shadow-card);
+  --signal-popover-shadow: var(--app-shadow-popover);
+  --signal-command: #f2b6c6;
+  --signal-command-text: #211820;
+  --signal-command-hover: #f7c9d6;
+  --signal-nav-text: #ddcbd5;
+  --signal-nav-muted: #a994a3;
+  --signal-nav-hover: #181719;
+  --signal-nav-active: #382a32;
+  --signal-nav-active-text: #ffe2eb;
+  --signal-nav-line: #28202b;
+  --signal-nav-strong: #fff4f8;
+  --signal-nav-brand: #ffe2eb;
+  --signal-hero: #201e21;
+  --signal-hero-text: #fff4f8;
+  --signal-hero-muted: #c9b6c2;
+  --signal-hero-mark: #f7c9d6;
+  --signal-hero-line: #49424c;
+  --signal-page-surface: rgba(24, 23, 25, 0.94);
+  --signal-sakura: #f2b6c6;
 }
 
 .console-signal {
@@ -322,4 +322,21 @@ body:has(.console-signal) > .select-dropdown-portal {
 .console-signal .plaza-group-header {
   background: var(--signal-surface);
   border-top: 2px solid var(--signal-control-line);
+}
+
+/* One elevation per surface. Keep charts, table rows and nested field groups flat. */
+.console-signal :is(.card, .settings-section-card),
+.console-signal [data-slot='root'].rounded-lg.ring.bg-default,
+.console-signal .signal-reading[data-slot='root'],
+.console-signal .custom-page-layout > .card,
+.console-signal .canvas-page-layout > .card {
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--app-shadow-card);
+}
+
+body:has(.console-signal) :is(.base-dialog-panel, [role='dialog'][data-slot='content']) {
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--app-shadow-dialog);
+}
+
+body:has(.console-signal) :is(.select-dropdown-portal, [role='menu'][data-slot='content'], [role='listbox'][data-slot='content']) {
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--app-shadow-popover);
 }

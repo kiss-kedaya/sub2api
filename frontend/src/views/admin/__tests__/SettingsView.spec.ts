@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
+import { createMemoryHistory, createRouter } from "vue-router";
 
 import enCommon from "@/i18n/locales/en/common";
 import enSettings from "@/i18n/locales/en/admin/settings";
@@ -104,6 +105,7 @@ vi.mock("@/api", () => ({
       getStreamTimeoutSettings,
       getRectifierSettings,
       getBetaPolicySettings,
+      getEmailTemplates: vi.fn().mockResolvedValue({ events: [], locales: [], placeholders: [] }),
     },
     accounts: {
       getUpstreamBillingProbeSettings,
@@ -126,6 +128,12 @@ vi.mock("@/api", () => ({
   },
 }));
 
+const { patchPublicSettings, patchFromSettings, appStorePublicState } = vi.hoisted(() => ({
+  patchPublicSettings: vi.fn(),
+  patchFromSettings: vi.fn(),
+  appStorePublicState: { cachedPublicSettings: null as Record<string, unknown> | null },
+}));
+
 vi.mock("@/stores", () => ({
   useAppStore: () => ({
     showError,
@@ -133,12 +141,17 @@ vi.mock("@/stores", () => ({
     showWarning: vi.fn(),
     showInfo: vi.fn(),
     fetchPublicSettings,
+    get cachedPublicSettings() {
+      return appStorePublicState.cachedPublicSettings;
+    },
+    patchPublicSettings,
   }),
 }));
 
 vi.mock("@/stores/adminSettings", () => ({
   useAdminSettingsStore: () => ({
     fetch: adminSettingsFetch,
+    patchFromSettings,
   }),
 }));
 
@@ -550,9 +563,11 @@ const baseSettingsResponse = {
   },
 };
 
-function mountView() {
+function mountView(extra: { plugins?: unknown[]; attachTo?: HTMLElement } = {}) {
   return mount(SettingsView, {
+    attachTo: extra.attachTo,
     global: {
+      plugins: (extra.plugins ?? []) as never[],
       stubs: {
         teleport: true,
         ThemeCustomizer: true,
@@ -572,6 +587,16 @@ function mountView() {
       },
     },
   });
+}
+
+function formOf(wrapper: ReturnType<typeof mountView>): Record<string, any> {
+  return (wrapper.vm as unknown as { form: Record<string, any> }).form;
+}
+
+function settingsPayload(): Record<string, any> {
+  const call = updateSettings.mock.calls.at(-1);
+  expect(call, "updateSettings was not called").toBeDefined();
+  return call![0] as Record<string, any>;
 }
 
 async function openPaymentTab(wrapper: ReturnType<typeof mountView>) {
@@ -773,6 +798,8 @@ describe("admin SettingsView payment visible method controls", () => {
     const wrapper = mountView();
     await flushPromises();
     showError.mockClear();
+    // The incremental save only fires when something changed.
+    formOf(wrapper).site_name = "Step Up Site";
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
     await wrapper.getComponent(TotpStepUpDialog).get('button').trigger("click");
@@ -791,6 +818,7 @@ describe("admin SettingsView payment visible method controls", () => {
     const wrapper = mountView();
     await flushPromises();
     showError.mockClear();
+    formOf(wrapper).site_name = "Step Up Site";
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
     const dialog = wrapper.getComponent(TotpStepUpDialog);
@@ -1002,18 +1030,17 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        turnstile_enabled: false,
-        tencent_captcha_enabled: true,
-        aliyun_captcha_enabled: false,
-        tencent_captcha_app_id: "123456789",
-        tencent_captcha_app_secret_key: "app-secret-value",
-        tencent_captcha_cloud_secret_id: "cloud-secret-id-value",
-        tencent_captcha_cloud_secret_key: "cloud-secret-key-value",
-        tencent_captcha_region: "cn",
-      }),
-    );
+    const payload = settingsPayload();
+    expect(payload).toMatchObject({
+      tencent_captcha_enabled: true,
+      tencent_captcha_app_id: "123456789",
+      tencent_captcha_app_secret_key: "app-secret-value",
+      tencent_captcha_cloud_secret_id: "cloud-secret-id-value",
+      tencent_captcha_cloud_secret_key: "cloud-secret-key-value",
+    });
+    // Both other providers were already off, so the incremental payload keeps them out.
+    expect(payload).not.toHaveProperty("turnstile_enabled");
+    expect(payload).not.toHaveProperty("aliyun_captcha_enabled");
   });
 
   it("腾讯天御切换到国际站后保存站点并更新控制台入口", async () => {
@@ -1071,18 +1098,16 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        turnstile_enabled: false,
-        tencent_captcha_enabled: false,
-        aliyun_captcha_enabled: true,
-        aliyun_captcha_prefix: "prefix-1",
-        aliyun_captcha_scene_id: "scene-1",
-        aliyun_captcha_access_key_id: "ak-id",
-        aliyun_captcha_access_key_secret: "ak-secret-value",
-        aliyun_captcha_region: "cn",
-      }),
-    );
+    const payload = settingsPayload();
+    expect(payload).toMatchObject({
+      aliyun_captcha_enabled: true,
+      aliyun_captcha_prefix: "prefix-1",
+      aliyun_captcha_scene_id: "scene-1",
+      aliyun_captcha_access_key_id: "ak-id",
+      aliyun_captcha_access_key_secret: "ak-secret-value",
+    });
+    expect(payload).not.toHaveProperty("turnstile_enabled");
+    expect(payload).not.toHaveProperty("tencent_captcha_enabled");
   });
 
   it("关闭人机验证总开关会同时关闭所有服务商", async () => {
@@ -1107,13 +1132,11 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        turnstile_enabled: false,
-        tencent_captcha_enabled: false,
-        aliyun_captcha_enabled: false,
-      }),
-    );
+    const payload = settingsPayload();
+    expect(payload).toMatchObject({ tencent_captcha_enabled: false });
+    // turnstile/aliyun were already off before the toggle; nothing to resend.
+    expect(payload).not.toHaveProperty("turnstile_enabled");
+    expect(payload).not.toHaveProperty("aliyun_captcha_enabled");
   });
 
   it("disables passkey sign-in when the RP configuration is unavailable", async () => {
@@ -1228,6 +1251,7 @@ describe("admin SettingsView payment visible method controls", () => {
 
     await flushPromises();
     await openPaymentTab(wrapper);
+    formOf(wrapper).payment_product_name_prefix = "Legacy check";
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
@@ -1252,12 +1276,17 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        affiliate_admin_recharge_enabled: true,
-      }),
-    );
+    // The loaded value already matches the server: an untouched form must not resend settings.
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(formOf(wrapper).affiliate_admin_recharge_enabled).toBe(true);
+
+    // A real edit is still sent, and only that field.
+    formOf(wrapper).affiliate_admin_recharge_enabled = false;
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    const payload = settingsPayload();
+    expect(payload).toMatchObject({ affiliate_admin_recharge_enabled: false });
+    expect(payload).not.toHaveProperty("affiliate_enabled");
   });
 
   it("submits Anthropic cache TTL injection gateway setting", async () => {
@@ -1272,12 +1301,15 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        enable_anthropic_cache_ttl_1h_injection: true,
-      }),
-    );
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(formOf(wrapper).enable_anthropic_cache_ttl_1h_injection).toBe(true);
+
+    formOf(wrapper).enable_anthropic_cache_ttl_1h_injection = false;
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(settingsPayload()).toMatchObject({
+      enable_anthropic_cache_ttl_1h_injection: false,
+    });
   });
 
   it("submits message cache_control rewrite gateway setting", async () => {
@@ -1292,12 +1324,13 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        rewrite_message_cache_control: true,
-      }),
-    );
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(formOf(wrapper).rewrite_message_cache_control).toBe(true);
+
+    formOf(wrapper).rewrite_message_cache_control = false;
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(settingsPayload()).toMatchObject({ rewrite_message_cache_control: false });
   });
 
   it("submits Claude OAuth system prompt injection gateway settings", async () => {
@@ -1314,26 +1347,31 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        enable_claude_oauth_system_prompt_injection: false,
-      }),
-    );
-    const payload = updateSettings.mock.calls[0][0] as {
-      claude_oauth_system_prompt_blocks: string;
-    };
+    // Nothing is dirty: the saved values stay untouched and no request goes out.
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    // A real edit to the prompt blocks is normalised before it is sent.
+    const editorBlocks = (wrapper.vm as unknown as {
+      claudeOAuthSystemPromptBlocks: Array<{ text: string }>;
+    }).claudeOAuthSystemPromptBlocks;
+    editorBlocks[0]!.text = "custom block v2";
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = settingsPayload();
     expect(JSON.parse(payload.claude_oauth_system_prompt_blocks)).toEqual([
       {
         enabled: true,
         type: "text",
-        text: "custom block",
+        text: "custom block v2",
         cache_control: {
           type: "ephemeral",
           ttl: "5m",
         },
       },
     ]);
+    // The flag itself was not edited, so the server keeps its loaded value.
+    expect(payload).not.toHaveProperty("enable_claude_oauth_system_prompt_injection");
   });
 
   it("submits Antigravity user agent version gateway setting", async () => {
@@ -1348,12 +1386,13 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        antigravity_user_agent_version: "1.23.2",
-      }),
-    );
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(formOf(wrapper).antigravity_user_agent_version).toBe("1.23.2");
+
+    formOf(wrapper).antigravity_user_agent_version = "1.24.0";
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(settingsPayload()).toMatchObject({ antigravity_user_agent_version: "1.24.0" });
   });
 
   it("updates provider enablement immediately and reloads providers", async () => {
@@ -1889,19 +1928,18 @@ describe("admin SettingsView wechat connect controls", () => {
     await flushPromises();
 
     expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        wechat_connect_enabled: true,
-        wechat_connect_app_id: "wx-app-id-updated",
-        wechat_connect_open_enabled: true,
-        wechat_connect_mp_enabled: true,
-        wechat_connect_mp_app_id: "wx-app-id-updated",
-        wechat_connect_mp_app_secret: "new-secret",
-        wechat_connect_redirect_url:
-          "https://admin.example.com/api/v1/auth/oauth/wechat/callback",
-        wechat_connect_frontend_redirect_url: "/auth/wechat/callback",
-      }),
-    );
+    const payload = settingsPayload();
+    expect(payload).toMatchObject({
+      wechat_connect_app_id: "wx-app-id-updated",
+      wechat_connect_open_enabled: true,
+      wechat_connect_mp_app_id: "wx-app-id-updated",
+      wechat_connect_mp_app_secret: "new-secret",
+    });
+    // Untouched WeChat fields are retained on the server, not resent.
+    expect(payload).not.toHaveProperty("wechat_connect_enabled");
+    expect(payload).not.toHaveProperty("wechat_connect_mp_enabled");
+    expect(payload).not.toHaveProperty("wechat_connect_redirect_url");
+    expect(payload).not.toHaveProperty("wechat_connect_frontend_redirect_url");
     expect(
       (
         wrapper.get('[data-testid="wechat-connect-mp-app-secret"]')
@@ -1957,13 +1995,95 @@ describe("admin SettingsView wechat connect controls", () => {
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        oidc_connect_use_pkce: false,
-        oidc_connect_validate_id_token: false,
-      }),
-    );
+    // Both flags already match the server; the no-op save must not force them back on.
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(formOf(wrapper).oidc_connect_use_pkce).toBe(false);
+    expect(formOf(wrapper).oidc_connect_validate_id_token).toBe(false);
+
+    formOf(wrapper).oidc_connect_use_pkce = true;
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    const payload = settingsPayload();
+    expect(payload).toMatchObject({ oidc_connect_use_pkce: true });
+    expect(payload).not.toHaveProperty("oidc_connect_validate_id_token");
+  });
+});
+
+describe("admin SettingsView command-palette deep links", () => {
+  beforeEach(() => {
+    getSettings.mockReset();
+    updateSettings.mockReset();
+    getWebSearchEmulationConfig.mockReset();
+    updateWebSearchEmulationConfig.mockReset();
+    getAdminApiKey.mockReset();
+    getOverloadCooldownSettings.mockReset();
+    getRateLimit429CooldownSettings.mockReset();
+    updateRateLimit429CooldownSettings.mockReset();
+    getStreamTimeoutSettings.mockReset();
+    getRectifierSettings.mockReset();
+    getBetaPolicySettings.mockReset();
+    getGroups.mockReset();
+    listProxies.mockReset();
+    getProviders.mockReset();
+    fetchPublicSettings.mockReset();
+    adminSettingsFetch.mockReset();
+    showError.mockReset();
+    showSuccess.mockReset();
+    localeRef.value = "zh-CN";
+
+    getSettings.mockResolvedValue({ ...baseSettingsResponse });
+    updateSettings.mockImplementation(async (payload) => ({ ...baseSettingsResponse, ...payload }));
+    getWebSearchEmulationConfig.mockResolvedValue({ enabled: false, providers: [] });
+    updateWebSearchEmulationConfig.mockResolvedValue({ enabled: false, providers: [] });
+    getAdminApiKey.mockResolvedValue({ exists: false, masked_key: "" });
+    getOverloadCooldownSettings.mockResolvedValue({ enabled: true, cooldown_minutes: 10 });
+    getRateLimit429CooldownSettings.mockResolvedValue({ enabled: true, cooldown_seconds: 5 });
+    updateRateLimit429CooldownSettings.mockImplementation(async (payload) => payload);
+    getStreamTimeoutSettings.mockResolvedValue({});
+    getRectifierSettings.mockResolvedValue({});
+    getBetaPolicySettings.mockResolvedValue({ rules: [] });
+    getGroups.mockResolvedValue([]);
+    listProxies.mockResolvedValue({ items: [] });
+    getProviders.mockResolvedValue({ data: [] });
+    fetchPublicSettings.mockResolvedValue(undefined);
+    adminSettingsFetch.mockResolvedValue(undefined);
+  });
+
+  function makeRouter() {
+    return createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/admin/settings", component: { template: "<div />" } }],
+    });
+  }
+
+  it("opens the tab and highlights the section named in the deep link", async () => {
+    const router = makeRouter();
+    await router.push("/admin/settings?tab=security&section=settings-linuxdo");
+
+    const wrapper = mountView({ plugins: [router], attachTo: document.body });
+    await flushPromises();
+
+    expect((wrapper.vm as unknown as { activeTab: string }).activeTab).toBe("security");
+    const section = wrapper.get("#settings-linuxdo");
+    expect(section.classes()).toContain("settings-section-highlight");
+    expect(section.text()).toContain("admin.settings.linuxdo.title");
+    wrapper.unmount();
+  });
+
+  it("follows a later deep link while the page is already open", async () => {
+    const router = makeRouter();
+    await router.push("/admin/settings");
+
+    const wrapper = mountView({ plugins: [router], attachTo: document.body });
+    await flushPromises();
+    expect((wrapper.vm as unknown as { activeTab: string }).activeTab).toBe("general");
+
+    await router.push("/admin/settings?tab=security&section=settings-wechat");
+    await flushPromises();
+
+    expect((wrapper.vm as unknown as { activeTab: string }).activeTab).toBe("security");
+    expect(wrapper.get("#settings-wechat").classes()).toContain("settings-section-highlight");
+    wrapper.unmount();
   });
 });
 
@@ -2031,25 +2151,30 @@ describe("admin SettingsView platform quota matrix", () => {
     await flushPromises();
     await openUsersTab(wrapper);
 
+    // 增量保存要求真实改动：先改一个配额再提交。
+    const anthropicDaily = wrapper.findAll('input[type="number"]').find((input) =>
+      input.element.closest("tr")?.textContent?.includes("anthropic"),
+    );
+    expect(anthropicDaily).toBeTruthy();
+    await anthropicDaily!.setValue("5");
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    expect(updateSettings).toHaveBeenCalled();
-    const lastCallArgs = updateSettings.mock.calls.at(-1);
-    expect(lastCallArgs).toBeDefined();
-    const payload = lastCallArgs![0] as Record<string, unknown>;
-
+    const payload = settingsPayload();
     // 应携带嵌套对象，而非扁平字段
     expect(payload).toHaveProperty("default_platform_quotas");
-    const quotas = payload["default_platform_quotas"] as Record<string, unknown>;
+    const quotas = payload["default_platform_quotas"] as Record<string, Record<string, unknown>>;
     const platforms = ["anthropic", "openai", "gemini", "antigravity", "grok"];
     for (const p of platforms) {
       expect(quotas).toHaveProperty(p);
-      const pq = quotas[p] as Record<string, unknown>;
-      expect(pq).toHaveProperty("daily");
-      expect(pq).toHaveProperty("weekly");
-      expect(pq).toHaveProperty("monthly");
+      expect(quotas[p]).toHaveProperty("daily");
+      expect(quotas[p]).toHaveProperty("weekly");
+      expect(quotas[p]).toHaveProperty("monthly");
     }
+    expect(quotas.anthropic?.daily).toBe(5);
+    // 其它平台沿用已加载值，不能被清空。
+    expect(quotas.openai?.weekly).toBe(12.5);
+    expect(quotas.gemini?.monthly).toBe(200);
 
     // 不应存在旧扁平字段
     expect(payload).not.toHaveProperty("default_platform_quota_anthropic_daily");
@@ -2070,15 +2195,26 @@ describe("admin SettingsView platform quota matrix", () => {
     await flushPromises();
     await openUsersTab(wrapper);
 
+    // 加载值先落到表单里，缺失平台补全为 null。
+    const formQuotas = formOf(wrapper).default_platform_quotas as Record<string, Record<string, unknown>>;
+    expect(formQuotas.anthropic?.daily).toBe(5);
+    expect(formQuotas.openai?.weekly).toBe(12.5);
+    expect(formQuotas.gemini).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(formQuotas.antigravity).toEqual({ daily: null, weekly: null, monthly: null });
+
+    // 真实改动提交时，嵌套映射带着这些保留值一起发出去。
+    const anthropicDaily = wrapper.findAll('input[type="number"]').find((input) =>
+      input.element.closest("tr")?.textContent?.includes("anthropic"),
+    );
+    expect(anthropicDaily).toBeTruthy();
+    await anthropicDaily!.setValue("9");
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
 
-    const payload = updateSettings.mock.calls.at(-1)![0] as Record<string, unknown>;
+    const payload = settingsPayload();
     const quotas = payload["default_platform_quotas"] as Record<string, Record<string, unknown>>;
-
-    expect(quotas["anthropic"]?.["daily"]).toBe(5);
+    expect(quotas["anthropic"]?.["daily"]).toBe(9);
     expect(quotas["openai"]?.["weekly"]).toBe(12.5);
-    // 缺失平台应补全为 null
     expect(quotas["gemini"]).toEqual({ daily: null, weekly: null, monthly: null });
     expect(quotas["antigravity"]).toEqual({ daily: null, weekly: null, monthly: null });
   });
@@ -2118,5 +2254,180 @@ describe("admin SettingsView platform quota matrix", () => {
     const quotas = payload["default_platform_quotas"] as Record<string, Record<string, unknown>>;
     // 不管输入是什么，提交值应为 null（而非 "" 或 NaN）
     expect(quotas["anthropic"]?.["daily"]).toBe(null);
+  });
+});
+
+describe("admin SettingsView incremental settings save", () => {
+  beforeEach(() => {
+    getSettings.mockReset();
+    updateSettings.mockReset();
+    getWebSearchEmulationConfig.mockReset();
+    updateWebSearchEmulationConfig.mockReset();
+    getAdminApiKey.mockReset();
+    getOverloadCooldownSettings.mockReset();
+    getRateLimit429CooldownSettings.mockReset();
+    updateRateLimit429CooldownSettings.mockReset();
+    getStreamTimeoutSettings.mockReset();
+    getRectifierSettings.mockReset();
+    getBetaPolicySettings.mockReset();
+    getUpstreamBillingProbeSettings.mockReset();
+    updateUpstreamBillingProbeSettings.mockReset();
+    getOllamaCloudUsageSettings.mockReset();
+    updateOllamaCloudUsageSettings.mockReset();
+    getGroups.mockReset();
+    listProxies.mockReset();
+    getProviders.mockReset();
+    updateProvider.mockReset();
+    createProvider.mockReset();
+    deleteProvider.mockReset();
+    fetchPublicSettings.mockReset();
+    adminSettingsFetch.mockReset();
+    patchPublicSettings.mockReset();
+    patchFromSettings.mockReset();
+    appStorePublicState.cachedPublicSettings = null;
+    showError.mockReset();
+    showSuccess.mockReset();
+    verifyStepUp.mockReset();
+    verifyStepUp.mockResolvedValue({ verified: true, expires_in: 900 });
+    localeRef.value = "zh-CN";
+
+    getSettings.mockResolvedValue({ ...baseSettingsResponse });
+    updateSettings.mockImplementation(async (payload) => ({
+      ...baseSettingsResponse,
+      ...payload,
+    }));
+    getWebSearchEmulationConfig.mockResolvedValue({ enabled: false, providers: [] });
+    updateWebSearchEmulationConfig.mockResolvedValue({ enabled: false, providers: [] });
+    getAdminApiKey.mockResolvedValue({ exists: false, masked_key: "" });
+    getOverloadCooldownSettings.mockResolvedValue({ enabled: true, cooldown_minutes: 10 });
+    getRateLimit429CooldownSettings.mockResolvedValue({ enabled: true, cooldown_seconds: 5 });
+    updateRateLimit429CooldownSettings.mockImplementation(async (payload) => payload);
+    getStreamTimeoutSettings.mockResolvedValue({});
+    getRectifierSettings.mockResolvedValue({});
+    getBetaPolicySettings.mockResolvedValue({ rules: [] });
+    getUpstreamBillingProbeSettings.mockResolvedValue({ enabled: true, interval_minutes: 30 });
+    updateUpstreamBillingProbeSettings.mockImplementation(async (payload) => payload);
+    getOllamaCloudUsageSettings.mockResolvedValue({ enabled: false, interval_minutes: 60, debounce_minutes: 1 });
+    updateOllamaCloudUsageSettings.mockImplementation(async (payload) => payload);
+    getGroups.mockResolvedValue([]);
+    listProxies.mockResolvedValue({ items: [] });
+    getProviders.mockResolvedValue({ data: [] });
+    fetchPublicSettings.mockResolvedValue(undefined);
+    adminSettingsFetch.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    appStorePublicState.cachedPublicSettings = null;
+  });
+
+  it("sends nothing and stays quiet when the form was not edited", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(updateWebSearchEmulationConfig).not.toHaveBeenCalled();
+    expect(showSuccess).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+    expect(patchPublicSettings).not.toHaveBeenCalled();
+    expect(patchFromSettings).not.toHaveBeenCalled();
+  });
+
+  it("ignores a second submit while the first save is still in flight", async () => {
+    let resolveUpdate!: (value: unknown) => void;
+    updateSettings.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveUpdate = resolve; }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    formOf(wrapper).site_name = "Incremental Site";
+
+    const form = wrapper.get("form");
+    void form.trigger("submit.prevent");
+    await flushPromises();
+    void form.trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(settingsPayload()).toMatchObject({ site_name: "Incremental Site" });
+
+    resolveUpdate({ ...baseSettingsResponse, site_name: "Incremental Site" });
+    await flushPromises();
+    expect(showSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the pending diff when a save fails so a retry sends the same payload", async () => {
+    updateSettings.mockRejectedValueOnce({ status: 500, message: "boom" });
+    const wrapper = mountView();
+    await flushPromises();
+    formOf(wrapper).site_name = "Retry Site";
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    const firstPayload = settingsPayload();
+    expect(firstPayload).toMatchObject({ site_name: "Retry Site" });
+    expect(showError).toHaveBeenCalled();
+    // Nothing was confirmed, so the caches must not be patched.
+    expect(patchPublicSettings).not.toHaveBeenCalled();
+    expect(patchFromSettings).not.toHaveBeenCalled();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    expect(updateSettings.mock.calls[1]?.[0]).toEqual(firstPayload);
+  });
+
+  it("does not refetch settings after a successful save", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    formOf(wrapper).site_name = "No Refetch";
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(getSettings).toHaveBeenCalledTimes(1);
+    expect(fetchPublicSettings).not.toHaveBeenCalled();
+    expect(adminSettingsFetch).not.toHaveBeenCalled();
+  });
+
+  it("patches only cached public keys and never copies secrets", async () => {
+    appStorePublicState.cachedPublicSettings = {
+      site_name: "Sub2API",
+      site_subtitle: "",
+      custom_menu_items: [],
+      theme_primary: "sakura",
+    };
+    updateSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      site_name: "Public Rename",
+      smtp_password: "should-not-leak",
+      tencent_captcha_app_secret_key: "should-not-leak",
+      custom_menu_items: [
+        { id: 1, title: "admin-only", visibility: "admin" },
+        { id: 2, title: "public", visibility: "user" },
+      ],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    formOf(wrapper).site_name = "Public Rename";
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(patchPublicSettings).toHaveBeenCalledTimes(1);
+    const patch = patchPublicSettings.mock.calls[0]![0] as Record<string, unknown>;
+    expect(patch.site_name).toBe("Public Rename");
+    expect(patch.custom_menu_items).toEqual([
+      { id: 2, title: "public", visibility: "user" },
+    ]);
+    expect(patch).not.toHaveProperty("smtp_password");
+    expect(patch).not.toHaveProperty("tencent_captcha_app_secret_key");
+    expect(patchFromSettings).toHaveBeenCalledTimes(1);
   });
 });

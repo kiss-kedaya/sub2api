@@ -7,6 +7,103 @@
    Declared after @nuxt/ui, which defines `dark` as `&:where(.dark, .dark *)`. */
 @custom-variant dark (&:is(.dark *));
 
+/* OS-specific affordances: the layout remains shared, but touch, keyboard and
+   contrast behavior follows the device instead of forcing one desktop skin. */
+@media (pointer: coarse) {
+  html :is(button, a, [role='button'], [role='option'], [role='menuitem']) {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  html[data-platform='windows'] .console-sidebar [data-slot='link']:hover,
+  html[data-platform='linux'] .console-sidebar [data-slot='link']:hover {
+    transform: translateX(1px);
+  }
+}
+
+html[data-platform='ios'] :is(input, textarea, select),
+html[data-platform='android'] :is(input, textarea, select) {
+  /* Prevent mobile Safari/Chrome focus zoom and keep form rows readable. */
+  font-size: max(16px, 1rem);
+}
+
+html[data-platform='macos'] .console-search-trigger kbd,
+html[data-platform='ios'] .console-search-trigger kbd {
+  font-variant-ligatures: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* A short, low-contrast cross-fade keeps the sakura day/night switch from
+   flashing white or black. It only runs while the root class is present and
+   never changes layout or transform, so tables and mobile panels stay still. */
+html.theme-transitioning,
+html.theme-transitioning body,
+html.theme-transitioning :is(.console-frame, .console-sidebar, .console-topbar, .signal-main, .bg-default, .bg-elevated) {
+  transition: background-color 240ms var(--cb-ease-out), color 240ms var(--cb-ease-out), border-color 240ms var(--cb-ease-out), box-shadow 240ms var(--cb-ease-out), fill 240ms var(--cb-ease-out), stroke 240ms var(--cb-ease-out) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transitioning,
+  html.theme-transitioning * {
+    transition: none !important;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]) {
+    transition: transform var(--cb-t-fast) var(--cb-ease-press), box-shadow var(--cb-t-fast) var(--cb-ease-out), background-color var(--cb-t-fast) ease, color var(--cb-t-fast) ease, border-color var(--cb-t-fast) ease;
+  }
+
+  .console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]):hover {
+    transform: translateY(var(--cb-lift));
+  }
+
+  .console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]):active {
+    transform: scale(var(--cb-press));
+  }
+}
+
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 180ms var(--cb-ease-out), transform 220ms var(--cb-ease-out);
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(5px);
+}
+
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter-active,
+  .page-leave-active {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :is(button, a, input, textarea, select, [role='button']) {
+    forced-color-adjust: auto;
+  }
+  .console-sidebar [data-slot='link'][aria-current='page'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
 @theme {
   --color-primary-50: rgb(var(--c-primary-50));
   --color-primary-100: rgb(var(--c-primary-100));

@@ -17,6 +17,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      '@runtime/context': resolve(__dirname, 'src/runtime/context.ts'),
       '@': resolve(__dirname, 'src'),
       'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js'
     }
