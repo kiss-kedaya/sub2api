@@ -4,8 +4,8 @@
       <AdminPageHeader :title="t('admin.usage.title')" :description="t('admin.usage.description')">
         <template #actions>
           <div class="usage-range-controls">
-            <div class="usage-control-cluster">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
+            <div class="usage-control-cluster" :title="t('admin.dashboard.timeRange')">
+              <span class="sr-only">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
                 ref="rangeToolbarRef"
                 include-time
@@ -14,8 +14,8 @@
                 @change="onDateRangeChange"
               />
             </div>
-            <div class="usage-control-cluster">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.granularity') }}:</span>
+            <div class="usage-control-cluster" :title="t('admin.dashboard.granularity')">
+              <span class="sr-only">{{ t('admin.dashboard.granularity') }}:</span>
               <div class="w-28">
                 <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
               </div>
@@ -74,66 +74,49 @@
         </div>
       </section>
       <!-- 明细区：tab 栏 + 筛选 + 内容收进同一张卡片，消除割裂感 -->
-      <section class="card usage-detail-workspace">
-        <div class="usage-detail-tabs" role="tablist">
-          <button
-            v-for="tab in detailTabs"
-            :key="tab.key"
-            type="button"
-            role="tab"
-            :aria-selected="activeTab === tab.key"
-            data-testid="usage-detail-tab"
-            class="usage-detail-tab"
-            :class="activeTab === tab.key
-              ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-              : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-dark-500 dark:hover:text-gray-200'"
-            @click="switchTab(tab.key)"
-          >
-            <Icon :name="tab.icon" size="sm" />
-            {{ tab.label }}
-          </button>
-        </div>
+      <section class="usage-detail-workspace">
+        <UTabs
+          :model-value="activeTab"
+          :items="detailTabItems"
+          :content="false"
+          variant="link"
+          class="usage-detail-tabs w-full"
+          :ui="{ list: 'border-b border-default overflow-x-auto', trigger: 'pb-2.5' }"
+          @update:model-value="switchTab($event as DetailTab)"
+        >
+          <template #default="{ item }">
+            <span data-testid="usage-detail-tab">{{ item.label }}</span>
+          </template>
+        </UTabs>
 
         <UsageFilters v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
           <template #after-reset>
-            <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
-              <button
+            <UPopover v-if="activeTab === 'usage' && !isObserver" mode="hover" :content="{ align: 'end' }">
+              <UButton color="neutral" variant="ghost" square icon="i-lucide-circle-help" aria-label="ID search help" />
+              <template #content>
+                <p class="max-w-xs p-2.5 text-xs leading-5 text-muted">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
+              </template>
+            </UPopover>
+            <UDropdownMenu
+              v-if="activeTab !== 'ranking'"
+              v-model:open="showColumnDropdown"
+              :items="columnMenuItems"
+              :content="{ align: 'end' }"
+              :ui="{ content: 'max-h-80 w-52' }"
+            >
+              <UButton
                 data-testid="usage-column-settings"
-                @click="showColumnDropdown = !showColumnDropdown"
-                class="btn btn-secondary px-2 md:px-3"
+                color="neutral"
+                variant="outline"
+                trailing-icon="i-lucide-settings-2"
                 :title="t('admin.users.columnSettings')"
               >
-                <svg class="h-4 w-4 md:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
-                </svg>
                 <span class="hidden md:inline">{{ t('admin.users.columnSettings') }}</span>
-              </button>
-              <div
-                v-if="showColumnDropdown"
-                class="admin-menu absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
-              >
-                <button
-                  v-for="col in currentToggleableColumns"
-                  :key="col.key"
-                  :data-testid="`usage-column-toggle-${col.key}`"
-                  @click="toggleCurrentColumn(col.key)"
-                  class="admin-menu-item flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-                >
-                  <span>{{ col.label }}</span>
-                  <Icon
-                    v-if="isCurrentColumnVisible(col.key)"
-                    name="check"
-                    size="sm"
-                    class="text-primary-500"
-                    :stroke-width="2"
-                  />
-                </button>
-              </div>
-            </div>
+              </UButton>
+            </UDropdownMenu>
           </template>
         </UsageFilters>
 
-        <p v-if="activeTab === 'usage' && !isObserver" class="mb-3 text-xs text-gray-500 dark:text-gray-400">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
         <div v-show="activeTab === 'usage'" class="usage-detail-content">
           <InflightUsagePanel
             :open="inflightOpen"
@@ -246,7 +229,6 @@ import { listErrorLogs } from '@/api/admin/ops'
 import type { OpsErrorLog } from '@/api/admin/ops'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'; import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'; import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
-import Icon from '@/components/icons/Icon.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
 
@@ -939,6 +921,8 @@ const detailTabs = computed(() => [
   { key: 'errors' as const, label: t('usage.tabs.errors'), icon: 'exclamationTriangle' as const },
   { key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const },
 ].filter(tab => !isObserver.value || tab.key === 'usage'))
+const detailTabIcons: Record<DetailTab, string> = { usage: 'i-lucide-file-text', errors: 'i-lucide-triangle-alert', ranking: 'i-lucide-trophy' }
+const detailTabItems = computed(() => detailTabs.value.map(tab => ({ value: tab.key, label: tab.label, icon: detailTabIcons[tab.key] })))
 const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
 const rangeToolbarRef = ref<InstanceType<typeof DateRangePicker> | null>(null)
 const rankingMounted = ref(false)
@@ -1013,13 +997,16 @@ const onErrPageSize = (s: number) => { errPageSize.value = s; errPage.value = 1;
 const openError = (id: number) => { selectedErrorId.value = id; showErrorModal.value = true }
 
 const showColumnDropdown = ref(false)
-const columnDropdownRef = ref<HTMLElement | null>(null)
-
-const handleColumnClickOutside = (event: MouseEvent) => {
-  if (columnDropdownRef.value && !columnDropdownRef.value.contains(event.target as HTMLElement)) {
-    showColumnDropdown.value = false
-  }
-}
+// 显示列：UDropdownMenu 复选项，复用原有列显隐与 localStorage 持久化。
+const columnMenuItems = computed(() => [currentToggleableColumns.value.map(col => ({
+  label: col.label,
+  type: 'checkbox' as const,
+  checked: isCurrentColumnVisible(col.key),
+  onUpdateChecked: () => toggleCurrentColumn(col.key),
+  onSelect: (e?: Event) => e?.preventDefault(),
+}))])
+// UDropdownMenu closes itself on outside clicks; kept as a no-op for the existing listener.
+const handleColumnClickOutside = (_event: MouseEvent) => {}
 
 onMounted(() => {
   applyRouteQueryFilters()
@@ -1054,12 +1041,6 @@ defineExpose({ requestedModelStats, refreshData })
   min-width: 0;
 }
 
-.usage-summary-strip :deep(.card) {
-  border-color: var(--signal-line);
-  border-radius: 8px;
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 6%, transparent);
-}
-
 .usage-analysis-workspace {
   display: grid;
   min-width: 0;
@@ -1091,64 +1072,15 @@ defineExpose({ requestedModelStats, refreshData })
   gap: 14px;
 }
 
-.usage-chart-grid :deep(.card) {
-  min-width: 0;
-  border-color: var(--signal-line);
-  border-radius: 8px;
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 5%, transparent);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
-}
-
-.usage-chart-grid :deep(.card:hover) {
-  border-color: var(--signal-control-line);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-accent) 16%, transparent);
-}
-
 .usage-detail-workspace {
-  min-width: 0;
-  overflow: visible;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 6%, transparent);
-}
-
-.usage-detail-tabs {
   display: flex;
   min-width: 0;
-  overflow-x: auto;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--signal-line);
-  scrollbar-width: thin;
-}
-
-.usage-detail-tab {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: -1px;
-  padding: 12px 14px;
-  border-bottom: 2px solid transparent;
-  white-space: nowrap;
-  font-size: 0.875rem;
-  font-weight: 600;
-  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
-}
-
-.usage-detail-tab:hover {
-  background: var(--signal-hover);
-}
-
-.usage-filter-panel {
-  border-bottom: 1px solid var(--signal-line);
-  background: color-mix(in srgb, var(--signal-bg) 58%, var(--signal-surface));
+  flex-direction: column;
+  gap: 12px;
 }
 
 .usage-detail-content {
   min-width: 0;
-  overflow: hidden;
-  border-radius: 0 0 8px 8px;
 }
 
 .usage-detail-content :deep(.table-wrapper) {
@@ -1195,13 +1127,6 @@ defineExpose({ requestedModelStats, refreshData })
     width: 100%;
   }
 
-  .usage-detail-tabs {
-    padding-inline: 4px;
-  }
-
-  .usage-detail-tab {
-    padding-inline: 12px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

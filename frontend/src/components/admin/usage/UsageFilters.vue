@@ -1,11 +1,11 @@
 <template>
-  <div :class="flat ? 'p-4 sm:p-6' : 'card p-6'">
+  <div :class="flat ? 'py-1' : 'rounded-lg bg-elevated/40 p-4 ring ring-default sm:p-5'">
     <!-- Toolbar: left filters (multi-line) + right actions -->
-    <div class="flex flex-wrap items-end justify-between gap-4">
+    <div class="flex flex-wrap items-end justify-between gap-3">
       <!-- Left: filters (allowed to wrap to multiple rows) -->
-      <div class="flex flex-1 flex-wrap items-end gap-4">
+      <div class="flex flex-1 flex-wrap items-end gap-x-2 gap-y-3">
         <div class="w-full sm:w-auto" data-testid="usage-date-range-filter">
-          <label class="input-label">{{ t('admin.dashboard.timeRange') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.dashboard.timeRange') }}</label>
           <DateRangePicker
             ref="dateRangeRef"
             include-time
@@ -15,11 +15,12 @@
           />
         </div>
         <div v-if="!observer" class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('admin.usage.requestId') }}</label>
-          <input
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.requestId') }}</label>
+          <UInput
             v-model="filters.request_id"
             type="text"
-            class="input"
+            icon="i-lucide-search"
+            class="w-full"
             :placeholder="t('usage.requestIdPlaceholder')"
             @change="emitChange"
             @keyup.enter="emitChange"
@@ -27,198 +28,208 @@
         </div>
         <template v-if="observer">
           <div v-for="filter in observerIdFilters" :key="filter.key" class="w-full sm:w-36">
-            <label :for="`observer-${filter.key}`" class="input-label">{{ t(filter.label) }} ID</label>
-            <input :id="`observer-${filter.key}`" v-model.number="filters[filter.key]" type="number" min="1" step="1" class="input" @change="emitChange" />
+            <label :for="`observer-${filter.key}`" class="mb-1 block text-xs font-medium text-muted">{{ t(filter.label) }} ID</label>
+            <UInput :id="`observer-${filter.key}`" v-model.number="filters[filter.key]" type="number" min="1" step="1" class="w-full" @change="emitChange" />
           </div>
         </template>
         <!-- User Search -->
         <div v-if="!observer" ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
-          <label class="input-label">{{ t('admin.usage.userFilter') }}</label>
-          <input
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.userFilter') }}</label>
+          <UInput
             v-model="userKeyword"
             type="text"
-            class="input pr-8"
+            class="w-full"
+            :ui="{ base: 'pe-8' }"
             :placeholder="t('admin.usage.searchUserPlaceholder')"
-            @input="debounceUserSearch"
+            @update:model-value="debounceUserSearch"
             @focus="showUserDropdown = true"
           />
-          <button
+          <UButton
             v-if="filters.user_id"
             type="button"
-            @click="clearUser"
-            class="absolute right-2 top-9 text-gray-400"
+            color="neutral"
+            variant="link"
+            size="xs"
+            icon="i-lucide-x"
+            class="absolute right-1.5 top-[1.85rem]"
             aria-label="Clear user filter"
-          >
-            ✕
-          </button>
+            @click="clearUser"
+          />
           <div
             v-if="showUserDropdown && (userResults.length > 0 || userKeyword)"
-            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
+            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
           >
-            <button
+            <UButton
               v-for="u in userResults"
               :key="u.id"
               type="button"
+              color="neutral"
+              variant="ghost"
+              block
+              class="justify-start font-normal"
               @click="selectUser(u)"
-              class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
             >
-              <span>{{ u.email }}<span v-if="u.deleted" class="ml-1 text-xs text-gray-400">（{{ t('admin.usage.userDeletedBadge') }}）</span></span>
-              <span class="ml-2 text-xs text-gray-400">#{{ u.id }}</span>
-            </button>
+              <span>{{ u.email }}<span v-if="u.deleted" class="ml-1 text-xs text-dimmed">（{{ t('admin.usage.userDeletedBadge') }}）</span></span>
+              <span class="ml-2 text-xs text-dimmed">#{{ u.id }}</span>
+            </UButton>
           </div>
         </div>
 
         <!-- API Key Search -->
         <div v-if="!observer" ref="apiKeySearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
-          <label class="input-label">{{ t('usage.apiKeyFilter') }}</label>
-          <input
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.apiKeyFilter') }}</label>
+          <UInput
             v-model="apiKeyKeyword"
             type="text"
-            class="input pr-8"
+            class="w-full"
+            :ui="{ base: 'pe-8' }"
             :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
-            @input="debounceApiKeySearch"
+            @update:model-value="debounceApiKeySearch"
             @focus="onApiKeyFocus"
           />
-          <button
+          <UButton
             v-if="filters.api_key_id"
             type="button"
-            @click="onClearApiKey"
-            class="absolute right-2 top-9 text-gray-400"
+            color="neutral"
+            variant="link"
+            size="xs"
+            icon="i-lucide-x"
+            class="absolute right-1.5 top-[1.85rem]"
             aria-label="Clear API key filter"
-          >
-            ✕
-          </button>
+            @click="onClearApiKey"
+          />
           <div
             v-if="showApiKeyDropdown && apiKeyResults.length > 0"
-            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
+            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
           >
-            <button
+            <UButton
               v-for="k in apiKeyResults"
               :key="k.id"
               type="button"
+              color="neutral"
+              variant="ghost"
+              block
+              class="justify-start font-normal"
               @click="selectApiKey(k)"
-              class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
             >
               <span class="truncate">{{ k.name || `#${k.id}` }}</span>
-              <span class="ml-2 text-xs text-gray-400">#{{ k.id }}</span>
-            </button>
+              <span class="ml-2 text-xs text-dimmed">#{{ k.id }}</span>
+            </UButton>
           </div>
         </div>
 
         <!-- Model Filter -->
         <div class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('usage.model') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.model') }}</label>
           <Select v-model="filters.model" :options="modelOptions" searchable @change="emitChange" />
         </div>
 
         <!-- Account Filter -->
         <div v-if="!observer" ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('admin.usage.account') }}</label>
-          <input
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.account') }}</label>
+          <UInput
             v-model="accountKeyword"
             type="text"
-            class="input pr-8"
+            class="w-full"
+            :ui="{ base: 'pe-8' }"
             :placeholder="t('admin.usage.searchAccountPlaceholder')"
-            @input="debounceAccountSearch"
+            @update:model-value="debounceAccountSearch"
             @focus="showAccountDropdown = true"
           />
-          <button
+          <UButton
             v-if="filters.account_id"
             type="button"
-            @click="clearAccount"
-            class="absolute right-2 top-9 text-gray-400"
+            color="neutral"
+            variant="link"
+            size="xs"
+            icon="i-lucide-x"
+            class="absolute right-1.5 top-[1.85rem]"
             aria-label="Clear account filter"
-          >
-            ✕
-          </button>
+            @click="clearAccount"
+          />
           <div
             v-if="showAccountDropdown && (accountResults.length > 0 || accountKeyword)"
-            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
+            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
           >
-            <button
+            <UButton
               v-for="a in accountResults"
               :key="a.id"
               type="button"
+              color="neutral"
+              variant="ghost"
+              block
+              class="justify-start font-normal"
               @click="selectAccount(a)"
-              class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
             >
               <span class="truncate">{{ a.name }}</span>
-              <span class="ml-2 text-xs text-gray-400">#{{ a.id }}</span>
-            </button>
+              <span class="ml-2 text-xs text-dimmed">#{{ a.id }}</span>
+            </UButton>
           </div>
         </div>
 
         <!-- Request Type Filter (usage only) -->
         <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.type') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.type') }}</label>
           <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
         </div>
 
         <!-- Native compaction is independent of the transport request type. -->
         <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.compactionFilter') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.compactionFilter') }}</label>
           <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
         </div>
 
         <!-- Billing Type Filter (usage only) -->
         <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.billingType') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.billingType') }}</label>
           <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
         </div>
 
         <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
         <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.billingMode') }}</label>
           <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitChange" />
         </div>
 
         <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('admin.usage.upstreamModelAudit') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.upstreamModelAudit') }}</label>
           <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
         </div>
 
         <!-- Error Phase Filter (errors only) -->
         <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.ops.errorLog.type') }}</label>
           <Select v-model="filters.error_phase" :options="errorPhaseOptions" @change="emitChange" />
         </div>
 
         <!-- Error Category Filter (errors only) -->
         <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.errors.category') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.errors.category') }}</label>
           <Select v-model="filters.error_category" :options="errorCategoryOptions" @change="emitChange" />
         </div>
 
         <!-- Status Code Filter (errors only) -->
         <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('admin.ops.errorLog.status') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.ops.errorLog.status') }}</label>
           <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitChange" />
         </div>
 
         <!-- Group Filter -->
         <div v-if="!observer" class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.group') }}</label>
+          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.group') }}</label>
           <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
         </div>
 
       </div>
 
       <!-- Right: actions -->
-      <div v-if="showActions" class="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
-        <button type="button" @click="$emit('refresh')" class="btn btn-secondary">
-          {{ t('common.refresh') }}
-        </button>
-        <button type="button" @click="$emit('reset')" class="btn btn-secondary">
-          {{ t('common.reset') }}
-        </button>
+      <div v-if="showActions" class="flex w-full flex-wrap items-center justify-end gap-1.5 sm:w-auto">
+        <UButton type="button" color="neutral" variant="outline" icon="i-lucide-refresh-cw" :label="t('common.refresh')" @click="$emit('refresh')" />
+        <UButton type="button" color="neutral" variant="ghost" :label="t('common.reset')" @click="$emit('reset')" />
         <slot name="after-reset" />
         <template v-if="mode === 'usage' && !observer">
-          <button type="button" @click="$emit('cleanup')" class="btn btn-danger">
-            {{ t('admin.usage.cleanup.button') }}
-          </button>
-          <button type="button" @click="$emit('export')" :disabled="exporting" class="btn btn-primary">
-            {{ t('usage.exportExcel') }}
-          </button>
+          <UButton type="button" color="error" variant="subtle" icon="i-lucide-trash-2" :label="t('admin.usage.cleanup.button')" @click="$emit('cleanup')" />
+          <UButton type="button" icon="i-lucide-download" :loading="exporting" :disabled="exporting" :label="t('usage.exportExcel')" @click="$emit('export')" />
         </template>
       </div>
     </div>

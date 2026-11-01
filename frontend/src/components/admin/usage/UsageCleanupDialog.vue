@@ -1,6 +1,6 @@
 <template>
   <BaseDialog :show="show" :title="t('admin.usage.cleanup.title')" width="wide" @close="handleClose">
-    <div class="space-y-4">
+    <div class="flex flex-col gap-4">
       <UsageFilters
         v-model="localFilters"
         v-model:startDate="localStartDate"
@@ -10,61 +10,56 @@
         @change="noop"
       />
 
-      <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-        {{ t('admin.usage.cleanup.warning') }}
-      </div>
+      <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.usage.cleanup.warning')" />
 
-      <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-700">
+      <div class="flex flex-col gap-3">
         <div class="flex items-center justify-between">
-          <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">
+          <h4 class="text-sm font-semibold text-highlighted">
             {{ t('admin.usage.cleanup.recentTasks') }}
           </h4>
-          <button type="button" class="btn btn-ghost btn-sm" @click="loadTasks">
-            {{ t('common.refresh') }}
-          </button>
+          <UButton type="button" color="neutral" variant="ghost" size="sm" icon="i-lucide-refresh-cw" :label="t('common.refresh')" @click="loadTasks" />
         </div>
 
-        <div class="mt-3 space-y-2">
-          <div v-if="tasksLoading" class="text-sm text-gray-500 dark:text-gray-400">
+        <div class="flex flex-col gap-2">
+          <div v-if="tasksLoading" class="text-sm text-muted">
             {{ t('admin.usage.cleanup.loadingTasks') }}
           </div>
-          <div v-else-if="tasks.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+          <div v-else-if="tasks.length === 0" class="text-sm text-muted">
             {{ t('admin.usage.cleanup.noTasks') }}
           </div>
-          <div v-else class="space-y-2">
-            <div
+          <ul v-else class="flex flex-col divide-y divide-default">
+            <li
               v-for="task in tasks"
               :key="task.id"
-              class="flex flex-col gap-2 rounded-lg border border-gray-100 px-3 py-2 text-sm text-gray-600 dark:border-dark-700 dark:text-gray-300"
+              class="flex flex-col gap-1.5 py-2.5 text-sm text-default first:pt-0"
             >
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex items-center gap-2">
-                  <span :class="statusClass(task.status)" class="rounded-full px-2 py-0.5 text-xs font-semibold">
-                    {{ statusLabel(task.status) }}
-                  </span>
-                  <span class="text-xs text-gray-400">#{{ task.id }}</span>
-                  <button
+                  <UBadge :color="statusColor(task.status)" variant="subtle" size="sm">{{ statusLabel(task.status) }}</UBadge>
+                  <span class="text-xs text-dimmed">#{{ task.id }}</span>
+                  <UButton
                     v-if="canCancel(task)"
                     type="button"
-                    class="btn btn-ghost btn-xs text-rose-600 hover:text-rose-700 dark:text-rose-300"
+                    color="error"
+                    variant="ghost"
+                    size="xs"
+                    :label="t('admin.usage.cleanup.cancel')"
                     @click="openCancelConfirm(task)"
-                  >
-                    {{ t('admin.usage.cleanup.cancel') }}
-                  </button>
+                  />
                 </div>
-                <div class="text-xs text-gray-400">
+                <div class="text-xs text-dimmed">
                   {{ formatDateTime(task.created_at) }}
                 </div>
               </div>
-              <div class="flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+              <div class="flex flex-wrap items-center gap-4 text-xs text-muted">
                 <span>{{ t('admin.usage.cleanup.range') }}: {{ formatRange(task) }}</span>
                 <span>{{ t('admin.usage.cleanup.deletedRows') }}: {{ task.deleted_rows.toLocaleString() }}</span>
               </div>
-              <div v-if="task.error_message" class="text-xs text-rose-500">
+              <div v-if="task.error_message" class="text-xs text-error">
                 {{ task.error_message }}
               </div>
-            </div>
-          </div>
+            </li>
+          </ul>
         </div>
 
         <Pagination
@@ -83,13 +78,9 @@
     </div>
 
     <template #footer>
-      <div class="flex justify-end gap-3">
-        <button type="button" class="btn btn-secondary" @click="handleClose">
-          {{ t('common.cancel') }}
-        </button>
-        <button type="button" class="btn btn-danger" :disabled="submitting" @click="openConfirm">
-          {{ submitting ? t('admin.usage.cleanup.submitting') : t('admin.usage.cleanup.submit') }}
-        </button>
+      <div class="flex justify-end gap-2">
+        <UButton type="button" color="neutral" variant="outline" :label="t('common.cancel')" @click="handleClose" />
+        <UButton type="button" color="error" :loading="submitting" :disabled="submitting" :label="submitting ? t('admin.usage.cleanup.submitting') : t('admin.usage.cleanup.submit')" @click="openConfirm" />
       </div>
     </template>
   </BaseDialog>
@@ -203,15 +194,15 @@ const statusLabel = (status: string) => {
   return map[status] || status
 }
 
-const statusClass = (status: string) => {
-  const map: Record<string, string> = {
-    pending: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200',
-    running: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
-    succeeded: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200',
-    failed: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-200',
-    canceled: 'bg-gray-200 text-gray-600 dark:bg-dark-600 dark:text-gray-300'
+const statusColor = (status: string): 'warning' | 'info' | 'success' | 'error' | 'neutral' => {
+  const map: Record<string, 'warning' | 'info' | 'success' | 'error' | 'neutral'> = {
+    pending: 'warning',
+    running: 'info',
+    succeeded: 'success',
+    failed: 'error',
+    canceled: 'neutral'
   }
-  return map[status] || 'bg-gray-100 text-gray-600'
+  return map[status] || 'neutral'
 }
 
 const formatDateTime = (value?: string | null) => {

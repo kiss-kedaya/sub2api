@@ -225,6 +225,14 @@ function reasoningCellText(wrapper: ReturnType<typeof mount>): string {
   return wrapper.get('[data-testid="reasoning-effort-cell"]').text()
 }
 
+function enableColumn(wrapper: ReturnType<typeof mount>, label: string) {
+  const groups = wrapper.findComponent({ name: 'DropdownMenu' }).props('items') as Array<Array<{ label: string; checked: boolean; onUpdateChecked: (v: boolean) => void }>>
+  const item = groups.flat().find(entry => entry.label === label)
+  if (!item) throw new Error('column item missing: ' + label + ' in ' + groups.flat().map(e => e.label).join(', '))
+  expect(item.checked).toBe(false)
+  item.onUpdateChecked(true)
+}
+
 describe('usage reasoning effort page display', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -286,8 +294,9 @@ describe('usage reasoning effort page display', () => {
 
     expect(wrapper.find('[data-testid="reasoning-effort-cell"]').exists()).toBe(false)
 
-    await wrapper.get('[data-testid="usage-column-settings"]').trigger('click')
-    await wrapper.get('[data-testid="usage-column-toggle-reasoning_effort"]').trigger('click')
+    // 显示列 is a Nuxt UI UDropdownMenu (teleported content): toggle through its checkbox item.
+    expect(wrapper.find('[data-testid="usage-column-settings"]').exists()).toBe(true)
+    enableColumn(wrapper, 'Reasoning Effort')
     await flushPromises()
 
     const cell = reasoningCellText(wrapper)
@@ -319,8 +328,9 @@ describe('usage reasoning effort page display', () => {
     })
     await flushPromises()
 
-    await wrapper.get('[data-testid="usage-column-settings"]').trigger('click')
-    await wrapper.get('[data-testid="usage-column-toggle-reasoning_effort"]').trigger('click')
+    // 显示列 is a Nuxt UI UDropdownMenu (teleported content): toggle through its checkbox item.
+    expect(wrapper.find('[data-testid="usage-column-settings"]').exists()).toBe(true)
+    enableColumn(wrapper, 'Reasoning Effort')
     await flushPromises()
 
     const cell = reasoningCellText(wrapper)

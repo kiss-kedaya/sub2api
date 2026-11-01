@@ -172,6 +172,12 @@ const mountRouteFilteredUsageView = () => mount(UsageView, {
   } },
 })
 
+// The column settings menu is a UDropdownMenu: find its checkbox item by label.
+function columnMenuItem(wrapper: ReturnType<typeof mount>, label: string) {
+  const groups = wrapper.findComponent({ name: 'DropdownMenu' }).props('items') as Array<Array<{ label: string; checked: boolean; onUpdateChecked: (v: boolean) => void }>>
+  return groups.flat().find(item => item.label === label)
+}
+
 describe('admin UsageView route filters', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -622,10 +628,13 @@ describe('admin UsageView request ID column visibility', () => {
       expect.arrayContaining([expect.objectContaining({ key: 'request_id' })]),
     )
 
-    await wrapper.get('button[title="admin.users.columnSettings"]').trigger('click')
-    const requestIdToggle = wrapper.findAll('button').find((button) => button.text() === 'Request ID')
+    // 显示列 is a Nuxt UI UDropdownMenu of checkbox items (content teleports): use its items.
+    expect(wrapper.find('button[title="admin.users.columnSettings"]').exists()).toBe(true)
+    const requestIdToggle = columnMenuItem(wrapper, 'Request ID')
     expect(requestIdToggle).toBeDefined()
-    await requestIdToggle!.trigger('click')
+    expect(requestIdToggle!.checked).toBe(false)
+    requestIdToggle!.onUpdateChecked(true)
+    await wrapper.vm.$nextTick()
 
     expect(usageTable.props('columns')).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'request_id', label: 'Request ID' })]),
@@ -667,10 +676,12 @@ describe('admin UsageView request ID column visibility', () => {
       expect.arrayContaining([expect.objectContaining({ key: 'upstream_request_id' })]),
     )
 
-    await wrapper.get('button[title="admin.users.columnSettings"]').trigger('click')
-    const upstreamToggle = wrapper.findAll('button').find((button) => button.text() === 'Upstream ID')
+    expect(wrapper.find('button[title="admin.users.columnSettings"]').exists()).toBe(true)
+    const upstreamToggle = columnMenuItem(wrapper, 'Upstream ID')
     expect(upstreamToggle).toBeDefined()
-    await upstreamToggle!.trigger('click')
+    expect(upstreamToggle!.checked).toBe(false)
+    upstreamToggle!.onUpdateChecked(true)
+    await wrapper.vm.$nextTick()
 
     expect(usageTable.props('columns')).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'upstream_request_id', label: 'Upstream ID' })]),
@@ -783,7 +794,8 @@ describe('admin UsageView errors tab filter forwarding', () => {
 
     // 切换到「错误请求」标签（第二个 tab 按钮）触发 loadAdminErrors
     const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
-    await tabs[1].trigger('click')
+    // Nuxt UI UTabs (Reka TabsTrigger) switch on mousedown, not click.
+    await tabs[1].trigger('mousedown', { button: 0 })
     await flushPromises()
 
     expect(listErrorLogs).toHaveBeenCalledWith(expect.objectContaining({
@@ -837,7 +849,7 @@ describe('admin UsageView ranking tab', () => {
 
     const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
     expect(tabs).toHaveLength(3)
-    await tabs[2].trigger('click')
+    await tabs[2].trigger('mousedown', { button: 0 })
     await flushPromises()
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(true)
 

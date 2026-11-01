@@ -7,14 +7,17 @@
       <span v-if="pendingIpCount > 0" class="text-xs text-gray-500 dark:text-gray-400">
         {{ t('usage.ipGeo.pending', { count: pendingIpCount }) }}
       </span>
-      <button
+      <UButton
         type="button"
-        class="inline-flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-primary-400 dark:hover:bg-primary-900/30"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        icon="i-lucide-map-pin"
+        :loading="ipGeoBatchLoading"
         :disabled="ipGeoBatchLoading || pendingIpCount === 0"
+        :label="ipGeoBatchLoading ? t('usage.ipGeo.batchFetching') : t('usage.ipGeo.batchFetch')"
         @click="handleBatchFetchIpGeo"
-      >
-        {{ ipGeoBatchLoading ? t('usage.ipGeo.batchFetching') : t('usage.ipGeo.batchFetch') }}
-      </button>
+      />
     </div>
     <div class="overflow-auto">
       <DataTable
@@ -28,15 +31,16 @@
       >
         <template #cell-user="{ row }">
           <div class="text-sm">
-            <button
+            <UButton
               v-if="row.user?.email && !observer"
-              class="font-medium text-primary-600 underline decoration-dashed underline-offset-2 transition-colors hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-              @click="$emit('userClick', row.user_id, row.user?.email)"
+              variant="link"
+              class="p-0 font-medium underline decoration-dashed underline-offset-2"
               :title="t('admin.usage.clickToViewBalance')"
+              @click="$emit('userClick', row.user_id, row.user?.email)"
             >
               {{ row.user.email }}
-            </button>
-            <span v-else class="font-medium text-gray-900 dark:text-white">{{ row.user?.email || '-' }}</span>
+            </UButton>
+            <span v-else class="font-medium text-highlighted">{{ row.user?.email || '-' }}</span>
             <span v-if="row.user?.deleted_at" class="ml-1 inline-flex items-center rounded-sm px-1 py-px text-[10px] font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30">
               {{ t('admin.usage.userDeletedBadge') }}
             </span>
@@ -289,36 +293,44 @@
 
         <template #cell-request_id="{ row }">
           <div v-if="row.request_id" class="flex max-w-[160px] items-center gap-1.5">
-            <button type="button" class="truncate font-mono text-xs text-gray-500 hover:underline dark:text-gray-400" :title="t('common.search') + ': ' + row.request_id" @click="emit('requestIdClick', row.request_id)">
+            <UButton type="button" color="neutral" variant="link" size="xs" class="min-w-0 truncate p-0 font-mono text-muted" :title="t('common.search') + ': ' + row.request_id" @click="emit('requestIdClick', row.request_id)">
               {{ row.request_id }}
-            </button>
-            <button
+            </UButton>
+            <UButton
               type="button"
-              class="shrink-0 rounded-sm p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
-              :class="copiedRequestId === row.request_id ? 'text-green-500 hover:text-green-500' : ''"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              square
+              class="shrink-0"
+              :class="copiedRequestId === row.request_id ? 'text-success' : 'text-dimmed'"
+              :icon="copiedRequestId === row.request_id ? 'i-lucide-check' : 'i-lucide-copy'"
               :title="copiedRequestId === row.request_id ? t('keys.copied') : t('keys.copyToClipboard')"
+              :aria-label="copiedRequestId === row.request_id ? t('keys.copied') : t('keys.copyToClipboard')"
               @click="copyRequestId(row.request_id)"
-            >
-              <Icon :name="copiedRequestId === row.request_id ? 'check' : 'copy'" size="sm" class="h-3.5 w-3.5" />
-            </button>
+            />
           </div>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
         <template #cell-upstream_request_id="{ row }">
           <div v-if="row.upstream_request_id" class="flex max-w-[160px] items-center gap-1.5">
-            <button type="button" class="truncate font-mono text-xs text-gray-500 hover:underline dark:text-gray-400" :title="t('common.search') + ': ' + row.upstream_request_id" @click="emit('requestIdClick', row.upstream_request_id)">
+            <UButton type="button" color="neutral" variant="link" size="xs" class="min-w-0 truncate p-0 font-mono text-muted" :title="t('common.search') + ': ' + row.upstream_request_id" @click="emit('requestIdClick', row.upstream_request_id)">
               {{ row.upstream_request_id }}
-            </button>
-            <button
+            </UButton>
+            <UButton
               type="button"
-              class="shrink-0 rounded-sm p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
-              :class="copiedRequestId === row.upstream_request_id ? 'text-green-500 hover:text-green-500' : ''"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              square
+              class="shrink-0"
+              :class="copiedRequestId === row.upstream_request_id ? 'text-success' : 'text-dimmed'"
+              :icon="copiedRequestId === row.upstream_request_id ? 'i-lucide-check' : 'i-lucide-copy'"
               :title="copiedRequestId === row.upstream_request_id ? t('keys.copied') : t('keys.copyToClipboard')"
+              :aria-label="copiedRequestId === row.upstream_request_id ? t('keys.copied') : t('keys.copyToClipboard')"
               @click="copyUpstreamRequestId(row.upstream_request_id)"
-            >
-              <Icon :name="copiedRequestId === row.upstream_request_id ? 'check' : 'copy'" size="sm" class="h-3.5 w-3.5" />
-            </button>
+            />
           </div>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
@@ -420,13 +432,15 @@
             <span class="font-semibold text-blue-400">{{ ((tokenTooltipData?.input_tokens || 0) + (tokenTooltipData?.output_tokens || 0) + (tokenTooltipData?.cache_creation_tokens || 0) + (tokenTooltipData?.cache_read_tokens || 0)).toLocaleString() }}</span>
           </div>
         </div>
-        <button
+        <UButton
           type="button"
+          color="neutral"
+          variant="soft"
+          size="xs"
           class="usage-tooltip-close"
+          :label="t('common.close')"
           @click="hideTokenTooltip"
-        >
-          {{ t("common.close") }}
-        </button>
+        />
         <div class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"></div>
       </div>
     </div>
@@ -568,13 +582,15 @@
             </div>
           </template>
         </div>
-        <button
+        <UButton
           type="button"
+          color="neutral"
+          variant="soft"
+          size="xs"
           class="usage-tooltip-close"
+          :label="t('common.close')"
           @click="hideTooltip"
-        >
-          {{ t("common.close") }}
-        </button>
+        />
         <div class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"></div>
       </div>
     </div>
@@ -919,13 +935,10 @@ const hideTokenTooltip = () => {
   }
 
   .usage-tooltip-close {
-    display: block;
+    display: flex;
     width: 100%;
+    justify-content: center;
     margin-top: 0.5rem;
-    border-top: 1px solid rgb(55 65 81);
-    padding-top: 0.5rem;
-    font-size: 0.75rem;
-    color: rgb(156 163 175);
   }
 }
 </style>

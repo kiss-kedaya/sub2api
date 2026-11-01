@@ -1,11 +1,11 @@
 <template>
   <!-- 用量页"用户排行"tab 内容：无卡片外观，依赖父级统一卡片；筛选/时间范围复用页面级筛选栏 -->
-  <div>
+  <div class="flex flex-col gap-3">
     <!-- Toolbar -->
-    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-dark-700/50 sm:px-6">
-      <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.usage.tokenRanking.subtitle') }}</p>
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-xs text-muted">{{ t('admin.usage.tokenRanking.subtitle') }}</p>
       <div class="flex items-center gap-3">
-        <span v-if="!loading && items.length > 0" class="text-xs text-gray-400 dark:text-gray-500">
+        <span v-if="!loading && items.length > 0" class="text-xs text-muted">
           {{ t('admin.usage.tokenRanking.userCount', { count: items.length }) }}
         </span>
         <div class="w-28">
@@ -15,72 +15,49 @@
     </div>
 
     <!-- Table -->
-    <div class="overflow-x-auto">
-      <table class="w-full min-w-max divide-y divide-gray-200 dark:divide-dark-700">
-        <thead class="bg-gray-50 dark:bg-dark-800">
-          <tr>
-            <th class="w-16 px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400 sm:px-6">#</th>
-            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
-              {{ t('admin.usage.tokenRanking.columns.user') }}
-            </th>
-            <th
-              v-for="col in sortableColumns"
-              :key="col.key"
-              class="cursor-pointer select-none whitespace-nowrap px-4 py-3 text-right text-xs font-medium uppercase tracking-wider transition-colors hover:bg-gray-100 dark:hover:bg-dark-700"
-              :class="sortBy === col.key ? 'text-primary-600 dark:text-primary-400' : 'text-gray-500 dark:text-dark-400'"
-              @click="setSort(col.key)"
-            >
-              {{ t(col.label) }}
-              <span v-if="sortBy === col.key" aria-hidden="true">↓</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
-          <tr v-if="loading">
-            <td :colspan="sortableColumns.length + 2" class="py-12 text-center">
-              <LoadingSpinner />
-            </td>
-          </tr>
-          <tr v-else-if="items.length === 0">
-            <td :colspan="sortableColumns.length + 2" class="py-12 text-center text-sm text-gray-400">
-              {{ t('admin.dashboard.noDataAvailable') }}
-            </td>
-          </tr>
-          <tr
-            v-for="(item, index) in items"
-            v-else
-            :key="item.user_id"
-            class="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-dark-700/40"
-            :title="t('admin.usage.tokenRanking.rowHint')"
-            @click="$emit('select-user', item.user_id, item.email)"
-          >
-            <td class="px-4 py-3 sm:px-6">
-              <span
-                v-if="index < 3"
-                class="inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold"
-                :class="RANK_BADGE_CLASSES[index]"
-              >{{ index + 1 }}</span>
-              <span v-else class="inline-block w-6 text-center text-sm tabular-nums text-gray-400">{{ index + 1 }}</span>
-            </td>
-            <td class="max-w-[260px] truncate px-4 py-3 text-sm font-medium text-gray-700 dark:text-gray-200" :title="item.email">
-              {{ item.email || `User #${item.user_id}` }}
-              <span class="ml-1 font-normal text-gray-400 dark:text-gray-500">#{{ item.user_id }}</span>
-            </td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-500 dark:text-gray-400">{{ item.requests.toLocaleString() }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-500 dark:text-gray-400">{{ fmtTokens(item.input_tokens) }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-500 dark:text-gray-400">{{ fmtTokens(item.output_tokens) }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-500 dark:text-gray-400">{{ fmtTokens(item.cache_tokens) }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ fmtTokens(item.total_tokens) }}</td>
-            <td class="whitespace-nowrap px-4 py-3 text-right text-sm font-medium tabular-nums text-green-600 dark:text-green-400">${{ fmtCost(item.actual_cost) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <UTable
+      :data="items"
+      :columns="tableColumns"
+      :loading="loading"
+      :ui="{ ...tableUi, tr: 'cursor-pointer', td: 'border-b border-default whitespace-nowrap' }"
+      @select="onRowSelect"
+    >
+      <template v-for="col in sortableHeaderSlots" :key="col.key" #[col.slot]>
+        <UButton
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="-mx-2 ms-auto"
+          :class="sortBy === col.key ? 'text-highlighted' : 'text-muted'"
+          :trailing-icon="sortBy === col.key ? 'i-lucide-arrow-down' : undefined"
+          :label="t(col.label)"
+          @click="setSort(col.key)"
+        />
+      </template>
+      <template #rank-cell="{ row }">
+        <UBadge v-if="row.index < 3" :color="row.index === 0 ? 'warning' : 'neutral'" :variant="row.index === 0 ? 'subtle' : 'outline'" size="sm" class="w-6 justify-center tabular-nums">{{ row.index + 1 }}</UBadge>
+        <span v-else class="inline-block w-6 text-center text-sm tabular-nums text-dimmed">{{ row.index + 1 }}</span>
+      </template>
+      <template #user-cell="{ row }">
+        <span class="block max-w-[260px] truncate text-sm font-medium text-highlighted" :title="row.original.email">
+          {{ row.original.email || `User #${row.original.user_id}` }}
+          <span class="ml-1 font-normal text-dimmed">#{{ row.original.user_id }}</span>
+        </span>
+      </template>
+      <template #loading>
+        <div class="py-12 text-center"><LoadingSpinner /></div>
+      </template>
+      <template #empty>
+        <p class="py-12 text-center text-sm text-muted">{{ t('admin.dashboard.noDataAvailable') }}</p>
+      </template>
+    </UTable>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import type { TableColumn, TableRow } from '@nuxt/ui'
+import { templateTableUi } from '@/views/admin/ops/utils/templateUi'
 import { useI18n } from 'vue-i18n'
 import { getUserBreakdown, type UserBreakdownParams } from '@/api/admin/dashboard'
 import { formatCompactNumber, formatCostFixed } from '@/utils/format'
@@ -95,9 +72,10 @@ const props = defineProps<{
   model?: string
 }>()
 
-defineEmits<{ (e: 'select-user', userId: number, email: string): void }>()
+const emit = defineEmits<{ (e: 'select-user', userId: number, email: string): void }>()
 
 const { t } = useI18n()
+const tableUi = templateTableUi
 
 type SortKey = NonNullable<UserBreakdownParams['sort_by']>
 const sortableColumns: { key: SortKey; label: string }[] = [
@@ -109,6 +87,21 @@ const sortableColumns: { key: SortKey; label: string }[] = [
   { key: 'actual_cost', label: 'admin.usage.tokenRanking.columns.cost' },
 ]
 
+const tableColumns = computed<TableColumn<UserBreakdownItem>[]>(() => [
+  { id: 'rank', header: '#', meta: { class: { th: 'w-16', td: 'w-16' } } },
+  { id: 'user', header: t('admin.usage.tokenRanking.columns.user') },
+  { id: 'requests', header: t('admin.usage.tokenRanking.columns.requests'), meta: { class: { th: 'text-right', td: 'text-right tabular-nums text-muted' } }, cell: ({ row }) => row.original.requests.toLocaleString() },
+  { id: 'input_tokens', header: t('admin.usage.tokenRanking.columns.inputTokens'), meta: { class: { th: 'text-right', td: 'text-right tabular-nums text-muted' } }, cell: ({ row }) => fmtTokens(row.original.input_tokens) },
+  { id: 'output_tokens', header: t('admin.usage.tokenRanking.columns.outputTokens'), meta: { class: { th: 'text-right', td: 'text-right tabular-nums text-muted' } }, cell: ({ row }) => fmtTokens(row.original.output_tokens) },
+  { id: 'cache_tokens', header: t('admin.usage.tokenRanking.columns.cacheTokens'), meta: { class: { th: 'text-right', td: 'text-right tabular-nums text-muted' } }, cell: ({ row }) => fmtTokens(row.original.cache_tokens) },
+  { id: 'total_tokens', header: t('admin.usage.tokenRanking.columns.totalTokens'), meta: { class: { th: 'text-right', td: 'text-right font-medium tabular-nums text-highlighted' } }, cell: ({ row }) => fmtTokens(row.original.total_tokens) },
+  { id: 'actual_cost', header: t('admin.usage.tokenRanking.columns.cost'), meta: { class: { th: 'text-right', td: 'text-right font-medium tabular-nums text-highlighted' } }, cell: ({ row }) => '$' + fmtCost(row.original.actual_cost) },
+])
+const sortableHeaderSlots = sortableColumns.map(col => ({ ...col, slot: col.key + '-header' }))
+function onRowSelect(_e: Event, row: TableRow<UserBreakdownItem>) {
+  emit('select-user', row.original.user_id, row.original.email)
+}
+
 const limitOptions = [
   { value: 20, label: 'Top 20' },
   { value: 50, label: 'Top 50' },
@@ -116,12 +109,6 @@ const limitOptions = [
   { value: 200, label: 'Top 200' },
 ]
 
-// 前三名金/银/铜徽章
-const RANK_BADGE_CLASSES = [
-  'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400',
-  'bg-gray-200 text-gray-600 dark:bg-gray-500/20 dark:text-gray-300',
-  'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400',
-]
 
 const items = ref<UserBreakdownItem[]>([])
 const loading = ref(false)
