@@ -1,7 +1,7 @@
 <template>
   <div class="relative w-full">
     <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-      <Icon name="search" size="md" class="text-gray-400" />
+      <UIcon name="i-lucide-search" class="size-5 text-gray-400" />
     </div>
     <input
       :value="modelValue"
@@ -15,7 +15,6 @@
 
 <script setup lang="ts">
 import { useDebounceFn } from '@vueuse/core'
-import Icon from '@/components/icons/Icon.vue'
 
 const props = withDefaults(defineProps<{
   modelValue: string
