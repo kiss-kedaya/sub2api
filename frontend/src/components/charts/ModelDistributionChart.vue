@@ -15,7 +15,7 @@
           color="neutral"
           size="xs"
           :ui="segmentedTabsUi"
-          @update:model-value="(value) => emit('update:source', value as ModelSource)"
+          @update:model-value="onSourceChange"
         />
         <UTabs
           v-if="showMetricToggle"
@@ -25,7 +25,7 @@
           color="neutral"
           size="xs"
           :ui="segmentedTabsUi"
-          @update:model-value="(value) => emit('update:metric', value as DistributionMetric)"
+          @update:model-value="onMetricChange"
         />
         <UTabs
           v-if="enableRankingView"
@@ -212,6 +212,8 @@ const showAccountCost = computed(() => props.showAccountCost)
 const activeView = ref<'model_distribution' | 'spending_ranking'>('model_distribution')
 
 const theme = useChartTheme()
+const onMetricChange = (value: string | number) => emit('update:metric', value as DistributionMetric)
+const onSourceChange = (value: string | number) => emit('update:source', value as ModelSource)
 const paletteColor = (index: number) => theme.value.categorical[index % theme.value.categorical.length]
 
 const sourceItems = computed(() => [

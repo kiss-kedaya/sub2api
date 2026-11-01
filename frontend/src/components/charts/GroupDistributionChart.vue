@@ -12,7 +12,7 @@
         color="neutral"
         size="xs"
         :ui="segmentedTabsUi"
-        @update:model-value="(value) => emit('update:metric', value as DistributionMetric)"
+        @update:model-value="onMetricChange"
       />
     </template>
 
@@ -130,6 +130,7 @@ const toggleBreakdown = async (type: string, id: number | string) => {
 }
 
 const theme = useChartTheme()
+const onMetricChange = (value: string | number) => emit('update:metric', value as DistributionMetric)
 
 const metricItems = computed(() => [
   { label: t('admin.dashboard.metricTokens'), value: 'tokens' },

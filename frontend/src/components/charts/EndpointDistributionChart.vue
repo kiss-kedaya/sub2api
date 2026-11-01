@@ -13,7 +13,7 @@
           color="neutral"
           size="xs"
           :ui="segmentedTabsUi"
-          @update:model-value="(value) => emit('update:source', value as EndpointSource)"
+          @update:model-value="onSourceChange"
         />
         <UTabs
           v-if="showMetricToggle"
@@ -23,7 +23,7 @@
           color="neutral"
           size="xs"
           :ui="segmentedTabsUi"
-          @update:model-value="(value) => emit('update:metric', value as DistributionMetric)"
+          @update:model-value="onMetricChange"
         />
       </div>
     </template>
@@ -149,6 +149,8 @@ const toggleBreakdown = async (endpoint: string) => {
 }
 
 const theme = useChartTheme()
+const onMetricChange = (value: string | number) => emit('update:metric', value as DistributionMetric)
+const onSourceChange = (value: string | number) => emit('update:source', value as EndpointSource)
 
 const sourceItems = computed(() => [
   { label: t('usage.inbound'), value: 'inbound' },
