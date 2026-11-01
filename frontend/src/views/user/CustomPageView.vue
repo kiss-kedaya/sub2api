@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="custom-page-layout">
-      <div class="card flex-1 min-h-0 overflow-hidden">
+      <div class="custom-page-card flex-1 min-h-0 overflow-hidden">
         <div v-if="loading" class="flex h-full items-center justify-center py-12">
           <div
             class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
@@ -14,14 +14,14 @@
         >
           <div class="max-w-md">
             <div
-              class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700"
+              class="mx-auto mb-4 flex size-12 items-center justify-center rounded-lg bg-elevated ring ring-default"
             >
-              <Icon name="link" size="lg" class="text-gray-400" />
+              <UIcon name="i-lucide-link" class="size-6 text-dimmed" />
             </div>
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+            <h3 class="text-base font-semibold text-highlighted">
               {{ t('customPage.notFoundTitle') }}
             </h3>
-            <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+            <p class="mt-2 text-sm text-muted">
               {{ t('customPage.notFoundDesc') }}
             </p>
           </div>
@@ -80,14 +80,14 @@
         <div v-else-if="!isValidUrl" class="flex h-full items-center justify-center p-10 text-center">
           <div class="max-w-md">
             <div
-              class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700"
+              class="mx-auto mb-4 flex size-12 items-center justify-center rounded-lg bg-elevated ring ring-default"
             >
-              <Icon name="link" size="lg" class="text-gray-400" />
+              <UIcon name="i-lucide-link" class="size-6 text-dimmed" />
             </div>
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+            <h3 class="text-base font-semibold text-highlighted">
               {{ t('customPage.notConfiguredTitle') }}
             </h3>
-            <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+            <p class="mt-2 text-sm text-muted">
               {{ t('customPage.notConfiguredDesc') }}
             </p>
           </div>
@@ -101,7 +101,7 @@
             :href="embeddedUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="btn btn-secondary btn-sm custom-open-fab"
+            class="custom-open-fab"
             :style="openButtonPosition ? { left: `${openButtonPosition.x}px`, top: `${openButtonPosition.y}px`, right: 'auto' } : undefined"
             @pointerdown="startButtonDrag"
             @pointermove="moveButtonDrag"
@@ -111,7 +111,7 @@
             @dragstart.prevent
             @click="handleOpenButtonClick"
           >
-            <Icon name="externalLink" size="sm" class="mr-1.5" :stroke-width="2" />
+            <UIcon name="i-lucide-external-link" class="size-4" />
             {{ t('customPage.openInNewTab') }}
           </a>
           <iframe
@@ -134,7 +134,6 @@ import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import Icon from '@/components/icons/Icon.vue'
 import { buildApiUrl } from '@/api/client'
 import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
 import { marked } from 'marked'
@@ -442,92 +441,37 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-@reference "../../style.css";
-.custom-page-layout {
-  @apply flex flex-col;
-  height: calc(100vh - 64px - 4rem);
-}
+.custom-page-layout { display: flex; flex-direction: column; height: calc(100vh - 64px - 4rem); }
+/* One card with a hairline ring; flat in dark (today's surface). */
+.custom-page-card { border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
+.dark .custom-page-card { box-shadow: 0 0 0 1px var(--ui-border); }
 
-.toc-sidebar {
-  @apply flex flex-col h-full border-r border-gray-200 dark:border-dark-600 bg-gray-50 dark:bg-dark-800;
-  width: min(240px, 30%);
-  min-width: 160px;
-  max-width: 280px;
-  overflow: hidden;
-}
-
+.toc-sidebar { display: flex; flex-direction: column; width: min(240px, 30%); min-width: 160px; max-width: 280px; height: 100%; overflow: hidden; border-right: 1px solid var(--ui-border); background: var(--ui-bg-muted); }
 @media (max-width: 640px) {
-  .toc-sidebar {
-    position: absolute;
-    left: 0;
-    top: 0;
-    z-index: 20;
-    width: 70%;
-    max-width: 240px;
-    height: 100%;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
-  }
+  .toc-sidebar { position: absolute; left: 0; top: 0; z-index: 20; width: 70%; max-width: 240px; height: 100%; box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1); }
 }
-
-.toc-header {
-  @apply flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-dark-600;
-}
-
-.toc-title {
-  @apply text-sm font-semibold text-gray-700 dark:text-dark-200;
-}
-
-.toc-close-btn {
-  @apply p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-dark-200 hover:bg-gray-200 dark:hover:bg-dark-600 transition-colors;
-}
-
-.toc-nav {
-  @apply flex-1 overflow-y-auto py-2 px-2;
-}
-
-.toc-item {
-  @apply block px-2 py-1.5 text-sm rounded transition-colors truncate;
-  @apply text-gray-600 dark:text-dark-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-dark-600;
-}
-
-.toc-item.toc-active {
-  @apply text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 font-medium;
-}
-
+.toc-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
+.toc-title { font-size: 13px; font-weight: 600; color: var(--ui-text-highlighted); }
+.toc-close-btn { padding: 4px; border-radius: 6px; color: var(--ui-text-dimmed); transition: background-color 150ms ease, color 150ms ease; }
+.toc-close-btn:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+.toc-nav { flex: 1; overflow-y: auto; padding: 8px; }
+.toc-item { display: block; overflow: hidden; padding: 6px 8px; border-radius: 6px; color: var(--ui-text-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
+.toc-item:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+.toc-item.toc-active { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); font-weight: 500; }
+.dark .toc-item.toc-active { background: color-mix(in srgb, var(--ui-primary) 12%, transparent); color: var(--ui-primary); }
 .toc-level-1 { padding-left: 8px; }
 .toc-level-2 { padding-left: 20px; }
 .toc-level-3 { padding-left: 32px; }
 .toc-level-4 { padding-left: 44px; }
+.toc-toggle-btn { position: absolute; left: 8px; top: 8px; z-index: 10; display: flex; align-items: center; padding: 6px 8px; border-radius: 6px; background: var(--ui-bg); color: var(--ui-text-muted); font-size: 13px; box-shadow: 0 0 0 1px var(--ui-border-accented), 0 1px 2px rgba(10, 10, 10, 0.05); cursor: pointer; transition: background-color 150ms ease, color 150ms ease; }
+.toc-toggle-btn:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
 
-.toc-toggle-btn {
-  @apply absolute left-2 top-2 z-10 flex items-center px-2 py-1.5 rounded-md text-sm;
-  @apply bg-white dark:bg-dark-700 border border-gray-200 dark:border-dark-500;
-  @apply text-gray-600 dark:text-dark-300 hover:bg-gray-100 dark:hover:bg-dark-600;
-  @apply shadow-xs transition-colors cursor-pointer;
-}
-
-.custom-embed-shell {
-  @apply relative;
-  @apply h-full w-full overflow-hidden rounded-2xl;
-  @apply bg-linear-to-b/srgb from-gray-50 to-white dark:from-dark-900 dark:to-dark-950;
-  @apply p-0;
-}
-
-.custom-open-fab {
-  @apply absolute right-3 top-3 z-10 w-max max-w-full touch-none select-none transition-colors;
-  @apply shadow-xs backdrop-blur-sm supports-backdrop-filter:bg-white/80 dark:supports-[backdrop-filter]:bg-dark-800/80;
-}
-
-.custom-embed-frame {
-  display: block;
-  margin: 0;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-}
+/* Embedded page: flat surface, no gradient. */
+.custom-embed-shell { position: relative; width: 100%; height: 100%; overflow: hidden; padding: 0; background: var(--ui-bg-muted); }
+.custom-open-fab { position: absolute; right: 12px; top: 12px; z-index: 10; display: inline-flex; align-items: center; gap: 6px; width: max-content; max-width: 100%; padding: 5px 10px; border-radius: 6px; background: var(--ui-bg); color: var(--ui-text-highlighted); font-size: 12px; font-weight: 500; box-shadow: 0 0 0 1px var(--ui-border-accented), 0 1px 2px rgba(10, 10, 10, 0.06); touch-action: none; user-select: none; transition: background-color 150ms ease; }
+.custom-open-fab:hover { background: var(--ui-bg-elevated); }
+.custom-embed-frame { display: block; margin: 0; width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+@media (prefers-reduced-motion: reduce) { .toc-close-btn, .toc-item, .toc-toggle-btn, .custom-open-fab { transition: none; } }
 </style>
 
 <style>
