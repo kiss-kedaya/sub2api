@@ -1,79 +1,45 @@
 <template>
   <div class="relative">
     <!-- Admin: Full version badge with dropdown -->
-    <template v-if="canManageSystem">
-      <button
-        @click="toggleDropdown"
-        class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors"
-        :class="[
-          hasUpdate
-            ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
-            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
-        ]"
+    <UPopover v-if="canManageSystem" v-model:open="dropdownOpen" :content="{ align: 'start' }">
+      <UButton
+        :color="hasUpdate ? 'warning' : 'neutral'"
+        variant="soft"
+        size="xs"
+        class="gap-1.5 font-medium tabular-nums"
         :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
       >
-        <span v-if="currentVersion" class="font-medium">{{ displayCurrentVersion }}</span>
-        <span
-          v-else
-          class="h-3 w-12 animate-pulse rounded-sm bg-gray-200 font-medium dark:bg-dark-600"
-        ></span>
+        <span v-if="currentVersion">{{ displayCurrentVersion }}</span>
+        <USkeleton v-else class="h-3 w-12" />
         <!-- Update indicator -->
-        <span v-if="hasUpdate" class="relative flex h-2 w-2">
-          <span
-            class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"
-          ></span>
-          <span class="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
-        </span>
-      </button>
+        <span v-if="hasUpdate" class="size-2 rounded-full bg-warning" aria-hidden="true"></span>
+      </UButton>
 
-      <!-- Dropdown -->
-      <transition name="dropdown">
+      <template #content>
         <div
-          v-if="dropdownOpen"
-          ref="dropdownRef"
-          class="absolute left-0 z-50 mt-2 overflow-hidden whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
+          class="whitespace-normal transition-[width] duration-200"
           :class="rollbackPanelOpen && isReleaseBuild ? 'w-80' : 'w-64'"
         >
           <!-- Header with refresh button -->
-          <div
-            class="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-dark-700"
-          >
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-300">{{
-              t('version.currentVersion')
-            }}</span>
-            <button
-              @click="refreshVersion(true)"
-              class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-dark-200"
+          <div class="flex items-center justify-between px-4 pb-1 pt-3">
+            <span class="text-sm font-medium text-highlighted">{{ t('version.currentVersion') }}</span>
+            <UButton
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              icon="i-lucide-refresh-cw"
+              :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
               :disabled="loading"
               :title="t('version.refresh')"
-            >
-              <Icon
-                name="refresh"
-                size="sm"
-                :stroke-width="2"
-                :class="{ 'animate-spin': loading }"
-              />
-            </button>
+              :aria-label="t('version.refresh')"
+              @click="refreshVersion(true)"
+            />
           </div>
 
-          <div class="p-4">
+          <div class="p-4 pt-2">
             <!-- Loading state -->
             <div v-if="loading" class="flex items-center justify-center py-6">
-              <svg class="h-6 w-6 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24">
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
+              <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
             </div>
 
             <!-- Content -->
@@ -81,31 +47,12 @@
               <!-- Version display - centered and prominent -->
               <div class="mb-4 text-center">
                 <div class="inline-flex items-center gap-2">
-                  <span
-                    v-if="currentVersion"
-                    class="text-2xl font-bold text-gray-900 dark:text-white"
-                    >{{ displayCurrentVersion }}</span
-                  >
-                  <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
+                  <span v-if="currentVersion" class="text-2xl font-semibold text-highlighted">{{ displayCurrentVersion }}</span>
+                  <span v-else class="text-2xl font-semibold text-dimmed">--</span>
                   <!-- Show check mark when up to date -->
-                  <span
-                    v-if="!hasUpdate"
-                    class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
-                  >
-                    <svg
-                      class="h-3 w-3 text-green-600 dark:text-green-400"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                  </span>
+                  <UIcon v-if="!hasUpdate" name="i-lucide-circle-check" class="size-5 text-success" />
                 </div>
-                <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                <p class="mt-1 text-xs text-muted">
                   {{
                     hasUpdate
                       ? t('version.latestVersion') + ': ' + displayLatestVersion
@@ -113,597 +60,269 @@
                   }}
                 </p>
               </div>
-
               <!-- Priority 1: Update error (must check before hasUpdate) -->
               <div v-if="updateError" class="space-y-2">
-                <div
-                  class="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800/50 dark:bg-red-900/20"
-                >
-                  <div
-                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/50"
-                  >
-                    <Icon
-                      name="x"
-                      size="sm"
-                      :stroke-width="2"
-                      class="text-red-600 dark:text-red-400"
-                    />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-red-700 dark:text-red-300">
-                      {{ t('version.updateFailed') }}
-                    </p>
-                    <p class="truncate text-xs text-red-600/70 dark:text-red-400/70">
-                      {{ updateError }}
-                    </p>
-                  </div>
-                </div>
-
+                <UAlert
+                  color="error"
+                  variant="subtle"
+                  icon="i-lucide-circle-x"
+                  :title="t('version.updateFailed')"
+                  :description="updateError"
+                  :ui="{ description: 'truncate' }"
+                />
                 <!-- Retry button -->
-                <button
-                  @click="handleUpdate"
-                  :disabled="updating"
-                  class="flex w-full items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {{ t('version.retry') }}
-                </button>
+                <UButton color="error" block :label="t('version.retry')" :disabled="updating" @click="handleUpdate" />
               </div>
 
               <!-- Priority 2: Update success - need restart -->
               <div v-else-if="updateSuccess && needRestart" class="space-y-2">
-                <div
-                  class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20"
-                >
-                  <div
-                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/50"
-                  >
-                    <svg
-                      class="h-4 w-4 text-green-600 dark:text-green-400"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-green-700 dark:text-green-300">
-                      {{
-                        successKind === 'rollback'
-                          ? t('version.rollbackComplete')
-                          : t('version.updateComplete')
-                      }}
-                    </p>
-                    <p class="text-xs text-green-600/70 dark:text-green-400/70">
-                      {{ t('version.restartRequired') }}
-                    </p>
-                  </div>
-                </div>
-
+                <UAlert
+                  color="success"
+                  variant="subtle"
+                  icon="i-lucide-check"
+                  :title="successKind === 'rollback' ? t('version.rollbackComplete') : t('version.updateComplete')"
+                  :description="t('version.restartRequired')"
+                />
                 <!-- Restart button with countdown -->
-                <button
-                  @click="handleRestart"
+                <UButton
+                  color="success"
+                  block
+                  icon="i-lucide-rotate-ccw"
+                  :loading="restarting"
                   :disabled="restarting"
-                  class="flex w-full items-center justify-center gap-2 rounded-lg bg-green-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  @click="handleRestart"
                 >
-                  <svg
-                    v-if="restarting"
-                    class="h-4 w-4 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      class="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      stroke-width="4"
-                    ></circle>
-                    <path
-                      class="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  <svg
-                    v-else
-                    class="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
                   <template v-if="restarting">
                     <span>{{ t('version.restarting') }}</span>
-                    <span v-if="restartCountdown > 0" class="tabular-nums"
-                      >({{ restartCountdown }}s)</span
-                    >
+                    <span v-if="restartCountdown > 0" class="tabular-nums">({{ restartCountdown }}s)</span>
                   </template>
                   <span v-else>{{ t('version.restartNow') }}</span>
-                </button>
+                </UButton>
               </div>
 
               <!-- Orchestrated deployments already restarted and health-checked. -->
               <div v-else-if="updateSuccess" class="space-y-2">
-                <div
-                  class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20"
-                >
-                  <div
-                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/50"
-                  >
-                    <Icon name="check" size="sm" :stroke-width="2" class="text-green-600 dark:text-green-400" />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-green-700 dark:text-green-300">
-                      {{ successKind === 'rollback' ? t('version.rollbackComplete') : t('version.updateComplete') }}
-                    </p>
-                    <p class="text-xs text-green-600/70 dark:text-green-400/70">
-                      {{ t('version.upToDate') }}
-                    </p>
-                  </div>
-                </div>
+                <UAlert
+                  color="success"
+                  variant="subtle"
+                  icon="i-lucide-check"
+                  :title="successKind === 'rollback' ? t('version.rollbackComplete') : t('version.updateComplete')"
+                  :description="t('version.upToDate')"
+                />
               </div>
 
               <!-- Priority 3: Update available for source build - show git pull hint -->
               <div v-else-if="hasUpdate && !isReleaseBuild" class="space-y-2">
-                <a
+                <UButton
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
-                  :href="releaseInfo.html_url"
+                  :to="releaseInfo.html_url"
                   target="_blank"
-                  rel="noopener noreferrer"
-                  class="group flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 transition-colors hover:bg-amber-100 dark:border-amber-800/50 dark:bg-amber-900/20 dark:hover:bg-amber-900/30"
+                  color="warning"
+                  variant="subtle"
+                  block
+                  icon="i-lucide-download"
+                  trailing-icon="i-lucide-chevron-right"
+                  class="justify-start"
                 >
-                  <div
-                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/50"
-                  >
-                    <Icon
-                      name="download"
-                      size="sm"
-                      :stroke-width="2"
-                      class="text-amber-600 dark:text-amber-400"
-                    />
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
-                      {{ t('version.updateAvailable') }}
-                    </p>
-                    <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
-                      {{ displayLatestVersion }}
-                    </p>
-                  </div>
-                  <svg
-                    class="h-4 w-4 text-amber-500 transition-transform group-hover:translate-x-0.5 dark:text-amber-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                </a>
+                  <span class="min-w-0 flex-1 text-left">
+                    <span class="block text-sm font-medium">{{ t('version.updateAvailable') }}</span>
+                    <span class="block text-xs opacity-80">{{ displayLatestVersion }}</span>
+                  </span>
+                </UButton>
                 <!-- Source build hint -->
-                <div
-                  class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
-                >
-                  <svg
-                    class="h-3.5 w-3.5 flex-shrink-0 text-blue-500 dark:text-blue-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  <p class="text-xs text-blue-600 dark:text-blue-400">
-                    {{ t('version.sourceModeHint') }}
-                  </p>
-                </div>
+                <UAlert color="info" variant="subtle" icon="i-lucide-info" :description="t('version.sourceModeHint')" />
               </div>
 
               <!-- Priority 4: Update available for release build - show update button -->
               <div v-else-if="hasUpdate && isReleaseBuild" class="space-y-2">
                 <!-- Update info card -->
-                <div
-                  class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
-                >
-                <div
-                  class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/50"
-                >
-                  <Icon
-                    name="download"
-                    size="sm"
-                    :stroke-width="2"
-                    class="text-amber-600 dark:text-amber-400"
-                  />
-                </div>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
-                      {{ t('version.updateAvailable') }}
-                    </p>
-                    <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
-                      {{ displayLatestVersion }}
-                    </p>
-                  </div>
-                </div>
-
+                <UAlert
+                  color="warning"
+                  variant="subtle"
+                  icon="i-lucide-download"
+                  :title="t('version.updateAvailable')"
+                  :description="displayLatestVersion"
+                />
                 <!-- Update button -->
-                <div
+                <UAlert
                   v-if="updateDisabled"
-                  class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
-                >
-                  <svg
-                    class="h-3.5 w-3.5 flex-shrink-0 text-blue-500 dark:text-blue-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  <p class="text-xs text-blue-600 dark:text-blue-400">
-                    {{ t('version.updateDisabledHint') }}
-                  </p>
-                </div>
-                <button
+                  color="info"
+                  variant="subtle"
+                  icon="i-lucide-info"
+                  :description="t('version.updateDisabledHint')"
+                />
+                <UButton
                   v-else
-                  @click="handleUpdate"
+                  color="primary"
+                  block
+                  icon="i-lucide-download"
+                  :loading="updating"
                   :disabled="updating"
-                  class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <svg v-if="updating" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle
-                      class="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      stroke-width="4"
-                    ></circle>
-                    <path
-                      class="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  <Icon v-else name="download" size="sm" :stroke-width="2" />
-                  {{ updating ? t('version.updating') : t('version.updateNow') }}
-                </button>
-
+                  :label="updating ? t('version.updating') : t('version.updateNow')"
+                  @click="handleUpdate"
+                />
                 <!-- View release link -->
-                <a
+                <UButton
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
-                  :href="releaseInfo.html_url"
+                  :to="releaseInfo.html_url"
                   target="_blank"
-                  rel="noopener noreferrer"
-                  class="flex items-center justify-center gap-1 text-xs text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-dark-200"
-                >
-                  {{ t('version.viewChangelog') }}
-                  <Icon name="externalLink" size="xs" :stroke-width="2" />
-                </a>
+                  color="neutral"
+                  variant="link"
+                  size="xs"
+                  block
+                  trailing-icon="i-lucide-external-link"
+                  :label="t('version.viewChangelog')"
+                />
               </div>
-
               <!-- Priority 5: Up to date - GitHub link + version rollback -->
               <div v-else class="space-y-2">
-                <a
+                <UButton
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
-                  :href="releaseInfo.html_url"
+                  :to="releaseInfo.html_url"
                   target="_blank"
-                  rel="noopener noreferrer"
-                  class="flex items-center justify-center gap-2 py-2 text-sm text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-dark-200"
-                >
-                  <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-                    <path
-                      fill-rule="evenodd"
-                      clip-rule="evenodd"
-                      d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"
-                    />
-                  </svg>
-                  {{ t('version.viewRelease') }}
-                </a>
+                  color="neutral"
+                  variant="ghost"
+                  block
+                  icon="i-lucide-github"
+                  :label="t('version.viewRelease')"
+                />
 
                 <!-- Version rollback entry -->
-                <div class="border-t border-gray-100 pt-2 dark:border-dark-700">
-                  <button
+                <UCollapsible :open="rollbackPanelOpen" class="pt-1">
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    block
+                    icon="i-lucide-history"
+                    trailing-icon="i-lucide-chevron-down"
+                    :label="t('version.rollback')"
+                    class="justify-between text-muted"
+                    :ui="{ trailingIcon: ['transition-transform duration-200', rollbackPanelOpen ? 'rotate-180' : ''] }"
                     @click="toggleRollbackPanel"
-                    class="group flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-600 dark:text-dark-500 dark:hover:bg-dark-700/50 dark:hover:text-dark-300"
-                  >
-                    <span class="flex items-center gap-1.5">
-                      <Icon name="clock" size="xs" :stroke-width="2" />
-                      {{ t('version.rollback') }}
-                    </span>
-                    <Icon
-                      name="chevronDown"
-                      size="xs"
-                      :stroke-width="2"
-                      class="transition-transform duration-200"
-                      :class="{ 'rotate-180': rollbackPanelOpen }"
-                    />
-                  </button>
+                  />
 
-                  <transition name="rollback">
-                    <div v-if="rollbackPanelOpen" class="mt-2 space-y-2">
+                  <template #content>
+                    <div class="mt-2 space-y-2">
                       <!-- Deployment with online update disabled: rollback also disabled -->
-                      <div
+                      <UAlert
                         v-if="updateDisabled"
-                        class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
-                      >
-                        <svg
-                          class="h-3.5 w-3.5 flex-shrink-0 text-blue-500 dark:text-blue-400"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                        <p class="min-w-0 flex-1 text-xs leading-4 text-blue-600 dark:text-blue-400">
-                          {{ t('version.rollbackDisabledHint') }}
-                        </p>
-                      </div>
+                        color="info"
+                        variant="subtle"
+                        icon="i-lucide-info"
+                        :description="t('version.rollbackDisabledHint')"
+                      />
                       <!-- Source build: online rollback unavailable, use git instead -->
-                      <div
+                      <UAlert
                         v-else-if="!isReleaseBuild"
-                        class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
-                      >
-                        <svg
-                          class="h-3.5 w-3.5 flex-shrink-0 text-blue-500 dark:text-blue-400"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                        <p class="min-w-0 flex-1 text-xs leading-4 text-blue-600 dark:text-blue-400">
-                          {{ t('version.rollbackSourceHint') }}
-                        </p>
-                      </div>
+                        color="info"
+                        variant="subtle"
+                        icon="i-lucide-info"
+                        :description="t('version.rollbackSourceHint')"
+                      />
 
                       <!-- Loading versions -->
-                      <div
-                        v-else-if="rollbackVersionsLoading"
-                        class="flex items-center justify-center py-4"
-                      >
-                        <svg
-                          class="h-5 w-5 animate-spin text-primary-500"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            class="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            stroke-width="4"
-                          ></circle>
-                          <path
-                            class="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          ></path>
-                        </svg>
+                      <div v-else-if="rollbackVersionsLoading" class="flex items-center justify-center py-4">
+                        <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin text-muted" />
                       </div>
 
                       <!-- Load error + retry -->
                       <div v-else-if="rollbackVersionsError" class="space-y-2">
-                        <p
-                          class="rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-600 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400"
-                        >
-                          {{ rollbackVersionsError }}
-                        </p>
-                        <button
-                          @click="loadRollbackVersions"
-                          class="w-full rounded-lg border border-gray-200 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 dark:border-dark-700 dark:text-dark-400 dark:hover:bg-dark-700/50 dark:hover:text-dark-200"
-                        >
-                          {{ t('version.retry') }}
-                        </button>
+                        <UAlert color="error" variant="subtle" :description="rollbackVersionsError" />
+                        <UButton color="neutral" variant="subtle" size="xs" block :label="t('version.retry')" @click="loadRollbackVersions" />
                       </div>
 
                       <!-- No versions available -->
-                      <p
-                        v-else-if="rollbackVersions.length === 0"
-                        class="py-3 text-center text-xs text-gray-400 dark:text-dark-500"
-                      >
+                      <p v-else-if="rollbackVersions.length === 0" class="py-3 text-center text-xs text-muted">
                         {{ t('version.noRollbackVersions') }}
                       </p>
 
                       <!-- Version list -->
                       <template v-else>
-                        <p class="px-0.5 text-[11px] text-gray-400 dark:text-dark-500">
-                          {{ t('version.rollbackSelectVersion') }}
-                        </p>
+                        <p class="px-0.5 text-[11px] text-muted">{{ t('version.rollbackSelectVersion') }}</p>
 
-                        <button
+                        <UButton
                           v-for="item in rollbackVersions"
                           :key="item.version"
-                          @click="selectRollbackVersion(item.version)"
+                          :color="selectedRollbackVersion === item.version ? 'warning' : 'neutral'"
+                          :variant="selectedRollbackVersion === item.version ? 'soft' : 'ghost'"
+                          block
+                          :icon="selectedRollbackVersion === item.version ? 'i-lucide-circle-dot' : 'i-lucide-circle'"
+                          :aria-pressed="selectedRollbackVersion === item.version ? 'true' : 'false'"
                           :disabled="rollingBack"
-                          class="flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60"
-                          :class="
-                            selectedRollbackVersion === item.version
-                              ? 'border-amber-300 bg-amber-50 shadow-xs dark:border-amber-700 dark:bg-amber-900/20'
-                              : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-dark-700 dark:hover:border-dark-600 dark:hover:bg-dark-700/40'
-                          "
+                          class="justify-start"
+                          @click="selectRollbackVersion(item.version)"
                         >
-                          <span class="flex items-center gap-2">
-                            <span
-                              class="flex h-3.5 w-3.5 items-center justify-center rounded-full border transition-colors"
-                              :class="
-                                selectedRollbackVersion === item.version
-                                  ? 'border-amber-500'
-                                  : 'border-gray-300 dark:border-dark-500'
-                              "
-                            >
-                              <span
-                                v-if="selectedRollbackVersion === item.version"
-                                class="h-1.5 w-1.5 rounded-full bg-amber-500"
-                              ></span>
-                            </span>
-                            <span
-                              class="text-sm font-semibold"
-                              :class="
-                                selectedRollbackVersion === item.version
-                                  ? 'text-amber-700 dark:text-amber-300'
-                                  : 'text-gray-700 dark:text-dark-200'
-                              "
-                              >v{{ item.version }}</span
-                            >
-                          </span>
-                          <span class="text-[11px] tabular-nums text-gray-400 dark:text-dark-500">
-                            {{ formatPublishedAt(item.published_at) }}
-                          </span>
-                        </button>
-
+                          <span class="flex-1 text-left text-sm font-semibold">v{{ item.version }}</span>
+                          <span class="text-[11px] text-muted tabular-nums">{{ formatPublishedAt(item.published_at) }}</span>
+                        </UButton>
                         <!-- Selected version: manual command (per deploy method) + confirm -->
-                        <transition name="rollback">
-                          <div v-if="selectedRollbackVersion" class="space-y-2">
-                            <p class="px-0.5 text-[11px] text-gray-400 dark:text-dark-500">
-                              {{ t('version.manualRollbackCommand') }}
-                            </p>
+                        <div v-if="selectedRollbackVersion" class="space-y-2">
+                          <p class="px-0.5 text-[11px] text-muted">{{ t('version.manualRollbackCommand') }}</p>
 
-                            <!-- Terminal-style block with deploy-method tabs -->
-                            <div
-                              class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-600"
-                            >
-                              <div
-                                class="flex items-center justify-between border-b border-gray-200 bg-gray-100 px-2 py-1.5 dark:border-dark-600 dark:bg-dark-700"
-                              >
-                                <div
-                                  class="flex items-center gap-0.5 rounded-md bg-gray-200/70 p-0.5 dark:bg-dark-600/70"
-                                >
-                                  <button
-                                    v-for="tab in manualTabs"
-                                    :key="tab.key"
-                                    @click="manualTab = tab.key"
-                                    class="rounded-sm px-2 py-0.5 text-[11px] font-medium transition-colors"
-                                    :class="
-                                      manualTab === tab.key
-                                        ? 'bg-white text-gray-700 shadow-xs dark:bg-dark-800 dark:text-dark-100'
-                                        : 'text-gray-400 hover:text-gray-600 dark:text-dark-400 dark:hover:text-dark-200'
-                                    "
-                                  >
-                                    {{ tab.label }}
-                                  </button>
-                                </div>
-                                <button
-                                  @click="copyToClipboard(activeManualCommand)"
-                                  class="flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-600 dark:text-dark-400 dark:hover:bg-dark-600 dark:hover:text-dark-200"
-                                >
-                                  <Icon
-                                    :name="copied ? 'check' : 'copy'"
-                                    size="xs"
-                                    :stroke-width="2"
-                                    :class="copied ? 'text-green-500' : ''"
-                                  />
-                                  {{ copied ? t('version.copied') : t('version.copyCommand') }}
-                                </button>
-                              </div>
-                              <code
-                                class="block select-all whitespace-pre-wrap break-all bg-gray-50 p-2.5 font-mono text-[10px] leading-relaxed text-gray-600 dark:bg-dark-900 dark:text-dark-300"
-                                >{{ activeManualCommand }}</code
-                              >
-                            </div>
-
-                            <p
-                              class="flex items-start gap-1.5 px-0.5 text-[11px] leading-4 text-amber-600 dark:text-amber-400"
-                            >
-                              <Icon
-                                name="exclamationTriangle"
+                          <!-- Command block with deploy-method tabs -->
+                          <div class="overflow-hidden rounded-md ring ring-default">
+                            <div class="flex items-center justify-between gap-2 bg-elevated/50 px-1.5 py-1">
+                              <UTabs
+                                v-model="manualTab"
+                                :items="manualTabs"
+                                value-key="key"
+                                :content="false"
                                 size="xs"
-                                :stroke-width="2"
-                                class="mt-px flex-shrink-0"
+                                color="neutral"
+                                :ui="{ root: 'gap-0', list: 'w-auto p-0.5', trigger: 'px-2 py-0.5 text-[11px]' }"
                               />
-                              {{ t('version.rollbackWarning') }}
-                            </p>
-
-                            <p
-                              v-if="rollbackError"
-                              class="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-600 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400"
-                            >
-                              {{ rollbackError }}
-                            </p>
-
-                            <button
-                              @click="handleRollback"
-                              :disabled="rollingBack"
-                              class="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <svg
-                                v-if="rollingBack"
-                                class="h-4 w-4 animate-spin"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                              >
-                                <circle
-                                  class="opacity-25"
-                                  cx="12"
-                                  cy="12"
-                                  r="10"
-                                  stroke="currentColor"
-                                  stroke-width="4"
-                                ></circle>
-                                <path
-                                  class="opacity-75"
-                                  fill="currentColor"
-                                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                                ></path>
-                              </svg>
-                              <Icon v-else name="clock" size="sm" :stroke-width="2" />
-                              <span>{{
-                                rollingBack
-                                  ? t('version.rollingBack')
-                                  : t('version.rollbackConfirm', {
-                                      version: 'v' + selectedRollbackVersion
-                                    })
-                              }}</span>
-                            </button>
+                              <UButton
+                                color="neutral"
+                                variant="ghost"
+                                size="xs"
+                                :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
+                                :ui="{ leadingIcon: copied ? 'text-success' : '' }"
+                                :label="copied ? t('version.copied') : t('version.copyCommand')"
+                                class="text-[11px]"
+                                @click="copyToClipboard(activeManualCommand)"
+                              />
+                            </div>
+                            <code class="block select-all whitespace-pre-wrap break-all bg-muted p-2.5 font-mono text-[10px] leading-relaxed text-default">{{ activeManualCommand }}</code>
                           </div>
-                        </transition>
+
+                          <p class="flex items-start gap-1.5 px-0.5 text-[11px] leading-4 text-warning">
+                            <UIcon name="i-lucide-triangle-alert" class="mt-px size-3.5 shrink-0" />
+                            {{ t('version.rollbackWarning') }}
+                          </p>
+
+                          <UAlert v-if="rollbackError" color="error" variant="subtle" :description="rollbackError" />
+
+                          <UButton
+                            color="warning"
+                            block
+                            icon="i-lucide-history"
+                            :loading="rollingBack"
+                            :disabled="rollingBack"
+                            :label="rollingBack ? t('version.rollingBack') : t('version.rollbackConfirm', { version: 'v' + selectedRollbackVersion })"
+                            @click="handleRollback"
+                          />
+                        </div>
                       </template>
                     </div>
-                  </transition>
-                </div>
+                  </template>
+                </UCollapsible>
               </div>
             </template>
           </div>
         </div>
-      </transition>
-    </template>
+      </template>
+    </UPopover>
 
     <!-- Read-only users see the public version without system API requests. -->
-    <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
+    <span v-else-if="version" class="text-xs text-muted">
       {{ formatVersion(version) }}
     </span>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
@@ -714,7 +333,6 @@ import {
   type RollbackVersionInfo
 } from '@/api/admin/system'
 import { useClipboard } from '@/composables/useClipboard'
-import Icon from '@/components/icons/Icon.vue'
 
 const GITHUB_REPO = 'kiss-kedaya/sub2api'
 // GHCR image published by CI (tags carry no "v" prefix).
@@ -732,7 +350,6 @@ const appStore = useAppStore()
 const canManageSystem = computed(() => authStore.isAdmin && !authStore.isAdminObserver)
 
 const dropdownOpen = ref(false)
-const dropdownRef = ref<HTMLElement | null>(null)
 
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
@@ -810,14 +427,6 @@ const activeManualCommand = computed(() =>
 
 // Only show update check for release builds (binary/docker deployment)
 const isReleaseBuild = computed(() => buildType.value === 'release')
-
-function toggleDropdown() {
-  dropdownOpen.value = !dropdownOpen.value
-}
-
-function closeDropdown() {
-  dropdownOpen.value = false
-}
 
 async function refreshVersion(force = true) {
   if (!canManageSystem.value) return
@@ -990,54 +599,11 @@ async function checkServiceAndReload() {
   window.location.reload()
 }
 
-function handleClickOutside(event: MouseEvent) {
-  const target = event.target as Node
-  const button = (event.target as Element).closest('button')
-  if (dropdownRef.value && !dropdownRef.value.contains(target) && !button?.contains(target)) {
-    closeDropdown()
-  }
-}
-
+// The popover closes itself on outside click / Escape.
 onMounted(() => {
   if (canManageSystem.value) {
     // Use cached version if available, otherwise fetch
     appStore.fetchVersion(false)
   }
-  document.addEventListener('click', handleClickOutside)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', handleClickOutside)
 })
 </script>
-
-<style scoped>
-.dropdown-enter-active,
-.dropdown-leave-active {
-  transition: all 0.2s ease;
-}
-
-.dropdown-enter-from,
-.dropdown-leave-to {
-  opacity: 0;
-  transform: scale(0.95) translateY(-4px);
-}
-
-.rollback-enter-active,
-.rollback-leave-active {
-  transition: all 0.2s ease;
-}
-
-.rollback-enter-from,
-.rollback-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
-
-.line-clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-</style>

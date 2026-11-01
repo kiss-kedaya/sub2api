@@ -1,33 +1,33 @@
 <template>
   <BaseDialog :show="show" :title="t('usage.exporting')" width="narrow" @close="handleCancel">
     <div class="space-y-4">
-      <div class="text-sm text-muted dark:text-gray-400">
+      <div class="text-sm text-muted">
         {{ t('usage.exportingProgress') }}
       </div>
-      <div class="flex items-center justify-between text-sm text-default dark:text-gray-300">
+      <div class="flex items-center justify-between text-sm text-default">
         <span>{{ t('usage.exportedCount', { current, total }) }}</span>
-        <span class="font-medium tabular-nums text-highlighted dark:text-white">{{ normalizedProgress }}%</span>
+        <span class="font-medium tabular-nums text-highlighted">{{ normalizedProgress }}%</span>
       </div>
       <UProgress
         :model-value="normalizedProgress"
         size="sm"
+        color="primary"
         :get-value-label="() => `${t('usage.exportingProgress')}: ${normalizedProgress}%`"
-        :ui="{ base: 'bg-accented dark:bg-dark-700', indicator: 'bg-primary-600' }"
       />
-      <div v-if="estimatedTime" class="text-xs text-gray-500 dark:text-gray-400" aria-live="polite" aria-atomic="true">
+      <div v-if="estimatedTime" class="text-xs text-muted" aria-live="polite" aria-atomic="true">
         {{ t('usage.estimatedTime', { time: estimatedTime }) }}
       </div>
     </div>
 
     <template #footer>
-      <UButton
-        color="neutral"
-        variant="outline"
-        size="lg"
-        class="dark:bg-dark-700 dark:text-gray-200 dark:ring-dark-600 dark:hover:bg-dark-600"
-        :label="t('usage.cancelExport')"
-        @click="handleCancel"
-      />
+      <div class="flex justify-end">
+        <UButton
+          color="neutral"
+          variant="subtle"
+          :label="t('usage.cancelExport')"
+          @click="handleCancel"
+        />
+      </div>
     </template>
   </BaseDialog>
 </template>

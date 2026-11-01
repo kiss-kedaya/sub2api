@@ -2,9 +2,7 @@
   <div v-if="snapshot" class="space-y-1" data-testid="monitor-quota-view">
     <!-- 套餐等级徽章（如智谱 plan level / Claude 订阅档） -->
     <div v-if="snapshot.plan_level" class="flex flex-wrap items-center gap-1.5">
-      <span class="rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-600 dark:text-gray-300">
-        {{ snapshot.plan_level }}
-      </span>
+      <UBadge color="neutral" variant="subtle" size="sm" :label="snapshot.plan_level" class="text-[10px]" />
     </div>
 
     <!-- 用量窗口条形图（复用账号页 UsageProgressBar：同阈值配色、同倒计时格式） -->
@@ -27,13 +25,13 @@
       <span
         v-for="b in balanceRows"
         :key="b.currency"
-        :class="['font-medium', b.balance <= 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300']"
+        :class="['font-medium tabular-nums', b.balance <= 0 ? 'text-error' : 'text-muted']"
       >
         {{ b.balance.toFixed(2) }} {{ b.currency }}
       </span>
     </div>
 
-    <div v-if="!snapshot.success" class="truncate text-[10px] text-red-600 dark:text-red-400" :title="snapshot.error" data-testid="monitor-quota-error">
+    <div v-if="!snapshot.success" class="truncate text-[10px] text-error" :title="snapshot.error" data-testid="monitor-quota-error">
       {{ truncatedError }}
     </div>
   </div>
