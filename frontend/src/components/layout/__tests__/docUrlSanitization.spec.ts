@@ -5,17 +5,18 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const dir = dirname(fileURLToPath(import.meta.url))
-const headerSource = readFileSync(resolve(dir, '../AppHeader.vue'), 'utf8')
+// Docs moved from the navbar to the sidebar's bottom group.
+const sidebarSource = readFileSync(resolve(dir, '../AppSidebar.vue'), 'utf8')
 const homeViewSource = readFileSync(resolve(dir, '../../../views/HomeView.vue'), 'utf8')
 const keyUsageViewSource = readFileSync(resolve(dir, '../../../views/KeyUsageView.vue'), 'utf8')
 
 describe('doc_url sanitization', () => {
-  it('AppHeader imports the sanitized internal docs fallback', () => {
-    expect(headerSource).toContain("import { resolveDocsUrl } from '@/utils/docsUrl'")
+  it('AppSidebar imports the sanitized internal docs fallback', () => {
+    expect(sidebarSource).toContain("import { resolveDocsUrl } from '@/utils/docsUrl'")
   })
 
-  it('AppHeader resolves its configured docs URL', () => {
-    expect(headerSource).toContain('resolveDocsUrl(appStore.docUrl)')
+  it('AppSidebar resolves its configured docs URL', () => {
+    expect(sidebarSource).toContain('resolveDocsUrl(appStore.docUrl)')
   })
 
   it('HomeView imports sanitizeUrl', () => {

@@ -1,52 +1,56 @@
-/* Ink-wash: white paper, black-and-grey ink for text and lines; pale sakura pink only
-   for selected items, primary buttons and soft highlights (and the blossoms behind). */
+/*
+  Console colour tokens (--signal-*), used by legacy page classes and ~35 components.
+  By day they point at Nuxt UI's tokens, so the admin's Appearance settings (neutral,
+  primary, radius) reach every page; the sakura pinks stay for the small marks and the
+  painting. At night they keep the plum-charcoal palette as literals.
+*/
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
-  --signal-bg: #ffffff;
-  --signal-surface: #ffffff;
-  --signal-page-surface: rgba(255, 255, 255, 0.55);
-  --signal-raised: #fafafa;
-  --signal-sidebar: #ffffff;
-  --signal-line: #e5e5e5;
-  --signal-text: #171717;
-  --signal-muted: #737373;
-  --signal-accent: #171717;
+  --signal-bg: var(--app-page-bg);
+  --signal-surface: var(--ui-bg);
+  --signal-page-surface: var(--ui-bg);
+  --signal-raised: var(--ui-bg-muted);
+  --signal-sidebar: var(--app-sidebar-bg);
+  --signal-line: var(--ui-border);
+  --signal-text: var(--ui-text-highlighted);
+  --signal-muted: var(--ui-text-muted);
+  --signal-accent: var(--ui-primary);
   --signal-sakura: #f2b6c6;
   --signal-amber: #906727;
-  --signal-hover: #fafafa;
-  --signal-accent-soft: #f4f4f4;
-  --signal-on-accent: #ffffff;
-  --signal-control-line: #d4d4d4;
-  --signal-highlight: #ffffff;
-  --signal-inset: #fafafa;
-  --signal-divider: #f0f0f0;
+  --signal-hover: color-mix(in oklab, var(--ui-bg-elevated) 50%, var(--ui-bg));
+  --signal-accent-soft: var(--ui-bg-elevated);
+  --signal-on-accent: var(--ui-text-inverted);
+  --signal-control-line: var(--ui-border-accented);
+  --signal-highlight: transparent;
+  --signal-inset: var(--ui-bg);
+  --signal-divider: var(--ui-border);
+  --signal-table-head: var(--ui-bg-muted);
   --signal-shadow: 0 0 #0000;
-  --signal-popover-shadow: 0 12px 32px #2f2a2c14;
-  --signal-command: #171717;
-  --signal-command-text: #ffffff;
-  --signal-command-hover: #262626;
-  --signal-nav-text: #4a4346;
-  --signal-nav-muted: #6b6266;
-  --signal-nav-hover: #f7f6f6;
-  --signal-nav-active: #f4f4f4;
-  --signal-nav-active-text: #2f2a2c;
-  --signal-nav-line: #efedee;
-  --signal-nav-strong: #1d1a1b;
-  --signal-nav-brand: #2f2a2c;
-  --signal-hero: #fafafa;
-  --signal-hero-text: #2f2a2c;
-  --signal-hero-muted: #6b6266;
+  --signal-popover-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.06);
+  --signal-command: var(--ui-primary);
+  --signal-command-text: var(--ui-text-inverted);
+  --signal-command-hover: color-mix(in oklab, var(--ui-primary) 75%, var(--ui-bg));
+  --signal-nav-text: var(--ui-text-muted);
+  --signal-nav-muted: var(--ui-text-dimmed);
+  --signal-nav-hover: color-mix(in oklab, var(--ui-bg-elevated) 50%, var(--ui-bg));
+  --signal-nav-active: var(--ui-bg-elevated);
+  --signal-nav-active-text: var(--ui-primary);
+  --signal-nav-line: var(--ui-border);
+  --signal-nav-strong: var(--ui-text-highlighted);
+  --signal-nav-brand: var(--ui-text-highlighted);
+  --signal-hero: var(--ui-bg-muted);
+  --signal-hero-text: var(--ui-text-highlighted);
+  --signal-hero-muted: var(--ui-text-muted);
   --signal-hero-mark: #e58fa7;
-  --signal-hero-line: #e5e5e5;
-  /* motion tokens: 独角兽级动效体系（统一 easing 与时长） */
+  --signal-hero-line: var(--ui-border);
+  /* motion tokens (durations and easing for the few transitions left) */
   --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
   --motion-dur-fast: 140ms;
   --motion-dur-base: 220ms;
   --motion-dur-slow: 420ms;
-  --signal-display-font: Georgia, 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', SimSun, serif;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  -webkit-font-smoothing: antialiased;
+  /* Headings use the site font (the Appearance setting), no serif display face. */
+  --signal-display-font: var(--font-sans);
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
@@ -66,6 +70,7 @@
   --signal-highlight: #ffffff0a;
   --signal-inset: #20171c;
   --signal-divider: #33262d;
+  --signal-table-head: #1c1519;
   --signal-shadow: 0 0 #0000;
   --signal-popover-shadow: 0 12px 32px #00000066;
   --signal-command: #e89ab3;
@@ -86,121 +91,11 @@
   --signal-hero-line: #4a3640;
   --signal-page-surface: rgba(38, 28, 33, 0.78);
   --signal-sakura: #e89ab3;
-  --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --motion-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
-  --motion-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
-  --motion-dur-fast: 140ms;
-  --motion-dur-base: 220ms;
-  --motion-dur-slow: 420ms;
-}
-
-.console-signal .signal-sidebar {
-  background: var(--signal-sidebar);
-  border-color: var(--signal-nav-line);
-  color: var(--signal-nav-text);
 }
 
 .console-signal {
   position: relative;
   isolation: isolate;
-}
-
-.console-signal .sidebar-header {
-  height: 64px;
-  padding-inline: 16px;
-  border-bottom-color: transparent;
-}
-
-.console-signal .sidebar-header-collapsed {
-  padding-inline: 16px;
-}
-
-.console-signal .signal-sidebar .sidebar-brand-title {
-  font-family: var(--signal-display-font);
-  font-size: 21px;
-  font-weight: 600;
-  color: var(--signal-nav-brand);
-}
-
-.console-signal .signal-sidebar .sidebar-brand-title:hover {
-  color: var(--signal-accent);
-}
-
-.console-signal .sidebar-nav {
-  padding-inline: 12px;
-}
-
-.console-signal .signal-sidebar .sidebar-link {
-  min-height: 38px;
-  border: 1px solid transparent;
-  padding: 8px 10px;
-  font-size: 13px;
-  color: var(--signal-nav-text);
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.console-signal .signal-sidebar .sidebar-link-active {
-  background: var(--signal-nav-active);
-  border-color: transparent;
-  color: var(--signal-nav-active-text);
-  box-shadow: none;
-}
-
-.console-signal .signal-sidebar .sidebar-link-active::before {
-  display: none;
-}
-
-.console-signal .signal-sidebar .sidebar-link-active > svg {
-  color: var(--signal-nav-active-text);
-}
-
-.console-signal .signal-sidebar .sidebar-link:hover {
-  background: var(--signal-nav-hover);
-  color: var(--signal-nav-strong);
-}
-
-.console-signal .signal-sidebar .sidebar-link-active:hover {
-  background: var(--signal-nav-active);
-  color: var(--signal-nav-active-text);
-}
-
-.console-signal .signal-sidebar :is(.sidebar-section-title, .sidebar-child-section) {
-  color: var(--signal-nav-muted);
-}
-
-/* VersionBadge sits on the dark sidebar; keep its amber update state, recolour the rest. */
-.console-signal .signal-sidebar .sidebar-brand > .relative > button:not([class*='bg-amber']) {
-  background: var(--signal-nav-hover);
-  color: var(--signal-nav-muted);
-}
-
-.console-signal .signal-sidebar .sidebar-brand > .relative > button:not([class*='bg-amber']):hover {
-  background: var(--signal-nav-active);
-  color: var(--signal-nav-active-text);
-}
-
-.console-signal .signal-sidebar .sidebar-brand .animate-pulse {
-  background: var(--signal-nav-line);
-}
-
-.console-signal .signal-header {
-  background: var(--signal-surface);
-  border-color: var(--signal-line);
-}
-
-.console-signal .header-inner { height: 56px; }
-
-@media (min-width: 1024px) {
-  .console-signal { --signal-nav-size: 224px; }
-  .console-signal.signal-nav-collapsed { --signal-nav-size: 72px; }
-  .console-signal .signal-sidebar { width: var(--signal-nav-size); }
-  .console-signal .signal-frame { margin-left: var(--signal-nav-size); }
-  .console-signal .signal-main { padding: 24px; }
-  .console-signal .header-inner { padding-inline: 24px; }
-}
-
-.console-signal :is(.header-avatar, .header-balance) {
-  box-shadow: inset 0 1px 0 var(--signal-highlight);
 }
 
 .console-signal .signal-main {
@@ -216,79 +111,14 @@
   max-width: none;
 }
 
-.console-signal :is(.signal-masthead, .signal-workspace-heading, .signal-channel-masthead, .signal-account-heading) {
-  padding-bottom: 22px;
-}
-
 .console-signal :is(h1, h2, h3) {
   letter-spacing: 0;
 }
 
-.console-signal :is(.signal-heading h1, .signal-workspace-heading h1, .signal-account-heading h1, .signal-channel-heading h1, .signal-payment-heading h1) {
-  font-family: var(--signal-display-font);
-  font-size: 26px;
-  line-height: 34px;
-  font-weight: 600;
-}
-
-.console-signal :is(.signal-mark, .signal-channel-mark, .signal-payment-heading__icon, .admin-overview-mark) {
-  border-radius: 8px;
-  background: var(--signal-accent-soft);
-  box-shadow: none;
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.btn, .input, .select-trigger) {
-  border-radius: 8px;
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary {
-  background: var(--signal-surface);
-  border-color: var(--signal-line);
-  box-shadow: none;
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary:hover:not(:disabled) {
-  border-color: var(--signal-control-line);
-  background: var(--signal-hover);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary {
-  border: 1px solid var(--signal-command);
-  background: var(--signal-command);
-  color: var(--signal-command-text);
-  box-shadow: none;
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled) {
-  background: var(--signal-command-hover);
-  border-color: var(--signal-command-hover);
-  color: var(--signal-command-text);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input {
-  background: var(--signal-surface);
-  box-shadow: none;
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .select-trigger {
-  box-shadow: none;
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.input:focus, .select-trigger-open) {
-  box-shadow: inset 0 1px 2px #00000008, 0 0 0 3px color-mix(in srgb, var(--signal-accent) 14%, transparent);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn:active:not(:disabled) {
-  transform: translateY(1px);
-  /* Tailwind v4 lifts/presses with `translate`/`scale`; cancel them as `transform` did under v3. */
-  translate: none;
-  scale: none;
-}
-
-/* Floating controls need separation; page sections keep their own flat layout. */
+/* Floating controls get one soft shadow; page sections stay flat. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.dropdown, .modal-content, .dialog-container),
 body:has(.console-signal) > .select-dropdown-portal {
-  box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-popover-shadow);
+  box-shadow: var(--signal-popover-shadow);
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.modal-footer, .dialog-footer) {
@@ -297,60 +127,6 @@ body:has(.console-signal) > .select-dropdown-portal {
 
 .console-signal :is(.signal-value, .signal-reading-value, .admin-metric-grid, .table-pagination) {
   font-variant-numeric: lining-nums tabular-nums;
-}
-
-.console-signal .signal-dashboard .signal-stats { display: block; }
-.console-signal .signal-dashboard .signal-masthead { padding-bottom: 20px; border: 0; }
-.console-signal .signal-dashboard .signal-lead-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.7fr); gap: 14px; }
-.console-signal .signal-dashboard .signal-lead-grid--simple { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
-.console-signal .signal-dashboard .signal-stat-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 16px; border: 0; background: transparent; box-shadow: none; }
-.console-signal .signal-dashboard .signal-stat-strip--models { grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(205px, 1.35fr); }
-.console-signal .signal-dashboard .signal-metric { display: flex; flex-direction: column; min-width: 0; padding: 18px; border: 1px solid var(--signal-line); border-radius: 8px; background: var(--signal-surface); overflow: hidden; box-shadow: none; }
-.console-signal .signal-dashboard .signal-lead-grid > .signal-metric { min-height: 164px; }
-.console-signal .signal-dashboard .signal-value { margin: 12px 0 0; color: var(--signal-text); font-size: 25px; font-weight: 600; line-height: 32px; }
-.console-signal .signal-dashboard .signal-lead-grid .signal-value { font-size: 28px; line-height: 36px; }
-.console-signal .signal-dashboard .signal-metric--balance .signal-value { color: var(--signal-text); }
-.console-signal .signal-dashboard .signal-value small { font-size: 14px; font-weight: 400; color: var(--signal-muted); }
-.console-signal .signal-dashboard .signal-metric--cost .signal-value { color: var(--signal-amber); }
-.console-signal .signal-dashboard .signal-label { font-size: 12px; }
-.console-signal .signal-dashboard .signal-label > svg { display: none; }
-.console-signal .signal-dashboard .signal-metric-foot { display: flex; flex-direction: column; gap: 3px; min-height: 54px; margin: auto -18px -18px; padding: 11px 18px; border-top: 1px solid var(--signal-line); background: transparent; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--signal-muted); overflow-wrap: anywhere; }
-.console-signal .signal-dashboard .signal-metric-foot strong { font-size: 12px; font-weight: 500; color: var(--signal-text); }
-.console-signal .signal-dashboard .signal-metric .signal-value { padding-bottom: 18px; }
-.console-signal .signal-dashboard .signal-token-split { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--signal-line); font-size: 11px; font-variant-numeric: tabular-nums; }
-.console-signal .signal-dashboard .signal-token-split dt { color: var(--signal-muted); }
-.console-signal .signal-dashboard .signal-token-split dd { margin-top: 5px; color: var(--signal-text); overflow-wrap: anywhere; }
-.console-signal .signal-dashboard .signal-actions { display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding: 12px 4px 0 12px; }
-.console-signal .signal-dashboard .signal-actions-label { display: block; padding: 0; color: var(--signal-text); font-size: 14px; font-weight: 600; }
-.console-signal .signal-dashboard .signal-actions-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 8px 16px; }
-.console-signal .signal-dashboard .signal-actions button { display: flex; align-items: center; justify-content: flex-start; min-width: 0; min-height: 48px; gap: 10px; padding: 8px 0; border-radius: 0; border-bottom: 1px solid var(--signal-line); background: transparent; color: var(--signal-text); text-align: left; font-size: 12px; }
-.console-signal .signal-dashboard .signal-actions button span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.console-signal .signal-dashboard .signal-actions button svg { color: var(--signal-muted); flex-shrink: 0; }
-.console-signal .signal-dashboard .signal-actions button:hover { color: var(--signal-accent); border-color: var(--signal-control-line); }
-.console-signal .signal-dashboard .signal-telemetry { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px 24px; margin-top: 12px; padding: 0; border: 0; }
-.console-signal .signal-dashboard .signal-telemetry .signal-reading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; padding: 0; border: 0; }
-.console-signal .signal-dashboard .signal-reading-value { margin: 0; font-size: 12px; font-weight: 500; }
-.console-signal .signal-dashboard .signal-platform-grid { gap: 12px; padding-block: 12px 20px; }
-.console-signal .signal-dashboard .signal-platform { padding: 16px; border: 1px solid var(--signal-line); border-radius: 8px; background: var(--signal-surface); }
-.console-signal .signal-dashboard .signal-platform-heading { margin-bottom: 14px; }
-
-@media (max-width: 1279px) {
-  .console-signal .signal-dashboard .signal-lead-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .console-signal .signal-dashboard .signal-actions { grid-column: 1 / -1; padding: 4px 0 0; }
-  .console-signal .signal-dashboard .signal-actions-list { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .console-signal .signal-dashboard .signal-stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .console-signal .signal-dashboard .signal-model-card { grid-column: 1 / -1; }
-  .console-signal .signal-dashboard .signal-model-summary { max-width: 400px; }
-}
-
-@media (max-width: 479px) {
-  .console-signal .signal-dashboard .signal-metric { padding: 14px; }
-  .console-signal .signal-dashboard .signal-metric-foot { margin-inline: -14px; margin-bottom: -14px; padding-inline: 14px; }
-  .console-signal .signal-dashboard .signal-lead-grid .signal-value { font-size: 23px; }
-  .console-signal .signal-dashboard .signal-value { font-size: 22px; }
-  .console-signal .signal-dashboard .signal-actions-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .console-signal .signal-dashboard .signal-telemetry { justify-content: flex-start; }
-  .console-signal .signal-dashboard .signal-lead-grid--simple > .signal-metric { grid-column: 1 / -1; }
 }
 
 .console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):not([aria-pressed='true']) {
@@ -363,19 +139,11 @@ body:has(.console-signal) > .select-dropdown-portal {
   color: var(--signal-text);
   border-color: var(--signal-accent);
   background: var(--signal-accent-soft);
-  box-shadow: inset 0 1px 0 var(--signal-highlight), inset 0 -2px var(--signal-accent);
+  box-shadow: inset 0 -2px var(--signal-accent);
 }
 
 .console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):hover:not(:disabled):not([aria-pressed='true']) {
   border-color: var(--signal-control-line);
-}
-
-.console-signal .signal-checkout-summary {
-  box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow);
-}
-
-.console-signal .signal-checkout-summary__header {
-  background: var(--signal-raised);
 }
 
 .console-signal .signal-payment [data-testid='payment-method-label'] {
@@ -385,29 +153,15 @@ body:has(.console-signal) > .select-dropdown-portal {
   line-height: 18px;
 }
 
-.console-signal .signal-profile :is(.rounded-3xl, .rounded-2xl) {
-  border-radius: 8px;
-}
-
-.console-signal.signal-admin .signal-admin-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--signal-text);
-}
-
 .console-signal.signal-admin .table-page-layout {
-  gap: 16px;
   min-width: 0;
 }
 
+/* Admin tables sit in a hairline box (user pages keep them flush). */
 .console-signal.signal-admin .signal-main .table-page-layout .table-scroll-container {
   border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow);
+  border-radius: calc(var(--ui-radius) * 2);
+  box-shadow: none;
 }
 
 .console-signal.signal-admin .table-scroll-container :is(th, td) {
@@ -456,7 +210,7 @@ body:has(.console-signal) > .select-dropdown-portal {
   min-height: 36px;
   margin-left: 0;
   border: 1px solid var(--signal-line);
-  border-radius: 6px;
+  border-radius: calc(var(--ui-radius) * 1.5);
   background: var(--signal-surface);
   color: var(--signal-muted);
 }
@@ -470,7 +224,6 @@ body:has(.console-signal) > .select-dropdown-portal {
   background: var(--signal-accent-soft);
   border-color: var(--signal-accent);
   color: var(--signal-accent);
-  box-shadow: inset 0 1px 0 var(--signal-highlight);
 }
 
 .console-signal.signal-admin :is(.text-gray-900, .text-gray-800, .text-gray-700) {
@@ -485,20 +238,6 @@ body:has(.console-signal) > .select-dropdown-portal {
   border-color: var(--signal-line);
   background-color: var(--signal-surface);
 }
-
-.console-signal .admin-overview-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--signal-line);
-}
-
-.admin-overview-identity { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.admin-overview-mark { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--signal-line); color: var(--signal-accent); }
-.admin-overview-label { font-size: 10px; color: var(--signal-muted); }
-.admin-overview-identity p { margin-top: 4px; font-size: 25px; line-height: 32px; font-weight: 600; }
 
 .console-signal .admin-metric-grid > .card {
   padding: 20px;
@@ -544,31 +283,11 @@ body:has(.console-signal) > .select-dropdown-portal {
 
 @media (max-width: 639px) {
   .console-signal .table-pagination button:not(.btn) { min-height: 44px; }
-  .console-signal .signal-sidebar .sidebar-link { min-height: 44px; }
   .console-signal .admin-metric-grid { gap: 10px; }
   .console-signal .admin-metric-grid > .card { padding: 14px 12px; }
   .console-signal .admin-metric-grid > .card > div { flex-direction: column; gap: 8px; }
   .console-signal .admin-chart-toolbar .ml-auto { margin-left: 0; }
-  .console-signal.signal-admin .table-page-layout.mobile-mode { height: auto; min-height: calc(100dvh - 120px); }
   .console-signal.signal-admin .signal-main .table-page-layout.mobile-mode .table-scroll-container { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-}
-
-@media (max-width: 479px) {
-  .console-signal .header-actions { gap: 0; }
-  .console-signal .header-actions > :is(button, div) > button,
-  .console-signal .header-actions > button {
-    min-width: 36px;
-    min-height: 40px;
-    padding-inline: 6px;
-  }
-  .console-signal .header-subscriptions > button > div { display: none; }
-  .console-signal .header-locale > button > svg { display: none; }
-  .console-signal .header-identity { max-width: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn:active:not(:disabled) { transform: none; }
-  .console-signal .signal-dashboard .signal-actions button { transition: none; }
 }
 
 .console-signal.model-plaza-public {
@@ -591,103 +310,9 @@ body:has(.console-signal) > .select-dropdown-portal {
 .console-signal .custom-page-layout > .card,
 .console-signal .canvas-page-layout > .card {
   border: 1px solid var(--signal-line);
-  border-radius: 8px;
+  border-radius: calc(var(--ui-radius) * 2);
   background: var(--signal-surface);
   box-shadow: none;
-}
-
-.console-signal .signal-editorial-heading,
-.console-signal .signal-editorial-heading.signal-masthead {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 116px;
-  padding: 20px 0 26px;
-  overflow: hidden;
-  border-bottom: 1px solid var(--signal-line);
-  margin-bottom: 24px;
-}
-
-.console-signal .signal-editorial-copy {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-}
-
-.console-signal .signal-dashboard .signal-editorial-heading h1,
-.console-signal .model-plaza-content .signal-editorial-heading h1 {
-  margin-top: 12px;
-  font-family: var(--signal-display-font);
-  font-size: 32px;
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: 0;
-  overflow-wrap: anywhere;
-}
-
-.console-signal .signal-editorial-heading p {
-  margin-top: 12px;
-  color: var(--signal-muted);
-  font-size: 13px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.console-signal .signal-editorial-index {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-family: 'SFMono-Regular', Consolas, monospace;
-  font-size: 10px;
-  color: var(--signal-muted);
-}
-
-.console-signal .signal-editorial-index::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  flex-shrink: 0;
-  background: var(--signal-sakura, var(--signal-accent));
-}
-
-.console-signal .signal-editorial-heading > button {
-  position: relative;
-  align-self: flex-end;
-  flex-shrink: 0;
-}
-
-.console-signal .signal-dashboard .signal-lead-grid {
-  gap: 18px;
-  margin-top: 4px;
-}
-
-.console-signal .signal-dashboard .signal-metric--balance {
-  background: var(--signal-hero);
-  border-color: var(--signal-hero);
-  color: var(--signal-hero-text);
-}
-
-.console-signal .signal-dashboard .signal-metric--balance :is(.signal-value, .signal-metric-foot strong) {
-  color: var(--signal-hero-text);
-}
-
-.console-signal .signal-dashboard .signal-metric--balance :is(.signal-label, .signal-metric-foot) {
-  color: var(--signal-hero-muted);
-  border-color: var(--signal-hero-line);
-}
-
-.console-signal .signal-dashboard .signal-metric--balance .signal-label > span {
-  color: var(--signal-hero-mark);
-}
-
-.console-signal .admin-overview-identity p {
-  font-family: var(--signal-display-font);
-}
-
-.console-signal .plaza-heading:not(.plaza-heading-embedded) {
-  min-height: 146px;
 }
 
 .console-signal .plaza-group {
@@ -697,118 +322,4 @@ body:has(.console-signal) > .select-dropdown-portal {
 .console-signal .plaza-group-header {
   background: var(--signal-surface);
   border-top: 2px solid var(--signal-control-line);
-}
-
-.console-signal .signal-editorial-heading::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 72px;
-  height: 1px;
-  background: var(--signal-accent);
-  transform-origin: left;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .console-signal .signal-editorial-copy {
-    animation: console-content-enter 560ms var(--motion-out) backwards;
-  }
-
-  .console-signal .signal-editorial-heading::after {
-    animation: console-line-enter 700ms var(--motion-out) backwards;
-  }
-
-  /* 卡片入场：stagger 展开（最多 9 张，超出统一走末位延迟） */
-  .console-signal :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric,
-  .console-signal .admin-metric-grid > .card,
-  .console-signal .plaza-group {
-    animation: console-content-enter 460ms var(--motion-out) var(--console-enter-delay, 0ms) backwards;
-  }
-
-  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(2) { --console-enter-delay: 45ms; }
-  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(3) { --console-enter-delay: 90ms; }
-  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(4) { --console-enter-delay: 135ms; }
-  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(5) { --console-enter-delay: 180ms; }
-  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(6) { --console-enter-delay: 225ms; }
-  .console-signal :is(.signal-lead-grid, .signal-stat-strip, .admin-metric-grid) > :nth-child(n + 7) { --console-enter-delay: 270ms; }
-
-  /* 交互过渡统一走 motion token */
-  .console-signal :is(.btn, .signal-actions button, .plaza-seg-item) {
-    transition: transform var(--motion-dur-fast) var(--motion-out),
-      background-color 160ms ease, color 160ms ease, border-color 160ms ease,
-      box-shadow var(--motion-dur-base) var(--motion-out),
-      translate var(--motion-dur-fast) var(--motion-out), scale var(--motion-dur-fast) var(--motion-out);
-  }
-
-  .console-signal .signal-actions button > svg:last-child {
-    transition: transform 200ms var(--motion-out);
-  }
-
-  .console-signal .signal-sidebar .sidebar-link > svg {
-    transition: transform 200ms var(--motion-out), color 160ms ease;
-  }
-
-  .console-signal :is(.btn, .signal-actions button):active:not(:disabled) {
-    transform: translateY(1px) scale(0.985);
-    translate: none;
-    scale: none;
-  }
-
-  /* 卡片 hover：轻微上浮 + 边缘提亮 + 外发光一次到位 */
-  .console-signal :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric,
-  .console-signal .admin-metric-grid > .card,
-  .console-signal .signal-dashboard .signal-platform {
-    transition: transform var(--motion-dur-base) var(--motion-out),
-      border-color var(--motion-dur-base) ease, box-shadow var(--motion-dur-base) var(--motion-out),
-      translate var(--motion-dur-base) var(--motion-out);
-  }
-
-  /* The trailing values cover the translate/scale entries added above; shorter lists ignore them. */
-  .console-signal :is(.btn, .signal-actions button, .plaza-seg-item, .signal-sidebar .sidebar-link) {
-    transition-timing-function: var(--motion-out), ease, ease, ease, var(--motion-out), var(--motion-out), var(--motion-out);
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    .console-signal .signal-sidebar .sidebar-link:hover > svg { transform: translateX(2px); }
-    .console-signal .signal-actions button:hover > svg:last-child { transform: translateX(4px); }
-    .console-signal .btn-primary:hover:not(:disabled) { transform: translateY(-1px); translate: none; }
-    .console-signal :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric:hover,
-    .console-signal .admin-metric-grid > .card:hover {
-      transform: translateY(-2px);
-      translate: none;
-      border-color: var(--signal-control-line);
-      box-shadow: 0 6px 16px #2024260d, 0 2px 4px #20242608;
-    }
-    .dark :is(.signal-lead-grid, .signal-stat-strip) > .signal-metric:hover,
-    .dark .admin-metric-grid > .card:hover {
-      box-shadow: 0 8px 20px #00000033;
-    }
-  }
-
-  /* 数值微动：指标刷新时轻微浮入，避免生硬替换 */
-  .console-signal .signal-value {
-    transition: opacity var(--motion-dur-fast) ease;
-  }
-}
-
-@keyframes console-line-enter {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
-}
-
-@keyframes console-content-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@media (max-width: 639px) {
-  .console-signal .signal-editorial-heading,
-  .console-signal .signal-editorial-heading.signal-masthead,
-  .console-signal .plaza-heading:not(.plaza-heading-embedded) {
-    min-height: 112px;
-    padding-block: 18px;
-    margin-bottom: 20px;
-  }
-
 }
