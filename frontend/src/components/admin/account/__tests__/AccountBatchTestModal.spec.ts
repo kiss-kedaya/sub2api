@@ -154,9 +154,8 @@ describe('AccountBatchTestModal', () => {
     await flushPromises()
 
     const box = wrapper.get('[data-test="test-row-select-11-gpt-5.4"]')
-    const el = box.element as HTMLInputElement
-    el.checked = true
-    await box.trigger('change')
+    await box.trigger('click')
+    expect(box.attributes('aria-checked')).toBe('true')
     await wrapper.get('[data-test="test-selected-models"]').trigger('click')
     await vi.waitFor(() => {
       expect(global.fetch).toHaveBeenCalledTimes(1)
@@ -199,8 +198,8 @@ describe('AccountBatchTestModal', () => {
     ])
     const wrapper = mountModal()
     await flushPromises()
-    await wrapper.get('[data-test="test-row-select-11-gpt-alpha"]').setValue(true)
-    await wrapper.get('[data-test="test-row-select-12-gpt-beta"]').setValue(true)
+    await wrapper.get('[data-test="test-row-select-11-gpt-alpha"]').trigger('click')
+    await wrapper.get('[data-test="test-row-select-12-gpt-beta"]').trigger('click')
     await wrapper.get('input[type="search"]').setValue('gpt-beta')
     expect(wrapper.find('[data-test="test-row-select-11-gpt-alpha"]').exists()).toBe(false)
     await wrapper.get('[data-test="test-selected-models"]').trigger('click')

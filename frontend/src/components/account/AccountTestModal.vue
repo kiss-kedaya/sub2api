@@ -121,14 +121,7 @@
         </div>
 
         <!-- Copy Button -->
-        <button
-          v-if="outputLines.length > 0"
-          @click="copyOutput"
-          class="absolute right-2 top-2 rounded-lg bg-gray-800/80 p-1.5 text-gray-400 opacity-0 transition-all hover:bg-gray-700 hover:text-white group-hover:opacity-100"
-          :title="t('admin.accounts.copyOutput')"
-        >
-          <Icon name="link" size="sm" :stroke-width="2" />
-        </button>
+        <UButton v-if="outputLines.length > 0" color="neutral" variant="soft" size="xs" icon="i-lucide-copy" square class="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" :title="t('admin.accounts.copyOutput')" :aria-label="t('admin.accounts.copyOutput')" @click="copyOutput" />
       </div>
 
       <div v-if="generatedImages.length > 0" class="space-y-2">
@@ -161,12 +154,7 @@
             class="fixed inset-0 z-100 flex items-center justify-center bg-black/80 p-4"
             @click.self="previewImageUrl = ''"
           >
-            <button
-              class="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white transition-colors hover:bg-black/70"
-              @click="previewImageUrl = ''"
-            >
-              <Icon name="x" size="lg" :stroke-width="2" />
-            </button>
+            <UButton color="neutral" variant="solid" icon="i-lucide-x" square class="absolute right-4 top-4 rounded-full" :aria-label="t('common.close')" @click="previewImageUrl = ''" />
             <img
               :src="previewImageUrl"
               alt="preview"
@@ -197,26 +185,8 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button
-          @click="handleClose"
-          class="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500"
-        >
-          {{ t('common.close') }}
-        </button>
-        <button
-          @click="startTest"
-          :disabled="status === 'connecting' || !selectedModelId"
-          :class="[
-            'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-            status === 'connecting' || !selectedModelId
-              ? 'cursor-not-allowed bg-primary-400 text-white'
-              : status === 'success'
-                ? 'bg-green-500 text-white hover:bg-green-600'
-                : status === 'error'
-                  ? 'bg-orange-500 text-white hover:bg-orange-600'
-                  : 'bg-primary-500 text-white hover:bg-primary-600'
-          ]"
-        >
+        <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="handleClose" />
+        <UButton :disabled="status === 'connecting' || !selectedModelId" :color="status === 'success' ? 'success' : status === 'error' ? 'warning' : 'primary'" @click="startTest">
           <Icon
             v-if="status === 'connecting'"
             name="refresh"
@@ -235,7 +205,7 @@
                   : t('admin.accounts.retry')
             }}
           </span>
-        </button>
+        </UButton>
       </div>
     </template>
   </BaseDialog>

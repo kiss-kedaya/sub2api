@@ -1,66 +1,84 @@
 <template>
   <BaseDialog :show="show" :title="t('admin.accounts.customUsage.title')" width="wide" :close-on-escape="!saving" :show-close-button="!saving" @close="close">
-    <div v-if="loading" class="flex items-center justify-center gap-2 py-12 text-sm text-gray-500" role="status"><Icon name="refresh" size="sm" class="animate-spin motion-reduce:animate-none" />{{ t('admin.accounts.customUsage.loading') }}</div>
+    <div v-if="loading" class="flex items-center justify-center gap-2 py-12 text-sm text-muted" role="status"><UIcon name="i-lucide-loader-circle" class="size-4 animate-spin motion-reduce:animate-none" />{{ t('admin.accounts.customUsage.loading') }}</div>
     <div v-else-if="loadFailed" class="space-y-3 py-6 text-sm" role="alert">
       <p>{{ t('admin.accounts.customUsage.loadFailed') }}</p>
-      <button class="btn btn-secondary" type="button" @click="load">{{ t('admin.accounts.customUsage.retry') }}</button>
+      <UButton color="neutral" variant="outline" :label="t('admin.accounts.customUsage.retry')" @click="load" />
     </div>
-    <form v-else id="custom-usage-form" class="space-y-4" @submit.prevent="save">
-      <div class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50/70 px-4 py-3 dark:border-dark-600 dark:bg-dark-800/60">
-        <div><h4 class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ t('admin.accounts.customUsage.enabled') }}</h4><p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ account?.name }}</p></div>
+    <form v-else id="custom-usage-form" class="space-y-5" @submit.prevent="save">
+      <div class="flex items-center justify-between gap-4">
+        <div><h4 class="text-sm font-medium text-highlighted">{{ t('admin.accounts.customUsage.enabled') }}</h4><p class="mt-0.5 text-xs text-muted">{{ account?.name }}</p></div>
         <Toggle v-model="draft.enabled" :disabled="busy" :aria-label="t('admin.accounts.customUsage.enabled')" />
       </div>
       <fieldset :disabled="busy" class="space-y-5">
-        <div>
-          <span id="custom-usage-template-label" class="input-label">{{ t('admin.accounts.customUsage.template') }}</span>
-          <div class="flex flex-wrap gap-2" role="group" aria-labelledby="custom-usage-template-label">
-            <button v-for="template in templates" :key="template" type="button" :data-template="template" :aria-pressed="draft.template === template" :title="t('admin.accounts.customUsage.templateHint')" class="rounded-lg border px-3 py-1.5 text-sm transition-colors" :class="draft.template === template ? 'border-primary-300 bg-primary-50 text-primary-700 dark:border-primary-700 dark:bg-primary-900/20 dark:text-primary-300' : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-dark-600 dark:text-gray-400 dark:hover:bg-dark-700'" @click="draft.template = template; applyTemplate()">{{ t('admin.accounts.customUsage.templates.' + template) }}</button>
+        <UFormField :label="t('admin.accounts.customUsage.template')" :help="t('admin.accounts.customUsage.templateHint')">
+          <div class="flex flex-wrap gap-2" role="group" :aria-label="t('admin.accounts.customUsage.template')">
+            <UButton
+              v-for="template in templates"
+              :key="template"
+              color="neutral"
+              :variant="draft.template === template ? 'soft' : 'outline'"
+              :data-template="template"
+              :aria-pressed="draft.template === template"
+              :title="t('admin.accounts.customUsage.templateHint')"
+              :label="t('admin.accounts.customUsage.templates.' + template)"
+              @click="draft.template = template; applyTemplate()"
+            />
           </div>
-        </div>
+        </UFormField>
         <div class="grid gap-4 md:grid-cols-2">
-        <div>
-          <label for="custom-usage-base" class="input-label">{{ t('admin.accounts.customUsage.baseUrl') }}</label>
-          <input id="custom-usage-base" v-model="draft.base_url" type="url" class="input" placeholder="https://api.example.com" autocomplete="off" />
+          <UFormField :label="t('admin.accounts.customUsage.baseUrl')">
+            <UInput id="custom-usage-base" v-model="draft.base_url" type="url" class="w-full" placeholder="https://api.example.com" autocomplete="off" />
+          </UFormField>
+          <UFormField v-for="field in visibleSecretFields" :key="field.name" :label="t('admin.accounts.customUsage.' + field.label)">
+            <UInput :id="'custom-usage-' + field.name" v-model="draft[field.name]" type="password" class="w-full font-mono" autocomplete="new-password" spellcheck="false" data-1p-ignore data-lpignore="true" :disabled="draft[field.clear]" :placeholder="draft[field.has] ? t('admin.accounts.customUsage.secretSaved') : t('admin.accounts.customUsage.secretPlaceholder')" />
+            <UCheckbox v-if="draft[field.has]" v-model="draft[field.clear]" class="mt-2" :label="t('admin.accounts.customUsage.clearSecret')" @update:model-value="draft[field.name] = ''" />
+          </UFormField>
         </div>
-          <div v-for="field in visibleSecretFields" :key="field.name">
-            <label :for="'custom-usage-' + field.name" class="input-label">{{ t('admin.accounts.customUsage.' + field.label) }}</label>
-            <input :id="'custom-usage-' + field.name" v-model="draft[field.name]" type="password" class="input font-mono" autocomplete="new-password" spellcheck="false" data-1p-ignore data-lpignore="true" :disabled="draft[field.clear]" :placeholder="draft[field.has] ? t('admin.accounts.customUsage.secretSaved') : t('admin.accounts.customUsage.secretPlaceholder')" />
-            <label v-if="draft[field.has]" class="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"><input v-model="draft[field.clear]" type="checkbox" class="checkbox" @change="draft[field.name] = ''" />{{ t('admin.accounts.customUsage.clearSecret') }}</label>
-          </div>
-        </div>
-        <div v-if="credentialMode || visibleSecretFields.length" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-          <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('admin.accounts.customUsage.credential') }}</span>
-          <span v-if="credentialMode" class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 dark:bg-emerald-900/25 dark:text-emerald-300">{{ credentialMode }}</span>
-          <span v-if="visibleSecretFields.length" class="text-gray-400 dark:text-dark-400">{{ t('admin.accounts.customUsage.credentialOverride') }}</span>
+        <div v-if="credentialMode || visibleSecretFields.length" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+          <span class="font-medium text-default">{{ t('admin.accounts.customUsage.credential') }}</span>
+          <UBadge v-if="credentialMode" color="success" variant="subtle" size="sm">{{ credentialMode }}</UBadge>
+          <span v-if="visibleSecretFields.length" class="text-dimmed">{{ t('admin.accounts.customUsage.credentialOverride') }}</span>
         </div>
         <div :class="draft.template === 'newapi' || draft.template === 'custom' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'" class="grid gap-4">
-          <div v-if="draft.template === 'newapi' || draft.template === 'custom'"><label for="custom-usage-user" class="input-label">{{ t('admin.accounts.customUsage.userId') }}</label><input id="custom-usage-user" v-model="draft.user_id" class="input" autocomplete="off" /></div>
-          <div><label for="custom-usage-timeout" class="input-label">{{ t('admin.accounts.customUsage.timeout') }}</label><input id="custom-usage-timeout" v-model.number="draft.timeout_seconds" type="number" min="1" max="30" step="1" class="input" /></div>
-          <div><label for="custom-usage-interval" class="input-label">{{ t('admin.accounts.customUsage.interval') }}</label><input id="custom-usage-interval" v-model.number="draft.interval_minutes" type="number" min="0" step="1" class="input" /></div>
+          <UFormField v-if="draft.template === 'newapi' || draft.template === 'custom'" :label="t('admin.accounts.customUsage.userId')"><UInput id="custom-usage-user" v-model="draft.user_id" class="w-full" autocomplete="off" /></UFormField>
+          <UFormField :label="t('admin.accounts.customUsage.timeout')"><UInput id="custom-usage-timeout" v-model.number="draft.timeout_seconds" type="number" min="1" max="30" step="1" class="w-full" /></UFormField>
+          <UFormField :label="t('admin.accounts.customUsage.interval')" :help="t('admin.accounts.customUsage.intervalDefault')"><UInput id="custom-usage-interval" v-model.number="draft.interval_minutes" type="number" min="0" step="1" class="w-full" /></UFormField>
         </div>
-        <p class="text-xs text-gray-400 dark:text-dark-400">{{ t('admin.accounts.customUsage.intervalDefault') }}</p>
-        <section class="space-y-4 border-t border-gray-200 pt-4 dark:border-dark-600">
-          <div><label for="custom-usage-url" class="input-label">{{ t('admin.accounts.customUsage.requestUrl') }}</label><div class="flex items-center gap-2"><span class="rounded-sm bg-gray-100 px-2 py-2 text-xs font-medium text-gray-500 dark:bg-dark-700">GET</span><input id="custom-usage-url" v-model="draft.request.url" class="input font-mono text-sm" spellcheck="false" autocomplete="off" /></div></div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.customUsage.variables') }} <code v-for="variable in variables" :key="variable" class="mr-2 select-all">{{ variable }}</code></p>
-          <div class="grid gap-4 md:grid-cols-2">
-          <div><label for="custom-usage-headers" class="input-label">{{ t('admin.accounts.customUsage.headers') }}</label><textarea id="custom-usage-headers" v-model="headersText" rows="8" class="input font-mono text-xs" spellcheck="false" autocomplete="off" /></div>
-          <div><label for="custom-usage-extractor" class="input-label">{{ t('admin.accounts.customUsage.extractor') }}</label><textarea id="custom-usage-extractor" v-model="extractorText" rows="8" class="input font-mono text-xs" spellcheck="false" aria-describedby="custom-usage-extractor-hint" /></div>
-          </div>
-          <p id="custom-usage-extractor-hint" class="input-hint">{{ t('admin.accounts.customUsage.extractorHint') }}</p>
-        </section>
+        <USeparator />
+        <UFormField :label="t('admin.accounts.customUsage.requestUrl')">
+          <UInput id="custom-usage-url" v-model="draft.request.url" class="w-full font-mono" spellcheck="false" autocomplete="off">
+            <template #leading><span class="text-xs font-medium text-muted">GET</span></template>
+          </UInput>
+          <template #help>{{ t('admin.accounts.customUsage.variables') }} <code v-for="variable in variables" :key="variable" class="mr-2 select-all">{{ variable }}</code></template>
+        </UFormField>
+        <div class="grid gap-4 md:grid-cols-2">
+          <UFormField :label="t('admin.accounts.customUsage.headers')"><UTextarea id="custom-usage-headers" v-model="headersText" :rows="8" class="w-full font-mono" spellcheck="false" autocomplete="off" /></UFormField>
+          <UFormField :label="t('admin.accounts.customUsage.extractor')"><UTextarea id="custom-usage-extractor" v-model="extractorText" :rows="8" class="w-full font-mono" spellcheck="false" aria-describedby="custom-usage-extractor-hint" /></UFormField>
+        </div>
+        <p id="custom-usage-extractor-hint" class="text-xs text-muted">{{ t('admin.accounts.customUsage.extractorHint') }}</p>
       </fieldset>
-      <p v-if="validation" class="text-sm text-red-600 dark:text-red-400" role="alert">{{ t('admin.accounts.customUsage.errors.' + validation) }}</p>
-      <p v-if="actionError" class="text-sm text-red-600 dark:text-red-400" role="alert">{{ t('admin.accounts.customUsage.' + actionError) }}</p>
-      <div v-if="testResult" class="rounded-lg border border-gray-200 p-4 dark:border-dark-600" data-testid="custom-usage-test-result"><p class="mb-2 text-sm font-medium">{{ t('admin.accounts.customUsage.testResult') }}</p><CustomUsageResult :result="testResult" /></div>
+      <p v-if="validation" class="text-sm text-error" role="alert">{{ t('admin.accounts.customUsage.errors.' + validation) }}</p>
+      <p v-if="actionError" class="text-sm text-error" role="alert">{{ t('admin.accounts.customUsage.' + actionError) }}</p>
+      <div v-if="testResult" class="rounded-md bg-muted p-4" data-testid="custom-usage-test-result"><p class="mb-2 text-sm font-medium text-highlighted">{{ t('admin.accounts.customUsage.testResult') }}</p><CustomUsageResult :result="testResult" /></div>
     </form>
     <template #footer>
       <div class="flex w-full flex-wrap items-center justify-between gap-3">
-        <div><button type="button" class="btn btn-secondary" :disabled="busy || loading || loadFailed || !draft.enabled" @click="test"><Icon v-if="testing" name="refresh" size="sm" class="mr-1 animate-spin motion-reduce:animate-none" />{{ t('admin.accounts.customUsage.test') }}</button><span class="ml-2 text-xs text-gray-400">{{ t('admin.accounts.customUsage.testHint') }}</span></div>
-        <div class="flex gap-2"><button type="button" class="btn btn-secondary" :disabled="saving" @click="close">{{ t('common.cancel') }}</button><button type="submit" form="custom-usage-form" class="btn btn-primary" :disabled="busy || loading || loadFailed">{{ saving ? t('admin.accounts.customUsage.saving') : t('common.save') }}</button></div>
+        <div class="flex items-center gap-2">
+          <UButton color="neutral" variant="outline" :disabled="busy || loading || loadFailed || !draft.enabled" @click="test">
+            <UIcon v-if="testing" name="i-lucide-loader-circle" class="size-4 animate-spin motion-reduce:animate-none" />{{ t('admin.accounts.customUsage.test') }}
+          </UButton>
+          <span class="text-xs text-dimmed">{{ t('admin.accounts.customUsage.testHint') }}</span>
+        </div>
+        <div class="flex gap-2">
+          <UButton color="neutral" variant="subtle" :disabled="saving" :label="t('common.cancel')" @click="close" />
+          <UButton type="submit" form="custom-usage-form" :disabled="busy || loading || loadFailed" :label="saving ? t('admin.accounts.customUsage.saving') : t('common.save')" />
+        </div>
       </div>
     </template>
   </BaseDialog>
 </template>
+
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -69,7 +87,6 @@ import { getConfig, saveConfig, queryUsage, type CustomUsageConfig, type CustomU
 import { createUsageDraft, parseUsageEditors, usagePayload, usageTemplate, validateUsageDraft, type UsageValidationError } from '@/utils/customUsage'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
-import Icon from '@/components/icons/Icon.vue'
 import CustomUsageResult from './CustomUsageResult.vue'
 const props = defineProps<{ show: boolean; account: AccountListItem | null }>()
 const emit = defineEmits<{ close: []; saved: [id: number, config: Pick<CustomUsageConfig, 'enabled' | 'interval_minutes'>] }>()

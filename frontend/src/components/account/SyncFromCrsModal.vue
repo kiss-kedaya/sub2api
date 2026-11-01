@@ -28,44 +28,20 @@
       </div>
 
       <div class="grid grid-cols-1 gap-4">
-        <div>
-          <label for="crs-base-url" class="input-label">{{ t('admin.accounts.crsBaseUrl') }}</label>
-          <input
-            id="crs-base-url"
-            v-model="form.base_url"
-            type="text"
-            class="input"
-            required
-            :placeholder="t('admin.accounts.crsBaseUrlPlaceholder')"
-          />
-        </div>
+        <UFormField :label="t('admin.accounts.crsBaseUrl')" required>
+          <UInput id="crs-base-url" v-model="form.base_url" class="w-full" required :placeholder="t('admin.accounts.crsBaseUrlPlaceholder')" />
+        </UFormField>
 
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label for="crs-username" class="input-label">{{ t('admin.accounts.crsUsername') }}</label>
-            <input id="crs-username" v-model="form.username" type="text" class="input" required autocomplete="username" />
-          </div>
-          <div>
-            <label for="crs-password" class="input-label">{{ t('admin.accounts.crsPassword') }}</label>
-            <input
-              id="crs-password"
-              v-model="form.password"
-              type="password"
-              class="input"
-              required
-              autocomplete="current-password"
-            />
-          </div>
+          <UFormField :label="t('admin.accounts.crsUsername')" required>
+            <UInput id="crs-username" v-model="form.username" class="w-full" required autocomplete="username" />
+          </UFormField>
+          <UFormField :label="t('admin.accounts.crsPassword')" required>
+            <UInput id="crs-password" v-model="form.password" type="password" class="w-full" required autocomplete="current-password" />
+          </UFormField>
         </div>
 
-        <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-dark-300">
-          <input
-            v-model="form.sync_proxies"
-            type="checkbox"
-            class="rounded-sm border-gray-300 dark:border-dark-600"
-          />
-          {{ t('admin.accounts.syncProxies') }}
-        </label>
+        <UCheckbox v-model="form.sync_proxies" :label="t('admin.accounts.syncProxies')" />
       </div>
     </form>
 
@@ -78,7 +54,7 @@
       >
         <div class="mb-2 text-sm font-medium text-gray-700 dark:text-dark-300">
           {{ t('admin.accounts.crsExistingAccounts') }}
-          <span class="ml-1 text-xs text-gray-400">({{ previewResult.existing_accounts.length }})</span>
+          <span class="ml-1 text-xs text-dimmed">({{ previewResult.existing_accounts.length }})</span>
         </div>
         <div class="max-h-32 overflow-auto text-xs text-gray-500 dark:text-dark-400">
           <div
@@ -97,42 +73,32 @@
       <!-- New accounts (selectable) -->
       <div v-if="previewResult.new_accounts.length">
         <div class="mb-2 flex items-center justify-between">
-          <div class="text-sm font-medium text-gray-900 dark:text-white">
+          <div class="text-sm font-medium text-highlighted">
             {{ t('admin.accounts.crsNewAccounts') }}
-            <span class="ml-1 text-xs text-gray-400">({{ previewResult.new_accounts.length }})</span>
+            <span class="ml-1 text-xs text-dimmed">({{ previewResult.new_accounts.length }})</span>
           </div>
           <div class="flex gap-2">
-            <button
-              type="button"
-              class="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
-              @click="selectAll"
-            >{{ t('admin.accounts.crsSelectAll') }}</button>
-            <button
-              type="button"
-              class="text-xs text-gray-500 hover:text-gray-600 dark:text-gray-400"
-              @click="selectNone"
-            >{{ t('admin.accounts.crsSelectNone') }}</button>
+            <UButton variant="link" size="xs" class="p-0" :label="t('admin.accounts.crsSelectAll')" @click="selectAll" />
+            <UButton color="neutral" variant="link" size="xs" class="p-0" :label="t('admin.accounts.crsSelectNone')" @click="selectNone" />
           </div>
         </div>
         <div
-          class="max-h-48 overflow-auto rounded-lg border border-gray-200 p-2 dark:border-dark-600"
+          class="max-h-48 overflow-auto rounded-md bg-muted/50 p-1"
         >
-          <label
+          <UCheckbox
             v-for="acc in previewResult.new_accounts"
             :key="acc.crs_account_id"
-            class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-dark-700/40"
+            :model-value="selectedIds.has(acc.crs_account_id)"
+            class="rounded-md px-2 py-1.5 hover:bg-elevated"
+            @update:model-value="toggleSelect(acc.crs_account_id)"
           >
-            <input
-              type="checkbox"
-              :checked="selectedIds.has(acc.crs_account_id)"
-              class="rounded-sm border-gray-300 dark:border-dark-600"
-              @change="toggleSelect(acc.crs_account_id)"
-            />
-            <span
-              class="inline-block rounded-sm bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
-            >{{ acc.platform }} / {{ acc.type }}</span>
-            <span class="truncate text-sm text-gray-700 dark:text-dark-300">{{ acc.name }}</span>
-          </label>
+            <template #label>
+              <span class="flex min-w-0 items-center gap-2">
+                <UBadge color="neutral" variant="subtle" size="sm">{{ acc.platform }} / {{ acc.type }}</UBadge>
+                <span class="truncate text-sm text-default">{{ acc.name }}</span>
+              </span>
+            </template>
+          </UCheckbox>
         </div>
         <div class="mt-1 text-xs text-gray-400">
           {{ t('admin.accounts.crsSelectedCount', { count: selectedIds.size }) }}
@@ -164,7 +130,7 @@
       <div
         class="space-y-2 rounded-xl border border-gray-200 p-4 dark:border-dark-700"
       >
-        <div class="text-sm font-medium text-gray-900 dark:text-white">
+        <div class="text-sm font-medium text-highlighted">
           {{ t('admin.accounts.syncResult') }}
         </div>
         <div class="text-sm text-gray-700 dark:text-dark-300">
@@ -191,49 +157,19 @@
       <div class="flex justify-end gap-3">
         <!-- Step 1: Input -->
         <template v-if="currentStep === 'input'">
-          <button
-            class="btn btn-secondary"
-            type="button"
-            :disabled="previewing"
-            @click="handleClose"
-          >
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            class="btn btn-primary"
-            type="submit"
-            form="sync-from-crs-form"
-            :disabled="previewing"
-          >
-            {{ previewing ? t('admin.accounts.crsPreviewing') : t('admin.accounts.crsPreview') }}
-          </button>
+          <UButton color="neutral" variant="subtle" :disabled="previewing" :label="t('common.cancel')" @click="handleClose" />
+          <UButton type="submit" form="sync-from-crs-form" :disabled="previewing" :label="previewing ? t('admin.accounts.crsPreviewing') : t('admin.accounts.crsPreview')" />
         </template>
 
         <!-- Step 2: Preview -->
         <template v-else-if="currentStep === 'preview'">
-          <button
-            class="btn btn-secondary"
-            type="button"
-            :disabled="syncing"
-            @click="handleBack"
-          >
-            {{ t('admin.accounts.crsBack') }}
-          </button>
-          <button
-            class="btn btn-primary"
-            type="button"
-            :disabled="syncing || hasNewButNoneSelected"
-            @click="handleSync"
-          >
-            {{ syncing ? t('admin.accounts.syncing') : t('admin.accounts.syncNow') }}
-          </button>
+          <UButton color="neutral" variant="subtle" :disabled="syncing" :label="t('admin.accounts.crsBack')" @click="handleBack" />
+          <UButton :disabled="syncing || hasNewButNoneSelected" :label="syncing ? t('admin.accounts.syncing') : t('admin.accounts.syncNow')" @click="handleSync" />
         </template>
 
         <!-- Step 3: Result -->
         <template v-else-if="currentStep === 'result'">
-          <button class="btn btn-secondary" type="button" @click="handleClose">
-            {{ t('common.close') }}
-          </button>
+          <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="handleClose" />
         </template>
       </div>
     </template>
