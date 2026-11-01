@@ -118,6 +118,7 @@ import { adminAPI } from '@/api/admin'
 import type { AdminUser, PlatformQuotaItem, PlatformQuotaPlatform, PlatformQuotaWindow } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { TableColumn } from '@nuxt/ui'
+import { confirm } from '@/composables/useConfirmation'
 
 const props = defineProps<{ show: boolean; user: AdminUser | null }>()
 const emit = defineEmits(['close', 'success'])
@@ -207,10 +208,10 @@ watch(
   (s) => { if (s && props.user) load() },
 )
 
-function onClearAll() {
+async function onClearAll() {
   // 二次确认：一键清空全部平台的 daily/weekly/monthly 限额属于高风险批量操作，
   // 误点后所有平台变为"无限额"，且本地无 undo 机制（需要逐个手动重填或取消保存）。
-  const confirmed = window.confirm(t('admin.users.platformQuota.clearAllConfirm'))
+  const confirmed = await confirm(t('admin.users.platformQuota.clearAllConfirm'))
   if (!confirmed) return
   for (const row of quotas.value) {
     row.daily_limit_usd = null
@@ -266,7 +267,7 @@ function normalizeLimit(v: number | null | undefined): number | null {
 async function onReset(platform: PlatformQuotaPlatform, quotaWindow: PlatformQuotaWindow) {
   if (!props.user) return
   const windowLabel = t(`admin.users.platformQuota.window${quotaWindow.charAt(0).toUpperCase() + quotaWindow.slice(1)}`)
-  const confirmed = window.confirm(
+  const confirmed = await confirm(
     t('admin.users.platformQuota.reset.confirm', { platform, window: windowLabel })
   )
   if (!confirmed) return

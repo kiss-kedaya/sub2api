@@ -210,6 +210,7 @@ import {
   stepUpBlockReason,
   useStepUp,
 } from "@/composables/useStepUp";
+import { confirm } from '@/composables/useConfirmation'
 
 interface PluginBridgeMessage {
   source?: string;
@@ -328,7 +329,7 @@ function pluginMenuItems(plugin: PluginInstallation): DropdownMenuItem[][] {
 async function enablePlugin(plugin: PluginInstallation): Promise<void> {
   let acceptUntested = false;
   if (!plugin.compatibility.tested) {
-    acceptUntested = window.confirm(t("admin.plugins.confirmUntested"));
+    acceptUntested = await confirm(t("admin.plugins.confirmUntested"));
     if (!acceptUntested) return;
   }
   busyID.value = plugin.id;
@@ -350,7 +351,7 @@ async function enablePlugin(plugin: PluginInstallation): Promise<void> {
 }
 
 async function disablePlugin(plugin: PluginInstallation): Promise<void> {
-  if (!window.confirm(t("admin.plugins.confirmDisable"))) return;
+  if (!(await confirm(t("admin.plugins.confirmDisable")))) return;
   busyID.value = plugin.id;
   try {
     await pluginStepUp.run(() => adminAPI.plugins.disable(plugin.id));
@@ -364,7 +365,7 @@ async function disablePlugin(plugin: PluginInstallation): Promise<void> {
 }
 
 async function uninstallPlugin(plugin: PluginInstallation): Promise<void> {
-  if (!window.confirm(t("admin.plugins.confirmUninstall"))) return;
+  if (!(await confirm(t("admin.plugins.confirmUninstall")))) return;
   busyID.value = plugin.id;
   try {
     await pluginStepUp.run(() => adminAPI.plugins.remove(plugin.id));

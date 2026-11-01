@@ -193,6 +193,7 @@ import type { CaptureTask, CaptureRecord, CapturePart, CaptureStats, CaptureTarg
 
 import zh from '@/i18n/locales/zh/admin/requestCapture'
 import en from '@/i18n/locales/en/admin/requestCapture'
+import { confirm } from '@/composables/useConfirmation'
 const { t } = useI18n({useScope:'local',messages:{zh:{admin:zh},en:{admin:en}},inheritLocale:true})
 const stepUp = useStepUp()
 const captureConfig=ref<api.CaptureConfig>({enabled:false,id1_diagnostic_enabled:false,diagnostic_user_ids:[],quota_mib:1024,retention_days:7})
@@ -292,7 +293,7 @@ async function refresh() { if (loading.value || disposed || !configLoaded.value)
 async function action(fn: () => Promise<void>) { busy.value = true; error.value = ''; try { await fn(); await refresh() } catch (err) { report(err) } finally { busy.value = false } }
 async function create() { if (!targetID.value || !validDuration.value) return; await action(async () => { const task = await api.createTask({ target_type: targetType.value, target_id: targetID.value, duration_minutes: duration.value, save_media: saveMedia.value }); taskPage.value = 1; createOpen.value = false; tab.value = 'tasks'; selectTask(task) }) }
 async function stop(task: CaptureTask) { await action(() => api.stopTask(task.id)) }
-async function remove(task: CaptureTask) { if (!window.confirm(t('admin.requestCapture.deleteConfirm'))) return; await action(async () => { await api.deleteTask(task.id); if (selectedTask.value?.id === task.id) { selectedTask.value = undefined; detail.value = undefined; records.value = []; detailVersion++; contentVersion++ } }) }
+async function remove(task: CaptureTask) { if (!(await confirm(t('admin.requestCapture.deleteConfirm')))) return; await action(async () => { await api.deleteTask(task.id); if (selectedTask.value?.id === task.id) { selectedTask.value = undefined; detail.value = undefined; records.value = []; detailVersion++; contentVersion++ } }) }
 async function download(task: string, record?: string) { await action(() => api.exportCapture(task, record, () => stepUp.run(api.authorizeSensitiveRead))) }
 function changeTaskPage(delta: number) { taskPage.value += delta; void refresh() }
 function selectTask(task: CaptureTask) { selectedTask.value = task; recordPage.value = 1; records.value = []; detail.value = undefined; detailVersion++; contentVersion++; void loadRecords() }

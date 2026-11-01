@@ -528,6 +528,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { sanitizeUrl } from '@/utils/url'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
+import { confirm } from '@/composables/useConfirmation'
 
 const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const appStore = useAppStore()
@@ -1918,7 +1919,7 @@ const toggleSelectAllVisible = (value: boolean | 'indeterminate') => {
 }
 const handleBulkDelete = async () => {
   const accountIds = [...selIds.value]
-  if (!confirm(t('admin.accounts.bulkActions.confirmDelete', { count: accountIds.length }))) return
+  if (!(await confirm(t('admin.accounts.bulkActions.confirmDelete', { count: accountIds.length })))) return
   try {
     const result = await adminAPI.accounts.batchDelete(accountIds)
     if (result.failed > 0) {
@@ -1938,7 +1939,7 @@ const handleBulkDelete = async () => {
   }
 }
 const handleBulkResetStatus = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!(await confirm(t('common.confirm')))) return
   try {
     const result = await adminAPI.accounts.batchClearError(selIds.value)
     if (result.failed > 0) {
@@ -1954,7 +1955,7 @@ const handleBulkResetStatus = async () => {
   }
 }
 const handleBulkRefreshToken = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!(await confirm(t('common.confirm')))) return
   const accountIds = [...selIds.value]
   try {
     const result = await adminAPI.accounts.batchRefresh(accountIds)
@@ -2082,7 +2083,8 @@ const handleTimerExecuted = () => {
 }
 const handleBulkToggleSchedulable = async (schedulable: boolean) => {
   const accountIds = [...selIds.value]
-  if (!accountIds.length || !confirm(t('admin.accounts.timer.bulkOverrideConfirm'))) return
+  if (!accountIds.length) return
+  if (!(await confirm(t('admin.accounts.timer.bulkOverrideConfirm')))) return
   try {
     const result = await adminAPI.accounts.bulkUpdate(accountIds, { schedulable })
     timerRefreshKey.value++
@@ -2531,7 +2533,7 @@ const confirmCreateSparkShadow = async () => {
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
 const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
 const handleToggleSchedulable = async (a: Account) => {
-  if (!confirm(t('admin.accounts.timer.manualOverrideConfirm'))) return
+  if (!(await confirm(t('admin.accounts.timer.manualOverrideConfirm')))) return
   const nextSchedulable = !a.schedulable
   togglingSchedulable.value = a.id
   try {

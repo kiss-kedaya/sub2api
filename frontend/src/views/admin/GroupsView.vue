@@ -3500,6 +3500,7 @@ import {
   serializeVideoModelPrices,
   videoModelPriceFamilyRows,
 } from "./groupsVideoModelPricing";
+import { confirm } from '@/composables/useConfirmation'
 
 const supportsLivePlatform = (platform: string): boolean =>
   platform === "openai" || platform === "composite";
@@ -5830,7 +5831,7 @@ const saveCompositeRoute = async () => {
 
 const deleteCompositeRoute = async (route: CompositeModelRoute) => {
   if (!compositeRoutesGroup.value) return;
-  if (!window.confirm(t("admin.groups.compositeRoutes.deleteConfirm"))) return;
+  if (!(await confirm(t("admin.groups.compositeRoutes.deleteConfirm")))) return;
   try {
     await adminAPI.groups.deleteCompositeRoute(
       compositeRoutesGroup.value.id,
@@ -5977,7 +5978,7 @@ const handleBulkDelete = async () => {
   const ids = selectedGroupIDs.value;
   if (ids.length === 0) return;
 
-  const confirmed = window.confirm(
+  const confirmed = await confirm(
     `${t("admin.groups.deleteGroup")} ${t("common.selectedCount", {
       count: ids.length,
     })}`,

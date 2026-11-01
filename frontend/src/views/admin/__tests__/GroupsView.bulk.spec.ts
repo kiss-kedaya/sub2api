@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AdminGroup } from '@/types'
 import GroupsView from '@/views/admin/GroupsView.vue'
+const confirmMock = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useConfirmation', () => ({ confirm: confirmMock }))
+
 
 const {
   listGroups,
@@ -205,7 +208,8 @@ describe('GroupsView bulk selection and optimistic deletes', () => {
     authState.isSimpleMode = false
     localStorage.clear()
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    confirmMock.mockReset()
+    confirmMock.mockResolvedValue(true)
     for (const fn of [
       listGroups,
       batchDeleteGroups,

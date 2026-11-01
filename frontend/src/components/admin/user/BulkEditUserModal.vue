@@ -77,6 +77,7 @@ import type { BatchUpdateUserLimitsRequest } from '@/api/admin/users'
 import { useAppStore } from '@/stores/app'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import { confirm } from '@/composables/useConfirmation'
 
 const props = defineProps<{
   show: boolean
@@ -165,7 +166,7 @@ const handleSubmit = async () => {
     )
   }
 
-  const confirmed = window.confirm(
+  const confirmed = await confirm(
     t('admin.users.bulkLimits.confirm', {
       count: props.selectedIds.length,
       fields: fields.join(', ')

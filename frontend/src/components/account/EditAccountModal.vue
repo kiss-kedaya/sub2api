@@ -2263,6 +2263,7 @@ import {
 } from '@/composables/useModelWhitelist'
 import { getActivePinia } from 'pinia'
 import { useOnboardingStore } from '@/stores/onboarding'
+import { confirm } from '@/composables/useConfirmation'
 
 // Compact selectable UPageCard (platform / type pickers): selection shows as the primary ring.
 const choiceCardUi = { root: 'cursor-pointer text-start hover:bg-elevated/50 focus-visible:outline-2 focus-visible:outline-primary', container: 'p-3 sm:p-3 gap-0 lg:flex', wrapper: 'flex-row items-center gap-3', leading: 'mb-0', leadingIcon: 'size-5 text-muted', title: 'text-sm font-medium', description: 'mt-0.5 text-xs text-muted' }
@@ -3588,16 +3589,16 @@ const addAntigravityPresetMapping = (from: string, to: string) => {
 }
 
 // Error code toggle helper
-const toggleErrorCode = (code: number) => {
+const toggleErrorCode = async (code: number) => {
   const index = selectedErrorCodes.value.indexOf(code)
   if (index === -1) {
     // Adding code - check for 429/529 warning
     if (code === 429) {
-      if (!confirm(t('admin.accounts.customErrorCodes429Warning'))) {
+      if (!(await confirm(t('admin.accounts.customErrorCodes429Warning')))) {
         return
       }
     } else if (code === 529) {
-      if (!confirm(t('admin.accounts.customErrorCodes529Warning'))) {
+      if (!(await confirm(t('admin.accounts.customErrorCodes529Warning')))) {
         return
       }
     }
@@ -3608,7 +3609,7 @@ const toggleErrorCode = (code: number) => {
 }
 
 // Add custom error code from input
-const addCustomErrorCode = () => {
+const addCustomErrorCode = async () => {
   const code = customErrorCodeInput.value
   if (code === null || code < 100 || code > 599) {
     appStore.showError(t('admin.accounts.invalidErrorCode'))
@@ -3620,11 +3621,11 @@ const addCustomErrorCode = () => {
   }
   // Check for 429/529 warning
   if (code === 429) {
-    if (!confirm(t('admin.accounts.customErrorCodes429Warning'))) {
+    if (!(await confirm(t('admin.accounts.customErrorCodes429Warning')))) {
       return
     }
   } else if (code === 529) {
-    if (!confirm(t('admin.accounts.customErrorCodes529Warning'))) {
+    if (!(await confirm(t('admin.accounts.customErrorCodes529Warning')))) {
       return
     }
   }

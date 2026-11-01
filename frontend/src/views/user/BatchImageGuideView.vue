@@ -785,6 +785,7 @@ import {
 } from '@/api/batchImage'
 import type { ApiKey } from '@/types'
 import type { Column } from '@/components/common/types'
+import { confirm } from '@/composables/useConfirmation'
 
 type BatchImageJobRow = Pick<BatchImageJob, 'id' | 'task_name' | 'parent_batch_id' | 'status' | 'model' | 'provider' | 'item_count' | 'success_count' | 'fail_count' | 'estimated_cost' | 'hold_amount' | 'actual_cost' | 'created_at' | 'downloaded_at'> & {
   api_key_id: number
@@ -1772,7 +1773,7 @@ async function cancelSelected() {
   if (!currentJob.value) return
   const key = keyForSelectedBatch() || requireApiKey()
   if (!key) return
-  if (!window.confirm(batchImageText('cancelConfirm'))) return
+  if (!(await confirm(batchImageText('cancelConfirm')))) return
   cancelling.value = true
   try {
     const job = await cancelBatchImageJob(key.key, currentJob.value.id)
@@ -1908,7 +1909,7 @@ async function deleteJob(job: BatchImageJobRow) {
   closeMoreMenu()
   const key = apiKeyForJob(job)
   if (!key) return
-  if (!window.confirm(batchImageText('deleteConfirm'))) return
+  if (!(await confirm(batchImageText('deleteConfirm')))) return
   deletingBatchId.value = job.id
   try {
     await deleteBatchImageJobRecord(key.key, job.id)
@@ -1924,7 +1925,7 @@ async function deleteJob(job: BatchImageJobRow) {
 async function deleteSelectedJobs() {
   const rows = selectedRows.value.filter(job => canDeleteRecord(job))
   if (bulkDeleting.value || rows.length === 0) return
-  if (!window.confirm(batchImageText('deleteSelectedConfirm'))) return
+  if (!(await confirm(batchImageText('deleteSelectedConfirm')))) return
   bulkDeleting.value = true
   try {
     for (const row of rows) {

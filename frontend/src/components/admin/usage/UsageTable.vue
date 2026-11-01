@@ -1,21 +1,5 @@
 <template>
   <div class="usage-table" :class="flat ? '' : 'card overflow-hidden'">
-    <div
-      v-if="showIpGeoToolbar && !observer"
-      class="flex items-center justify-end gap-2 border-b border-gray-200 px-4 py-2 dark:border-dark-700"
-    >
-      <span v-if="pendingIpCount > 0" class="text-xs text-gray-500 dark:text-gray-400">
-        {{ t('usage.ipGeo.pending', { count: pendingIpCount }) }}
-      </span>
-      <button
-        type="button"
-        class="inline-flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-primary-400 dark:hover:bg-primary-900/30"
-        :disabled="ipGeoBatchLoading || pendingIpCount === 0"
-        @click="handleBatchFetchIpGeo"
-      >
-        {{ ipGeoBatchLoading ? t('usage.ipGeo.batchFetching') : t('usage.ipGeo.batchFetch') }}
-      </button>
-    </div>
     <div class="overflow-auto">
       <DataTable
         :columns="layoutColumns"
@@ -331,7 +315,6 @@
         <template #cell-ip_address="{ row }">
           <div v-if="row.ip_address">
             <span class="text-sm font-mono text-gray-600 dark:text-gray-400">{{ row.ip_address }}</span>
-            <IpGeoCell :ip="row.ip_address" />
           </div>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
@@ -639,9 +622,7 @@ function isIndependentToolUsage(row: AdminUsageLog | null): boolean {
 
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
 
@@ -673,16 +654,12 @@ const emit = defineEmits<{
   requestIdClick: [requestID: string]
   userClick: [userID: number, email?: string]
   sort: [key: string, order: 'asc' | 'desc']
-  ipGeoBatchFailed: []
 }>()
 const { t } = useI18n()
 const displayDuration = (row: { duration_ms?: number | null }) => row.duration_ms
 const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
-const ipGeoBatchLoading = ref(false)
-
-const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))
 
 const wrappingColumns = new Set(['user', 'api_key', 'account', 'model', 'endpoint', 'group'])
 const layoutColumns = computed(() => props.columns.map(column => ({
@@ -716,28 +693,6 @@ const modelAuditTitle = (row: AdminUsageLog): string => [
   `${t('usage.sentUpstreamModel')}: ${sentUpstreamModel(row) || '-'}`,
   `${t('usage.upstreamResponseModel')}: ${row.upstream_response_model || '-'}`,
 ].join('\n')
-
-const currentPageIps = computed(() =>
-  Array.from(new Set(props.data.map((row) => row.ip_address).filter((ip): ip is string => Boolean(ip))))
-)
-
-const pendingIpCount = computed(() => {
-  if (!showIpGeoToolbar.value) return 0
-  return currentPageIps.value.filter((ip) => {
-    const status = getEntry(ip).status
-    return status === 'idle' || status === 'error'
-  }).length
-})
-
-const handleBatchFetchIpGeo = async () => {
-  ipGeoBatchLoading.value = true
-  try {
-    const ok = await fetchBatch(currentPageIps.value)
-    if (!ok) emit('ipGeoBatchFailed')
-  } finally {
-    ipGeoBatchLoading.value = false
-  }
-}
 
 const { copyToClipboard } = useClipboard()
 

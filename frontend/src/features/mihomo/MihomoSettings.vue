@@ -272,6 +272,7 @@ import type { CountryFilter, CountryNode } from './mihomoCountry'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import type { ProxyQualityCheckResult } from '@/types'
 import { proxyQualityOverallColor, proxyQualityOverallLabelKey, summarizeProxyQuality } from './proxyQuality'
+import { confirm } from '@/composables/useConfirmation'
 const props = withDefaults(defineProps<{ section?: 'subscriptions' | 'dynamic' | 'nodes' | 'kernel' }>(), { section: 'subscriptions' })
 const emit = defineEmits<{ 'static-proxies-added': [] }>()
 const { locale, t } = useI18n()
@@ -482,7 +483,8 @@ async function addStaticProxies() {
   }
 }
 async function removeStaticProxy(node: ManagedNode) {
-  if (pending.value || !window.confirm(text('确认释放此静态代理？仍被账号引用时将拒绝操作。', 'Remove this static proxy? The operation is rejected while accounts still use it.'))) return
+  if (pending.value) return
+  if (!(await confirm(text('确认释放此静态代理？仍被账号引用时将拒绝操作。', 'Remove this static proxy? The operation is rejected while accounts still use it.')))) return
   pending.value = true
   error.value = ''
   try {

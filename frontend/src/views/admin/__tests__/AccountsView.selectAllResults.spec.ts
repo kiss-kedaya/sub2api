@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountsView from '../AccountsView.vue'
+const confirmMock = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useConfirmation', () => ({ confirm: confirmMock }))
+
 
 const {
   listAccounts,
@@ -175,7 +178,7 @@ describe('admin AccountsView select all filtered results', () => {
   ])('$name after a batch token refresh and table reload', async ({ result, expectedIds }) => {
     listAccounts.mockResolvedValue({ items: makeAccounts(3), total: 3, page: 1, page_size: 20, pages: 1 })
     batchRefresh.mockResolvedValue(result)
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    confirmMock.mockResolvedValue(true)
     const wrapper = mountView()
     await flushPromises()
     await wrapper.get('[data-test="select-page"]').trigger('click')

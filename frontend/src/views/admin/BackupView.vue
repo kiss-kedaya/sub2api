@@ -260,6 +260,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import SettingsSection from '@/views/admin/settings/SettingsSection.vue'
 import type { TableColumn } from '@nuxt/ui'
+import { confirm } from '@/composables/useConfirmation'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -637,7 +638,7 @@ function closeDownloadParts() {
 }
 
 async function restoreBackup(id: string) {
-  if (!window.confirm(t('admin.backup.actions.restoreConfirm'))) return
+  if (!(await confirm(t('admin.backup.actions.restoreConfirm')))) return
   const password = window.prompt(t('admin.backup.actions.restorePasswordPrompt'))
   if (!password) return
   restoringId.value = id
@@ -659,7 +660,7 @@ async function restoreBackup(id: string) {
 }
 
 async function removeBackup(id: string) {
-  if (!window.confirm(t('admin.backup.actions.deleteConfirm'))) return
+  if (!(await confirm(t('admin.backup.actions.deleteConfirm')))) return
   try {
     await adminAPI.backup.deleteBackup(id)
     appStore.showSuccess(t('admin.backup.actions.deleted'))

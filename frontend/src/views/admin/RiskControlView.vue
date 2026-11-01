@@ -1055,6 +1055,7 @@ function categorySettingsFromConfig(settings?: Record<string, { enabled: boolean
 }
 
 import {zh as moderationZh,en as moderationEn} from '@/features/ip-risk/moderationCategories.locale'
+import { confirm } from '@/composables/useConfirmation'
 const {t,locale}=useI18n({useScope:'local',messages:{zh:{moderationCategories:moderationZh},en:{moderationCategories:moderationEn}},inheritLocale:true})
 const appStore = useAppStore()
 const defaultBlockMessage = () => t('admin.riskControl.defaultBlockMessage')
@@ -1937,7 +1938,7 @@ async function deleteFlaggedHash() {
 
 async function clearFlaggedHashes() {
   if (hashActionLoading.value) return
-  const confirmed = window.confirm(t('admin.riskControl.clearFlaggedHashesConfirm'))
+  const confirmed = await confirm(t('admin.riskControl.clearFlaggedHashesConfirm'))
   if (!confirmed) return
   hashActionLoading.value = true
   try {

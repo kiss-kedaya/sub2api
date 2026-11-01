@@ -3,6 +3,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import BulkEditUserModal from '../BulkEditUserModal.vue'
 
+const confirmMock = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useConfirmation', () => ({ confirm: confirmMock }))
+
 const { batchUpdateLimits, showSuccess, showError } = vi.hoisted(() => ({
   batchUpdateLimits: vi.fn(),
   showSuccess: vi.fn(),
@@ -52,6 +55,8 @@ describe('BulkEditUserModal', () => {
     batchUpdateLimits.mockReset()
     showSuccess.mockReset()
     showError.mockReset()
+    confirmMock.mockReset()
+    confirmMock.mockResolvedValue(true)
     batchUpdateLimits.mockResolvedValue({ affected: 2 })
   })
 
@@ -82,7 +87,6 @@ describe('BulkEditUserModal', () => {
   })
 
   it('submits only the enabled RPM field and preserves zero as unlimited', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mountModal()
 
     await wrapper.get('[data-test="enable-rpm-limit"]').trigger('click')
@@ -96,14 +100,13 @@ describe('BulkEditUserModal', () => {
       all: false,
       rpm_limit: 0
     })
-    expect(confirm).toHaveBeenCalledWith(
+    expect(confirmMock).toHaveBeenCalledWith(
       expect.stringContaining('admin.users.bulkLimits.rpmUnlimitedValue')
     )
     expect(wrapper.emitted('success')).toEqual([[2]])
   })
 
   it('omits disabled fields from the request', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mountModal()
 
     await wrapper.get('[data-test="enable-concurrency"]').trigger('click')
@@ -119,7 +122,7 @@ describe('BulkEditUserModal', () => {
   })
 
   it('does not call the API when overwrite confirmation is cancelled', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    confirmMock.mockResolvedValue(false)
     const wrapper = mountModal()
 
     await wrapper.get('[data-test="enable-concurrency"]').trigger('click')
