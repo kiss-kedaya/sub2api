@@ -31,7 +31,6 @@
     color="neutral"
     variant="soft"
     icon="i-lucide-shield"
-    orientation="horizontal"
     :title="t('legal.loginAgreementPrompt.noticeTitle')"
     :description="t('legal.loginAgreementPrompt.noticeDescription')"
     :actions="[{ label: t('legal.loginAgreementPrompt.viewTerms'), size: 'xs', onClick: () => emit('open') }]"
