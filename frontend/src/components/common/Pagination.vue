@@ -7,6 +7,7 @@
       <UButton
         color="neutral"
         variant="outline"
+        class="disabled:opacity-50"
         :label="t('pagination.previous')"
         :disabled="page === 1"
         @click="goToPage(page - 1)"
@@ -17,7 +18,7 @@
       <UButton
         color="neutral"
         variant="outline"
-        class="ml-3"
+        class="ml-3 disabled:opacity-50"
         :label="t('pagination.next')"
         :disabled="page === totalPages"
         @click="goToPage(page + 1)"
@@ -92,6 +93,7 @@
             variant="outline"
             icon="i-lucide-chevron-left"
             square
+            class="disabled:opacity-50"
             :aria-label="t('pagination.previous')"
           />
         </template>
@@ -113,6 +115,7 @@
             variant="outline"
             icon="i-lucide-chevron-right"
             square
+            class="disabled:opacity-50"
             :aria-label="t('pagination.next')"
           />
         </template>
