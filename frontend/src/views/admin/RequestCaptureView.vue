@@ -8,7 +8,7 @@
         </template>
       </AdminPageHeader>
       <PageToolbar>
-        <template #left><UTabs v-model="tab" :items="tabs" :content="false" variant="link" class="-mx-1" :ui="{ list: 'border-b-0' }" /></template>
+        <template #left><UNavigationMenu v-if="routed" :items="navItems" highlight class="-mx-1" /><UTabs v-else v-model="tab" :items="tabs" :content="false" variant="link" class="-mx-1" :ui="{ list: 'border-b-0' }" /></template>
         <template v-if="tab === 'tasks'" #right>
           <UDropdownMenu :items="columnMenu" :content="{ align: 'end' }">
             <UButton :label="t('admin.requestCapture.columns')" color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" />
@@ -183,6 +183,7 @@ import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
+import { useSectionRoute } from './sysSectionRoute'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
@@ -212,7 +213,8 @@ const selectedTask = ref<CaptureTask>(), records = ref<CaptureRecord[]>([]), rec
 const requestID = ref(''), detail = ref<CaptureRecord>(), stage = ref(stages[0]), part = ref<CapturePart>()
 const content = ref(''), contentOffset = ref(0), nextOffset = ref(0), contentMore = ref(false), contentLoading = ref(false)
 const loading = ref(false), busy = ref(false), error = ref(''), now = ref(Date.now())
-const tab = ref<'tasks' | 'settings'>('tasks'), createOpen = ref(false), metadataOpen = ref(false)
+const { section: tab, routed, to: sectionTo } = useSectionRoute<'tasks' | 'settings'>('tasks', { tasks: 'AdminRequestCaptures', settings: 'AdminRequestCaptureSettings' })
+const createOpen = ref(false), metadataOpen = ref(false)
 const streamExport = api.canStreamExport()
 const validDuration = computed(() => Number.isInteger(duration.value) && duration.value >= 1 && duration.value <= 1440)
 const stageParts = computed(() => (detail.value?.parts || []).filter(item => item.stage === stage.value).sort((a, b) => a.name.localeCompare(b.name)))
@@ -225,6 +227,7 @@ const tabs = computed(() => [
   { label: t('admin.requestCapture.tabs.tasks'), value: 'tasks', icon: 'i-lucide-radio' },
   { label: t('admin.requestCapture.tabs.settings'), value: 'settings', icon: 'i-lucide-settings-2' },
 ])
+const navItems = computed(() => tabs.value.map(item => ({ label: item.label, icon: item.icon, to: sectionTo(item.value as 'tasks' | 'settings') })))
 const statCardUi = { container: 'gap-y-1.5', wrapper: 'items-start', leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25', title: 'font-normal text-muted text-xs uppercase' }
 const statCards = computed(() => stats.value ? [
   { key: 'instance', icon: 'i-lucide-server', label: t('admin.requestCapture.instance'), value: stats.value.instance_id || '—' },

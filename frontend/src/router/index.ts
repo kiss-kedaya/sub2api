@@ -18,6 +18,19 @@ import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadEr
 /**
  * Route definitions with lazy loading
  */
+// Sys areas: sub-pages are sibling routes sharing one view (meta.section picks the sub-page).
+const mihomoView = () => import('@/views/admin/MihomoView.vue')
+const requestCaptureView = () => import('@/views/admin/RequestCaptureView.vue')
+const cryptoView = () => import('@/views/admin/CryptoView.vue')
+const riskControlView = () => import('@/views/admin/RiskControlView.vue')
+// Old one-page URLs with ?tab=<id> land on the matching sub-page.
+const tabRedirect = (targets: Record<string, string>) => (to: { query: Record<string, unknown> }) => {
+  const name = targets[String(to.query.tab ?? '')]
+  if (!name) return true
+  const { tab: _tab, ...query } = to.query
+  return { name, query: query as Record<string, string> }
+}
+
 const routes: RouteRecordRaw[] = [
   {path:'/admin/ops-center',name:'AdminOpsCenter',component:()=>import('@/views/admin/OpsCenterView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'运营中心'}},
   {path:'/admin/model-comparison',name:'AdminModelComparison',component:()=>import('@/views/admin/ModelComparisonView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'模型比价'}},
@@ -29,9 +42,13 @@ const routes: RouteRecordRaw[] = [
   {path:'/admin/credential-guard',name:'AdminCredentialGuard',component:()=>import('@/views/admin/CredentialGuardView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'凭证巡检'}},
   {path:'/admin/account-ops',name:'AdminAccountOps',component:()=>import('@/views/admin/AccountOpsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'账号通知'}},
   {path:'/admin/channel-operations',name:'AdminChannelOperations',component:()=>import('@/views/admin/ChannelOperationsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'渠道运维'}},
-  {path:'/admin/mihomo',name:'AdminMihomo',component:()=>import('@/views/admin/MihomoView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'代理出口'}},
+  {path:'/admin/mihomo',name:'AdminMihomo',component:mihomoView,beforeEnter:tabRedirect({nodes:'AdminMihomoNodes',dynamic:'AdminMihomoDynamic',kernel:'AdminMihomoKernel'}),meta:{requiresAuth:true,requiresAdmin:true,title:'代理出口',section:'subscriptions'}},
+  {path:'/admin/mihomo/nodes',name:'AdminMihomoNodes',component:mihomoView,meta:{requiresAuth:true,requiresAdmin:true,title:'代理出口',section:'nodes'}},
+  {path:'/admin/mihomo/dynamic',name:'AdminMihomoDynamic',component:mihomoView,meta:{requiresAuth:true,requiresAdmin:true,title:'代理出口',section:'dynamic'}},
+  {path:'/admin/mihomo/kernel',name:'AdminMihomoKernel',component:mihomoView,meta:{requiresAuth:true,requiresAdmin:true,title:'代理出口',section:'kernel'}},
   {path:'/admin/group-cache-tests',name:'AdminGroupCacheTests',component:()=>import('@/views/admin/GroupCacheTestView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'分组缓存测试'}},
-  {path:'/admin/request-captures',name:'AdminRequestCaptures',component:()=>import('@/views/admin/RequestCaptureView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'请求采集'}},
+  {path:'/admin/request-captures',name:'AdminRequestCaptures',component:requestCaptureView,beforeEnter:tabRedirect({settings:'AdminRequestCaptureSettings'}),meta:{requiresAuth:true,requiresAdmin:true,title:'请求采集',section:'tasks'}},
+  {path:'/admin/request-captures/settings',name:'AdminRequestCaptureSettings',component:requestCaptureView,meta:{requiresAuth:true,requiresAdmin:true,title:'请求采集',section:'settings'}},
   {path:'/admin/connections',name:'AdminConnections',component:()=>import('@/views/admin/ConnectionDiagnosticsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'连接诊断'}},
   {path:'/admin/traffic',name:'AdminTraffic',component:()=>import('@/views/TrafficView.vue'),props:{admin:true},meta:{requiresAuth:true,requiresAdmin:true,title:'用户流量'}},
   {path:'/traffic',name:'UserTraffic',component:()=>import('@/views/TrafficView.vue'),meta:{requiresAuth:true,requiresAdmin:false,title:'流量记录'}},
@@ -656,13 +673,67 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin/crypto',
     name: 'AdminCrypto',
-    component: () => import('@/views/admin/CryptoView.vue'),
+    component: cryptoView,
+    beforeEnter: tabRedirect({ addresses: 'AdminCryptoAddresses', sweep: 'AdminCryptoSweeps', sweeps: 'AdminCryptoSweeps', deposits: 'AdminCryptoDeposits', config: 'AdminCryptoSettings', settings: 'AdminCryptoSettings' }),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
       title: 'Crypto Deposits',
       titleKey: 'admin.crypto.title',
-      descriptionKey: 'admin.crypto.description'
+      descriptionKey: 'admin.crypto.description',
+      section: 'overview'
+    }
+  },
+  {
+    path: '/admin/crypto/addresses',
+    name: 'AdminCryptoAddresses',
+    component: cryptoView,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Crypto Deposits',
+      titleKey: 'admin.crypto.title',
+      descriptionKey: 'admin.crypto.description',
+      section: 'addresses'
+    }
+  },
+  {
+    path: '/admin/crypto/sweeps',
+    name: 'AdminCryptoSweeps',
+    component: cryptoView,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Crypto Deposits',
+      titleKey: 'admin.crypto.title',
+      descriptionKey: 'admin.crypto.description',
+      section: 'sweep'
+    }
+  },
+  {
+    path: '/admin/crypto/deposits',
+    name: 'AdminCryptoDeposits',
+    component: cryptoView,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Crypto Deposits',
+      titleKey: 'admin.crypto.title',
+      descriptionKey: 'admin.crypto.description',
+      section: 'deposits'
+    }
+  },
+  {
+    path: '/admin/crypto/settings',
+    name: 'AdminCryptoSettings',
+    component: cryptoView,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Crypto Deposits',
+      titleKey: 'admin.crypto.title',
+      descriptionKey: 'admin.crypto.description',
+      section: 'config'
     }
   },
   {
@@ -680,14 +751,58 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin/risk-control',
     name: 'AdminRiskControl',
-    component: () => import('@/views/admin/RiskControlView.vue'),
+    component: riskControlView,
+    beforeEnter: tabRedirect({ records: 'AdminRiskControlRecords', logs: 'AdminRiskControlRecords', keys: 'AdminRiskControlKeys', settings: 'AdminRiskControlSettings' }),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
       title: 'Risk Control',
       titleKey: 'admin.riskControl.title',
       descriptionKey: 'admin.riskControl.description',
-      requiresRiskControl: true
+      requiresRiskControl: true,
+      section: 'overview'
+    }
+  },
+  {
+    path: '/admin/risk-control/records',
+    name: 'AdminRiskControlRecords',
+    component: riskControlView,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Risk Control',
+      titleKey: 'admin.riskControl.title',
+      descriptionKey: 'admin.riskControl.description',
+      requiresRiskControl: true,
+      section: 'records'
+    }
+  },
+  {
+    path: '/admin/risk-control/keys',
+    name: 'AdminRiskControlKeys',
+    component: riskControlView,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Risk Control',
+      titleKey: 'admin.riskControl.title',
+      descriptionKey: 'admin.riskControl.description',
+      requiresRiskControl: true,
+      section: 'keys'
+    }
+  },
+  {
+    path: '/admin/risk-control/settings',
+    name: 'AdminRiskControlSettings',
+    component: riskControlView,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Risk Control',
+      titleKey: 'admin.riskControl.title',
+      descriptionKey: 'admin.riskControl.description',
+      requiresRiskControl: true,
+      section: 'settings'
     }
   },
   {

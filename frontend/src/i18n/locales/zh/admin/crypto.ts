@@ -47,6 +47,8 @@ export default {
     tabAddresses: '地址',
     tabSweep: '归集',
     tabDeposits: '到账记录',
+    tabOverview: '概览',
+    overviewHint: '进入各子页面管理地址、归集、到账记录和配置。',
     depTotal: '记录总数',
     depCredited: '已入账',
     depPending: '待确认',

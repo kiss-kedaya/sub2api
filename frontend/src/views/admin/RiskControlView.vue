@@ -9,11 +9,12 @@
         <AdminPageHeader :title="t('admin.riskControl.title')" :description="t('admin.riskControl.description')">
           <template #actions>
             <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="statusLoading" :disabled="statusLoading" :label="t('admin.riskControl.refreshStatus')" @click="loadStatus(false)" />
-            <UButton icon="i-lucide-settings" :label="t('admin.riskControl.openSettings')" @click="openSettings" />
+            <UButton v-if="!routed" icon="i-lucide-settings" :label="t('admin.riskControl.openSettings')" @click="openSettings" />
           </template>
         </AdminPageHeader>
+        <PageToolbar v-if="routed"><template #left><UNavigationMenu :items="riskNavItems" highlight class="-mx-1" /></template></PageToolbar>
 
-        <div class="flex flex-col gap-2">
+        <div v-show="showPart('overview')" class="flex flex-col gap-2">
           <p class="text-sm text-muted" data-test="active-audit-engine">
             {{ t('admin.riskControl.activeEngine', { engine: engineLabel(status?.engine ?? savedEngine) }) }}
           </p>
@@ -27,9 +28,10 @@
           />
         </div>
 
-        <UPageGrid class="gap-4 sm:gap-6 lg:grid-cols-4 lg:gap-px">
+        <UPageGrid v-show="showPart('overview')" class="gap-4 sm:gap-6 lg:grid-cols-4 lg:gap-px">
           <UPageCard
             v-for="item in overviewItems"
+            :to="routed ? statLink(item.key) : undefined"
             :key="item.key"
             :icon="item.icon"
             :title="item.label"
@@ -52,10 +54,11 @@
 
         <div
           v-if="showPreBlockRuntimeCard"
+          v-show="showPart('overview') || showPart('keys')"
           data-test="pre-block-runtime-cards"
-          class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]"
+          :class="['grid grid-cols-1 gap-6', routed ? '' : 'xl:grid-cols-[minmax(0,520px)_minmax(0,1fr)]']"
         >
-          <UCard data-test="pre-block-sync-card" :ui="{ header: 'flex items-start justify-between gap-3' }">
+          <UCard v-show="showPart('overview')" data-test="pre-block-sync-card" :ui="{ header: 'flex items-start justify-between gap-3' }">
             <template #header>
               <div class="min-w-0">
                 <div class="flex items-center gap-1"><h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.preBlockSyncStatus') }}</h2><UPopover :content="{ align: 'start', side: 'bottom' }"><UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" square class="text-dimmed"><span class="sr-only">{{ t('admin.riskControl.preBlockSyncHint') }}</span></UButton><template #content><p class="max-w-sm p-3 text-sm text-pretty text-muted">{{ t('admin.riskControl.preBlockSyncHint') }}</p></template></UPopover></div>
@@ -71,7 +74,7 @@
             </div>
           </UCard>
 
-          <UCard data-test="pre-block-api-key-load-card" :ui="{ header: 'flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between' }">
+          <UCard v-show="showPart('keys')" data-test="pre-block-api-key-load-card" :ui="{ header: 'flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between' }">
             <template #header>
               <div class="min-w-0">
                 <div class="flex items-center gap-1"><h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.preBlockAPIKeyLoad') }}</h2><UPopover :content="{ align: 'start', side: 'bottom' }"><UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" square class="text-dimmed"><span class="sr-only">{{ t('admin.riskControl.preBlockAPIKeyLoadHint') }}</span></UButton><template #content><p class="max-w-sm p-3 text-sm text-pretty text-muted">{{ t('admin.riskControl.preBlockAPIKeyLoadHint') }}</p></template></UPopover></div>
@@ -121,7 +124,7 @@
           </UCard>
         </div>
 
-        <UCard v-if="showWorkerRuntimeCard" :ui="{ header: 'flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between' }">
+        <UCard v-if="showWorkerRuntimeCard" v-show="showPart('overview')" :ui="{ header: 'flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between' }">
           <template #header>
             <div class="min-w-0">
               <div class="flex items-center gap-1"><h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.workerStatus') }}</h2><UPopover :content="{ align: 'start', side: 'bottom' }"><UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" square class="text-dimmed"><span class="sr-only">{{ t('admin.riskControl.workerStatusHint') }}</span></UButton><template #content><p class="max-w-sm p-3 text-sm text-pretty text-muted">{{ t('admin.riskControl.workerStatusHint') }}</p></template></UPopover></div>
@@ -188,7 +191,7 @@
           </div>
         </UCard>
 
-        <section class="flex flex-col gap-4">
+        <section v-show="showPart('records')" class="flex flex-col gap-4">
           <div class="flex flex-col gap-1">
             <div class="flex items-center gap-1"><h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.records') }}</h2><UPopover :content="{ align: 'start', side: 'bottom' }"><UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" square class="text-dimmed"><span class="sr-only">{{ t('admin.riskControl.recordsHint') }}</span></UButton><template #content><p class="max-w-sm p-3 text-sm text-pretty text-muted">{{ t('admin.riskControl.recordsHint') }}</p></template></UPopover></div>
           </div>
@@ -340,7 +343,7 @@
         </section>
       </template>
 
-      <BaseDialog :show="settingsOpen" :title="t('admin.riskControl.settingsTitle')" width="extra-wide" @close="settingsOpen = false">
+      <component :is="settingsInline ? InlineSettingsShell : BaseDialog" v-if="!settingsInline || !loading" :show="settingsInline || settingsOpen" :title="t('admin.riskControl.settingsTitle')" width="extra-wide" @close="settingsOpen = false">
         <div class="flex flex-col gap-6">
           <UTabs
             :model-value="activeSettingsTab"
@@ -889,11 +892,11 @@
 
         <template #footer>
           <div class="flex justify-end gap-2">
-            <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="settingsOpen = false" />
+            <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="closeSettings" />
             <UButton icon="i-lucide-check" :loading="saving" :disabled="saving" :label="saving ? t('common.saving') : t('admin.riskControl.saveConfig')" @click="saveConfig" />
           </div>
         </template>
-      </BaseDialog>
+      </component>
 
       <BaseDialog
         :show="inputDetailRow !== null"
@@ -964,12 +967,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, toRaw, watch } from 'vue'
+import { computed, defineComponent, h, onMounted, onUnmounted, reactive, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
+import { useSectionRoute } from './sysSectionRoute'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Pagination from '@/components/common/Pagination.vue'
@@ -1050,7 +1055,7 @@ function categorySettingsFromConfig(settings?: Record<string, { enabled: boolean
 }
 
 import {zh as moderationZh,en as moderationEn} from '@/features/ip-risk/moderationCategories.locale'
-const {t}=useI18n({useScope:'local',messages:{zh:{moderationCategories:moderationZh},en:{moderationCategories:moderationEn}},inheritLocale:true})
+const {t,locale}=useI18n({useScope:'local',messages:{zh:{moderationCategories:moderationZh},en:{moderationCategories:moderationEn}},inheritLocale:true})
 const appStore = useAppStore()
 const defaultBlockMessage = () => t('admin.riskControl.defaultBlockMessage')
 
@@ -1945,6 +1950,28 @@ async function clearFlaggedHashes() {
     hashActionLoading.value = false
   }
 }
+
+// Sub-pages (overview, records, keys, settings) are sibling routes; without a router everything stays on one page.
+type RiskSection = 'overview' | 'records' | 'keys' | 'settings'
+const { section: riskSection, routed, to: sectionTo } = useSectionRoute<RiskSection>('overview', { overview: 'AdminRiskControl', records: 'AdminRiskControlRecords', keys: 'AdminRiskControlKeys', settings: 'AdminRiskControlSettings' })
+const showPart = (part: RiskSection) => !routed || riskSection.value === part
+const settingsInline = computed(() => routed && riskSection.value === 'settings')
+const statLink = (key: string) => key === 'logs' ? sectionTo('records') : key === 'api-key' ? sectionTo('keys') : undefined
+const riskNavItems = computed(() => [
+  { label: locale.value.startsWith('zh') ? '概览' : 'Overview', icon: 'i-lucide-layout-dashboard', to: sectionTo('overview') },
+  { label: t('admin.riskControl.records'), icon: 'i-lucide-list', to: sectionTo('records') },
+  { label: t('admin.riskControl.preBlockAPIKeyLoad'), icon: 'i-lucide-key-round', to: sectionTo('keys') },
+  { label: t('admin.riskControl.openSettings'), icon: 'i-lucide-settings', to: sectionTo('settings') },
+])
+// The settings sub-page renders the dialog's content in the page (same default and footer slots).
+const InlineSettingsShell = defineComponent({
+  props: { show: Boolean, title: String, width: String },
+  emits: ['close'],
+  setup(_, { slots }) {
+    return () => h('div', { class: 'mx-auto flex w-full max-w-5xl flex-col gap-4' }, [slots.default?.(), slots.footer ? h('div', { class: 'flex justify-end gap-2 border-t border-default pt-4' }, slots.footer()) : null])
+  }
+})
+function closeSettings() { if (settingsInline.value) riskSection.value = 'overview'; else settingsOpen.value = false }
 
 function openSettings() {
   activeSettingsTab.value = 'basic'
