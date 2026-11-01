@@ -111,19 +111,10 @@ onBeforeUnmount(() => {
   >
     <!-- Trigger Icon -->
     <slot name="trigger">
-      <svg
-        class="h-4 w-4 cursor-help text-gray-400 transition-colors hover:text-primary-600 dark:text-gray-500 dark:hover:text-primary-400"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        stroke-width="2"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
-      </svg>
+      <UIcon
+        name="i-lucide-info"
+        class="size-4 cursor-help text-dimmed transition-colors hover:text-highlighted dark:text-gray-500 dark:hover:text-primary-400"
+      />
     </slot>
 
     <!-- Teleport to body to escape modal overflow clipping -->
@@ -134,7 +125,7 @@ onBeforeUnmount(() => {
         v-show="show"
         role="tooltip"
         :class="[
-          'fixed z-99999 -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:top-full before:h-3 dark:bg-gray-800 dark:selection:bg-primary-200 dark:selection:text-gray-900',
+          'fixed z-99999 -translate-x-1/2 -translate-y-full rounded-md bg-default p-3 text-xs leading-relaxed text-default shadow-lg ring ring-default selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:top-full before:h-3 dark:rounded-lg dark:bg-gray-800 dark:text-white dark:shadow-xl dark:ring-1 dark:ring-white/10 dark:selection:bg-primary-200 dark:selection:text-gray-900',
           props.widthClass,
         ]"
         :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left }"
@@ -143,7 +134,7 @@ onBeforeUnmount(() => {
         <button
           v-if="props.trigger === 'click'"
           type="button"
-          class="absolute right-1.5 top-1.5 rounded-sm p-1 text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+          class="absolute right-1.5 top-1.5 rounded-sm p-1 text-dimmed transition-colors hover:bg-elevated hover:text-default dark:text-gray-300 dark:hover:bg-white/10 dark:hover:text-white"
           aria-label="Close"
           @click.stop="closeTooltip"
         >
@@ -152,7 +143,7 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <slot>{{ content }}</slot>
-        <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+        <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-b border-r border-default bg-default dark:border-0 dark:bg-gray-800"></div>
       </div>
     </Teleport>
   </div>

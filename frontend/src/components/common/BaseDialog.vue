@@ -1,9 +1,12 @@
 <template>
   <Teleport to="body">
-    <Transition name="modal">
+    <Transition name="base-dialog">
+      <!-- The overlay is also the portal target of Nuxt UI popovers opened inside the dialog,
+           so they stack above the panel and share its inert state. -->
       <div
         v-if="show"
-        class="modal-overlay"
+        ref="overlayRef"
+        class="modal-overlay base-dialog"
         :style="zIndexStyle"
         :aria-labelledby="dialogId"
         role="dialog"
@@ -19,14 +22,16 @@
             <h3 :id="dialogId" class="modal-title">
               {{ title }}
             </h3>
-            <button
+            <UButton
               v-if="showCloseButton"
-              @click="emit('close')"
-              class="-mr-2 rounded-xl p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500/30 focus-visible:ring-offset-2 dark:text-dark-500 dark:hover:bg-dark-700 dark:hover:text-dark-300 dark:focus-visible:ring-offset-dark-900"
+              icon="i-lucide-x"
+              color="neutral"
+              variant="ghost"
+              square
+              class="-me-1.5 shrink-0 text-muted hover:bg-elevated hover:text-default dark:text-dark-500 dark:hover:bg-dark-700 dark:hover:text-dark-300"
               aria-label="Close modal"
-            >
-              <Icon name="x" size="md" />
-            </button>
+              @click="emit('close')"
+            />
           </div>
 
           <!-- Body -->
@@ -49,14 +54,15 @@ let dialogIdCounter = 0
 </script>
 
 <script setup lang="ts">
-import { computed, watch, onMounted, onUnmounted, ref, nextTick } from 'vue'
-import Icon from '@/components/icons/Icon.vue'
+import { computed, watch, onMounted, onUnmounted, provide, ref, nextTick, type Ref } from 'vue'
+import { portalTargetInjectionKey } from '@nuxt/ui/composables/usePortal'
 import { useDialogStack } from '@/composables/useDialogStack'
 
 // 生成唯一ID以避免多个对话框时ID冲突
 const dialogId = `modal-title-${++dialogIdCounter}`
 
 // 焦点管理
+const overlayRef = ref<HTMLElement | null>(null)
 const dialogRef = ref<HTMLElement | null>(null)
 const modalBodyRef = ref<HTMLElement | null>(null)
 let previousActiveElement: HTMLElement | null = null
@@ -90,6 +96,10 @@ const emit = defineEmits<Emits>()
 const { isTopmost, zIndex, open: openLayer, close: closeLayer } = useDialogStack(() => props.zIndex)
 const zIndexStyle = computed(() => ({ zIndex: zIndex.value }))
 
+// Nuxt UI overlays (menus, popovers, tooltips) opened from the dialog teleport into its
+// overlay instead of <body>: a body-level popover would sit under this z-indexed layer.
+provide(portalTargetInjectionKey, computed(() => overlayRef.value ?? 'body') as Ref<string | HTMLElement>)
+
 const widthClasses = computed(() => {
   // Width guidance: narrow=confirm/short prompts, normal=standard forms,
   // wide=multi-section forms or rich content, extra-wide=analytics/tables,
@@ -112,6 +122,8 @@ const handleClose = () => {
 
 const handleEscape = (event: KeyboardEvent) => {
   if (!props.show || !isTopmost.value) return
+  // An open Nuxt UI layer inside the dialog (menu, popover, tooltip) takes this Escape first.
+  if (event.key === 'Escape' && overlayRef.value?.querySelector('[data-dismissable-layer]')) return
   if (props.closeOnEscape && event.key === 'Escape') {
     event.preventDefault()
     emit('close')
@@ -173,3 +185,68 @@ onUnmounted(() => {
   closeLayer()
 })
 </script>
+
+<style>
+/* Light theme in the manner of Nuxt UI's modal: a flat neutral veil (no blur), a white panel
+   with a hairline ring, shadow-xl, 12px radius and solid hairline dividers. Unlayered, so it
+   overrides the legacy `modal-*` utilities; the night theme keeps today's styling. */
+html:not(.dark) .base-dialog.modal-overlay {
+  background-color: color-mix(in oklab, var(--ui-bg-elevated) 75%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html:not(.dark) .base-dialog .modal-content {
+  border-color: var(--ui-border);
+  border-radius: calc(var(--ui-radius) * 3);
+  background-color: var(--ui-bg);
+  box-shadow: 0 20px 25px -5px rgb(10 10 10 / 0.1), 0 8px 10px -6px rgb(10 10 10 / 0.08);
+}
+
+html:not(.dark) .base-dialog .modal-header::after,
+html:not(.dark) .base-dialog .modal-footer::before {
+  background: var(--ui-border);
+}
+
+.base-dialog .modal-title {
+  font-size: 1rem;
+  line-height: 1.5rem;
+  letter-spacing: 0;
+}
+
+/* Quick, quiet motion: fade the veil, lift the panel 4px. */
+.base-dialog-enter-active,
+.base-dialog-leave-active {
+  transition: opacity 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.base-dialog-enter-active .modal-content,
+.base-dialog-leave-active .modal-content {
+  transition: opacity 150ms cubic-bezier(0.2, 0, 0, 1), transform 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.base-dialog-enter-from,
+.base-dialog-leave-to {
+  opacity: 0;
+}
+
+.base-dialog-enter-from .modal-content,
+.base-dialog-leave-to .modal-content {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .base-dialog-enter-active,
+  .base-dialog-leave-active,
+  .base-dialog-enter-active .modal-content,
+  .base-dialog-leave-active .modal-content {
+    transition-duration: 1ms;
+  }
+
+  .base-dialog-enter-from .modal-content,
+  .base-dialog-leave-to .modal-content {
+    transform: none;
+  }
+}
+</style>

@@ -1,9 +1,10 @@
 <template>
   <div
-    :class="['spinner', sizeClasses, colorClass]"
+    :class="['inline-flex shrink-0', sizeClasses, colorClass]"
     role="status"
     :aria-label="t('common.loading')"
   >
+    <UIcon name="i-lucide-loader-circle" class="size-full animate-spin" />
     <span class="sr-only">{{ t('common.loading') }}</span>
   </div>
 </template>
@@ -29,10 +30,10 @@ const props = withDefaults(defineProps<Props>(), {
 
 const sizeClasses = computed(() => {
   const sizes: Record<SpinnerSize, string> = {
-    sm: 'w-4 h-4 border-2',
-    md: 'w-8 h-8 border-2',
-    lg: 'w-12 h-12 border-[3px]',
-    xl: 'w-16 h-16 border-4'
+    sm: 'size-4',
+    md: 'size-8',
+    lg: 'size-12',
+    xl: 'size-16'
   }
   return sizes[props.size]
 })
@@ -47,20 +48,3 @@ const colorClass = computed(() => {
   return colors[props.color]
 })
 </script>
-
-<style scoped>
-@reference "../../style.css";
-.spinner {
-  @apply inline-block rounded-full border-solid border-current border-r-transparent;
-  animation: spin 0.75s linear infinite;
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>

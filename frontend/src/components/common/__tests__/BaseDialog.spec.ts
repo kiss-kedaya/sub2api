@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, h, inject, nextTick, type Ref } from 'vue'
+import { portalTargetInjectionKey } from '@nuxt/ui/composables/usePortal'
 import BaseDialog from '../BaseDialog.vue'
 
 enableAutoUnmount(afterEach)
@@ -58,6 +59,31 @@ describe('BaseDialog', () => {
     expect(lower.hasAttribute('inert')).toBe(false)
     await original.setProps({ show: false })
     expect(document.body.classList.contains('modal-open')).toBe(false)
+  })
+
+  it('closes from the header close button', async () => {
+    const wrapper = mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Details' } })
+    await flushPromises()
+    document.querySelector<HTMLButtonElement>('.modal-header button[aria-label="Close modal"]')!.click()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('lets an open menu or popover inside the dialog take Escape first', async () => {
+    const wrapper = mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Menu host' }, slots: { default: '<div data-dismissable-layer>menu</div>' } })
+    await flushPromises()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(wrapper.emitted('close')).toBeUndefined()
+    document.querySelector('[data-dismissable-layer]')!.remove()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('makes the overlay the portal target of Nuxt UI popovers opened inside it', async () => {
+    let target: Ref<string | HTMLElement | boolean> | undefined
+    const Probe = defineComponent({ setup() { target = inject(portalTargetInjectionKey); return () => h('span') } })
+    mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Host' }, slots: { default: Probe } })
+    await flushPromises()
+    expect(target?.value).toBe(document.querySelector('.modal-overlay'))
   })
 
   it('keeps keyboard focus within the top dialog', async () => {
