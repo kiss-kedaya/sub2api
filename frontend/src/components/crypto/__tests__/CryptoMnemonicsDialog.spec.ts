@@ -175,6 +175,8 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     await submitAndAuthorize(wrapper)
     await wrapper.get('.crypto-mnemonics__footer .btn-primary').trigger('click')
     await wrapper.setProps({ show: false })
+    // The dialog panel leaves through its closing animation (immediate in jsdom, one tick later).
+    await flushPromises()
     expect(wrapper.text()).not.toContain(deposit)
     expect(wrapper.text()).not.toContain(hot)
     expect(wrapper.findAll('.crypto-mnemonics__seed')).toHaveLength(0)

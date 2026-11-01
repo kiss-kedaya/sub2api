@@ -1,43 +1,19 @@
 <template>
-  <!-- Sidebar search button (UDashboardSearchButton): label and Ctrl/⌘ K, or an icon on the rail. -->
-  <UButton
-    icon="i-lucide-search"
-    color="neutral"
-    :variant="collapsed ? 'ghost' : 'outline'"
-    :square="collapsed"
-    block
-    class="console-search-trigger"
-    :class="collapsed ? 'justify-center' : 'justify-start'"
-    :title="collapsed ? t('common.search') : undefined"
-    :aria-label="t('common.search')"
-    @click="open = true"
+  <!-- UDashboardSearch: opened by the sidebar's UDashboardSearchButton or Ctrl/⌘ K
+       (its own shortcut, also while typing). Pages the visitor may open, then the theme. -->
+  <UDashboardSearch
+    v-model:open="open"
+    v-model:search-term="query"
+    :groups="groups"
+    :color-mode="false"
+    :fuse="{ resultLimit: 100 }"
+    :title="t('common.search')"
+    :placeholder="uiT('dashboardSearchButton.label')"
   >
-    <template v-if="!collapsed">
-      <span class="truncate text-muted">{{ uiT('dashboardSearchButton.label') }}</span>
-      <span class="ms-auto hidden items-center gap-0.5 lg:flex">
-        <UKbd value="meta" variant="subtle" />
-        <UKbd value="k" variant="subtle" />
-      </span>
+    <template #empty>
+      <p class="py-6 text-center text-sm text-muted">{{ uiT('commandPalette.noMatch', { searchTerm: query }) }}</p>
     </template>
-  </UButton>
-
-  <!-- Command palette (UDashboardSearch): pages the visitor may open, then the theme. -->
-  <UModal v-model:open="open" :title="t('common.search')" :ui="{ content: 'sm:max-w-2xl h-full sm:h-[28rem]' }">
-    <template #content>
-      <UCommandPalette
-        v-model:search-term="query"
-        :groups="groups"
-        :fuse="{ resultLimit: 100 }"
-        close
-        class="h-full"
-        @update:open="open = $event"
-      >
-        <template #empty>
-          <p class="py-6 text-center text-sm text-muted">{{ uiT('commandPalette.noMatch', { searchTerm: query }) }}</p>
-        </template>
-      </UCommandPalette>
-    </template>
-  </UModal>
+  </UDashboardSearch>
 </template>
 
 <script setup lang="ts">
@@ -45,14 +21,11 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import type { CommandPaletteGroup, CommandPaletteItem } from '@nuxt/ui'
-import { defineShortcuts } from '@nuxt/ui/composables/defineShortcuts'
 import { useLocale } from '@nuxt/ui/composables/useLocale'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { THEME_MODE_OPTIONS, useSiteColorMode, type ThemeMode } from '@/composables/useSiteTheme'
-
-withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false })
 
 const { t } = useI18n()
 const { t: uiT } = useLocale()
@@ -124,6 +97,7 @@ const groups = computed((): CommandPaletteGroup<CommandPaletteItem>[] => {
     ignoreFilter: true,
     items: results.value.filter(item => item.group === group).map(toItem)
   }))
+  // Our own theme group: Nuxt UI's colorMode is off, the site keeps its own light / dark state.
   const theme = {
     id: 'theme',
     label: uiT('dashboardSearch.theme'),
@@ -131,10 +105,7 @@ const groups = computed((): CommandPaletteGroup<CommandPaletteItem>[] => {
       label: t(`admin.settings.siteTheme.modes.${mode}`),
       icon: MODE_ICONS[mode],
       active: colorMode.preference.value === mode,
-      onSelect: () => {
-        colorMode.setPreference(mode)
-        open.value = false
-      }
+      onSelect: () => colorMode.setPreference(mode)
     }))
   }
   return [...navigation.filter(group => group.items.length), theme]
@@ -142,16 +113,6 @@ const groups = computed((): CommandPaletteGroup<CommandPaletteItem>[] => {
 
 watch(open, (value) => {
   if (value) query.value = ''
-})
-
-// Ctrl+K (⌘K on macOS) opens or closes the palette, also while typing in a field.
-defineShortcuts({
-  meta_k: {
-    usingInput: true,
-    handler: () => {
-      open.value = !open.value
-    }
-  }
 })
 
 function navigate(path?: string) {
