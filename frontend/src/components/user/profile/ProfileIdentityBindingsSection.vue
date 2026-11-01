@@ -1,78 +1,61 @@
 <template>
-  <div :class="props.embedded ? 'space-y-4' : 'overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none'">
-    <div
-      v-if="!props.embedded"
-      class="border-b border-default px-5 py-4 sm:px-6"
-    >
-      <h2 class="text-base font-semibold text-highlighted">
-        {{ t('profile.authBindings.title') }}
-      </h2>
-      <p class="mt-1 text-sm text-muted">
-        {{ t('profile.authBindings.description') }}
-      </p>
-    </div>
+  <!-- Settings section of the dashboard template: a title card, then one subtle card with a
+       hairline-divided row per sign-in method. Same chrome embedded or standalone. -->
+  <div>
+    <UPageCard
+      :title="t('profile.authBindings.title')"
+      :description="t('profile.authBindings.description')"
+      variant="naked"
+      class="mb-4"
+    />
 
-    <div :class="props.embedded ? 'space-y-4' : 'divide-y divide-gray-100 dark:divide-dark-700'">
-      <div v-if="props.embedded">
-        <p class="text-sm font-semibold text-gray-900 dark:text-white">
-          {{ t('profile.authBindings.title') }}
-        </p>
-        <p class="mt-1 text-sm text-muted">
-          {{ t('profile.authBindings.description') }}
-        </p>
-      </div>
+    <UPageCard variant="subtle">
+      <div class="divide-y divide-default">
+        <div
+          v-for="item in providerItems"
+          :key="item.provider"
+          class="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between"
+        >
+          <div class="flex min-w-0 flex-1 items-start gap-3">
+            <UAvatar
+              :icon="item.provider === 'email' ? 'i-lucide-mail' : undefined"
+              :text="item.provider === 'email' ? undefined : providerInitial(item.provider)"
+              size="md"
+              class="shrink-0"
+            />
 
-      <div
-        v-for="item in providerItems"
-        :key="item.provider"
-        :class="rowClass"
-      >
-        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div class="flex min-w-0 flex-1 items-start gap-4">
-            <div
-              :class="providerIconClass(item.provider)"
-              class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold"
-            >
-              <Icon
-                v-if="item.provider === 'email'"
-                name="mail"
-                size="sm"
-                class="text-current"
-              />
-              <span v-else>{{ providerInitial(item.provider) }}</span>
-            </div>
-
-            <div class="min-w-0 flex-1 space-y-3">
+            <div class="min-w-0 flex-1 space-y-2">
               <div class="flex flex-wrap items-center gap-2">
-                <h3 class="font-medium text-gray-900 dark:text-white">
+                <p class="text-sm font-medium text-highlighted">
                   {{ item.label }}
-                </h3>
-                <span
+                </p>
+                <UBadge
                   :data-testid="`profile-binding-${item.provider}-status`"
-                  :class="['badge', item.bound ? 'badge-success' : 'badge-gray']"
+                  :color="item.bound ? 'success' : 'neutral'"
+                  variant="subtle"
                 >
                   {{
                     item.bound
                       ? t('profile.authBindings.status.bound')
                       : t('profile.authBindings.status.notBound')
                   }}
-                </span>
+                </UBadge>
               </div>
 
               <p
                 v-if="providerSummary(item.provider)"
-                class="text-sm text-gray-600 dark:text-gray-300"
+                class="text-sm text-toned"
               >
                 {{ providerSummary(item.provider) }}
               </p>
 
               <div
                 v-if="hasBindingDetails(item.provider, item.details)"
-                class="grid gap-1 text-sm text-gray-500 dark:text-gray-400"
+                class="grid gap-0.5 text-sm text-muted"
               >
                 <p
                   v-if="item.provider !== 'email' && item.details?.display_name"
-                  class="font-medium text-gray-700 dark:text-gray-200"
+                  class="font-medium text-toned"
                 >
                   {{ item.details.display_name }}
                 </p>
@@ -90,51 +73,50 @@
               <div
                 v-if="item.provider === 'email' && showEmailForm"
                 data-testid="profile-binding-email-form"
-                class="grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_auto]"
+                class="grid gap-2 pt-1 sm:grid-cols-2"
               >
-                <input
-                  v-model.trim="emailBindingForm.email"
-                  data-testid="profile-binding-email-input"
-                  type="email"
-                  class="input"
-                  :placeholder="t('profile.authBindings.emailPlaceholder')"
-                  :disabled="isSendingEmailCode || isBindingEmail"
-                />
-                <button
-                  data-testid="profile-binding-email-send-code"
-                  type="button"
-                  class="btn btn-secondary btn-sm"
-                  :disabled="isSendingEmailCode || isBindingEmail"
-                  @click="sendEmailCode"
-                >
-                  {{
-                    isSendingEmailCode
-                      ? t('common.loading')
-                      : t('profile.authBindings.sendCodeAction')
-                  }}
-                </button>
-                <input
+                <UFieldGroup class="sm:col-span-2">
+                  <UInput
+                    v-model.trim="emailBindingForm.email"
+                    data-testid="profile-binding-email-input"
+                    type="email"
+                    class="flex-1"
+                    :placeholder="t('profile.authBindings.emailPlaceholder')"
+                    :disabled="isSendingEmailCode || isBindingEmail"
+                  />
+                  <UButton
+                    data-testid="profile-binding-email-send-code"
+                    color="neutral"
+                    variant="outline"
+                    :disabled="isSendingEmailCode || isBindingEmail"
+                    @click="sendEmailCode"
+                  >
+                    {{
+                      isSendingEmailCode
+                        ? t('common.loading')
+                        : t('profile.authBindings.sendCodeAction')
+                    }}
+                  </UButton>
+                </UFieldGroup>
+                <UInput
                   v-model.trim="emailBindingForm.verifyCode"
                   data-testid="profile-binding-email-code-input"
                   type="text"
                   inputmode="numeric"
                   maxlength="6"
-                  class="input"
                   :placeholder="t('profile.authBindings.codePlaceholder')"
                   :disabled="isBindingEmail"
                 />
-                <input
+                <UInput
                   v-model="emailBindingForm.password"
                   data-testid="profile-binding-email-password-input"
                   type="password"
-                  class="input"
                   :placeholder="emailPasswordPlaceholder"
                   :disabled="isBindingEmail"
                 />
-                <button
+                <UButton
                   data-testid="profile-binding-email-submit"
-                  type="button"
-                  class="btn btn-primary btn-sm sm:col-span-2"
+                  class="w-fit sm:col-span-2"
                   :disabled="isBindingEmail"
                   @click="bindEmail"
                 >
@@ -143,17 +125,17 @@
                       ? t('common.loading')
                       : emailSubmitActionLabel
                   }}
-                </button>
+                </UButton>
               </div>
             </div>
           </div>
 
-          <div class="flex shrink-0 flex-wrap items-center gap-3">
-            <button
+          <div class="flex shrink-0 flex-wrap items-center gap-2 max-sm:ps-11">
+            <UButton
               v-if="item.provider === 'email' && compact"
               data-testid="profile-binding-email-toggle"
-              type="button"
-              class="btn btn-secondary btn-sm"
+              color="neutral"
+              variant="outline"
               @click="toggleEmailForm"
             >
               {{
@@ -161,21 +143,19 @@
                   ? t('profile.authBindings.hideEmailFormAction')
                   : t('profile.authBindings.manageEmailAction')
               }}
-            </button>
-            <button
+            </UButton>
+            <UButton
               v-if="item.canBind"
               :data-testid="`profile-binding-${item.provider}-action`"
-              type="button"
-              class="btn btn-primary btn-sm"
               @click="startBinding(item.provider)"
             >
               {{ t('profile.authBindings.bindAction', { providerName: item.label }) }}
-            </button>
-            <button
+            </UButton>
+            <UButton
               v-if="item.canUnbind"
               :data-testid="`profile-binding-${item.provider}-unbind`"
-              type="button"
-              class="btn btn-secondary btn-sm"
+              color="neutral"
+              variant="outline"
               :disabled="unbindingProvider === item.provider"
               @click="handleUnbindForItem(item.provider, item.label)"
             >
@@ -184,11 +164,11 @@
                   ? t('common.loading')
                   : t('profile.authBindings.unbindAction')
               }}
-            </button>
+            </UButton>
           </div>
         </div>
       </div>
-    </div>
+    </UPageCard>
   </div>
 </template>
 
@@ -207,7 +187,6 @@ import {
   startOAuthBinding,
   unbindAuthIdentity,
 } from '@/api/user'
-import Icon from '@/components/icons/Icon.vue'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { User, UserAuthBindingStatus, UserAuthProvider } from '@/types'
 
@@ -281,13 +260,6 @@ watch(
 
 const currentUser = computed(() => localUser.value ?? props.user)
 const compact = computed(() => props.compact)
-const rowClass = computed(() =>
-  props.embedded
-    ? compact.value
-      ? 'rounded-2xl border border-gray-100 bg-white p-4 shadow-xs dark:border-dark-700 dark:bg-dark-900/40'
-      : 'rounded-2xl border border-gray-100 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-900/30'
-    : 'px-6 py-5'
-)
 const emailBound = computed(() => getBindingStatus('email'))
 const showEmailForm = computed(() => !compact.value || isEmailFormExpanded.value)
 const emailPasswordPlaceholder = computed(() =>
@@ -486,22 +458,6 @@ function providerInitial(provider: UserAuthProvider): string {
     return 'O'
   }
   return 'E'
-}
-
-function providerIconClass(provider: UserAuthProvider): string {
-  if (provider === 'linuxdo') {
-    return 'bg-orange-100 text-orange-600 dark:bg-orange-900/20 dark:text-orange-300'
-  }
-  if (provider === 'dingtalk') {
-    return 'bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300'
-  }
-  if (provider === 'wechat') {
-    return 'bg-green-100 text-green-600 dark:bg-green-900/20 dark:text-green-300'
-  }
-  if (provider === 'oidc') {
-    return 'bg-sky-100 text-sky-600 dark:bg-sky-900/20 dark:text-sky-300'
-  }
-  return 'bg-primary-100 text-primary-600 dark:bg-primary-900/20 dark:text-primary-300'
 }
 
 function providerSummary(provider: UserAuthProvider): string {

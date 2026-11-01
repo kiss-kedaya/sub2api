@@ -1,41 +1,35 @@
 <template>
-  <div :class="props.embedded ? 'space-y-4' : 'overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none'">
-    <div
+  <!-- Embedded: one form row inside the parent's card. Standalone: a section with its own
+       title card and a body card (same surface as UPageCard variant="subtle"). -->
+  <section>
+    <UPageCard
       v-if="!props.embedded"
-      class="border-b border-default px-5 py-4 sm:px-6"
-    >
-      <h2 class="text-base font-semibold text-highlighted">
-        {{ t('profile.editProfile') }}
-      </h2>
-    </div>
-    <div :class="props.embedded ? '' : 'p-5 sm:p-6'">
-      <form @submit.prevent="handleUpdateProfile" class="space-y-4">
-        <div v-if="props.embedded">
-          <p class="text-sm font-semibold text-gray-900 dark:text-white">
-            {{ t('profile.editProfile') }}
-          </p>
-        </div>
-        <div>
-          <label for="username" class="input-label">
-            {{ t('profile.username') }}
-          </label>
-          <input
-            id="username"
-            v-model="username"
-            type="text"
-            class="input"
-            :placeholder="t('profile.enterUsername')"
-          />
-        </div>
-
-        <div class="flex justify-end pt-4">
-          <button type="submit" :disabled="loading" class="btn btn-primary">
-            {{ loading ? t('profile.updating') : t('profile.updateProfile') }}
-          </button>
-        </div>
+      :title="t('profile.editProfile')"
+      variant="naked"
+      class="mb-4"
+    />
+    <div :class="props.embedded ? undefined : 'rounded-lg bg-elevated/50 p-4 ring ring-default sm:p-6'">
+      <form @submit.prevent="handleUpdateProfile">
+        <UFormField
+          :label="t('profile.username')"
+          class="flex justify-between gap-4 max-sm:flex-col sm:items-center"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <UInput
+              id="username"
+              v-model="username"
+              type="text"
+              class="w-full sm:w-56"
+              :placeholder="t('profile.enterUsername')"
+            />
+            <UButton type="submit" :disabled="loading">
+              {{ loading ? t('profile.updating') : t('profile.updateProfile') }}
+            </UButton>
+          </div>
+        </UFormField>
       </form>
     </div>
-  </div>
+  </section>
 </template>
 
 <script setup lang="ts">

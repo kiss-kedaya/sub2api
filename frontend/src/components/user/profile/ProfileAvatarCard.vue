@@ -1,81 +1,60 @@
 <template>
-  <div :class="props.embedded ? 'space-y-4' : 'overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none'">
-    <div
+  <!-- Embedded: one form row inside the parent's card. Standalone: a section with its own
+       title card and a body card (same surface as UPageCard variant="subtle"). -->
+  <section>
+    <UPageCard
       v-if="!props.embedded"
-      class="border-b border-default px-5 py-4 sm:px-6"
-    >
-      <h2 class="text-base font-semibold text-highlighted">
-        {{ t('profile.avatar.title') }}
-      </h2>
-      <p class="mt-1 text-sm text-muted">
-        {{ t('profile.avatar.description') }}
-      </p>
-    </div>
-
-    <div :class="props.embedded ? 'space-y-3' : 'flex flex-col gap-5 px-6 py-6 sm:flex-row sm:items-start'">
-      <div
-        :class="props.embedded
-          ? 'flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-linear-to-br/srgb from-primary-500 to-primary-600 text-xl font-bold text-white shadow-lg shadow-primary-500/20'
-          : 'flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-linear-to-br/srgb from-primary-500 to-primary-600 text-3xl font-bold text-white shadow-lg shadow-primary-500/20'"
+      :title="t('profile.avatar.title')"
+      :description="t('profile.avatar.description')"
+      variant="naked"
+      class="mb-4"
+    />
+    <div :class="props.embedded ? undefined : 'rounded-lg bg-elevated/50 p-4 ring ring-default sm:p-6'">
+      <UFormField
+        :label="props.embedded ? t('profile.avatar.title') : displayName"
+        :description="t('profile.avatar.uploadHint')"
+        class="flex justify-between gap-4 max-sm:flex-col sm:items-center"
       >
-        <img
-          v-if="avatarPreviewUrl"
-          data-testid="profile-avatar-preview"
-          :src="avatarPreviewUrl"
-          :alt="displayName"
-          class="h-full w-full object-cover"
-        >
-        <span v-else>{{ avatarInitial }}</span>
-      </div>
-
-      <div :class="props.embedded ? 'space-y-3' : 'min-w-0 flex-1 space-y-4'">
-        <div class="space-y-1">
-          <p v-if="props.embedded" class="text-sm font-semibold text-gray-900 dark:text-white">
-            {{ t('profile.avatar.title') }}
-          </p>
-          <p v-else class="text-sm font-medium text-gray-900 dark:text-white">
-            {{ displayName }}
-          </p>
-          <p class="text-sm text-gray-500 dark:text-gray-400">
-            {{ t('profile.avatar.uploadHint') }}
-          </p>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-3">
-          <label class="btn btn-secondary btn-sm cursor-pointer">
-            <input
-              data-testid="profile-avatar-file-input"
-              type="file"
-              accept="image/*"
-              class="hidden"
-              @change="handleAvatarFileChange"
-            >
+        <div class="flex flex-wrap items-center gap-2">
+          <UAvatar
+            :src="avatarPreviewUrl || undefined"
+            :alt="displayName"
+            :text="avatarInitial"
+            size="lg"
+            v-bind="avatarPreviewUrl ? { 'data-testid': 'profile-avatar-preview' } : {}"
+          />
+          <UButton color="neutral" variant="outline" @click="fileInput?.click()">
             {{ t('profile.avatar.uploadAction') }}
-          </label>
-
-          <button
+          </UButton>
+          <UButton
             data-testid="profile-avatar-save"
-            type="button"
-            class="btn btn-primary btn-sm"
             :disabled="avatarSaving || !avatarDraft"
             @click="handleAvatarSave"
           >
             {{ t('common.save') }}
-          </button>
-
-          <button
+          </UButton>
+          <UButton
             data-testid="profile-avatar-delete"
-            type="button"
-            class="btn btn-secondary btn-sm"
+            color="neutral"
+            variant="ghost"
             :disabled="avatarSaving"
             @click="handleAvatarDelete"
           >
             {{ t('common.delete') }}
-          </button>
+          </UButton>
+          <!-- Hidden native picker, opened by the upload button (no Nuxt UI equivalent). -->
+          <input
+            ref="fileInput"
+            data-testid="profile-avatar-file-input"
+            type="file"
+            accept="image/*"
+            class="hidden"
+            @change="handleAvatarFileChange"
+          >
         </div>
-      </div>
+      </UFormField>
     </div>
-  </div>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -103,6 +82,7 @@ const avatarScaleSteps = [1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44, 0.36]
 const avatarQualitySteps = [0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44, 0.36]
 const avatarDraft = ref('')
 const avatarSaving = ref(false)
+const fileInput = ref<HTMLInputElement | null>(null)
 
 const displayName = computed(() => props.user?.username?.trim() || props.user?.email?.trim() || t('profile.user'))
 const avatarInitial = computed(() => displayName.value.charAt(0).toUpperCase() || 'U')

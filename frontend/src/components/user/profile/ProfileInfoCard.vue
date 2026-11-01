@@ -1,25 +1,15 @@
 <template>
-  <div class="space-y-6">
-    <section
-      data-testid="profile-overview-hero"
-      class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
-    >
-      <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
-        <div class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-elevated text-xl font-semibold text-highlighted ring ring-default">
-          <img
-            v-if="avatarUrl"
-            :src="avatarUrl"
-            :alt="displayName"
-            class="h-full w-full object-cover"
-          >
-          <span v-else>{{ avatarInitial }}</span>
-        </div>
-
-        <div class="min-w-0 flex-1 space-y-1.5">
+  <!-- `contents`: each block below is one section of the profile page column and takes
+       the page's section gap; the wrappers only keep the test hooks. -->
+  <div class="contents">
+    <div data-testid="profile-overview-hero" class="flex flex-col gap-4">
+      <div class="flex min-w-0 items-center gap-4">
+        <UAvatar :src="avatarUrl || undefined" :alt="displayName" :text="avatarInitial" size="3xl" />
+        <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-2">
-            <h2 class="truncate text-lg font-semibold text-highlighted">
+            <p class="truncate font-semibold text-highlighted">
               {{ displayName }}
-            </h2>
+            </p>
             <UBadge :color="user?.role === 'admin' ? 'primary' : 'neutral'" variant="subtle">
               {{ user?.role === 'admin' ? t('profile.administrator') : t('profile.user') }}
             </UBadge>
@@ -31,131 +21,80 @@
               }}
             </UBadge>
           </div>
-          <p class="truncate text-sm text-muted">
+          <p v-if="primaryEmailDisplay" class="truncate text-sm text-muted">
             {{ primaryEmailDisplay }}
           </p>
-          <div
-            v-if="sourceHints.length"
-            class="flex flex-wrap gap-1.5 pt-1"
-          >
-            <UBadge
-              v-for="hint in sourceHints"
-              :key="hint.key"
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-link"
-            >
-              {{ hint.text }}
-            </UBadge>
-          </div>
         </div>
       </div>
 
-      <div class="grid grid-cols-1 divide-y divide-default border-t border-default sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <div data-testid="profile-overview-metric-balance" class="px-5 py-4 sm:px-6">
-          <p class="text-xs font-medium text-muted">
-            {{ t('profile.accountBalance') }}
-          </p>
-          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
-            {{ formatCurrency(user?.balance || 0) }}
-          </p>
-        </div>
-        <div data-testid="profile-overview-metric-concurrency" class="px-5 py-4 sm:px-6">
-          <p class="text-xs font-medium text-muted">
-            {{ t('profile.concurrencyLimit') }}
-          </p>
-          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
-            {{ user?.concurrency || 0 }}
-          </p>
-        </div>
-        <div data-testid="profile-overview-metric-member-since" class="px-5 py-4 sm:px-6">
-          <p class="text-xs font-medium text-muted">
-            {{ t('profile.memberSince') }}
-          </p>
-          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
-            {{ memberSinceLabel }}
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <div class="space-y-6">
-      <div data-testid="profile-main-column" class="space-y-6">
-        <section
-          data-testid="profile-basics-panel"
-          class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
+      <UPageGrid class="gap-4 sm:grid-cols-3 sm:gap-px lg:grid-cols-3 lg:gap-px">
+        <UPageCard
+          v-for="metric in metrics"
+          :key="metric.key"
+          :data-testid="metric.testId"
+          :icon="metric.icon"
+          :title="metric.label"
+          variant="subtle"
+          :ui="metricCardUi"
+          class="sm:rounded-none sm:first:rounded-s-lg sm:last:rounded-e-lg"
         >
-          <header class="border-b border-default px-5 py-4 sm:px-6">
-            <h3 class="text-base font-semibold text-highlighted">
-              {{ t('profile.basicsTitle') }}
-            </h3>
-            <p class="mt-1 text-sm text-muted">
-              {{ t('profile.basicsDescription') }}
-            </p>
-          </header>
+          <span class="text-xl font-semibold tabular-nums text-highlighted">{{ metric.value }}</span>
+        </UPageCard>
+      </UPageGrid>
+    </div>
 
-          <div class="grid divide-y divide-default md:grid-cols-2 md:divide-x md:divide-y-0">
-            <div class="p-5 sm:p-6">
-              <ProfileAvatarCard
-                :user="user"
-                embedded
-              />
-            </div>
+    <div data-testid="profile-main-column" class="contents">
+      <section data-testid="profile-basics-panel">
+        <UPageCard
+          :title="t('profile.basicsTitle')"
+          :description="t('profile.basicsDescription')"
+          variant="naked"
+          class="mb-4"
+        />
+        <UPageCard variant="subtle">
+          <ProfileAvatarCard :user="user" embedded />
+          <USeparator />
+          <ProfileEditForm :initial-username="user?.username || ''" embedded />
+        </UPageCard>
+      </section>
 
-            <div class="p-5 sm:p-6">
-              <ProfileEditForm
-                :initial-username="user?.username || ''"
-                embedded
-              />
-            </div>
-          </div>
-        </section>
+      <section data-testid="profile-auth-bindings-panel">
+        <ProfileIdentityBindingsSection
+          :user="user"
+          :linuxdo-enabled="linuxdoEnabled"
+          :dingtalk-enabled="dingtalkEnabled"
+          :oidc-enabled="oidcEnabled"
+          :oidc-provider-name="oidcProviderName"
+          :wechat-enabled="wechatEnabled"
+          :wechat-open-enabled="wechatOpenEnabled"
+          :wechat-mp-enabled="wechatMpEnabled"
+          embedded
+          compact
+        />
+      </section>
+    </div>
 
-        <section
-          data-testid="profile-auth-bindings-panel"
-          class="profile-bindings-panel rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none"
-        >
-          <ProfileIdentityBindingsSection
-            :user="user"
-            :linuxdo-enabled="linuxdoEnabled"
-            :dingtalk-enabled="dingtalkEnabled"
-            :oidc-enabled="oidcEnabled"
-            :oidc-provider-name="oidcProviderName"
-            :wechat-enabled="wechatEnabled"
-            :wechat-open-enabled="wechatOpenEnabled"
-            :wechat-mp-enabled="wechatMpEnabled"
-            embedded
-            compact
-          />
-        </section>
-      </div>
-
-      <div data-testid="profile-side-column" class="space-y-6">
-        <section
-          v-if="sourceHints.length"
-          class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
-        >
-          <header class="border-b border-default px-5 py-4 sm:px-6">
-            <h3 class="text-base font-semibold text-highlighted">
-              {{ t('profile.linkedProfileSources') }}
-            </h3>
-            <p class="mt-1 text-sm text-muted">
-              {{ t('profile.linkedProfileSourcesDescription') }}
-            </p>
-          </header>
-
+    <div data-testid="profile-side-column" class="contents">
+      <section v-if="sourceHints.length">
+        <UPageCard
+          :title="t('profile.linkedProfileSources')"
+          :description="t('profile.linkedProfileSourcesDescription')"
+          variant="naked"
+          class="mb-4"
+        />
+        <UPageCard variant="subtle">
           <ul class="divide-y divide-default">
             <li
               v-for="hint in sourceHints"
               :key="hint.key"
-              class="flex items-start gap-3 px-5 py-3 text-sm text-default sm:px-6"
+              class="flex items-start gap-3 py-3 text-sm text-default first:pt-0 last:pb-0"
             >
               <UIcon name="i-lucide-link" class="mt-0.5 size-4 shrink-0 text-dimmed" />
               <span>{{ hint.text }}</span>
             </li>
           </ul>
-        </section>
-      </div>
+        </UPageCard>
+      </section>
     </div>
   </div>
 </template>
@@ -225,6 +164,38 @@ const primaryEmailDisplay = computed(() => {
   return email
 })
 const avatarInitial = computed(() => displayName.value.charAt(0).toUpperCase() || 'U')
+
+// Stat cards in the manner of the template's HomeStats.
+const metricCardUi = {
+  container: 'gap-y-1.5',
+  wrapper: 'items-start',
+  leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25',
+  title: 'font-normal text-muted text-xs uppercase'
+}
+const metrics = computed(() => [
+  {
+    key: 'balance',
+    testId: 'profile-overview-metric-balance',
+    icon: 'i-lucide-wallet',
+    label: t('profile.accountBalance'),
+    value: formatCurrency(props.user?.balance || 0)
+  },
+  {
+    key: 'concurrency',
+    testId: 'profile-overview-metric-concurrency',
+    icon: 'i-lucide-gauge',
+    label: t('profile.concurrencyLimit'),
+    value: String(props.user?.concurrency || 0)
+  },
+  {
+    key: 'member-since',
+    testId: 'profile-overview-metric-member-since',
+    icon: 'i-lucide-calendar',
+    label: t('profile.memberSince'),
+    value: memberSinceLabel.value
+  }
+])
+
 const memberSinceLabel = computed(() => {
   const raw = props.user?.created_at?.trim()
   if (!raw) {
@@ -359,12 +330,3 @@ const sourceHints = computed(() => {
   return hints
 })
 </script>
-
-<style scoped>
-/* Login methods inside the bindings card: hairline-divided rows, not nested cards. */
-.profile-bindings-panel :deep(.space-y-4 > .rounded-2xl.border) { margin-top: 0; padding: 16px 0 0; border-width: 1px 0 0; border-radius: 0; background: transparent; box-shadow: none; }
-.profile-bindings-panel :deep(.space-y-4 > .rounded-2xl.border:not(:last-child)) { padding-bottom: 16px; }
-.profile-bindings-panel :deep(.space-y-4 > div:first-child) { margin-bottom: 16px; }
-.profile-bindings-panel :deep(.space-y-4 > div:first-child > p:first-child) { font-size: 16px; line-height: 24px; }
-.profile-bindings-panel :deep(.rounded-2xl.h-11.w-11) { width: 36px; height: 36px; border-radius: 8px; }
-</style>

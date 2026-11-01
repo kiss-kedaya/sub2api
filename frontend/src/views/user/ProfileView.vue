@@ -1,8 +1,10 @@
 <template>
   <AppLayout>
+    <!-- Settings-page layout of the Nuxt UI dashboard template: one centred column of
+         sections, each a naked title card over a subtle card of form rows. -->
     <div
       data-testid="profile-shell"
-      class="signal-account-page mx-auto max-w-[950px] space-y-6"
+      class="mx-auto flex w-full flex-col gap-4 sm:gap-6 lg:max-w-2xl lg:gap-10"
     >
       <UserPageHeader flush :title="t('profile.title')" />
       <ProfileInfoCard
@@ -19,12 +21,11 @@
       <UAlert
         v-if="contactInfo"
         color="neutral"
-        variant="outline"
+        variant="subtle"
         icon="i-lucide-message-circle"
-        class="shadow-xs dark:shadow-none"
         :title="t('common.contactSupport')"
         :description="contactInfo"
-        :ui="{ description: 'font-medium break-all' }"
+        :ui="{ description: 'break-all' }"
       />
 
       <ProfilePasswordForm />

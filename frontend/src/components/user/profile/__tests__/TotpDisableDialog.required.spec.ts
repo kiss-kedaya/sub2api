@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount as mountComponent } from '@vue/test-utils'
 import TotpDisableDialog from '../TotpDisableDialog.vue'
+
+// BaseDialog teleports to <body>; render its slots in place so the wrapper can query the dialog.
+const BaseDialogStub = { props: ['show'], template: '<div v-if="show"><slot /><slot name="footer" /></div>' }
+
 const mocks = vi.hoisted(() => ({ role: 'admin', method: 'password', disable: vi.fn(), showError: vi.fn() }))
 vi.mock('@/api', () => ({ totpAPI: {
   getVerificationMethod: async () => ({ method: mocks.method }), disable: mocks.disable
@@ -10,6 +14,11 @@ vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { role: mocks.rol
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 beforeEach(() => { vi.clearAllMocks(); mocks.role = 'admin'; mocks.method = 'password'; mocks.disable.mockResolvedValue({ success: true }) })
+
+const mount = (component: typeof TotpDisableDialog) => mountComponent(component, { global: { stubs: { BaseDialog: BaseDialogStub } } })
+// URadioGroup renders button[role="radio"]; choosing a method clicks the matching radio.
+const chooseMethod = (wrapper: ReturnType<typeof mount>, method: 'totp' | 'server') =>
+  wrapper.get(`[data-testid="totp-disable-method"] button[role="radio"][value="${method}"]`).trigger('click')
 
 describe('Administrator TOTP disable UI protection', () => {
   it('defaults to an exactly six digit TOTP code for admins', async () => {
@@ -61,7 +70,7 @@ describe('Administrator TOTP disable UI protection', () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
     await wrapper.get('[data-testid="totp-disable-code"]').setValue('12345')
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await chooseMethod(wrapper, 'server')
     expect(wrapper.find('[data-testid="totp-disable-code"]').exists()).toBe(false)
     const input = wrapper.get('[data-testid="totp-disable-server-code"]')
     expect(input.attributes('type')).toBe('password')
@@ -85,11 +94,11 @@ describe('Administrator TOTP disable UI protection', () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
     await wrapper.get('[data-testid="totp-disable-code"]').setValue('12345')
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await chooseMethod(wrapper, 'server')
     await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
-    await wrapper.get('[data-testid="totp-disable-method-authenticator"]').setValue()
+    await chooseMethod(wrapper, 'totp')
     expect(wrapper.get('[data-testid="totp-disable-code"]').element).toHaveProperty('value', '')
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await chooseMethod(wrapper, 'server')
     expect(wrapper.get('[data-testid="totp-disable-server-code"]').element).toHaveProperty('value', '')
     await wrapper.get('form').trigger('submit')
     expect(mocks.disable).not.toHaveBeenCalled()
@@ -99,7 +108,7 @@ describe('Administrator TOTP disable UI protection', () => {
     mocks.disable.mockRejectedValueOnce({ message: 'Server authorization expired' })
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await chooseMethod(wrapper, 'server')
     await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
     await wrapper.get('form').trigger('submit')
     await flushPromises()
@@ -111,9 +120,9 @@ describe('Administrator TOTP disable UI protection', () => {
   it('clears a server authorization immediately on cancel without submitting', async () => {
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await chooseMethod(wrapper, 'server')
     await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
-    await wrapper.get('.btn-secondary').trigger('click')
+    await wrapper.get('[data-testid="totp-disable-cancel"]').trigger('click')
     expect(wrapper.get('[data-testid="totp-disable-server-code"]').element).toHaveProperty('value', '')
     expect(wrapper.emitted('close')).toHaveLength(1)
     expect(mocks.disable).not.toHaveBeenCalled()
@@ -124,7 +133,7 @@ describe('Administrator TOTP disable UI protection', () => {
     mocks.method = 'email'
     const wrapper = mount(TotpDisableDialog)
     await flushPromises()
-    expect(wrapper.find('[data-testid="totp-disable-method-server"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="totp-disable-method"] button[role="radio"][value="server"]').exists()).toBe(false)
     expect(wrapper.find('#password').exists()).toBe(false)
     expect(wrapper.find('input[placeholder="profile.totp.enterEmailCode"]').exists()).toBe(false)
     await wrapper.get('#disable-totp-code').setValue('654321')

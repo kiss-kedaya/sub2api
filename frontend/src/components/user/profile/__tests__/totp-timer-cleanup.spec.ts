@@ -2,6 +2,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TotpSetupModal from '@/components/user/profile/TotpSetupModal.vue'
 import TotpDisableDialog from '@/components/user/profile/TotpDisableDialog.vue'
+
+// BaseDialog teleports to <body>; render its slots in place so the wrapper can query the dialog.
+const BaseDialogStub = { props: ['show'], template: '<div v-if="show"><slot /><slot name="footer" /></div>' }
+
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { role: mocks.role } }) }))
 
 const mocks = vi.hoisted(() => ({
@@ -83,7 +87,7 @@ describe('TOTP 弹窗定时器清理', () => {
   })
 
   it('TotpSetupModal 卸载时清理倒计时定时器', async () => {
-    const wrapper = mount(TotpSetupModal)
+    const wrapper = mount(TotpSetupModal, { global: { stubs: { BaseDialog: BaseDialogStub } } })
     await flushPromises()
 
     const sendButton = wrapper
@@ -103,7 +107,7 @@ describe('TOTP 弹窗定时器清理', () => {
   })
 
   it('TotpDisableDialog 不再发送邮箱码或创建倒计时', async () => {
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mount(TotpDisableDialog, { global: { stubs: { BaseDialog: BaseDialogStub } } })
     await flushPromises()
 
     const sendButton = wrapper
@@ -125,11 +129,11 @@ describe('TOTP 弹窗定时器清理', () => {
       response: { data: { message: 'setup failed' } }
     })
 
-    const wrapper = mount(TotpSetupModal)
+    const wrapper = mount(TotpSetupModal, { global: { stubs: { BaseDialog: BaseDialogStub } } })
     await flushPromises()
 
     await wrapper.get('input[type="password"]').setValue('correct horse battery staple')
-    await wrapper.get('button[type="button"].btn-primary').trigger('click')
+    await wrapper.get('button[type="button"][data-testid="totp-setup-primary"]').trigger('click')
     await flushPromises()
 
     expect(mocks.showError).toHaveBeenCalledWith('setup failed')
@@ -144,7 +148,7 @@ describe('TOTP 弹窗定时器清理', () => {
       response: { data: { message: 'disable failed' } }
     })
 
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mount(TotpDisableDialog, { global: { stubs: { BaseDialog: BaseDialogStub } } })
     await flushPromises()
 
     await wrapper.get('#disable-totp-code').setValue('123456')

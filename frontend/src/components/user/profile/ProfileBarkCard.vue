@@ -1,73 +1,102 @@
 <template>
-  <div class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
-    <div class="border-b border-default px-5 py-4 sm:px-6">
-      <h2 class="text-base font-semibold text-highlighted">
-        {{ title || t('profile.bark.title') }}
-      </h2>
-      <p class="mt-1 text-sm text-muted">
-        {{ description || t('profile.bark.description') }}
-      </p>
-    </div>
-    <div class="space-y-6 p-5 sm:p-6">
-      <div v-if="loadError" role="alert" class="text-sm text-red-600 dark:text-red-400">
-        <p>{{ loadError }}</p>
-        <button type="button" class="btn btn-secondary btn-sm mt-2" :disabled="loading" @click="refresh">{{ t('common.refresh') }}</button>
+  <!-- Notification section of the dashboard template: title card with the save actions, then a
+       subtle card with the device key and push switch rows. Also used on the admin crypto page. -->
+  <section>
+    <UPageCard
+      :description="description || t('profile.bark.description')"
+      variant="naked"
+      orientation="horizontal"
+      class="mb-4"
+    >
+      <template #title>
+        <h2>{{ title || t('profile.bark.title') }}</h2>
+      </template>
+      <div class="flex w-fit gap-2 lg:ms-auto">
+        <UButton
+          v-if="status.configured"
+          color="neutral"
+          variant="outline"
+          :disabled="loading || saving || !!loadError"
+          @click="clear"
+        >
+          {{ t('profile.bark.clear') }}
+        </UButton>
+        <UButton
+          data-testid="bark-save"
+          :disabled="loading || saving || !!loadError || (!deviceKey.trim() && !status.configured)"
+          @click="save"
+        >
+          {{ saving ? t('common.saving') : t('profile.bark.save') }}
+        </UButton>
       </div>
-      <p v-if="needsTotp" role="alert" class="text-sm text-amber-700 dark:text-amber-300">
-        {{ t('profile.bark.totpRequired') }}
-        <a href="/profile" class="underline">{{ t('profile.bark.configureTotp') }}</a>
-      </p>
-      <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('profile.bark.changeVerificationHint') }}</p>
-      <div class="flex items-center gap-2 text-sm">
-        <span
-          class="inline-block h-2 w-2 rounded-full"
-          :class="status.configured ? 'bg-green-500' : 'bg-gray-400'"
-        ></span>
-        <span class="text-gray-500 dark:text-gray-400">
-          {{ status.configured ? t('profile.bark.configured') : t('profile.bark.notConfigured') }}
-        </span>
-      </div>
+    </UPageCard>
 
-      <div>
-        <label for="bark-device-key" class="input-label">{{ t('profile.bark.deviceKey') }}</label>
-        <input
+    <UPageCard variant="subtle">
+      <UAlert
+        v-if="loadError"
+        role="alert"
+        color="error"
+        variant="subtle"
+        icon="i-lucide-circle-alert"
+        :description="loadError"
+        orientation="horizontal"
+      >
+        <template #actions>
+          <UButton size="xs" color="neutral" variant="outline" :disabled="loading" @click="refresh">{{ t('common.refresh') }}</UButton>
+        </template>
+      </UAlert>
+      <UAlert
+        v-if="needsTotp"
+        role="alert"
+        color="warning"
+        variant="subtle"
+        icon="i-lucide-shield-alert"
+      >
+        <template #description>
+          {{ t('profile.bark.totpRequired') }}
+          <a href="/profile" class="font-medium underline">{{ t('profile.bark.configureTotp') }}</a>
+        </template>
+      </UAlert>
+
+      <UFormField
+        :label="t('profile.bark.deviceKey')"
+        class="flex justify-between gap-4 max-sm:flex-col sm:items-start"
+        :ui="{ wrapper: 'min-w-0 flex-1' }"
+      >
+        <template #description>
+          <span class="block">{{ t(status.configured ? 'profile.bark.keepKeyHint' : 'profile.bark.deviceKeyHint') }}</span>
+          <span class="mt-1 block">{{ t('profile.bark.changeVerificationHint') }}</span>
+        </template>
+        <template #hint>
+          <UBadge :color="status.configured ? 'success' : 'neutral'" variant="subtle" size="sm">
+            {{ status.configured ? t('profile.bark.configured') : t('profile.bark.notConfigured') }}
+          </UBadge>
+        </template>
+        <UInput
           id="bark-device-key"
           v-model="deviceKey"
           type="password"
           autocomplete="off"
           spellcheck="false"
           :disabled="loading || saving || !!loadError"
-          class="input"
+          class="w-full sm:w-64"
           :placeholder="t('profile.bark.deviceKeyPlaceholder')"
         />
-        <p class="mt-1 text-xs text-gray-400">{{ t(status.configured ? 'profile.bark.keepKeyHint' : 'profile.bark.deviceKeyHint') }}</p>
-      </div>
-
-      <div class="flex items-center justify-between">
-        <label class="input-label mb-0">{{ t('profile.bark.enabled') }}</label>
-        <label class="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" v-model="enabled" :disabled="loading || saving || !!loadError" class="sr-only peer" :aria-label="t('profile.bark.enabled')" />
-          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-hidden peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-600 peer-checked:bg-primary-600"></div>
-        </label>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <button type="button" class="btn btn-primary btn-sm" :disabled="loading || saving || !!loadError || (!deviceKey.trim() && !status.configured)" @click="save">
-          {{ saving ? t('common.saving') : t('profile.bark.save') }}
-        </button>
-        <button
-          v-if="status.configured"
-          type="button"
-          class="btn btn-secondary btn-sm"
+      </UFormField>
+      <USeparator />
+      <UFormField
+        :label="t('profile.bark.enabled')"
+        class="flex items-center justify-between gap-2"
+      >
+        <USwitch
+          v-model="enabled"
           :disabled="loading || saving || !!loadError"
-          @click="clear"
-        >
-          {{ t('profile.bark.clear') }}
-        </button>
-      </div>
-    </div>
+          :aria-label="t('profile.bark.enabled')"
+        />
+      </UFormField>
+    </UPageCard>
     <TotpStepUpDialog :controller="stepUp" :verify="verifyChange" :hint="t('profile.bark.verifyChangeHint')" />
-  </div>
+  </section>
 </template>
 
 <script setup lang="ts">

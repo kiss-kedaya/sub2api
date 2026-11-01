@@ -25,7 +25,7 @@ const deferred = () => {
   return { promise, resolve }
 }
 
-const pendingRows = (wrapper: VueWrapper) => wrapper.findAll('.bg-yellow-50')
+const pendingRows = (wrapper: VueWrapper) => wrapper.findAll('[data-testid="balance-notify-pending"]')
 const pendingEmails = (wrapper: VueWrapper) => pendingRows(wrapper).map(row => row.get('span').text())
 
 const button = (wrapper: VueWrapper, text: string) =>

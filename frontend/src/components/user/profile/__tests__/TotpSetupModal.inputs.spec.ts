@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import TotpSetupModal from '../TotpSetupModal.vue'
 
+// BaseDialog teleports to <body>; render its slots in place so the wrapper can query the dialog.
+const BaseDialogStub = { props: ['show'], template: '<div v-if="show"><slot /><slot name="footer" /></div>' }
+
+
 const api = vi.hoisted(() => ({ getVerificationMethod: vi.fn(), initiateSetup: vi.fn(), enable: vi.fn() }))
 vi.mock('@/api', () => ({ totpAPI: api }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() }) }))
@@ -17,12 +21,12 @@ beforeEach(() => {
 })
 
 async function openCodeStep(code = '123456') {
-  const wrapper = mount(TotpSetupModal, { attachTo: document.body })
+  const wrapper = mount(TotpSetupModal, { attachTo: document.body, global: { stubs: { BaseDialog: BaseDialogStub } } })
   await flushPromises()
   await wrapper.get('input[type="password"]').setValue('password')
-  await wrapper.get('.btn-primary').trigger('click')
+  await wrapper.get('[data-testid="totp-setup-primary"]').trigger('click')
   await flushPromises()
-  await wrapper.get('.btn-primary').trigger('click')
+  await wrapper.get('[data-testid="totp-setup-primary"]').trigger('click')
   await wrapper.get('input[autocomplete="one-time-code"]').setValue(code)
   return wrapper
 }
@@ -48,7 +52,7 @@ describe('TOTP setup input synchronization', () => {
   it('retains partial input when returning from the QR-code step and submits on completion', async () => {
     const wrapper = await openCodeStep('1234')
     await wrapper.findAll('button').find(button => button.text() === 'common.back')!.trigger('click')
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-testid="totp-setup-primary"]').trigger('click')
     expect(wrapper.get('input[autocomplete="one-time-code"]').element).toHaveProperty('value', '1234')
     expect(wrapper.findAll('.totp-code-input span').slice(0, 4).map(cell => cell.text())).toEqual(['1', '2', '3', '4'])
     expect(api.enable).not.toHaveBeenCalled()
