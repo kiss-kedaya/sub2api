@@ -476,7 +476,7 @@
 
         <div
           v-if="accountCategory === 'apikey'"
-          class="mt-3 rounded-lg border border-default bg-elevated px-3 py-2 text-xs text-highlighted"
+          class="mt-3 text-xs text-muted"
         >
           <p>{{ t('admin.accounts.gemini.accountType.apiKeyNote') }}</p>
           <div class="mt-2 flex flex-wrap gap-2">
@@ -981,7 +981,7 @@
           />
         </div>
 
-        <div v-if="form.platform === 'gemini' && accountCategory === 'apikey'" class="rounded-lg border border-default p-3">
+        <div v-if="form.platform === 'gemini' && accountCategory === 'apikey'">
           <UCheckbox v-model="geminiUseCustomProtocol" data-testid="gemini-custom-protocol" :label="t('admin.accounts.gemini.accountType.customProtocolTitle')" :description="t('admin.accounts.gemini.accountType.customProtocolDesc')" />
         </div>
 
@@ -1813,7 +1813,7 @@
             <div
               v-for="(rule, index) in tempUnschedRules"
               :key="getTempUnschedRuleKey(rule)"
-              class="rounded-lg border border-default p-3"
+             
             >
               <div class="mb-2 flex items-center justify-between">
                 <span class="text-xs font-medium text-muted">
@@ -1920,7 +1920,7 @@
         </div>
 
         <!-- Window Cost Limit -->
-        <div class="rounded-lg border border-default p-4">
+        <div class="space-y-4">
           <UFormField :label="t('admin.accounts.quotaControl.windowCost.label')" :description="t('admin.accounts.quotaControl.windowCost.hint')" class="flex items-center justify-between gap-4 mb-3">
             <Toggle v-model="windowCostEnabled" />
           </UFormField>
@@ -1960,7 +1960,7 @@
         </div>
 
         <!-- Session Limit -->
-        <div class="rounded-lg border border-default p-4">
+        <div class="space-y-4">
           <UFormField :label="t('admin.accounts.quotaControl.sessionLimit.label')" :description="t('admin.accounts.quotaControl.sessionLimit.hint')" class="flex items-center justify-between gap-4 mb-3">
             <Toggle v-model="sessionLimitEnabled" />
           </UFormField>
@@ -1995,7 +1995,7 @@
         </div>
 
         <!-- RPM Limit -->
-        <div class="rounded-lg border border-default p-4">
+        <div class="space-y-4">
           <UFormField :label="t('admin.accounts.quotaControl.rpmLimit.label')" :description="t('admin.accounts.quotaControl.rpmLimit.hint')" class="flex items-center justify-between gap-4 mb-3">
             <Toggle v-model="rpmLimitEnabled" />
           </UFormField>
@@ -2081,7 +2081,7 @@
         </div>
 
         <!-- TLS Fingerprint -->
-        <div class="rounded-lg border border-default p-4">
+        <div class="space-y-4">
           <UFormField :label="t('admin.accounts.quotaControl.tlsFingerprint.label')" :description="t('admin.accounts.quotaControl.tlsFingerprint.hint')" class="flex items-center justify-between gap-4">
             <Toggle v-model="tlsFingerprintEnabled" />
           </UFormField>
@@ -2099,14 +2099,14 @@
         </div>
 
         <!-- Session ID Masking -->
-        <div class="rounded-lg border border-default p-4">
+        <div class="space-y-4">
           <UFormField :label="t('admin.accounts.quotaControl.sessionIdMasking.label')" :description="t('admin.accounts.quotaControl.sessionIdMasking.hint')" class="flex items-center justify-between gap-4">
             <Toggle v-model="sessionIdMaskingEnabled" />
           </UFormField>
         </div>
 
         <!-- Cache TTL Override -->
-        <div class="rounded-lg border border-default p-4">
+        <div class="space-y-4">
           <UFormField :label="t('admin.accounts.quotaControl.cacheTTLOverride.label')" :description="t('admin.accounts.quotaControl.cacheTTLOverride.hint')" class="flex items-center justify-between gap-4">
             <Toggle v-model="cacheTTLOverrideEnabled" />
           </UFormField>
@@ -2124,7 +2124,7 @@
         </div>
 
         <!-- Custom Base URL Relay -->
-        <div class="rounded-lg border border-default p-4">
+        <div class="space-y-4">
           <UFormField :label="t('admin.accounts.quotaControl.customBaseUrl.label')" :description="t('admin.accounts.quotaControl.customBaseUrl.hint')" class="flex items-center justify-between gap-4">
             <Toggle v-model="customBaseUrlEnabled" />
           </UFormField>

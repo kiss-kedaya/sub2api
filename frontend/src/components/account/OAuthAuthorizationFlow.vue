@@ -1,10 +1,8 @@
 <template>
-  <div
-    class="rounded-lg border border-default bg-elevated p-4"
-  >
-      <div class="flex items-start gap-4">
-      <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary">
-        <Icon name="link" size="md" class="text-inverted" />
+  <div>
+      <div class="flex items-start gap-3">
+      <div class="flex size-8 shrink-0 items-center justify-center rounded-md bg-elevated">
+        <UIcon name="i-lucide-link" class="size-4 text-muted" />
       </div>
       <div class="flex-1">
         <h4 class="mb-3 font-semibold text-highlighted">{{ oauthTitle }}</h4>
@@ -37,7 +35,7 @@
         <!-- Refresh Token Input (OpenAI / Antigravity / Mobile RT) -->
         <div v-if="inputMethod === 'refresh_token' || inputMethod === 'mobile_refresh_token'" class="space-y-4">
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <p class="mb-3 text-sm text-highlighted">
               {{ t(getOAuthKey('refreshTokenDesc')) }}
@@ -95,7 +93,7 @@
         <!-- SSO Cookie Input (Grok Web -> Grok Build) -->
         <div v-if="inputMethod === 'sso_cookie'" class="space-y-4">
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <p class="mb-3 text-sm text-highlighted">
               {{ t(getOAuthKey('ssoCookieDesc')) }}
@@ -144,7 +142,7 @@
         <!-- Grok email + password → ephemeral SSO → Build OAuth (password never stored) -->
         <div v-if="inputMethod === 'email_password'" class="space-y-4">
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <p class="mb-3 text-sm text-highlighted">
               {{ t(getOAuthKey('emailPasswordDesc')) }}
@@ -191,7 +189,7 @@
         <!-- Codex auth.json / session credential batch import -->
         <div v-if="inputMethod === 'codex_session' || inputMethod === 'agent_identity'" class="space-y-4">
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <p class="mb-3 text-sm text-highlighted">
               {{ t(isAgentIdentityInput ? 'admin.accounts.oauth.openai.agentIdentityDesc' : 'admin.accounts.oauth.openai.codexSessionDesc') }}
@@ -244,7 +242,7 @@
         <!-- Codex Personal Access Token -->
         <div v-if="inputMethod === 'codex_pat'" class="space-y-4">
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <p class="mb-3 text-sm text-highlighted">
               {{ t('admin.accounts.oauth.openai.codexPatDesc') }}
@@ -291,7 +289,7 @@
         <!-- Cookie Auto-Auth Form -->
         <div v-if="inputMethod === 'cookie'" class="space-y-4">
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <p class="mb-3 text-sm text-highlighted">
               {{ t('admin.accounts.oauth.cookieAutoAuthDesc') }}
@@ -341,7 +339,7 @@
             <!-- Help Section -->
             <div
               v-if="showHelpDialog && showHelp"
-              class="mb-4 rounded-lg border border-warning/30 bg-warning/10 p-3"
+              class="mb-4 rounded-md bg-warning/10 p-3"
             >
               <h5 class="mb-2 font-semibold text-warning">
                 {{ t('admin.accounts.oauth.howToGetSessionKey') }}
@@ -391,7 +389,7 @@
 
           <!-- Step 1: Generate Auth URL -->
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <div class="flex items-start gap-3">
               <div
@@ -471,7 +469,7 @@
 
           <!-- Step 2: Open URL and authorize -->
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <div class="flex items-start gap-3">
               <div
@@ -487,20 +485,16 @@
                   {{ oauthOpenUrlDesc }}
                 </p>
                 <!-- Local callback notice -->
-                <UAlert v-if="showLocalCallbackNotice" color="warning" variant="subtle" icon="i-lucide-triangle-alert" class="mt-2">
-                  <template #description></template>
-                </UAlert>
+                <UAlert v-if="showLocalCallbackNotice" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="oauthImportantNotice" class="mt-2" />
                 <!-- Proxy Warning (for non-OpenAI) -->
-                <UAlert v-else-if="showProxyWarning" color="warning" variant="subtle" icon="i-lucide-triangle-alert" class="mt-2">
-                  <template #description></template>
-                </UAlert>
+                <UAlert v-else-if="showProxyWarning" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.oauth.proxyWarning')" class="mt-2" />
               </div>
             </div>
           </div>
 
           <!-- Step 3: Enter authorization code -->
           <div
-            class="rounded-lg border border-default bg-default p-4"
+            class="py-1"
           >
             <div class="flex items-start gap-3">
               <div
@@ -535,7 +529,7 @@
                   <!-- Gemini-specific state parameter warning -->
                   <div
                     v-if="platform === 'gemini'"
-                    class="mt-3 rounded-lg border-2 border-warning bg-warning/10 p-3"
+                    class="mt-3 rounded-md bg-warning/10 p-3"
                   >
                     <div class="flex items-start gap-2">
                       <Icon
