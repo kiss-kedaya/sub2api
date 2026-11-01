@@ -18,8 +18,16 @@ import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadEr
 /**
  * Route definitions with lazy loading
  */
+/** Placeholder for sub-page child routes whose parent view renders the section (keeps one view instance). */
+const SubPageOutlet = { name: 'SubPageOutlet', render: () => null }
+
 const routes: RouteRecordRaw[] = [
-  {path:'/admin/ops-center',name:'AdminOpsCenter',component:()=>import('@/views/admin/OpsCenterView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'运营中心'}},
+  // 运营中心：概览 → 需要处理 / 账号资产 子页（同一个视图按 route meta 切换分区）
+  {path:'/admin/ops-center',component:()=>import('@/views/admin/OpsCenterView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'运营中心'},children:[
+    {path:'',name:'AdminOpsCenter',component:SubPageOutlet,meta:{opsCenterSection:'overview'}},
+    {path:'attention',name:'AdminOpsCenterAttention',component:SubPageOutlet,meta:{opsCenterSection:'attention',title:'需要处理',parent:'/admin/ops-center'}},
+    {path:'assets',name:'AdminOpsCenterAssets',component:SubPageOutlet,meta:{opsCenterSection:'assets',title:'账号资产',parent:'/admin/ops-center'}},
+  ]},
   {path:'/admin/model-comparison',name:'AdminModelComparison',component:()=>import('@/views/admin/ModelComparisonView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'模型比价'}},
   {path:'/admin/security-penalties',name:'AdminSecurityPenalties',component:()=>import('@/views/admin/SecurityPenaltiesView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'分层安全限制'}},
   {path:'/security',name:'SecurityRecords',component:()=>import('@/views/user/SecurityRecordsView.vue'),meta:{requiresAuth:true,title:'安全记录'}},
@@ -548,7 +556,6 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/channels/monitor',
-    name: 'AdminChannelMonitor',
     component: () => import('@/views/admin/ChannelMonitorView.vue'),
     meta: {
       requiresAuth: true,
@@ -556,7 +563,13 @@ const routes: RouteRecordRaw[] = [
       title: 'Channel Monitor',
       titleKey: 'admin.channelMonitor.title',
       descriptionKey: 'admin.channelMonitor.description'
-    }
+    },
+    // 列表（V1 监控项）与 V2 设置分为子页；默认页随系统模式选择。
+    children: [
+      { path: '', name: 'AdminChannelMonitor', component: SubPageOutlet },
+      { path: 'settings', name: 'AdminChannelMonitorSettings', component: SubPageOutlet, meta: { monitorSection: 'v2', parent: '/admin/channels/monitor' } },
+      { path: 'list', name: 'AdminChannelMonitorList', component: SubPageOutlet, meta: { monitorSection: 'legacy', parent: '/admin/channels/monitor' } }
+    ]
   },
   {
     path: '/monitor',
@@ -705,7 +718,6 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/admin/usage',
-    name: 'AdminUsage',
     component: () => import('@/views/admin/UsageView.vue'),
     meta: {
       requiresAuth: true,
@@ -713,7 +725,22 @@ const routes: RouteRecordRaw[] = [
       title: 'Usage Records',
       titleKey: 'admin.usage.title',
       descriptionKey: 'admin.usage.description'
-    }
+    },
+    // 旧链接 /admin/usage?tab=errors|ranking 跳到对应子页，其余查询参数保留。
+    beforeEnter: (to) => {
+      const tab = typeof to.query.tab === 'string' ? to.query.tab : ''
+      if (to.path === '/admin/usage' && ['errors', 'ranking', 'breakdown'].includes(tab)) {
+        const { tab: _drop, ...query } = to.query
+        return { path: `/admin/usage/${tab}`, query, replace: true }
+      }
+      return true
+    },
+    children: [
+      { path: '', name: 'AdminUsage', component: SubPageOutlet, meta: { usageSection: 'usage' } },
+      { path: 'errors', name: 'AdminUsageErrors', component: SubPageOutlet, meta: { usageSection: 'errors', parent: '/admin/usage' } },
+      { path: 'ranking', name: 'AdminUsageRanking', component: SubPageOutlet, meta: { usageSection: 'ranking', parent: '/admin/usage' } },
+      { path: 'breakdown', name: 'AdminUsageBreakdown', component: SubPageOutlet, meta: { usageSection: 'breakdown', parent: '/admin/usage' } }
+    ]
   },
   {
     path: '/admin/affiliates',

@@ -4,7 +4,7 @@
     <div class="flex flex-wrap items-end justify-between gap-3">
       <!-- Left: filters (allowed to wrap to multiple rows) -->
       <div class="flex flex-1 flex-wrap items-end gap-x-2 gap-y-3">
-        <div class="w-full sm:w-auto" data-testid="usage-date-range-filter">
+        <div v-if="!flat" class="w-full sm:w-auto" data-testid="usage-date-range-filter">
           <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.dashboard.timeRange') }}</label>
           <DateRangePicker
             ref="dateRangeRef"
@@ -15,7 +15,7 @@
           />
         </div>
         <div v-if="!observer" class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.requestId') }}</label>
+          <label :class="labelClass">{{ t('admin.usage.requestId') }}</label>
           <UInput
             v-model="filters.request_id"
             type="text"
@@ -34,7 +34,7 @@
         </template>
         <!-- User Search -->
         <div v-if="!observer" ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
-          <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.userFilter') }}</label>
+          <label :class="labelClass">{{ t('admin.usage.userFilter') }}</label>
           <UInput
             v-model="userKeyword"
             type="text"
@@ -77,7 +77,7 @@
 
         <!-- API Key Search -->
         <div v-if="!observer" ref="apiKeySearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
-          <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.apiKeyFilter') }}</label>
+          <label :class="labelClass">{{ t('usage.apiKeyFilter') }}</label>
           <UInput
             v-model="apiKeyKeyword"
             type="text"
@@ -120,12 +120,12 @@
 
         <!-- Model Filter -->
         <div class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.model') }}</label>
+          <label :class="labelClass">{{ t('usage.model') }}</label>
           <Select v-model="filters.model" :options="modelOptions" searchable @change="emitChange" />
         </div>
 
         <!-- Account Filter -->
-        <div v-if="!observer" ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
+        <div v-show="advancedVisible" v-if="!observer" ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
           <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.account') }}</label>
           <UInput
             v-model="accountKeyword"
@@ -168,30 +168,30 @@
         </div>
 
         <!-- Request Type Filter (usage only) -->
-        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+        <div v-show="advancedVisible" v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.type') }}</label>
           <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
         </div>
 
         <!-- Native compaction is independent of the transport request type. -->
-        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+        <div v-show="advancedVisible" v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="mb-1 block text-xs font-medium text-muted">{{ t('usage.compactionFilter') }}</label>
           <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
         </div>
 
         <!-- Billing Type Filter (usage only) -->
-        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[200px]">
+        <div v-show="advancedVisible" v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.billingType') }}</label>
           <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
         </div>
 
         <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
-        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
+        <div v-show="advancedVisible" v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.billingMode') }}</label>
           <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitChange" />
         </div>
 
-        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
+        <div v-show="advancedVisible" v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
           <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.upstreamModelAudit') }}</label>
           <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
         </div>
@@ -215,7 +215,7 @@
         </div>
 
         <!-- Group Filter -->
-        <div v-if="!observer" class="w-full sm:w-auto sm:min-w-[200px]">
+        <div v-show="advancedVisible" v-if="!observer" class="w-full sm:w-auto sm:min-w-[200px]">
           <label class="mb-1 block text-xs font-medium text-muted">{{ t('admin.usage.group') }}</label>
           <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
         </div>
@@ -224,6 +224,18 @@
 
       <!-- Right: actions -->
       <div v-if="showActions" class="flex w-full flex-wrap items-center justify-end gap-1.5 sm:w-auto">
+        <UButton
+          v-if="flat"
+          type="button"
+          color="neutral"
+          variant="ghost"
+          icon="i-lucide-list-filter"
+          :trailing-icon="showAdvanced ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+          :aria-expanded="showAdvanced"
+          data-testid="usage-more-filters"
+          :label="t('usage.moreFilters')"
+          @click="showAdvanced = !showAdvanced"
+        />
         <UButton type="button" color="neutral" variant="outline" icon="i-lucide-refresh-cw" :label="t('common.refresh')" @click="$emit('refresh')" />
         <UButton type="button" color="neutral" variant="ghost" :label="t('common.reset')" @click="$emit('reset')" />
         <slot name="after-reset" />
@@ -265,6 +277,7 @@ interface Props {
   observer?: boolean
 }
 
+const showAdvanced = ref(false)
 const props = withDefaults(defineProps<Props>(), {
   showActions: true,
   mode: 'usage',
@@ -618,4 +631,8 @@ const refreshActivePreset = (): { startDate: string; endDate: string } | null =>
   dateRangeRef.value?.refreshActivePreset?.() ?? null
 
 defineExpose({ getUserSearchRevision, setUserKeyword, refreshActivePreset })
+
+// Toolbar (flat) mode keeps one compact row: placeholders carry the field names, rare fields fold away.
+const labelClass = computed(() => (props.flat ? 'sr-only' : 'mb-1 block text-xs font-medium text-muted'))
+const advancedVisible = computed(() => !props.flat || showAdvanced.value)
 </script>

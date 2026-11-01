@@ -514,7 +514,8 @@ export default {
       detailAccuracy: 'Accuracy',
       detailCoordinates: 'Coordinates',
     },
-    tabs: { usage: 'Usage', errors: 'Error Requests', ranking: 'User Ranking' },
+    tabs: { usage: 'Usage', errors: 'Error Requests', ranking: 'User Ranking', breakdown: 'Breakdown' },
+    moreFilters: 'More filters',
     errors: {
       time: 'Time', model: 'Model', endpoint: 'Endpoint', status: 'Status',
       category: 'Category', platform: 'Platform', message: 'Message',

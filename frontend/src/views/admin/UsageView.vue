@@ -25,7 +25,19 @@
       </AdminPageHeader>
       <!-- 筛选栏放进框架的 PageToolbar（导航栏下方一行）；无框架时原地渲染 -->
       <PageToolbar>
-          <UsageFilters v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel w-full" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <div class="flex w-full min-w-0 flex-col gap-2">
+          <UNavigationMenu
+            :items="subnavItems"
+            highlight
+            class="-mx-1 overflow-x-auto"
+            :ui="{ list: 'gap-0.5' }"
+            :aria-label="t('admin.usage.title')"
+          >
+            <template #item-label="{ item }">
+              <span data-testid="usage-detail-tab">{{ item.label }}</span>
+            </template>
+          </UNavigationMenu>
+          <UsageFilters v-if="activeTab !== 'breakdown'" v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="filterMode" class="usage-filter-panel w-full" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
             <template #after-reset>
               <UPopover v-if="activeTab === 'usage' && !isObserver" mode="hover" :content="{ align: 'end' }">
                 <UButton color="neutral" variant="ghost" square icon="i-lucide-circle-help" aria-label="ID search help" />
@@ -52,12 +64,13 @@
               </UDropdownMenu>
             </template>
           </UsageFilters>
+        </div>
       </PageToolbar>
       <section class="usage-summary-strip">
         <UsageStatsCards :stats="usageStats" />
       </section>
       <!-- Charts Section -->
-      <section class="usage-analysis-workspace">
+      <section v-show="activeTab === 'breakdown' || isObserver" class="usage-analysis-workspace">
         <div class="usage-chart-grid">
           <ModelDistributionChart
             v-model:source="modelDistributionSource"
@@ -104,20 +117,7 @@
         </div>
       </section>
       <!-- 明细区：tab 栏 + 筛选 + 内容收进同一张卡片，消除割裂感 -->
-      <section class="usage-detail-workspace">
-        <UTabs
-          :model-value="activeTab"
-          :items="detailTabItems"
-          :content="false"
-          variant="link"
-          class="usage-detail-tabs w-full"
-          :ui="{ list: 'border-b border-default overflow-x-auto', trigger: 'pb-2.5' }"
-          @update:model-value="switchTab($event as DetailTab)"
-        >
-          <template #default="{ item }">
-            <span data-testid="usage-detail-tab">{{ item.label }}</span>
-          </template>
-        </UTabs>
+      <section v-show="activeTab !== 'breakdown'" class="usage-detail-workspace">
 
 
         <div v-show="activeTab === 'usage'" class="usage-detail-content">
@@ -210,7 +210,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, getCurrentInstance, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import { useRoute } from 'vue-router'
@@ -918,15 +918,35 @@ const loadSavedColumns = () => {
 }
 
 // Detail tabs
-type DetailTab = 'usage' | 'errors' | 'ranking'
+type DetailTab = 'usage' | 'errors' | 'ranking' | 'breakdown'
 const activeTab = ref<DetailTab>('usage')
 const detailTabs = computed(() => [
   { key: 'usage' as const, label: t('usage.tabs.usage'), icon: 'document' as const },
   { key: 'errors' as const, label: t('usage.tabs.errors'), icon: 'exclamationTriangle' as const },
   { key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const },
+  { key: 'breakdown' as const, label: t('usage.tabs.breakdown'), icon: 'chart' as const },
 ].filter(tab => !isObserver.value || tab.key === 'usage'))
-const detailTabIcons: Record<DetailTab, string> = { usage: 'i-lucide-file-text', errors: 'i-lucide-triangle-alert', ranking: 'i-lucide-trophy' }
-const detailTabItems = computed(() => detailTabs.value.map(tab => ({ value: tab.key, label: tab.label, icon: detailTabIcons[tab.key] })))
+const detailTabIcons: Record<DetailTab, string> = { usage: 'i-lucide-file-text', errors: 'i-lucide-triangle-alert', ranking: 'i-lucide-trophy', breakdown: 'i-lucide-chart-pie' }
+// Sub-pages (/admin/usage, /errors, /ranking, /breakdown): one view instance, the section follows the route.
+const sectionPaths: Record<DetailTab, string> = { usage: '/admin/usage', errors: '/admin/usage/errors', ranking: '/admin/usage/ranking', breakdown: '/admin/usage/breakdown' }
+const appRouter = getCurrentInstance()?.proxy?.$router
+const selectSection = (tab: DetailTab) => {
+  switchTab(tab)
+  const path = sectionPaths[tab]
+  if (appRouter && (route as { path?: string }).path !== path) void appRouter.push({ path, query: route.query })
+}
+const subnavItems = computed(() => detailTabs.value.map(tab => ({
+  label: tab.label,
+  icon: detailTabIcons[tab.key],
+  active: activeTab.value === tab.key,
+  onSelect: () => selectSection(tab.key),
+})))
+/** The filter row only knows usage / errors / ranking; breakdown charts follow the usage filters. */
+const filterMode = computed(() => (activeTab.value === 'breakdown' ? 'usage' : activeTab.value))
+const routeSection = () => {
+  const section = (route as { meta?: { usageSection?: unknown } }).meta?.usageSection
+  return typeof section === 'string' && section in sectionPaths ? (section as DetailTab) : null
+}
 const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
 const rangeToolbarRef = ref<InstanceType<typeof DateRangePicker> | null>(null)
 const rankingMounted = ref(false)
@@ -1011,6 +1031,9 @@ const columnMenuItems = computed(() => [currentToggleableColumns.value.map(col =
 }))])
 // UDropdownMenu closes itself on outside clicks; kept as a no-op for the existing listener.
 const handleColumnClickOutside = (_event: MouseEvent) => {}
+
+// Registered after every declaration: switchTab may load errors immediately.
+watch(() => routeSection(), (section) => { if (section && section !== activeTab.value) switchTab(section) }, { immediate: true })
 
 onMounted(() => {
   applyRouteQueryFilters()

@@ -178,6 +178,12 @@ function columnMenuItem(wrapper: ReturnType<typeof mount>, label: string) {
   return groups.flat().find(item => item.label === label)
 }
 
+// The usage sections are UNavigationMenu items; select one through its handler (as a click on the item does).
+function selectSubnav(wrapper: ReturnType<typeof mount>, index: number) {
+  const items = wrapper.findComponent({ name: 'NavigationMenu' }).props('items') as Array<{ onSelect: () => void }>
+  items[index].onSelect()
+}
+
 describe('admin UsageView route filters', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -794,8 +800,8 @@ describe('admin UsageView errors tab filter forwarding', () => {
 
     // 切换到「错误请求」标签（第二个 tab 按钮）触发 loadAdminErrors
     const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
-    // Nuxt UI UTabs (Reka TabsTrigger) switch on mousedown, not click.
-    await tabs[1].trigger('mousedown', { button: 0 })
+    // Sections are sub-pages in a UNavigationMenu (toolbar); select the second item (错误请求).
+    selectSubnav(wrapper, 1)
     await flushPromises()
 
     expect(listErrorLogs).toHaveBeenCalledWith(expect.objectContaining({
@@ -848,8 +854,9 @@ describe('admin UsageView ranking tab', () => {
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(false)
 
     const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
-    expect(tabs).toHaveLength(3)
-    await tabs[2].trigger('mousedown', { button: 0 })
+    // usage / errors / ranking / breakdown
+    expect(tabs).toHaveLength(4)
+    selectSubnav(wrapper, 2)
     await flushPromises()
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(true)
 
