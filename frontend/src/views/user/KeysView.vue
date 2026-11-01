@@ -39,6 +39,17 @@
           </template>
           <template #actions>
             <UButton
+              v-if="selectedKeyCount > 0"
+              color="error"
+              variant="outline"
+              icon="i-lucide-trash-2"
+              data-test="keys-bulk-delete"
+              @click="openBulkDelete"
+            >
+              {{ t('common.delete') }}
+              <span class="ml-1 tabular-nums opacity-70">{{ selectedKeyCount }}</span>
+            </UButton>
+            <UButton
               color="neutral"
               variant="outline"
               icon="i-lucide-refresh-cw"
@@ -87,6 +98,9 @@
           :data="apiKeys"
           :loading="loading"
           :server-side-sort="true"
+          :selectable="true"
+          :row-key="keyRowId"
+          v-model:selected-keys="selectedKeyIds"
           default-sort-key="created_at"
           default-sort-order="desc"
           @sort="handleSort"
@@ -924,6 +938,18 @@
       @cancel="showDeleteDialog = false"
     />
 
+    <!-- Bulk Delete Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showBulkDeleteDialog"
+      :title="t('keys.deleteKey')"
+      :message="bulkDeleteMessage"
+      :confirm-text="t('common.delete')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="handleBulkDelete"
+      @cancel="showBulkDeleteDialog = false"
+    />
+
     <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
       :show="showResetQuotaDialog"
@@ -1253,6 +1279,11 @@ const columns = computed<Column[]>(() =>
 )
 
 const apiKeys = ref<ApiKey[]>([])
+// Selection is scoped to the rows on screen: it is pruned on every reload and
+// every local removal, so a bulk delete can never touch a row the user cannot see.
+const selectedKeyIds = ref<Array<string | number>>([])
+const showBulkDeleteDialog = ref(false)
+const keyRowId = (row: ApiKey) => row.id
 const groups = ref<Group[]>([])
 const loading = ref(false)
 const submitting = ref(false)
@@ -1604,6 +1635,7 @@ const loadApiKeys = async () => {
     })
     if (signal.aborted) return
     apiKeys.value = response.items
+    pruneSelection()
     void loadQueueSnapshot(response.items.filter(key => (key.concurrency_limit ?? 0) > 0).map(key => key.id), signal)
     pagination.value.total = response.total
     pagination.value.pages = response.pages
@@ -1732,11 +1764,17 @@ const editKey = (key: ApiKey) => {
 const toggleKeyStatus = async (key: ApiKey) => {
   const newStatus = key.status === 'active' ? 'inactive' : 'active'
   try {
-    await keysAPI.toggleStatus(key.id, newStatus)
+    const updated = await keysAPI.toggleStatus(key.id, newStatus)
+    const merged = mergeKeyLocally(updated)
+    if (merged && !matchesActiveFilters(merged)) {
+      // The row no longer belongs under the active status filter; drop it locally.
+      const removed = removeKeysLocally([merged.id])
+      applyTotalDelta(-removed.length)
+      await backfillPageIfEmpty()
+    }
     appStore.showSuccess(
       newStatus === 'active' ? t('keys.keyEnabledSuccess') : t('keys.keyDisabledSuccess')
     )
-    loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToUpdateStatus'))
   }
@@ -1790,9 +1828,11 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   if (key.group_id === newGroupId) return
 
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    key.group_id = newGroupId
+    const updated = await keysAPI.update(key.id, { group_id: newGroupId })
+    // Merge the response so the row and its group badge update in place.
+    mergeKeyLocally(updated)
     appStore.showSuccess(t('keys.groupChangedSuccess'))
-    loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToChangeGroup'))
   }
@@ -1813,6 +1853,132 @@ const closeGroupSelector = (event: MouseEvent) => {
 const confirmDelete = (key: ApiKey) => {
   selectedKey.value = key
   showDeleteDialog.value = true
+}
+
+const selectedKeyCount = computed(() => selectedKeyIds.value.length)
+
+const bulkDeleteMessage = computed(
+  () => `${t('keys.deleteKey')} ${t('common.selectedCount', { count: selectedKeyCount.value })}`
+)
+
+const pruneSelection = () => {
+  if (selectedKeyIds.value.length === 0) return
+  const visible = new Set(apiKeys.value.map((key) => key.id))
+  selectedKeyIds.value = selectedKeyIds.value.filter((id) => visible.has(Number(id)))
+}
+
+/** Adjust the server-side total locally instead of refetching the page. */
+const applyTotalDelta = (delta: number) => {
+  if (delta === 0) return
+  const total = Math.max(0, pagination.value.total + delta)
+  pagination.value.total = total
+  pagination.value.pages =
+    pagination.value.page_size > 0 ? Math.ceil(total / pagination.value.page_size) : 0
+  if (total === 0) pagination.value.page = 1
+}
+
+type RemovedKeySnapshot = { index: number; key: ApiKey; usage?: BatchApiKeyUsageStats }
+
+const removeKeysLocally = (ids: number[]): RemovedKeySnapshot[] => {
+  const idSet = new Set(ids)
+  const removed: RemovedKeySnapshot[] = []
+  apiKeys.value.forEach((key, index) => {
+    if (idSet.has(key.id)) removed.push({ index, key, usage: usageStats.value[key.id] })
+  })
+  if (removed.length === 0) return removed
+  apiKeys.value = apiKeys.value.filter((key) => !idSet.has(key.id))
+  removed.forEach((snapshot) => {
+    delete usageStats.value[snapshot.key.id]
+  })
+  selectedKeyIds.value = selectedKeyIds.value.filter((id) => !idSet.has(Number(id)))
+  if (selectedKey.value && idSet.has(selectedKey.value.id)) selectedKey.value = null
+  return removed
+}
+
+const restoreRemovedKeys = (removed: RemovedKeySnapshot[]) => {
+  if (removed.length === 0) return
+  const next = [...apiKeys.value]
+  for (const snapshot of [...removed].sort((a, b) => a.index - b.index)) {
+    next.splice(Math.min(snapshot.index, next.length), 0, snapshot.key)
+    if (snapshot.usage) usageStats.value[snapshot.key.id] = snapshot.usage
+  }
+  apiKeys.value = next
+}
+
+/**
+ * Rows were already removed locally. When the page emptied out but older pages
+ * still hold keys, walk back one page instead of reloading everything.
+ */
+const backfillPageIfEmpty = async () => {
+  if (apiKeys.value.length > 0) return
+  if (pagination.value.total <= 0) return
+  if (pagination.value.page <= 1) return
+  pagination.value.page -= 1
+  await loadApiKeys()
+}
+
+const matchesActiveFilters = (key: ApiKey) => {
+  if (filterStatus.value && key.status !== filterStatus.value) return false
+  if (filterGroupId.value !== '' && String(key.group_id ?? '') !== String(filterGroupId.value)) {
+    return false
+  }
+  const query = filterSearch.value.trim().toLowerCase()
+  if (query) {
+    const haystack = `${key.name ?? ''} ${key.key ?? ''}`.toLowerCase()
+    if (!haystack.includes(query)) return false
+  }
+  return true
+}
+
+const compareRowsForCurrentSort = (left: ApiKey, right: ApiKey): number => {
+  const field = sortState.value.sort_by
+  const direction = sortState.value.sort_order === 'asc' ? 1 : -1
+  const leftValue = (left as unknown as Record<string, unknown>)[field]
+  const rightValue = (right as unknown as Record<string, unknown>)[field]
+  if (leftValue == null && rightValue == null) return 0
+  if (leftValue == null) return 1
+  if (rightValue == null) return -1
+  if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+    return (leftValue - rightValue) * direction
+  }
+  return String(leftValue).localeCompare(String(rightValue)) * direction
+}
+
+/** Patch one row in place from a server response; never reloads the list. */
+const mergeKeyLocally = (updated: ApiKey | null | undefined): ApiKey | null => {
+  if (!updated || typeof updated !== 'object' || typeof updated.id !== 'number') return null
+  const index = apiKeys.value.findIndex((key) => key.id === updated.id)
+  if (index === -1) return null
+  const merged: ApiKey = { ...apiKeys.value[index] }
+  const patch = updated as unknown as Record<string, unknown>
+  const target = merged as unknown as Record<string, unknown>
+  for (const [field, value] of Object.entries(patch)) {
+    // `group` comes back empty on update responses; keep the badge we already have.
+    if (value === undefined) continue
+    if (value === null && (field === 'group' || field === 'user')) continue
+    target[field] = value
+  }
+  if (merged.group_id == null) {
+    merged.group = undefined
+  } else {
+    const localGroup = groups.value.find((group) => group.id === merged.group_id)
+    if (localGroup) merged.group = localGroup
+  }
+  apiKeys.value[index] = merged
+  if (selectedKey.value?.id === merged.id) selectedKey.value = merged
+  return merged
+}
+
+/** Insert a freshly created key without refetching the page. */
+const insertKeyLocally = (created: ApiKey | null | undefined) => {
+  if (!created || typeof created !== 'object' || typeof created.id !== 'number') return false
+  applyTotalDelta(1)
+  if (pagination.value.page !== 1 || !matchesActiveFilters(created)) return false
+  const index = apiKeys.value.findIndex((key) => compareRowsForCurrentSort(key, created) > 0)
+  const next = [...apiKeys.value]
+  next.splice(index === -1 ? next.length : index, 0, created)
+  apiKeys.value = next
+  return true
 }
 
 const handleSubmit = async () => {
@@ -1896,11 +2062,12 @@ const handleSubmit = async () => {
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
-      await keysAPI.update(selectedKey.value.id, updates)
+      const updated = await keysAPI.update(selectedKey.value.id, updates)
+      mergeKeyLocally(updated)
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
-      await keysAPI.create(
+      const created = await keysAPI.create(
         formData.value.name,
         formData.value.group_id,
         customKey,
@@ -1913,6 +2080,7 @@ const handleSubmit = async () => {
         formData.value.anthropic_cache_ttl_mode,
         { deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled, ...(formData.value.concurrency_limit > 0 ? { concurrencyLimit: formData.value.concurrency_limit } : {}) }
       )
+      insertKeyLocally(created)
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
@@ -1920,7 +2088,6 @@ const handleSubmit = async () => {
       }
     }
     closeModals()
-    loadApiKeys()
   } catch (error: any) {
     const errorMsg = error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
@@ -1936,17 +2103,58 @@ const handleSubmit = async () => {
  * 若后端未返回消息则显示默认的国际化文本
  */
 const handleDelete = async () => {
-  if (!selectedKey.value) return
+  const key = selectedKey.value
+  if (!key) return
+
+  // Optimistic: drop the row immediately and keep a snapshot for rollback.
+  showDeleteDialog.value = false
+  selectedKey.value = null
+  const removed = removeKeysLocally([key.id])
+  applyTotalDelta(-removed.length)
 
   try {
-    await keysAPI.delete(selectedKey.value.id)
+    await keysAPI.delete(key.id)
     appStore.showSuccess(t('keys.keyDeletedSuccess'))
-    showDeleteDialog.value = false
-    loadApiKeys()
+    await backfillPageIfEmpty()
   } catch (error: any) {
     // 优先使用后端返回的错误消息，提供更具体的错误信息给用户
-    const errorMsg = error?.message || t('keys.failedToDelete')
+    restoreRemovedKeys(removed)
+    applyTotalDelta(removed.length)
+    const errorMsg = error?.response?.data?.detail || error?.message || t('keys.failedToDelete')
     appStore.showError(errorMsg)
+  }
+}
+
+const openBulkDelete = () => {
+  if (selectedKeyCount.value === 0) return
+  showBulkDeleteDialog.value = true
+}
+
+const handleBulkDelete = async () => {
+  const ids = selectedKeyIds.value.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+  showBulkDeleteDialog.value = false
+  if (ids.length === 0) return
+
+  const removed = removeKeysLocally(ids)
+  applyTotalDelta(-removed.length)
+
+  try {
+    const result = await keysAPI.deleteMany(ids)
+    if (result.failed.length === 0) {
+      appStore.showSuccess(t('common.deleted'))
+    } else {
+      // Only the failures go back into the table.
+      const failedIds = new Set(result.failed.map((id) => Number(id)))
+      const failedRows = removed.filter((snapshot) => failedIds.has(snapshot.key.id))
+      restoreRemovedKeys(failedRows)
+      applyTotalDelta(failedRows.length)
+      appStore.showError(t('keys.failedToDelete'))
+    }
+    await backfillPageIfEmpty()
+  } catch (error) {
+    restoreRemovedKeys(removed)
+    applyTotalDelta(removed.length)
+    appStore.showError(t('keys.failedToDelete'))
   }
 }
 
@@ -2031,12 +2239,12 @@ const resetRateLimitUsage = async () => {
   if (!selectedKey.value) return
   showResetRateLimitDialog.value = false
   try {
-    await keysAPI.update(selectedKey.value.id, { reset_rate_limit_usage: true })
+    const target = selectedKey.value
+    const updated = await keysAPI.update(target.id, { reset_rate_limit_usage: true })
     appStore.showSuccess(t('keys.rateLimitResetSuccess'))
-    // Refresh key data
-    await loadApiKeys()
-    // Update the editing key with fresh data
-    const refreshedKey = apiKeys.value.find(k => k.id === selectedKey.value!.id)
+    // Patch only this key instead of reloading the whole page.
+    if (mergeKeyLocally(updated)) return
+    const refreshedKey = apiKeys.value.find(k => k.id === target.id)
     if (refreshedKey) {
       selectedKey.value = refreshedKey
     }
