@@ -1,23 +1,35 @@
 <template>
   <div ref="root" class="min-w-28" :aria-busy="state?.loading || false" data-testid="custom-usage-cell">
-    <span v-if="!eligible" class="text-sm text-gray-400">—</span>
+    <span v-if="!eligible" class="text-sm text-dimmed">—</span>
     <template v-else>
       <div class="flex items-start gap-1.5">
         <div class="min-w-0">
           <CustomUsageResult v-if="state?.result?.configured" :result="state.result" />
-          <span v-else-if="state?.loading" class="text-xs text-gray-400">{{ t('admin.accounts.customUsage.loading') }}</span>
-          <button v-else-if="state?.result" type="button" class="text-xs text-gray-500 hover:text-primary-600 dark:text-gray-400" @click="emit('configure')">{{ t('admin.accounts.customUsage.configure') }}</button>
-          <span v-else class="text-xs text-gray-400">—</span>
-          <div v-if="state?.result?.configured && !state.result.enabled" class="text-xs text-gray-400">{{ t('admin.accounts.customUsage.disabled') }}</div>
+          <span v-else-if="state?.loading" class="text-xs text-dimmed">{{ t('admin.accounts.customUsage.loading') }}</span>
+          <UButton v-else-if="state?.result" color="neutral" variant="link" size="xs" class="p-0" :label="t('admin.accounts.customUsage.configure')" @click="emit('configure')" />
+          <span v-else class="text-xs text-dimmed">—</span>
+          <div v-if="state?.result?.configured && !state.result.enabled" class="text-xs text-dimmed">{{ t('admin.accounts.customUsage.disabled') }}</div>
         </div>
-        <button v-if="!state?.result || (state.result.enabled && state.result.configured)" type="button" class="rounded-sm p-1 text-gray-400 hover:bg-gray-100 hover:text-primary-600 disabled:cursor-wait dark:hover:bg-dark-700" :disabled="state?.loading" :aria-label="t('admin.accounts.customUsage.refresh')" :title="t('admin.accounts.customUsage.refresh')" data-testid="custom-usage-refresh" @click="emit('refresh')">
-          <Icon name="refresh" size="sm" :class="{ 'animate-spin motion-reduce:animate-none': state?.loading }" />
-        </button>
+        <UButton
+          v-if="!state?.result || (state.result.enabled && state.result.configured)"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          icon="i-lucide-refresh-cw"
+          square
+          :loading="state?.loading"
+          :disabled="state?.loading"
+          :aria-label="t('admin.accounts.customUsage.refresh')"
+          :title="t('admin.accounts.customUsage.refresh')"
+          data-testid="custom-usage-refresh"
+          @click="emit('refresh')"
+        />
       </div>
-      <div v-if="state?.error" class="mt-1 text-xs text-amber-600 dark:text-amber-400" role="status">{{ t('admin.accounts.customUsage.loadFailed') }}</div>
+      <div v-if="state?.error" class="mt-1 text-xs text-warning" role="status">{{ t('admin.accounts.customUsage.loadFailed') }}</div>
     </template>
   </div>
 </template>
+
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -25,7 +37,6 @@ import type { AccountListItem } from '@/types'
 import type { CustomUsageRowState } from '@/composables/useCustomUsage'
 import { supportsCustomUsage } from '@/utils/customUsage'
 import CustomUsageResult from './CustomUsageResult.vue'
-import Icon from '@/components/icons/Icon.vue'
 const props = defineProps<{ account: AccountListItem; state?: CustomUsageRowState }>()
 const emit = defineEmits<{ refresh: []; configure: []; visibility: [visible: boolean] }>()
 const { t } = useI18n()

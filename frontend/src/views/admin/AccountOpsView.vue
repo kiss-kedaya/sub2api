@@ -1,162 +1,174 @@
 <template>
   <AppLayout>
-    <div class="account-ops mx-auto max-w-6xl space-y-8">
-      <AdminPageHeader :title="t('accountOps.title')" :description="t('accountOps.description')"><template v-if="remote" #actions><span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300">{{ enabledDraft ? t('accountOps.observing') : t('accountOps.disabled') }}</span></template></AdminPageHeader>
-      <dl v-if="remote" class="grid gap-2 sm:grid-cols-3" data-testid="account-ops-summary">
-        <div class="py-1"><dt class="text-[11px] text-gray-500">{{ t('accountOps.enabledChannels') }}</dt><dd class="mt-1 text-xl font-semibold tabular-nums">{{ enabledChannelCount }}</dd></div>
-        <div class="py-1"><dt class="text-[11px] text-gray-500">{{ t('accountOps.enabledRules') }}</dt><dd class="mt-1 text-xl font-semibold tabular-nums">{{ enabledRuleCount }}</dd></div>
-        <div class="py-1"><dt class="text-[11px] text-gray-500">{{ t('accountOps.loadedPending') }}</dt><dd class="mt-1 text-xl font-semibold tabular-nums" :class="pendingEventCount ? 'text-amber-600' : ''">{{ pendingEventCount }}</dd></div>
-      </dl>
-      <p v-if="loadError" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ t('accountOps.previousData') }} {{ loadError }}</p>
+    <div class="account-ops mx-auto max-w-6xl space-y-6">
+      <AdminPageHeader :title="t('accountOps.title')" :description="t('accountOps.description')">
+        <template v-if="remote" #actions>
+          <UBadge :color="enabledDraft ? 'success' : 'neutral'" variant="subtle">{{ enabledDraft ? t('accountOps.observing') : t('accountOps.disabled') }}</UBadge>
+        </template>
+      </AdminPageHeader>
+      <UPageGrid v-if="remote" class="gap-4 sm:grid-cols-3 lg:grid-cols-3 lg:gap-px" data-testid="account-ops-summary">
+        <UPageCard variant="subtle" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.enabledChannels')">
+          <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ enabledChannelCount }}</span>
+        </UPageCard>
+        <UPageCard variant="subtle" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.enabledRules')">
+          <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ enabledRuleCount }}</span>
+        </UPageCard>
+        <UPageCard variant="subtle" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.loadedPending')">
+          <span class="text-2xl font-semibold tabular-nums" :class="pendingEventCount ? 'text-warning' : 'text-highlighted'">{{ pendingEventCount }}</span>
+        </UPageCard>
+      </UPageGrid>
+      <UAlert v-if="loadError" role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="`${t('accountOps.previousData')} ${loadError}`" />
+
+      <!-- Toolbar: section tabs on the left, the global switch and refresh on the right. -->
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div role="tablist" :aria-label="t('accountOps.pageSections')" class="flex gap-6">
-          <button v-for="tab in tabs" :id="`ops-tab-${tab}`" :key="tab" type="button" role="tab" :aria-selected="activeTab === tab"
-            :aria-controls="`ops-panel-${tab}`" :tabindex="activeTab === tab ? 0 : -1" class="rounded-md px-2.5 py-2 text-sm font-medium transition-colors"
-            :class="activeTab === tab ? 'text-gray-900 dark:text-gray-100' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'"
-            :data-testid="`account-ops-tab-${tab}`" @click="selectTab(tab)"
-            @keydown="tabKey($event, tab)">{{ t(tab === 'records' ? 'accountOps.recordsTab' : 'accountOps.settingsTab') }}</button>
+        <div role="tablist" :aria-label="t('accountOps.pageSections')" class="flex gap-1 rounded-lg bg-elevated p-1">
+          <UButton
+            v-for="tab in tabs"
+            :id="`ops-tab-${tab}`"
+            :key="tab"
+            role="tab"
+            color="neutral"
+            :variant="activeTab === tab ? 'outline' : 'ghost'"
+            :class="activeTab === tab ? 'bg-default shadow-xs' : 'text-muted'"
+            :aria-selected="activeTab === tab"
+            :aria-controls="`ops-panel-${tab}`"
+            :tabindex="activeTab === tab ? 0 : -1"
+            :data-testid="`account-ops-tab-${tab}`"
+            :label="t(tab === 'records' ? 'accountOps.recordsTab' : 'accountOps.settingsTab')"
+            @click="selectTab(tab)"
+            @keydown="tabKey($event, tab)"
+          />
         </div>
-        <div class="flex items-center gap-3 pb-2">
-          <div class="flex items-center gap-3 text-sm font-medium"><span id="account-ops-enabled-label">{{ t('accountOps.enabled') }}</span>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2 text-sm font-medium text-default"><span id="account-ops-enabled-label">{{ t('accountOps.enabled') }}</span>
             <Toggle :model-value="enabledDraft" aria-labelledby="account-ops-enabled-label"
               :disabled="!remote || loading || mutating || globalSaving" class="disabled:cursor-wait disabled:opacity-50"
               data-testid="notifications-enabled" @update:model-value="toggleNotifications" />
-          </div><button class="btn btn-secondary inline-flex items-center gap-2 py-1.5" :disabled="loading || thresholdLoading || mutating || globalSaving" @click="refresh">
-            <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />{{ t('qualityOps.refresh') }}
-          </button>
+          </div>
+          <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="loading" :disabled="loading || thresholdLoading || mutating || globalSaving" :label="t('qualityOps.refresh')" @click="refresh" />
         </div>
       </div>
-      <section v-if="activeTab === 'records'" id="ops-panel-records" role="tabpanel" aria-labelledby="ops-tab-records"
-        class="overflow-hidden">
-        <div class="flex flex-wrap items-center justify-between gap-3 p-4">
-          <div class="min-w-0">
-            <h2 class="text-base font-semibold">{{ t('accountOps.recordsTab') }}</h2>
-            <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.recordsOnceHint') }}</p>
+
+      <section v-if="activeTab === 'records'" id="ops-panel-records" role="tabpanel" aria-labelledby="ops-tab-records" class="space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm text-muted">{{ t('accountOps.recordsOnceHint') }}</p>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <UInput v-model="query" icon="i-lucide-search" class="w-56" :placeholder="t('accountOps.search')" :aria-label="t('accountOps.search')" />
+            <USelect v-model="kind" :items="kindItems" class="min-w-36" :aria-label="t('accountOps.alertTypes')" />
+            <USelect v-model="phase" :items="phaseItems" class="min-w-28" :aria-label="t('accountOps.eventPhase')" />
           </div>
-          <div class="flex flex-wrap gap-2"><input v-model="query" class="input w-48 text-sm" :placeholder="t('accountOps.search')"
-              :aria-label="t('accountOps.search')" /><select v-model="kind" class="input w-auto text-sm"
-              :aria-label="t('accountOps.alertTypes')">
-              <option value="all">{{ t('accountOps.allTypes') }}</option>
-              <option v-for="value in alertKinds" :key="value" :value="value">{{ t(`accountOps.${value}`) }}</option>
-            </select><select v-model="phase" class="input w-auto text-sm" :aria-label="t('accountOps.eventPhase')">
-              <option value="all">{{ t('accountOps.allPhases') }}</option>
-              <option value="alert">{{ t('accountOps.phases.alert') }}</option>
-              <option value="recovery">{{ t('accountOps.phases.recovery') }}</option>
-            </select></div>
         </div>
-        <p v-if="remote?.dropped_signals || remote?.storage_failures" role="alert" class="p-4 text-sm text-amber-700">
-          {{ t('accountOps.captureIssue') }}</p>
+        <UAlert v-if="remote?.dropped_signals || remote?.storage_failures" role="alert" color="warning" variant="subtle" :description="t('accountOps.captureIssue')" />
         <div class="overflow-x-auto" data-testid="account-events-scroll" :aria-busy="loading">
-          <table v-if="filteredEvents.length" class="w-full min-w-[760px] text-left text-sm">
-            <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800">
-              <tr>
-                <th class="px-5 py-3">{{ t('qualityOps.accounts') }}</th>
-                <th class="px-4 py-3">{{ t('accountOps.eventPhase') }}</th>
-                <th class="px-4 py-3">{{ t('accountOps.eventValue') }}</th>
-                <th class="px-4 py-3">{{ t('accountOps.occurredAt') }}</th>
-                <th class="px-5 py-3">{{ t('accountOps.mailStatus') }}</th>
-                <th class="px-5 py-3">{{ t('accountOps.deliveryDetails') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="event in filteredEvents" :key="eventKey(event)" class="align-top transition-colors hover:bg-gray-50/70 dark:hover:bg-dark-800/50"
-                data-testid="notification-record">
-                <td class="px-5 py-4">
-                  <p class="font-medium">{{ event.group_name || event.account_name }}</p>
-                  <p class="mt-1 text-xs text-gray-500">#{{ event.account_id }} · {{ t(`accountOps.${event.kind}`) }}</p>
-                </td>
-                <td class="px-4 py-4"><span class="rounded-sm px-2 py-1 text-xs"
-                    :class="event.phase === 'recovery' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'">{{ t(event.phase ? `accountOps.phases.${event.phase}` : 'accountOps.failureSignal') }}</span>
-                </td>
-                <td class="px-4 py-4 text-xs"><template v-if="event.kind === 'balance_threshold'">{{ event.details?.balance }}
-                    {{ event.details?.unit }}<span class="mt-1 block text-gray-500">{{ t('accountOps.thresholdValue') }}
-                      {{ event.details?.threshold }} {{ event.details?.unit }}</span></template><template
-                    v-else-if="event.kind === 'quota_threshold'">{{ event.details?.used_percent }}% · {{ event.details?.window }}<span
-                      class="mt-1 block text-gray-500">{{ t('accountOps.thresholdValue') }}
-                      {{ event.details?.threshold_percent }}%</span></template><template v-else>HTTP {{ event.http_status }}<span
-                      class="mt-1 block text-gray-500">{{ t(`accountOps.signals.${event.signal}`) }}</span></template></td>
-                <td class="whitespace-nowrap px-4 py-4 text-xs text-gray-600 dark:text-gray-400">{{ date(event.first_seen) }}</td>
-                <td class="px-5 py-4">
-                  <p class="whitespace-nowrap text-xs"
-                    :class="event.state === 'failed' ? 'text-red-600' : event.state === 'sent' ? 'text-emerald-600' : 'text-gray-500'">
-                    {{ t(event.notification_enabled === false ? 'accountOps.policyRecord' : `accountOps.states.${event.state}`) }}</p>
-                  <p v-if="event.state === 'failed'" class="mt-2 text-[11px] text-gray-500">
-                    {{ t(event.attempts < 3 ? 'accountOps.retryAt' : 'accountOps.retryStopped', { time: date(event.next_send_at) }) }}</p>
-                </td>
-                <td class="px-5 py-4"><AccountOpsDeliveryDetails :deliveries="event.deliveries" /></td>
-              </tr>
-            </tbody>
-          </table>
+          <UTable v-if="filteredEvents.length" :data="filteredEvents" :columns="eventColumns" class="min-w-[760px]" :ui="tableUi">
+            <template #account-cell="{ row }">
+              <div data-testid="notification-record">
+                <p class="font-medium text-highlighted">{{ row.original.group_name || row.original.account_name }}</p>
+                <p class="mt-1 text-xs text-muted">#{{ row.original.account_id }} · {{ t(`accountOps.${row.original.kind}`) }}</p>
+              </div>
+            </template>
+            <template #phase-cell="{ row }">
+              <UBadge :color="row.original.phase === 'recovery' ? 'success' : 'warning'" variant="subtle" size="sm">
+                {{ t(row.original.phase ? `accountOps.phases.${row.original.phase}` : 'accountOps.failureSignal') }}
+              </UBadge>
+            </template>
+            <template #value-cell="{ row }">
+              <div class="text-xs text-default">
+                <template v-if="row.original.kind === 'balance_threshold'">{{ row.original.details?.balance }} {{ row.original.details?.unit }}<span class="mt-1 block text-muted">{{ t('accountOps.thresholdValue') }} {{ row.original.details?.threshold }} {{ row.original.details?.unit }}</span></template>
+                <template v-else-if="row.original.kind === 'quota_threshold'">{{ row.original.details?.used_percent }}% · {{ row.original.details?.window }}<span class="mt-1 block text-muted">{{ t('accountOps.thresholdValue') }} {{ row.original.details?.threshold_percent }}%</span></template>
+                <template v-else>HTTP {{ row.original.http_status }}<span class="mt-1 block text-muted">{{ t(`accountOps.signals.${row.original.signal}`) }}</span></template>
+              </div>
+            </template>
+            <template #occurredAt-cell="{ row }">
+              <span class="whitespace-nowrap text-xs tabular-nums text-muted">{{ date(row.original.first_seen) }}</span>
+            </template>
+            <template #mailStatus-cell="{ row }">
+              <p class="whitespace-nowrap text-xs" :class="row.original.state === 'failed' ? 'text-error' : row.original.state === 'sent' ? 'text-success' : 'text-muted'">
+                {{ t(row.original.notification_enabled === false ? 'accountOps.policyRecord' : `accountOps.states.${row.original.state}`) }}
+              </p>
+              <p v-if="row.original.state === 'failed'" class="mt-1 text-xs text-muted">
+                {{ t(row.original.attempts < 3 ? 'accountOps.retryAt' : 'accountOps.retryStopped', { time: date(row.original.next_send_at) }) }}
+              </p>
+            </template>
+            <template #deliveryDetails-cell="{ row }">
+              <AccountOpsDeliveryDetails :deliveries="row.original.deliveries" />
+            </template>
+          </UTable>
         </div>
-        <div v-if="!filteredEvents.length" class="flex min-h-72 flex-col items-center justify-center gap-3 p-8 text-center text-gray-500">
-          <Icon name="bell" size="xl" />
-          <p class="text-sm">{{ t(loading ? 'common.loading' : events.length ? 'accountOps.noMatchingRecords' : 'accountOps.empty') }}</p>
-          <p class="max-w-lg text-xs leading-5">{{ t('accountOps.recordsEmptyHint') }}</p><button type="button"
-            class="btn btn-secondary mt-1" @click="selectTab('settings')">{{ t('accountOps.settingsTab') }}</button>
+        <div v-if="!filteredEvents.length" class="flex min-h-64 flex-col items-center justify-center gap-2 p-8 text-center">
+          <UIcon name="i-lucide-bell" class="size-8 text-dimmed" />
+          <p class="text-sm text-highlighted">{{ t(loading ? 'common.loading' : events.length ? 'accountOps.noMatchingRecords' : 'accountOps.empty') }}</p>
+          <p class="max-w-lg text-xs leading-5 text-muted">{{ t('accountOps.recordsEmptyHint') }}</p>
+          <UButton color="neutral" variant="outline" class="mt-1" :label="t('accountOps.settingsTab')" @click="selectTab('settings')" />
         </div>
-        <div class="flex items-center justify-between gap-3 py-3 text-xs text-gray-500">
-          <span>{{ t('accountOps.noRawErrors') }}</span><button v-if="hasMore" :disabled="loadingMore" class="text-primary-600"
-            @click="more">{{ t(loadingMore ? 'common.loading' : 'qualityOps.loadMore') }}</button></div>
+        <div class="flex items-center justify-between gap-3 border-t border-default pt-3 text-xs text-muted">
+          <span>{{ t('accountOps.noRawErrors') }}</span>
+          <UButton v-if="hasMore" variant="link" size="xs" :disabled="loadingMore" :label="t(loadingMore ? 'common.loading' : 'qualityOps.loadMore')" @click="more" />
+        </div>
       </section>
-      <section v-if="activeTab === 'settings' && remote" id="ops-panel-settings" role="tabpanel" aria-labelledby="ops-tab-settings"
-        class="space-y-5">
-        <section class="rounded-xl bg-gray-50/40 dark:bg-dark-900/40"
-          data-testid="account-ops-channels">
-          <div class="flex flex-wrap items-center justify-between gap-3 px-1 py-2">
+
+      <section v-if="activeTab === 'settings' && remote" id="ops-panel-settings" role="tabpanel" aria-labelledby="ops-tab-settings" class="space-y-8">
+        <!-- Notification channels -->
+        <div class="space-y-3" data-testid="account-ops-channels">
+          <div class="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h2 class="text-sm font-semibold">{{ t('accountOps.notificationChannels') }}</h2>
-              <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.channelSummaryHint') }}</p>
+              <h2 class="text-base font-semibold text-highlighted">{{ t('accountOps.notificationChannels') }}</h2>
+              <p class="mt-1 text-sm text-muted">{{ t('accountOps.channelSummaryHint') }}</p>
             </div>
+            <UButton color="neutral" variant="outline" icon="i-lucide-plus" :disabled="!canAddChannel" data-testid="account-ops-add-channel" :label="t('accountOps.addChannel')" @click="showAddChannel = true" />
           </div>
-          <div class="grid gap-2.5 p-4 sm:grid-cols-2 xl:grid-cols-3">
-            <div v-if="remote.config.recipient" class="rounded-lg bg-white/80 p-3 shadow-xs dark:bg-dark-900/70"
-              data-testid="account-ops-email-channel">
-              <div class="flex items-center justify-between"><span
-                  class="min-w-0 truncate text-sm font-medium" :title="remote.config.email_name || t('accountOps.providers.email')">{{ remote.config.email_name || t('accountOps.providers.email') }}</span><span
-                  class="text-xs text-gray-500">{{ t(remote.config.recipient ? 'accountOps.channelConfigured' : 'accountOps.channelUnconfigured') }}</span>
-              </div>
-              <p class="mt-1 truncate text-xs text-gray-500">{{ remote.config.email_name ? `${t('accountOps.providers.email')} · ` : '' }}{{ remote.config.recipient }}</p>
-              <div class="mt-2 flex gap-3 text-xs"><button type="button" class="text-primary-600" data-testid="edit-email-channel"
-                  @click="showEmail = true">{{ t('common.edit') }}</button><button type="button" :disabled="mutating"
-                  class="text-gray-500 hover:text-red-600 disabled:opacity-40" data-testid="delete-email-channel"
-                  @click="removeEmail">{{ t('common.delete') }}</button></div>
-            </div>
-            <div v-for="(hook, index) in remote.config.webhooks" :key="hook.id"
-              class="rounded-lg bg-white/80 p-3 shadow-xs dark:bg-dark-900/70">
-              <div class="flex items-center justify-between gap-2"><span
-                  class="min-w-0 truncate text-sm font-medium" :title="hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}`">{{ hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}` }}</span><span class="text-xs"
-                  :class="hook.enabled ? 'text-emerald-600' : 'text-gray-500'">{{ t(hook.enabled ? 'accountOps.channelEnabled' : 'accountOps.channelDisabled') }}</span>
-              </div>
-              <p class="mt-1 text-xs text-gray-500">
-                {{ hook.name ? `${t(`accountOps.providers.${hook.provider}`)} · ` : '' }}{{ t(hook.url_configured ? 'accountOps.credentialSaved' : 'accountOps.channelUnconfigured') }}</p>
-              <div class="mt-2 flex gap-3 text-xs"><button type="button" class="text-primary-600" :data-testid="`edit-webhook-${hook.id}`"
-                  @click="editWebhook(hook)">{{ t('common.edit') }}</button><button type="button"
-                  class="text-primary-600 disabled:opacity-40" :disabled="!hook.url_configured || !!testingId"
-                  :data-testid="`account-ops-webhook-test-${hook.id}`"
-                  @click="testWebhook(hook.id)">{{ t(testingId === hook.id ? 'common.loading' : 'accountOps.testRobot') }}</button><button
-                  type="button" class="text-gray-500 hover:text-red-600" @click="removeWebhook(hook.id)">{{ t('common.delete') }}</button>
-              </div>
-            </div><button type="button"
-              class="min-h-20 rounded-lg bg-gray-100/70 p-3 text-sm text-primary-600 transition-colors hover:bg-gray-100 disabled:opacity-40 dark:bg-dark-800/70 dark:hover:bg-dark-800"
-              :disabled="!canAddChannel" data-testid="account-ops-add-channel"
-              @click="showAddChannel = true">{{ t('accountOps.addChannel') }}</button>
+          <UPageCard variant="subtle" :ui="{ container: 'p-0 sm:p-0 gap-y-0' }">
+            <ul class="divide-y divide-default">
+              <li v-if="remote.config.recipient" class="flex flex-wrap items-center justify-between gap-3 px-4 py-3" data-testid="account-ops-email-channel">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium text-highlighted" :title="remote.config.email_name || t('accountOps.providers.email')">{{ remote.config.email_name || t('accountOps.providers.email') }}</p>
+                  <p class="mt-0.5 truncate text-xs text-muted">{{ remote.config.email_name ? `${t('accountOps.providers.email')} · ` : '' }}{{ remote.config.recipient }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <UBadge color="neutral" variant="subtle" size="sm">{{ t(remote.config.recipient ? 'accountOps.channelConfigured' : 'accountOps.channelUnconfigured') }}</UBadge>
+                  <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-pencil" data-testid="edit-email-channel" :label="t('common.edit')" @click="showEmail = true" />
+                  <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-trash-2" :disabled="mutating" data-testid="delete-email-channel" :aria-label="t('common.delete')" :title="t('common.delete')" @click="removeEmail" />
+                </div>
+              </li>
+              <li v-for="(hook, index) in remote.config.webhooks" :key="hook.id" class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium text-highlighted" :title="hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}`">{{ hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}` }}</p>
+                  <p class="mt-0.5 text-xs text-muted">{{ hook.name ? `${t(`accountOps.providers.${hook.provider}`)} · ` : '' }}{{ t(hook.url_configured ? 'accountOps.credentialSaved' : 'accountOps.channelUnconfigured') }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <UBadge :color="hook.enabled ? 'success' : 'neutral'" variant="subtle" size="sm">{{ t(hook.enabled ? 'accountOps.channelEnabled' : 'accountOps.channelDisabled') }}</UBadge>
+                  <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-send" :disabled="!hook.url_configured || !!testingId" :data-testid="`account-ops-webhook-test-${hook.id}`" :label="t(testingId === hook.id ? 'common.loading' : 'accountOps.testRobot')" @click="testWebhook(hook.id)" />
+                  <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-pencil" :data-testid="`edit-webhook-${hook.id}`" :label="t('common.edit')" @click="editWebhook(hook)" />
+                  <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-trash-2" :aria-label="t('common.delete')" :title="t('common.delete')" @click="removeWebhook(hook.id)" />
+                </div>
+              </li>
+              <li v-if="!remote.config.recipient && !(remote.config.webhooks?.length)" class="px-4 py-6 text-center text-sm text-muted">
+                {{ t('accountOps.channelUnconfigured') }}
+              </li>
+            </ul>
+          </UPageCard>
+        </div>
+
+        <!-- Account groups -->
+        <div class="flex flex-wrap items-center justify-between gap-3" data-testid="account-ops-groups">
+          <div>
+            <h2 class="text-base font-semibold text-highlighted">{{ t('accountOps.accountGroups') }}</h2>
+            <p class="mt-1 text-sm text-muted">{{ t('accountOps.accountGroupsSummary', { count: accountGroups.length }) }}</p>
           </div>
-        </section>
-        <section class="rounded-xl bg-gray-50/40 px-1 dark:bg-dark-900/40" data-testid="account-ops-groups">
-          <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-            <div>
-              <h2 class="text-sm font-semibold">{{ t('accountOps.accountGroups') }}</h2>
-              <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.accountGroupsSummary', { count: accountGroups.length }) }}</p>
-            </div>
-            <button type="button" class="btn btn-secondary text-sm" :disabled="thresholdLoading || mutating" data-testid="edit-account-groups" @click="showGroupDialog = true">{{ t('common.edit') }}</button>
-          </div>
-        </section>
+          <UButton color="neutral" variant="outline" icon="i-lucide-pencil" :disabled="thresholdLoading || mutating" data-testid="edit-account-groups" :label="t('common.edit')" @click="showGroupDialog = true" />
+        </div>
+
         <AccountOpsRuleList ref="ruleList" :accounts="thresholdAccounts" :groups="accountGroups" :config="remote.config" :loading="thresholdLoading"
           :ready="thresholdReady" :error="thresholdError" :busy="mutating"
           @batch-edit="batchAccounts = $event" @edit-group="showGroupDialog = true" @toggle="toggleGroup">
           <template #global-settings>
-            <details><summary class="cursor-pointer px-1 py-3 text-sm font-medium">{{ t('accountOps.advancedSettings') }}</summary><AccountOpsGlobalSettings :config="remote.config" :disabled="mutating" @saving="globalSaving = $event" @saved="acceptConfig"
-              @error="app.showError" /></details>
+            <UCollapsible :unmount-on-hide="false" class="border-y border-default">
+              <UButton color="neutral" variant="link" class="px-0 py-3 font-medium" trailing-icon="i-lucide-chevron-down" :label="t('accountOps.advancedSettings')" />
+              <template #content>
+                <AccountOpsGlobalSettings :config="remote.config" :disabled="mutating" @saving="globalSaving = $event" @saved="acceptConfig"
+                  @error="app.showError" />
+              </template>
+            </UCollapsible>
           </template>
         </AccountOpsRuleList>
       </section>
@@ -176,8 +188,10 @@
     </div>
   </AppLayout>
 </template>
+
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import type { TableColumn } from '@nuxt/ui'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useAccountOpsStore } from '@/stores/accountOps'
@@ -186,7 +200,6 @@ import { useAppStore } from '@/stores/app'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import { accountOpsMessages } from '@/components/admin/operations/accountOpsMessages'
-import Icon from '@/components/icons/Icon.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import AccountOpsRuleList from '@/components/admin/operations/AccountOpsRuleList.vue'
 import AccountOpsBatchRuleDialog from '@/components/admin/operations/AccountOpsBatchRuleDialog.vue'
@@ -220,6 +233,25 @@ watch(thresholdAccounts, accounts => {
   batchAccounts.value = accounts.filter(account => selected.has(account.account_id))
 })
 const query = ref(''), kind = ref('all'), phase = ref('all'), alertKinds = ['balance_threshold','quota_threshold','balance_low','weekly_quota']
+const kindItems = computed(() => [{ value: 'all', label: t('accountOps.allTypes') }, ...alertKinds.map(value => ({ value, label: t(`accountOps.${value}`) }))])
+const phaseItems = computed(() => [{ value: 'all', label: t('accountOps.allPhases') }, { value: 'alert', label: t('accountOps.phases.alert') }, { value: 'recovery', label: t('accountOps.phases.recovery') }])
+// Records list in the template table style: elevated header row, hairline row borders.
+const eventColumns = computed<TableColumn<AccountOpsEvent>[]>(() => [
+  { id: 'account', header: t('qualityOps.accounts') },
+  { id: 'phase', header: t('accountOps.eventPhase') },
+  { id: 'value', header: t('accountOps.eventValue') },
+  { id: 'occurredAt', header: t('accountOps.occurredAt') },
+  { id: 'mailStatus', header: t('accountOps.mailStatus') },
+  { id: 'deliveryDetails', header: t('accountOps.deliveryDetails') }
+])
+const tableUi = {
+  base: 'border-separate border-spacing-0',
+  thead: '[&>tr]:bg-elevated [&>tr]:after:content-none',
+  tbody: '[&>tr]:last:[&>td]:border-b-0',
+  th: 'py-2 text-xs font-medium text-muted first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r',
+  td: 'py-3 align-top border-b border-default',
+  separator: 'h-0'
+}
 const editingHook = ref<AccountOpsWebhook|null>(null), editingProvider = ref<AccountOpsWebhookProvider>('custom'), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
 let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, alive = true, timer: ReturnType<typeof setInterval>|null = null
 const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', balance_low:c.balance_low, weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,provider:g.provider,site:g.site,account_ids:g.account_ids ? [...g.account_ids] : []})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })

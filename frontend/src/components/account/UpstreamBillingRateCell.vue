@@ -3,8 +3,8 @@
     <HelpTooltip class="-ml-1" width-class="w-max max-w-[calc(100vw-2rem)]" data-testid="upstream-billing-details">
       <template #trigger>
         <span
-          class="cursor-help border-b border-dotted border-gray-300 text-sm font-medium dark:border-dark-600"
-          :class="hasEffectiveRate ? 'font-mono text-gray-800 dark:text-gray-200' : statusClass || 'text-gray-400 dark:text-gray-500'"
+          class="cursor-help border-b border-dotted border-accented text-sm font-medium"
+          :class="hasEffectiveRate ? 'font-mono tabular-nums text-highlighted' : statusClass || 'text-dimmed'"
           data-testid="upstream-billing-rate"
         >
           {{ primaryValue }}
@@ -49,9 +49,9 @@
         >
           {{ t('admin.accounts.upstreamBilling.nextProbeAt', { value: formatDate(nextProbeAt) }) }}
         </p>
-        <p class="mt-2 border-t border-white/15 pt-2" data-testid="upstream-billing-probe-state">
+        <p class="mt-2 border-t border-default pt-2" data-testid="upstream-billing-probe-state">
           {{ t('admin.accounts.upstreamBilling.accountProbeState') }}
-          <span :class="probeEnabled ? 'text-emerald-400' : 'text-red-400'">
+          <span :class="probeEnabled ? 'text-success' : 'text-error'">
             {{ probeEnabled ? t('admin.accounts.upstreamBilling.enabled') : t('admin.accounts.upstreamBilling.disabled') }}
           </span>
         </p>
@@ -61,33 +61,35 @@
           data-testid="upstream-billing-global-probe-state"
         >
           {{ t('admin.accounts.upstreamBilling.globalProbeState') }}
-          <span class="text-red-400">{{ t('admin.accounts.upstreamBilling.disabled') }}</span>
+          <span class="text-error">{{ t('admin.accounts.upstreamBilling.disabled') }}</span>
         </p>
       </div>
     </HelpTooltip>
-    <span v-if="hasEffectiveRate && statusLabel" :class="statusClass" class="whitespace-nowrap text-[10px] font-medium">
+    <span v-if="hasEffectiveRate && statusLabel" :class="statusClass" class="whitespace-nowrap text-xs font-medium">
       {{ statusLabel }}
     </span>
-    <button
-      type="button"
-      class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-sm text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+    <UButton
+      color="neutral"
+      variant="ghost"
+      size="xs"
+      icon="i-lucide-refresh-cw"
+      square
+      class="shrink-0"
+      :loading="probing"
       :disabled="probing"
       :aria-label="t('admin.accounts.upstreamBilling.manualProbe')"
       :title="t('admin.accounts.upstreamBilling.manualProbe')"
       data-testid="upstream-billing-probe"
       @click="$emit('probe')"
-    >
-      <Icon name="refresh" size="xs" :class="{ 'animate-spin': probing }" />
-    </button>
+    />
   </div>
-  <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+  <span v-else class="text-sm text-dimmed">-</span>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
-import Icon from '@/components/icons/Icon.vue'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, UpstreamBillingProbeSnapshot } from '@/types'
 
@@ -202,10 +204,10 @@ const statusLabel = computed(() => {
   return ''
 })
 const statusClass = computed(() => {
-  if (!snapshot.value) return 'text-gray-400 dark:text-gray-500'
-  if (snapshot.value.status === 'unsupported') return 'text-gray-500 dark:text-gray-400'
-  if (stale.value) return 'text-amber-600 dark:text-amber-400'
-  if (snapshot.value.status === 'failed') return 'text-red-600 dark:text-red-400'
+  if (!snapshot.value) return 'text-dimmed'
+  if (snapshot.value.status === 'unsupported') return 'text-muted'
+  if (stale.value) return 'text-warning'
+  if (snapshot.value.status === 'failed') return 'text-error'
   return ''
 })
 const hasEffectiveRate = computed(() => effectiveRate.value !== '-')

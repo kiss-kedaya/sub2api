@@ -7,104 +7,90 @@
   >
     <div class="space-y-4">
       <div v-if="loading" class="flex items-center justify-center py-8">
-        <svg class="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
-          <circle
-            class="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            stroke-width="4"
-          ></circle>
-          <path
-            class="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-          ></path>
-        </svg>
+        <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-dimmed" />
       </div>
 
-      <div v-else-if="!isActive" class="rounded-lg border border-gray-200 p-4 text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400">
+      <div v-else-if="!isActive" class="py-6 text-center text-sm text-muted">
         {{ t('admin.accounts.tempUnschedulable.notActive') }}
       </div>
 
       <div v-else class="space-y-4">
-        <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+        <div class="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
           {{ t('admin.accounts.recoverStateHint') }}
         </div>
 
-        <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
-          <p class="text-xs text-gray-500 dark:text-gray-400">
+        <div class="border-b border-default pb-3">
+          <p class="text-xs text-muted">
             {{ t('admin.accounts.tempUnschedulable.accountName') }}
           </p>
-          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+          <p class="mt-1 text-sm font-medium text-highlighted">
             {{ account?.name || '-' }}
           </p>
         </div>
 
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-            <p class="text-xs text-gray-500 dark:text-gray-400">
+        <div class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+          <div class="">
+            <p class="text-xs text-muted">
               {{ t('admin.accounts.tempUnschedulable.triggeredAt') }}
             </p>
-            <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            <p class="mt-1 text-sm font-medium text-highlighted">
               {{ triggeredAtText }}
             </p>
           </div>
-          <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-            <p class="text-xs text-gray-500 dark:text-gray-400">
+          <div class="">
+            <p class="text-xs text-muted">
               {{ t('admin.accounts.tempUnschedulable.until') }}
             </p>
-            <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            <p class="mt-1 text-sm font-medium text-highlighted">
               {{ untilText }}
             </p>
           </div>
-          <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-            <p class="text-xs text-gray-500 dark:text-gray-400">
+          <div class="">
+            <p class="text-xs text-muted">
               {{ t('admin.accounts.tempUnschedulable.remaining') }}
             </p>
-            <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            <p class="mt-1 text-sm font-medium text-highlighted">
               {{ remainingText }}
             </p>
           </div>
-          <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-            <p class="text-xs text-gray-500 dark:text-gray-400">
+          <div class="">
+            <p class="text-xs text-muted">
               {{ t('admin.accounts.tempUnschedulable.errorCode') }}
             </p>
-            <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            <p class="mt-1 text-sm font-medium text-highlighted">
               {{ state?.status_code || '-' }}
             </p>
           </div>
-          <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-            <p class="text-xs text-gray-500 dark:text-gray-400">
+          <div class="">
+            <p class="text-xs text-muted">
               {{ t('admin.accounts.tempUnschedulable.matchedKeyword') }}
             </p>
-            <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            <p class="mt-1 text-sm font-medium text-highlighted">
               {{ state?.matched_keyword || '-' }}
             </p>
           </div>
-          <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-            <p class="text-xs text-gray-500 dark:text-gray-400">
+          <div class="">
+            <p class="text-xs text-muted">
               {{ t('admin.accounts.tempUnschedulable.ruleOrder') }}
             </p>
-            <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            <p class="mt-1 text-sm font-medium text-highlighted">
               {{ ruleIndexDisplay }}
             </p>
           </div>
         </div>
 
-        <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-          <p class="text-xs text-gray-500 dark:text-gray-400">
+        <div class="">
+          <p class="text-xs text-muted">
             {{ t('admin.accounts.tempUnschedulable.errorMessage') }}
           </p>
-          <div class="mt-2 rounded-sm bg-gray-50 p-2 text-xs text-gray-700 dark:bg-dark-700 dark:text-gray-300">
+          <div class="mt-2 rounded-md bg-muted p-2 font-mono text-xs text-default">
             {{ state?.error_message || '-' }}
           </div>
         </div>
 
         <div
           v-if="hasThresholdEvidence"
-          class="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300"
+          class="rounded-md bg-info/10 px-3 py-2 text-sm text-info"
           data-testid="temp-unsched-trigger-evidence"
         >
           {{ triggerEvidenceText }}
@@ -114,37 +100,11 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button type="button" class="btn btn-secondary" @click="handleClose">
-          {{ t('common.close') }}
-        </button>
-        <button
-          type="button"
-          class="btn btn-primary"
-          :disabled="!isActive || resetting"
-          @click="handleReset"
-        >
-          <svg
-            v-if="resetting"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
+        <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="handleClose" />
+        <UButton :disabled="!isActive || resetting" @click="handleReset">
+          <UIcon v-if="resetting" name="i-lucide-loader-circle" class="size-4 animate-spin" />
           {{ t('admin.accounts.recoverState') }}
-        </button>
+        </UButton>
       </div>
     </template>
   </BaseDialog>

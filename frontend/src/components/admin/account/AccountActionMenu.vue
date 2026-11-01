@@ -1,114 +1,53 @@
 <template>
+  <!-- One shared row menu for the whole table: the row's "..." button passes its rect and an
+       invisible fixed anchor sits on it, so virtualised rows can unmount without closing the menu.
+       Teleported to <body> so no transformed ancestor shifts the fixed anchor. -->
   <Teleport to="body">
-    <div v-if="show && anchorRect">
-      <!-- Backdrop: click anywhere outside to close -->
-      <div class="fixed inset-0 z-9998" @click="emit('close')"></div>
-      <div
-        ref="menuRef"
-        class="action-menu-content fixed z-9999 w-52 overflow-y-auto overscroll-contain rounded-xl bg-white shadow-lg ring-1 ring-black/5 dark:bg-dark-800"
-        :style="menuStyle"
-        @click.stop
-      >
-        <div class="py-1">
-          <template v-if="account">
-            <button @click="$emit('test', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="play" size="sm" class="text-green-500" :stroke-width="2" />
-              {{ t('admin.accounts.testConnection') }}
-            </button>
-            <button v-if="supportsCustomUsage(account)" @click="$emit('custom-usage', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="chart" size="sm" class="text-indigo-500" />
-              {{ t('admin.accounts.customUsage.title') }}
-            </button>
-            <button @click="$emit('stats', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="chart" size="sm" class="text-indigo-500" />
-              {{ t('admin.accounts.viewStats') }}
-            </button>
-            <button @click="$emit('schedule', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="clock" size="sm" class="text-orange-500" />
-              {{ t('admin.scheduledTests.schedule') }}
-            </button>
-            <button v-if="canDuplicate" @click="$emit('duplicate', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="copy" size="sm" class="text-sky-500" />
-              {{ t('admin.accounts.duplicateAccount') }}
-            </button>
-            <!-- 影子账号不持凭据:重授权/刷新 token 对其无效(后端拒绝),故隐藏(外审 G4)。 -->
-            <template v-if="(account.type === 'oauth' || account.type === 'setup-token') && !isShadow">
-              <button @click="$emit('reauth', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-blue-600 hover:bg-gray-100 dark:hover:bg-dark-700">
-                <Icon name="link" size="sm" />
-                {{ t('admin.accounts.reAuthorize') }}
-              </button>
-              <button @click="$emit('refresh-token', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-purple-600 hover:bg-gray-100 dark:hover:bg-dark-700">
-                <Icon name="refresh" size="sm" />
-                {{ t('admin.accounts.refreshToken') }}
-              </button>
-            </template>
-            <button v-if="isOpenAIOAuthParent" @click="$emit('create-spark-shadow', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-amber-600 hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="sparkles" size="sm" />
-              {{ t('admin.accounts.createSparkShadow') }}
-            </button>
-            <button v-if="supportsPrivacy" @click="$emit('set-privacy', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-emerald-600 hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="shield" size="sm" />
-              {{ t('admin.accounts.setPrivacy') }}
-            </button>
-            <div v-if="hasRecoverableState" class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
-            <button v-if="hasRecoverableState" @click="$emit('recover-state', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-emerald-600 hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="sync" size="sm" />
-              {{ t('admin.accounts.recoverState') }}
-            </button>
-            <button v-if="hasQuotaLimit" @click="$emit('reset-quota', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-teal-600 hover:bg-gray-100 dark:hover:bg-dark-700">
-              <Icon name="refresh" size="sm" />
-              {{ t('admin.accounts.resetQuota') }}
-            </button>
-          </template>
-        </div>
-      </div>
-    </div>
+    <UDropdownMenu
+      :open="open"
+      :items="items"
+      :content="contentProps"
+      :ui="{ content: 'action-menu-content w-52' }"
+      @update:open="onOpenChange"
+    >
+      <span class="action-menu-anchor pointer-events-none fixed" :style="anchorStyle" aria-hidden="true" />
+    </UDropdownMenu>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onUnmounted } from 'vue'
-import { useResizeObserver, useWindowSize } from '@vueuse/core'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Icon } from '@/components/icons'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import type { Account } from '@/types'
 import { supportsCustomUsage } from '@/utils/customUsage'
 
 const props = defineProps<{ show: boolean; account: Account | null; anchorRect: DOMRect | null }>()
-const emit = defineEmits(['custom-usage', 'close', 'test', 'stats', 'schedule', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow'])
+const emit = defineEmits(['custom-usage', 'close', 'test', 'stats', 'schedule', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow', 'delete'])
 const { t } = useI18n()
-const menuRef = ref<HTMLElement | null>(null)
-const { width: viewportWidth, height: viewportHeight } = useWindowSize()
-const viewportPadding = 8
-const menuPosition = ref({ top: viewportPadding, left: viewportPadding })
-const menuStyle = computed(() => ({
-  top: `${menuPosition.value.top}px`,
-  left: `${menuPosition.value.left}px`,
-  maxWidth: `${Math.max(0, viewportWidth.value - viewportPadding * 2)}px`,
-  maxHeight: `${Math.max(0, viewportHeight.value - viewportPadding * 2)}px`
+
+const open = computed(() => props.show && !!props.anchorRect && !!props.account)
+
+// Menu placement: below the trigger, right edges aligned; it flips above near the bottom
+// and stays 8px inside the viewport (floating-ui collision handling).
+const VIEWPORT_PADDING = 8
+const anchorStyle = computed(() => {
+  const rect = props.anchorRect
+  if (!rect) return { display: 'none' }
+  return { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` }
+})
+const contentProps = computed(() => ({
+  side: 'bottom' as const,
+  align: 'end' as const,
+  sideOffset: 4,
+  collisionPadding: VIEWPORT_PADDING,
+  avoidCollisions: true
 }))
 
-const updatePosition = () => {
-  if (!menuRef.value || !props.anchorRect) return
-
-  const { width, height } = menuRef.value.getBoundingClientRect()
-  const anchor = props.anchorRect
-  const gap = 4
-  const maxTop = viewportHeight.value - height - viewportPadding
-  const top = anchor.bottom + gap <= maxTop
-    ? anchor.bottom + gap
-    : anchor.top - height - gap
-  const left = viewportWidth.value < 768
-    ? anchor.left + anchor.width / 2 - width / 2
-    : anchor.right - width
-
-  menuPosition.value.top = Math.max(viewportPadding, Math.min(top, maxTop))
-  menuPosition.value.left = Math.max(viewportPadding, Math.min(left, viewportWidth.value - width - viewportPadding))
+// Selecting an item or dismissing (Escape, outside click) closes through update:open.
+const onOpenChange = (value: boolean) => {
+  if (!value && props.show) emit('close')
 }
-
-// Measure after rendering; menu items and translated labels can change its size.
-watch([menuRef, () => props.anchorRect, viewportWidth, viewportHeight], updatePosition, { flush: 'post' })
-useResizeObserver(menuRef, updatePosition)
 
 const canDuplicate = computed(() => {
   if (!props.account || props.account.parent_account_id != null) return false
@@ -147,23 +86,55 @@ const hasQuotaLimit = computed(() => {
   )
 })
 
-const handleKeydown = (event: KeyboardEvent) => {
-  if (event.key === 'Escape') emit('close')
+type MenuEvent = 'custom-usage' | 'test' | 'stats' | 'schedule' | 'duplicate' | 'reauth' | 'refresh-token' | 'recover-state' | 'reset-quota' | 'set-privacy' | 'create-spark-shadow' | 'delete'
+const fire = (event: MenuEvent) => () => {
+  if (props.account) emit(event, props.account)
 }
 
-watch(
-  () => props.show,
-  (visible) => {
-    if (visible) {
-      window.addEventListener('keydown', handleKeydown)
-    } else {
-      window.removeEventListener('keydown', handleKeydown)
-    }
-  },
-  { immediate: true }
-)
+const items = computed<DropdownMenuItem[][]>(() => {
+  const account = props.account
+  if (!account) return []
+  const general: DropdownMenuItem[] = [
+    { label: t('admin.accounts.testConnection'), icon: 'i-lucide-play', onSelect: fire('test') }
+  ]
+  if (supportsCustomUsage(account)) {
+    general.push({ label: t('admin.accounts.customUsage.title'), icon: 'i-lucide-gauge', onSelect: fire('custom-usage') })
+  }
+  general.push(
+    { label: t('admin.accounts.viewStats'), icon: 'i-lucide-chart-column', onSelect: fire('stats') },
+    { label: t('admin.scheduledTests.schedule'), icon: 'i-lucide-calendar-clock', onSelect: fire('schedule') }
+  )
+  if (canDuplicate.value) {
+    general.push({ label: t('admin.accounts.duplicateAccount'), icon: 'i-lucide-copy', onSelect: fire('duplicate') })
+  }
 
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown)
+  const credentials: DropdownMenuItem[] = []
+  // 影子账号不持凭据:重授权/刷新 token 对其无效(后端拒绝),故隐藏(外审 G4)。
+  if ((account.type === 'oauth' || account.type === 'setup-token') && !isShadow.value) {
+    credentials.push(
+      { label: t('admin.accounts.reAuthorize'), icon: 'i-lucide-link', onSelect: fire('reauth') },
+      { label: t('admin.accounts.refreshToken'), icon: 'i-lucide-refresh-cw', onSelect: fire('refresh-token') }
+    )
+  }
+  if (isOpenAIOAuthParent.value) {
+    credentials.push({ label: t('admin.accounts.createSparkShadow'), icon: 'i-lucide-sparkles', onSelect: fire('create-spark-shadow') })
+  }
+  if (supportsPrivacy.value) {
+    credentials.push({ label: t('admin.accounts.setPrivacy'), icon: 'i-lucide-shield', onSelect: fire('set-privacy') })
+  }
+
+  const recovery: DropdownMenuItem[] = []
+  if (hasRecoverableState.value) {
+    recovery.push({ label: t('admin.accounts.recoverState'), icon: 'i-lucide-heart-pulse', onSelect: fire('recover-state') })
+  }
+  if (hasQuotaLimit.value) {
+    recovery.push({ label: t('admin.accounts.resetQuota'), icon: 'i-lucide-rotate-ccw', onSelect: fire('reset-quota') })
+  }
+
+  const danger: DropdownMenuItem[] = [
+    { label: t('common.delete'), icon: 'i-lucide-trash-2', color: 'error', onSelect: fire('delete') }
+  ]
+
+  return [general, credentials, recovery, danger].filter(group => group.length > 0)
 })
 </script>

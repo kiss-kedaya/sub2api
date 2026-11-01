@@ -1,10 +1,12 @@
 <template>
-  <section class="rounded-xl border border-gray-200 p-4 dark:border-dark-600">
-    <label class="flex cursor-pointer items-start gap-3">
-      <input type="checkbox" class="mt-1 h-4 w-4 rounded-sm border-gray-300 text-primary-600" :checked="modelValue" @change="emit('update:modelValue', ($event.target as HTMLInputElement).checked)" />
-      <span><span class="block text-sm font-medium">GitHub Copilot SDK</span><span class="mt-1 block text-xs leading-5 text-gray-500">{{ hint }}</span></span>
-    </label>
-    <p v-if="modelValue" class="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{{ continuity }}</p>
+  <section class="space-y-3">
+    <UCheckbox
+      :model-value="modelValue"
+      label="GitHub Copilot SDK"
+      :description="hint"
+      @update:model-value="emit('update:modelValue', $event === true)"
+    />
+    <UAlert v-if="modelValue" color="warning" variant="subtle" :description="continuity" />
   </section>
 </template>
 <script setup lang="ts">

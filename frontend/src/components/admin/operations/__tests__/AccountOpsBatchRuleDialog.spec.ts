@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import USelect from '@nuxt/ui/components/Select.vue'
 import BatchRuleDialog from '../AccountOpsBatchRuleDialog.vue'
 import { saveAccountOpsRuleGroups, saveAccountOpsRulesBatch } from '@/api/admin/accountOps'
 import type { AccountOpsConfig, AccountOpsThresholdAccount } from '@/api/admin/accountOps'
@@ -58,16 +59,16 @@ describe('batch account rules', () => {
     const wrapper = create()
     expect(wrapper.find('[data-testid="batch-rule-threshold"]').exists()).toBe(true)
     expect((wrapper.get('[data-testid="batch-rule-threshold"]').element as HTMLInputElement).value).toBe('')
-    expect((wrapper.get('[data-testid="batch-rule-enabled"]').element as HTMLInputElement).checked).toBe(true)
-    expect((wrapper.get('[data-testid="batch-rule-notify-alert"]').element as HTMLInputElement).checked).toBe(true)
-    expect((wrapper.get('[data-testid="batch-rule-notify-recovery"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.get('[data-testid="batch-rule-enabled"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="batch-rule-notify-alert"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="batch-rule-notify-recovery"]').attributes('aria-checked')).toBe('true')
     expect(wrapper.text()).toContain('Alpha key')
     expect(wrapper.text()).toContain('Beta key')
     expect(wrapper.text()).toContain('accountOps.batchReplaceHint')
 
     await wrapper.get('[data-testid="batch-rule-threshold"]').setValue('5')
-    await wrapper.get('[data-testid="batch-rule-enabled"]').setValue(false)
-    await wrapper.get('[data-testid="batch-rule-notify-alert"]').setValue(false)
+    await wrapper.get('[data-testid="batch-rule-enabled"]').trigger('click')
+    await wrapper.get('[data-testid="batch-rule-notify-alert"]').trigger('click')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(saveAccountOpsRulesBatch).toHaveBeenCalledTimes(1)
@@ -83,12 +84,13 @@ describe('batch account rules', () => {
 
   it('offers only shared OAuth windows plus any and preserves notification flags', async () => {
     const wrapper = create(oauthAccounts)
-    const windowSelect = wrapper.get('[data-testid="batch-rule-window"]')
-    expect(windowSelect.findAll('option').map(option => option.element.value)).toEqual(['any', 'seven_day'])
-    expect((windowSelect.element as HTMLSelectElement).value).toBe('any')
-    await windowSelect.setValue('seven_day')
+    expect(wrapper.get('[data-testid="batch-rule-window"]').attributes('role')).toBe('combobox')
+    const windowSelect = wrapper.getComponent(USelect)
+    expect((windowSelect.props('items') as Array<{ value: string }>).map(option => option.value)).toEqual(['any', 'seven_day'])
+    expect(windowSelect.props('modelValue')).toBe('any')
+    windowSelect.vm.$emit('update:modelValue', 'seven_day'); await flushPromises()
     await wrapper.get('[data-testid="batch-rule-threshold"]').setValue('85')
-    await wrapper.get('[data-testid="batch-rule-notify-recovery"]').setValue(false)
+    await wrapper.get('[data-testid="batch-rule-notify-recovery"]').trigger('click')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(saveAccountOpsRulesBatch).toHaveBeenCalledTimes(1)
@@ -184,20 +186,21 @@ describe('mixed account rule batches', () => {
   it('submits two independently configured groups in one operation, ignoring OAuth currency fields', async () => {
     const wrapper = create(mixedAccounts)
     expect(wrapper.find('[data-testid="batch-balance-rule-threshold"]').exists()).toBe(true)
-    const quotaWindows = wrapper.get('[data-testid="batch-quota-rule-window"]')
-    expect(quotaWindows.findAll('option').map(option => option.element.value)).toEqual(['any', 'seven_day'])
+    expect(wrapper.get('[data-testid="batch-quota-rule-window"]').attributes('role')).toBe('combobox')
+    const quotaWindows = wrapper.getComponent(USelect)
+    expect((quotaWindows.props('items') as Array<{ value: string }>).map(option => option.value)).toEqual(['any', 'seven_day'])
     expect(wrapper.get('[data-testid="save-batch-rules"]').attributes('disabled')).toBeUndefined()
     for (const metric of ['balance', 'quota']) {
       expect((wrapper.get(`[data-testid="batch-${metric}-rule-threshold"]`).element as HTMLInputElement).value).toBe('')
       for (const field of ['enabled', 'notify-alert', 'notify-recovery']) {
-        expect((wrapper.get(`[data-testid="batch-${metric}-rule-${field}"]`).element as HTMLInputElement).checked).toBe(true)
+        expect(wrapper.get(`[data-testid="batch-${metric}-rule-${field}"]`).attributes('aria-checked')).toBe('true')
       }
     }
     await wrapper.get('[data-testid="batch-balance-rule-threshold"]').setValue('5.5')
-    await wrapper.get('[data-testid="batch-balance-rule-enabled"]').setValue(false)
-    await wrapper.get('[data-testid="batch-balance-rule-notify-alert"]').setValue(false)
+    await wrapper.get('[data-testid="batch-balance-rule-enabled"]').trigger('click')
+    await wrapper.get('[data-testid="batch-balance-rule-notify-alert"]').trigger('click')
     await wrapper.get('[data-testid="batch-quota-rule-threshold"]').setValue('85')
-    await wrapper.get('[data-testid="batch-quota-rule-notify-recovery"]').setValue(false)
+    await wrapper.get('[data-testid="batch-quota-rule-notify-recovery"]').trigger('click')
     await quotaWindows.setValue('seven_day')
     await wrapper.get('form').trigger('submit')
     await flushPromises()

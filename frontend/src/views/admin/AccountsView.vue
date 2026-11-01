@@ -4,115 +4,106 @@
       <template #actions>
         <AdminPageHeader :title="t('admin.accounts.title')" :description="t('admin.accounts.description')">
           <template #actions>
-            <button type="button" class="btn btn-primary accounts-create-action" @click="showCreate = true">
-              <Icon name="plus" size="sm" />
-              <span>{{ t('admin.accounts.createAccount') }}</span>
-            </button>
+            <UButton icon="i-lucide-plus" :label="t('admin.accounts.createAccount')" @click="showCreate = true" />
           </template>
         </AdminPageHeader>
       </template>
       <template #filters>
-        <div class="accounts-command-bar">
-          <AccountTableFilters
-            v-model:searchQuery="params.search"
-            :filters="params"
-            :groups="groups"
-            @update:filters="(newFilters) => Object.assign(params, newFilters)"
-            @change="debouncedReload"
-            @update:searchQuery="debouncedReload"
-          >
-            <template #actions>
-              <AccountTableActions
-                :loading="loading"
-                @refresh="handleManualRefresh"
-              >
-                <template #after>
-              <!-- Auto Refresh Dropdown -->
-              <UDropdownMenu
-                v-model:open="showAutoRefreshDropdown"
-                :items="autoRefreshMenuItems"
-                :content="{ align: 'end' }"
-                :ui="{ content: 'w-56' }"
-              >
-                <button
-                  type="button"
-                  class="btn btn-secondary accounts-compact-action"
-                  :title="t('admin.accounts.autoRefresh')"
-                  :aria-label="t('admin.accounts.autoRefresh')"
-                >
-                  <Icon name="refresh" size="sm" :class="[autoRefreshEnabled ? 'animate-spin' : '']" />
-                  <span class="hidden md:inline">
-                    {{
-                      autoRefreshEnabled
-                        ? t('admin.accounts.autoRefreshCountdown', { seconds: autoRefreshCountdown })
-                        : t('admin.accounts.autoRefresh')
-                    }}
-                  </span>
-                </button>
-              </UDropdownMenu>
-
-              <!-- More Tools Dropdown -->
-              <UDropdownMenu
-                v-model:open="showAccountToolsDropdown"
-                :items="accountToolsMenuItems"
-                :content="{ align: 'end' }"
-                :ui="{ content: 'w-72' }"
-              >
-                <button
-                  type="button"
-                  class="btn btn-secondary accounts-compact-action"
-                  :title="t('admin.accounts.moreActions')"
-                  :aria-label="t('admin.accounts.moreActions')"
-                >
-                  <Icon name="more" size="sm" class="md:mr-1.5" />
-                  <span class="hidden md:inline">{{ t('admin.accounts.moreActions') }}</span>
-                  <Icon name="chevronDown" size="xs" class="ml-1 hidden md:inline" />
-                </button>
-                <template #export-trailing>
-                  <span
-                    v-if="selIds.length"
-                    class="rounded-full bg-elevated px-2 py-0.5 text-xs font-medium text-highlighted dark:bg-primary-900/40 dark:text-primary-300"
-                  >
-                    {{ t('admin.accounts.selectedCount', { count: selIds.length }) }}
-                  </span>
-                </template>
-              </UDropdownMenu>
-                </template>
-              </AccountTableActions>
-            </template>
-          </AccountTableFilters>
-        </div>
-        <div
-          v-if="hasPendingListSync"
-          class="accounts-sync-notice"
+        <AccountTableFilters
+          v-model:searchQuery="params.search"
+          :filters="params"
+          :groups="groups"
+          @update:filters="(newFilters) => Object.assign(params, newFilters)"
+          @change="debouncedReload"
+          @update:searchQuery="debouncedReload"
         >
-          <span>{{ t('admin.accounts.listPendingSyncHint') }}</span>
-          <button
-            class="btn btn-secondary px-2 py-1 text-xs"
-            @click="syncPendingListChanges"
-          >
-            {{ t('admin.accounts.listPendingSyncAction') }}
-          </button>
-        </div>
+          <template #actions>
+            <AccountBulkActionsBar
+              :selected-ids="selIds"
+              :total-results="pagination.total"
+              :selecting-all="selectingAllResults"
+              :all-results-selected="allResultsSelected"
+              v-on="bulkActionListeners"
+            />
+            <AccountTableActions
+              :loading="loading"
+              @refresh="handleManualRefresh"
+            >
+              <template #after>
+                <!-- Auto refresh -->
+                <UDropdownMenu
+                  v-model:open="showAutoRefreshDropdown"
+                  :items="autoRefreshMenuItems"
+                  :content="{ align: 'end' }"
+                  :ui="{ content: 'w-56' }"
+                >
+                  <UButton
+                    color="neutral"
+                    :variant="autoRefreshEnabled ? 'soft' : 'outline'"
+                    icon="i-lucide-timer"
+                    :square="!autoRefreshEnabled"
+                    :title="t('admin.accounts.autoRefresh')"
+                    :aria-label="t('admin.accounts.autoRefresh')"
+                  >
+                    <span v-if="autoRefreshEnabled" class="tabular-nums">
+                      {{ t('admin.accounts.autoRefreshCountdown', { seconds: autoRefreshCountdown }) }}
+                    </span>
+                  </UButton>
+                </UDropdownMenu>
+
+                <!-- Column visibility, like the template's "Display" menu -->
+                <UDropdownMenu
+                  v-model:open="showColumnsDropdown"
+                  :items="columnMenuItems"
+                  :content="{ align: 'end' }"
+                  :ui="{ content: 'w-52' }"
+                >
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    trailing-icon="i-lucide-settings-2"
+                    :label="t('admin.accounts.viewColumns')"
+                    data-test="account-columns-menu"
+                  />
+                </UDropdownMenu>
+
+                <!-- More tools -->
+                <UDropdownMenu
+                  v-model:open="showAccountToolsDropdown"
+                  :items="accountToolsMenuItems"
+                  :content="{ align: 'end' }"
+                  :ui="{ content: 'w-64' }"
+                >
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    icon="i-lucide-ellipsis"
+                    square
+                    :title="t('admin.accounts.moreActions')"
+                    :aria-label="t('admin.accounts.moreActions')"
+                  />
+                  <template #export-trailing>
+                    <UBadge v-if="selIds.length" color="neutral" variant="subtle" size="sm">
+                      {{ t('admin.accounts.selectedCount', { count: selIds.length }) }}
+                    </UBadge>
+                  </template>
+                </UDropdownMenu>
+              </template>
+            </AccountTableActions>
+          </template>
+        </AccountTableFilters>
+        <UAlert
+          v-if="hasPendingListSync"
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-refresh-ccw"
+          orientation="horizontal"
+          class="mt-2"
+          :description="t('admin.accounts.listPendingSyncHint')"
+          :actions="[{ label: t('admin.accounts.listPendingSyncAction'), color: 'warning', variant: 'outline', size: 'xs', onClick: syncPendingListChanges }]"
+        />
       </template>
       <template #table>
-        <AccountBulkActionsBar
-          :selected-ids="selIds"
-          :total-results="pagination.total"
-          :selecting-all="selectingAllResults"
-          :all-results-selected="allResultsSelected"
-          @delete="handleBulkDelete"
-          @reset-status="handleBulkResetStatus"
-          @refresh-token="handleBulkRefreshToken"
-          @probe-upstream-billing="handleBulkProbeUpstreamBilling"
-          @test-models="openBatchTestModal"
-          @edit-selected="openBulkEditSelected"
-          @edit-filtered="openBulkEditFiltered"
-          @clear="clearSelection"
-          @select-page="selectPage"
-          @select-all-results="handleSelectAllResults"
-          @toggle-schedulable="handleBulkToggleSchedulable"
-        />
         <div ref="accountTableRef" class="accounts-table-stage">
         <DataTable
           ref="dataTableRef"
@@ -130,22 +121,25 @@
           :virtualize-threshold="20"
         >
           <template #header-select>
-            <input
-              type="checkbox"
-              class="h-4 w-4 cursor-pointer rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-              :checked="allVisibleSelected"
+            <UCheckbox
+              :model-value="headerSelectState"
+              :aria-label="t('common.selectAll')"
               @click.stop
-              @change="toggleSelectAllVisible($event)"
+              @update:model-value="toggleSelectAllVisible"
             />
           </template>
           <template #cell-select="{ row }">
-            <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500" />
+            <UCheckbox
+              :model-value="isSelected(row.id)"
+              :aria-label="row.name"
+              @update:model-value="toggleSel(row.id)"
+            />
           </template>
           <template #cell-id="{ value }">
-            <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
+            <span class="font-mono text-xs text-muted">#{{ value }}</span>
           </template>
           <template #cell-name="{ row, value }">
-            <div class="flex flex-col">
+            <div class="flex min-w-0 flex-col">
               <HelpTooltip
                 v-if="accountHomepageUrl(row)"
                 :content="accountHomepageUrl(row)"
@@ -157,25 +151,27 @@
                     :href="accountHomepageUrl(row)"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="border-b border-dotted border-gray-300 font-medium text-gray-900 dark:border-dark-600 dark:text-white"
+                    class="border-b border-dotted border-accented font-medium text-highlighted"
                   >
                     {{ value }}
                   </a>
                 </template>
               </HelpTooltip>
-              <span v-else class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <span v-else class="font-medium text-highlighted">{{ value }}</span>
               <span
-                v-if="accountDisplayEmail(row)"
-                class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
+                v-if="accountDisplayEmail(row) || hiddenColumns.has('id')"
+                class="max-w-[220px] truncate text-xs text-muted"
                 :title="accountDisplayEmail(row) + (row.parent_chatgpt_account_id ? ' · ' + row.parent_chatgpt_account_id : '')"
               >
+                <span v-if="hiddenColumns.has('id')" class="font-mono">#{{ row.id }}</span>
+                <template v-if="hiddenColumns.has('id') && accountDisplayEmail(row)"> · </template>
                 {{ accountDisplayEmail(row) }}
               </span>
             </div>
           </template>
           <template #cell-notes="{ value }">
-            <span v-if="value" :title="value" class="block max-w-xs truncate text-sm text-gray-600 dark:text-gray-300">{{ value }}</span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-if="value" :title="value" class="block max-w-xs truncate text-sm text-default">{{ value }}</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
           <template #cell-platform_type="{ row }">
             <div class="flex min-w-0 flex-col gap-1">
@@ -185,22 +181,21 @@
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
                   :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
-                <span
+                <UBadge
                   v-if="getAntigravityTierLabel(row)"
-                  :class="['inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
+                  :color="getAntigravityTierColor(row)"
+                  variant="subtle"
+                  size="sm"
                 >
                   {{ getAntigravityTierLabel(row) }}
-                </span>
+                </UBadge>
               </div>
               <div
                 v-if="getOpenAICompactMeta(row)"
-                :class="[
-                  'inline-flex items-center gap-1.5 pl-0.5 text-[11px] font-medium leading-4',
-                  getOpenAICompactMeta(row)?.className
-                ]"
+                :class="['inline-flex items-center gap-1.5 pl-0.5 text-xs leading-4', getOpenAICompactMeta(row)?.className]"
                 :title="getOpenAICompactTitle(row)"
               >
-                <span :class="['h-1.5 w-1.5 rounded-full', getOpenAICompactMeta(row)?.dotClass]" />
+                <span :class="['size-1.5 rounded-full', getOpenAICompactMeta(row)?.dotClass]" />
                 <span>{{ getOpenAICompactMeta(row)?.label }}</span>
               </div>
             </div>
@@ -209,20 +204,25 @@
             <AccountCapacityCell :account="row" />
           </template>
           <template #cell-status="{ row }">
-            <div class="flex items-center gap-1.5">
-              <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
-            </div>
+            <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
           </template>
           <template #cell-schedulable="{ row }">
-            <SchedulableTimerControl
-              v-if="authStore.isAdmin && !authStore.isAdminObserver"
-              :account-id="row.id"
-              :refresh-key="timerRefreshKey"
-              @executed="handleTimerExecuted"
-            />
-            <button @click="handleToggleSchedulable(row)" :disabled="togglingSchedulable === row.id" class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-dark-800" :class="[row.schedulable ? 'bg-primary-500 hover:bg-primary-600' : 'bg-gray-200 hover:bg-gray-300 dark:bg-dark-600 dark:hover:bg-dark-500']" :title="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')">
-              <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out" :class="[row.schedulable ? 'translate-x-4' : 'translate-x-0']" />
-            </button>
+            <div class="flex min-w-24 flex-wrap items-center gap-x-1 gap-y-1">
+              <USwitch
+                :model-value="row.schedulable"
+                :disabled="togglingSchedulable === row.id"
+                size="sm"
+                :title="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')"
+                :aria-label="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')"
+                @update:model-value="handleToggleSchedulable(row)"
+              />
+              <SchedulableTimerControl
+                v-if="authStore.isAdmin && !authStore.isAdminObserver"
+                :account-id="row.id"
+                :refresh-key="timerRefreshKey"
+                @executed="handleTimerExecuted"
+              />
+            </div>
           </template>
           <template #cell-today_stats="{ row }">
             <AccountTodayStatsCell
@@ -266,36 +266,37 @@
           </template>
           <template #cell-proxy="{ row }">
             <div class="flex flex-col gap-1">
-              <div v-if="row.proxy" class="flex items-center gap-2">
-                <span class="text-sm text-gray-700 dark:text-gray-300">{{ row.proxy.name }}</span>
-                <span v-if="row.proxy.country_code" class="text-xs text-gray-500 dark:text-gray-400">
-                  ({{ row.proxy.country_code }})
-                </span>
+              <div v-if="row.proxy" class="flex items-center gap-1.5 text-sm">
+                <span class="text-default">{{ row.proxy.name }}</span>
+                <span v-if="row.proxy.country_code" class="text-xs text-muted">({{ row.proxy.country_code }})</span>
               </div>
-              <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
-              <div v-if="row.proxy && row.proxy.expires_at" class="flex items-center gap-2 text-xs">
-                <span class="text-gray-600 dark:text-gray-300">{{ formatDateTime(row.proxy.expires_at) }}</span>
-                <span :class="proxyExpiryBadge(row.proxy)">{{ proxyExpiryText(row.proxy) }}</span>
+              <span v-else class="text-sm text-dimmed">-</span>
+              <div v-if="row.proxy && row.proxy.expires_at" class="flex items-center gap-1.5 text-xs">
+                <span class="text-muted">{{ formatDateTime(row.proxy.expires_at) }}</span>
+                <UBadge v-if="proxyExpiryColor(row.proxy) !== 'neutral'" :color="proxyExpiryColor(row.proxy)" variant="subtle" size="sm">
+                  {{ proxyExpiryText(row.proxy) }}
+                </UBadge>
+                <span v-else class="text-muted">{{ proxyExpiryText(row.proxy) }}</span>
               </div>
               <div v-if="row.proxy_fallback_origin_id" class="flex items-center gap-1">
-                <span class="inline-flex items-center px-1.5 py-0.5 rounded-sm text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" :title="t('admin.accounts.fallbackActiveTip', { origin: row.proxy_fallback_origin_name })">
+                <UBadge color="warning" variant="subtle" size="sm" :title="t('admin.accounts.fallbackActiveTip', { origin: row.proxy_fallback_origin_name })">
                   {{ t('admin.accounts.fallbackActive') }}
-                </span>
-                <button class="text-xs px-1.5 py-0.5 rounded-sm border border-gray-300 dark:border-dark-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-700" @click="onRevertFallback(row)">{{ t('admin.accounts.revertProxy') }}</button>
+                </UBadge>
+                <UButton color="neutral" variant="outline" size="xs" :label="t('admin.accounts.revertProxy')" @click="onRevertFallback(row)" />
               </div>
             </div>
           </template>
           <template #cell-rate_multiplier="{ row }">
-            <span class="inline-flex items-center gap-1 text-sm font-mono text-gray-700 dark:text-gray-300">
+            <span class="inline-flex items-center gap-1 font-mono text-sm tabular-nums text-default">
               <span>{{ formatMultiplier(row.rate_multiplier ?? 1) }}x</span>
               <span
                 v-if="row.extra?.upstream_billing_rate_sync_enabled === true"
-                class="inline-flex cursor-help text-emerald-600 dark:text-emerald-400"
+                class="inline-flex cursor-help text-success"
                 :aria-label="t('admin.accounts.upstreamBilling.syncedRateTooltip')"
                 :title="t('admin.accounts.upstreamBilling.syncedRateTooltip')"
                 data-testid="account-rate-sync-indicator"
               >
-                <Icon name="sync" size="xs" />
+                <UIcon name="i-lucide-refresh-cw" class="size-3" />
               </span>
             </span>
           </template>
@@ -317,7 +318,7 @@
             />
           </template>
           <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+            <span class="text-sm tabular-nums text-default">{{ value }}</span>
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -326,58 +327,63 @@
             </div>
           </template>
           <template #cell-scheduler_score="{ row }">
-            <div v-if="getSchedulerScoreRows(row).length" class="flex min-w-28 flex-col gap-0.5 font-mono text-[11px] leading-4">
+            <div v-if="getSchedulerScoreRows(row).length" class="flex min-w-28 flex-col gap-0.5 font-mono text-xs leading-4">
               <div
                 v-for="score in getSchedulerScoreRows(row)"
                 :key="String(score.group_id)"
-                class="flex items-center gap-1 whitespace-nowrap text-gray-700 dark:text-gray-300"
+                class="flex items-center gap-1 whitespace-nowrap text-default"
                 :title="`${formatSchedulerScoreGroup(score)} / ${formatSchedulerScore(score.base_score)} / ${formatStickySchedulerScore(score)}`"
               >
-                <span class="max-w-19 truncate text-gray-500 dark:text-dark-400">{{ formatSchedulerScoreGroup(score) }}</span>
-                <span class="text-gray-300 dark:text-gray-600">/</span>
+                <span class="max-w-19 truncate text-muted">{{ formatSchedulerScoreGroup(score) }}</span>
+                <span class="text-dimmed">/</span>
                 <span>{{ formatSchedulerScore(score.base_score) }}</span>
-                <span class="text-gray-300 dark:text-gray-600">/</span>
-                <span class="text-primary-700 dark:text-primary-300">{{ formatStickySchedulerScore(score) }}</span>
+                <span class="text-dimmed">/</span>
+                <span class="text-highlighted">{{ formatStickySchedulerScore(score) }}</span>
               </div>
             </div>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
           <template #cell-last_used_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatRelativeTime(value) }}</span>
+            <span class="text-sm text-muted">{{ formatRelativeTime(value) }}</span>
           </template>
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-sm tabular-nums text-muted">{{ formatDateTime(value) }}</span>
           </template>
           <template #cell-expires_at="{ row, value }">
             <div class="flex flex-col items-start gap-1">
-              <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatExpiresAt(value) }}</span>
+              <span class="text-sm tabular-nums text-muted">{{ formatExpiresAt(value) }}</span>
               <div v-if="isExpired(value) || (row.auto_pause_on_expired && value)" class="flex items-center gap-1">
-                <span
-                  v-if="isExpired(value)"
-                  class="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                >
+                <UBadge v-if="isExpired(value)" color="warning" variant="subtle" size="sm">
                   {{ t('admin.accounts.expired') }}
-                </span>
-                <span
-                  v-if="row.auto_pause_on_expired && value"
-                  class="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-                >
+                </UBadge>
+                <UBadge v-if="row.auto_pause_on_expired && value" color="neutral" variant="subtle" size="sm">
                   {{ t('admin.accounts.autoPauseOnExpired') }}
-                </span>
+                </UBadge>
               </div>
             </div>
           </template>
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-0.5">
-              <AdminRowAction :label="t('common.edit')" icon="edit" tone="primary" @click="handleEdit(row)" />
-              <AdminRowAction :label="t('common.delete')" icon="trash" tone="danger" @click="handleDelete(row)" />
+            <div class="flex items-center justify-end gap-0.5">
+              <AdminRowAction :label="t('common.edit')" icon="edit" @click="handleEdit(row)" />
               <AdminRowAction :label="t('common.more')" icon="more" @click="openMenu(row, $event)" />
             </div>
           </template>
         </DataTable>
         </div>
       </template>
-      <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
+      <template #pagination>
+        <div v-if="pagination.total > 0" class="accounts-footer">
+          <AccountBulkActionsBar
+            placement="footer"
+            :selected-ids="selIds"
+            :total-results="pagination.total"
+            :selecting-all="selectingAllResults"
+            :all-results-selected="allResultsSelected"
+            v-on="bulkActionListeners"
+          />
+          <Pagination :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
+        </div>
+      </template>
     </TablePageLayout>
       <CreateAccountModal v-if="showCreate" :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
       <EditAccountModal v-if="showEdit" :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
@@ -393,7 +399,7 @@
       @close="customUsageAccount = null"
       @saved="handleCustomUsageSaved"
     />
-    <AccountActionMenu @custom-usage="customUsageAccount = $event" :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu @custom-usage="customUsageAccount = $event" :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" @delete="handleDelete" />
       <SyncFromCrsModal v-if="showSync" :show="showSync" @close="showSync = false" @synced="reload" />
       <ImportDataModal v-if="showImportData" :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -412,10 +418,7 @@
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <ConfirmDialog :show="showCreateShadowDialog" :title="t('admin.accounts.createSparkShadow')" :message="t('admin.accounts.createSparkShadowConfirm', { name: creatingShadowAcc?.name })" @confirm="confirmCreateSparkShadow" @cancel="showCreateShadowDialog = false" />
     <ConfirmDialog :show="showExportDataDialog" :title="t('admin.accounts.dataExport')" :message="t('admin.accounts.dataExportConfirmMessage')" :confirm-text="t('admin.accounts.dataExportConfirm')" :cancel-text="t('common.cancel')" @confirm="handleExportData" @cancel="showExportDataDialog = false">
-      <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-        <input type="checkbox" class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500" v-model="includeProxyOnExport" />
-        <span>{{ t('admin.accounts.dataExportIncludeProxies') }}</span>
-      </label>
+      <UCheckbox v-model="includeProxyOnExport" :label="t('admin.accounts.dataExportIncludeProxies')" />
     </ConfirmDialog>
       <ErrorPassthroughRulesModal v-if="showErrorPassthrough" :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
       <TLSFingerprintProfilesModal v-if="showTLSFingerprintProfiles" :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
@@ -468,7 +471,6 @@ import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
-import Icon from '@/components/icons/Icon.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
@@ -495,6 +497,7 @@ import { resolveBatchTestAccounts } from '@/utils/accountModelTest'
 import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
+import type { BadgeProps } from '@nuxt/ui'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { sanitizeUrl } from '@/utils/url'
 import { formatMultiplier } from '@/utils/formatters'
@@ -593,10 +596,13 @@ const upstreamBillingRateRefreshing = ref(false)
 let upstreamBillingRateAbortController: AbortController | null = null
 useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 
-// Account tools dropdown (UDropdownMenu places, closes and scrolls it)
+// Account tools and column dropdowns (UDropdownMenu places, closes and scrolls them)
 const showAccountToolsDropdown = ref(false)
+const showColumnsDropdown = ref(false)
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
+// Fresh layouts start with the most used columns; the rest are one click away in "列显示".
+// The account id also shows under the name while its own column is hidden.
+const DEFAULT_HIDDEN_COLUMNS = ['id', 'today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier', 'expires_at']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
@@ -1217,6 +1223,7 @@ const refreshUpstreamBillingRates = async (force = false) => {
     isAnyModalOpen.value ||
     menu.show ||
     showAccountToolsDropdown.value ||
+    showColumnsDropdown.value ||
     showAutoRefreshDropdown.value ||
     (typeof document !== 'undefined' && document.hidden)
   )) return
@@ -1522,7 +1529,7 @@ const { pause: pauseAutoRefresh, resume: resumeAutoRefresh } = useIntervalFn(
     if (document.hidden) return
     if (loading.value || autoRefreshFetching.value) return
     if (isAnyModalOpen.value) return
-    if (menu.show || showAccountToolsDropdown.value || showAutoRefreshDropdown.value) return
+    if (menu.show || showAccountToolsDropdown.value || showColumnsDropdown.value || showAutoRefreshDropdown.value) return
     if (inAutoRefreshSilentWindow()) {
       autoRefreshCountdown.value = Math.max(
         0,
@@ -1737,13 +1744,12 @@ function getOpenAICompactTitle(row: any): string {
   return `${label} | ${t('admin.accounts.openai.compactLastChecked')}: ${formatDateTime(new Date(checkedAt))}`
 }
 
-function getAntigravityTierClass(row: any): string {
+function getAntigravityTierColor(row: any): BadgeProps['color'] {
   const tier = getAntigravityTierFromRow(row)
   switch (tier) {
-    case 'free-tier': return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
-    case 'g1-pro-tier': return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
-    case 'g1-ultra-tier': return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
-    default: return ''
+    case 'g1-pro-tier': return 'info'
+    case 'g1-ultra-tier': return 'primary'
+    default: return 'neutral'
   }
 }
 
@@ -1820,18 +1826,18 @@ const accountToolsMenuItems = computed<DropdownMenuItem[][]>(() => [
     { label: t('admin.errorPassthrough.title'), icon: 'i-lucide-shield', onSelect: openErrorPassthrough },
     { label: t('admin.tlsFingerprintProfiles.title'), icon: 'i-lucide-lock', onSelect: openTLSFingerprintProfiles },
     { label: t('admin.accounts.balanceAlert.title'), icon: 'i-lucide-bell', onSelect: openBalanceAlert }
-  ],
-  [
-    { type: 'label', label: t('admin.accounts.viewColumns') },
-    ...toggleableColumns.value.map((col) => ({
-      type: 'checkbox' as const,
-      label: col.label,
-      checked: isColumnVisible(col.key),
-      onUpdateChecked: () => toggleColumn(col.key),
-      onSelect: keepMenuOpen
-    }))
   ]
 ])
+// "列显示" menu: one checkbox per optional column (persisted in localStorage).
+const columnMenuItems = computed<DropdownMenuItem[]>(() =>
+  toggleableColumns.value.map((col) => ({
+    type: 'checkbox' as const,
+    label: col.label,
+    checked: isColumnVisible(col.key),
+    onUpdateChecked: () => toggleColumn(col.key),
+    onSelect: keepMenuOpen
+  }))
+)
 
 // Filtered columns based on visibility
 const cols = computed(() =>
@@ -1867,9 +1873,13 @@ const openMenu = (a: Account, e: MouseEvent) => {
   menu.anchorRect = target.getBoundingClientRect()
   menu.show = true
 }
-const toggleSelectAllVisible = (event: Event) => {
-  const target = event.target as HTMLInputElement
-  toggleVisible(target.checked)
+// Header checkbox: checked when every visible row is selected, indeterminate when only some are.
+const headerSelectState = computed<boolean | 'indeterminate'>(() => {
+  if (allVisibleSelected.value) return true
+  return accounts.value.some(account => isSelected(account.id)) ? 'indeterminate' : false
+})
+const toggleSelectAllVisible = (value: boolean | 'indeterminate') => {
+  toggleVisible(value === true)
 }
 const handleBulkDelete = async () => {
   const accountIds = [...selIds.value]
@@ -2527,8 +2537,13 @@ const isExpired = (value: number | null) => {
   if (!value) return false
   return value * 1000 <= Date.now()
 }
-// 所绑定代理的有效期(逻辑同 /admin/proxies,见 utils/proxyExpiry)
-const proxyExpiryBadge = (p: AccountProxy): string => proxyExpiryBadgeClass(p.expires_at, p.status)
+// 所绑定代理的有效期(逻辑同 /admin/proxies,见 utils/proxyExpiry):危险红、临近黄,其余为普通文字。
+const proxyExpiryColor = (p: AccountProxy): 'error' | 'warning' | 'neutral' => {
+  const level = proxyExpiryBadgeClass(p.expires_at, p.status)
+  if (level.includes('badge-danger')) return 'error'
+  if (level.includes('badge-warning')) return 'warning'
+  return 'neutral'
+}
 const proxyExpiryText = (p: AccountProxy): string => {
   const { key, params } = proxyExpiryLabelKey(p.expires_at, p.status)
   return params ? t(key, params) : t(key)
@@ -2538,6 +2553,21 @@ const proxyExpiryText = (p: AccountProxy): string => {
 const handleScroll = (event: Event) => {
   if (event.target instanceof Element && event.target.closest('.action-menu-content')) return
   menu.show = false
+}
+
+// The bulk bar renders twice (toolbar actions, footer selection helpers); both share these handlers.
+const bulkActionListeners = {
+  delete: handleBulkDelete,
+  'reset-status': handleBulkResetStatus,
+  'refresh-token': handleBulkRefreshToken,
+  'probe-upstream-billing': handleBulkProbeUpstreamBilling,
+  'test-models': openBatchTestModal,
+  'edit-selected': openBulkEditSelected,
+  'edit-filtered': openBulkEditFiltered,
+  clear: clearSelection,
+  'select-page': selectPage,
+  'select-all-results': handleSelectAllResults,
+  'toggle-schedulable': handleBulkToggleSchedulable
 }
 
 onMounted(async () => {
@@ -2627,15 +2657,6 @@ onUnmounted(() => {
   overflow-x: auto;
 }
 
-.accounts-command-bar {
-  padding-block: 1px;
-}
-
-.accounts-compact-action {
-  min-width: 40px;
-  padding-inline: 10px;
-}
-
 .accounts-table-stage {
   display: flex;
   width: 100%;
@@ -2647,46 +2668,22 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.accounts-sync-notice {
+/* Footer: selected count + selection helpers above the pager, like the template's
+   "n of m row(s) selected" line. */
+.accounts-footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 8px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--signal-amber) 42%, var(--signal-line));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--signal-amber) 9%, var(--signal-surface));
-  color: var(--signal-amber);
-  font-size: 13px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.accounts-create-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
+.accounts-footer > :first-child {
+  padding-inline: 4px;
 }
 
 @media (max-width: 767px) {
   .accounts-workspace {
     gap: 10px;
-  }
-
-  .accounts-compact-action {
-    width: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    padding-inline: 0;
-  }
-
-  .accounts-sync-notice {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .accounts-create-action {
-    min-height: 44px;
   }
 }
 </style>

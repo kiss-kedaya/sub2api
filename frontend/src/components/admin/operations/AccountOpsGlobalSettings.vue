@@ -1,23 +1,24 @@
 <template>
-  <form id="account-ops-global-form" class="px-1 py-3" @submit.prevent="save">
-    <fieldset :disabled="busy || disabled" class="flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
+  <form id="account-ops-global-form" class="py-3" @submit.prevent="save">
+    <fieldset :disabled="busy || disabled" class="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
       <div>
-        <h4 class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ t('accountOps.globalSettings') }}</h4>
+        <h4 class="text-xs font-medium text-muted">{{ t('accountOps.globalSettings') }}</h4>
         <div class="mt-3 flex flex-wrap items-center gap-x-6 gap-y-3">
-          <label class="flex items-center gap-2 text-sm"><input v-model="draft.balance_low" type="checkbox" data-testid="global-balance-low" @change="dirty = true" />{{ t('accountOps.balance_low') }}</label>
-          <label class="flex items-center gap-2 text-sm"><input v-model="draft.weekly_quota" type="checkbox" data-testid="global-weekly-quota" @change="dirty = true" />{{ t('accountOps.weekly_quota') }}</label>
-          <label class="flex flex-wrap items-center gap-2 text-sm">
+          <UCheckbox v-model="draft.balance_low" :label="t('accountOps.balance_low')" data-testid="global-balance-low" @update:model-value="dirty = true" />
+          <UCheckbox v-model="draft.weekly_quota" :label="t('accountOps.weekly_quota')" data-testid="global-weekly-quota" @update:model-value="dirty = true" />
+          <div class="flex flex-wrap items-center gap-2 text-sm">
             <span>{{ t('accountOps.cooldown') }}</span>
-            <input v-model.number="draft.cooldown_minutes" type="number" min="5" max="1440" step="1" required class="input w-24 py-1.5 text-sm" data-testid="global-cooldown" @input="dirty = true" />
-            <span class="text-gray-500">{{ t('accountOps.minutes') }}</span>
-          </label>
+            <UInput v-model.number="draft.cooldown_minutes" type="number" min="5" max="1440" step="1" required size="sm" class="w-24" data-testid="global-cooldown" :aria-label="t('accountOps.cooldown')" @update:model-value="dirty = true" />
+            <span class="text-muted">{{ t('accountOps.minutes') }}</span>
+          </div>
         </div>
       </div>
-      <button type="submit" :disabled="!dirty" class="btn btn-secondary py-1.5 text-sm">{{ t(busy ? 'common.loading' : 'accountOps.saveGlobalSettings') }}</button>
+      <UButton type="submit" color="neutral" variant="outline" :disabled="!dirty" :label="t(busy ? 'common.loading' : 'accountOps.saveGlobalSettings')" />
     </fieldset>
-    <p class="mt-3 text-xs leading-5 text-gray-500">{{ t('accountOps.globalFailuresHint') }}</p>
+    <p class="mt-3 text-xs leading-5 text-muted">{{ t('accountOps.globalFailuresHint') }}</p>
   </form>
 </template>
+
 <script setup lang="ts">
 import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

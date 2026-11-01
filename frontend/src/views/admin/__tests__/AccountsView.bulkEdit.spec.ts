@@ -114,6 +114,9 @@ const AccountBulkActionsBarStub = {
   `
 }
 
+// The bulk actions bar renders in the filters toolbar's actions slot (and again in the footer).
+const AccountTableFiltersStub = { template: '<div><slot name="actions" /></div>' }
+
 const PaginationStub = {
   emits: ['update:page'],
   template: '<button data-test="next-page" @click="$emit(\'update:page\', 2)">next</button>'
@@ -177,7 +180,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Pagination: true,
           ConfirmDialog: true,
           AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
-          AccountTableFilters: { template: '<div></div>' },
+          AccountTableFilters: AccountTableFiltersStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountActionMenu: true,
           ImportDataModal: true,
@@ -243,7 +246,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Pagination: true,
           ConfirmDialog: true,
           AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
-          AccountTableFilters: { template: '<div></div>' },
+          AccountTableFilters: AccountTableFiltersStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountActionMenu: true,
           ImportDataModal: true,
@@ -318,7 +321,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Pagination: true,
           ConfirmDialog: true,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountBulkActionsBar: true,
           AccountActionMenu: true,
           ImportDataModal: true,
@@ -375,7 +378,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Pagination: PaginationStub,
           ConfirmDialog: true,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountActionMenu: true,
           ImportDataModal: true,
@@ -403,10 +406,10 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"] [role="checkbox"]').trigger('click')
     await wrapper.get('[data-test="next-page"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"] [role="checkbox"]').trigger('click')
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
@@ -450,7 +453,7 @@ describe('admin AccountsView bulk edit scope', () => {
           DataTable: DataTableStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountActionMenu: true,
           Pagination: PaginationStub,
           ConfirmDialog: true,
@@ -481,7 +484,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
     await wrapper.get('[data-test="next-page"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"] [role="checkbox"]').trigger('click')
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
@@ -521,11 +524,11 @@ describe('admin AccountsView bulk edit scope', () => {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
-          TablePageLayout: { template: '<div><slot name="table" /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
           DataTable: DataTableStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountActionMenu: true,
           Pagination: true,
           ConfirmDialog: true,
@@ -554,7 +557,7 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"] [role="checkbox"]').trigger('click')
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
@@ -598,7 +601,7 @@ describe('admin AccountsView bulk edit scope', () => {
           DataTable: ProbeDataTableStub,
           AccountBulkActionsBar: true,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountActionMenu: true,
           Pagination: true,
           ConfirmDialog: true,
