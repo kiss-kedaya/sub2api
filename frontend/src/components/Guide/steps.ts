@@ -1,6 +1,24 @@
 import { DriveStep } from 'driver.js'
 
 /**
+ * Sidebar links the tours point at, by route path. AppSidebar puts the value on the link
+ * as data-tour (UNavigationMenu forwards data-* attributes, not id).
+ */
+export const SIDEBAR_TOUR_ANCHORS: Readonly<Record<string, string>> = {
+  '/admin/groups': 'sidebar-group-manage',
+  '/admin/accounts': 'sidebar-channel-manage',
+  '/admin/redeem': 'sidebar-wallet',
+  '/keys': 'sidebar-my-keys'
+}
+
+const sidebarAnchor = (path: string) => `[data-tour="${SIDEBAR_TOUR_ANCHORS[path]}"]`
+
+/** The tour selector for each sidebar path, e.g. '[data-tour="sidebar-my-keys"]'. */
+export const SIDEBAR_TOUR_SELECTORS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.keys(SIDEBAR_TOUR_ANCHORS).map((path) => [path, sidebarAnchor(path)])
+)
+
+/**
  * 管理员完整引导流程
  * 交互式引导：指引用户实际操作
  * @param t 国际化函数
@@ -21,7 +39,7 @@ export const getAdminSteps = (t: (key: string) => string, isSimpleMode = false):
 
   // ========== 第一部分：创建分组 ==========
   {
-    element: '#sidebar-group-manage',
+    element: sidebarAnchor('/admin/groups'),
     popover: {
       title: t('onboarding.admin.groupManage.title'),
       description: t('onboarding.admin.groupManage.description'),
@@ -93,7 +111,7 @@ export const getAdminSteps = (t: (key: string) => string, isSimpleMode = false):
 
   // ========== 第二部分：创建账号授权 ==========
   {
-    element: '#sidebar-channel-manage',
+    element: sidebarAnchor('/admin/accounts'),
     popover: {
       title: t('onboarding.admin.accountManage.title'),
       description: t('onboarding.admin.accountManage.description'),

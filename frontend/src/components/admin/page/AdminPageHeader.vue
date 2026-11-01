@@ -1,5 +1,20 @@
 <template>
-  <header class="admin-page-header">
+  <!-- In the console frame the title names the page in the navbar and the actions join the
+       navbar (wide screens) or the toolbar row under it; the description line is dropped.
+       Only #meta stays in the page. Without the frame (specs, public pages) it renders here. -->
+  <template v-if="frame">
+    <Teleport v-if="$slots.title" defer :to="selector(FRAME_TARGETS.title)">
+      <slot name="title">{{ title }}</slot>
+    </Teleport>
+    <Teleport v-if="$slots.actions" defer :to="actionsTarget">
+      <slot name="actions" />
+    </Teleport>
+    <div v-if="$slots.meta" v-bind="$attrs" class="admin-page-header__meta admin-page-header__meta--framed">
+      <slot name="meta" />
+    </div>
+  </template>
+
+  <header v-else v-bind="$attrs" class="admin-page-header">
     <div class="admin-page-header__text">
       <h2 class="admin-page-header__title">
         <slot name="title">{{ title }}</slot>
@@ -18,15 +33,32 @@
 </template>
 
 <script setup lang="ts">
-// Page header for admin pages in the Nuxt UI dashboard manner: title and the page's
-// existing description on the left, primary actions on the right. Pages pass their own
-// strings (no router lookup: several specs mock vue-router without useRoute).
+// Page header for admin pages in the Nuxt UI dashboard manner. Pages pass their own strings
+// (no router lookup: several specs mock vue-router without useRoute).
+import { computed, useSlots } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
+import {
+  FRAME_TARGETS,
+  NAVBAR_ACTIONS_QUERY,
+  claimFrameTitle,
+  selector,
+  useDashboardFrame
+} from '@/components/layout/dashboardFrame'
 import './admin-page.css'
 
-defineProps<{
+defineOptions({ inheritAttrs: false })
+
+const props = defineProps<{
   title?: string
   description?: string
 }>()
+
+const slots = useSlots()
+const frame = useDashboardFrame()
+const wide = useMediaQuery(NAVBAR_ACTIONS_QUERY)
+const actionsTarget = computed(() => selector(wide.value ? FRAME_TARGETS.actions : FRAME_TARGETS.toolbarEnd))
+
+claimFrameTitle(frame, () => props.title ?? '', () => !!slots.title)
 </script>
 
 <style scoped>
@@ -64,6 +96,10 @@ defineProps<{
 
 .admin-page-header__meta {
   margin-top: 10px;
+}
+
+.admin-page-header__meta--framed {
+  margin-top: 0;
 }
 
 .admin-page-header__actions {

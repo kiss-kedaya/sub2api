@@ -26,7 +26,7 @@ describe('BaseDialog', () => {
 
     await wrapper.setProps({ show: true })
     await nextTick()
-    const body = document.body.querySelector<HTMLElement>('.modal-body')
+    const body = document.body.querySelector<HTMLElement>('.base-dialog-body')
     expect(body).not.toBeNull()
     body!.scrollTop = 480
 
@@ -34,7 +34,7 @@ describe('BaseDialog', () => {
     await wrapper.setProps({ show: true })
     await nextTick()
 
-    expect(document.body.querySelector<HTMLElement>('.modal-body')?.scrollTop).toBe(0)
+    expect(document.body.querySelector<HTMLElement>('.base-dialog-body')?.scrollTop).toBe(0)
     wrapper.unmount()
   })
 
@@ -64,7 +64,10 @@ describe('BaseDialog', () => {
   it('closes from the header close button', async () => {
     const wrapper = mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Details' } })
     await flushPromises()
-    document.querySelector<HTMLButtonElement>('.modal-header button[aria-label="Close modal"]')!.click()
+    const close = document.querySelector<HTMLButtonElement>('.base-dialog-header [data-slot="close"]')!
+    // Nuxt UI's localized close label (English when no app locale is provided).
+    expect(close.getAttribute('aria-label')).toBe('Close')
+    close.click()
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 
@@ -83,14 +86,54 @@ describe('BaseDialog', () => {
     const Probe = defineComponent({ setup() { target = inject(portalTargetInjectionKey); return () => h('span') } })
     mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Host' }, slots: { default: Probe } })
     await flushPromises()
-    expect(target?.value).toBe(document.querySelector('.modal-overlay'))
+    expect(target?.value).toBe(document.querySelector('.modal-overlay [data-base-dialog-portal]'))
+  })
+
+  it('renders a Nuxt UI modal panel with title, description, body and footer', async () => {
+    mount(BaseDialog, {
+      attachTo: document.body,
+      props: { show: true, title: 'New customer', description: 'Add a new customer' },
+      slots: { default: '<p>body text</p>', footer: '<button>Create</button>' }
+    })
+    await flushPromises()
+    const panel = document.querySelector<HTMLElement>('.base-dialog-panel')!
+    expect(panel.getAttribute('role')).toBe('dialog')
+    expect(panel.getAttribute('aria-modal')).toBe('true')
+    expect(document.getElementById(panel.getAttribute('aria-labelledby')!)?.textContent).toBe('New customer')
+    expect(panel.querySelector('[data-slot="description"]')?.textContent).toBe('Add a new customer')
+    expect(panel.querySelector('.base-dialog-body')?.textContent).toBe('body text')
+    expect(panel.querySelector('.base-dialog-footer button')?.textContent).toBe('Create')
+  })
+
+  it('closes from the veil only when closeOnClickOutside is set', async () => {
+    const wrapper = mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Veil' } })
+    await flushPromises()
+    const overlay = document.querySelector<HTMLElement>('.modal-overlay')!
+    overlay.click()
+    document.querySelector<HTMLElement>('.base-dialog-panel')!.click()
+    expect(wrapper.emitted('close')).toBeUndefined()
+
+    await wrapper.setProps({ closeOnClickOutside: true })
+    document.querySelector<HTMLElement>('.base-dialog-panel')!.click()
+    expect(wrapper.emitted('close')).toBeUndefined()
+    overlay.click()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('removes the layer after the panel has left', async () => {
+    const wrapper = mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Leaving' } })
+    await flushPromises()
+    await wrapper.setProps({ show: false })
+    await flushPromises()
+    expect(document.querySelector('.modal-overlay')).toBeNull()
+    expect(document.body.classList.contains('modal-open')).toBe(false)
   })
 
   it('keeps keyboard focus within the top dialog', async () => {
     mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Verify', showCloseButton: false }, slots: { default: '<input aria-label="Code" /><button>Cancel</button>' } })
     await flushPromises()
     const input = document.querySelector<HTMLInputElement>('input')!
-    const button = document.querySelector<HTMLButtonElement>('.modal-body button')!
+    const button = document.querySelector<HTMLButtonElement>('.base-dialog-body button')!
     button.focus()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))
     expect(document.activeElement).toBe(input)
