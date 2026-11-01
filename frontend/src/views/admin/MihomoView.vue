@@ -15,7 +15,8 @@
       </AdminPageHeader>
       <PageToolbar>
         <template #left>
-        <nav :aria-label="text('代理管理', 'Proxy management')" class="-mx-1">
+        <UNavigationMenu v-if="routed" :items="navItems" highlight class="-mx-1" :aria-label="text('代理管理', 'Proxy management')" />
+        <nav v-else :aria-label="text('代理管理', 'Proxy management')" class="-mx-1">
         <UTabs v-model="activeTab" :items="tabs" :content="false" variant="link" :ui="{ list: 'border-b-0', indicator: section === 'kernel' ? 'hidden' : '' }" />
       </nav>
         </template>
@@ -25,21 +26,23 @@
   </AppLayout>
 </template>
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import MihomoSettings from '@/features/mihomo/MihomoSettings.vue'
+import { useSectionRoute } from './sysSectionRoute'
 type Section = 'subscriptions' | 'nodes' | 'dynamic' | 'kernel'
 const { locale } = useI18n()
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en
-const section = ref<Section>('subscriptions')
+const { section, routed, to } = useSectionRoute<Section>('subscriptions', { subscriptions: 'AdminMihomo', nodes: 'AdminMihomoNodes', dynamic: 'AdminMihomoDynamic', kernel: 'AdminMihomoKernel' })
 const tabs = computed(() => [
   { value: 'subscriptions', label: text('订阅', 'Subscriptions'), icon: 'i-lucide-rss' },
   { value: 'nodes', label: text('节点', 'Nodes'), icon: 'i-lucide-server' },
   { value: 'dynamic', label: text('动态代理', 'Dynamic proxies'), icon: 'i-lucide-shuffle' },
 ])
+const navItems = computed(() => tabs.value.map(tab => ({ label: tab.label, icon: tab.icon, to: to(tab.value as Section) })))
 // The kernel section has no tab of its own (it opens from "Advanced settings"), so no tab is active there.
 const activeTab = computed<string | number>({
   get: () => section.value,

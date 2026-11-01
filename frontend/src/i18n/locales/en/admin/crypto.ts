@@ -47,6 +47,8 @@ export default {
     tabAddresses: 'Addresses',
     tabSweep: 'Sweep',
     tabDeposits: 'Deposits',
+    tabOverview: 'Overview',
+    overviewHint: 'Open a sub-page to manage addresses, sweeps, deposits and configuration.',
     depTotal: 'Records',
     depCredited: 'Credited',
     depPending: 'Pending',

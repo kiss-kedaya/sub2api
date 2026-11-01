@@ -10,10 +10,11 @@
           </div>
         </template>
       </AdminPageHeader>
+      <PageToolbar v-if="routed"><template #left><UNavigationMenu :items="navItems" highlight class="-mx-1" /></template></PageToolbar>
 
-      <CryptoWalletSecurityPanel class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
+      <CryptoWalletSecurityPanel v-show="!routed || section === 'overview'" class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
 
-      <UCollapsible class="crypto-view__notifications" :unmount-on-hide="false">
+      <UCollapsible v-show="!routed || section === 'overview'" class="crypto-view__notifications" :unmount-on-hide="false">
         <UButton color="neutral" variant="ghost" trailing-icon="i-lucide-chevron-down" class="-mx-2.5 group" :ui="{ trailingIcon: 'transition-transform group-data-[state=open]:rotate-180' }">
           <span class="font-medium text-highlighted">{{ t('admin.crypto.walletNotificationSettings') }}</span>
           <span class="text-muted">{{ t('admin.crypto.walletNotificationOptional') }}</span>
@@ -23,14 +24,22 @@
         </template>
       </UCollapsible>
 
+      <div v-if="routed && section === 'overview'" class="flex flex-col gap-3">
+        <p class="text-sm text-muted">{{ t('admin.crypto.overviewHint') }}</p>
+        <UPageGrid class="gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <UPageCard v-for="entry in overviewEntries" :key="entry.section" :icon="entry.icon" :title="entry.label" :to="sectionTo(entry.section)" variant="subtle" :ui="{ leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25' }" />
+        </UPageGrid>
+      </div>
+
       <UAlert v-if="operationIntentError" role="alert" class="crypto-view__intent-error" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="operationIntentError" />
 
       <UTabs
+        v-show="!routed || section !== 'overview'"
         :model-value="activeTab"
         :items="tabs"
         variant="link"
         class="crypto-view__tabs w-full gap-4 sm:gap-6"
-        :ui="{ list: 'border-b border-default', trigger: 'grow-0' }"
+        :ui="{ list: routed ? 'hidden' : 'border-b border-default', trigger: 'grow-0' }"
         :aria-label="t('admin.crypto.title')"
         @update:model-value="(value: string | number) => switchTab(String(value))"
       >
@@ -572,6 +581,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
+import { useSectionRoute } from './sysSectionRoute'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
@@ -665,6 +676,15 @@ const tabs = computed(() => [
 // Open on the address list: it is the operator's main view (the config tab
 // is a one-time setup step).
 const activeTab = ref('addresses')
+type CryptoSection = 'overview' | 'addresses' | 'sweep' | 'deposits' | 'config'
+const { section, routed, to: sectionTo } = useSectionRoute<CryptoSection>('overview', { overview: 'AdminCrypto', addresses: 'AdminCryptoAddresses', sweep: 'AdminCryptoSweeps', deposits: 'AdminCryptoDeposits', config: 'AdminCryptoSettings' })
+const overviewEntries = computed(() => [
+  { section: 'addresses' as const, label: t('admin.crypto.tabAddresses'), icon: 'i-lucide-wallet' },
+  { section: 'sweep' as const, label: t('admin.crypto.tabSweep'), icon: 'i-lucide-arrow-up-from-line' },
+  { section: 'deposits' as const, label: t('admin.crypto.tabDeposits'), icon: 'i-lucide-arrow-down-to-line' },
+  { section: 'config' as const, label: t('admin.crypto.tabConfig'), icon: 'i-lucide-settings-2' },
+])
+const navItems = computed(() => [{ label: t('admin.crypto.tabOverview'), icon: 'i-lucide-layout-dashboard', to: sectionTo('overview') }, ...overviewEntries.value.map(entry => ({ label: entry.label, icon: entry.icon, to: sectionTo(entry.section) }))])
 
 const config = ref<CryptoConfig | null>(null)
 // Snapshot of the last loaded/saved config: the save confirmation diffs
@@ -1624,6 +1644,9 @@ async function loadDeposits() {
     loadingDeposits.value = false
   }
 }
+
+// Sub-page routes drive the tab panels; the overview keeps the addresses panel ready behind it.
+watch(section, value => { if (routed && value !== 'overview' && value !== activeTab.value) switchTab(value) }, { immediate: true })
 
 onMounted(() => {
   void loadConfig()
