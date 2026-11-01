@@ -1,5 +1,6 @@
 <template>
-  <div class="table-pagination flex items-center justify-between gap-3 border-t border-default px-4 py-3 sm:px-6">
+  <!-- No `table-pagination` hook class: old console skins restyle it and would hide Nuxt UI's look. -->
+  <div class="flex items-center justify-between gap-3 border-t border-default px-4 py-3 sm:px-6" data-test="pagination">
     <div class="flex flex-1 items-center justify-between sm:hidden">
       <!-- Mobile pagination -->
       <UButton

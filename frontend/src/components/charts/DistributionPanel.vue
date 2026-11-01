@@ -17,8 +17,8 @@
         :ui="{
           base: 'text-xs',
           thead: 'bg-default',
-          th: 'px-2 py-1.5 text-xs font-medium text-muted first:pl-0 last:pr-0',
-          td: 'px-2 py-1.5 text-xs text-muted first:pl-0 last:pr-0 whitespace-nowrap',
+          th: 'px-1.5 py-1.5 text-xs font-medium text-muted whitespace-nowrap first:pl-0 last:pr-0',
+          td: 'px-1.5 py-1.5 text-xs text-muted whitespace-nowrap first:pl-0 last:pr-0',
           separator: 'h-px bg-(--ui-border-muted)',
           tbody: 'divide-y divide-default'
         }"

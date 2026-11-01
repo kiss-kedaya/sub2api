@@ -3,7 +3,8 @@
        `${id}-tab-${key}` ids, which UTabs generates itself. -->
   <div
     ref="tablist"
-    class="console-tabs relative inline-flex max-w-full flex-wrap gap-1 rounded-lg bg-elevated p-1"
+    class="relative inline-flex max-w-full flex-wrap gap-1 rounded-lg bg-elevated p-1"
+    data-test="console-tabs"
     role="tablist"
     :aria-label="label"
   >
