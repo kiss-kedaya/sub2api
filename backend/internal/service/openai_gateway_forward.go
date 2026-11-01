@@ -635,7 +635,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
-	if !SupportsVerbosity(upstreamModel) && requestRoot.Get("text.verbosity").Exists() {
+	if !nativeDeepSeekResponses && !SupportsVerbosity(upstreamModel) && requestRoot.Get("text.verbosity").Exists() {
 		markPatchDelete("text.verbosity")
 	}
 
@@ -692,7 +692,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		markPatchSet("max_output_tokens", clampedCap)
 	}
 	if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 &&
-		!account.IsOpenAIApiKey() && requestRoot.Get("previous_response_id").Exists() {
+		!account.IsOpenAIApiKey() && !nativeDeepSeekResponses && requestRoot.Get("previous_response_id").Exists() {
 		markPatchDelete("previous_response_id")
 	}
 	if openAIRequestBodyMayContainEmptyBase64InputImage(body) {
@@ -1246,7 +1246,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					strings.Contains(upstreamMsg, "The encrypted content") &&
 					strings.Contains(upstreamMsg, "could not be verified") &&
 					strings.Contains(upstreamMsg, "could not be decrypted or parsed"))
-			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
+			if !nativeDeepSeekResponses && !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
 					return nil, decodeErr
@@ -1270,7 +1270,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
 			}
-			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
+			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBodyForAccount(account, resp.StatusCode, body, respBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
 				body = retryBody

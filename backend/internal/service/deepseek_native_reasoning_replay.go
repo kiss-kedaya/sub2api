@@ -189,22 +189,6 @@ func hasDeepSeekNativeReasoningText(content gjson.Result) bool {
 	return false
 }
 
-func deepSeekNativeMessageText(content gjson.Result) string {
-	if content.Type == gjson.String {
-		return content.String()
-	}
-	if !content.IsArray() {
-		return ""
-	}
-	var builder strings.Builder
-	for _, part := range content.Array() {
-		if part.Get("text").Type == gjson.String {
-			_, _ = builder.WriteString(part.Get("text").String())
-		}
-	}
-	return builder.String()
-}
-
 type deepSeekNativeReasoningItem struct {
 	ids       map[string]bool
 	parts     map[int]*strings.Builder

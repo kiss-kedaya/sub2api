@@ -139,6 +139,12 @@ func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body m
 // Responses 均不支持服务端状态存储，携带这些字段会被拒绝）。
 // 非原生 Responses 协议账号原样返回。
 func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte {
+	// Native DeepSeek accepts these fields itself (including reasoning.summary).
+	// Do not apply assumptions learned from older third-party Chat relays to a
+	// native Responses request: retain state intent, opaque ids and tool media.
+	if account != nil && account.Platform == PlatformDeepseek && account.UsesNativeCNResponses() {
+		return body
+	}
 	native := account != nil && account.UsesNativeCNResponses()
 	dedupe := deepSeekDuplicateCallIDRewrite(account, body)
 	if !native && !dedupe {
@@ -225,6 +231,11 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 // that is actually selected.
 func RewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) []byte {
 	if len(body) == 0 {
+		return body
+	}
+	// Native DeepSeek validates call ids itself. Keep both valid opaque ids
+	// and invalid duplicate calls intact; never drop/graft client history.
+	if deepSeekCallIDScope(groupPlatform, model) {
 		return body
 	}
 	// Scope by platform/model, but also clean any body that actually carries

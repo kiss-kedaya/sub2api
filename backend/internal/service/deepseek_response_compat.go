@@ -14,3 +14,12 @@ func (s *OpenAIGatewayService) deepSeekResponseCompatEnabled() bool {
 	}
 	return s.cfg.Gateway.DeepSeekResponseCompatEnabled
 }
+
+// Native DeepSeek owns parameter validation. Do not retry a different request
+// by silently removing the user's reasoning, tools or response-shaping fields.
+func normalizeOpenAIResponsesRejectedFieldRetryBodyForAccount(account *Account, status int, body, response []byte) ([]byte, string, bool, error) {
+	if account != nil && account.Platform == PlatformDeepseek && account.UsesNativeCNResponses() {
+		return body, "", false, nil
+	}
+	return normalizeOpenAIResponsesRejectedFieldRetryBody(status, body, response)
+}
