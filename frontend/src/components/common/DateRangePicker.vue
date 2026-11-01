@@ -87,7 +87,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMediaQuery } from '@vueuse/core'
 import { CalendarDate, getLocalTimeZone, today as calendarToday } from '@internationalized/date'
@@ -278,7 +278,8 @@ function sameDay(a: string, b: string) {
 const calendarMax = computed(() => toCalendarDate(tomorrow.value))
 const wideScreen = useMediaQuery('(min-width: 640px)')
 const monthsShown = computed(() => (wideScreen.value ? 2 : 1))
-const calendarPlaceholder = ref<CalendarDate>(calendarToday(getLocalTimeZone()))
+// shallowRef keeps the CalendarDate class type (ref would unwrap it); dates are replaced, never mutated.
+const calendarPlaceholder = shallowRef<CalendarDate>(calendarToday(getLocalTimeZone()))
 
 // Show the months that hold the selected range; the right-most month is the end month.
 const syncPlaceholder = () => {

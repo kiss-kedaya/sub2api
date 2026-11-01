@@ -27,11 +27,11 @@
       v-for="index in 6"
       :key="index"
       aria-hidden="true"
-      class="flex h-12 min-w-0 items-center justify-center rounded-lg border bg-white text-center text-lg font-semibold text-gray-900 transition-colors dark:bg-dark-700 dark:text-white"
+      class="flex h-12 min-w-0 items-center justify-center rounded-md bg-default text-center text-lg font-semibold text-highlighted tabular-nums ring ring-inset transition-colors"
       :class="[
-        disabled ? 'opacity-50' : '',
-        invalid ? 'border-red-500' : 'border-gray-300 dark:border-dark-600',
-        focused && activeIndex === index - 1 ? 'border-primary-500 ring-2 ring-primary-500/25 dark:border-primary-400' : ''
+        disabled ? 'opacity-75' : '',
+        invalid ? 'ring-error' : 'ring-accented',
+        focused && activeIndex === index - 1 ? (invalid ? 'outline-3 outline-error/25' : 'ring-2 ring-primary outline-3 outline-primary/25') : ''
       ]"
     >{{ modelValue[index - 1] || '\u200b' }}</span>
   </div>
