@@ -62,7 +62,7 @@ func TestDeepSeekProtocolParityLive(t *testing.T) {
 							body["tool_choice"] = map[string]string{"type": "function", "name": "parity_lookup"}
 						}
 					case "chat":
-						path, url = "/v1/chat/completions", base+"/chat/completions"
+						path, url = "/v1/chat/completions", buildOpenAIChatCompletionsURL(base)
 						body["messages"] = []any{map[string]string{"role": "user", "content": prompt}}
 						body["max_tokens"] = 768
 						body["thinking"] = map[string]string{"type": "disabled"}
