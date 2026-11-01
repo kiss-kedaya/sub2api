@@ -11,13 +11,7 @@
         <p class="text-sm text-gray-500 dark:text-gray-400">
           {{ t('admin.scheduledTests.title') }}
         </p>
-        <button
-          @click="showAddForm = !showAddForm"
-          class="btn btn-primary flex items-center gap-1.5 text-sm"
-        >
-          <Icon name="plus" size="sm" :stroke-width="2" />
-          {{ t('admin.scheduledTests.addPlan') }}
-        </button>
+        <UButton icon="i-lucide-plus" :label="t('admin.scheduledTests.addPlan')" @click="showAddForm = !showAddForm" />
       </div>
 
       <!-- Add Plan Form -->
@@ -71,12 +65,7 @@
             <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
               {{ t('admin.scheduledTests.prompt') }}
             </label>
-            <textarea
-              v-model="newPlan.prompt_text"
-              rows="4"
-              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-hidden transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
-              :placeholder="t('admin.scheduledTests.promptPlaceholder')"
-            />
+            <UTextarea v-model="newPlan.prompt_text" :rows="4" class="w-full" :placeholder="t('admin.scheduledTests.promptPlaceholder')" />
             <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
               {{ t('admin.scheduledTests.promptHelp') }}
             </p>
@@ -135,20 +124,11 @@
           </div>
         </div>
         <div class="mt-3 flex justify-end gap-2">
-          <button
-            @click="showAddForm = false; resetNewPlan()"
-            class="rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500"
-          >
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            @click="handleCreate"
-            :disabled="!newPlan.model_id || !newPlan.cron_expression || creating || (newPlan.quality_check_enabled && newPlan.quality_provider === 'chanshui' && !isChanshuiPolicyValid(newPlan.quality_config))"
-            class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Icon v-if="creating" name="refresh" size="sm" class="animate-spin" :stroke-width="2" />
+          <UButton color="neutral" variant="subtle" size="sm" :label="t('common.cancel')" @click="showAddForm = false; resetNewPlan()" />
+          <UButton size="sm" :disabled="!newPlan.model_id || !newPlan.cron_expression || creating || (newPlan.quality_check_enabled && newPlan.quality_provider === 'chanshui' && !isChanshuiPolicyValid(newPlan.quality_config))" @click="handleCreate">
+            <UIcon v-if="creating" name="i-lucide-loader-circle" class="size-4 animate-spin" />
             {{ t('common.save') }}
-          </button>
+          </UButton>
         </div>
       </div>
 
@@ -236,20 +216,8 @@
 
               <!-- Actions -->
               <div class="flex items-center gap-1" @click.stop>
-                <button
-                  @click="startEdit(plan)"
-                  class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-blue-50 hover:text-blue-500 dark:hover:bg-blue-900/20"
-                  :title="t('admin.scheduledTests.editPlan')"
-                >
-                  <Icon name="edit" size="sm" :stroke-width="2" />
-                </button>
-                <button
-                  @click="confirmDeletePlan(plan)"
-                  class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
-                  :title="t('admin.scheduledTests.deletePlan')"
-                >
-                  <Icon name="trash" size="sm" :stroke-width="2" />
-                </button>
+                <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-pencil" square :title="t('admin.scheduledTests.editPlan')" :aria-label="t('admin.scheduledTests.editPlan')" @click="startEdit(plan)" />
+                <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-trash-2" square :title="t('admin.scheduledTests.deletePlan')" :aria-label="t('admin.scheduledTests.deletePlan')" @click="confirmDeletePlan(plan)" />
               </div>
 
               <!-- Expand indicator -->
@@ -316,12 +284,7 @@
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                   {{ t('admin.scheduledTests.prompt') }}
                 </label>
-                <textarea
-                  v-model="editForm.prompt_text"
-                  rows="4"
-                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-hidden transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-200"
-                  :placeholder="t('admin.scheduledTests.promptPlaceholder')"
-                />
+                <UTextarea v-model="editForm.prompt_text" :rows="4" class="w-full" :placeholder="t('admin.scheduledTests.promptPlaceholder')" />
                 <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
                   {{ t('admin.scheduledTests.promptHelp') }}
                 </p>
@@ -380,20 +343,11 @@
               </div>
             </div>
             <div class="mt-3 flex justify-end gap-2">
-              <button
-                @click="cancelEdit"
-                class="rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500"
-              >
-                {{ t('common.cancel') }}
-              </button>
-              <button
-                @click="handleEdit"
-                :disabled="!editForm.model_id || !editForm.cron_expression || updating || (editForm.quality_check_enabled && editForm.quality_provider === 'chanshui' && !isChanshuiPolicyValid(editForm.quality_config))"
-                class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Icon v-if="updating" name="refresh" size="sm" class="animate-spin" :stroke-width="2" />
+              <UButton color="neutral" variant="subtle" size="sm" :label="t('common.cancel')" @click="cancelEdit" />
+              <UButton size="sm" :disabled="!editForm.model_id || !editForm.cron_expression || updating || (editForm.quality_check_enabled && editForm.quality_provider === 'chanshui' && !isChanshuiPolicyValid(editForm.quality_config))" @click="handleEdit">
+                <UIcon v-if="updating" name="i-lucide-loader-circle" class="size-4 animate-spin" />
                 {{ t('common.save') }}
-              </button>
+              </UButton>
             </div>
           </div>
 
@@ -429,14 +383,12 @@
             <!-- Results History -->
             <div v-else class="grid min-h-112 grid-cols-1 gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]">
               <div class="max-h-128 space-y-2 overflow-y-auto pr-1">
-                <button
+                <UButton
                   v-for="result in displayedResults"
                   :key="result.id"
-                  type="button"
-                  class="w-full rounded-lg border p-3 text-left transition-colors"
-                  :class="selectedResult?.id === result.id
-                    ? 'border-primary-400 bg-primary-50 dark:border-primary-500 dark:bg-primary-900/20'
-                    : 'border-gray-100 bg-gray-50 hover:border-gray-300 dark:border-dark-700 dark:bg-dark-900 dark:hover:border-dark-500'"
+                  color="neutral"
+                  :variant="selectedResult?.id === result.id ? 'soft' : 'ghost'"
+                  class="block w-full p-3 text-left"
                   @click="selectResult(result.id)"
                 >
                   <div class="flex items-start justify-between gap-2">
@@ -467,7 +419,7 @@
                     <span>{{ t(auditReports.get(result.id) ? 'admin.scheduledTests.chanshui' : 'admin.scheduledTests.legacyResult') }}</span>
                     <span>{{ result.latency_ms > 0 ? `${result.latency_ms}ms` : '—' }}</span>
                   </div>
-                </button>
+                </UButton>
               </div>
 
               <div v-if="selectedResult" class="min-w-0 rounded-xl border border-gray-200 bg-white dark:border-dark-600 dark:bg-dark-800">
@@ -488,22 +440,8 @@
                     </div>
                   </div>
                   <div v-if="!selectedAudit" class="flex items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-900">
-                    <button
-                      type="button"
-                      class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-                      :class="previewMode === 'preview' ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
-                      @click="previewMode = 'preview'"
-                    >
-                      {{ t('admin.scheduledTests.preview') }}
-                    </button>
-                    <button
-                      type="button"
-                      class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-                      :class="previewMode === 'source' ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400'"
-                      @click="previewMode = 'source'"
-                    >
-                      {{ t('admin.scheduledTests.source') }}
-                    </button>
+                    <UButton color="neutral" :variant="previewMode === 'preview' ? 'outline' : 'ghost'" size="xs" :label="t('admin.scheduledTests.preview')" @click="previewMode = 'preview'" />
+                    <UButton color="neutral" :variant="previewMode === 'source' ? 'outline' : 'ghost'" size="xs" :label="t('admin.scheduledTests.source')" @click="previewMode = 'source'" />
                   </div>
                 </div>
 

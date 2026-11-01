@@ -7,26 +7,26 @@
     </label>
     <label v-if="condition.rules.some(rule => rule.type === 'fingerprint_mismatch')" class="block text-xs">
       {{ t('admin.scheduledTests.expectedModel') }}
-      <input type="text" class="input mt-1 w-full" :value="condition.expected_model" :placeholder="model"
-        @input="emit('update:modelValue', { ...condition, expected_model: ($event.target as HTMLInputElement).value })" />
+      <UInput class="mt-1 w-full" :model-value="condition.expected_model" :placeholder="model"
+        @update:model-value="emit('update:modelValue', { ...condition, expected_model: String($event ?? '') })" />
     </label>
     <div v-for="(rule, index) in condition.rules" :key="index" class="space-y-2 border-t border-gray-200 pt-3 dark:border-dark-600" data-testid="chanshui-stop-rule">
       <div class="flex items-center gap-2">
         <Select class="min-w-0 flex-1" :model-value="rule.type" :options="ruleOptions" :aria-label="t('admin.scheduledTests.stopRuleType')" @update:model-value="setType(index, $event)" />
-        <button type="button" class="btn btn-secondary" :disabled="condition.rules.length === 1" @click="remove(index)">{{ t('common.delete') }}</button>
+        <UButton color="neutral" variant="ghost" icon="i-lucide-trash-2" :disabled="condition.rules.length === 1" :label="t('common.delete')" @click="remove(index)" />
       </div>
       <label v-if="rule.type === 'total_score_below'" class="block text-xs">
         {{ t('admin.scheduledTests.minimumTotal') }}
-        <input type="number" class="input mt-1 w-full" min="0" max="100" step="0.1" :value="rule.threshold ?? ''" data-testid="chanshui-score-threshold"
-          @input="setThreshold(index, ($event.target as HTMLInputElement).value)" />
+        <UInput type="number" class="mt-1 w-full" min="0" max="100" step="0.1" :model-value="rule.threshold == null ? '' : String(rule.threshold)" data-testid="chanshui-score-threshold"
+          @update:model-value="setThreshold(index, String($event ?? ''))" />
       </label>
       <div v-if="rule.type === 'section_status'" class="grid gap-2 sm:grid-cols-2">
         <Select :model-value="rule.section" :options="sectionOptions" :aria-label="t('admin.scheduledTests.stopSection')" @update:model-value="setSection(index, $event)" />
-        <input type="text" class="input" :value="rule.status" :placeholder="t('admin.scheduledTests.stopStatusPlaceholder')"
-          @input="patch(index, { status: ($event.target as HTMLInputElement).value })" />
+        <UInput class="w-full" :model-value="rule.status" :placeholder="t('admin.scheduledTests.stopStatusPlaceholder')"
+          @update:model-value="patch(index, { status: String($event ?? '') })" />
       </div>
     </div>
-    <button type="button" class="btn btn-secondary text-xs" :disabled="condition.rules.length >= 10" @click="add">{{ t('admin.scheduledTests.addStopRule') }}</button>
+    <UButton color="neutral" variant="outline" size="xs" icon="i-lucide-plus" :disabled="condition.rules.length >= 10" :label="t('admin.scheduledTests.addStopRule')" @click="add" />
     <p class="text-xs text-gray-500">{{ t('admin.scheduledTests.stopConditionHint') }}</p>
   </div>
 </template>

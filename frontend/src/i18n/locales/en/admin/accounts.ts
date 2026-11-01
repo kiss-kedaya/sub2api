@@ -56,6 +56,7 @@ export default {
       dataActions: 'Data',
       toolActions: 'Tools',
       viewColumns: 'Columns',
+      accountDetail: { open: 'Account details', overview: 'Overview', usage: 'Usage', schedule: 'Schedule' },
       selectedCount: '{count} selected',
       dataExportConfirmMessage: 'The exported data contains sensitive account and proxy information. Store it securely.',
       dataExportConfirm: 'Confirm Export',

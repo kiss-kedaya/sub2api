@@ -55,11 +55,11 @@
 
       <div>
         <label class="input-label" for="ollama-cloud-session">{{ t('admin.accounts.ollamaCloud.sessionLabel') }}</label>
-        <textarea
+        <UTextarea
           id="ollama-cloud-session"
           v-model="session"
-          rows="3"
-          class="input font-mono text-xs"
+          :rows="3"
+          class="w-full font-mono"
           autocomplete="new-password"
           data-1p-ignore
           data-lpignore="true"
@@ -70,38 +70,9 @@
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          :disabled="saving || !session.trim() || !state.encryption_key_configured"
-          data-testid="ollama-cloud-session-save"
-          @click="saveSession"
-        >
-          <Icon name="check" size="xs" class="mr-1.5" />
-          {{ t('common.save') }}
-        </button>
-        <button
-          v-if="state.configured"
-          type="button"
-          class="btn btn-secondary btn-sm text-red-600 dark:text-red-400"
-          :disabled="saving"
-          data-testid="ollama-cloud-session-delete"
-          @click="showDeleteConfirm = true"
-        >
-          <Icon name="trash" size="xs" class="mr-1.5" />
-          {{ t('admin.accounts.ollamaCloud.deleteSession') }}
-        </button>
-        <button
-          v-if="state.configured"
-          type="button"
-          class="btn btn-secondary btn-sm"
-          :disabled="refreshing"
-          data-testid="ollama-cloud-refresh"
-          @click="refreshUsage"
-        >
-          <Icon name="refresh" size="xs" class="mr-1.5" :class="{ 'animate-spin': refreshing }" />
-          {{ t('admin.accounts.ollamaCloud.refreshNow') }}
-        </button>
+        <UButton size="sm" icon="i-lucide-check" :disabled="saving || !session.trim() || !state.encryption_key_configured" data-testid="ollama-cloud-session-save" :label="t('common.save')" @click="saveSession" />
+        <UButton v-if="state.configured" color="error" variant="subtle" size="sm" icon="i-lucide-trash-2" :disabled="saving" data-testid="ollama-cloud-session-delete" :label="t('admin.accounts.ollamaCloud.deleteSession')" @click="showDeleteConfirm = true" />
+        <UButton v-if="state.configured" color="neutral" variant="outline" size="sm" icon="i-lucide-refresh-cw" :loading="refreshing" :disabled="refreshing" data-testid="ollama-cloud-refresh" :label="t('admin.accounts.ollamaCloud.refreshNow')" @click="refreshUsage" />
       </div>
 
       <div v-if="state.configured" class="flex items-center justify-between gap-4 border-t border-gray-100 pt-4 dark:border-dark-700">

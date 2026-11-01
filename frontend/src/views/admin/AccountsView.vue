@@ -241,6 +241,9 @@
             </div>
           </template>
           <template #cell-usage="{ row }">
+            <!-- A fixed width lets the window stats and action row wrap instead of
+                 stretching the column under the sticky actions column. -->
+            <div class="w-60 max-w-60 whitespace-normal">
             <AccountUsageCell
               :account="row"
               :today-stats="todayStatsByAccountId[String(row.id)] ?? null"
@@ -253,6 +256,7 @@
               @account-updated="handleAccountUpdated"
               @usage-loaded="handleAccountUsageLoaded(row.id, $event)"
             />
+            </div>
           </template>
           <template #cell-custom_usage="{ row }">
             <CustomUsageCell
@@ -364,6 +368,7 @@
           </template>
           <template #cell-actions="{ row }">
             <div class="flex items-center justify-end gap-0.5">
+              <AdminRowAction :label="t('admin.accounts.accountDetail.open')" icon="eye" data-test="open-account-detail" @click="openDetail(row)" />
               <AdminRowAction :label="t('common.edit')" icon="edit" @click="handleEdit(row)" />
               <AdminRowAction :label="t('common.more')" icon="more" @click="openMenu(row, $event)" />
             </div>
@@ -398,6 +403,26 @@
       :account="customUsageAccount"
       @close="customUsageAccount = null"
       @saved="handleCustomUsageSaved"
+    />
+    <AccountDetailSlideover
+      :open="detailAccount !== null"
+      :account="detailAccount"
+      :groups="detailAccount ? accountGroupsForRow(detailAccount) : []"
+      :today-stats="detailAccount ? (todayStatsByAccountId[String(detailAccount.id)] ?? null) : null"
+      :show-timer="authStore.isAdmin && !authStore.isAdminObserver"
+      :timer-refresh-key="timerRefreshKey"
+      :usage-refresh-key="usageManualRefreshToken"
+      :global-probe-enabled="upstreamBillingProbeGloballyEnabled"
+      :now="upstreamBillingNow"
+      @close="detailAccountId = null"
+      @edit="handleEdit"
+      @test="handleTest"
+      @stats="handleViewStats"
+      @schedule="handleSchedule"
+      @timer-executed="handleTimerExecuted"
+      @show-temp-unsched="handleShowTempUnsched"
+      @account-updated="handleAccountUpdated"
+      @probe-upstream-billing="handleProbeUpstreamBilling"
     />
     <AccountActionMenu @custom-usage="customUsageAccount = $event" :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" @delete="handleDelete" />
       <SyncFromCrsModal v-if="showSync" :show="showSync" @close="showSync = false" @synced="reload" />
@@ -460,6 +485,7 @@ import AccountTableActions from '@/components/admin/account/AccountTableActions.
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
+import AccountDetailSlideover from '@/components/admin/account/AccountDetailSlideover.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
@@ -602,7 +628,11 @@ const showColumnsDropdown = ref(false)
 const hiddenColumns = reactive<Set<string>>(new Set())
 // Fresh layouts start with the most used columns; the rest are one click away in "列显示".
 // The account id also shows under the name while its own column is hidden.
-const DEFAULT_HIDDEN_COLUMNS = ['id', 'today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier', 'expires_at']
+// Saved layouts keep their own choice; only a fresh layout starts with this set.
+const DEFAULT_HIDDEN_COLUMNS = [
+  'id', 'today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier', 'expires_at',
+  'priority', 'created_at', 'custom_usage', 'upstream_billing_rate'
+]
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
@@ -1860,6 +1890,11 @@ const loadAccountDetails = async (account: Pick<AccountListItem, 'id'>): Promise
     accountDetailLoading.delete(account.id)
   }
 }
+
+// Account detail (slideover): follows the live row, so auto refresh keeps it current.
+const detailAccountId = ref<number | null>(null)
+const detailAccount = computed(() => accounts.value.find(account => account.id === detailAccountId.value) ?? null)
+const openDetail = (a: AccountListItem) => { detailAccountId.value = a.id }
 
 const handleEdit = async (a: AccountListItem) => {
   const account = await loadAccountDetails(a)

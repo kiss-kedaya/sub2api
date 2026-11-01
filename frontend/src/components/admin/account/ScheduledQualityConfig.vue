@@ -1,39 +1,38 @@
 <template>
   <div class="space-y-3 sm:col-span-2" data-testid="scheduled-quality-config">
-    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400">
-      {{ t('admin.scheduledTests.auditServiceURL') }}
-      <input class="input mt-1 w-full" type="url" :value="config.base_url" placeholder="https://chanshui.dev"
-        data-testid="chanshui-service-url" @input="update('base_url', ($event.target as HTMLInputElement).value)" />
-    </label>
-    <p class="text-xs text-amber-700 dark:text-amber-400">{{ t('admin.scheduledTests.auditKeyNotice') }}</p>
+    <UFormField :label="t('admin.scheduledTests.auditServiceURL')">
+      <UInput type="url" class="w-full" :model-value="config.base_url" placeholder="https://chanshui.dev"
+        data-testid="chanshui-service-url" @update:model-value="update('base_url', String($event ?? ''))" />
+    </UFormField>
+    <p class="text-xs text-warning">{{ t('admin.scheduledTests.auditKeyNotice') }}</p>
     <div class="grid gap-3 sm:grid-cols-2">
-      <label class="block text-xs font-medium text-gray-600 dark:text-gray-400">
-        {{ t('admin.scheduledTests.auditProtocol') }}
+      <UFormField :label="t('admin.scheduledTests.auditProtocol')">
         <Select :model-value="config.protocol" :options="protocolOptions" :aria-label="t('admin.scheduledTests.auditProtocol')" @update:model-value="updateProtocol" />
-      </label>
-      <label class="block text-xs font-medium text-gray-600 dark:text-gray-400">
-        {{ t('admin.scheduledTests.auditTimeout') }}
-        <input class="input mt-1 w-full" type="number" min="10" max="600" :value="config.timeout"
-          @input="update('timeout', Number(($event.target as HTMLInputElement).value))" />
-      </label>
+      </UFormField>
+      <UFormField :label="t('admin.scheduledTests.auditTimeout')">
+        <UInput type="number" min="10" max="600" class="w-full" :model-value="String(config.timeout)"
+          @update:model-value="update('timeout', Number($event))" />
+      </UFormField>
     </div>
-    <details class="rounded-lg border border-gray-300 p-3 dark:border-dark-600" data-testid="chanshui-sections">
-      <summary class="cursor-pointer text-sm text-gray-700 dark:text-gray-300">
+    <UCollapsible :unmount-on-hide="false" data-testid="chanshui-sections">
+      <UButton color="neutral" variant="link" class="p-0" trailing-icon="i-lucide-chevron-down">
         {{ t('admin.scheduledTests.auditSections') }} · {{ config.sections.length ? `${config.sections.length}` : t('admin.scheduledTests.auditAll') }}
-      </summary>
+      </UButton>
+      <template #content>
       <div class="mt-3 grid gap-2 sm:grid-cols-2">
-        <label class="flex items-center gap-2 text-sm sm:col-span-2">
-          <input type="checkbox" :checked="config.sections.length === 0" @change="update('sections', [])" />
-          {{ t('admin.scheduledTests.auditAll') }}
-        </label>
-        <label v-for="section in chanshuiSections" :key="section" class="flex items-center gap-2 text-sm">
-          <input type="checkbox" :data-section="section" :checked="config.sections.length === 0 || config.sections.includes(section)"
-            :disabled="config.sections.length === 1 && config.sections[0] === section"
-            @change="toggleSection(section, ($event.target as HTMLInputElement).checked)" />
-          {{ t(`admin.scheduledTests.sections.${section}`) }}
-        </label>
+        <UCheckbox class="sm:col-span-2" :model-value="config.sections.length === 0" :label="t('admin.scheduledTests.auditAll')" @update:model-value="update('sections', [])" />
+        <UCheckbox
+          v-for="section in chanshuiSections"
+          :key="section"
+          :data-section="section"
+          :model-value="config.sections.length === 0 || config.sections.includes(section)"
+          :disabled="config.sections.length === 1 && config.sections[0] === section"
+          :label="t(`admin.scheduledTests.sections.${section}`)"
+          @update:model-value="toggleSection(section, $event === true)"
+        />
       </div>
-    </details>
+      </template>
+    </UCollapsible>
     <p class="text-xs text-gray-500">{{ t('admin.scheduledTests.auditLimits') }}</p>
     <ChanshuiStopConditions :model-value="config.stop_condition" :model="model" @update:model-value="update('stop_condition', $event)" />
     <p v-if="!isChanshuiPolicyValid(config)" class="text-xs text-red-600" role="alert">{{ t('admin.scheduledTests.invalidStopCondition') }}</p>

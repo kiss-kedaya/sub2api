@@ -6,50 +6,56 @@
           <UBadge :color="enabledDraft ? 'success' : 'neutral'" variant="subtle">{{ enabledDraft ? t('accountOps.observing') : t('accountOps.disabled') }}</UBadge>
         </template>
       </AdminPageHeader>
-      <UPageGrid v-if="remote" class="gap-4 sm:grid-cols-3 lg:grid-cols-3 lg:gap-px" data-testid="account-ops-summary">
-        <UPageCard variant="subtle" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.enabledChannels')">
-          <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ enabledChannelCount }}</span>
-        </UPageCard>
-        <UPageCard variant="subtle" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.enabledRules')">
-          <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ enabledRuleCount }}</span>
-        </UPageCard>
-        <UPageCard variant="subtle" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.loadedPending')">
-          <span class="text-2xl font-semibold tabular-nums" :class="pendingEventCount ? 'text-warning' : 'text-highlighted'">{{ pendingEventCount }}</span>
-        </UPageCard>
-      </UPageGrid>
-      <UAlert v-if="loadError" role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="`${t('accountOps.previousData')} ${loadError}`" />
-
-      <!-- Toolbar: section tabs on the left, the global switch and refresh on the right. -->
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div role="tablist" :aria-label="t('accountOps.pageSections')" class="flex gap-1 rounded-lg bg-elevated p-1">
-          <UButton
-            v-for="tab in tabs"
-            :id="`ops-tab-${tab}`"
-            :key="tab"
-            role="tab"
-            color="neutral"
-            :variant="activeTab === tab ? 'outline' : 'ghost'"
-            :class="activeTab === tab ? 'bg-default shadow-xs' : 'text-muted'"
-            :aria-selected="activeTab === tab"
-            :aria-controls="`ops-panel-${tab}`"
-            :tabindex="activeTab === tab ? 0 : -1"
-            :data-testid="`account-ops-tab-${tab}`"
-            :label="t(tab === 'records' ? 'accountOps.recordsTab' : 'accountOps.settingsTab')"
-            @click="selectTab(tab)"
-            @keydown="tabKey($event, tab)"
-          />
-        </div>
-        <div class="flex items-center gap-3">
+      <!-- Sub-pages (overview / channels / rules / records) as child routes; the global switch and refresh stay on every sub-page. -->
+      <PageToolbar>
+        <template #left>
+          <UNavigationMenu :items="navItems" highlight class="-mx-1 min-w-0 flex-1" :aria-label="t('accountOps.pageSections')" data-testid="account-ops-subnav" />
+        </template>
+        <template #right>
           <div class="flex items-center gap-2 text-sm font-medium text-default"><span id="account-ops-enabled-label">{{ t('accountOps.enabled') }}</span>
             <Toggle :model-value="enabledDraft" aria-labelledby="account-ops-enabled-label"
               :disabled="!remote || loading || mutating || globalSaving" class="disabled:cursor-wait disabled:opacity-50"
               data-testid="notifications-enabled" @update:model-value="toggleNotifications" />
           </div>
           <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="loading" :disabled="loading || thresholdLoading || mutating || globalSaving" :label="t('qualityOps.refresh')" @click="refresh" />
-        </div>
-      </div>
+        </template>
+      </PageToolbar>
+      <UAlert v-if="loadError" role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="`${t('accountOps.previousData')} ${loadError}`" />
 
-      <section v-if="activeTab === 'records'" id="ops-panel-records" role="tabpanel" aria-labelledby="ops-tab-records" class="space-y-4">
+      <!-- Overview: a few numbers that open their sub-page and a short list of alerts that still need attention. -->
+      <section v-if="activeTab === 'overview' && remote" class="space-y-6" data-testid="account-ops-overview">
+        <UPageGrid class="gap-4 sm:grid-cols-3 lg:grid-cols-3 lg:gap-px" data-testid="account-ops-summary">
+          <UPageCard variant="subtle" :to="sectionRoutes.channels" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.enabledChannels')">
+            <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ enabledChannelCount }}</span>
+          </UPageCard>
+          <UPageCard variant="subtle" :to="sectionRoutes.rules" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.enabledRules')">
+            <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ enabledRuleCount }}</span>
+          </UPageCard>
+          <UPageCard variant="subtle" :to="sectionRoutes.records" :ui="{ container: 'gap-y-1.5', title: 'text-xs font-normal text-muted' }" :title="t('accountOps.loadedPending')">
+            <span class="text-2xl font-semibold tabular-nums" :class="pendingEventCount ? 'text-warning' : 'text-highlighted'">{{ pendingEventCount }}</span>
+          </UPageCard>
+        </UPageGrid>
+        <div class="space-y-3" data-testid="account-ops-attention">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-base font-semibold text-highlighted">{{ t('accountOps.attention') }}</h2>
+            <UButton color="neutral" variant="link" size="sm" trailing-icon="i-lucide-arrow-right" :to="sectionRoutes.records" data-testid="account-ops-view-all-records" :label="t('accountOps.viewAll')" />
+          </div>
+          <UPageCard variant="subtle" :ui="{ container: 'p-0 sm:p-0 gap-y-0' }">
+            <ul class="divide-y divide-default">
+              <li v-for="event in attentionEvents" :key="eventKey(event)" class="flex flex-wrap items-center justify-between gap-3 px-4 py-3" data-testid="account-ops-attention-item">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium text-highlighted">{{ event.group_name || event.account_name }}</p>
+                  <p class="mt-0.5 text-xs text-muted">#{{ event.account_id }} · {{ t(`accountOps.${event.kind}`) }} · {{ date(event.first_seen) }}</p>
+                </div>
+                <UBadge :color="event.state === 'failed' ? 'error' : 'warning'" variant="subtle" size="sm">{{ t(`accountOps.states.${event.state}`) }}</UBadge>
+              </li>
+              <li v-if="!attentionEvents.length" class="px-4 py-6 text-center text-sm text-muted">{{ t('accountOps.noAttention') }}</li>
+            </ul>
+          </UPageCard>
+        </div>
+      </section>
+
+      <section v-if="activeTab === 'records'" id="ops-panel-records" class="space-y-4" data-testid="account-ops-records">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <p class="text-sm text-muted">{{ t('accountOps.recordsOnceHint') }}</p>
           <div class="flex flex-wrap items-center gap-1.5">
@@ -99,7 +105,10 @@
           <UIcon name="i-lucide-bell" class="size-8 text-dimmed" />
           <p class="text-sm text-highlighted">{{ t(loading ? 'common.loading' : events.length ? 'accountOps.noMatchingRecords' : 'accountOps.empty') }}</p>
           <p class="max-w-lg text-xs leading-5 text-muted">{{ t('accountOps.recordsEmptyHint') }}</p>
-          <UButton color="neutral" variant="outline" class="mt-1" :label="t('accountOps.settingsTab')" @click="selectTab('settings')" />
+          <div class="mt-1 flex flex-wrap justify-center gap-2">
+            <UButton color="neutral" variant="outline" :to="sectionRoutes.channels" :label="t('accountOps.notificationChannels')" />
+            <UButton color="neutral" variant="outline" :to="sectionRoutes.rules" :label="t('accountOps.accountRules')" />
+          </div>
         </div>
         <div class="flex items-center justify-between gap-3 border-t border-default pt-3 text-xs text-muted">
           <span>{{ t('accountOps.noRawErrors') }}</span>
@@ -107,8 +116,8 @@
         </div>
       </section>
 
-      <section v-if="activeTab === 'settings' && remote" id="ops-panel-settings" role="tabpanel" aria-labelledby="ops-tab-settings" class="space-y-8">
-        <!-- Notification channels -->
+      <!-- Channels sub-page -->
+      <section v-if="activeTab === 'channels' && remote" id="ops-panel-channels" class="space-y-8">
         <div class="space-y-3" data-testid="account-ops-channels">
           <div class="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -148,8 +157,10 @@
             </ul>
           </UPageCard>
         </div>
+      </section>
 
-        <!-- Account groups -->
+      <!-- Rules sub-page: account groups, per-group rules and the global rule settings -->
+      <section v-if="activeTab === 'rules' && remote" id="ops-panel-rules" class="space-y-8">
         <div class="flex flex-wrap items-center justify-between gap-3" data-testid="account-ops-groups">
           <div>
             <h2 class="text-base font-semibold text-highlighted">{{ t('accountOps.accountGroups') }}</h2>
@@ -191,7 +202,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import type { TableColumn } from '@nuxt/ui'
+import type { NavigationMenuItem, TableColumn } from '@nuxt/ui'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useAccountOpsStore } from '@/stores/accountOps'
@@ -199,6 +210,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import { accountOpsMessages } from '@/components/admin/operations/accountOpsMessages'
 import Toggle from '@/components/common/Toggle.vue'
 import AccountOpsRuleList from '@/components/admin/operations/AccountOpsRuleList.vue'
@@ -212,9 +224,19 @@ import AccountOpsGroupDialog from '@/components/admin/operations/AccountOpsGroup
 import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, testAccountOpsWebhook, saveAccountOpsRuleGroups, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
 import type { AccountOpsConfig, AccountOpsEvent, AccountOpsThresholdAccount, AccountOpsWebhook, AccountOpsWebhookProvider, AccountOpsGroup, AccountOpsRuleBatchGroup } from '@/api/admin/accountOps'
 import { extractApiErrorMessage } from '@/utils/apiError'
+type AccountOpsSection = 'overview' | 'channels' | 'rules' | 'records'
+// The router passes the sub-page (/admin/account-ops, /channels, /rules, /records); all four share this instance and its data.
+const props = withDefaults(defineProps<{ section?: AccountOpsSection }>(), { section: 'overview' })
 const { t } = useI18n({ useScope: 'local', messages: accountOpsMessages }), auth = useAuthStore(), app = useAppStore()
 const { remote, events, hasMore } = storeToRefs(useAccountOpsStore())
-const tabs = ['settings','records'] as const, activeTab = ref<'records'|'settings'>('settings')
+const activeTab = computed<AccountOpsSection>(() => props.section)
+const sectionRoutes: Record<AccountOpsSection, string> = { overview: '/admin/account-ops', channels: '/admin/account-ops/channels', rules: '/admin/account-ops/rules', records: '/admin/account-ops/records' }
+const navItems = computed<NavigationMenuItem[]>(() => [
+  { label: t('accountOps.overviewTab'), icon: 'i-lucide-layout-dashboard', to: sectionRoutes.overview, exact: true, active: activeTab.value === 'overview' },
+  { label: t('accountOps.notificationChannels'), icon: 'i-lucide-send', to: sectionRoutes.channels, active: activeTab.value === 'channels' },
+  { label: t('accountOps.accountRules'), icon: 'i-lucide-list-checks', to: sectionRoutes.rules, active: activeTab.value === 'rules' },
+  { label: t('accountOps.recordsTab'), icon: 'i-lucide-bell', to: sectionRoutes.records, active: activeTab.value === 'records' }
+])
 const loading = ref(false), loadingMore = ref(false), mutating = ref(false)
 const thresholdAccounts = ref<AccountOpsThresholdAccount[]>([]), thresholdLoading = ref(false), thresholdReady = ref(false), thresholdError = ref('')
 const accountGroups = ref<AccountOpsGroup[]>([]), showGroupDialog = ref(false)
@@ -224,6 +246,8 @@ const loadError = ref('')
 const enabledChannelCount = computed(() => (remote.value?.config.recipient ? 1 : 0) + (remote.value?.config.webhooks ?? []).filter(h => h.enabled).length)
 const enabledRuleCount = computed(() => [...(remote.value?.config.balance_thresholds ?? []), ...(remote.value?.config.quota_thresholds ?? [])].filter(r => r.enabled).length)
 const pendingEventCount = computed(() => events.value.filter(e => ['pending', 'sending', 'failed'].includes(e.state)).length)
+// Overview list: the first few alerts still waiting or failed; the records sub-page has the rest.
+const attentionEvents = computed(() => events.value.filter(e => ['pending', 'sending', 'failed'].includes(e.state)).slice(0, 5))
 watch(() => remote.value?.config.enabled, enabled => { enabledDraft.value = enabled ?? false }, { immediate: true })
 const ruleList = ref<InstanceType<typeof AccountOpsRuleList> | null>(null)
 const batchAccounts = ref<AccountOpsThresholdAccount[]>([])
@@ -273,7 +297,7 @@ async function load() {
 }
 async function refresh() {
   if (mutating.value || globalSaving.value) return
-  await Promise.all([load(), ...(activeTab.value === 'settings' ? [loadAccounts()] : [])])
+  await Promise.all([load(), ...(activeTab.value === 'rules' ? [loadAccounts()] : [])])
 }
 async function loadAccounts() {
   if(!auth.user)return
@@ -282,8 +306,8 @@ async function loadAccounts() {
   catch(e){if(alive&&current===accountsVersion){thresholdError.value=message(e);app.showError(thresholdError.value)}}
   finally{if(alive&&current===accountsVersion)thresholdLoading.value=false}
 }
-function selectTab(tab:'records'|'settings'){activeTab.value=tab;if(tab==='settings'&&!thresholdReady.value&&!thresholdLoading.value)void loadAccounts()}
-function tabKey(event:KeyboardEvent,tab:'records'|'settings'){if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?'settings':event.key==='End'?'records':tab==='records'?'settings':'records';selectTab(next);document.getElementById(`ops-tab-${next}`)?.focus()}
+// Entering the rules sub-page loads the accounts once if the first load has not finished or was reset.
+watch(activeTab, tab => { if (tab === 'rules' && !thresholdReady.value && !thresholdLoading.value) void loadAccounts() })
 function acceptConfig(config: AccountOpsConfig){if(!alive||!auth.user||!remote.value)return;version++;loading.value=false;remote.value={...remote.value,config:normalize(config)};app.showSuccess(t('accountOps.settingsSaved'))}
 function acceptGroupConfig(config: AccountOpsConfig){showGroupDialog.value=false;acceptConfig(config);void loadGroups()}
 async function loadGroups(){try{const groups=await getAccountOpsThresholdGroups();if(alive)accountGroups.value=groups}catch(e){if(alive)app.showError(message(e))}}
@@ -319,7 +343,7 @@ async function toggleGroup(_group:AccountOpsGroup, accounts:AccountOpsThresholdA
 async function removeWebhook(id:string){await mutate(()=>deleteAccountOpsWebhook(id))}
 async function testWebhook(id:string){if(testingId.value)return;const current=++testSequence;testingId.value=id;try{await testAccountOpsWebhook(id);if(alive&&current===testSequence)app.showSuccess(t('accountOps.testSuccess'))}catch(e){if(alive&&current===testSequence)app.showError(message(e))}finally{if(alive&&current===testSequence)testingId.value=null}}
 async function more(){if(loadingMore.value||loading.value)return;const current=version, sequence=++paginationSequence;loadingMore.value=true;try{const p=await getAccountOpsEvents(events.value.length);if(alive&&current===version){const merged=new Map([...events.value,...p.items].map(e=>[eventKey(e),e]));events.value=[...merged.values()];hasMore.value=p.has_more}}catch(e){if(alive&&current===version)app.showError(message(e))}finally{if(alive&&sequence===paginationSequence)loadingMore.value=false}}
-watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showWebhook.value=showEmail.value=showAddChannel.value=showGroupDialog.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;activeTab.value='settings';batchAccounts.value=[];loadError.value=''},{flush:'sync'})
-onMounted(()=>{void load();void loadAccounts();timer=setInterval(()=>{if(document.visibilityState==='visible'&&!loadingMore.value&&!mutating.value&&!globalSaving.value){void load();if(activeTab.value==='settings')void loadAccounts()}},30000)})
+watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showWebhook.value=showEmail.value=showAddChannel.value=showGroupDialog.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;batchAccounts.value=[];loadError.value=''},{flush:'sync'})
+onMounted(()=>{void load();void loadAccounts();timer=setInterval(()=>{if(document.visibilityState==='visible'&&!loadingMore.value&&!mutating.value&&!globalSaving.value){void load();if(activeTab.value==='rules')void loadAccounts()}},30000)})
 onBeforeUnmount(()=>{alive=false;version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;if(timer)clearInterval(timer)})
 </script>

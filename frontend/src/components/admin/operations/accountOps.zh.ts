@@ -230,4 +230,8 @@ export default {
   ,"selectedGroups": "已选 {count} 个账号组"
   ,"selectGroup": "选择 {name}"
   ,"selectVisibleGroups": "全选当前可见账号组"
+  ,"overviewTab": "概览"
+  ,"attention": "待处理提醒"
+  ,"viewAll": "查看全部"
+  ,"noAttention": "没有待处理的提醒。"
 }
