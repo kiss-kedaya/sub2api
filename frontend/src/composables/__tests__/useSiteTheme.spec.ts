@@ -11,6 +11,8 @@ import {
   previewSiteTheme,
   previewSiteThemeMode,
   restoreSiteTheme,
+  toggleColorMode,
+  useSiteColorMode,
   useSiteTheme
 } from '../useSiteTheme'
 import { paletteColor, paletteHex, paletteRgbChannels } from '@/theme/palettes'
@@ -165,5 +167,45 @@ describe('useSiteTheme', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     previewSiteThemeMode('nonsense')
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+
+  it('lets a visitor choose light, dark or system; system follows the OS over the site default', () => {
+    prefersDark(false)
+    const mode = useSiteColorMode()
+    applySiteTheme({ ...DEFAULT_SITE_THEME, theme_default_mode: 'dark' }, { colorMode: true })
+    expect(mode.preference.value).toBe('dark')
+    expect(mode.isDark.value).toBe(true)
+
+    mode.setPreference('system')
+    expect(localStorage.getItem('theme')).toBe('system')
+    expect(mode.preference.value).toBe('system')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(mode.isDark.value).toBe(false)
+    // A reload keeps following the OS, not the dark site default.
+    applySiteTheme({ ...DEFAULT_SITE_THEME, theme_default_mode: 'dark' }, { colorMode: true })
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+
+    mode.setPreference('dark')
+    expect(localStorage.getItem('theme')).toBe('dark')
+    expect(mode.isDark.value).toBe(true)
+  })
+
+  it('toggles from the mode actually on <html> and mirrors class changes made elsewhere', async () => {
+    const mode = useSiteColorMode()
+    document.documentElement.classList.add('dark')
+    await Promise.resolve()
+    expect(mode.isDark.value).toBe(true)
+
+    toggleColorMode()
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(localStorage.getItem('theme')).toBe('light')
+    expect(mode.isDark.value).toBe(false)
+
+    // Another page's own toggle writes the class and localStorage directly.
+    document.documentElement.classList.add('dark')
+    localStorage.setItem('theme', 'dark')
+    await Promise.resolve()
+    expect(mode.isDark.value).toBe(true)
+    expect(useSiteColorMode().preference.value).toBe('dark')
   })
 })

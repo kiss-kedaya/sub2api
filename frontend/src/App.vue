@@ -10,6 +10,7 @@ import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, 
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
 import { nuxtUiLocale } from '@/plugins/nuxtUi'
+import { applySiteTheme, normalizeSiteTheme, useSiteTheme } from '@/composables/useSiteTheme'
 
 const router = useRouter()
 const route = useRoute()
@@ -27,6 +28,20 @@ function updateDocumentTitle() {
   ]
   document.title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems)
 }
+
+// main.ts applies the site theme before mounting. Apply it again when the public
+// settings bring a different one (first fetch without injected config, or a save).
+// An unchanged theme is left alone so an admin's live preview is not overwritten;
+// the light/dark class is only reset when the site default mode itself changed.
+const { theme: appliedSiteTheme } = useSiteTheme()
+watch(
+  () => JSON.stringify(normalizeSiteTheme(appStore.cachedPublicSettings)),
+  (next) => {
+    if (next === JSON.stringify(appliedSiteTheme.value)) return
+    const theme = normalizeSiteTheme(appStore.cachedPublicSettings)
+    applySiteTheme(theme, { colorMode: theme.theme_default_mode !== appliedSiteTheme.value.theme_default_mode })
+  }
+)
 
 // Watch for site settings changes and update favicon/title
 watch(
