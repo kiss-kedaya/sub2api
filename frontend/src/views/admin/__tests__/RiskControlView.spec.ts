@@ -3,6 +3,8 @@ import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils'
 
+import UCard from '@nuxt/ui/components/Card.vue'
+import URadioGroup from '@nuxt/ui/components/RadioGroup.vue'
 import RiskControlView from '../RiskControlView.vue'
 import type { ContentModerationConfig, UpdateContentModerationConfig } from '@/api/admin/riskControl'
 
@@ -190,6 +192,23 @@ function findButtonByText(wrapper: VueWrapper, text: string): DOMWrapper<HTMLBut
   return button
 }
 
+// Settings tabs are Nuxt UI (reka) tab triggers, which activate on mousedown; other buttons on click.
+async function pressButtonByText(wrapper: VueWrapper, text: string) {
+  const button = findButtonByText(wrapper, text)
+  if (button.attributes('role') === 'tab') await button.trigger('mousedown', { button: 0 })
+  else await button.trigger('click')
+}
+
+async function chooseModelFilterType(wrapper: VueWrapper, type: string, label: string) {
+  const group = wrapper.findAllComponents(URadioGroup).find((item) => item.attributes('data-test') === 'model-filter-type')
+  if (!group) {
+    throw new Error('model filter type radio group not found')
+  }
+  expect(group.text()).toContain(label)
+  group.vm.$emit('update:modelValue', type)
+  await flushPromises()
+}
+
 describe('admin RiskControlView', () => {
   beforeEach(() => {
     getConfig.mockReset()
@@ -235,11 +254,11 @@ describe('admin RiskControlView', () => {
 
     await flushPromises()
 
-    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
-    await findButtonByText(wrapper, 'admin.riskControl.tabs.scope').trigger('click')
-    await findButtonByText(wrapper, 'admin.riskControl.modelFilterInclude').trigger('click')
+    await pressButtonByText(wrapper, 'admin.riskControl.openSettings')
+    await pressButtonByText(wrapper, 'admin.riskControl.tabs.scope')
+    await chooseModelFilterType(wrapper, 'include', 'admin.riskControl.modelFilterInclude')
     await wrapper.get('[data-test="model-filter-input"]').setValue('gpt-5.5, gpt-5.4')
-    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await pressButtonByText(wrapper, 'admin.riskControl.saveConfig')
     await flushPromises()
 
     expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
@@ -269,11 +288,11 @@ describe('admin RiskControlView', () => {
 
     await flushPromises()
 
-    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
-    await findButtonByText(wrapper, 'admin.riskControl.tabs.riskThresholds').trigger('click')
+    await pressButtonByText(wrapper, 'admin.riskControl.openSettings')
+    await pressButtonByText(wrapper, 'admin.riskControl.tabs.riskThresholds')
     await wrapper.get('[data-test="risk-threshold-sexual"]').setValue('72')
     await wrapper.get('[data-test="risk-threshold-harassment"]').setValue('99')
-    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await pressButtonByText(wrapper, 'admin.riskControl.saveConfig')
     await flushPromises()
 
     expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({
@@ -404,8 +423,10 @@ describe('admin RiskControlView', () => {
     ]))
     expect(syncCard.element.parentElement).toBe(runtimeCards.element)
     expect(apiKeyLoadCard.element.parentElement).toBe(runtimeCards.element)
-    expect(syncCard.classes()).toContain('card')
-    expect(apiKeyLoadCard.classes()).toContain('card')
+    // Both panels are Nuxt UI cards (the legacy `card` skin class is gone).
+    const cardRoots = wrapper.findAllComponents(UCard).map((card) => card.element)
+    expect(cardRoots).toContain(syncCard.element)
+    expect(cardRoots).toContain(apiKeyLoadCard.element)
     expect(syncCard.get('h2').text()).toBe('admin.riskControl.preBlockSyncStatus')
     expect(syncCard.text()).toContain('admin.riskControl.preBlockSyncHint')
     expect(apiKeyLoadCard.get('h2').text()).toBe('admin.riskControl.preBlockAPIKeyLoad')
