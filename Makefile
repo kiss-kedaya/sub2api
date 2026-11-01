@@ -141,4 +141,4 @@ test-frontend:
 	@pnpm --dir frontend exec vitest run --config dev/vitest.config.ts
 
 test-frontend-critical:
-	@pnpm --dir frontend exec vitest run $(FRONTEND_CRITICAL_VITEST)
+	@pnpm --dir frontend exec vitest run --minWorkers=1 --maxWorkers=2 $(FRONTEND_CRITICAL_VITEST)
