@@ -1,76 +1,99 @@
 <template>
-  <div class="account-bulk-bar" :class="{ 'account-bulk-bar-selected': selectedIds.length > 0 }">
-    <div class="account-bulk-selection">
-      <span v-if="allResultsSelected" class="text-sm font-medium text-primary-900 dark:text-primary-100">
-        {{ t('admin.accounts.bulkActions.selectedAll', { count: selectedIds.length }) }}
-      </span>
-      <span v-else-if="selectedIds.length > 0" class="text-sm font-medium text-primary-900 dark:text-primary-100">
-        {{ t('admin.accounts.bulkActions.selected', { count: selectedIds.length }) }}
-      </span>
-      <span v-else class="text-sm font-medium text-primary-900 dark:text-primary-100">
-        {{ t('admin.accounts.bulkEdit.title') }}
-      </span>
-      <template v-if="selectedIds.length > 0">
-        <button
-          @click="$emit('select-page')"
-          class="text-xs font-medium text-primary-700 hover:text-primary-800 dark:text-primary-300 dark:hover:text-primary-200"
-        >
-          {{ t('admin.accounts.bulkActions.selectCurrentPage') }}
-        </button>
-      </template>
-      <template v-if="!allResultsSelected && totalResults > selectedIds.length">
-        <span v-if="selectedIds.length > 0" class="text-gray-300 dark:text-primary-800">•</span>
-        <button
-          :disabled="selectingAll"
-          @click="$emit('select-all-results')"
-          class="text-xs font-medium text-primary-700 hover:text-primary-800 disabled:cursor-not-allowed disabled:opacity-60 dark:text-primary-300 dark:hover:text-primary-200"
-        >
-          {{
-            selectingAll
-              ? t('admin.accounts.bulkActions.selectingAll')
-              : t('admin.accounts.bulkActions.selectAllResults', { count: totalResults })
-          }}
-        </button>
-      </template>
-      <template v-if="selectedIds.length > 0">
-        <span class="text-gray-300 dark:text-primary-800">•</span>
-        <button
-          @click="$emit('clear')"
-          class="text-xs font-medium text-primary-700 hover:text-primary-800 dark:text-primary-300 dark:hover:text-primary-200"
-        >
-          {{ t('admin.accounts.bulkActions.clear') }}
-        </button>
-      </template>
-    </div>
-    <div class="account-bulk-commands">
-      <template v-if="selectedIds.length > 0">
-        <button @click="$emit('delete')" class="btn btn-danger btn-sm">{{ t('admin.accounts.bulkActions.delete') }}</button>
-        <button @click="$emit('reset-status')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkActions.resetStatus') }}</button>
-        <button @click="$emit('refresh-token')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkActions.refreshToken') }}</button>
-        <button @click="$emit('probe-upstream-billing')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkActions.probeUpstreamBilling') }}</button>
-        <button @click="$emit('test-models')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkActions.testModels') }}</button>
-        <button @click="$emit('toggle-schedulable', true)" class="btn btn-success btn-sm">{{ t('admin.accounts.bulkActions.enableScheduling') }}</button>
-        <button @click="$emit('toggle-schedulable', false)" class="btn btn-warning btn-sm">{{ t('admin.accounts.bulkActions.disableScheduling') }}</button>
-        <button @click="$emit('edit-selected')" class="btn btn-primary btn-sm">{{ t('admin.accounts.bulkActions.edit') }}</button>
-      </template>
-      <button @click="$emit('edit-filtered')" class="btn btn-secondary btn-sm">
-        {{ t('admin.accounts.bulkEdit.submit') }}
-      </button>
-    </div>
+  <!-- Footer: selection summary and selection helpers, like the template's "n of m selected" line. -->
+  <div v-if="placement === 'footer'" class="account-selection-footer">
+    <span class="text-sm text-muted tabular-nums">
+      {{
+        allResultsSelected
+          ? t('admin.accounts.bulkActions.selectedAll', { count: selectedIds.length })
+          : t('admin.accounts.bulkActions.selected', { count: selectedIds.length })
+      }}
+    </span>
+    <UButton
+      v-if="selectedIds.length > 0"
+      color="neutral"
+      variant="link"
+      size="xs"
+      :label="t('admin.accounts.bulkActions.selectCurrentPage')"
+      @click="$emit('select-page')"
+    />
+    <UButton
+      v-if="!allResultsSelected && totalResults > selectedIds.length"
+      color="neutral"
+      variant="link"
+      size="xs"
+      :loading="selectingAll"
+      :disabled="selectingAll"
+      :label="selectingAll
+        ? t('admin.accounts.bulkActions.selectingAll')
+        : t('admin.accounts.bulkActions.selectAllResults', { count: totalResults })"
+      @click="$emit('select-all-results')"
+    />
+    <UButton
+      v-if="selectedIds.length > 0"
+      color="neutral"
+      variant="link"
+      size="xs"
+      :label="t('admin.accounts.bulkActions.clear')"
+      @click="$emit('clear')"
+    />
+  </div>
+
+  <!-- Toolbar: bulk actions with the selected count, like the template's "Delete [n]" button. -->
+  <div v-else class="account-bulk-bar">
+    <template v-if="selectedIds.length > 0">
+      <UButton color="neutral" variant="outline" icon="i-lucide-pencil" @click="$emit('edit-selected')">
+        {{ t('admin.accounts.bulkActions.edit') }}
+        <template #trailing>
+          <UBadge color="neutral" variant="subtle" size="sm" class="tabular-nums">{{ selectedIds.length }}</UBadge>
+        </template>
+      </UButton>
+      <UButton
+        color="error"
+        variant="subtle"
+        icon="i-lucide-trash-2"
+        :label="t('admin.accounts.bulkActions.delete')"
+        @click="$emit('delete')"
+      />
+      <UDropdownMenu :items="moreItems" :content="{ align: 'end' }" :ui="{ content: 'w-56' }">
+        <UButton
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-ellipsis"
+          square
+          data-test="bulk-more"
+          :title="t('common.more')"
+          :aria-label="t('common.more')"
+        />
+      </UDropdownMenu>
+    </template>
+    <UButton
+      v-else
+      color="neutral"
+      variant="outline"
+      icon="i-lucide-list-checks"
+      :label="t('admin.accounts.bulkEdit.submit')"
+      @click="$emit('edit-filtered')"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { DropdownMenuItem } from '@nuxt/ui'
 
-defineProps<{
+withDefaults(defineProps<{
   selectedIds: number[]
   totalResults: number
   selectingAll: boolean
   allResultsSelected: boolean
-}>()
+  /** toolbar: bulk action buttons; footer: selected count and selection helpers. */
+  placement?: 'toolbar' | 'footer'
+}>(), {
+  placement: 'toolbar'
+})
 
-defineEmits([
+const emit = defineEmits([
   'delete',
   'edit-selected',
   'edit-filtered',
@@ -85,19 +108,36 @@ defineEmits([
 ])
 
 const { t } = useI18n()
+
+// Less frequent bulk actions; edit and delete stay visible next to the selected count.
+const moreItems = computed<DropdownMenuItem[][]>(() => [
+  [
+    { label: t('admin.accounts.bulkActions.testModels'), icon: 'i-lucide-flask-conical', onSelect: () => emit('test-models') },
+    { label: t('admin.accounts.bulkActions.probeUpstreamBilling'), icon: 'i-lucide-radar', onSelect: () => emit('probe-upstream-billing') }
+  ],
+  [
+    { label: t('admin.accounts.bulkActions.enableScheduling'), icon: 'i-lucide-play', onSelect: () => emit('toggle-schedulable', true) },
+    { label: t('admin.accounts.bulkActions.disableScheduling'), icon: 'i-lucide-pause', onSelect: () => emit('toggle-schedulable', false) },
+    { label: t('admin.accounts.bulkActions.resetStatus'), icon: 'i-lucide-rotate-ccw', onSelect: () => emit('reset-status') },
+    { label: t('admin.accounts.bulkActions.refreshToken'), icon: 'i-lucide-key-round', onSelect: () => emit('refresh-token') }
+  ],
+  [
+    { label: t('admin.accounts.bulkEdit.submit'), icon: 'i-lucide-list-checks', onSelect: () => emit('edit-filtered') }
+  ]
+])
 </script>
 
 <style scoped>
-.account-bulk-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; min-width: 0; padding: 10px 14px; border-bottom: 1px solid var(--signal-line); background: var(--signal-bg); }
-.account-bulk-bar-selected { background: var(--signal-accent-soft); }
-.account-bulk-selection, .account-bulk-commands { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
-.account-bulk-commands { margin-left: auto; }
-.account-bulk-selection > span:first-child { color: var(--signal-text); font-size: 12px; }
-.account-bulk-selection button { color: var(--signal-accent); min-height: 30px; }
-.account-bulk-commands .btn { min-height: 32px; padding-inline: 10px; font-size: 12px; white-space: normal; }
-@media (max-width: 767px) {
-  .account-bulk-bar { padding: 10px; }
-  .account-bulk-selection button, .account-bulk-commands .btn { min-height: 40px; }
-  .account-bulk-bar-selected .account-bulk-commands { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.account-bulk-bar,
+.account-selection-footer {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.account-selection-footer {
+  gap: 4px 10px;
 }
 </style>

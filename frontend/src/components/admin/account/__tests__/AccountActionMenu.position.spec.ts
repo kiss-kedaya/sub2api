@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import UDropdownMenu from '@nuxt/ui/components/DropdownMenu.vue'
 import AccountActionMenu from '../AccountActionMenu.vue'
 import type { Account } from '@/types'
 
@@ -15,138 +16,107 @@ const account = {
   rate_limit_reset_at: '2099-01-01T00:00:00Z'
 } as Account
 
-let menuHeight: number
-let resizeMenu: ResizeObserverCallback
-
-const getMenu = () => document.body.querySelector<HTMLElement>('.action-menu-content')!
-const getTop = () => Number.parseFloat(getMenu().style.top)
-const getLeft = () => Number.parseFloat(getMenu().style.left)
-
-function setViewport(width: number, height: number) {
-  vi.stubGlobal('innerWidth', width)
-  vi.stubGlobal('innerHeight', height)
-  window.dispatchEvent(new Event('resize'))
-}
+// The menu is a UDropdownMenu teleported to <body>; floating-ui places it against the
+// trigger rect (virtual reference), flips it above near the viewport bottom and keeps it
+// inside an 8px margin. Specs assert that configuration plus the rendered menu.
+const getMenu = () => document.body.querySelector<HTMLElement>('.action-menu-content')
+const menuItems = () => Array.from(document.body.querySelectorAll<HTMLElement>('.action-menu-content [role="menuitem"]'))
 
 async function mountMenu(anchorRect = new DOMRect(950, 720, 32, 24)) {
   const wrapper = mount(AccountActionMenu, {
-    props: { show: true, account, anchorRect },
-    global: { stubs: { Icon: true } }
+    attachTo: document.body,
+    props: { show: true, account, anchorRect }
   })
   await flushPromises()
   return wrapper
 }
 
+const contentOf = (wrapper: Awaited<ReturnType<typeof mountMenu>>) =>
+  wrapper.getComponent(UDropdownMenu).props('content') as {
+    side: string
+    align: string
+    sideOffset: number
+    collisionPadding: number
+    avoidCollisions: boolean
+    reference?: { getBoundingClientRect: () => DOMRect }
+  }
+
 enableAutoUnmount(afterEach)
 
 describe('AccountActionMenu viewport positioning', () => {
-  beforeEach(() => {
-    menuHeight = 305
-    setViewport(1024, 768)
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if (!this.classList.contains('action-menu-content')) return new DOMRect()
-      return new DOMRect(0, 0, Math.min(208, window.innerWidth - 16), Math.min(menuHeight, window.innerHeight - 16))
-    })
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(callback: ResizeObserverCallback) { resizeMenu = callback }
-      observe = vi.fn()
-      disconnect = vi.fn()
-      unobserve = vi.fn()
-    })
+  it('anchors a long OAuth menu to the trigger of the last row', async () => {
+    const wrapper = await mountMenu()
+
+    const content = contentOf(wrapper)
+    expect(content.reference?.getBoundingClientRect()).toEqual(new DOMRect(950, 720, 32, 24))
+    expect(getMenu()).not.toBeNull()
+    expect(getMenu()!.textContent).toContain('admin.accounts.recoverState')
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
-    vi.unstubAllGlobals()
+  it('opens below the trigger with right edges aligned', async () => {
+    const wrapper = await mountMenu(new DOMRect(500, 100, 32, 24))
+
+    expect(contentOf(wrapper)).toMatchObject({ side: 'bottom', align: 'end', sideOffset: 4 })
   })
 
-  it('measures a long OAuth menu and opens above the last row', async () => {
-    await mountMenu()
+  it('flips above and stays inside an 8px viewport margin near the edges', async () => {
+    const wrapper = await mountMenu(new DOMRect(179, 550, 32, 24))
 
-    expect(getTop()).toBe(720 - 305 - 4)
-    expect(getLeft()).toBe(982 - 208)
-    expect(getTop() + menuHeight).toBeLessThanOrEqual(window.innerHeight - 8)
-    expect(getMenu().textContent).toContain('admin.accounts.recoverState')
+    expect(contentOf(wrapper)).toMatchObject({ avoidCollisions: true, collisionPadding: 8 })
   })
 
-  it('opens below the trigger when the complete menu fits', async () => {
-    await mountMenu(new DOMRect(500, 100, 32, 24))
+  it.each([0, 370])('keeps the same collision margin for a trigger at x=%i', async (x) => {
+    const wrapper = await mountMenu(new DOMRect(x, 100, 24, 24))
 
-    expect(getTop()).toBe(128)
-    expect(getLeft()).toBe(324)
+    expect(contentOf(wrapper).collisionPadding).toBe(8)
+    expect(contentOf(wrapper).reference?.getBoundingClientRect().x).toBe(x)
   })
 
-  it('centers a mobile menu on its trigger and flips above the last row', async () => {
-    setViewport(390, 600)
-    await mountMenu(new DOMRect(179, 550, 32, 24))
-
-    expect(getTop()).toBe(241)
-    expect(getLeft()).toBe(91)
-  })
-
-  it.each([0, 370])('keeps mobile menus within the horizontal margins at x=%i', async (x) => {
-    setViewport(390, 600)
-    await mountMenu(new DOMRect(x, 100, 24, 24))
-
-    expect(getLeft()).toBeGreaterThanOrEqual(8)
-    expect(getLeft() + 208).toBeLessThanOrEqual(382)
-  })
-
-  it('constrains an oversized menu and preserves the recover-state action', async () => {
-    setViewport(180, 220)
+  it('limits an oversized menu to the available height, scrolls it and preserves the recover-state action', async () => {
     const wrapper = await mountMenu(new DOMRect(150, 180, 24, 24))
 
-    expect(getTop()).toBe(8)
-    expect(getLeft()).toBe(8)
-    expect(getMenu().style.maxHeight).toBe('204px')
-    expect(getMenu().style.maxWidth).toBe('164px')
-    expect(getMenu().classList.contains('overflow-y-auto')).toBe(true)
-    expect(getMenu().classList.contains('overscroll-contain')).toBe(true)
+    const menu = getMenu()!
+    expect(menu.className).toContain('max-h-(--reka-dropdown-menu-content-available-height)')
+    expect(menu.querySelector('[class*="overflow-y-auto"]')).not.toBeNull()
 
-    const recover = Array.from(getMenu().querySelectorAll('button'))
-      .find(button => button.textContent?.includes('admin.accounts.recoverState'))!
+    const recover = menuItems().find(item => item.textContent?.includes('admin.accounts.recoverState'))!
     recover.click()
+    await flushPromises()
     expect(wrapper.emitted('recover-state')).toEqual([[account]])
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 
-  it('repositions when menu content grows', async () => {
-    await mountMenu()
-    menuHeight = 420
-    resizeMenu([], {} as ResizeObserver)
-    await flushPromises()
-
-    expect(getTop()).toBe(296)
-  })
-
-  it('repositions and updates size limits after a viewport resize', async () => {
-    await mountMenu()
-    setViewport(320, 240)
-    await flushPromises()
-
-    expect(getTop()).toBe(8)
-    expect(getLeft()).toBe(104)
-    expect(getMenu().style.maxHeight).toBe('224px')
-    expect(getMenu().style.maxWidth).toBe('304px')
-  })
-
-  it('remeasures after reopening on another row', async () => {
+  it('follows the trigger when it reopens on another row', async () => {
     const wrapper = await mountMenu()
     await wrapper.setProps({ show: false })
+    await flushPromises()
     expect(getMenu()).toBeNull()
+
     await wrapper.setProps({ show: true, anchorRect: new DOMRect(400, 100, 32, 24) })
     await flushPromises()
 
-    expect(getTop()).toBe(128)
-    expect(getLeft()).toBe(224)
+    expect(getMenu()).not.toBeNull()
+    expect(contentOf(wrapper).reference?.getBoundingClientRect()).toEqual(new DOMRect(400, 100, 32, 24))
   })
 
-  it('still closes on Escape and backdrop clicks', async () => {
+  it('still closes on Escape', async () => {
     const wrapper = await mountMenu()
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    const backdrop = getMenu().previousElementSibling as HTMLElement
-    backdrop.click()
+    getMenu()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
 
-    expect(wrapper.emitted('close')).toHaveLength(2)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('does not render without an anchor or an account', async () => {
+    const wrapper = mount(AccountActionMenu, {
+      attachTo: document.body,
+      props: { show: true, account: null, anchorRect: new DOMRect(10, 10, 24, 24) }
+    })
+    await flushPromises()
+    expect(getMenu()).toBeNull()
+
+    await wrapper.setProps({ account, anchorRect: null })
+    await flushPromises()
+    expect(getMenu()).toBeNull()
   })
 })
