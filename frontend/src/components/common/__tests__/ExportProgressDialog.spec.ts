@@ -22,7 +22,7 @@ describe('ExportProgressDialog', () => {
     const wrapper = mount(ExportProgressDialog, { attachTo: document.body, props: { show: true, progress: 40, current: 4, total: 10, estimatedTime: '1m' } })
     await flushPromises()
     expect(document.body.textContent).toContain('usage.estimatedTime')
-    ;[...document.querySelectorAll<HTMLButtonElement>('.modal-footer button')].find(button => button.textContent?.includes('usage.cancelExport'))!.click()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.base-dialog-footer button')].find(button => button.textContent?.includes('usage.cancelExport'))!.click()
     expect(wrapper.emitted('cancel')).toHaveLength(1)
   })
 })
