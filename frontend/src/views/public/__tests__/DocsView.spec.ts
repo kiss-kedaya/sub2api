@@ -59,6 +59,18 @@ describe('public API documentation page', () => {
     wrapper.unmount()
   })
 
+  it('theme button flips the mode in force, even after it changed outside the page', async () => {
+    document.documentElement.classList.remove('dark')
+    const { wrapper } = await openDocs()
+    // e.g. the OS switched to dark while the shared "system" mode is in force
+    document.documentElement.classList.add('dark')
+    await wrapper.get(`button[aria-label="${english.docs.theme}"]`).trigger('click')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(localStorage.getItem('theme')).toBe('light')
+    localStorage.removeItem('theme')
+    wrapper.unmount()
+  })
+
   it('handles query navigation, unknown pages and mobile menu visibility', async () => {
     const { wrapper, router } = await openDocs('missing-page')
     expect(wrapper.get('h1').text()).toBe('Your first API request')

@@ -207,6 +207,19 @@ describe('KeyUsageView daily detail', () => {
     wrapper.unmount()
   })
 
+  it('keeps the site light/dark mode instead of forcing the OS preference', () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: true }),
+    })
+    document.documentElement.classList.remove('dark')
+    const wrapper = mount(KeyUsageView, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, LocaleSwitcher: true } },
+    })
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    wrapper.unmount()
+  })
+
   it('queries the current local calendar date near midnight', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 6, 13, 0, 30))

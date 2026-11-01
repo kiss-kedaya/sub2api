@@ -182,6 +182,15 @@ describe('HomeView compact mode', () => {
     expect(modelPlazaDestination(wrapper)).toBeUndefined()
   })
 
+  it('keeps the site light/dark mode instead of forcing the OS preference', () => {
+    // No saved choice and a dark OS: the startup theme (site default) stays in force.
+    vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList)
+    document.documentElement.classList.remove('dark')
+    const wrapper = mountHome({ compact_home_enabled: true })
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    wrapper.unmount()
+  })
+
   it('exposes legal policy links in compact and default footers', () => {
     const compact = mountHome({ compact_home_enabled: true })
     expect(
