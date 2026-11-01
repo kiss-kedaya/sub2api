@@ -188,8 +188,10 @@ func TestOneChainRPCFailureDoesNotBlockFollowingChain(t *testing.T) {
 	if err := worker.ScanOnce(t.Context()); err == nil {
 		t.Fatal("failed chain was reported successful")
 	}
-	if first.callCount("eth_getLogs") != 1 || second.callCount("eth_getLogs") != 1 {
-		t.Fatal("a failed chain starved the following network")
+	// The failing chain may subdivide its query, but only within the budget.
+	failed := first.callCount("eth_getLogs")
+	if failed == 0 || failed > 1+maxGetLogsSplitRequests || second.callCount("eth_getLogs") != 1 {
+		t.Fatal("a failed chain starved the following network", failed)
 	}
 }
 

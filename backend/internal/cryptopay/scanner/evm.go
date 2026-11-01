@@ -4,6 +4,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -87,35 +88,17 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 	}
 
 	var out []Transfer
+	// One budget per scanRange: a dense or slow range may be subdivided, but a
+	// node failing every request can never turn one pass into a request storm.
+	budget := maxGetLogsSplitRequests
 	for start := 0; start < len(recipients); start += batchSize {
 		end := start + batchSize
 		if end > len(recipients) {
 			end = len(recipients)
 		}
-		// topic0 = Transfer, topic2 = to (any of the watched addresses).
-		toTopic := make([]any, 0, end-start)
-		for _, addr := range recipients[start:end] {
-			toTopic = append(toTopic, padTopic(addr))
-		}
-		params := getLogsParams{
-			FromBlock: fmt.Sprintf("0x%x", fromBlock),
-			ToBlock:   fmt.Sprintf("0x%x", toBlock),
-			Address:   tokens,
-			Topics:    [][]any{{transferTopic}, nil, toTopic},
-		}
-		if outgoing {
-			params.Topics = [][]any{{transferTopic}, toTopic}
-		}
-		raw, err := s.pool.Call(ctx, "eth_getLogs", []any{params})
+		logs, err := s.getLogsAdaptive(ctx, chain, fromBlock, toBlock, tokens, recipients[start:end], outgoing, start/batchSize, &budget)
 		if err != nil {
-			return nil, fmt.Errorf("getLogs %s %d-%d: %w", chain, fromBlock, toBlock, err)
-		}
-		var logs []evmLog
-		if err := json.Unmarshal(raw, &logs); err != nil {
-			return nil, fmt.Errorf("getLogs decode: %w", err)
-		}
-		if logs == nil {
-			return nil, &rpc.Failure{Kind: "response"}
+			return nil, err
 		}
 		for _, log := range logs {
 			if log.Removed || len(log.Topics) < 3 {
@@ -150,6 +133,105 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 		}
 	}
 	return out, nil
+}
+
+// maxGetLogsSplitRequests caps the extra eth_getLogs requests one scanRange may
+// spend subdividing failed queries. Public BSC nodes time out or answer "query
+// exceeds max results" on dense ranges; halving recovers those, while the cap
+// keeps a node that rejects everything from being hammered every pass.
+const maxGetLogsSplitRequests = 64
+
+// minSplitAddresses stops halving the address filter. A single-block query with
+// this few topics that still fails is an endpoint problem, not query size.
+const minSplitAddresses = 25
+
+// LogsError locates the eth_getLogs query that still failed after adaptive
+// splitting. Every field is numeric or a configured chain name and the wrapped
+// cause comes from rpc.Pool, so it never adds an endpoint or node-supplied text.
+type LogsError struct {
+	Chain              string
+	FromBlock, ToBlock uint64
+	Batch              int // index of the address batch (batchSize each) in the scanned list
+	Addresses          int // addresses in the failing, possibly halved, filter
+	Err                error
+}
+
+func (e *LogsError) Error() string {
+	return fmt.Sprintf("getLogs %s %d-%d batch %d (%d addresses): %v", e.Chain, e.FromBlock, e.ToBlock, e.Batch, e.Addresses, e.Err)
+}
+
+func (e *LogsError) Unwrap() error { return e.Err }
+
+// getLogsAdaptive returns logs only when the complete [from,to] x addresses
+// space was covered. A failed RPC query is retried as two halves: the block
+// range while it spans more than one block, then the address filter while it
+// holds more than minSplitAddresses. Splits are disjoint, so no log repeats.
+// Callers therefore still advance cursors only past fully scanned ranges.
+func (s *EVMScanner) getLogsAdaptive(ctx context.Context, chain string, from, to uint64, tokens, addresses []string, outgoing bool, batch int, budget *int) ([]evmLog, error) {
+	logs, err := s.getLogs(ctx, from, to, tokens, addresses, outgoing)
+	if err == nil {
+		return logs, nil
+	}
+	var failure *rpc.Failure
+	canSplit := ctx.Err() == nil && errors.As(err, &failure) && *budget >= 2 &&
+		(to > from || len(addresses) > minSplitAddresses)
+	if !canSplit {
+		return nil, &LogsError{Chain: chain, FromBlock: from, ToBlock: to, Batch: batch, Addresses: len(addresses), Err: err}
+	}
+	*budget -= 2 // reserve both halves before either can spend more
+	if to > from {
+		mid := from + (to-from)/2
+		left, leftErr := s.getLogsAdaptive(ctx, chain, from, mid, tokens, addresses, outgoing, batch, budget)
+		if leftErr != nil {
+			return nil, leftErr
+		}
+		right, rightErr := s.getLogsAdaptive(ctx, chain, mid+1, to, tokens, addresses, outgoing, batch, budget)
+		if rightErr != nil {
+			return nil, rightErr
+		}
+		return append(left, right...), nil
+	}
+	half := len(addresses) / 2
+	left, leftErr := s.getLogsAdaptive(ctx, chain, from, to, tokens, addresses[:half], outgoing, batch, budget)
+	if leftErr != nil {
+		return nil, leftErr
+	}
+	right, rightErr := s.getLogsAdaptive(ctx, chain, from, to, tokens, addresses[half:], outgoing, batch, budget)
+	if rightErr != nil {
+		return nil, rightErr
+	}
+	return append(left, right...), nil
+}
+
+// getLogs issues exactly one eth_getLogs filter for the given addresses.
+func (s *EVMScanner) getLogs(ctx context.Context, from, to uint64, tokens, addresses []string, outgoing bool) ([]evmLog, error) {
+	// topic0 = Transfer, topic2 = to (any of the watched addresses); outflows
+	// filter topic1 = from instead.
+	topic := make([]any, 0, len(addresses))
+	for _, addr := range addresses {
+		topic = append(topic, padTopic(addr))
+	}
+	params := getLogsParams{
+		FromBlock: fmt.Sprintf("0x%x", from),
+		ToBlock:   fmt.Sprintf("0x%x", to),
+		Address:   tokens,
+		Topics:    [][]any{{transferTopic}, nil, topic},
+	}
+	if outgoing {
+		params.Topics = [][]any{{transferTopic}, topic}
+	}
+	raw, err := s.pool.Call(ctx, "eth_getLogs", []any{params})
+	if err != nil {
+		return nil, err
+	}
+	var logs []evmLog
+	if err := json.Unmarshal(raw, &logs); err != nil {
+		return nil, fmt.Errorf("getLogs decode: %w", err)
+	}
+	if logs == nil {
+		return nil, &rpc.Failure{Kind: "response"}
+	}
+	return logs, nil
 }
 
 // padTopic left-pads a 20-byte address to a 32-byte topic.

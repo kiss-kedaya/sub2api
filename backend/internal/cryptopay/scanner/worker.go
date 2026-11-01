@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,108 @@ type Worker struct {
 	replayMu     sync.Mutex
 	replayedAt   map[string]time.Time
 	failureAt    time.Time
+	// Per-chain report limiter: one slow chain must not hide another's errors.
+	chainFailureAt map[string]time.Time
+}
+
+// scanStageError attributes a per-chain failure to the scan step that produced
+// it (security, head, deposit, live or replay). Error() is the unchanged inner
+// message, so callers and stored errors see exactly what they saw before.
+type scanStageError struct {
+	chain    string
+	stage    string
+	from, to uint64
+	err      error
+}
+
+func (e *scanStageError) Error() string { return e.err.Error() }
+func (e *scanStageError) Unwrap() error { return e.err }
+
+// stageErr tags one error unless an inner step already identified itself.
+func stageErr(chain, stage string, from, to uint64, err error) error {
+	if err == nil {
+		return nil
+	}
+	var tagged *scanStageError
+	if errors.As(err, &tagged) {
+		return err
+	}
+	return &scanStageError{chain: chain, stage: stage, from: from, to: to, err: err}
+}
+
+// tagStage labels every untagged leaf of a joined error; tagged parts keep
+// their own stage. The rebuilt join has the same message and error chain.
+func tagStage(chain, stage string, err error) error {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		parts := joined.Unwrap()
+		tagged := make([]error, 0, len(parts))
+		for _, part := range parts {
+			tagged = append(tagged, tagStage(chain, stage, part))
+		}
+		return errors.Join(tagged...)
+	}
+	return stageErr(chain, stage, 0, 0, err)
+}
+
+// logAttrs exposes only the chain name, block numbers, batch counters and the
+// rpc.Failure category with numeric statuses. RPC URLs, node error text and
+// keys never reach the log; the cause string is rpc.SafeError.
+func (e *scanStageError) logAttrs() []any {
+	attrs := []any{"chain", e.chain, "stage", e.stage}
+	if e.from != 0 || e.to != 0 {
+		attrs = append(attrs, "from", e.from, "to", e.to)
+	}
+	var logsErr *LogsError
+	if errors.As(e.err, &logsErr) {
+		attrs = append(attrs, "query_from", logsErr.FromBlock, "query_to", logsErr.ToBlock,
+			"batch", logsErr.Batch, "addresses", logsErr.Addresses)
+	}
+	var failure *rpc.Failure
+	switch {
+	case errors.As(e.err, &failure):
+		attrs = append(attrs, "kind", failure.Kind)
+		if failure.HTTPStatus != 0 {
+			attrs = append(attrs, "http_status", failure.HTTPStatus)
+		}
+		if failure.RPCCode != 0 {
+			attrs = append(attrs, "rpc_code", failure.RPCCode)
+		}
+		if errors.Is(failure, context.DeadlineExceeded) {
+			attrs = append(attrs, "timeout", true)
+		}
+	case errors.Is(e.err, context.DeadlineExceeded):
+		attrs = append(attrs, "kind", "timeout")
+	case errors.Is(e.err, context.Canceled):
+		attrs = append(attrs, "kind", "canceled")
+	case errors.Is(e.err, rpc.ErrIndependentEvidence):
+		attrs = append(attrs, "kind", "evidence")
+	default:
+		attrs = append(attrs, "kind", "other")
+	}
+	return append(attrs, "cause", rpc.SafeError(e.err))
+}
+
+// collectScanFailures splits a pass error into tagged per-chain failures and
+// everything else (pending retry, recheck, lock), keeping each subtree whole.
+func collectScanFailures(err error, byChain map[string][]*scanStageError, other *[]error) {
+	switch e := err.(type) {
+	case nil:
+		return
+	case *scanStageError:
+		byChain[e.chain] = append(byChain[e.chain], e)
+		return
+	case interface{ Unwrap() []error }:
+		for _, part := range e.Unwrap() {
+			collectScanFailures(part, byChain, other)
+		}
+		return
+	}
+	var tagged *scanStageError
+	if !errors.As(err, &tagged) {
+		*other = append(*other, err)
+		return
+	}
+	collectScanFailures(errors.Unwrap(err), byChain, other)
 }
 
 // Security hooks precede pending credit as well as every live/backfill range.
@@ -181,18 +284,43 @@ func (w *Worker) scanAll(ctx context.Context) {
 	if w == nil {
 		return
 	}
-	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) {
-		// Production can run at error-only logging. Keep failures visible while
-		// limiting repeated reports and excluding RPC URLs or node messages.
-		w.replayMu.Lock()
-		report := time.Since(w.failureAt) >= time.Minute
-		if report {
-			w.failureAt = time.Now()
+	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) && ctx.Err() == nil {
+		w.reportScanFailure(err)
+	}
+}
+
+// reportScanFailure keeps failures visible at error-only production logging.
+// Each chain has its own one-minute limiter and names the failing stage, so a
+// stuck BSC cursor is distinguishable from a healthy ETH pass.
+func (w *Worker) reportScanFailure(err error) {
+	byChain := make(map[string][]*scanStageError)
+	var other []error
+	collectScanFailures(err, byChain, &other)
+	now := time.Now()
+	w.replayMu.Lock()
+	if w.chainFailureAt == nil {
+		w.chainFailureAt = make(map[string]time.Time)
+	}
+	reportChains := make([]string, 0, len(byChain))
+	for chain := range byChain {
+		if now.Sub(w.chainFailureAt[chain]) >= time.Minute {
+			w.chainFailureAt[chain] = now
+			reportChains = append(reportChains, chain)
 		}
-		w.replayMu.Unlock()
-		if report && ctx.Err() == nil {
-			slog.Error("[cryptopay] payment scan incomplete; retrying without skipping blocks", "cause", rpc.SafeError(err))
+	}
+	reportOther := len(other) > 0 && now.Sub(w.failureAt) >= time.Minute
+	if reportOther {
+		w.failureAt = now
+	}
+	w.replayMu.Unlock()
+	sort.Strings(reportChains)
+	for _, chain := range reportChains {
+		for _, failure := range byChain[chain] {
+			slog.Error("[cryptopay] payment scan incomplete; retrying without skipping blocks", failure.logAttrs()...)
 		}
+	}
+	if reportOther {
+		slog.Error("[cryptopay] payment scan incomplete; retrying without skipping blocks", "cause", rpc.SafeError(errors.Join(other...)))
 	}
 }
 
@@ -359,6 +487,9 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
+	// Registered first so it runs last: every failure of this chain carries a
+	// stage for the per-chain report; cursor/address steps default to deposit.
+	defer func() { scanErr = tagStage(chain.Chain, "deposit", scanErr) }()
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, maxScanTimePerChain)
 	defer cancel()
@@ -369,11 +500,11 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 	}
 	pool, err := verifiedChainPool(ctx, pool, chain.Chain)
 	if err != nil {
-		return err
+		return stageErr(chain.Chain, "head", 0, 0, err)
 	}
 	head, err := pool.BlockNumber(ctx)
 	if err != nil {
-		return err
+		return stageErr(chain.Chain, "head", 0, 0, err)
 	}
 	slog.Info("[cryptopay] scan tick", "chain", chain.Chain, "head", head, "confirmations", chain.Confirmations)
 	if w.securityRange != nil && head > 0 {
@@ -388,7 +519,12 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		}
 		span = min(span, head)
 		if err := w.securityRange(ctx, NewEVMScanner(pool), pool, chain, head-span+1, head); err != nil {
-			return err
+			// This head window is an early warning only. A slow public node
+			// failing it must not freeze deposit discovery: every deposit range
+			// below still runs securityRange itself before credit or cursor
+			// progress. The failure stays in the result for manual callers.
+			headErr := stageErr(chain.Chain, "security", head-span+1, head, err)
+			defer func() { scanErr = errors.Join(headErr, scanErr) }()
 		}
 	}
 	if head <= chain.Confirmations {
@@ -454,13 +590,14 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		if err != nil {
 			// The overlap boundary must be durable BEFORE the forward cursor
 			// moves. Once saved, failures cannot move that independent boundary.
-			return err
+			return stageErr(chain.Chain, "replay", 0, 0, err)
 		}
 		if state != nil {
 			defer func() {
 				// A slow or dense overlap has its own budget and checkpoint. It
 				// neither steals the forward budget nor blocks new deposits.
-				scanErr = errors.Join(scanErr, w.replayRecentRange(parent, scanner, pool, chain, state, maxRange, recipients))
+				replayErr := w.replayRecentRange(parent, scanner, pool, chain, state, maxRange, recipients)
+				scanErr = errors.Join(scanErr, stageErr(chain.Chain, "replay", state.Next, state.Through, replayErr))
 			}()
 		}
 	}
@@ -474,19 +611,22 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		// the ledger's transfer identity handles replay when catch-up arrives.
 		span := min(uint64(evmFirstRunLookback), maxRange)
 		if err := w.processScanRange(ctx, scanner, pool, chain, confirmed-span+1, confirmed, recipients); err != nil {
-			liveErr = errors.Join(liveErr, fmt.Errorf("live window %s: %w", chain.Chain, err))
+			liveErr = errors.Join(liveErr, stageErr(chain.Chain, "live", confirmed-span+1, confirmed,
+				fmt.Errorf("live window %s: %w", chain.Chain, err)))
 		}
 	}
 	for from, batches := last+1, 0; from <= confirmed && batches < maxScanBatchesPerChain; batches++ {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(liveErr, err)
-		}
 		to := from + min(maxRange-1, confirmed-from)
+		if err := ctx.Err(); err != nil {
+			return errors.Join(liveErr, stageErr(chain.Chain, "deposit", from, to, err))
+		}
+		// The cursor only ever moves to the end of a fully scanned chunk, so a
+		// failure here resumes from exactly this chunk on the next pass.
 		if err := w.processScanRange(ctx, scanner, pool, chain, from, to, recipients); err != nil {
-			return errors.Join(liveErr, err)
+			return errors.Join(liveErr, stageErr(chain.Chain, "deposit", from, to, err))
 		}
 		if err := w.cursor.Save(ctx, chain.Chain, to); err != nil {
-			return errors.Join(liveErr, err)
+			return errors.Join(liveErr, stageErr(chain.Chain, "deposit", from, to, err))
 		}
 		from = to + 1
 	}
@@ -499,7 +639,7 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool *rpc.Pool, chain ChainConfig, from, to uint64, recipients []string) error {
 	if w.securityRange != nil {
 		if err := w.securityRange(ctx, scanner, pool, chain, from, to); err != nil {
-			return err
+			return stageErr(chain.Chain, "security", from, to, err)
 		}
 	}
 	transfers, err := scanner.ScanRange(ctx, chain.Chain, from, to, chain.Tokens, recipients)
