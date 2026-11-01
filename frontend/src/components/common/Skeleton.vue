@@ -1,7 +1,6 @@
 <template>
   <USkeleton
     :class="[
-      'dark:bg-dark-700',
       variant === 'circle' ? 'rounded-full' : 'rounded-md',
       customClass
     ]"

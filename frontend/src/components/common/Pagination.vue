@@ -1,48 +1,44 @@
 <template>
-  <div
-    class="table-pagination flex items-center justify-between border-t border-default bg-default px-4 py-3 dark:border-dark-700 dark:bg-dark-800 sm:px-6"
-  >
+  <div class="table-pagination flex items-center justify-between gap-3 border-t border-default px-4 py-3 sm:px-6">
     <div class="flex flex-1 items-center justify-between sm:hidden">
       <!-- Mobile pagination -->
       <UButton
         color="neutral"
         variant="outline"
-        class="disabled:opacity-50"
+        icon="i-lucide-chevron-left"
         :label="t('pagination.previous')"
         :disabled="page === 1"
         @click="goToPage(page - 1)"
       />
-      <span class="text-sm text-default dark:text-gray-300">
+      <span class="text-sm text-muted tabular-nums">
         {{ t('pagination.pageOf', { page, total: totalPages }) }}
       </span>
       <UButton
         color="neutral"
         variant="outline"
-        class="ml-3 disabled:opacity-50"
+        trailing-icon="i-lucide-chevron-right"
         :label="t('pagination.next')"
         :disabled="page === totalPages"
         @click="goToPage(page + 1)"
       />
     </div>
 
-    <div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+    <div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between sm:gap-3">
       <!-- Desktop pagination info -->
-      <div class="flex items-center space-x-4">
-        <p class="text-sm text-muted dark:text-gray-300">
+      <div class="flex items-center gap-4">
+        <p class="text-sm text-muted tabular-nums">
           {{ t('pagination.showing') }}
-          <span class="font-medium text-highlighted dark:text-gray-300">{{ fromItem }}</span>
+          <span class="font-medium text-highlighted">{{ fromItem }}</span>
           {{ t('pagination.to') }}
-          <span class="font-medium text-highlighted dark:text-gray-300">{{ toItem }}</span>
+          <span class="font-medium text-highlighted">{{ toItem }}</span>
           {{ t('pagination.of') }}
-          <span class="font-medium text-highlighted dark:text-gray-300">{{ total }}</span>
+          <span class="font-medium text-highlighted">{{ total }}</span>
           {{ t('pagination.results') }}
         </p>
 
         <!-- Page size selector -->
-        <div v-if="showPageSizeSelector" class="flex items-center space-x-2">
-          <span class="text-sm text-muted dark:text-gray-300"
-            >{{ t('pagination.perPage') }}:</span
-          >
+        <div v-if="showPageSizeSelector" class="flex items-center gap-2">
+          <span class="text-sm text-muted">{{ t('pagination.perPage') }}:</span>
           <div class="page-size-select w-20">
             <Select
               :model-value="pageSize"
@@ -52,8 +48,8 @@
           </div>
         </div>
 
-        <div v-if="showJump" class="flex items-center space-x-2">
-          <span class="text-sm text-muted dark:text-gray-300">{{ t('pagination.jumpTo') }}</span>
+        <div v-if="showJump" class="flex items-center gap-2">
+          <span class="text-sm text-muted">{{ t('pagination.jumpTo') }}</span>
           <UInput
             :model-value="jumpPage"
             type="number"
@@ -93,7 +89,6 @@
             variant="outline"
             icon="i-lucide-chevron-left"
             square
-            class="disabled:opacity-50"
             :aria-label="t('pagination.previous')"
           />
         </template>
@@ -115,7 +110,6 @@
             variant="outline"
             icon="i-lucide-chevron-right"
             square
-            class="disabled:opacity-50"
             :aria-label="t('pagination.next')"
           />
         </template>

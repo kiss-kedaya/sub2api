@@ -1,42 +1,35 @@
 <template>
   <div class="w-full">
-    <label v-if="label" :for="id" class="input-label mb-1.5 block">
-      {{ label }}
-      <span v-if="required" class="text-red-500">*</span>
-    </label>
-    <div class="relative">
-      <textarea
+    <DefineControl>
+      <UTextarea
         :id="id"
         ref="textAreaRef"
-        :value="modelValue"
+        :model-value="modelValue ?? ''"
         :disabled="disabled"
         :required="required"
         :placeholder="placeholderText"
         :readonly="readonly"
-        :rows="rows"
-        :class="[
-          'input w-full min-h-[80px] transition-all duration-200 resize-y',
-          error ? 'input-error ring-2 ring-red-500/20' : '',
-          disabled ? 'cursor-not-allowed bg-gray-100 opacity-60 dark:bg-dark-900' : ''
-        ]"
-        @input="onInput"
+        :rows="rowCount"
+        class="w-full"
+        :ui="{ base: 'min-h-20 resize-y' }"
+        @update:model-value="onInput"
         @change="$emit('change', ($event.target as HTMLTextAreaElement).value)"
         @blur="$emit('blur', $event)"
         @focus="$emit('focus', $event)"
-      ></textarea>
-    </div>
-    <!-- Hint / Error Text -->
-    <p v-if="error" class="input-error-text mt-1.5">
-      {{ error }}
-    </p>
-    <p v-else-if="hint" class="input-hint mt-1.5">
-      {{ hint }}
-    </p>
+      />
+    </DefineControl>
+
+    <!-- A field wrapper only when this component shows its own label / hint / error. -->
+    <UFormField v-if="label || error || hint" :label="label" :required="required" :error="error || false" :help="hint">
+      <ReuseControl />
+    </UFormField>
+    <ReuseControl v-else />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { createReusableTemplate } from '@vueuse/core'
 
 interface Props {
   modelValue: string | null | undefined
@@ -65,17 +58,22 @@ const emit = defineEmits<{
   (e: 'focus', event: FocusEvent): void
 }>()
 
-const textAreaRef = ref<HTMLTextAreaElement | null>(null)
-const placeholderText = computed(() => props.placeholder || '')
+const [DefineControl, ReuseControl] = createReusableTemplate()
 
-const onInput = (event: Event) => {
-  const value = (event.target as HTMLTextAreaElement).value
-  emit('update:modelValue', value)
+const textAreaRef = ref<{ textareaRef?: HTMLTextAreaElement | null } | null>(null)
+const placeholderText = computed(() => props.placeholder || '')
+const rowCount = computed(() => {
+  const rows = Number(props.rows)
+  return Number.isFinite(rows) && rows > 0 ? rows : 3
+})
+
+const onInput = (value: string | null | undefined) => {
+  emit('update:modelValue', value == null ? '' : String(value))
 }
 
 // Expose focus method
 defineExpose({
-  focus: () => textAreaRef.value?.focus(),
-  select: () => textAreaRef.value?.select()
+  focus: () => textAreaRef.value?.textareaRef?.focus(),
+  select: () => textAreaRef.value?.textareaRef?.select()
 })
 </script>

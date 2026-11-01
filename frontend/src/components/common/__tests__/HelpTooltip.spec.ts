@@ -1,15 +1,22 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 
-function getTooltipElement(): HTMLDivElement {
+// The tooltip renders through a Nuxt UI popover: it is mounted only while open (closed = absent).
+function findTooltip(): HTMLDivElement | null {
   const tooltip = document.body.querySelector('[role="tooltip"]')
-  if (!(tooltip instanceof HTMLDivElement)) {
+  return tooltip instanceof HTMLDivElement ? tooltip : null
+}
+
+function getTooltipElement(): HTMLDivElement {
+  const tooltip = findTooltip()
+  if (!tooltip) {
     throw new Error('tooltip element not found')
   }
   return tooltip
 }
+
+const isOpen = () => findTooltip() !== null
 
 describe('HelpTooltip', () => {
   afterEach(() => {
@@ -25,17 +32,17 @@ describe('HelpTooltip', () => {
     })
 
     const trigger = wrapper.get('.group')
-    const tooltip = getTooltipElement()
 
-    expect(tooltip.style.display).toBe('none')
+    expect(isOpen()).toBe(false)
 
     await trigger.trigger('mouseenter')
-    await nextTick()
-    expect(tooltip.style.display).not.toBe('none')
+    await flushPromises()
+    expect(isOpen()).toBe(true)
+    expect(getTooltipElement().textContent).toContain('hover details')
 
     await trigger.trigger('mouseleave')
-    await nextTick()
-    expect(tooltip.style.display).toBe('none')
+    await flushPromises()
+    expect(isOpen()).toBe(false)
 
     wrapper.unmount()
   })
@@ -49,23 +56,23 @@ describe('HelpTooltip', () => {
     })
 
     const trigger = wrapper.get('.group')
-    const tooltip = getTooltipElement()
 
     await trigger.trigger('mouseenter')
-    await nextTick()
-    expect(tooltip.style.display).not.toBe('none')
+    await flushPromises()
+    const tooltip = getTooltipElement()
+    expect(isOpen()).toBe(true)
 
     await trigger.trigger('mouseleave', { relatedTarget: tooltip })
-    await nextTick()
-    expect(tooltip.style.display).not.toBe('none')
+    await flushPromises()
+    expect(isOpen()).toBe(true)
 
     tooltip.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: trigger.element }))
-    await nextTick()
-    expect(tooltip.style.display).not.toBe('none')
+    await flushPromises()
+    expect(isOpen()).toBe(true)
 
     tooltip.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: null }))
-    await nextTick()
-    expect(tooltip.style.display).toBe('none')
+    await flushPromises()
+    expect(isOpen()).toBe(false)
 
     wrapper.unmount()
   })
@@ -80,30 +87,53 @@ describe('HelpTooltip', () => {
     })
 
     const trigger = wrapper.get('.group')
-    const tooltip = getTooltipElement()
 
-    expect(tooltip.style.display).toBe('none')
+    expect(isOpen()).toBe(false)
 
     await trigger.trigger('click')
-    await nextTick()
-    expect(tooltip.style.display).not.toBe('none')
-    expect(tooltip.textContent).toContain('click details')
+    await flushPromises()
+    expect(isOpen()).toBe(true)
+    expect(getTooltipElement().textContent).toContain('click details')
 
-    const closeButton = tooltip.querySelector('button[aria-label="Close"]')
+    const closeButton = getTooltipElement().querySelector('button[aria-label="Close"]')
     if (!(closeButton instanceof HTMLButtonElement)) {
       throw new Error('close button not found')
     }
     closeButton.click()
-    await nextTick()
-    expect(tooltip.style.display).toBe('none')
+    await flushPromises()
+    expect(isOpen()).toBe(false)
 
     await trigger.trigger('click')
-    await nextTick()
-    expect(tooltip.style.display).not.toBe('none')
+    await flushPromises()
+    expect(isOpen()).toBe(true)
 
     document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    await nextTick()
-    expect(tooltip.style.display).toBe('none')
+    await flushPromises()
+    expect(isOpen()).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('closes a click tooltip on Escape and when the trigger is clicked again', async () => {
+    const wrapper = mount(HelpTooltip, {
+      attachTo: document.body,
+      props: { content: 'esc details', trigger: 'click' },
+    })
+    const trigger = wrapper.get('.group')
+
+    await trigger.trigger('click')
+    await flushPromises()
+    expect(isOpen()).toBe(true)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(isOpen()).toBe(false)
+
+    await trigger.trigger('click')
+    await flushPromises()
+    expect(isOpen()).toBe(true)
+    await trigger.trigger('click')
+    await flushPromises()
+    expect(isOpen()).toBe(false)
 
     wrapper.unmount()
   })

@@ -40,10 +40,11 @@ const sizeClasses = computed(() => {
 
 const colorClass = computed(() => {
   const colors: Record<SpinnerColor, string> = {
-    primary: 'text-primary-500',
-    secondary: 'text-gray-500 dark:text-dark-400',
-    white: 'text-white',
-    gray: 'text-gray-400 dark:text-dark-500'
+    primary: 'text-primary',
+    secondary: 'text-muted',
+    // On solid primary buttons; inverted follows the theme like the button label does.
+    white: 'text-inverted',
+    gray: 'text-dimmed'
   }
   return colors[props.color]
 })
