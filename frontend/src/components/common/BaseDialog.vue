@@ -207,7 +207,7 @@ watch(
         // Focus moves into the dialog without drawing a focus ring; the next Tab shows it.
         panel.querySelector<HTMLElement>(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-        )?.focus({ focusVisible: false } as FocusOptions)
+        )?.focus()
       }
     } else {
       // Safety net if the panel never reports the end of its closing animation.

@@ -6091,7 +6091,8 @@ function reportInvalid(control: HTMLElement | null) {
   if (!control) return
   wizardCheckingSteps = true
   try {
-    ;(control as HTMLInputElement).reportValidity?.()
+    const input = control as HTMLInputElement
+    input.reportValidity?.()
   } finally {
     wizardCheckingSteps = false
   }

@@ -95,7 +95,7 @@ export function resolveUpstreamPath(rawPath: string | undefined | null): PathDec
   if (!rawPath || typeof rawPath !== 'string') return { ok: false, reason: 'missing path' }
   if (!rawPath.startsWith('/')) return { ok: false, reason: 'relative path' }
   if (rawPath.length > MAX_PATH_LENGTH) return { ok: false, reason: 'path too long' }
-  if (/[\u0000-\u001f\u007f]/.test(rawPath)) return { ok: false, reason: 'control character' }
+  if (containsControlCharacter(rawPath)) return { ok: false, reason: 'control character' }
   if (rawPath.includes('\\') || rawPath.includes('//')) return { ok: false, reason: 'malformed path' }
   if (rawPath.includes('?') || rawPath.includes('#')) return { ok: false, reason: 'query in path' }
   // Encoded separators could turn one segment into two after decoding.
@@ -108,7 +108,7 @@ export function resolveUpstreamPath(rawPath: string | undefined | null): PathDec
     return { ok: false, reason: 'malformed escape' }
   }
   if (decoded.includes('\\') || decoded.includes('//')) return { ok: false, reason: 'malformed path' }
-  if (/[\u0000-\u001f\u007f]/.test(decoded)) return { ok: false, reason: 'control character' }
+  if (containsControlCharacter(decoded)) return { ok: false, reason: 'control character' }
 
   const segments = decoded.split('/')
   for (const segment of segments) {
@@ -121,6 +121,14 @@ export function resolveUpstreamPath(rawPath: string | undefined | null): PathDec
   const normalized = `/${parts.join('/')}`
   if (!normalized.startsWith(`${API_PREFIX}/`)) return { ok: false, reason: 'outside api prefix' }
   return { ok: true, path: normalized.replace(/\/$/, '') }
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x1f || code === 0x7f) return true
+  }
+  return false
 }
 
 export function isAllowedMethod(method: string | undefined | null): boolean {

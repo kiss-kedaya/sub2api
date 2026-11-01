@@ -4899,7 +4899,8 @@ function onEditInvalid(event: Event) {
   editInvalidJumpPending = true
   editSection.value = key
   nextTick(() => {
-    ;(event.target as HTMLInputElement).reportValidity?.()
+    const input = event.target as HTMLInputElement
+    input.reportValidity?.()
     editInvalidJumpPending = false
   })
 }

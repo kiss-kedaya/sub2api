@@ -146,7 +146,7 @@
         @update:model-value="toggleRowSelection(row.original.row, row.original.index, !!$event)"
       />
     </template>
-    <template v-for="column in columns" #[`${column.key}-header`]>
+    <template v-for="column in columns" :key="`header-${column.key}`" #[`${column.key}-header`]>
       <div :class="['flex items-center', getHeaderContentAlignmentClass(column)]">
         <UButton
           v-if="column.sortable"
@@ -168,7 +168,7 @@
       </div>
     </template>
 
-    <template v-for="column in columns" #[`${column.key}-cell`]="{ row }">
+    <template v-for="column in columns" :key="`cell-${column.key}`" #[`${column.key}-cell`]="{ row }">
       <div v-if="row.original.skeleton" class="h-4 w-3/4 min-w-8 animate-pulse rounded-sm bg-elevated"></div>
       <slot
         v-else
