@@ -23,6 +23,36 @@
           </div>
         </template>
       </AdminPageHeader>
+      <!-- 筛选栏放进框架的 PageToolbar（导航栏下方一行）；无框架时原地渲染 -->
+      <PageToolbar>
+          <UsageFilters v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel w-full" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+            <template #after-reset>
+              <UPopover v-if="activeTab === 'usage' && !isObserver" mode="hover" :content="{ align: 'end' }">
+                <UButton color="neutral" variant="ghost" square icon="i-lucide-circle-help" aria-label="ID search help" />
+                <template #content>
+                  <p class="max-w-xs p-2.5 text-xs leading-5 text-muted">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
+                </template>
+              </UPopover>
+              <UDropdownMenu
+                v-if="activeTab !== 'ranking'"
+                v-model:open="showColumnDropdown"
+                :items="columnMenuItems"
+                :content="{ align: 'end' }"
+                :ui="{ content: 'max-h-80 w-52' }"
+              >
+                <UButton
+                  data-testid="usage-column-settings"
+                  color="neutral"
+                  variant="outline"
+                  trailing-icon="i-lucide-settings-2"
+                  :title="t('admin.users.columnSettings')"
+                >
+                  <span class="hidden md:inline">{{ t('admin.users.columnSettings') }}</span>
+                </UButton>
+              </UDropdownMenu>
+            </template>
+          </UsageFilters>
+      </PageToolbar>
       <section class="usage-summary-strip">
         <UsageStatsCards :stats="usageStats" />
       </section>
@@ -89,33 +119,6 @@
           </template>
         </UTabs>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
-          <template #after-reset>
-            <UPopover v-if="activeTab === 'usage' && !isObserver" mode="hover" :content="{ align: 'end' }">
-              <UButton color="neutral" variant="ghost" square icon="i-lucide-circle-help" aria-label="ID search help" />
-              <template #content>
-                <p class="max-w-xs p-2.5 text-xs leading-5 text-muted">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
-              </template>
-            </UPopover>
-            <UDropdownMenu
-              v-if="activeTab !== 'ranking'"
-              v-model:open="showColumnDropdown"
-              :items="columnMenuItems"
-              :content="{ align: 'end' }"
-              :ui="{ content: 'max-h-80 w-52' }"
-            >
-              <UButton
-                data-testid="usage-column-settings"
-                color="neutral"
-                variant="outline"
-                trailing-icon="i-lucide-settings-2"
-                :title="t('admin.users.columnSettings')"
-              >
-                <span class="hidden md:inline">{{ t('admin.users.columnSettings') }}</span>
-              </UButton>
-            </UDropdownMenu>
-          </template>
-        </UsageFilters>
 
         <div v-show="activeTab === 'usage'" class="usage-detail-content">
           <InflightUsagePanel
@@ -230,6 +233,7 @@ import type { OpsErrorLog } from '@/api/admin/ops'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'; import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'; import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import { PageToolbar } from '@/components/layout'
 import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
 
 const { t } = useI18n()
