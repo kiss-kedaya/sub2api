@@ -14,7 +14,7 @@
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
           <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="handlePageChange(1)" />
         </div>
-        <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :ui="{ leadingIcon: loading ? 'animate-spin' : '' }" :disabled="loading" :title="t('common.refresh')" :aria-label="t('common.refresh')" @click="fetchOrders" />
+        <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" class="size-[42px] justify-center" :ui="{ leadingIcon: loading ? 'animate-spin' : '' }" :disabled="loading" :title="t('common.refresh')" :aria-label="t('common.refresh')" @click="fetchOrders" />
       </div>
 
       <!-- Table -->
