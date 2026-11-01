@@ -188,6 +188,16 @@ export default {
     queryFailed: '查询失败',
     queryFailedRetry: '查询失败，请稍后重试',
     noDailyUsage: '暂无按日用量数据',
+    showKey: '显示 Key',
+    hideKey: '隐藏 Key',
+  },
+
+  // 404 page
+  notFound: {
+    description: '你访问的页面不存在或已被移动。',
+    goBack: '返回上一页',
+    goToDashboard: '进入控制台',
+    needHelp: '需要帮助？',
   },
 
   // Setup Wizard

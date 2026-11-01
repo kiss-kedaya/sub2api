@@ -188,6 +188,16 @@ export default {
     queryFailed: 'Query failed',
     queryFailedRetry: 'Query failed, please try again later',
     noDailyUsage: 'No daily usage data',
+    showKey: 'Show key',
+    hideKey: 'Hide key',
+  },
+
+  // 404 page
+  notFound: {
+    description: "The page you are looking for doesn't exist or has been moved.",
+    goBack: 'Go Back',
+    goToDashboard: 'Go to Dashboard',
+    needHelp: 'Need help?',
   },
 
   // Setup Wizard
