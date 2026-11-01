@@ -1,18 +1,10 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <section
-        class="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-dark-700 sm:flex-row sm:items-end sm:justify-between"
-      >
-        <div class="min-w-0">
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-            {{ t("admin.plugins.title") }}
-          </h2>
-          <p class="mt-1 max-w-3xl text-sm text-gray-500 dark:text-gray-400">
-            {{ t("admin.plugins.description") }}
-          </p>
+      <AdminPageHeader :title="t('admin.plugins.title')" :description="t('admin.plugins.description')">
+        <template #meta>
           <div
-            class="mt-3 flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-300"
+            class="flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-300"
           >
             <span class="rounded-sm bg-gray-100 px-2 py-1 dark:bg-dark-700">{{
               t("admin.plugins.onlyOpenAI")
@@ -21,9 +13,9 @@
               t("admin.plugins.noAccountCoupling")
             }}</span>
           </div>
-        </div>
+        </template>
 
-        <div class="flex flex-shrink-0 items-center gap-2">
+        <template #actions>
           <input
             ref="fileInput"
             class="hidden"
@@ -50,8 +42,8 @@
             <Icon name="refresh" size="sm" />
             <span class="sr-only">{{ t("common.refresh") }}</span>
           </button>
-        </div>
-      </section>
+        </template>
+      </AdminPageHeader>
 
       <p class="text-xs text-gray-500 dark:text-gray-400">
         {{ t("admin.plugins.uploadHint") }}
@@ -342,6 +334,7 @@ import {
 } from "@/api/admin";
 import { useAppStore } from "@/stores";
 import AppLayout from "@/components/layout/AppLayout.vue";
+import AdminPageHeader from "@/components/admin/page/AdminPageHeader.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
 import Icon from "@/components/icons/Icon.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";

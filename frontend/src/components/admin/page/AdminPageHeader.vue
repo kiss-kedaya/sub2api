@@ -7,6 +7,9 @@
       <p v-if="description || $slots.description" class="admin-page-header__description">
         <slot name="description">{{ description }}</slot>
       </p>
+      <div v-if="$slots.meta" class="admin-page-header__meta">
+        <slot name="meta" />
+      </div>
     </div>
     <div v-if="$slots.actions" class="admin-page-header__actions">
       <slot name="actions" />
@@ -57,6 +60,10 @@ defineProps<{
   color: var(--ui-text-muted);
   font-size: 13px;
   line-height: 20px;
+}
+
+.admin-page-header__meta {
+  margin-top: 10px;
 }
 
 .admin-page-header__actions {

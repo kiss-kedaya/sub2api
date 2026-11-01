@@ -1,13 +1,14 @@
 <template>
   <AppLayout>
     <div class="space-y-4">
-      <!-- Actions -->
-      <div class="flex items-center justify-end gap-2">
-        <button @click="loadPlans" :disabled="plansLoading" class="btn btn-secondary" :title="t('common.refresh')">
-          <Icon name="refresh" size="md" :class="plansLoading ? 'animate-spin' : ''" />
-        </button>
-        <button @click="openPlanEdit(null)" class="btn btn-primary">{{ t('payment.admin.createPlan') }}</button>
-      </div>
+      <AdminPageHeader :title="t('nav.paymentPlans')">
+        <template #actions>
+          <button @click="loadPlans" :disabled="plansLoading" class="btn btn-secondary" :title="t('common.refresh')">
+            <Icon name="refresh" size="md" :class="plansLoading ? 'animate-spin' : ''" />
+          </button>
+          <button @click="openPlanEdit(null)" class="btn btn-primary">{{ t('payment.admin.createPlan') }}</button>
+        </template>
+      </AdminPageHeader>
 
       <!-- Plans Table -->
       <DataTable :columns="planColumns" :data="plans" :loading="plansLoading">
@@ -80,6 +81,7 @@ import type { ApiSubscriptionPlan, SubscriptionPlan } from '@/types/payment'
 import type { AdminGroup } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
