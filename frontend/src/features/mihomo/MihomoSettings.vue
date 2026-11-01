@@ -1,199 +1,257 @@
 <template>
-  <div class="space-y-5" :aria-busy="busy">
-    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gray-50 p-4 dark:bg-dark-700">
-      <div class="space-y-1">
-        <p class="text-sm font-medium" role="status">Mihomo <span class="badge ml-2" :class="status?.running ? 'badge-success' : 'badge-gray'">{{ status?.phase || '—' }}</span></p>
-        <p class="text-xs text-gray-500">{{ text('当前服务器', 'Current server') }} <code>{{ status?.host_id || '—' }}</code> · {{ status?.nodes || 0 }} {{ text('个节点', 'nodes') }}</p>
-      </div>
-      <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="refresh">{{ text('检测状态', 'Check status') }}</button>
-    </div>
-    <div v-if="warmPools.length" class="grid gap-3 sm:grid-cols-2">
-      <div v-for="pool in warmPools" :key="pool.source" class="rounded-xl border border-gray-200 p-3 text-xs dark:border-dark-600" data-testid="bps-warm-pool">
-        <p class="font-medium">{{ pool.source }} · Warm IP pool</p>
-        <p class="mt-2">{{ text('就绪', 'Ready') }} {{ pool.ready }} / {{ text('目标', 'Target') }} {{ pool.target }} · {{ text('探测中', 'Checking') }} {{ pool.checking }} · {{ text('冷却中', 'Cooling') }} {{ pool.cooling }}</p>
-        <p v-if="pool.source === 'Mihomo' && pool.ready_subscription !== undefined" class="mt-1">{{ text('订阅就绪', 'Ready subscription exits') }} {{ pool.ready_subscription }} · {{ text('动态就绪', 'Ready dynamic exits') }} {{ pool.ready_dynamic || 0 }}</p>
-        <p class="mt-1 text-gray-500">{{ text('目标按已启用账号的并发数汇总；不足时复用就绪出口，用户请求不探测冷节点。', 'Targets follow enabled account concurrency. Ready exits are reused when scarce; requests never probe cold nodes.') }}</p>
-        <p v-for="(count, reason) in pool.failure_reasons" :key="reason">{{ reason }}: {{ count }}</p>
-        <p v-if="pool.target > 0 && pool.ready === 0" class="mt-1 text-amber-700">{{ text('后台正在预热；不会退回直连。', 'Background warming continues; direct fallback is disabled.') }}</p>
-      </div>
-    </div>
-    <p v-if="error || status?.error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20">{{ error || status?.error }}</p>
-    <p v-if="success" role="status" class="text-sm text-green-700 dark:text-green-400">{{ success }}</p>
-    <p v-if="busy" role="status" class="text-sm text-primary-600">{{ text('正在应用，请等待完成…', 'Applying changes. Please wait…') }}</p>
+  <div class="flex flex-col gap-4 sm:gap-6" :aria-busy="busy">
+    <UPageGrid :class="['gap-4 sm:gap-6 lg:gap-px', statGridClass]">
+      <UPageCard icon="i-lucide-cpu" variant="subtle" :ui="statUi" class="lg:rounded-none first:rounded-l-lg last:rounded-r-lg">
+        <template #title>Mihomo · {{ text('当前服务器', 'Current server') }} <code class="normal-case">{{ status?.host_id || '—' }}</code></template>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="flex items-center gap-2" role="status">
+            <span class="text-2xl font-semibold text-highlighted">{{ status?.nodes || 0 }}</span>
+            <span class="text-sm text-muted">{{ text('个节点', 'nodes') }}</span>
+            <UBadge :color="status?.running ? 'success' : 'neutral'" variant="subtle">{{ status?.phase || '—' }}</UBadge>
+          </p>
+          <UButton size="xs" color="neutral" variant="outline" icon="i-lucide-refresh-cw" :disabled="busy" :label="text('检测状态', 'Check status')" @click="refresh" />
+        </div>
+      </UPageCard>
+      <UPageCard v-for="pool in warmPools" :key="pool.source" icon="i-lucide-flame" variant="subtle" :ui="statUi" class="lg:rounded-none first:rounded-l-lg last:rounded-r-lg" data-testid="bps-warm-pool">
+        <template #title>
+          <span class="inline-flex items-center gap-1">{{ pool.source }} · Warm IP pool
+            <UPopover>
+              <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-info" class="-my-1" :aria-label="text('说明', 'About')" :title="text('说明', 'About')" />
+              <template #content><p class="max-w-xs p-3 text-xs normal-case text-muted">{{ text('目标按已启用账号的并发数汇总；不足时复用就绪出口，用户请求不探测冷节点。', 'Targets follow enabled account concurrency. Ready exits are reused when scarce; requests never probe cold nodes.') }}</p></template>
+            </UPopover>
+          </span>
+        </template>
+        <div class="space-y-1 text-xs text-muted">
+          <p class="flex items-baseline gap-2"><span class="text-2xl font-semibold text-highlighted">{{ pool.ready }} / {{ pool.target }}</span><span>{{ text('就绪', 'Ready') }} / {{ text('目标', 'Target') }}</span></p>
+          <p>{{ text('探测中', 'Checking') }} {{ pool.checking }} · {{ text('冷却中', 'Cooling') }} {{ pool.cooling }}<template v-if="pool.source === 'Mihomo' && pool.ready_subscription !== undefined"> · {{ text('订阅就绪', 'Ready subscription exits') }} {{ pool.ready_subscription }} · {{ text('动态就绪', 'Ready dynamic exits') }} {{ pool.ready_dynamic || 0 }}</template></p>
+          <p v-for="(count, reason) in pool.failure_reasons" :key="reason">{{ reason }}: {{ count }}</p>
+          <p v-if="pool.target > 0 && pool.ready === 0" class="text-warning">{{ text('后台正在预热；不会退回直连。', 'Background warming continues; direct fallback is disabled.') }}</p>
+        </div>
+      </UPageCard>
+    </UPageGrid>
+    <UAlert v-if="error || status?.error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error || status?.error" />
+    <p v-if="success" role="status" class="text-sm text-success">{{ success }}</p>
+    <p v-if="busy" role="status" class="flex items-center gap-2 text-sm text-muted"><UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" />{{ text('正在应用，请等待完成…', 'Applying changes. Please wait…') }}</p>
 
     <template v-if="section === 'subscriptions'">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div><h2 class="font-semibold">{{ text('Mihomo 订阅', 'Mihomo subscriptions') }}</h2><p class="mt-1 text-xs text-gray-500">{{ text('按订阅管理来源；地址和令牌不回显。添加订阅不会替换其他来源。', 'Manage each source independently. URLs and tokens stay hidden; adding a subscription preserves other sources.') }}</p></div>
-        <button type="button" class="btn btn-primary" :disabled="busy || !status?.installed" @click="openSubscription()">{{ text('添加订阅', 'Add subscription') }}</button>
-      </div>
-      <div class="rounded-xl border border-gray-200 p-3 dark:border-dark-600">
-        <div class="flex flex-wrap items-center gap-3">
-          <label for="subscription-download-mode" class="text-sm font-medium">{{ text('订阅下载模式', 'Subscription download mode') }}</label>
-          <select id="subscription-download-mode" v-model="downloadMode" class="input w-auto" :disabled="busy" @change="downloadModeDirty = true">
-            <option value="auto">{{ text('自动：代理失败后直连', 'Auto: proxy with direct fallback') }}</option>
-            <option value="proxy">{{ text('仅通过 Mihomo', 'Mihomo proxy only') }}</option>
-            <option value="direct">{{ text('仅直连', 'Direct only') }}</option>
-          </select>
-          <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !downloadModeDirty" @click="saveDownloadMode">{{ text('保存下载模式', 'Save download mode') }}</button>
-        </div>
-        <p class="mt-2 text-xs text-gray-500">{{ text('仅影响订阅文件下载，不改变打票或账号业务出口。自动模式在代理下载失败或内容无效时尝试直连；仅代理模式不会回退直连。', 'Only affects subscription downloads, not ticket or account traffic. Auto retries direct after a failed or invalid proxy response; proxy-only never falls back to direct.') }}</p>
-      </div>
-      <div class="flex flex-wrap gap-3">
-        <input v-model="search" type="search" class="input sm:max-w-xs" :placeholder="text('搜索订阅名称', 'Search subscription names')" :aria-label="text('搜索订阅', 'Search subscriptions')" />
-        <div v-if="selected.length" class="flex flex-wrap items-center gap-2 text-sm">
-          <span>{{ text('已选', 'Selected') }} {{ selected.length }}</span>
-          <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="batchSubscriptions('subscription_refresh')">{{ text('更新所选', 'Refresh selected') }}</button>
-          <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="batchSubscriptions('subscription_enable')">{{ text('启用所选', 'Enable selected') }}</button>
-          <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="batchSubscriptions('subscription_disable')">{{ text('停用所选', 'Disable selected') }}</button>
-          <button type="button" class="btn btn-danger btn-sm" :disabled="busy" @click="confirmRemoval(selected.map(id => 'subscription_remove/' + id))">{{ text('移除所选', 'Remove selected') }}</button>
-        </div>
+      <UPageCard variant="naked" orientation="horizontal" :title="text('Mihomo 订阅', 'Mihomo subscriptions')" :description="text('按订阅管理来源；地址和令牌不回显。添加订阅不会替换其他来源。', 'Manage each source independently. URLs and tokens stay hidden; adding a subscription preserves other sources.')">
+        <UButton icon="i-lucide-plus" class="w-fit lg:ms-auto" :disabled="busy || !status?.installed" :label="text('添加订阅', 'Add subscription')" @click="openSubscription()" />
+      </UPageCard>
+      <div class="flex flex-wrap items-center justify-between gap-1.5">
+        <UInput v-model="search" type="search" icon="i-lucide-search" class="w-full max-w-sm" :placeholder="text('搜索订阅名称', 'Search subscription names')" :aria-label="text('搜索订阅', 'Search subscriptions')" />
+        <UDropdownMenu v-if="selected.length" :items="subscriptionBatchItems" :content="{ align: 'end' }">
+          <UButton color="neutral" variant="outline" trailing-icon="i-lucide-chevron-down" :disabled="busy">
+            {{ text('已选', 'Selected') }}<UBadge color="neutral" variant="subtle" size="sm">{{ selected.length }}</UBadge>
+          </UButton>
+        </UDropdownMenu>
       </div>
       <DataTable v-model:selected-keys="selected" :columns="subscriptionColumns" :data="filteredSubscriptions" row-key="id" selectable :loading="loading">
-        <template #cell-label="{ row }"><span class="font-medium">{{ row.label }}</span><code class="ml-2 text-xs text-gray-400">{{ row.id.slice(0, 8) }}</code></template>
-        <template #cell-enabled="{ row }"><span class="badge" :class="row.enabled ? 'badge-success' : 'badge-gray'">{{ row.enabled ? text('启用', 'Enabled') : text('停用', 'Disabled') }}</span></template>
+        <template #cell-label="{ row }"><span class="font-medium text-highlighted">{{ row.label }}</span><code class="ml-2 text-xs text-dimmed">{{ row.id.slice(0, 8) }}</code></template>
+        <template #cell-enabled="{ row }"><UBadge :color="row.enabled ? 'success' : 'neutral'" variant="subtle">{{ row.enabled ? text('启用', 'Enabled') : text('停用', 'Disabled') }}</UBadge></template>
         <template #cell-nodes="{ row }">{{ row.cached ? row.nodes : text('待更新', 'Not refreshed') }}</template>
         <template #cell-updated_at="{ row }">{{ row.updated_at ? new Date(row.updated_at).toLocaleString() : '—' }}</template>
         <template #cell-actions="{ row }">
-          <div class="flex flex-wrap gap-2">
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !row.enabled" @click="operate('subscription_refresh/' + row.id)">{{ text('更新', 'Refresh') }}</button>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="openSubscription(row)">{{ text('编辑', 'Edit') }}</button>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="operate((row.enabled ? 'subscription_disable/' : 'subscription_enable/') + row.id)">{{ row.enabled ? text('停用', 'Disable') : text('启用', 'Enable') }}</button>
-            <button type="button" class="btn btn-danger btn-sm" :disabled="busy" @click="confirmRemoval(['subscription_remove/' + row.id])">{{ text('移除', 'Remove') }}</button>
+          <div class="flex items-center justify-end gap-0.5">
+            <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" :disabled="busy || !row.enabled" :aria-label="text('更新', 'Refresh')" :title="text('更新', 'Refresh')" @click="operate('subscription_refresh/' + row.id)" />
+            <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-pencil" :disabled="busy" :aria-label="text('编辑', 'Edit')" :title="text('编辑', 'Edit')" @click="openSubscription(row)" />
+            <UDropdownMenu :items="subscriptionRowItems(row)" :content="{ align: 'end' }">
+              <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-ellipsis-vertical" :aria-label="text('更多操作', 'More actions')" :title="text('更多操作', 'More actions')" />
+            </UDropdownMenu>
           </div>
         </template>
-        <template #empty><p class="p-8 text-center text-sm text-gray-500">{{ text('暂无匹配的订阅。点击“添加订阅”导入 Clash / Mihomo YAML 来源。', 'No matching subscriptions. Add a Clash / Mihomo YAML source to get started.') }}</p></template>
+        <template #empty><p class="p-8 text-center text-sm text-muted">{{ text('暂无匹配的订阅。点击“添加订阅”导入 Clash / Mihomo YAML 来源。', 'No matching subscriptions. Add a Clash / Mihomo YAML source to get started.') }}</p></template>
       </DataTable>
-      <p v-if="status?.subscriptions && !status.subscription_items" class="text-sm text-amber-700">{{ text('当前后端尚不支持订阅列表，请升级后端后使用逐条管理。', 'This backend does not support subscription lists yet. Upgrade it to manage individual sources.') }}</p>
+      <div class="flex items-center justify-between gap-3 border-t border-default pt-4 text-sm text-muted">
+        <span>{{ text('已选', 'Selected') }} {{ selected.length }} / {{ filteredSubscriptions.length }}</span>
+      </div>
+      <UAlert v-if="status?.subscriptions && !status.subscription_items" color="warning" variant="subtle" :description="text('当前后端尚不支持订阅列表，请升级后端后使用逐条管理。', 'This backend does not support subscription lists yet. Upgrade it to manage individual sources.')" />
+      <UPageCard variant="subtle">
+        <UFormField :label="text('订阅下载模式', 'Subscription download mode')" :description="text('仅影响订阅文件下载，不改变打票或账号业务出口。自动模式在代理下载失败或内容无效时尝试直连；仅代理模式不会回退直连。', 'Only affects subscription downloads, not ticket or account traffic. Auto retries direct after a failed or invalid proxy response; proxy-only never falls back to direct.')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'sm:shrink-0' }">
+          <div class="flex flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
+            <USelect v-model="downloadMode" :items="downloadModeItems" class="min-w-52" :disabled="busy" @update:model-value="downloadModeDirty = true" />
+            <UButton color="neutral" variant="outline" :disabled="busy || !downloadModeDirty" :label="text('保存下载模式', 'Save download mode')" @click="saveDownloadMode" />
+          </div>
+        </UFormField>
+      </UPageCard>
     </template>
 
     <template v-if="section === 'dynamic' || section === 'nodes'">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div><h2 class="font-semibold">{{ section === 'dynamic' ? text('动态代理', 'Dynamic proxies') : text('节点管理', 'Node management') }}</h2><p class="mt-1 text-xs text-gray-500">{{ text('测试连接与质量检测通过独立内核只经该节点出口，不调用模型，也不改变节点状态；“检测”会按结果标记检测失败或恢复节点。订阅节点从所属订阅移除；动态代理可单独删除。', 'Test connection and quality check route through an isolated kernel using only that node; they call no models and never change node state. “Probe” marks the node failed or recovers it. Remove subscription nodes through their source; dynamic proxies can be deleted individually.') }}</p></div>
-        <div class="flex flex-wrap gap-2">
-          <button type="button" class="btn btn-secondary" :disabled="!status?.installed || batchTesting || !nodeBatchTargets.length" @click="batchTestNodes">{{ t('admin.proxies.testConnection') }}</button>
-          <button type="button" class="btn btn-secondary" :disabled="!status?.installed || batchQualityChecking || !nodeBatchTargets.length" @click="batchCheckNodeQuality">{{ t('admin.proxies.batchQualityCheck') }}</button>
-          <button type="button" class="btn btn-secondary" :disabled="busy || !selectedNodeTargets.length" @click="nodeEditDialog = true">{{ text('批量编辑', 'Batch edit') }}</button>
-          <button type="button" class="btn btn-primary" :disabled="busy || !status?.running || !selectedNodeTargets.length" @click="openStaticProxyDialog(selectedNodeTargets)">{{ text('批量添加为静态代理', 'Add selected as static proxies') }}</button>
-          <button v-if="section === 'dynamic'" type="button" class="btn btn-primary" :disabled="busy || !status?.installed" @click="dynamicDialog = true">{{ text('导入动态代理', 'Import dynamic proxies') }}</button>
+      <UPageCard variant="naked" orientation="horizontal">
+        <template #title>
+          <span class="inline-flex items-center gap-1">{{ section === 'dynamic' ? text('动态代理', 'Dynamic proxies') : text('节点管理', 'Node management') }}
+            <UPopover>
+              <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-info" :aria-label="text('说明', 'About')" :title="text('说明', 'About')" />
+              <template #content><p class="max-w-sm p-3 text-xs text-muted">{{ text('测试连接与质量检测通过独立内核只经该节点出口，不调用模型，也不改变节点状态；“检测”会按结果标记检测失败或恢复节点。订阅节点从所属订阅移除；动态代理可单独删除。', 'Test connection and quality check route through an isolated kernel using only that node; they call no models and never change node state. “Probe” marks the node failed or recovers it. Remove subscription nodes through their source; dynamic proxies can be deleted individually.') }}</p></template>
+            </UPopover>
+          </span>
+        </template>
+        <div class="flex flex-wrap gap-2 lg:justify-end">
+          <UButton color="neutral" variant="outline" icon="i-lucide-plug" :loading="batchTesting" :disabled="!status?.installed || batchTesting || !nodeBatchTargets.length" :label="t('admin.proxies.testConnection')" @click="batchTestNodes" />
+          <UButton color="neutral" variant="outline" icon="i-lucide-gauge" :loading="batchQualityChecking" :disabled="!status?.installed || batchQualityChecking || !nodeBatchTargets.length" :label="t('admin.proxies.batchQualityCheck')" @click="batchCheckNodeQuality" />
+          <UButton v-if="section === 'dynamic'" icon="i-lucide-plus" :disabled="busy || !status?.installed" :label="text('导入动态代理', 'Import dynamic proxies')" @click="dynamicDialog = true" />
+        </div>
+      </UPageCard>
+      <div class="flex flex-wrap items-center justify-between gap-1.5">
+        <UInput v-model="search" type="search" icon="i-lucide-search" class="w-full max-w-sm" :placeholder="text('搜索节点名称或地区', 'Search node names or regions')" :aria-label="text('搜索节点', 'Search nodes')" />
+        <div class="flex flex-wrap items-center gap-1.5">
+          <template v-if="selectedNodes.length">
+            <UButton color="neutral" variant="outline" icon="i-lucide-pencil" :disabled="busy || !selectedNodeTargets.length" :label="text('批量编辑', 'Batch edit')" @click="nodeEditDialog = true" />
+            <UButton icon="i-lucide-plus" :disabled="busy || !status?.running || !selectedNodeTargets.length" @click="openStaticProxyDialog(selectedNodeTargets)">
+              {{ text('批量添加为静态代理', 'Add selected as static proxies') }}<UBadge color="neutral" variant="subtle" size="sm">{{ selectedNodeTargets.length }}</UBadge>
+            </UButton>
+          </template>
+          <USelect v-model="nodeStateFilter" :items="nodeStateItems" class="min-w-28" :aria-label="text('节点状态', 'Node status')" />
+          <USelect v-if="section === 'nodes'" v-model="nodeSourceFilter" :items="nodeSourceItems" class="min-w-28" :aria-label="text('节点来源', 'Node source')" />
+          <UDropdownMenu :items="nodeColumnItems" :content="{ align: 'end' }">
+            <UButton color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" :label="text('显示列', 'Columns')" />
+          </UDropdownMenu>
         </div>
       </div>
-      <div class="flex flex-wrap items-center gap-3">
-        <input v-model="search" type="search" class="input sm:max-w-xs" :placeholder="text('搜索节点名称或地区', 'Search node names or regions')" :aria-label="text('搜索节点', 'Search nodes')" />
-        <select v-model="nodeState" class="input w-auto" :aria-label="text('节点状态', 'Node status')">
-          <option value="">{{ text('全部状态', 'All statuses') }}</option><option v-for="state in nodeStates" :key="state" :value="state">{{ stateLabel(state) }}</option>
-        </select>
-        <select v-if="section === 'nodes'" v-model="nodeSource" class="input w-auto" :aria-label="text('节点来源', 'Node source')">
-          <option value="">{{ text('全部来源', 'All sources') }}</option><option value="dynamic">{{ text('动态代理', 'Dynamic proxies') }}</option>
-          <option v-for="source in status?.subscription_items || []" :key="source.id" :value="source.id">{{ source.label }}</option>
-        </select>
-        <span class="text-xs text-gray-500" data-testid="node-batch-scope">{{ selectedNodes.length ? text(`批量检测已选的 ${nodeBatchTargets.length} 个节点`, `Batch checks cover ${nodeBatchTargets.length} selected nodes`) : text(`未选择时批量检测当前筛选的全部 ${nodeBatchTargets.length} 个节点`, `Without a selection, batch checks cover all ${nodeBatchTargets.length} filtered nodes`) }}</span>
-      </div>
-      <DataTable v-model:selected-keys="selectedNodes" :columns="nodeColumns" :data="pagedNodes" row-key="name" selectable :loading="loading">
-        <template #cell-display_name="{ row }"><span>{{ row.display_name || row.name }}</span><span v-if="row.static_proxy" class="badge badge-primary ml-2">{{ text('已添加静态代理', 'Static proxy added') }}</span></template>
+      <DataTable v-model:selected-keys="selectedNodes" :columns="visibleNodeColumns" :data="pagedNodes" row-key="name" selectable :loading="loading">
+        <template #cell-display_name="{ row }"><span class="text-highlighted">{{ row.display_name || row.name }}</span><UBadge v-if="row.static_proxy" color="primary" variant="subtle" class="ml-2">{{ text('已添加静态代理', 'Static proxy added') }}</UBadge></template>
         <template #cell-source="{ row }">{{ nodeSourceLabel(row) }}</template>
-        <template #cell-state="{ row }"><span class="badge" :class="row.state === 'enabled' ? 'badge-success' : 'badge-gray'">{{ stateLabel(row.state) }}</span></template>
+        <template #cell-state="{ row }"><UBadge :color="stateColor(row.state)" variant="subtle">{{ stateLabel(row.state) }}</UBadge></template>
         <template #cell-country_code="{ row }">{{ row.dynamic ? text('供应商控制', 'Provider managed') : row.country_code || text('未知', 'Unknown') }}</template>
         <template #cell-check="{ row }">
-          <div class="flex flex-col gap-1" data-testid="node-check">
-            <span v-if="row.check?.latency_status === 'failed'" class="badge badge-danger" :title="row.check.latency_message || undefined">{{ t('admin.proxies.latencyFailed') }}</span>
-            <span v-else-if="typeof row.check?.latency_ms === 'number'" :class="['badge', row.check.latency_ms < 200 ? 'badge-success' : 'badge-warning']">{{ row.check.latency_ms }}ms</span>
-            <span v-else class="text-sm text-gray-400">-</span>
-            <div v-if="typeof row.check?.quality_checked === 'number'" class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400" :title="row.check.quality_summary || undefined">
+          <div class="flex flex-col items-start gap-1" data-testid="node-check">
+            <UBadge v-if="row.check?.latency_status === 'failed'" color="error" variant="subtle" :title="row.check.latency_message || undefined">{{ t('admin.proxies.latencyFailed') }}</UBadge>
+            <UBadge v-else-if="typeof row.check?.latency_ms === 'number'" :color="row.check.latency_ms < 200 ? 'success' : 'warning'" variant="subtle">{{ row.check.latency_ms }}ms</UBadge>
+            <span v-else class="text-sm text-dimmed">-</span>
+            <div v-if="typeof row.check?.quality_checked === 'number'" class="flex items-center gap-1 text-xs text-muted" :title="row.check.quality_summary || undefined">
               <span>{{ t('admin.proxies.qualityInline', { grade: row.check.quality_grade || '-', score: row.check.quality_score ?? '-' }) }}</span>
-              <span class="badge" :class="proxyQualityOverallClass(row.check.quality_status)">{{ t(proxyQualityOverallLabelKey(row.check.quality_status)) }}</span>
+              <UBadge :color="proxyQualityOverallColor(row.check.quality_status)" variant="subtle" size="sm">{{ t(proxyQualityOverallLabelKey(row.check.quality_status)) }}</UBadge>
             </div>
-            <span v-if="row.check && checkExit(row.check)" class="text-xs text-gray-500 dark:text-gray-400" :title="checkTitle(row)">{{ checkExit(row.check) }}</span>
+            <span v-if="row.check && checkExit(row.check)" class="text-xs text-muted" :title="checkTitle(row)">{{ checkExit(row.check) }}</span>
+            <span v-if="qualityNodes.has(row.name)" class="flex items-center gap-1 text-xs text-muted" role="status"><UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />{{ t('admin.proxies.testing') }}</span>
           </div>
         </template>
         <template #cell-actions="{ row }">
-          <div class="flex flex-wrap gap-2">
-            <button type="button" class="btn btn-primary btn-sm" :disabled="busy || !status?.running || row.state !== 'enabled'" @click="openStaticProxyDialog([row])">{{ text('添加为静态代理', 'Add as static proxy') }}</button>
-            <button v-if="row.static_proxy" type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="removeStaticProxy(row)">{{ text('移除静态代理', 'Remove static proxy') }}</button>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="!status?.installed || testingNodes.has(row.name)" :aria-busy="testingNodes.has(row.name)" @click="testNode(row)">{{ testingNodes.has(row.name) ? t('admin.proxies.testing') : t('admin.proxies.testConnection') }}</button>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="!status?.installed || qualityNodes.has(row.name)" :aria-busy="qualityNodes.has(row.name)" @click="checkNodeQuality(row)">{{ qualityNodes.has(row.name) ? t('admin.proxies.testing') : t('admin.proxies.qualityCheck') }}</button>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !status?.running" :title="text('经运行中的内核测速：失败则标记为检测失败，成功则恢复节点', 'Measures through the running kernel: failure marks the node failed, success recovers it')" @click="operate('probe/' + row.name)">{{ text('检测', 'Probe') }}</button>
-            <button v-if="!row.dynamic" type="button" class="btn btn-secondary btn-sm" :disabled="busy || !status?.running" @click="operate('country_probe/' + row.name)">{{ text('检测地区', 'Check region') }}</button>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || row.state === 'country_excluded'" @click="operate((row.state === 'enabled' ? 'disable/' : 'recover/') + row.name)">{{ row.state === 'enabled' ? text('停用', 'Disable') : text('恢复', 'Recover') }}</button>
-            <button v-if="row.dynamic" type="button" class="btn btn-danger btn-sm" :disabled="busy" @click="confirmRemoval(['dynamic_remove/' + row.name])">{{ text('移除', 'Remove') }}</button>
+          <div class="flex items-center justify-end gap-0.5">
+            <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-plus" :disabled="busy || !status?.running || row.state !== 'enabled'" :aria-label="text('添加为静态代理', 'Add as static proxy')" :title="text('添加为静态代理', 'Add as static proxy')" @click="openStaticProxyDialog([row])" />
+            <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-plug" :loading="testingNodes.has(row.name)" :disabled="!status?.installed || testingNodes.has(row.name)" :aria-busy="testingNodes.has(row.name)" :aria-label="testingNodes.has(row.name) ? t('admin.proxies.testing') : t('admin.proxies.testConnection')" :title="t('admin.proxies.testConnection')" @click="testNode(row)" />
+            <UDropdownMenu :items="nodeRowItems(row)" :content="{ align: 'end' }">
+              <UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-ellipsis-vertical" :aria-label="text('更多操作', 'More actions')" :title="text('更多操作', 'More actions')" />
+            </UDropdownMenu>
           </div>
         </template>
       </DataTable>
-      <div class="flex items-center justify-between text-sm">
-        <span>{{ text('共', 'Total') }} {{ filteredNodes.length }} {{ text('个节点', 'nodes') }} · {{ page }} / {{ totalPages }}</span>
-        <div class="flex gap-2"><button type="button" class="btn btn-secondary btn-sm" :disabled="page <= 1" @click="page--">{{ text('上一页', 'Previous') }}</button><button type="button" class="btn btn-secondary btn-sm" :disabled="page >= totalPages" @click="page++">{{ text('下一页', 'Next') }}</button></div>
-      </div>
-    </template>
-
-    <template v-if="section === 'kernel'">
-      <h2 class="font-semibold">{{ text('内核与地区规则', 'Kernel and region rules') }}</h2>
-      <p class="text-sm text-gray-500">{{ text('这些设置只影响当前服务器。应用滚动更新保留内核；手动停止会中断使用本机出口的连接。', 'These settings apply only to the selected server. Application rolling updates retain the kernel; manually stopping it interrupts connections using its exits.') }}</p>
-      <div class="flex flex-wrap gap-2">
-        <button v-if="status && !status.installed" type="button" class="btn btn-primary" :disabled="busy || !status.supported" @click="operate('install')">{{ text('检测并安装', 'Install kernel') }}</button>
-        <button v-else-if="!status?.running" type="button" class="btn btn-secondary" :disabled="busy || !status?.nodes" @click="operate('start')">{{ text('启动内核', 'Start kernel') }}</button>
-        <button v-if="status?.running" type="button" class="btn btn-danger" :disabled="busy" @click="confirmStop">{{ text('停止内核', 'Stop kernel') }}</button>
-      </div>
-      <details class="rounded-xl border border-gray-200 p-4 dark:border-dark-600">
-        <summary class="cursor-pointer text-sm font-medium">{{ text('共享站点的私网出口设置', 'Private outbound settings for shared sites') }}</summary>
-        <div class="mt-4 space-y-3">
-          <p class="text-xs text-gray-500">{{ text('默认只允许本机检测。要供共享数据库的其他服务器使用，需填写本机私网地址和允许来源；不会监听公网，控制接口始终仅本机可用。已有静态代理时不能修改。', 'Local checks are available by default. To share exits with other servers, configure this server’s private address and allowed sources. Public listeners are prohibited; the control API remains local. Remove existing static bindings before changing these settings.') }}</p>
-          <label class="block text-sm">{{ text('本机私网地址', 'This server’s private IP') }}<input v-model="privateHost" class="input mt-1 w-full" autocomplete="off" placeholder="10.0.0.10" /></label>
-          <label class="block text-sm">{{ text('允许访问的私网 CIDR（每行一个）', 'Allowed private source CIDRs (one per line)') }}<textarea v-model="allowedCIDRs" class="input mt-1 w-full font-mono text-xs" rows="3" placeholder="10.0.0.0/24" /></label>
-          <button type="button" class="btn btn-secondary" :disabled="busy" @click="saveExposure">{{ text('保存私网设置', 'Save private network settings') }}</button>
+      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4">
+        <span class="text-sm text-muted" data-testid="node-batch-scope">{{ selectedNodes.length ? text(`批量检测已选的 ${nodeBatchTargets.length} 个节点`, `Batch checks cover ${nodeBatchTargets.length} selected nodes`) : text(`未选择时批量检测当前筛选的全部 ${nodeBatchTargets.length} 个节点`, `Without a selection, batch checks cover all ${nodeBatchTargets.length} filtered nodes`) }}</span>
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-muted">{{ text('共', 'Total') }} {{ filteredNodes.length }} {{ text('个节点', 'nodes') }}</span>
+          <UPagination v-model:page="page" :total="filteredNodes.length" :items-per-page="50" />
         </div>
-      </details>
-      <label v-if="status?.installed" class="flex items-center gap-2 text-sm"><input type="checkbox" :checked="status.use_once" :disabled="busy" @change="operate(status.use_once ? 'once_off' : 'once_on')" />{{ text('打票节点用后移出（需手动恢复）', 'Retire harvest nodes after use (manual recovery)') }}</label>
-      <MihomoCountryFilter v-if="status?.installed" :filter="status.country_filter" :codes="status.country_codes || []" :nodes="status.node_states || []" :busy="busy" @save="operate('country_filter', { country_filter: $event })" @scan="operate('country_scan')" />
-      <p class="text-xs text-gray-500">{{ text('这里的配置独立保存。采票出口在本页「采票出口」中选择，账号业务代理在账号设置中选择。', 'Configuration is saved here independently. Select the harvest exit in the Harvest Exit tab and account proxies in account settings.') }}</p>
+      </div>
     </template>
-    <p v-if="status && !status.installed && section !== 'kernel'" class="text-sm text-amber-700">{{ text('请先在“内核与规则”中安装内核。', 'Install the kernel in Kernel and rules first.') }}</p>
-
+    <div v-if="section === 'kernel'" class="mx-auto flex w-full flex-col gap-4 sm:gap-6 lg:max-w-2xl">
+      <UPageCard variant="naked" orientation="horizontal" :title="text('内核与地区规则', 'Kernel and region rules')" :description="text('这些设置只影响当前服务器。应用滚动更新保留内核；手动停止会中断使用本机出口的连接。', 'These settings apply only to the selected server. Application rolling updates retain the kernel; manually stopping it interrupts connections using its exits.')">
+        <div class="flex flex-wrap gap-2 lg:justify-end">
+          <UButton v-if="status && !status.installed" icon="i-lucide-download" :disabled="busy || !status.supported" :label="text('检测并安装', 'Install kernel')" @click="operate('install')" />
+          <UButton v-else-if="!status?.running" color="neutral" variant="outline" icon="i-lucide-play" :disabled="busy || !status?.nodes" :label="text('启动内核', 'Start kernel')" @click="operate('start')" />
+          <UButton v-if="status?.running" color="error" icon="i-lucide-square" :disabled="busy" :label="text('停止内核', 'Stop kernel')" @click="confirmStop" />
+        </div>
+      </UPageCard>
+      <UPageCard variant="subtle">
+        <UFormField v-if="status?.installed" :label="text('打票节点用后移出（需手动恢复）', 'Retire harvest nodes after use (manual recovery)')" class="flex items-center justify-between gap-2">
+          <USwitch :model-value="!!status.use_once" :disabled="busy" @update:model-value="operate(status.use_once ? 'once_off' : 'once_on')" />
+        </UFormField>
+        <USeparator v-if="status?.installed" />
+        <UCollapsible :unmount-on-hide="false" class="flex flex-col gap-4">
+          <UButton color="neutral" variant="ghost" block trailing-icon="i-lucide-chevron-down" class="group -mx-2.5 justify-between text-sm font-medium text-highlighted" :ui="{ trailingIcon: 'group-data-[state=open]:rotate-180 transition-transform duration-200' }" :label="text('共享站点的私网出口设置', 'Private outbound settings for shared sites')" />
+          <template #content>
+            <div class="flex flex-col gap-4">
+              <p class="text-sm text-muted">{{ text('默认只允许本机检测。要供共享数据库的其他服务器使用，需填写本机私网地址和允许来源；不会监听公网，控制接口始终仅本机可用。已有静态代理时不能修改。', 'Local checks are available by default. To share exits with other servers, configure this server’s private address and allowed sources. Public listeners are prohibited; the control API remains local. Remove existing static bindings before changing these settings.') }}</p>
+              <UFormField :label="text('本机私网地址', 'This server’s private IP')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                <UInput v-model="privateHost" autocomplete="off" placeholder="10.0.0.10" />
+              </UFormField>
+              <UFormField :label="text('允许访问的私网 CIDR（每行一个）', 'Allowed private source CIDRs (one per line)')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-xs' }">
+                <UTextarea v-model="allowedCIDRs" :rows="3" class="w-full" :ui="{ base: 'font-mono text-xs' }" placeholder="10.0.0.0/24" />
+              </UFormField>
+              <div class="flex justify-end"><UButton color="neutral" variant="outline" :disabled="busy" :label="text('保存私网设置', 'Save private network settings')" @click="saveExposure" /></div>
+            </div>
+          </template>
+        </UCollapsible>
+      </UPageCard>
+      <p class="text-xs text-muted">{{ text('这里的配置独立保存。采票出口在本页「采票出口」中选择，账号业务代理在账号设置中选择。', 'Configuration is saved here independently. Select the harvest exit in the Harvest Exit tab and account proxies in account settings.') }}</p>
+      <MihomoCountryFilter v-if="status?.installed" :filter="status.country_filter" :codes="status.country_codes || []" :nodes="status.node_states || []" :busy="busy" @save="operate('country_filter', { country_filter: $event })" @scan="operate('country_scan')" />
+    </div>
+    <UAlert v-if="status && !status.installed && section !== 'kernel'" color="warning" variant="subtle" :description="text('请先在“内核与规则”中安装内核。', 'Install the kernel in Kernel and rules first.')" />
     <BaseDialog :show="staticProxyDialog" :title="text('添加为静态代理', 'Add as static proxies')" @close="!pending && (staticProxyDialog = false)">
       <div class="space-y-3 text-sm">
         <p>{{ text(`将 ${staticProxyTargets.length} 个节点添加到“静态代理 / IP 代理池”，之后可在账号设置中单独选择。已添加的节点会复用现有代理。`, `Add ${staticProxyTargets.length} nodes to the static proxy pool, then select them in individual account settings. Existing proxies will be reused.`) }}</p>
-        <p class="text-gray-500">{{ text('固定使用所选节点。Mihomo 停止、节点停用或从来源移除后，该代理将不可用；不会自动切换到其他节点。', 'Each proxy uses only its selected node. It becomes unavailable when Mihomo stops or the node is disabled or removed; it will not switch to another node.') }}</p>
-        <p v-if="staticProxyTargets.some(node => node.dynamic)" class="text-amber-700">{{ text('包含动态代理：固定的是代理配置，实际公网 IP 仍由供应商控制，可能随连接变化。', 'Includes dynamic proxies: the proxy configuration is fixed, but the provider may change the public IP between connections.') }}</p>
-        <ul class="max-h-48 overflow-auto rounded-lg bg-gray-50 p-3 dark:bg-dark-700"><li v-for="node in staticProxyTargets" :key="node.name">{{ node.display_name || node.name }}</li></ul>
-        <p v-if="staticProxyTargets.some(node => node.state !== 'enabled')" role="alert" class="text-amber-700">{{ text('请先恢复所选节点，并确认地区规则允许使用这些节点。', 'Restore selected nodes and allow their regions before adding them.') }}</p>
-        <p v-if="staticProxyError" role="alert" class="text-red-600">{{ staticProxyError }}</p>
+        <p class="text-muted">{{ text('固定使用所选节点。Mihomo 停止、节点停用或从来源移除后，该代理将不可用；不会自动切换到其他节点。', 'Each proxy uses only its selected node. It becomes unavailable when Mihomo stops or the node is disabled or removed; it will not switch to another node.') }}</p>
+        <UAlert v-if="staticProxyTargets.some(node => node.dynamic)" color="warning" variant="subtle" :description="text('包含动态代理：固定的是代理配置，实际公网 IP 仍由供应商控制，可能随连接变化。', 'Includes dynamic proxies: the proxy configuration is fixed, but the provider may change the public IP between connections.')" />
+        <ul class="max-h-48 space-y-1 overflow-auto rounded-md bg-elevated/50 p-3"><li v-for="node in staticProxyTargets" :key="node.name">{{ node.display_name || node.name }}</li></ul>
+        <UAlert v-if="staticProxyTargets.some(node => node.state !== 'enabled')" role="alert" color="warning" variant="subtle" :description="text('请先恢复所选节点，并确认地区规则允许使用这些节点。', 'Restore selected nodes and allow their regions before adding them.')" />
+        <UAlert v-if="staticProxyError" role="alert" color="error" variant="subtle" :description="staticProxyError" />
       </div>
-      <template #footer><button type="button" class="btn btn-primary" :disabled="busy || !staticProxyTargets.length || staticProxyTargets.some(node => node.state !== 'enabled')" @click="addStaticProxies">{{ pending ? text('正在添加…', 'Adding…') : text('确认添加', 'Confirm add') }}</button></template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :disabled="pending" :label="t('common.cancel')" @click="staticProxyDialog = false" />
+          <UButton :loading="pending" :disabled="busy || !staticProxyTargets.length || staticProxyTargets.some(node => node.state !== 'enabled')" :label="pending ? text('正在添加…', 'Adding…') : text('确认添加', 'Confirm add')" @click="addStaticProxies" />
+        </div>
+      </template>
     </BaseDialog>
     <BaseDialog :show="nodeEditDialog" :title="text('批量编辑节点', 'Batch edit nodes')" @close="!pending && (nodeEditDialog = false)">
-      <div class="space-y-3 text-sm">
+      <div class="space-y-4 text-sm">
         <p>{{ text(`仅修改已选择的 ${selectedNodeTargets.length} 个节点。`, `Only the ${selectedNodeTargets.length} selected nodes will be changed.`) }}</p>
-        <label class="block">{{ text('操作', 'Action') }}<select v-model="nodeEditAction" class="input mt-2" data-testid="node-batch-action"><option value="recover">{{ text('恢复节点', 'Recover nodes') }}</option><option value="disable">{{ text('停用节点', 'Disable nodes') }}</option><option value="static">{{ text('添加为静态代理', 'Add as static proxies') }}</option></select></label>
-        <p class="text-gray-500">{{ text('恢复操作仍受地区规则限制；停用节点会同时停止对应静态代理的转发。', 'Recovery still follows region rules. Disabling a node also stops forwarding through its static proxy.') }}</p>
-        <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
+        <UFormField :label="text('操作', 'Action')" :help="text('恢复操作仍受地区规则限制；停用节点会同时停止对应静态代理的转发。', 'Recovery still follows region rules. Disabling a node also stops forwarding through its static proxy.')">
+          <USelect v-model="nodeEditAction" :items="nodeEditItems" class="w-full" data-testid="node-batch-action" />
+        </UFormField>
+        <UAlert v-if="error" role="alert" color="error" variant="subtle" :description="error" />
       </div>
-      <template #footer><button type="button" class="btn btn-primary" :disabled="busy || !selectedNodeTargets.length" @click="applyNodeEdit">{{ text('应用所选', 'Apply to selected') }}</button></template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :disabled="pending" :label="t('common.cancel')" @click="nodeEditDialog = false" />
+          <UButton :disabled="busy || !selectedNodeTargets.length" :label="text('应用所选', 'Apply to selected')" @click="applyNodeEdit" />
+        </div>
+      </template>
     </BaseDialog>
     <BaseDialog :show="subscriptionDialog" :title="editing ? text('编辑订阅', 'Edit subscription') : text('添加订阅', 'Add subscription')" @close="subscriptionDialog = false">
       <div class="space-y-4">
-        <label class="block text-sm">{{ text('订阅名称（单条订阅，可选）', 'Subscription name (single source, optional)') }}<input v-model="subscriptionName" maxlength="80" class="input mt-2" data-testid="subscription-name" /></label>
-        <label class="block text-sm" for="mihomo-subscriptions">{{ editing ? text('新订阅地址（留空只修改名称）', 'New URL (leave blank to rename only)') : text('机场订阅地址（每行一个）', 'Subscription URLs (one per line)') }}</label>
-        <textarea id="mihomo-subscriptions" v-model="subscriptions" class="input w-full font-mono text-xs" rows="5" autocomplete="off" spellcheck="false" />
-        <p class="text-xs text-gray-500">{{ text('支持 Clash / Mihomo YAML。地址含密钥时请勿填入名称；已保存的地址不会回显。', 'Requires Clash / Mihomo YAML. Keep secrets out of names; saved URLs are never displayed.') }}</p>
-        <input v-if="!editing" type="file" accept=".txt,text/plain" :aria-label="text('导入订阅 TXT', 'Import subscription TXT')" @change="importFile" />
-        <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
+        <UFormField :label="text('订阅名称（单条订阅，可选）', 'Subscription name (single source, optional)')">
+          <UInput v-model="subscriptionName" maxlength="80" class="w-full" data-testid="subscription-name" />
+        </UFormField>
+        <UFormField :label="editing ? text('新订阅地址（留空只修改名称）', 'New URL (leave blank to rename only)') : text('机场订阅地址（每行一个）', 'Subscription URLs (one per line)')" :help="text('支持 Clash / Mihomo YAML。地址含密钥时请勿填入名称；已保存的地址不会回显。', 'Requires Clash / Mihomo YAML. Keep secrets out of names; saved URLs are never displayed.')">
+          <UTextarea v-model="subscriptions" :rows="5" autocomplete="off" spellcheck="false" class="w-full" :ui="{ base: 'font-mono text-xs' }" />
+        </UFormField>
+        <UFileUpload v-if="!editing" v-slot="{ open }" :model-value="null" reset accept=".txt,text/plain" :aria-label="text('导入订阅 TXT', 'Import subscription TXT')" @update:model-value="importFile">
+          <UButton color="neutral" variant="outline" icon="i-lucide-file-text" :label="text('导入订阅 TXT', 'Import subscription TXT')" @click="open()" />
+        </UFileUpload>
+        <UAlert v-if="error" role="alert" color="error" variant="subtle" :description="error" />
       </div>
-      <template #footer><button type="button" class="btn btn-primary" :disabled="busy || (!subscriptions.trim() && !editing)" @click="saveSubscription">{{ text('保存并应用', 'Save and apply') }}</button></template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="subscriptionDialog = false" />
+          <UButton :disabled="busy || (!subscriptions.trim() && !editing)" :label="text('保存并应用', 'Save and apply')" @click="saveSubscription" />
+        </div>
+      </template>
     </BaseDialog>
     <BaseDialog :show="dynamicDialog" :title="text('导入动态代理', 'Import dynamic proxies')" @close="dynamicDialog = false">
-      <div class="space-y-3">
-        <label class="block text-sm" for="mihomo-dynamic-protocol">{{ text('无协议前缀时使用', 'Default protocol') }}</label>
-        <select id="mihomo-dynamic-protocol" v-model="dynamicProtocol" class="input"><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks5">SOCKS5</option><option value="socks5h">SOCKS5H</option></select>
-        <label class="block text-sm" for="mihomo-dynamic-proxies">{{ text('动态代理（每行一个）', 'Dynamic proxies (one per line)') }}</label>
-        <textarea id="mihomo-dynamic-proxies" v-model="dynamicProxies" class="input w-full font-mono text-xs" rows="6" autocomplete="off" spellcheck="false" />
-        <details class="text-xs text-gray-500"><summary>{{ text('支持的输入格式', 'Supported formats') }}</summary><pre class="mt-2 whitespace-pre-wrap">hostname:port:username:password
+      <div class="space-y-4">
+        <UFormField :label="text('无协议前缀时使用', 'Default protocol')">
+          <USelect v-model="dynamicProtocol" :items="protocolItems" class="w-full" />
+        </UFormField>
+        <UFormField :label="text('动态代理（每行一个）', 'Dynamic proxies (one per line)')" :help="text('不会删除机场订阅。更换出口的国家／地区仍由供应商控制。', 'Subscriptions are preserved. Exit regions remain controlled by the provider.')">
+          <UTextarea v-model="dynamicProxies" :rows="6" autocomplete="off" spellcheck="false" class="w-full" :ui="{ base: 'font-mono text-xs' }" />
+        </UFormField>
+        <UCollapsible>
+          <UButton size="xs" color="neutral" variant="link" trailing-icon="i-lucide-chevron-down" class="group px-0" :ui="{ trailingIcon: 'group-data-[state=open]:rotate-180 transition-transform duration-200' }" :label="text('支持的输入格式', 'Supported formats')" />
+          <template #content><pre class="mt-2 whitespace-pre-wrap rounded-md bg-elevated/50 p-3 text-xs text-muted">hostname:port:username:password
 username:password:hostname:port
 username:password@hostname:port
 hostname:port@username:password
-http://username:password@hostname:port</pre></details>
-        <label class="flex items-center gap-2 text-sm"><input v-model="replaceDynamic" type="checkbox" />{{ text('替换已保存的动态代理（不勾选则追加）', 'Replace saved dynamic proxies (otherwise append)') }}</label>
-        <p class="text-xs text-gray-500">{{ text('不会删除机场订阅。更换出口的国家／地区仍由供应商控制。', 'Subscriptions are preserved. Exit regions remain controlled by the provider.') }}</p>
-        <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
+http://username:password@hostname:port</pre></template>
+        </UCollapsible>
+        <UCheckbox v-model="replaceDynamic" :label="text('替换已保存的动态代理（不勾选则追加）', 'Replace saved dynamic proxies (otherwise append)')" />
+        <UAlert v-if="error" role="alert" color="error" variant="subtle" :description="error" />
       </div>
-      <template #footer><button type="button" class="btn btn-primary" :disabled="busy || !dynamicProxies.trim()" @click="saveDynamic">{{ text('应用动态代理', 'Apply dynamic proxies') }}</button></template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="dynamicDialog = false" />
+          <UButton :disabled="busy || !dynamicProxies.trim()" :label="text('应用动态代理', 'Apply dynamic proxies')" @click="saveDynamic" />
+        </div>
+      </template>
     </BaseDialog>
     <ConfirmDialog :show="!!confirmation" :title="text('确认变更代理来源', 'Confirm proxy source changes')" :message="confirmation?.message || ''" danger @cancel="confirmation = undefined" @confirm="confirmActions" />
     <ProxyQualityReportDialog :show="!!qualityReport" :name="qualityReportName" :report="qualityReport" @close="qualityReport = null" />
@@ -211,8 +269,9 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import ProxyQualityReportDialog from './ProxyQualityReportDialog.vue'
 import MihomoCountryFilter from './MihomoCountryFilter.vue'
 import type { CountryFilter, CountryNode } from './mihomoCountry'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import type { ProxyQualityCheckResult } from '@/types'
-import { proxyQualityOverallClass, proxyQualityOverallLabelKey, summarizeProxyQuality } from './proxyQuality'
+import { proxyQualityOverallColor, proxyQualityOverallLabelKey, summarizeProxyQuality } from './proxyQuality'
 const props = withDefaults(defineProps<{ section?: 'subscriptions' | 'dynamic' | 'nodes' | 'kernel' }>(), { section: 'subscriptions' })
 const emit = defineEmits<{ 'static-proxies-added': [] }>()
 const { locale, t } = useI18n()
@@ -289,6 +348,73 @@ const nodeColumns = computed(() => [
   { key: 'state', label: text('状态', 'Status') }, { key: 'country_code', label: text('地区', 'Region') },
   { key: 'check', label: t('admin.proxies.columns.latency') }, { key: 'actions', label: text('操作', 'Actions') }
 ])
+// Stats strip: the kernel card plus 0-2 warm-pool cards, joined like the template's HomeStats.
+const statGridClass = computed(() => ['sm:grid-cols-1 lg:grid-cols-1', 'sm:grid-cols-2 lg:grid-cols-2', 'sm:grid-cols-2 lg:grid-cols-3'][warmPools.value.length])
+const statUi = { container: 'gap-y-1.5', wrapper: 'items-start', leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25', title: 'font-normal text-muted text-xs uppercase' }
+// USelect rejects '' as an item value: "all" filters use a sentinel that maps back to ''.
+const ALL = '__all__'
+const nodeStateFilter = computed({ get: () => nodeState.value || ALL, set: (value: string) => { nodeState.value = value === ALL ? '' : value } })
+const nodeSourceFilter = computed({ get: () => nodeSource.value || ALL, set: (value: string) => { nodeSource.value = value === ALL ? '' : value } })
+const nodeStateItems = computed(() => [{ label: text('全部状态', 'All statuses'), value: ALL }, ...nodeStates.map(state => ({ label: stateLabel(state), value: state }))])
+const nodeSourceItems = computed(() => [
+  { label: text('全部来源', 'All sources'), value: ALL }, { label: text('动态代理', 'Dynamic proxies'), value: 'dynamic' },
+  ...(status.value?.subscription_items || []).map(source => ({ label: source.label, value: source.id }))
+])
+const downloadModeItems = computed(() => [
+  { label: text('自动：代理失败后直连', 'Auto: proxy with direct fallback'), value: 'auto' as const },
+  { label: text('仅通过 Mihomo', 'Mihomo proxy only'), value: 'proxy' as const },
+  { label: text('仅直连', 'Direct only'), value: 'direct' as const }
+])
+const nodeEditItems = computed(() => [
+  { label: text('恢复节点', 'Recover nodes'), value: 'recover' as const },
+  { label: text('停用节点', 'Disable nodes'), value: 'disable' as const },
+  { label: text('添加为静态代理', 'Add as static proxies'), value: 'static' as const }
+])
+const protocolItems = [{ label: 'HTTP', value: 'http' }, { label: 'HTTPS', value: 'https' }, { label: 'SOCKS5', value: 'socks5' }, { label: 'SOCKS5H', value: 'socks5h' }]
+const stateColor = (state: string) => state === 'enabled' ? 'success' as const : state === 'failed' ? 'error' as const : 'neutral' as const
+// "Columns" menu for the node table; hidden columns persist per browser.
+const hideableNodeColumns = ['source', 'state', 'country_code', 'check']
+const columnStorageKey = 'mihomo.nodeColumns.hidden'
+const hiddenNodeColumns = ref<string[]>(readHiddenColumns())
+function readHiddenColumns(): string[] {
+  try { const value = JSON.parse(localStorage.getItem(columnStorageKey) || '[]'); return Array.isArray(value) ? value.filter(key => hideableNodeColumns.includes(key)) : [] } catch { return [] }
+}
+watch(hiddenNodeColumns, value => { try { localStorage.setItem(columnStorageKey, JSON.stringify(value)) } catch { /* storage unavailable */ } }, { deep: true })
+const visibleNodeColumns = computed(() => nodeColumns.value.filter(column => !hiddenNodeColumns.value.includes(column.key)))
+const nodeColumnItems = computed<DropdownMenuItem[]>(() => nodeColumns.value.filter(column => hideableNodeColumns.includes(column.key)).map(column => ({
+  label: column.label, type: 'checkbox' as const, checked: !hiddenNodeColumns.value.includes(column.key),
+  onUpdateChecked(checked: boolean) { hiddenNodeColumns.value = checked ? hiddenNodeColumns.value.filter(key => key !== column.key) : [...hiddenNodeColumns.value, column.key] },
+  onSelect(e?: Event) { e?.preventDefault() }
+})))
+const subscriptionBatchItems = computed<DropdownMenuItem[][]>(() => [[
+  { label: text('更新所选', 'Refresh selected'), icon: 'i-lucide-refresh-cw', disabled: busy.value, onSelect: () => { void batchSubscriptions('subscription_refresh') } },
+  { label: text('启用所选', 'Enable selected'), icon: 'i-lucide-power', disabled: busy.value, onSelect: () => { void batchSubscriptions('subscription_enable') } },
+  { label: text('停用所选', 'Disable selected'), icon: 'i-lucide-power-off', disabled: busy.value, onSelect: () => { void batchSubscriptions('subscription_disable') } }
+], [
+  { label: text('移除所选', 'Remove selected'), icon: 'i-lucide-trash-2', color: 'error', disabled: busy.value, onSelect: () => confirmRemoval(selected.value.map(id => 'subscription_remove/' + id)) }
+]])
+function subscriptionRowItems(row: Subscription): DropdownMenuItem[][] {
+  return [[
+    { label: row.enabled ? text('停用', 'Disable') : text('启用', 'Enable'), icon: row.enabled ? 'i-lucide-power-off' : 'i-lucide-power', disabled: busy.value, onSelect: () => { void operate((row.enabled ? 'subscription_disable/' : 'subscription_enable/') + row.id) } }
+  ], [
+    { label: text('移除', 'Remove'), icon: 'i-lucide-trash-2', color: 'error', disabled: busy.value, onSelect: () => confirmRemoval(['subscription_remove/' + row.id]) }
+  ]]
+}
+// Row "…" menu for a node; "Add as static proxy" and "Test connection" stay visible as icon buttons.
+function nodeRowItems(row: ManagedNode): DropdownMenuItem[][] {
+  const checks: DropdownMenuItem[] = [
+    { label: qualityNodes.value.has(row.name) ? t('admin.proxies.testing') : t('admin.proxies.qualityCheck'), icon: 'i-lucide-gauge', disabled: !status.value?.installed || qualityNodes.value.has(row.name), onSelect: () => { void checkNodeQuality(row) } },
+    { label: text('检测', 'Probe'), description: text('经运行中的内核测速：失败则标记为检测失败，成功则恢复节点', 'Measures through the running kernel: failure marks the node failed, success recovers it'), icon: 'i-lucide-activity', disabled: busy.value || !status.value?.running, onSelect: () => { void operate('probe/' + row.name) } }
+  ]
+  if (!row.dynamic) checks.push({ label: text('检测地区', 'Check region'), icon: 'i-lucide-map-pin', disabled: busy.value || !status.value?.running, onSelect: () => { void operate('country_probe/' + row.name) } })
+  const state: DropdownMenuItem[] = [
+    { label: row.state === 'enabled' ? text('停用', 'Disable') : text('恢复', 'Recover'), icon: row.state === 'enabled' ? 'i-lucide-power-off' : 'i-lucide-rotate-ccw', disabled: busy.value || row.state === 'country_excluded', onSelect: () => { void operate((row.state === 'enabled' ? 'disable/' : 'recover/') + row.name) } }
+  ]
+  if (row.static_proxy) state.push({ label: text('移除静态代理', 'Remove static proxy'), icon: 'i-lucide-unlink', disabled: busy.value, onSelect: () => { void removeStaticProxy(row) } })
+  const groups = [checks, state]
+  if (row.dynamic) groups.push([{ label: text('移除', 'Remove'), icon: 'i-lucide-trash-2', color: 'error', disabled: busy.value, onSelect: () => confirmRemoval(['dynamic_remove/' + row.name]) }])
+  return groups
+}
 const filteredSubscriptions = computed(() => (status.value?.subscription_items || []).filter(s => (s.label + s.id).toLowerCase().includes(search.value.trim().toLowerCase())))
 const filteredNodes = computed(() => (status.value?.node_states || []).filter(n =>
   (props.section !== 'dynamic' || n.dynamic) && (!nodeState.value || n.state === nodeState.value) &&
@@ -598,12 +724,11 @@ async function batchSubscriptions(action: string) {
   }
   selected.value = []
 }
-async function importFile(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
+// UFileUpload stays controlled at null, so choosing the same file again still triggers an import.
+async function importFile(file: unknown) {
+  if (!(file instanceof File)) return
   if (file.size > 256 * 1024) { error.value = text('文件不能超过 256 KiB', 'File must be at most 256 KiB'); return }
-  try { subscriptions.value = await file.text(); input.value = '' } catch { error.value = text('无法读取文件', 'Cannot read file') }
+  try { subscriptions.value = await file.text() } catch { error.value = text('无法读取文件', 'Cannot read file') }
 }
 onMounted(refresh)
 onUnmounted(() => { disposed = true; if (timer) clearTimeout(timer) })
