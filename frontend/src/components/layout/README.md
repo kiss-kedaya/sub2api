@@ -53,10 +53,11 @@ Navigation sidebar with user and admin sections.
   - Accounts
   - Proxies
   - Redeem Codes
-- Collapsible sidebar with toggle button
+- Collapsible to an icon rail (collapse button in the header); on the rail a group opens its children in a menu
+- Search button for the command palette (`ConsoleNavigationSearch.vue`, also Ctrl/⌘ K)
+- User menu in the footer (`UserMenu.vue`): profile, API keys, System / Light / Dark theme, logout
 - Active route highlighting
-- Icons using HTML entities
-- Responsive (mobile-friendly)
+- Responsive (a drawer on phones)
 
 **Used automatically by AppLayout** - no need to import separately.
 
@@ -64,18 +65,15 @@ Navigation sidebar with user and admin sections.
 
 ### 3. AppHeader.vue
 
-Top header with user info and actions.
+Top navbar of the dashboard panel.
 
 **Features:**
 
-- Mobile menu toggle button
-- Page title (from route meta or slot)
-- User balance display (desktop only)
-- User dropdown menu with:
-  - Profile link
-  - Logout button
-- User avatar with initials
-- Click-outside handling for dropdown
+- Mobile menu toggle and desktop sidebar collapse buttons
+- Breadcrumb with the page title (from route meta)
+- Light/dark button; its icon follows the real `dark` class on `<html>`
+- User balance display (from 640px wide)
+- On phones, the user menu (with the balance)
 - Responsive design
 
 **Usage with custom title:**
