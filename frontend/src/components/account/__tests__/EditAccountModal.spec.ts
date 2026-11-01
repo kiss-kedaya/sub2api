@@ -1695,3 +1695,21 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     wrapper.unmount()
   })
 })
+
+describe('EditAccountModal section nav', () => {
+  it('shows one section at a time and switches from the nav', async () => {
+    const wrapper = mountModal(buildAccount())
+    await flushPromises()
+    const visible = () => wrapper.findAll('[data-edit-section]').filter((el) => (el.element as HTMLElement).style.display !== 'none').map((el) => el.attributes('data-edit-section'))
+    expect(visible()).toEqual(['basic'])
+
+    const tab = wrapper.get('[data-testid="edit-section-nav"]').findAll('button').find((b) => b.text() === 'admin.accounts.formSections.models')
+    expect(tab).toBeDefined()
+    await tab!.trigger('mousedown')
+    await tab!.trigger('click')
+    await flushPromises()
+    expect(visible()).toEqual(['models'])
+    // fields in hidden sections stay mounted, so the payload does not depend on the visible section
+    expect(wrapper.find('[data-edit-section="basic"] [data-tour="edit-account-form-name"]').exists()).toBe(true)
+  })
+})

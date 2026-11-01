@@ -716,3 +716,57 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
   })
 })
+
+describe('CreateAccountModal step flow', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 42, platform: 'openai', type: 'apikey' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+    syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
+  })
+
+  const visibleStep = (wrapper: ReturnType<typeof mountModal>) =>
+    wrapper.findAll('[data-wizard-step]').filter((el) => (el.element as HTMLElement).style.display !== 'none').map((el) => el.attributes('data-wizard-step'))
+
+  it('shows one step at a time and only advances past a valid step', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await flushPromises()
+    expect(visibleStep(wrapper)).toEqual(['0'])
+
+    // the name is required: Next stays on the first step while it is empty
+    await wrapper.get('[data-testid="wizard-next"]').trigger('click')
+    await flushPromises()
+    expect(visibleStep(wrapper)).toEqual(['0'])
+
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('stepped account')
+    await wrapper.get('[data-testid="wizard-next"]').trigger('click')
+    await flushPromises()
+    expect(visibleStep(wrapper)).toEqual(['1'])
+
+    await wrapper.get('[data-testid="wizard-back"]').trigger('click')
+    await flushPromises()
+    expect(visibleStep(wrapper)).toEqual(['0'])
+  })
+
+  it('reaches the confirm step with a summary and submits the same payload', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('stepped account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    for (let i = 0; i < 4; i += 1) {
+      await wrapper.get('[data-testid="wizard-next"]').trigger('click')
+      await flushPromises()
+    }
+    expect(visibleStep(wrapper)).toEqual(['4'])
+    expect(wrapper.find('[data-testid="wizard-next"]').exists()).toBe(false)
+    expect(wrapper.get('[data-wizard-step="4"]').text()).toContain('stepped account')
+
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({ name: 'stepped account', platform: 'openai', type: 'apikey' })
+  })
+})
