@@ -1,15 +1,13 @@
 <template>
   <AppLayout>
     <div class="signal-admin-dashboard space-y-6">
-      <div class="admin-overview-toolbar">
-        <div class="admin-overview-identity">
-          <span class="admin-overview-mark"><Icon name="chart" size="lg" /></span>
-          <div><span class="admin-overview-label">OVERVIEW</span><p>{{ t('admin.dashboard.title') }}</p></div>
-        </div>
-        <button type="button" class="btn btn-secondary" :disabled="loading || chartsLoading" @click="loadDashboardStats">
-          <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || chartsLoading }" />{{ t('common.refresh') }}
-        </button>
-      </div>
+      <AdminPageHeader :title="t('admin.dashboard.title')" :description="t('admin.dashboard.description')">
+        <template #actions>
+          <button type="button" class="btn btn-secondary" :disabled="loading || chartsLoading" @click="loadDashboardStats">
+            <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || chartsLoading }" />{{ t('common.refresh') }}
+          </button>
+        </template>
+      </AdminPageHeader>
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <LoadingSpinner />
@@ -28,7 +26,7 @@
           <!-- Total API Keys -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30">
+              <div class="admin-stat-icon rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30">
                 <Icon name="key" size="md" class="text-blue-600 dark:text-blue-400" :stroke-width="2" />
               </div>
               <div>
@@ -48,7 +46,7 @@
           <!-- Service Accounts -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30">
+              <div class="admin-stat-icon rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30">
                 <Icon name="server" size="md" class="text-purple-600 dark:text-purple-400" :stroke-width="2" />
               </div>
               <div>
@@ -73,7 +71,7 @@
           <!-- Today Requests -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-green-100 p-2 dark:bg-green-900/30">
+              <div class="admin-stat-icon rounded-lg bg-green-100 p-2 dark:bg-green-900/30">
                 <Icon name="chart" size="md" class="text-green-600 dark:text-green-400" :stroke-width="2" />
               </div>
               <div>
@@ -93,7 +91,7 @@
           <!-- New Users Today -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30">
+              <div class="admin-stat-icon rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30">
                 <Icon name="userPlus" size="md" class="text-emerald-600 dark:text-emerald-400" :stroke-width="2" />
               </div>
               <div>
@@ -116,7 +114,7 @@
           <!-- Today Tokens -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30">
+              <div class="admin-stat-icon rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30">
                 <Icon name="cube" size="md" class="text-amber-600 dark:text-amber-400" :stroke-width="2" />
               </div>
               <div>
@@ -152,7 +150,7 @@
           <!-- Total Tokens -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-indigo-100 p-2 dark:bg-indigo-900/30">
+              <div class="admin-stat-icon rounded-lg bg-indigo-100 p-2 dark:bg-indigo-900/30">
                 <Icon name="database" size="md" class="text-indigo-600 dark:text-indigo-400" :stroke-width="2" />
               </div>
               <div>
@@ -188,7 +186,7 @@
           <!-- Performance (RPM/TPM) -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-violet-100 p-2 dark:bg-violet-900/30">
+              <div class="admin-stat-icon rounded-lg bg-violet-100 p-2 dark:bg-violet-900/30">
                 <Icon name="bolt" size="md" class="text-violet-600 dark:text-violet-400" :stroke-width="2" />
               </div>
               <div class="flex-1">
@@ -214,7 +212,7 @@
           <!-- Avg Response Time -->
           <div class="card p-4">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-rose-100 p-2 dark:bg-rose-900/30">
+              <div class="admin-stat-icon rounded-lg bg-rose-100 p-2 dark:bg-rose-900/30">
                 <Icon name="clock" size="md" class="text-rose-600 dark:text-rose-400" :stroke-width="2" />
               </div>
               <div>
@@ -243,10 +241,10 @@
             <button
               v-if="canUseBatchImage"
               type="button"
-              class="group flex items-center gap-3 rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-sky-50 dark:bg-dark-800/50 dark:hover:bg-sky-900/20"
+              class="admin-shortcut group flex items-center gap-3 rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-sky-50 dark:bg-dark-800/50 dark:hover:bg-sky-900/20"
               @click="router.push('/batch-image')"
             >
-              <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400">
+              <span class="admin-shortcut-icon flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400">
                 <Icon name="sparkles" size="md" :stroke-width="2" />
               </span>
               <span class="min-w-0 flex-1">
@@ -261,10 +259,10 @@
             </button>
             <button
               type="button"
-              class="group flex items-center gap-3 rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-emerald-50 dark:bg-dark-800/50 dark:hover:bg-emerald-900/20"
+              class="admin-shortcut group flex items-center gap-3 rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-emerald-50 dark:bg-dark-800/50 dark:hover:bg-emerald-900/20"
               @click="router.push('/admin/groups')"
             >
-              <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              <span class="admin-shortcut-icon flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
                 <Icon name="grid" size="md" :stroke-width="2" />
               </span>
               <span class="min-w-0 flex-1">
@@ -284,7 +282,7 @@
         <div class="admin-dashboard-charts space-y-6">
           <!-- Date Range Filter -->
           <div class="admin-chart-toolbar">
-            <div class="flex flex-wrap items-center gap-4">
+            <div class="flex flex-wrap items-center gap-3">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
                   >{{ t('admin.dashboard.timeRange') }}:</span
@@ -374,6 +372,7 @@ import type {
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
@@ -774,4 +773,47 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* Light mode in the Nuxt UI dashboard manner (the night theme keeps today's look):
+   neutral icon chips, plain section spacing instead of rule lines, chart cards back on. */
+html:not(.dark) .admin-stat-icon,
+html:not(.dark) .admin-shortcut-icon {
+  border-radius: 9999px;
+  background: #f4f4f4;
+  box-shadow: inset 0 0 0 1px #e5e5e5;
+  color: #171717;
+}
+
+html:not(.dark) .admin-stat-icon > svg {
+  color: #171717;
+}
+
+html:not(.dark) .signal-admin-dashboard .admin-dashboard-shortcuts {
+  padding-block: 0;
+  border-block: 0;
+}
+
+html:not(.dark) .signal-admin-dashboard .admin-dashboard-shortcuts .admin-shortcut {
+  border-color: #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
+}
+
+html:not(.dark) .signal-admin-dashboard .admin-dashboard-shortcuts .admin-shortcut:hover {
+  border-color: #d4d4d4;
+  background: #fafafa;
+}
+
+html:not(.dark) .signal-admin-dashboard .admin-chart-toolbar {
+  padding-block: 0;
+  border-bottom: 0;
+}
+
+html:not(.dark) .signal-admin-dashboard .admin-dashboard-charts > .grid > .card,
+html:not(.dark) .signal-admin-dashboard .admin-dashboard-charts > .card {
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(10, 10, 10, 0.06), 0 1px 2px -1px rgba(10, 10, 10, 0.06);
+}
 </style>
