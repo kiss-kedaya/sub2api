@@ -6,12 +6,26 @@ import (
 	"strings"
 )
 
+// ResponsesToAnthropicOptions gates provider-specific reasoning replay.
+// Callers must set PreserveReasoningText only after resolving the concrete target
+// platform (for example DeepSeek), not from a client model alias.
+type ResponsesToAnthropicOptions struct {
+	PreserveReasoningText bool
+}
+
 // ResponsesToAnthropicRequest converts a Responses API request into an
 // Anthropic Messages request. This is the reverse of AnthropicToResponses and
 // enables Anthropic platform groups to accept OpenAI Responses API requests
 // by converting them to the native /v1/messages format before forwarding upstream.
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
-	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input)
+	return ResponsesToAnthropicRequestWithOptions(req, nil)
+}
+
+// ResponsesToAnthropicRequestWithOptions is ResponsesToAnthropicRequest with
+// provider-specific replay gates. The default path keeps legacy behavior.
+func ResponsesToAnthropicRequestWithOptions(req *ResponsesRequest, opts *ResponsesToAnthropicOptions) (*AnthropicRequest, error) {
+	preserveReasoningText := opts != nil && opts.PreserveReasoningText
+	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, preserveReasoningText)
 	if err != nil {
 		return nil, err
 	}
@@ -55,13 +69,14 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 	// reasoning.effort → output_config.effort + thinking
 	if req.Reasoning != nil && req.Reasoning.Effort != "" {
 		effort := mapResponsesEffortToAnthropic(req.Reasoning.Effort)
-		out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
 		switch effort {
 		case "none", "off", "disabled":
+			// Do not send output_config.effort=none: Anthropic does not accept it.
 			out.Thinking = &AnthropicThinking{Type: "disabled"}
 		case "low":
-			// Keep the existing low-effort behavior: no explicit thinking block.
+			out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
 		default:
+			out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
 			out.Thinking = &AnthropicThinking{
 				Type:         "enabled",
 				BudgetTokens: defaultThinkingBudget(effort),
@@ -105,7 +120,7 @@ func mapResponsesEffortToAnthropic(effort string) string {
 // convertResponsesInputToAnthropic extracts system prompt and messages from
 // a Responses API instructions + input array. Returns the system as raw JSON
 // (for Anthropic's polymorphic system field) and a list of Anthropic messages.
-func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage) (json.RawMessage, []AnthropicMessage, error) {
+func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage, preserveReasoningText bool) (json.RawMessage, []AnthropicMessage, error) {
 	var systemParts []AnthropicContentBlock
 	preserveSystemBlocks := false
 	if strings.TrimSpace(instructions) != "" {
@@ -197,18 +212,19 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			})
 
 		case item.Type == "reasoning":
-			// Preserve genuine provider reasoning_text as a thinking block. Do not
-			// substitute summary text: summary is display-only and is not replayable
-			// chain-of-thought. encrypted_content is intentionally omitted here
-			// because a foreign opaque signature can make Anthropic reject the turn.
-			thinkingText := responsesInputReasoningContentText(item.Content)
-			if thinkingText != "" {
-				block := AnthropicContentBlock{Type: "thinking", Thinking: thinkingText}
-				blockJSON, _ := json.Marshal([]AnthropicContentBlock{block})
-				messages = append(messages, AnthropicMessage{
-					Role:    "assistant",
-					Content: blockJSON,
-				})
+			if preserveReasoningText {
+				// Only the caller that resolved a DeepSeek target may replay
+				// reasoning_text as an unsigned thinking block. Keep the legacy drop
+				// path for Anthropic and every other provider.
+				thinkingText := responsesInputReasoningContentText(item.Content)
+				if thinkingText != "" {
+					block := AnthropicContentBlock{Type: "thinking", Thinking: thinkingText}
+					blockJSON, _ := json.Marshal([]AnthropicContentBlock{block})
+					messages = append(messages, AnthropicMessage{
+						Role:    "assistant",
+						Content: blockJSON,
+					})
+				}
 			}
 
 		case item.Role == "user":

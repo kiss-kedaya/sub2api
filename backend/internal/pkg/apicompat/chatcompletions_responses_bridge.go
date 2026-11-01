@@ -963,34 +963,11 @@ func isBlankChatContent(raw json.RawMessage) bool {
 	return chatMessageContentText(raw) == ""
 }
 
-// extractResponsesReasoningText pulls replayable reasoning text out of a
-// Responses reasoning item. Genuine reasoning_text content wins; summary is only
-// a display fallback for providers that never emit content.
+// extractResponsesReasoningText pulls only replayable reasoning_text content
+// out of a Responses reasoning item. summary_text is display-only and must not
+// be fabricated into request-side reasoning_content.
 func extractResponsesReasoningText(item map[string]json.RawMessage) string {
-	if text := responsesInputReasoningContentText(item["content"]); text != "" {
-		return text
-	}
-	var parts []string
-	collect := func(raw json.RawMessage) {
-		raw = bytesTrimSpace(raw)
-		if len(raw) == 0 || string(raw) == "null" {
-			return
-		}
-		var arr []map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &arr); err == nil {
-			for _, p := range arr {
-				if t := rawString(p["text"]); t != "" {
-					parts = append(parts, t)
-				}
-			}
-			return
-		}
-		if t := rawString(raw); t != "" {
-			parts = append(parts, t)
-		}
-	}
-	collect(item["summary"])
-	return strings.Join(parts, "\n")
+	return responsesInputReasoningContentText(item["content"])
 }
 
 // ExtractResponsesReasoningItem parses a raw Responses input item and, when it

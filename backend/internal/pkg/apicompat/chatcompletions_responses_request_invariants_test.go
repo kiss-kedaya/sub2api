@@ -46,7 +46,7 @@ func convertGolden(t *testing.T, input string) []ChatMessage {
 func TestGolden_SingleToolCall(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"latest sha?"}]},
-		{"type":"reasoning","summary":[{"type":"summary_text","text":"need to run curl"}]},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"need to run curl"}],"content":[{"type":"reasoning_text","text":"need to run curl"}]},
 		{"type":"function_call","call_id":"call_a","name":"exec_command","arguments":"{\"cmd\":\"curl x\"}"},
 		{"type":"function_call_output","call_id":"call_a","output":"deadbeef"}
 	]`)
@@ -66,7 +66,7 @@ func TestGolden_SingleToolCall(t *testing.T) {
 func TestGolden_ParallelToolCalls(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"features?"}]},
-		{"type":"reasoning","summary":[{"type":"summary_text","text":"inspect repo"}]},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"inspect repo"}],"content":[{"type":"reasoning_text","text":"inspect repo"}]},
 		{"type":"function_call","call_id":"c0","name":"exec_command","arguments":"{\"cmd\":\"git log\"}"},
 		{"type":"function_call","call_id":"c1","name":"exec_command","arguments":"{\"cmd\":\"git tag\"}"},
 		{"type":"function_call_output","call_id":"c0","output":"log"},
@@ -92,7 +92,7 @@ func TestGolden_ParallelToolCalls(t *testing.T) {
 func TestGolden_UnknownItemBetweenToolCallAndOutput(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"search"}]},
-		{"type":"reasoning","summary":[{"type":"summary_text","text":"let me search"}]},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"let me search"}],"content":[{"type":"reasoning_text","text":"let me search"}]},
 		{"type":"function_call","call_id":"c0","name":"exec_command","arguments":"{}"},
 		{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"x"}},
 		{"type":"function_call_output","call_id":"c0","output":"result"}
@@ -126,7 +126,7 @@ func TestRequest_SequentialToolCallsStaySeparate(t *testing.T) {
 func TestGolden_MessageBetweenToolCallAndOutput(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"do it"}]},
-		{"type":"reasoning","summary":[{"type":"summary_text","text":"run cmd"}]},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"run cmd"}],"content":[{"type":"reasoning_text","text":"run cmd"}]},
 		{"type":"function_call","call_id":"A","name":"exec","arguments":"{}"},
 		{"type":"message","role":"developer","content":[{"type":"input_text","text":"Approved command prefix saved"}]},
 		{"type":"function_call_output","call_id":"A","output":"ok"}
@@ -147,7 +147,7 @@ func TestGolden_MessageBetweenToolCallAndOutput(t *testing.T) {
 func TestGolden_PartialParallelDropsUnansweredCall(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
-		{"type":"reasoning","summary":[{"type":"summary_text","text":"r"}]},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"r"}],"content":[{"type":"reasoning_text","text":"r"}]},
 		{"type":"function_call","call_id":"A","name":"exec","arguments":"{}"},
 		{"type":"function_call","call_id":"B","name":"exec","arguments":"{}"},
 		{"type":"function_call_output","call_id":"A","output":"oa"}
@@ -165,7 +165,7 @@ func TestGolden_PartialParallelDropsUnansweredCall(t *testing.T) {
 func TestGolden_DanglingToolCallDropped(t *testing.T) {
 	msgs := convertGolden(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
-		{"type":"reasoning","summary":[{"type":"summary_text","text":"r"}]},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"r"}],"content":[{"type":"reasoning_text","text":"r"}]},
 		{"type":"function_call","call_id":"A","name":"exec","arguments":"{}"}
 	]`)
 	assertChatInvariants(t, msgs)

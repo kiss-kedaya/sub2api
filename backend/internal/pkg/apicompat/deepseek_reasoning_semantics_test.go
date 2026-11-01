@@ -18,6 +18,21 @@ func TestResponsesToAnthropicRequest_NoneDisablesThinking(t *testing.T) {
 	require.NotNil(t, out.Thinking)
 	require.Equal(t, "disabled", out.Thinking.Type)
 	require.Zero(t, out.Thinking.BudgetTokens)
+	require.Nil(t, out.OutputConfig, "effort=none must not be sent as output_config.effort")
+}
+
+func TestResponsesToAnthropicRequest_DefaultDropsReasoningText(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "deepseek-v4-pro",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"run"}]},
+			{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"provider cot"}]}
+		]`),
+	}
+	out, err := ResponsesToAnthropicRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Messages, 1)
+	require.NotContains(t, string(out.Messages[0].Content), "provider cot")
 }
 
 func TestResponsesToAnthropicRequest_PreservesReasoningText(t *testing.T) {
@@ -28,7 +43,7 @@ func TestResponsesToAnthropicRequest_PreservesReasoningText(t *testing.T) {
 			{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"short summary"}],"content":[{"type":"reasoning_text","text":"real chain of thought"}]}
 		]`),
 	}
-	out, err := ResponsesToAnthropicRequest(req)
+	out, err := ResponsesToAnthropicRequestWithOptions(req, &ResponsesToAnthropicOptions{PreserveReasoningText: true})
 	require.NoError(t, err)
 	require.Len(t, out.Messages, 2)
 	blocks := parseContentBlocks(out.Messages[1].Content)
@@ -85,7 +100,7 @@ func TestChatCompletionsToResponses_ReasoningContentUsesReasoningTextField(t *te
 			ReasoningContent: "real chain of thought",
 		}},
 	}
-	out, err := ChatCompletionsToResponses(req)
+	out, err := ChatCompletionsToResponsesWithOptions(req, &ChatCompletionsToResponsesOptions{PreserveReasoningContent: true})
 	require.NoError(t, err)
 
 	var items []ResponsesInputItem
@@ -212,4 +227,75 @@ func TestAnthropicToResponsesStream_ThinkingTerminalCarriesReasoningTextField(t 
 	require.Len(t, reasoning.Content, 1)
 	require.Equal(t, "reasoning_text", reasoning.Content[0].Type)
 	require.Equal(t, "real chain of thought", reasoning.Content[0].Text)
+}
+
+func TestChatCompletionsToResponses_DefaultKeepsSummaryOnly(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "deepseek-v4-pro",
+		Messages: []ChatMessage{{
+			Role:             "assistant",
+			Content:          json.RawMessage(`"answer"`),
+			ReasoningContent: "provider cot",
+		}},
+	}
+	out, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+
+	var items []ResponsesInputItem
+	require.NoError(t, json.Unmarshal(out.Input, &items))
+	var reasoning *ResponsesInputItem
+	for i := range items {
+		if items[i].Type == "reasoning" {
+			reasoning = &items[i]
+			break
+		}
+	}
+	require.NotNil(t, reasoning)
+	require.Nil(t, reasoning.Content)
+	require.Len(t, reasoning.Summary, 1)
+	require.Equal(t, "provider cot", reasoning.Summary[0].Text)
+}
+
+func TestResponsesToChatCompletionsRequest_SummaryOnlyDoesNotBecomeReasoningContent(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "gpt-5.5",
+		Input: json.RawMessage(`[
+			{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"display only"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}
+		]`),
+	}
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Messages, 1)
+	require.Empty(t, out.Messages[0].ReasoningContent)
+}
+
+func TestResponsesToChatCompletionsStream_SeparateReasoningItemsNotSwallowed(t *testing.T) {
+	state := NewResponsesEventToChatState()
+	chunks := ResponsesEventToChatChunks(&ResponsesStreamEvent{
+		Type:        "response.output_item.done",
+		OutputIndex: 0,
+		Item: &ResponsesOutput{
+			Type:    "reasoning",
+			Content: []ResponsesContentPart{{Type: "reasoning_text", Text: "first"}},
+		},
+	}, state)
+	chunks = append(chunks, ResponsesEventToChatChunks(&ResponsesStreamEvent{
+		Type:        "response.output_item.done",
+		OutputIndex: 1,
+		Item: &ResponsesOutput{
+			Type:    "reasoning",
+			Content: []ResponsesContentPart{{Type: "reasoning_text", Text: "second"}},
+		},
+	}, state)...)
+
+	var got []string
+	for _, chunk := range chunks {
+		for _, choice := range chunk.Choices {
+			if choice.Delta.ReasoningContent != nil {
+				got = append(got, *choice.Delta.ReasoningContent)
+			}
+		}
+	}
+	require.Equal(t, []string{"first", "second"}, got)
 }

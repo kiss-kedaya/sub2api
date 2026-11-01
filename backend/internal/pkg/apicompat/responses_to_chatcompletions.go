@@ -116,31 +116,32 @@ func responsesStatusToChatFinishReason(status string, details *ResponsesIncomple
 // ResponsesEventToChatState tracks state for converting a sequence of Responses
 // SSE events into Chat Completions SSE chunks.
 type ResponsesEventToChatState struct {
-	ID                      string
-	Model                   string
-	Created                 int64
-	ServiceTier             string // upstream tier observed on response events; echoed on chunks
-	SentRole                bool
-	SawToolCall             bool
-	SawText                 bool
-	SawReasoning            bool
-	Finalized               bool        // true after finish chunk has been emitted
-	NextToolCallIndex       int         // next sequential tool_call index to assign
-	OutputIndexToToolIndex  map[int]int // Responses output_index → Chat tool_calls index
-	OutputIndexToArguments  map[int]string
-	ToolCallIDToOutputIndex map[string]int
-	IncludeUsage            bool
-	Usage                   *ChatUsage
+	ID                        string
+	Model                     string
+	Created                   int64
+	ServiceTier               string // upstream tier observed on response events; echoed on chunks
+	SentRole                  bool
+	SawToolCall               bool
+	SawText                   bool
+	SawReasoningByOutputIndex map[int]bool
+	Finalized                 bool        // true after finish chunk has been emitted
+	NextToolCallIndex         int         // next sequential tool_call index to assign
+	OutputIndexToToolIndex    map[int]int // Responses output_index → Chat tool_calls index
+	OutputIndexToArguments    map[int]string
+	ToolCallIDToOutputIndex   map[string]int
+	IncludeUsage              bool
+	Usage                     *ChatUsage
 }
 
 // NewResponsesEventToChatState returns an initialised stream state.
 func NewResponsesEventToChatState() *ResponsesEventToChatState {
 	return &ResponsesEventToChatState{
-		ID:                      generateChatCmplID(),
-		Created:                 time.Now().Unix(),
-		OutputIndexToToolIndex:  make(map[int]int),
-		OutputIndexToArguments:  make(map[int]string),
-		ToolCallIDToOutputIndex: make(map[string]int),
+		ID:                        generateChatCmplID(),
+		Created:                   time.Now().Unix(),
+		OutputIndexToToolIndex:    make(map[int]int),
+		OutputIndexToArguments:    make(map[int]string),
+		ToolCallIDToOutputIndex:   make(map[string]int),
+		SawReasoningByOutputIndex: make(map[int]bool),
 	}
 }
 
@@ -380,29 +381,29 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 	if evt.Delta == "" {
 		return nil
 	}
-	state.SawReasoning = true
+	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
 	reasoning := evt.Delta
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
 }
 
 func resToChatHandleReasoningDone(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
-	if evt.Text == "" || state.SawReasoning {
+	if evt.Text == "" || state.SawReasoningByOutputIndex[evt.OutputIndex] {
 		return nil
 	}
-	state.SawReasoning = true
+	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
 	reasoning := evt.Text
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
 }
 
 func resToChatHandleReasoningSnapshot(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
-	if evt.Item == nil || evt.Item.Type != "reasoning" || state.SawReasoning {
+	if evt.Item == nil || evt.Item.Type != "reasoning" || state.SawReasoningByOutputIndex[evt.OutputIndex] {
 		return nil
 	}
 	text := responsesReasoningText(evt.Item.Content, evt.Item.Summary)
 	if text == "" {
 		return nil
 	}
-	state.SawReasoning = true
+	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &text})}
 }
 

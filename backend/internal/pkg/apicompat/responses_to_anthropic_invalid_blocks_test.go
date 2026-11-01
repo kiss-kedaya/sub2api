@@ -62,20 +62,16 @@ func requireAnthropicMessagesAreSendable(t *testing.T, messages []AnthropicMessa
 
 // issue #5329：工具执行后的下一轮，Codex 会把 reasoning item 一起回放。
 // 该 item 带 content 数组时，reasoning_text 块以前会被原样塞进 Anthropic 请求体。
-func TestResponsesToAnthropic_ReasoningItemWithContentBecomesThinking(t *testing.T) {
+func TestResponsesToAnthropic_ReasoningItemWithContentIsDroppedByDefault(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"run a shell command"}]},
-		{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"short summary"}],"content":[{"type":"reasoning_text","text":"let me think"}]}
+		{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"let me think"}]}
 	]`)
 
 	requireAnthropicMessagesAreSendable(t, messages)
-	require.Len(t, messages, 2)
-	blocks := parseContentBlocks(messages[1].Content)
-	require.Len(t, blocks, 1)
-	require.Equal(t, "thinking", blocks[0].Type)
-	require.Equal(t, "let me think", blocks[0].Thinking)
-	require.NotEqual(t, "short summary", blocks[0].Thinking)
-	require.NotContains(t, string(mustMarshal(t, messages)), "reasoning_text")
+	require.Len(t, messages, 1)
+	require.NotContains(t, string(messages[0].Content), "reasoning_text")
+	require.NotContains(t, string(messages[0].Content), "let me think")
 }
 
 func TestResponsesToAnthropic_ReasoningItemSummaryOnlyStillDropped(t *testing.T) {

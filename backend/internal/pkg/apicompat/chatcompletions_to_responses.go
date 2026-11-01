@@ -13,30 +13,44 @@ type chatMessageContent struct {
 	Parts []ChatContentPart
 }
 
+// ChatCompletionsToResponsesOptions gates provider-specific reasoning replay.
+// Callers must set PreserveReasoningContent only after resolving the concrete
+// target platform (for example DeepSeek), not from a client model alias.
+type ChatCompletionsToResponsesOptions struct {
+	PreserveReasoningContent bool
+}
+
 // ChatCompletionsToResponses converts a Chat Completions request into a
 // Responses API request. The upstream always streams, so Stream is forced to
 // true. store is always false and reasoning.encrypted_content is always
 // included so that the response translator has full context.
 func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest, error) {
-	return chatCompletionsToResponses(req, false)
+	return chatCompletionsToResponses(req, false, nil)
+}
+
+// ChatCompletionsToResponsesWithOptions is ChatCompletionsToResponses with
+// provider-specific replay gates. The default path keeps legacy behavior.
+func ChatCompletionsToResponsesWithOptions(req *ChatCompletionsRequest, opts *ChatCompletionsToResponsesOptions) (*ResponsesRequest, error) {
+	return chatCompletionsToResponses(req, false, opts)
 }
 
 // ChatCompletionsToAnthropicRequest reuses the Responses conversion chain while
 // retaining Anthropic cache extensions. Ordinary Responses upstreams must not
 // receive these extensions, so ChatCompletionsToResponses leaves them out.
 func ChatCompletionsToAnthropicRequest(req *ChatCompletionsRequest) (*AnthropicRequest, error) {
-	responses, err := chatCompletionsToResponses(req, true)
+	responses, err := chatCompletionsToResponses(req, true, nil)
 	if err != nil {
 		return nil, err
 	}
 	return ResponsesToAnthropicRequest(responses)
 }
 
-func chatCompletionsToResponses(req *ChatCompletionsRequest, anthropic bool) (*ResponsesRequest, error) {
+func chatCompletionsToResponses(req *ChatCompletionsRequest, anthropic bool, opts *ChatCompletionsToResponsesOptions) (*ResponsesRequest, error) {
 	if err := openai.ValidateGPT61SolReasoningEffort(req.Model, req.ReasoningEffort); err != nil {
 		return nil, err
 	}
-	input, err := convertChatMessagesToResponsesInputWithCache(req.Messages, anthropic)
+	preserveReasoningContent := opts != nil && opts.PreserveReasoningContent
+	input, err := convertChatMessagesToResponsesInputWithCache(req.Messages, anthropic, preserveReasoningContent)
 	if err != nil {
 		return nil, err
 	}
@@ -124,10 +138,10 @@ func chatCompletionsToResponses(req *ChatCompletionsRequest, anthropic bool) (*R
 // convertChatMessagesToResponsesInput converts the Chat Completions messages
 // array into a Responses API input items array.
 func convertChatMessagesToResponsesInput(msgs []ChatMessage) ([]ResponsesInputItem, error) {
-	return convertChatMessagesToResponsesInputWithCache(msgs, false)
+	return convertChatMessagesToResponsesInputWithCache(msgs, false, false)
 }
 
-func convertChatMessagesToResponsesInputWithCache(msgs []ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
+func convertChatMessagesToResponsesInputWithCache(msgs []ChatMessage, anthropic bool, preserveReasoningContent bool) ([]ResponsesInputItem, error) {
 	var out []ResponsesInputItem
 	legacyIDs := legacyFunctionCallIDs{msgs: msgs}
 	for _, m := range msgs {
@@ -141,7 +155,7 @@ func convertChatMessagesToResponsesInputWithCache(msgs []ChatMessage, anthropic 
 		case m.Role == "function" && m.ToolCallID == "":
 			m.ToolCallID = legacyIDs.claim(m.Name)
 		}
-		items, err := chatMessageToResponsesItems(m, anthropic)
+		items, err := chatMessageToResponsesItems(m, anthropic, preserveReasoningContent)
 		if err != nil {
 			return nil, err
 		}
@@ -201,14 +215,14 @@ func (ids *legacyFunctionCallIDs) claim(name string) string {
 
 // chatMessageToResponsesItems converts a single ChatMessage into one or more
 // ResponsesInputItem values.
-func chatMessageToResponsesItems(m ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
+func chatMessageToResponsesItems(m ChatMessage, anthropic bool, preserveReasoningContent bool) ([]ResponsesInputItem, error) {
 	switch m.Role {
 	case "system", "developer":
 		return chatSystemToResponses(m, anthropic)
 	case "user":
 		return chatUserToResponses(m, anthropic)
 	case "assistant":
-		return chatAssistantToResponses(m, anthropic)
+		return chatAssistantToResponses(m, anthropic, preserveReasoningContent)
 	case "tool":
 		return chatToolToResponses(m, anthropic)
 	case "function":
@@ -249,7 +263,7 @@ func chatUserToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputItem, e
 // text content and tool_calls, the text is emitted as an assistant message
 // first, then each tool_call becomes a function_call item. If the content is
 // empty/nil and there are tool_calls, only function_call items are emitted.
-func chatAssistantToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputItem, error) {
+func chatAssistantToResponses(m ChatMessage, anthropic bool, preserveReasoningContent bool) ([]ResponsesInputItem, error) {
 	var items []ResponsesInputItem
 	text := ""
 	thinking := strings.TrimSpace(m.ReasoningContent)
@@ -273,8 +287,10 @@ func chatAssistantToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputIt
 				Text: thinking,
 			}},
 		}
-		if content, ok := responsesReasoningContentJSON(thinking); ok {
-			reasoningItem.Content = content
+		if preserveReasoningContent {
+			if content, ok := responsesReasoningContentJSON(thinking); ok {
+				reasoningItem.Content = content
+			}
 		}
 		items = append(items, reasoningItem)
 	}
