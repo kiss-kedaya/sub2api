@@ -93,6 +93,12 @@ export default {
     allGroups: 'All Groups',
     allStatus: 'All Status',
     columnSettings: 'Column Settings',
+    displayColumns: 'Display',
+    advancedOptions: 'Advanced options',
+    moreActions: 'More actions',
+    moveRouteUp: 'Move up',
+    moveRouteDown: 'Move down',
+    removeRoute: 'Remove',
     columnAlwaysVisible: 'This column is always visible',
     createKey: 'Create API Key',
     editKey: 'Edit API Key',
@@ -353,6 +359,7 @@ export default {
   // Usage
   usage: {
     title: 'Usage Records',
+    displayColumns: 'Display',
     description: 'View and analyze your API usage history',
     costDetails: 'Cost Breakdown',
     requestFailed: 'Related error',

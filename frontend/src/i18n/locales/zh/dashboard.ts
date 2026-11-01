@@ -93,6 +93,12 @@ export default {
     allGroups: '全部分组',
     allStatus: '全部状态',
     columnSettings: '列设置',
+    displayColumns: '显示列',
+    advancedOptions: '高级选项',
+    moreActions: '更多操作',
+    moveRouteUp: '上移',
+    moveRouteDown: '下移',
+    removeRoute: '移除',
     columnAlwaysVisible: '该列固定显示，不可隐藏',
     createKey: '创建密钥',
     editKey: '编辑密钥',
@@ -358,6 +364,7 @@ export default {
   // Usage
   usage: {
     title: '使用记录',
+    displayColumns: '显示列',
     description: '查看和分析您的 API 使用历史',
     costDetails: '费用明细',
     requestFailed: '关联错误',

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
@@ -249,13 +249,41 @@ const mountView = async () => {
         EndpointPopover: true,
         GroupBadge: true,
         GroupOptionItem: true,
-        Teleport: true,
       },
     },
+    // Nuxt UI menus and popovers teleport to <body>; attach so they can be queried there.
+    attachTo: document.body,
   })
+  mounted.push(wrapper)
   await flushPromises()
   await nextTick()
   return wrapper
+}
+
+const mounted: VueWrapper[] = []
+
+const settle = async () => {
+  for (let i = 0; i < 5; i++) {
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+// Opens the "Display" (column settings) menu and returns its element in <body>.
+const openColumnMenu = async (wrapper: VueWrapper) => {
+  await wrapper.get('button[title="Column Settings"]').trigger('click')
+  await settle()
+  const menu = document.body.querySelector('[role="menu"]')
+  if (!menu) throw new Error('column menu did not open')
+  return menu as HTMLElement
+}
+
+const clickColumnItem = async (label: string) => {
+  const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'))
+    .find((el) => el.textContent?.trim() === label)
+  if (!item) throw new Error(`column item not found: ${label}`)
+  item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await settle()
 }
 
 const visibleColumnKeys = (wrapper: VueWrapper) =>
@@ -264,15 +292,13 @@ const visibleColumnKeys = (wrapper: VueWrapper) =>
 const visibleColumnMeta = (wrapper: VueWrapper): Array<{ key: string; sortable: boolean }> =>
   JSON.parse(wrapper.get('[data-test="columns-meta"]').text())
 
-const getButtonByText = (wrapper: VueWrapper, text: string) => {
-  const button = wrapper.findAll('button').find((item) => item.text().includes(text))
-  if (!button) {
-    throw new Error(`Button not found: ${text}`)
-  }
-  return button
-}
 
 describe('user KeysView column settings', () => {
+  afterEach(() => {
+    while (mounted.length) mounted.pop()!.unmount()
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     localStorage.clear()
 
@@ -311,6 +337,7 @@ describe('user KeysView column settings', () => {
     expect(columns.attributes('title')).toBe('Column Settings')
     expect(columns.attributes('aria-expanded')).toBe('false')
     await columns.trigger('click')
+    await settle()
     expect(columns.attributes('aria-expanded')).toBe('true')
     listKeys.mockClear()
     await wrapper.get('button[aria-label="Refresh"]').trigger('click')
@@ -331,16 +358,16 @@ describe('user KeysView column settings', () => {
     await wrapper.get('[data-tour="key-form-name"]').setValue('Provider key')
     const groupSelect = wrapper.getComponent('[data-tour="key-form-group"]')
     expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([1])
-    expect(wrapper.get('input[name="key-provider"][value="cn"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[role="radio"][value="cn"]').attributes('disabled')).toBeDefined()
     groupSelect.vm.$emit('update:modelValue', 1)
     await nextTick()
-    await wrapper.get('input[name="key-provider"][value="openai"]').setValue()
+    await wrapper.get('button[role="radio"][value="openai"]').trigger('click')
     expect(groupSelect.props('modelValue')).toBeNull()
     expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([2])
     await wrapper.get('#key-form').trigger('submit')
     expect(createKey).not.toHaveBeenCalled()
     expect(showError).toHaveBeenCalledWith('keys.groupRequired')
-    await wrapper.get('input[name="key-provider"][value="other"]').setValue()
+    await wrapper.get('button[role="radio"][value="other"]').trigger('click')
     expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([3, 4])
     groupSelect.vm.$emit('update:modelValue', 3)
     await nextTick()
@@ -391,7 +418,7 @@ describe('user KeysView column settings', () => {
       total: 1,
     })
     const wrapper = await mountView()
-    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
     const toggle = wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]')
     expect(toggle.attributes('aria-checked')).toBe(String(expected))
     await wrapper.get('#key-form').trigger('submit')
@@ -406,7 +433,7 @@ describe('user KeysView column settings', () => {
     getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
     listKeys.mockResolvedValue({ items: [{ ...createApiKey(), group_id: 3 }], total: 1 })
     const wrapper = await mountView()
-    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
     await wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]').trigger('click')
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
@@ -433,7 +460,7 @@ describe('user KeysView column settings', () => {
       total: 1,
     })
     const wrapper = await mountView()
-    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
     const toggle = wrapper.get('[role="switch"][aria-labelledby="key-deepseek-tool-injection-label"]')
     expect(toggle.attributes('aria-checked')).toBe('false')
     await toggle.trigger('click')
@@ -452,7 +479,7 @@ describe('user KeysView column settings', () => {
     await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
     resolveGroups([{ id: 2, name: 'GPT', platform: 'openai' }])
     await flushPromises()
-    expect((wrapper.get('input[name="key-provider"][value="openai"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.get('button[role="radio"][value="openai"]').attributes('aria-checked')).toBe('true')
     expect(wrapper.getComponent('[data-tour="key-form-group"]').props('options')).toMatchObject([{ value: 2 }])
     wrapper.unmount()
   })
@@ -467,8 +494,8 @@ describe('user KeysView column settings', () => {
     ])
     listKeys.mockResolvedValue({ items: [{ ...createApiKey(), group_id: 3 }], total: 1 })
     const wrapper = await mountView()
-    await getButtonByText(wrapper, 'common.edit').trigger('click')
-    expect((wrapper.get('input[name="key-provider"][value="cn"]').element as HTMLInputElement).checked).toBe(true)
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
+    expect(wrapper.get('button[role="radio"][value="cn"]').attributes('aria-checked')).toBe('true')
     const groupSelect = wrapper.getComponent('[data-tour="key-form-group"]')
     expect(groupSelect.props('modelValue')).toBe(3)
     expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([2, 3, 4, 5])
@@ -483,8 +510,8 @@ describe('user KeysView column settings', () => {
     ])
     listKeys.mockResolvedValue({ items: [{ ...createApiKey(), group_id: 2, group_ids: [2, 1] }], total: 1 })
     const wrapper = await mountView()
-    await getButtonByText(wrapper, 'common.edit').trigger('click')
-    await wrapper.get('input[name="key-provider"][value="other"]').setValue()
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
+    await wrapper.get('button[role="radio"][value="other"]').trigger('click')
     const addSelect = wrapper.findAllComponents({ name: 'Select' }).find((select) => select.attributes('placeholder') === 'keys.smartRoutingAdd')!
     expect(addSelect.props('options')).toMatchObject([{ value: 3 }])
     addSelect.vm.$emit('update:modelValue', 3)
@@ -507,7 +534,7 @@ describe('user KeysView column settings', () => {
     listKeys.mockResolvedValueOnce({ items: [key], total: 1, page: 1, page_size: 20, pages: 1 })
     updateKey.mockResolvedValue({ ...key, status, quota_used: 0 })
     const wrapper = await mountView()
-    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
     await wrapper.get('[data-tour="key-form-name"]').setValue('Unsaved name')
     const statusSelect = wrapper.findAllComponents({ name: 'Select' })
       .find((select) => select.props('options').length === 2 &&
@@ -555,9 +582,8 @@ describe('user KeysView column settings', () => {
   it('shows a hidden column when toggled and persists the preference', async () => {
     const wrapper = await mountView()
 
-    await wrapper.get('button[title="Column Settings"]').trigger('click')
-    await getButtonByText(wrapper, 'Rate Limit').trigger('click')
-    await nextTick()
+    await openColumnMenu(wrapper)
+    await clickColumnItem('Rate Limit')
 
     expect(visibleColumnKeys(wrapper)).toContain('rate_limit')
     expect(localStorage.getItem('api-key-hidden-columns')).toBe(
@@ -569,9 +595,8 @@ describe('user KeysView column settings', () => {
   it('shows the API key ID column when toggled', async () => {
     const wrapper = await mountView()
 
-    await wrapper.get('button[title="Column Settings"]').trigger('click')
-    await getButtonByText(wrapper, 'ID').trigger('click')
-    await nextTick()
+    await openColumnMenu(wrapper)
+    await clickColumnItem('ID')
 
     expect(visibleColumnKeys(wrapper)).toContain('id')
     expect(wrapper.get('[data-test="key-id"]').text()).toBe('#1')
@@ -588,9 +613,8 @@ describe('user KeysView column settings', () => {
     })
     const wrapper = await mountView()
 
-    await wrapper.get('button[title="Column Settings"]').trigger('click')
-    await getButtonByText(wrapper, 'Last Used IP').trigger('click')
-    await nextTick()
+    await openColumnMenu(wrapper)
+    await clickColumnItem('Last Used IP')
 
     expect(visibleColumnKeys(wrapper)).toContain('last_used_ip')
     expect(wrapper.get('[data-test="last-used-ip"]').text()).toBe('203.0.113.10')
@@ -622,10 +646,7 @@ describe('user KeysView column settings', () => {
   it('does not include always-visible columns in the toggleable menu', async () => {
     const wrapper = await mountView()
 
-    await wrapper.get('button[title="Column Settings"]').trigger('click')
-    await nextTick()
-
-    const columnMenuText = wrapper.text()
+    const columnMenuText = (await openColumnMenu(wrapper)).textContent ?? ''
     expect(columnMenuText).toContain('API Key')
     expect(columnMenuText).toContain('ID')
     expect(columnMenuText).toContain('Current Concurrency')

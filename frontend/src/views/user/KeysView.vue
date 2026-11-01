@@ -1,84 +1,67 @@
 <template>
   <AppLayout>
-    <TablePageLayout class="signal-keys">
-      <template #filters>
-        <div class="flex flex-col gap-3">
-          <div class="flex flex-wrap items-center gap-2">
-            <SearchInput
-              v-model="filterSearch"
-              :placeholder="t('keys.searchPlaceholder')"
-              class="w-full sm:w-64"
-              @search="onFilterChange"
-            />
-            <Select
-              :model-value="filterGroupId"
-              class="w-full sm:w-40"
-              :options="groupFilterOptions"
-              @update:model-value="onGroupFilterChange"
-            />
-            <Select
-              :model-value="filterStatus"
-              class="w-full sm:w-40"
-              :options="statusFilterOptions"
-              @update:model-value="onStatusFilterChange"
-            />
-          </div>
-          <EndpointPopover
-            class="signal-key-endpoints"
-            v-if="publicSettings?.api_base_url || customEndpoints.length > 0"
-            :api-base-url="publicSettings?.api_base_url || ''"
-            :custom-endpoints="customEndpoints"
-          />
-        </div>
-      </template>
-
+    <TablePageLayout>
       <template #actions>
         <UserPageHeader flush :title="t('keys.title')">
           <template #badge>
             <UBadge color="neutral" variant="subtle" class="tabular-nums" data-test="key-count">{{ pagination.total }}</UBadge>
           </template>
-          <template #actions>
-            <UButton
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-refresh-cw"
-              :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
-              :disabled="loading"
-              :title="t('common.refresh')"
-              :aria-label="t('common.refresh')"
-              @click="loadApiKeys"
+        </UserPageHeader>
+      </template>
+
+      <template #filters>
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-wrap items-center justify-between gap-1.5">
+            <SearchInput
+              v-model="filterSearch"
+              :placeholder="t('keys.searchPlaceholder')"
+              class="w-full sm:max-w-sm"
+              @search="onFilterChange"
             />
-            <div class="relative" ref="columnDropdownRef">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <Select
+                :model-value="filterGroupId"
+                class="w-full sm:w-40"
+                :options="groupFilterOptions"
+                @update:model-value="onGroupFilterChange"
+              />
+              <Select
+                :model-value="filterStatus"
+                class="w-full sm:w-36"
+                :options="statusFilterOptions"
+                @update:model-value="onStatusFilterChange"
+              />
+              <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }" :ui="{ content: 'max-h-80' }">
+                <UButton
+                  color="neutral"
+                  variant="outline"
+                  trailing-icon="i-lucide-settings-2"
+                  :label="t('keys.displayColumns')"
+                  :title="t('keys.columnSettings')"
+                  :aria-label="t('keys.columnSettings')"
+                />
+              </UDropdownMenu>
               <UButton
                 color="neutral"
                 variant="outline"
-                icon="i-lucide-columns-3"
-                :title="t('keys.columnSettings')"
-                :aria-label="t('keys.columnSettings')"
-                :aria-expanded="showColumnDropdown"
-                @click="showColumnDropdown = !showColumnDropdown"
+                icon="i-lucide-refresh-cw"
+                :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+                :disabled="loading"
+                :title="t('common.refresh')"
+                :aria-label="t('common.refresh')"
+                @click="loadApiKeys"
               />
-              <div
-                v-if="showColumnDropdown"
-                class="absolute left-0 top-full z-50 mt-1 max-h-80 w-52 overflow-y-auto rounded-lg bg-default p-1 shadow-lg ring ring-default sm:left-auto sm:right-0"
-              >
-                <button
-                  v-for="col in toggleableColumns"
-                  :key="col.key"
-                  type="button"
-                  @click="toggleColumn(col.key)"
-                  class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm text-default transition-colors hover:bg-elevated"
-                >
-                  <span>{{ col.label }}</span>
-                  <UIcon v-if="isColumnVisible(col.key)" name="i-lucide-check" class="size-4 text-highlighted" />
-                </button>
-              </div>
+              <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="showCreateModal = true">
+                {{ t('keys.createKey') }}
+              </UButton>
             </div>
-            <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="showCreateModal = true">
-              {{ t('keys.createKey') }}
-            </UButton>
-          </template>
-        </UserPageHeader>
+          </div>
+          <EndpointPopover
+            v-if="publicSettings?.api_base_url || customEndpoints.length > 0"
+            :api-base-url="publicSettings?.api_base_url || ''"
+            :custom-endpoints="customEndpoints"
+          />
+        </div>
       </template>
 
       <template #table>
@@ -92,55 +75,49 @@
           @sort="handleSort"
         >
           <template #cell-id="{ value }">
-            <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
+            <span class="font-mono text-xs text-muted">#{{ value }}</span>
           </template>
 
           <template #cell-key="{ value, row }">
-            <div class="flex items-center gap-2">
-              <code class="rounded-md bg-elevated px-1.5 py-0.5 font-mono text-xs text-default ring ring-inset ring-default">
-                {{ maskApiKey(value) }}
-              </code>
-              <button
-                type="button"
-                @click="copyToClipboard(value, row.id)"
-                class="rounded-md p-1 transition-colors hover:bg-elevated"
-                :class="
-                  copiedKeyId === row.id
-                    ? 'text-green-500'
-                    : 'text-dimmed hover:text-highlighted'
-                "
+            <div class="flex items-center gap-1">
+              <code class="font-mono text-xs text-muted">{{ maskApiKey(value) }}</code>
+              <UButton
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                :icon="copiedKeyId === row.id ? 'i-lucide-check' : 'i-lucide-copy'"
+                :class="copiedKeyId === row.id ? 'text-success' : ''"
                 :title="copiedKeyId === row.id ? t('keys.copied') : t('keys.copyToClipboard')"
-              >
-                <Icon
-                  v-if="copiedKeyId === row.id"
-                  name="check"
-                  size="sm"
-                  :stroke-width="2"
-                />
-                <Icon v-else name="clipboard" size="sm" />
-              </button>
+                :aria-label="copiedKeyId === row.id ? t('keys.copied') : t('keys.copyToClipboard')"
+                @click="copyToClipboard(value, row.id)"
+              />
             </div>
           </template>
 
           <template #cell-name="{ value, row }">
             <div class="flex items-center gap-1.5">
-              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
-              <Icon
+              <span class="font-medium text-highlighted">{{ value }}</span>
+              <UIcon
                 v-if="row.ip_whitelist?.length > 0 || row.ip_blacklist?.length > 0"
-                name="shield"
-                size="sm"
-                class="text-blue-500"
+                name="i-lucide-shield"
+                class="size-4 text-info"
                 :title="t('keys.ipRestrictionEnabled')"
               />
             </div>
           </template>
 
           <template #cell-group="{ row }">
-            <div class="group/dropdown relative">
-              <button
-                :ref="(el) => setGroupButtonRef(row.id, el)"
-                @click="openGroupSelector(row)"
-                class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
+            <UPopover
+              :open="groupSelectorKeyId === row.id"
+              :content="{ align: 'start', collisionPadding: 8 }"
+              @update:open="(open: boolean) => setGroupSelectorOpen(row, open)"
+            >
+              <UButton
+                color="neutral"
+                variant="ghost"
+                trailing-icon="i-lucide-chevrons-up-down"
+                class="-mx-2.5 max-w-full"
+                :ui="{ trailingIcon: 'size-3.5 text-dimmed' }"
                 :title="isSmartRoutingKey(row) ? t('keys.smartRoutingChangeInEditor') : t('keys.clickToChangeGroup')"
               >
                 <GroupBadge
@@ -155,260 +132,166 @@
                   :peak-end="row.group.peak_end"
                   :peak-rate-multiplier="row.group.peak_rate_multiplier"
                 />
-                <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
-                  t('keys.noGroup')
-                }}</span>
-                <UBadge v-if="isSmartRoutingKey(row)" color="primary" variant="subtle" size="sm">
+                <span v-else class="text-sm text-dimmed">{{ t('keys.noGroup') }}</span>
+                <UBadge v-if="isSmartRoutingKey(row)" color="neutral" variant="subtle" size="sm">
                   {{ t('keys.smartRouting') }}
                   {{ t('keys.smartRoutingMore', { count: (row.group_ids?.length || 1) - 1 }) }}
                 </UBadge>
-                <span v-else class="text-xs text-muted">{{ t('keys.selectGroup') }}</span>
-                <svg
-                  class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M8.25 15L12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9"
-                  />
-                </svg>
-              </button>
-            </div>
+              </UButton>
+              <template #content>
+                <div class="w-[min(380px,calc(100vw-16px))]">
+                  <div class="border-b border-default p-2">
+                    <UInput
+                      v-model="groupSearchQuery"
+                      icon="i-lucide-search"
+                      variant="none"
+                      class="w-full"
+                      :placeholder="t('keys.searchGroup')"
+                    />
+                  </div>
+                  <div class="max-h-80 overflow-y-auto p-1">
+                    <UButton
+                      v-for="option in filteredGroupOptions"
+                      :key="option.value ?? 'null'"
+                      color="neutral"
+                      variant="ghost"
+                      block
+                      class="justify-start"
+                      :class="row.group_id === option.value || (!row.group_id && option.value === null) ? 'bg-elevated' : ''"
+                      :title="option.description || undefined"
+                      @click="changeGroup(row, option.value)"
+                    >
+                      <GroupOptionItem
+                        :name="option.label"
+                        :platform="option.platform"
+                        :subscription-type="option.subscriptionType"
+                        :rate-multiplier="option.rate"
+                        :user-rate-multiplier="option.userRate"
+                        :peak-rate-enabled="option.peakRateEnabled"
+                        :peak-start="option.peakStart"
+                        :peak-end="option.peakEnd"
+                        :peak-rate-multiplier="option.peakRateMultiplier"
+                        :description="option.description"
+                        :selected="row.group_id === option.value || (!row.group_id && option.value === null)"
+                      />
+                    </UButton>
+                    <p v-if="filteredGroupOptions.length === 0" class="py-4 text-center text-sm text-muted">
+                      {{ t('keys.noGroupFound') }}
+                    </p>
+                  </div>
+                </div>
+              </template>
+            </UPopover>
           </template>
 
           <template #cell-current_concurrency="{ value, row }">
-            <span
-              :class="[
-                'inline-flex min-w-8 items-center justify-center rounded-sm px-2 py-1 text-sm font-semibold tabular-nums',
-                (value ?? 0) > 0
-                  ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-300 dark:ring-emerald-800'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-400'
-              ]"
-            >
+            <UBadge :color="(value ?? 0) > 0 ? 'success' : 'neutral'" variant="subtle" class="tabular-nums">
               {{ value ?? 0 }}<span v-if="row.concurrency_limit" class="ml-1 opacity-70">/ {{ row.concurrency_limit }}</span>
-            </span>
-            <span v-if="row.concurrency_limit" class="mt-1 block text-xs text-gray-500">{{ t('keys.queueWaiting') }}: {{ queueWaiting[row.id] ?? '—' }}</span>
+            </UBadge>
+            <span v-if="row.concurrency_limit" class="mt-1 block text-xs text-muted">{{ t('keys.queueWaiting') }}: {{ queueWaiting[row.id] ?? '—' }}</span>
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="text-sm">
+            <div class="min-w-36 space-y-0.5 text-sm">
               <div class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
-                </span>
+                <span class="text-muted">{{ t('keys.today') }}:</span>
+                <span class="font-medium tabular-nums text-highlighted">${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}</span>
               </div>
-              <div class="mt-0.5 flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
-                </span>
+              <div class="flex items-center gap-1.5">
+                <span class="text-muted">{{ t('keys.total') }}:</span>
+                <span class="font-medium tabular-nums text-highlighted">${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}</span>
               </div>
-              <!-- Quota progress (if quota is set) -->
-              <div v-if="row.quota > 0" class="mt-1.5">
+              <div v-if="row.quota > 0" class="pt-1">
                 <div class="flex items-center gap-1.5">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('keys.quota') }}:</span>
-                  <span :class="[
-                    'font-medium',
-                    row.quota_used >= row.quota ? 'text-red-500' :
-                    row.quota_used >= row.quota * 0.8 ? 'text-yellow-500' :
-                    'text-gray-900 dark:text-white'
-                  ]">
+                  <span class="text-muted">{{ t('keys.quota') }}:</span>
+                  <span class="font-medium tabular-nums" :class="limitTextClass(row.quota_used, row.quota)">
                     ${{ row.quota_used?.toFixed(2) || '0.00' }} / ${{ row.quota?.toFixed(2) }}
                   </span>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      row.quota_used >= row.quota ? 'bg-red-500' :
-                      row.quota_used >= row.quota * 0.8 ? 'bg-yellow-500' :
-                      'bg-primary-500'
-                    ]"
-                    :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
-                  />
-                </div>
+                <UProgress :model-value="limitPercent(row.quota_used, row.quota)" :color="limitColor(row.quota_used, row.quota)" size="xs" class="mt-1" />
               </div>
             </div>
           </template>
 
           <template #cell-rate_limit="{ row }">
-            <div v-if="row.rate_limit_5h > 0 || row.rate_limit_1d > 0 || row.rate_limit_7d > 0" class="space-y-1.5 min-w-[140px]">
-              <!-- 5h window -->
-              <div v-if="row.rate_limit_5h > 0">
+            <div v-if="rateWindows(row).length" class="min-w-[140px] space-y-1.5">
+              <div v-for="win in rateWindows(row)" :key="win.label">
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">5h</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_5h >= row.rate_limit_5h ? 'text-red-500' :
-                    row.usage_5h >= row.rate_limit_5h * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
-                    ${{ row.usage_5h?.toFixed(2) || '0.00' }}/${{ row.rate_limit_5h?.toFixed(2) }}
+                  <span class="text-muted">{{ win.label }}</span>
+                  <span class="font-medium tabular-nums" :class="limitTextClass(win.used, win.limit)">
+                    ${{ win.used?.toFixed(2) || '0.00' }}/${{ win.limit?.toFixed(2) }}
                   </span>
                 </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_5h >= row.rate_limit_5h ? 'bg-red-500' :
-                      row.usage_5h >= row.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
-                    ]"
-                    :style="{ width: Math.min((row.usage_5h / row.rate_limit_5h) * 100, 100) + '%' }"
-                  />
-                </div>
-                <div v-if="row.reset_5h_at && formatResetTime(row.reset_5h_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-                  ⟳ {{ formatResetTime(row.reset_5h_at) }}
+                <UProgress :model-value="limitPercent(win.used, win.limit)" :color="limitColor(win.used, win.limit)" size="2xs" />
+                <div v-if="win.resetAt && formatResetTime(win.resetAt)" class="text-[10px] tabular-nums text-dimmed">
+                  ⟳ {{ formatResetTime(win.resetAt) }}
                 </div>
               </div>
-              <!-- 1d window -->
-              <div v-if="row.rate_limit_1d > 0">
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">1d</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_1d >= row.rate_limit_1d ? 'text-red-500' :
-                    row.usage_1d >= row.rate_limit_1d * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
-                    ${{ row.usage_1d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_1d?.toFixed(2) }}
-                  </span>
-                </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_1d >= row.rate_limit_1d ? 'bg-red-500' :
-                      row.usage_1d >= row.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
-                    ]"
-                    :style="{ width: Math.min((row.usage_1d / row.rate_limit_1d) * 100, 100) + '%' }"
-                  />
-                </div>
-                <div v-if="row.reset_1d_at && formatResetTime(row.reset_1d_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-                  ⟳ {{ formatResetTime(row.reset_1d_at) }}
-                </div>
-              </div>
-              <!-- 7d window -->
-              <div v-if="row.rate_limit_7d > 0">
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">7d</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_7d >= row.rate_limit_7d ? 'text-red-500' :
-                    row.usage_7d >= row.rate_limit_7d * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
-                    ${{ row.usage_7d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_7d?.toFixed(2) }}
-                  </span>
-                </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_7d >= row.rate_limit_7d ? 'bg-red-500' :
-                      row.usage_7d >= row.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
-                    ]"
-                    :style="{ width: Math.min((row.usage_7d / row.rate_limit_7d) * 100, 100) + '%' }"
-                  />
-                </div>
-                <div v-if="row.reset_7d_at && formatResetTime(row.reset_7d_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-                  ⟳ {{ formatResetTime(row.reset_7d_at) }}
-                </div>
-              </div>
-              <!-- Reset button -->
-              <button
+              <UButton
                 v-if="row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0"
-                @click.stop="confirmResetRateLimitFromTable(row)"
-                class="mt-0.5 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                icon="i-lucide-rotate-ccw"
+                class="-ml-1.5"
                 :title="t('keys.resetRateLimitUsage')"
+                @click.stop="confirmResetRateLimitFromTable(row)"
               >
-                <Icon name="refresh" size="xs" />
                 {{ t('keys.resetUsage') }}
-              </button>
+              </UButton>
             </div>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
 
           <template #cell-expires_at="{ value }">
-            <span v-if="value" :class="[
-              'text-sm',
-              new Date(value) < new Date() ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'
-            ]">
+            <span v-if="value" class="text-sm" :class="new Date(value) < new Date() ? 'text-error' : 'text-muted'">
               {{ formatDateTime(value) }}
             </span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noExpiration') }}</span>
+            <span v-else class="text-sm text-dimmed">{{ t('keys.noExpiration') }}</span>
           </template>
 
           <template #cell-status="{ value }">
-            <span :class="[
-              'badge',
-              value === 'active' ? 'badge-success' :
-              value === 'quota_exhausted' ? 'badge-warning' :
-              value === 'expired' ? 'badge-danger' :
-              'badge-gray'
-            ]">
-              {{ t('keys.status.' + value) }}
-            </span>
+            <UBadge :color="statusColor(value)" variant="subtle">{{ t('keys.status.' + value) }}</UBadge>
           </template>
 
           <template #cell-last_used_at="{ value }">
-            <span v-if="value" class="text-sm text-gray-500 dark:text-dark-400">
-              {{ formatDateTime(value) }}
-            </span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-if="value" class="text-sm text-muted">{{ formatDateTime(value) }}</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
 
           <template #cell-last_used_ip="{ value }">
-            <span v-if="value" class="text-sm text-gray-500 dark:text-dark-400">
-              {{ value }}
-            </span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-if="value" class="text-sm text-muted">{{ value }}</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-sm text-muted">{{ formatDateTime(value) }}</span>
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-0.5">
-              <!-- Use Key Button -->
-              <button type="button" class="key-row-action" @click="openUseKeyModal(row)">
-                <UIcon name="i-lucide-square-terminal" class="size-4" />
-                <span>{{ t('keys.useKey') }}</span>
-              </button>
-              <!-- Import to CC Switch Button -->
-              <button
-                v-if="!publicSettings?.hide_ccs_import_button"
-                type="button"
-                class="key-row-action"
-                @click="importToCcswitch(row)"
-              >
-                <UIcon name="i-lucide-upload" class="size-4" />
-                <span>{{ t('keys.importToCcSwitch') }}</span>
-              </button>
-              <!-- Toggle Status Button -->
-              <button type="button" class="key-row-action" @click="toggleKeyStatus(row)">
-                <UIcon v-if="row.status === 'active'" name="i-lucide-ban" class="size-4" />
-                <UIcon v-else name="i-lucide-circle-check" class="size-4" />
-                <span>{{ row.status === 'active' ? t('keys.disable') : t('keys.enable') }}</span>
-              </button>
-              <!-- Edit Button -->
-              <button type="button" class="key-row-action" @click="editKey(row)">
-                <UIcon name="i-lucide-pencil" class="size-4" />
-                <span>{{ t('common.edit') }}</span>
-              </button>
-              <!-- Delete Button -->
-              <button type="button" class="key-row-action key-row-action--danger" @click="confirmDelete(row)">
-                <UIcon name="i-lucide-trash-2" class="size-4" />
-                <span>{{ t('common.delete') }}</span>
-              </button>
+            <div class="flex items-center justify-end gap-0.5">
+              <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-square-terminal" @click="openUseKeyModal(row)">
+                {{ t('keys.useKey') }}
+              </UButton>
+              <UButton
+                color="neutral"
+                variant="ghost"
+                size="sm"
+                icon="i-lucide-pencil"
+                :title="t('common.edit')"
+                :aria-label="t('common.edit')"
+                @click="editKey(row)"
+              />
+              <UDropdownMenu :items="rowMenuItems(row)" :content="{ align: 'end' }">
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  size="sm"
+                  icon="i-lucide-ellipsis-vertical"
+                  :title="t('keys.moreActions')"
+                  :aria-label="t('keys.moreActions')"
+                />
+              </UDropdownMenu>
             </div>
           </template>
 
@@ -425,7 +308,6 @@
 
       <template #pagination>
         <Pagination
-          class="signal-pagination"
           v-if="pagination.total > 0"
           :page="pagination.page"
           :total="pagination.total"
@@ -443,94 +325,74 @@
       width="normal"
       @close="closeModals"
     >
-      <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
-        <UFormField :label="t('keys.nameLabel')" required size="lg">
+      <form id="key-form" @submit.prevent="handleSubmit" class="space-y-4">
+        <UFormField :label="t('keys.nameLabel')" required>
           <UInput
             v-model="formData.name"
             type="text"
             required
-            size="lg" :ui="{ base: 'py-[11px]' }"
             class="w-full"
             :placeholder="t('keys.namePlaceholder')"
             data-tour="key-form-name"
           />
         </UFormField>
 
-        <fieldset>
-          <legend class="mb-1.5 text-sm font-medium text-default">{{ t('keys.providerLabel') }}</legend>
-          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <label
-              v-for="provider in keyProviders"
-              :key="provider.value"
-              class="relative min-w-0"
-            >
-              <input
-                type="radio"
-                name="key-provider"
-                :value="provider.value"
-                :checked="activeKeyProvider === provider.value"
-                :disabled="!availableKeyProviders.has(provider.value)"
-                class="peer sr-only"
-                @change="selectKeyProvider(provider.value)"
-              />
-              <span class="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-accented bg-default px-2 py-3 text-sm font-semibold text-highlighted transition-colors peer-enabled:cursor-pointer hover:peer-enabled:border-inverted peer-checked:border-inverted peer-checked:bg-elevated peer-checked:ring-1 peer-checked:ring-inverted peer-focus-visible:outline-solid peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-inverted peer-disabled:cursor-not-allowed peer-disabled:opacity-40 dark:border-dark-500 dark:bg-transparent dark:text-gray-100 dark:hover:peer-enabled:border-primary/60 dark:peer-checked:border-primary dark:peer-checked:bg-primary/10 dark:peer-checked:ring-primary dark:peer-focus-visible:outline-primary">
-                <span class="flex h-8 items-center justify-center gap-1" aria-hidden="true">
-                  <span
-                    v-for="platform in provider.icons"
-                    :key="platform"
-                    :class="['flex h-8 w-8 items-center justify-center rounded-lg', platformBadgeLightClass(platform)]"
-                  >
-                    <PlatformIcon :platform="platform" size="lg" />
-                  </span>
-                </span>
-                <span class="max-w-full wrap-break-word text-center">{{ provider.label }}</span>
-              </span>
+        <URadioGroup
+          :model-value="activeKeyProvider"
+          name="key-provider"
+          variant="card"
+          orientation="horizontal"
+          indicator="hidden"
+          :legend="t('keys.providerLabel')"
+          :items="keyProviderItems"
+          :ui="{ fieldset: 'grid grid-cols-2 gap-2 sm:grid-cols-4', legend: 'mb-1.5 text-sm font-medium text-default', item: 'justify-center p-3', wrapper: 'flex flex-col items-center gap-2 text-center' }"
+          @update:model-value="(value) => selectKeyProvider(value as KeyProvider)"
+        >
+          <template #label="{ item }">
+            <span class="flex h-8 items-center justify-center gap-1" aria-hidden="true">
               <span
-                v-if="activeKeyProvider === provider.value"
-                class="pointer-events-none absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-inverted text-inverted dark:bg-primary dark:text-inverted"
-                aria-hidden="true"
+                v-for="platform in (item as unknown as KeyProviderItem).icons"
+                :key="platform"
+                :class="['flex size-8 items-center justify-center rounded-lg', platformBadgeLightClass(platform)]"
               >
-                <UIcon name="i-lucide-check" class="size-3" />
+                <PlatformIcon :platform="platform" size="lg" />
               </span>
-            </label>
-          </div>
-        </fieldset>
-
-        <UFormField :label="t('keys.groupLabel')" size="lg">
-          <template #hint>
-            <label class="flex items-center gap-2 text-sm text-default">
-              <input v-model="formData.smart_routing" type="checkbox" class="size-4 rounded-sm border-accented accent-[var(--ui-primary)]" />
-              {{ t('keys.smartRouting') }}
-            </label>
+            </span>
+            <span class="block max-w-full wrap-break-word font-medium text-highlighted">{{ (item as unknown as KeyProviderItem).label }}</span>
           </template>
-          <p v-if="formData.smart_routing" class="mb-3 text-xs text-muted">
-            {{ t('keys.smartRoutingHint') }}
-          </p>
+        </URadioGroup>
+
+        <UFormField :label="t('keys.groupLabel')" :description="formData.smart_routing ? t('keys.smartRoutingHint') : undefined">
+          <template #hint>
+            <UCheckbox v-model="formData.smart_routing" :label="t('keys.smartRouting')" />
+          </template>
           <div v-if="formData.smart_routing" class="space-y-2">
-            <div
-              v-for="(groupId, index) in formData.group_ids"
-              :key="`${groupId}-${index}`"
-              class="flex items-center gap-2 rounded-lg px-3 py-2 ring ring-default"
-            >
-              <span class="shrink-0 text-xs text-muted">{{ t('keys.smartRoutingRoute') }} {{ index + 1 }}</span>
-              <div class="min-w-0 flex-1">
-                <GroupBadge
-                  v-if="groupOptionById(groupId)"
-                  :name="groupOptionById(groupId)!.label"
-                  :platform="groupOptionById(groupId)!.platform"
-                  :subscription-type="groupOptionById(groupId)!.subscriptionType"
-                  :rate-multiplier="groupOptionById(groupId)!.rate"
-                  :user-rate-multiplier="groupOptionById(groupId)!.userRate"
-                  :peak-rate-enabled="groupOptionById(groupId)!.peakRateEnabled"
-                  :peak-start="groupOptionById(groupId)!.peakStart"
-                  :peak-end="groupOptionById(groupId)!.peakEnd"
-                  :peak-rate-multiplier="groupOptionById(groupId)!.peakRateMultiplier"
-                />
-                <span v-else class="text-sm text-muted">#{{ groupId }}</span>
+            <div v-if="formData.group_ids.length" class="divide-y divide-default rounded-md ring ring-default">
+              <div
+                v-for="(groupId, index) in formData.group_ids"
+                :key="`${groupId}-${index}`"
+                class="flex items-center gap-2 px-3 py-1.5"
+              >
+                <span class="shrink-0 text-xs text-muted">{{ t('keys.smartRoutingRoute') }} {{ index + 1 }}</span>
+                <div class="min-w-0 flex-1">
+                  <GroupBadge
+                    v-if="groupOptionById(groupId)"
+                    :name="groupOptionById(groupId)!.label"
+                    :platform="groupOptionById(groupId)!.platform"
+                    :subscription-type="groupOptionById(groupId)!.subscriptionType"
+                    :rate-multiplier="groupOptionById(groupId)!.rate"
+                    :user-rate-multiplier="groupOptionById(groupId)!.userRate"
+                    :peak-rate-enabled="groupOptionById(groupId)!.peakRateEnabled"
+                    :peak-start="groupOptionById(groupId)!.peakStart"
+                    :peak-end="groupOptionById(groupId)!.peakEnd"
+                    :peak-rate-multiplier="groupOptionById(groupId)!.peakRateMultiplier"
+                  />
+                  <span v-else class="text-sm text-muted">#{{ groupId }}</span>
+                </div>
+                <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-arrow-up" :aria-label="t('keys.moveRouteUp')" :title="t('keys.moveRouteUp')" @click="moveSmartRoute(index, -1)" />
+                <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-arrow-down" :aria-label="t('keys.moveRouteDown')" :title="t('keys.moveRouteDown')" @click="moveSmartRoute(index, 1)" />
+                <UButton color="error" variant="ghost" size="xs" icon="i-lucide-x" :aria-label="t('keys.removeRoute')" :title="t('keys.removeRoute')" @click="removeSmartRoute(index)" />
               </div>
-              <button type="button" class="key-route-action" @click="moveSmartRoute(index, -1)"><UIcon name="i-lucide-arrow-up" class="size-4" /></button>
-              <button type="button" class="key-route-action" @click="moveSmartRoute(index, 1)"><UIcon name="i-lucide-arrow-down" class="size-4" /></button>
-              <button type="button" class="key-route-action key-route-action--danger" @click="removeSmartRoute(index)"><UIcon name="i-lucide-x" class="size-4" /></button>
             </div>
             <Select
               :model-value="null"
@@ -584,318 +446,197 @@
           </Select>
         </UFormField>
 
-        <!-- Custom Key Section (only for create) -->
-        <div v-if="!showEditModal" class="space-y-3">
-          <div class="flex items-center justify-between gap-4">
-            <span id="key-custom-key-label" class="text-sm font-medium text-default">{{ t('keys.customKeyLabel') }}</span>
-            <Toggle v-model="formData.use_custom_key" aria-labelledby="key-custom-key-label" />
+        <div v-if="showDeepSeekToolInjection" class="flex items-start justify-between gap-4">
+          <div>
+            <span id="key-deepseek-tool-injection-label" class="text-sm font-medium text-default">{{ t('keys.deepseekToolInjection') }}</span>
+            <p id="key-deepseek-tool-injection-hint" class="text-sm text-muted">{{ t('keys.deepseekToolInjectionHint') }}</p>
           </div>
-          <UFormField
-            v-if="formData.use_custom_key"
-            size="lg"
-            :error="customKeyError || undefined"
-            :help="customKeyError ? undefined : t('keys.customKeyHint')"
+          <Toggle
+            v-model="formData.deepseek_tool_injection_enabled"
+            aria-labelledby="key-deepseek-tool-injection-label"
+            aria-describedby="key-deepseek-tool-injection-hint"
+          />
+        </div>
+
+        <UFormField v-if="showEditModal" :label="t('keys.statusLabel')">
+          <Select v-model="formData.status" :options="statusOptions" :placeholder="t('keys.selectStatus')" />
+        </UFormField>
+
+        <UFormField :label="t('keys.quotaLimit')" :help="t('keys.quotaAmountHint')">
+          <UInput
+            v-model.number="formData.quota"
+            type="number"
+            step="0.01"
+            min="0"
+            class="w-full"
+            :placeholder="t('keys.quotaAmountPlaceholder')"
           >
-            <UInput
-              v-model="formData.custom_key"
-              type="text"
-              size="lg"
-              class="w-full"
-              :ui="{ base: 'font-mono py-[11px]' }"
-              :placeholder="t('keys.customKeyPlaceholder')"
-            />
-          </UFormField>
-        </div>
-
-        <UFormField v-if="showEditModal" :label="t('keys.statusLabel')" size="lg">
-          <Select
-            v-model="formData.status"
-            :options="statusOptions"
-            :placeholder="t('keys.selectStatus')"
-          />
+            <template #leading><span class="text-sm text-muted">$</span></template>
+          </UInput>
         </UFormField>
 
-        <!-- IP Restriction Section -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between gap-4">
-            <span id="key-ip-restriction-label" class="text-sm font-medium text-default">{{ t('keys.ipRestriction') }}</span>
-            <Toggle v-model="formData.enable_ip_restriction" aria-labelledby="key-ip-restriction-label" />
-          </div>
-
-          <div v-if="formData.enable_ip_restriction" class="space-y-4 pt-1">
-            <UFormField :label="t('keys.ipWhitelist')" :help="t('keys.ipWhitelistHint')" size="lg">
-              <UTextarea
-                v-model="formData.ip_whitelist"
-                :rows="3"
-                size="lg"
-                class="w-full"
-                :ui="{ base: 'font-mono text-sm' }"
-                :placeholder="t('keys.ipWhitelistPlaceholder')"
-              />
-            </UFormField>
-            <UFormField :label="t('keys.ipBlacklist')" :help="t('keys.ipBlacklistHint')" size="lg">
-              <UTextarea
-                v-model="formData.ip_blacklist"
-                :rows="3"
-                size="lg"
-                class="w-full"
-                :ui="{ base: 'font-mono text-sm' }"
-                :placeholder="t('keys.ipBlacklistPlaceholder')"
-              />
-            </UFormField>
-          </div>
-        </div>
-
-        <!-- Quota Limit Section -->
-        <div class="space-y-4">
-          <UFormField :label="t('keys.quotaLimit')" :help="t('keys.quotaAmountHint')" size="lg">
-            <UInput
-              v-model.number="formData.quota"
-              type="number"
-              step="0.01"
-              min="0"
-              size="lg" :ui="{ base: 'py-[11px]' }"
-              class="w-full"
-              :placeholder="t('keys.quotaAmountPlaceholder')"
-            >
-              <template #leading><span class="text-sm text-muted">$</span></template>
-            </UInput>
-          </UFormField>
-
-          <!-- Quota used display (only in edit mode) -->
-          <UFormField v-if="showEditModal && selectedKey && selectedKey.quota > 0" :label="t('keys.quotaUsed')" size="lg">
-            <div class="flex items-center gap-2">
-              <div class="flex-1 rounded-md bg-elevated px-3 py-2 text-sm">
-                <span class="font-medium text-highlighted">
-                  ${{ selectedKey.quota_used?.toFixed(4) || '0.0000' }}
-                </span>
-                <span class="mx-2 text-dimmed">/</span>
-                <span class="text-muted">
-                  ${{ selectedKey.quota?.toFixed(2) || '0.00' }}
-                </span>
-              </div>
-              <UButton
-                color="neutral"
-                variant="outline"
-                size="lg"
-                :title="t('keys.resetQuotaUsed')"
-                @click="confirmResetQuota"
-              >
-                {{ t('keys.reset') }}
-              </UButton>
+        <UFormField v-if="showEditModal && selectedKey && selectedKey.quota > 0" :label="t('keys.quotaUsed')">
+          <div class="flex items-center gap-2">
+            <div class="flex-1 rounded-md bg-elevated px-3 py-1.5 text-sm tabular-nums">
+              <span class="font-medium text-highlighted">${{ selectedKey.quota_used?.toFixed(4) || '0.0000' }}</span>
+              <span class="mx-2 text-dimmed">/</span>
+              <span class="text-muted">${{ selectedKey.quota?.toFixed(2) || '0.00' }}</span>
             </div>
-          </UFormField>
-        </div>
-
-        <!-- Rate Limit Section -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between gap-4">
-            <span id="key-rate-limit-label" class="text-sm font-medium text-default">{{ t('keys.rateLimitSection') }}</span>
-            <Toggle v-model="formData.enable_rate_limit" aria-labelledby="key-rate-limit-label" />
+            <UButton color="neutral" variant="outline" :title="t('keys.resetQuotaUsed')" @click="confirmResetQuota">
+              {{ t('keys.reset') }}
+            </UButton>
           </div>
-
-          <div v-if="formData.enable_rate_limit" class="space-y-4">
-            <p class="text-xs text-muted">{{ t('keys.rateLimitHint') }}</p>
-            <!-- 5-Hour Limit -->
-            <UFormField :label="t('keys.rateLimit5h')" size="lg">
-              <UInput v-model.number="formData.rate_limit_5h" type="number" step="0.01" min="0" size="lg" :ui="{ base: 'py-[11px]' }" class="w-full" :placeholder="'0'">
-                <template #leading><span class="text-sm text-muted">$</span></template>
-              </UInput>
-              <!-- Usage info (edit mode only) -->
-              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0" class="mt-2">
-                <div class="rounded-md bg-elevated px-3 py-2 text-sm">
-                  <span :class="[
-                    'font-medium',
-                    selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-red-500' :
-                    selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'text-yellow-500' :
-                    'text-highlighted'
-                  ]">
-                    ${{ selectedKey.usage_5h?.toFixed(4) || '0.0000' }}
-                  </span>
-                  <span class="mx-2 text-dimmed">/</span>
-                  <span class="text-muted">
-                    ${{ selectedKey.rate_limit_5h?.toFixed(2) || '0.00' }}
-                  </span>
-                </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'bg-red-500' :
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
-                    ]"
-                    :style="{ width: Math.min((selectedKey.usage_5h / selectedKey.rate_limit_5h) * 100, 100) + '%' }"
-                  />
-                </div>
-              </div>
-            </UFormField>
-
-            <!-- Daily Limit -->
-            <UFormField :label="t('keys.rateLimit1d')" size="lg">
-              <UInput v-model.number="formData.rate_limit_1d" type="number" step="0.01" min="0" size="lg" :ui="{ base: 'py-[11px]' }" class="w-full" :placeholder="'0'">
-                <template #leading><span class="text-sm text-muted">$</span></template>
-              </UInput>
-              <!-- Usage info (edit mode only) -->
-              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0" class="mt-2">
-                <div class="rounded-md bg-elevated px-3 py-2 text-sm">
-                  <span :class="[
-                    'font-medium',
-                    selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-red-500' :
-                    selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'text-yellow-500' :
-                    'text-highlighted'
-                  ]">
-                    ${{ selectedKey.usage_1d?.toFixed(4) || '0.0000' }}
-                  </span>
-                  <span class="mx-2 text-dimmed">/</span>
-                  <span class="text-muted">
-                    ${{ selectedKey.rate_limit_1d?.toFixed(2) || '0.00' }}
-                  </span>
-                </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'bg-red-500' :
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
-                    ]"
-                    :style="{ width: Math.min((selectedKey.usage_1d / selectedKey.rate_limit_1d) * 100, 100) + '%' }"
-                  />
-                </div>
-              </div>
-            </UFormField>
-
-            <!-- 7-Day Limit -->
-            <UFormField :label="t('keys.rateLimit7d')" size="lg">
-              <UInput v-model.number="formData.rate_limit_7d" type="number" step="0.01" min="0" size="lg" :ui="{ base: 'py-[11px]' }" class="w-full" :placeholder="'0'">
-                <template #leading><span class="text-sm text-muted">$</span></template>
-              </UInput>
-              <!-- Usage info (edit mode only) -->
-              <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="mt-2">
-                <div class="rounded-md bg-elevated px-3 py-2 text-sm">
-                  <span :class="[
-                    'font-medium',
-                    selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-red-500' :
-                    selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'text-yellow-500' :
-                    'text-highlighted'
-                  ]">
-                    ${{ selectedKey.usage_7d?.toFixed(4) || '0.0000' }}
-                  </span>
-                  <span class="mx-2 text-dimmed">/</span>
-                  <span class="text-muted">
-                    ${{ selectedKey.rate_limit_7d?.toFixed(2) || '0.00' }}
-                  </span>
-                </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'bg-red-500' :
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
-                    ]"
-                    :style="{ width: Math.min((selectedKey.usage_7d / selectedKey.rate_limit_7d) * 100, 100) + '%' }"
-                  />
-                </div>
-              </div>
-            </UFormField>
-
-            <!-- Reset Rate Limit button (edit mode only) -->
-            <div v-if="showEditModal && selectedKey && (selectedKey.rate_limit_5h > 0 || selectedKey.rate_limit_1d > 0 || selectedKey.rate_limit_7d > 0)">
-              <UButton color="neutral" variant="outline" icon="i-lucide-rotate-ccw" @click="confirmResetRateLimit">
-                {{ t('keys.resetRateLimitUsage') }}
-              </UButton>
-            </div>
-          </div>
-        </div>
-
-        <UFormField :label="t('keys.concurrencyLimit')" :help="t('keys.concurrencyLimitHint')" size="lg">
-          <UInput v-model.number="formData.concurrency_limit" type="number" min="0" max="100000" step="1" size="lg" :ui="{ base: 'py-[11px]' }" class="w-full" />
         </UFormField>
 
-        <!-- DeepSeek automatic tools -->
-        <div v-if="showDeepSeekToolInjection" class="space-y-2">
-          <div class="flex items-center justify-between gap-4">
-            <span id="key-deepseek-tool-injection-label" class="text-sm font-medium text-default">
-              {{ t('keys.deepseekToolInjection') }}
-            </span>
-            <Toggle
-              v-model="formData.deepseek_tool_injection_enabled"
-              aria-labelledby="key-deepseek-tool-injection-label"
-              aria-describedby="key-deepseek-tool-injection-hint"
-            />
-          </div>
-          <p id="key-deepseek-tool-injection-hint" class="text-xs text-muted">
-            {{ t('keys.deepseekToolInjectionHint') }}
-          </p>
-        </div>
-
-        <!-- Anthropic Cache TTL Override -->
-        <UFormField :label="t('keys.anthropicCacheTtlMode')" :help="t('keys.anthropicCacheTtlModeHint')" size="lg">
-          <Select
-            v-model="formData.anthropic_cache_ttl_mode"
-            :options="[
-              { value: 'inherit', label: t('keys.anthropicCacheTtlInherit') },
-              { value: 'off', label: t('keys.anthropicCacheTtlOff') },
-              { value: '1h', label: t('keys.anthropicCacheTtl1h') },
-              { value: '5m', label: t('keys.anthropicCacheTtl5m') },
-            ]"
-          />
-        </UFormField>
-
-        <!-- Expiration Section -->
         <div class="space-y-3">
           <div class="flex items-center justify-between gap-4">
             <span id="key-expiration-label" class="text-sm font-medium text-default">{{ t('keys.expiration') }}</span>
             <Toggle v-model="formData.enable_expiration" aria-labelledby="key-expiration-label" />
           </div>
-
-          <div v-if="formData.enable_expiration" class="space-y-4 pt-1">
-            <!-- Quick select buttons (for both create and edit mode) -->
-            <div class="flex flex-wrap gap-2">
+          <div v-if="formData.enable_expiration" class="space-y-3">
+            <div class="flex flex-wrap gap-1.5">
               <UButton
                 v-for="days in ['7', '30', '90']"
                 :key="days"
-                :color="formData.expiration_preset === days ? 'primary' : 'neutral'"
-                :variant="formData.expiration_preset === days ? 'soft' : 'outline'"
+                color="neutral"
+                :variant="formData.expiration_preset === days ? 'subtle' : 'outline'"
+                :class="formData.expiration_preset === days ? 'ring-accented font-semibold' : ''"
                 @click="setExpirationDays(parseInt(days))"
               >
                 {{ showEditModal ? t('keys.extendDays', { days }) : t('keys.expiresInDays', { days }) }}
               </UButton>
               <UButton
-                :color="formData.expiration_preset === 'custom' ? 'primary' : 'neutral'"
-                :variant="formData.expiration_preset === 'custom' ? 'soft' : 'outline'"
+                color="neutral"
+                :variant="formData.expiration_preset === 'custom' ? 'subtle' : 'outline'"
+                :class="formData.expiration_preset === 'custom' ? 'ring-accented font-semibold' : ''"
                 @click="formData.expiration_preset = 'custom'"
               >
                 {{ t('keys.customDate') }}
               </UButton>
             </div>
-
-            <!-- Date picker (always show for precise adjustment) -->
-            <UFormField :label="t('keys.expirationDate')" :help="t('keys.expirationDateHint')" size="lg">
-              <UInput v-model="formData.expiration_date" type="datetime-local" size="lg" class="w-full" :ui="{ base: 'dark:[color-scheme:dark] py-[11px]' }" />
+            <UFormField :label="t('keys.expirationDate')" :help="t('keys.expirationDateHint')">
+              <UInput v-model="formData.expiration_date" type="datetime-local" class="w-full" :ui="{ base: 'dark:[color-scheme:dark]' }" />
             </UFormField>
-
-            <!-- Current expiration display (only in edit mode) -->
-            <div v-if="showEditModal && selectedKey?.expires_at" class="text-sm">
+            <p v-if="showEditModal && selectedKey?.expires_at" class="text-sm">
               <span class="text-muted">{{ t('keys.currentExpiration') }}: </span>
-              <span class="font-medium text-highlighted">
-                {{ formatDateTime(selectedKey.expires_at) }}
-              </span>
-            </div>
+              <span class="font-medium text-highlighted">{{ formatDateTime(selectedKey.expires_at) }}</span>
+            </p>
           </div>
         </div>
+
+        <UCollapsible v-model:open="advancedOpen" class="border-t border-default pt-3">
+          <UButton
+            color="neutral"
+            variant="ghost"
+            trailing-icon="i-lucide-chevron-down"
+            class="-mx-2.5"
+            :ui="{ trailingIcon: 'transition-transform group-data-[state=open]:rotate-180' }"
+            :label="t('keys.advancedOptions')"
+          />
+          <template #content>
+            <div class="space-y-4 pt-3">
+              <div v-if="!showEditModal" class="space-y-3">
+                <div class="flex items-center justify-between gap-4">
+                  <span id="key-custom-key-label" class="text-sm font-medium text-default">{{ t('keys.customKeyLabel') }}</span>
+                  <Toggle v-model="formData.use_custom_key" aria-labelledby="key-custom-key-label" />
+                </div>
+                <UFormField
+                  v-if="formData.use_custom_key"
+                  :error="customKeyError || undefined"
+                  :help="customKeyError ? undefined : t('keys.customKeyHint')"
+                >
+                  <UInput v-model="formData.custom_key" type="text" class="w-full" :ui="{ base: 'font-mono' }" :placeholder="t('keys.customKeyPlaceholder')" />
+                </UFormField>
+              </div>
+
+              <div class="space-y-3">
+                <div class="flex items-center justify-between gap-4">
+                  <span id="key-ip-restriction-label" class="text-sm font-medium text-default">{{ t('keys.ipRestriction') }}</span>
+                  <Toggle v-model="formData.enable_ip_restriction" aria-labelledby="key-ip-restriction-label" />
+                </div>
+                <template v-if="formData.enable_ip_restriction">
+                  <UFormField :label="t('keys.ipWhitelist')" :help="t('keys.ipWhitelistHint')">
+                    <UTextarea v-model="formData.ip_whitelist" :rows="3" class="w-full" :ui="{ base: 'font-mono text-sm' }" :placeholder="t('keys.ipWhitelistPlaceholder')" />
+                  </UFormField>
+                  <UFormField :label="t('keys.ipBlacklist')" :help="t('keys.ipBlacklistHint')">
+                    <UTextarea v-model="formData.ip_blacklist" :rows="3" class="w-full" :ui="{ base: 'font-mono text-sm' }" :placeholder="t('keys.ipBlacklistPlaceholder')" />
+                  </UFormField>
+                </template>
+              </div>
+
+              <div class="space-y-3">
+                <div class="flex items-center justify-between gap-4">
+                  <span id="key-rate-limit-label" class="text-sm font-medium text-default">{{ t('keys.rateLimitSection') }}</span>
+                  <Toggle v-model="formData.enable_rate_limit" aria-labelledby="key-rate-limit-label" />
+                </div>
+                <template v-if="formData.enable_rate_limit">
+                  <p class="text-xs text-muted">{{ t('keys.rateLimitHint') }}</p>
+                  <UFormField :label="t('keys.rateLimit5h')">
+                    <UInput v-model.number="formData.rate_limit_5h" type="number" step="0.01" min="0" class="w-full" placeholder="0">
+                      <template #leading><span class="text-sm text-muted">$</span></template>
+                    </UInput>
+                    <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0" class="mt-2 space-y-1">
+                      <p class="text-sm tabular-nums"><span class="font-medium" :class="limitTextClass(selectedKey.usage_5h, selectedKey.rate_limit_5h)">${{ selectedKey.usage_5h?.toFixed(4) || '0.0000' }}</span><span class="mx-2 text-dimmed">/</span><span class="text-muted">${{ selectedKey.rate_limit_5h?.toFixed(2) || '0.00' }}</span></p>
+                      <UProgress :model-value="limitPercent(selectedKey.usage_5h, selectedKey.rate_limit_5h)" :color="limitColor(selectedKey.usage_5h, selectedKey.rate_limit_5h)" size="xs" />
+                    </div>
+                  </UFormField>
+                  <UFormField :label="t('keys.rateLimit1d')">
+                    <UInput v-model.number="formData.rate_limit_1d" type="number" step="0.01" min="0" class="w-full" placeholder="0">
+                      <template #leading><span class="text-sm text-muted">$</span></template>
+                    </UInput>
+                    <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0" class="mt-2 space-y-1">
+                      <p class="text-sm tabular-nums"><span class="font-medium" :class="limitTextClass(selectedKey.usage_1d, selectedKey.rate_limit_1d)">${{ selectedKey.usage_1d?.toFixed(4) || '0.0000' }}</span><span class="mx-2 text-dimmed">/</span><span class="text-muted">${{ selectedKey.rate_limit_1d?.toFixed(2) || '0.00' }}</span></p>
+                      <UProgress :model-value="limitPercent(selectedKey.usage_1d, selectedKey.rate_limit_1d)" :color="limitColor(selectedKey.usage_1d, selectedKey.rate_limit_1d)" size="xs" />
+                    </div>
+                  </UFormField>
+                  <UFormField :label="t('keys.rateLimit7d')">
+                    <UInput v-model.number="formData.rate_limit_7d" type="number" step="0.01" min="0" class="w-full" placeholder="0">
+                      <template #leading><span class="text-sm text-muted">$</span></template>
+                    </UInput>
+                    <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="mt-2 space-y-1">
+                      <p class="text-sm tabular-nums"><span class="font-medium" :class="limitTextClass(selectedKey.usage_7d, selectedKey.rate_limit_7d)">${{ selectedKey.usage_7d?.toFixed(4) || '0.0000' }}</span><span class="mx-2 text-dimmed">/</span><span class="text-muted">${{ selectedKey.rate_limit_7d?.toFixed(2) || '0.00' }}</span></p>
+                      <UProgress :model-value="limitPercent(selectedKey.usage_7d, selectedKey.rate_limit_7d)" :color="limitColor(selectedKey.usage_7d, selectedKey.rate_limit_7d)" size="xs" />
+                    </div>
+                  </UFormField>
+                  <UButton
+                    v-if="showEditModal && selectedKey && (selectedKey.rate_limit_5h > 0 || selectedKey.rate_limit_1d > 0 || selectedKey.rate_limit_7d > 0)"
+                    color="neutral"
+                    variant="outline"
+                    icon="i-lucide-rotate-ccw"
+                    @click="confirmResetRateLimit"
+                  >
+                    {{ t('keys.resetRateLimitUsage') }}
+                  </UButton>
+                </template>
+              </div>
+
+              <UFormField :label="t('keys.concurrencyLimit')" :help="t('keys.concurrencyLimitHint')">
+                <UInput v-model.number="formData.concurrency_limit" type="number" min="0" max="100000" step="1" class="w-full" />
+              </UFormField>
+
+              <UFormField :label="t('keys.anthropicCacheTtlMode')" :help="t('keys.anthropicCacheTtlModeHint')">
+                <Select
+                  v-model="formData.anthropic_cache_ttl_mode"
+                  :options="[
+                    { value: 'inherit', label: t('keys.anthropicCacheTtlInherit') },
+                    { value: 'off', label: t('keys.anthropicCacheTtlOff') },
+                    { value: '1h', label: t('keys.anthropicCacheTtl1h') },
+                    { value: '5m', label: t('keys.anthropicCacheTtl5m') },
+                  ]"
+                />
+              </UFormField>
+            </div>
+          </template>
+        </UCollapsible>
       </form>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="outline" size="lg" @click="closeModals">
+          <UButton color="neutral" variant="subtle" @click="closeModals">
             {{ t('common.cancel') }}
           </UButton>
           <UButton
             form="key-form"
             type="submit"
-            size="lg"
             :loading="submitting"
             :disabled="submitting"
             data-tour="key-form-submit"
@@ -966,11 +707,8 @@
       @close="closeCcsImportModal"
     >
       <div class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-gray-400">
-          {{ t('keys.ccsImport.description') }}
-        </p>
-        <div>
-          <label class="input-label" for="ccs-import-platform">{{ t('keys.ccsImport.platform') }}</label>
+        <p class="text-sm text-muted">{{ t('keys.ccsImport.description') }}</p>
+        <UFormField :label="t('keys.ccsImport.platform')" name="ccs-import-platform">
           <Select
             id="ccs-import-platform"
             :model-value="ccsImportApp"
@@ -978,9 +716,12 @@
             :aria-label="t('keys.ccsImport.platform')"
             @update:model-value="onCcsAppChange"
           />
-        </div>
-        <div>
-          <label class="input-label" for="ccs-import-model">{{ t('keys.ccsImport.model') }}</label>
+        </UFormField>
+        <UFormField
+          :label="t('keys.ccsImport.model')"
+          name="ccs-import-model"
+          :help="ccsModelsLoading ? t('keys.ccsImport.modelLoading') : t('keys.ccsImport.modelHint')"
+        >
           <Select
             id="ccs-import-model"
             :model-value="ccsImportModel"
@@ -992,102 +733,32 @@
             :aria-label="t('keys.ccsImport.model')"
             @update:model-value="onCcsModelChange"
           />
-          <p class="input-hint mt-1">
-            {{ ccsModelsLoading ? t('keys.ccsImport.modelLoading') : t('keys.ccsImport.modelHint') }}
-          </p>
-        </div>
+        </UFormField>
         <UAlert
           v-if="ccsImportDeeplinkUnsupported"
           color="warning"
           variant="subtle"
           icon="i-lucide-triangle-alert"
           :description="t('keys.ccsImport.deeplinkUnsupported')"
-          :ui="{ description: 'text-xs leading-5' }"
         />
       </div>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="outline" size="lg" @click="closeCcsImportModal">
+          <UButton color="neutral" variant="subtle" @click="closeCcsImportModal">
             {{ t('common.cancel') }}
           </UButton>
-          <UButton size="lg" :disabled="ccsImportDeeplinkUnsupported" @click="confirmCcsImport">
+          <UButton :disabled="ccsImportDeeplinkUnsupported" @click="confirmCcsImport">
             {{ t('common.import') }}
           </UButton>
         </div>
       </template>
     </BaseDialog>
-
-    <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
-    <Teleport to="body">
-      <div
-        v-if="groupSelectorKeyId !== null && dropdownPosition"
-        ref="dropdownRef"
-        class="animate-in fade-in slide-in-from-top-2 fixed z-100000020 w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-lg bg-default shadow-lg ring ring-default duration-200 sm:min-w-[380px]"
-        style="pointer-events: auto !important;"
-        :style="{
-          top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
-          bottom: dropdownPosition.bottom !== undefined ? dropdownPosition.bottom + 'px' : undefined,
-          left: dropdownPosition.left + 'px'
-        }"
-      >
-        <!-- Search box -->
-        <div class="border-b border-default p-2">
-          <UInput
-            v-model="groupSearchQuery"
-            type="text"
-            icon="i-lucide-search"
-            variant="soft"
-            class="w-full"
-            :placeholder="t('keys.searchGroup')"
-            @click.stop
-          />
-        </div>
-        <!-- Group list -->
-        <div class="max-h-80 overflow-y-auto p-1.5">
-          <button
-            v-for="option in filteredGroupOptions"
-            :key="option.value ?? 'null'"
-            @click="changeGroup(selectedKeyForGroup!, option.value)"
-            :class="[
-              'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
-              'border-b border-gray-100 last:border-0 dark:border-dark-700',
-              selectedKeyForGroup?.group_id === option.value ||
-              (!selectedKeyForGroup?.group_id && option.value === null)
-                ? 'bg-primary-50 dark:bg-primary-900/20'
-                : 'hover:bg-gray-100 dark:hover:bg-dark-700'
-            ]"
-            :title="option.description || undefined"
-          >
-            <GroupOptionItem
-              :name="option.label"
-              :platform="option.platform"
-              :subscription-type="option.subscriptionType"
-              :rate-multiplier="option.rate"
-              :user-rate-multiplier="option.userRate"
-              :peak-rate-enabled="option.peakRateEnabled"
-              :peak-start="option.peakStart"
-              :peak-end="option.peakEnd"
-              :peak-rate-multiplier="option.peakRateMultiplier"
-              :description="option.description"
-              :selected="
-                selectedKeyForGroup?.group_id === option.value ||
-                (!selectedKeyForGroup?.group_id && option.value === null)
-              "
-            />
-          </button>
-          <!-- Empty state when search has no results -->
-          <div v-if="filteredGroupOptions.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
-            {{ t('keys.noGroupFound') }}
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import '@/styles/console-workspace.css'
-	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+	import type { DropdownMenuItem } from '@nuxt/ui'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
@@ -1106,7 +777,6 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import Select from '@/components/common/Select.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Toggle from '@/components/common/Toggle.vue'
-	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
@@ -1252,6 +922,52 @@ const columns = computed<Column[]>(() =>
   allColumns.value.filter((col) => ALWAYS_VISIBLE_COLUMNS.has(col.key) || !hiddenColumns.has(col.key))
 )
 
+// "Display" menu: one checkbox per hideable column; the menu stays open while toggling.
+const columnMenuItems = computed<DropdownMenuItem[]>(() =>
+  toggleableColumns.value.map((col) => ({
+    label: col.label,
+    type: 'checkbox' as const,
+    checked: isColumnVisible(col.key),
+    onUpdateChecked(checked: boolean) {
+      if (checked !== isColumnVisible(col.key)) toggleColumn(col.key)
+    },
+    onSelect(event: Event) {
+      event.preventDefault()
+    }
+  }))
+)
+
+// Shared colour rules for quota and rate-limit bars: warn at 80 %, error when used up.
+const limitPercent = (used: number | null | undefined, limit: number) => Math.min(((used ?? 0) / limit) * 100, 100)
+const limitColor = (used: number | null | undefined, limit: number) =>
+  (used ?? 0) >= limit ? 'error' : (used ?? 0) >= limit * 0.8 ? 'warning' : 'primary'
+const limitTextClass = (used: number | null | undefined, limit: number) =>
+  (used ?? 0) >= limit ? 'text-error' : (used ?? 0) >= limit * 0.8 ? 'text-warning' : 'text-highlighted'
+
+const rateWindows = (row: ApiKey) => [
+  { label: '5h', limit: row.rate_limit_5h, used: row.usage_5h, resetAt: row.reset_5h_at },
+  { label: '1d', limit: row.rate_limit_1d, used: row.usage_1d, resetAt: row.reset_1d_at },
+  { label: '7d', limit: row.rate_limit_7d, used: row.usage_7d, resetAt: row.reset_7d_at }
+].filter((win) => win.limit > 0)
+
+const statusColor = (status: string) =>
+  status === 'active' ? 'success' : status === 'quota_exhausted' ? 'warning' : status === 'expired' ? 'error' : 'neutral'
+
+// Row "…" menu: everything except the two primary row actions (use key, edit).
+const rowMenuItems = (row: ApiKey): DropdownMenuItem[][] => [
+  [
+    ...(!publicSettings.value?.hide_ccs_import_button
+      ? [{ label: t('keys.importToCcSwitch'), icon: 'i-lucide-upload', onSelect: () => importToCcswitch(row) }]
+      : []),
+    {
+      label: row.status === 'active' ? t('keys.disable') : t('keys.enable'),
+      icon: row.status === 'active' ? 'i-lucide-ban' : 'i-lucide-circle-check',
+      onSelect: () => toggleKeyStatus(row)
+    }
+  ],
+  [{ label: t('common.delete'), icon: 'i-lucide-trash-2', color: 'error' as const, onSelect: () => confirmDelete(row) }]
+]
+
 const apiKeys = ref<ApiKey[]>([])
 const groups = ref<Group[]>([])
 const loading = ref(false)
@@ -1284,7 +1000,6 @@ const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
 const showCcsImportModal = ref(false)
-const showColumnDropdown = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
 const ccsImportApp = ref<CcSwitchApp>('claude')
 const ccsImportModel = ref('')
@@ -1320,25 +1035,11 @@ const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const publicSettings = ref<PublicSettings | null>(null)
 const customEndpoints = ref<CustomEndpoint[]>([])
-const dropdownRef = ref<HTMLElement | null>(null)
-const columnDropdownRef = ref<HTMLElement | null>(null)
-const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
-const groupButtonRefs = ref<Map<number, HTMLElement>>(new Map())
 let abortController: AbortController | null = null
 
-// Get the currently selected key for group change
-const selectedKeyForGroup = computed(() => {
-  if (groupSelectorKeyId.value === null) return null
-  return apiKeys.value.find((k) => k.id === groupSelectorKeyId.value) || null
-})
-
-const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance | null) => {
-  if (el instanceof HTMLElement) {
-    groupButtonRefs.value.set(keyId, el)
-  } else {
-    groupButtonRefs.value.delete(keyId)
-  }
-}
+// Rarely used key settings sit in a collapsed "Advanced options" block; it opens by
+// itself when the key being edited already uses one of them.
+const advancedOpen = ref(false)
 
 const formData = ref({
   name: '',
@@ -1498,6 +1199,11 @@ const selectKeyProvider = (provider: KeyProvider) => {
     formData.value.group_ids = []
   }
 }
+
+interface KeyProviderItem { value: KeyProvider; label: string; icons: GroupPlatform[]; disabled: boolean }
+const keyProviderItems = computed<KeyProviderItem[]>(() =>
+  keyProviders.value.map((provider) => ({ ...provider, disabled: !availableKeyProviders.value.has(provider.value) }))
+)
 
 const isSmartRoutingKey = (key: ApiKey) => (key.group_ids?.length ?? 0) > 1
 
@@ -1742,47 +1448,23 @@ const toggleKeyStatus = async (key: ApiKey) => {
   }
 }
 
-const openGroupSelector = (key: ApiKey) => {
+// The group cell is a per-row popover: positioning, outside clicks and Escape are
+// handled by UPopover; only one row's selector is open at a time.
+const setGroupSelectorOpen = (key: ApiKey, open: boolean) => {
+  if (!open) {
+    if (groupSelectorKeyId.value === key.id) groupSelectorKeyId.value = null
+    return
+  }
   if (isSmartRoutingKey(key)) {
     appStore.showError(t('keys.smartRoutingChangeInEditor'))
     return
   }
-  if (groupSelectorKeyId.value === key.id) {
-    groupSelectorKeyId.value = null
-    dropdownPosition.value = null
-  } else {
-    const buttonEl = groupButtonRefs.value.get(key.id)
-    if (buttonEl) {
-      const rect = buttonEl.getBoundingClientRect()
-      const dropdownEstHeight = 400 // estimated max dropdown height
-      const dropdownEstWidth = Math.min(380, window.innerWidth - 16)
-      const spaceBelow = window.innerHeight - rect.bottom
-      const spaceAbove = rect.top
-      // 夹取 left，避免窄屏下浮层超出视口右缘
-      const left = Math.max(8, Math.min(rect.left, window.innerWidth - dropdownEstWidth - 8))
-
-      if (spaceBelow < dropdownEstHeight && spaceAbove > spaceBelow) {
-        // Not enough space below, pop upward
-        dropdownPosition.value = {
-          bottom: window.innerHeight - rect.top + 4,
-          left
-        }
-      } else {
-        // Default: pop downward
-        dropdownPosition.value = {
-          top: rect.bottom + 4,
-          left
-        }
-      }
-    }
-    groupSelectorKeyId.value = key.id
-    groupSearchQuery.value = ''
-  }
+  groupSelectorKeyId.value = key.id
+  groupSearchQuery.value = ''
 }
 
 const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   groupSelectorKeyId.value = null
-  dropdownPosition.value = null
   if (isSmartRoutingKey(key)) {
     appStore.showError(t('keys.smartRoutingChangeInEditor'))
     return
@@ -1795,18 +1477,6 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
     loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToChangeGroup'))
-  }
-}
-
-const closeGroupSelector = (event: MouseEvent) => {
-  const target = event.target as HTMLElement
-  // Check if click is inside the dropdown or the trigger button
-  if (!target.closest('.group\\/dropdown') && !dropdownRef.value?.contains(target)) {
-    groupSelectorKeyId.value = null
-    dropdownPosition.value = null
-  }
-  if (columnDropdownRef.value && !columnDropdownRef.value.contains(target)) {
-    showColumnDropdown.value = false
   }
 }
 
@@ -2182,25 +1852,21 @@ onMounted(() => {
   loadUserGroupRates()
   loadPublicSettings()
   loadCustomEndpoints()
-  document.addEventListener('click', closeGroupSelector)
   resetTimer = setInterval(() => { now.value = new Date() }, 60000)
 })
 
+watch(
+  () => showCreateModal.value || showEditModal.value,
+  (open) => {
+    if (!open) return
+    const form = formData.value
+    advancedOpen.value = form.use_custom_key || form.enable_ip_restriction || form.enable_rate_limit ||
+      (form.concurrency_limit ?? 0) > 0 || form.anthropic_cache_ttl_mode !== 'inherit'
+  }
+)
+
 onUnmounted(() => {
-  document.removeEventListener('click', closeGroupSelector)
   if (resetTimer) clearInterval(resetTimer)
   ccsModelsAbort?.abort()
 })
 </script>
-
-<style scoped>
-/* Row actions: quiet ghost buttons, icon over a short label. */
-.key-row-action { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 6px; border-radius: 6px; color: var(--ui-text-muted); font-size: 11px; line-height: 14px; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
-.key-row-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
-.key-row-action:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
-.key-row-action--danger:hover { background: color-mix(in srgb, var(--ui-error) 10%, transparent); color: var(--ui-error); }
-.key-route-action { display: inline-flex; padding: 4px; border-radius: 6px; color: var(--ui-text-dimmed); transition: background-color 150ms ease, color 150ms ease; }
-.key-route-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
-.key-route-action--danger:hover { color: var(--ui-error); }
-@media (prefers-reduced-motion: reduce) { .key-row-action, .key-route-action { transition: none; } }
-</style>

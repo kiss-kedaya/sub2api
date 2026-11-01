@@ -64,42 +64,31 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="allEndpoints.length > 0" class="flex flex-wrap gap-2">
+  <div v-if="allEndpoints.length > 0" class="flex flex-wrap gap-1.5">
     <div
       v-for="(item, index) in allEndpoints"
       :key="index"
-      class="flex items-center gap-1.5 rounded-md border border-default bg-default px-2.5 py-1.5 text-xs shadow-xs transition-colors hover:border-accented dark:border-dark-600 dark:bg-dark-800 dark:shadow-none dark:hover:border-primary-700"
+      class="flex items-center gap-1.5 rounded-md py-0.5 pl-2.5 pr-0.5 text-xs ring ring-inset ring-default"
     >
-      <span class="font-medium text-toned dark:text-gray-300">{{ item.name }}</span>
-      <span
-        v-if="item.isDefault"
-        class="rounded-sm bg-elevated px-1 py-px text-[10px] font-medium leading-tight text-highlighted dark:bg-primary-900/30 dark:text-primary-400"
-      >{{ t('keys.endpoints.default') }}</span>
+      <span class="font-medium text-toned">{{ item.name }}</span>
+      <UBadge v-if="item.isDefault" color="neutral" variant="soft" size="sm">{{ t('keys.endpoints.default') }}</UBadge>
 
-      <span class="text-dimmed dark:text-dark-500">|</span>
-
-      <div class="group/endpoint relative flex items-center gap-1.5">
+      <div class="group/endpoint relative flex items-center gap-0.5">
+        <!-- Hover / focus hint above the URL, styled like UTooltip. It stays in the DOM so the
+             endpoint description is readable without hovering a separate icon. -->
         <div
-          class="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-max max-w-[24rem] -translate-x-1/2 translate-y-1 rounded-lg border border-default bg-default px-3 py-2.5 text-left opacity-0 shadow-lg transition-all duration-150 group-hover/endpoint:translate-y-0 group-hover/endpoint:opacity-100 group-focus-within/endpoint:translate-y-0 group-focus-within/endpoint:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_14px_36px_-20px_rgba(15,23,42,0.35)] dark:ring-1 dark:ring-slate-700/70"
+          class="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1.5 w-max max-w-[24rem] -translate-x-1/2 rounded-sm bg-default px-2.5 py-1.5 text-left opacity-0 shadow-sm ring ring-default transition-opacity duration-150 group-hover/endpoint:opacity-100 group-focus-within/endpoint:opacity-100"
         >
-          <p
-            v-if="item.description"
-            class="max-w-[24rem] wrap-break-word text-xs leading-5 text-toned dark:text-slate-200"
-          >
+          <p v-if="item.description" class="max-w-[24rem] wrap-break-word text-xs leading-5 text-highlighted">
             {{ item.description }}
           </p>
-          <p
-            class="flex items-center gap-1.5 text-[11px] leading-4 text-primary-600 dark:text-primary-300"
-            :class="item.description ? 'mt-1.5' : ''"
-          >
-            <span class="h-1.5 w-1.5 rounded-full bg-primary-500 dark:bg-primary-300"></span>
+          <p class="text-xs text-muted" :class="item.description ? 'mt-1' : ''">
             {{ tooltipHint(item.endpoint) }}
           </p>
-          <div class="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-default bg-default dark:border-slate-700 dark:bg-slate-900"></div>
         </div>
 
         <code
-          class="cursor-pointer font-mono text-muted decoration-gray-400 decoration-dashed underline-offset-2 hover:text-primary-600 hover:underline focus:text-primary-600 focus:underline focus:outline-hidden dark:text-gray-400 dark:decoration-gray-500 dark:hover:text-primary-400 dark:focus:text-primary-400"
+          class="cursor-pointer rounded-sm px-1 font-mono text-muted hover:text-highlighted focus:text-highlighted focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary"
           role="button"
           tabindex="0"
           @click="copy(item.endpoint)"
@@ -107,34 +96,27 @@ onBeforeUnmount(() => {
           @keydown.space.prevent="copy(item.endpoint)"
         >{{ item.endpoint }}</code>
 
-        <button
-          type="button"
-          class="rounded-sm p-0.5 transition-colors"
-          :class="copiedEndpoint === item.endpoint
-            ? 'text-emerald-500 dark:text-emerald-400'
-            : 'text-dimmed hover:text-highlighted dark:text-gray-500 dark:hover:text-primary-400'"
+        <UButton
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          :icon="copiedEndpoint === item.endpoint ? 'i-lucide-check' : 'i-lucide-copy'"
+          :class="copiedEndpoint === item.endpoint ? 'text-success' : ''"
           :aria-label="tooltipHint(item.endpoint)"
           @click="copy(item.endpoint)"
-        >
-          <svg v-if="copiedEndpoint === item.endpoint" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-          <svg v-else class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-        </button>
+        />
 
-        <a
-          :href="speedTestUrl(item.endpoint)"
+        <UButton
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          icon="i-lucide-zap"
+          :to="speedTestUrl(item.endpoint)"
           target="_blank"
           rel="noopener noreferrer"
-          class="rounded-sm p-0.5 text-dimmed transition-colors hover:text-amber-500 dark:text-gray-500 dark:hover:text-amber-400"
           :title="t('keys.endpoints.speedTest')"
-        >
-          <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-        </a>
+          :aria-label="t('keys.endpoints.speedTest')"
+        />
       </div>
     </div>
   </div>
