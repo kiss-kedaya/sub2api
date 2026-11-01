@@ -17,6 +17,7 @@
           <UButton icon="i-lucide-plus" :label="t('payment.admin.createPlan')" @click="openPlanEdit(null)" />
         </template>
       </AdminPageHeader>
+      <OrdersSubnav />
 
       <!-- Plans Table -->
       <DataTable :columns="planColumns" :data="plans" :loading="plansLoading">
@@ -78,6 +79,7 @@ import type { AdminGroup } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import OrdersSubnav from './OrdersSubnav.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'

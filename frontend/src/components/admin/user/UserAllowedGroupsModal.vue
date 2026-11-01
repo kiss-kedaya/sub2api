@@ -43,7 +43,7 @@
                   :placeholder="String(config.defaultRate)"
                   class="w-24"
                   :ui="{ base: noSpinner }"
-                  @update:model-value="(value) => updateCustomRate(config.groupId, String(value ?? ''))"
+                  @update:model-value="(value: unknown) => updateCustomRate(config.groupId, String(value ?? ''))"
                 />
               </UFormField>
             </li>
@@ -86,7 +86,7 @@
                   :placeholder="String(config.defaultRate)"
                   class="w-24"
                   :ui="{ base: noSpinner }"
-                  @update:model-value="(value) => updateCustomRate(config.groupId, String(value ?? ''))"
+                  @update:model-value="(value: unknown) => updateCustomRate(config.groupId, String(value ?? ''))"
                 />
               </UFormField>
             </li>

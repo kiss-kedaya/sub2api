@@ -93,6 +93,8 @@ describe('AdminPaymentPlansView', () => {
           GroupBadge: true,
           Icon: true,
           PlanEditDialog: true,
+          // The area sub-nav renders router links; this spec mounts without a router.
+          OrdersSubnav: true,
         },
       },
     })

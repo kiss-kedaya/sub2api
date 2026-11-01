@@ -436,6 +436,22 @@ export default {
     users: {
       displayColumns: '显示列',
       advancedOptions: '高级选项',
+      detail: {
+        title: '用户详情',
+        quickLook: '用户概览',
+        openDetail: '查看详情',
+        back: '返回用户列表',
+        notFound: '用户不存在或已删除',
+        tabs: { profile: '资料', balance: '余额', keys: 'API 密钥', usage: '用量', subscriptions: '订阅' },
+        usageTitle: '用量统计',
+        requests: '请求数',
+        cost: '费用',
+        tokens: 'Token',
+        viewAllUsage: '在使用记录中查看',
+        noSubscriptions: '暂无订阅',
+        manageKeys: '管理密钥分组',
+        quota: '平台额度'
+      },
       title: '用户管理',
       description: '管理用户账户和权限',
       createUser: '创建用户',

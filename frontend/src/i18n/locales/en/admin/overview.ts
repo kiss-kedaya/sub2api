@@ -436,6 +436,22 @@ export default {
     users: {
       displayColumns: 'Columns',
       advancedOptions: 'Advanced options',
+      detail: {
+        title: 'User detail',
+        quickLook: 'User overview',
+        openDetail: 'Open detail',
+        back: 'Back to users',
+        notFound: 'User not found or deleted',
+        tabs: { profile: 'Profile', balance: 'Balance', keys: 'API keys', usage: 'Usage', subscriptions: 'Subscriptions' },
+        usageTitle: 'Usage stats',
+        requests: 'Requests',
+        cost: 'Cost',
+        tokens: 'Tokens',
+        viewAllUsage: 'View in usage records',
+        noSubscriptions: 'No subscriptions',
+        manageKeys: 'Manage key groups',
+        quota: 'Platform quotas'
+      },
       title: 'User Management',
       description: 'Manage users and their permissions',
       createUser: 'Create User',

@@ -2,6 +2,7 @@
   <AppLayout>
     <div class="space-y-4">
       <AdminPageHeader :title="t('nav.orderManagement')" />
+      <OrdersSubnav />
       <!-- Toolbar row (template customers page) -->
       <PageToolbar>
         <template #left>
@@ -127,6 +128,7 @@ import type { PaymentOrder } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
+import OrdersSubnav from './OrdersSubnav.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'

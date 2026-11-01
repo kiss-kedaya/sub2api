@@ -19,7 +19,7 @@
           v-if="enableConcurrency"
           id="bulk-concurrency"
           :model-value="String(concurrencyValue)"
-          @update:model-value="(value) => (concurrencyValue = String(value ?? ''))"
+          @update:model-value="(value: unknown) => (concurrencyValue = String(value ?? ''))"
           type="number"
           min="0"
           step="1"
@@ -39,7 +39,7 @@
           <UInput
             id="bulk-rpm-limit"
             :model-value="String(rpmLimitValue)"
-            @update:model-value="(value) => (rpmLimitValue = String(value ?? ''))"
+            @update:model-value="(value: unknown) => (rpmLimitValue = String(value ?? ''))"
             type="number"
             min="0"
             step="1"

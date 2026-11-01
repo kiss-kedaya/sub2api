@@ -519,6 +519,56 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    // User detail (phase 3): sub-pages for profile, balance, keys, usage and subscriptions
+    path: '/admin/users/:id(\\d+)',
+    component: () => import('@/views/admin/users/AdminUserDetailView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'User Detail',
+      titleKey: 'admin.users.detail.title',
+      parent: 'AdminUsers'
+    },
+    children: [
+      {
+        path: '',
+        name: 'AdminUserDetail',
+        redirect: (to) => `/admin/users/${String(to.params.id)}/profile`,
+        meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'admin.users.detail.title', parent: 'AdminUsers' }
+      },
+      {
+        path: 'profile',
+        name: 'AdminUserDetailProfile',
+        component: () => import('@/views/admin/users/UserDetailProfile.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'admin.users.detail.title', parent: 'AdminUsers' }
+      },
+      {
+        path: 'balance',
+        name: 'AdminUserDetailBalance',
+        component: () => import('@/views/admin/users/UserDetailBalance.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'admin.users.detail.title', parent: 'AdminUsers' }
+      },
+      {
+        path: 'keys',
+        name: 'AdminUserDetailKeys',
+        component: () => import('@/views/admin/users/UserDetailKeys.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'admin.users.detail.title', parent: 'AdminUsers' }
+      },
+      {
+        path: 'usage',
+        name: 'AdminUserDetailUsage',
+        component: () => import('@/views/admin/users/UserDetailUsage.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'admin.users.detail.title', parent: 'AdminUsers' }
+      },
+      {
+        path: 'subscriptions',
+        name: 'AdminUserDetailSubscriptions',
+        component: () => import('@/views/admin/users/UserDetailSubscriptions.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'admin.users.detail.title', parent: 'AdminUsers' }
+      }
+    ]
+  },
+  {
     path: '/admin/groups',
     name: 'AdminGroups',
     component: () => import('@/views/admin/GroupsView.vue'),

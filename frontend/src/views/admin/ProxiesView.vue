@@ -107,7 +107,7 @@
               <UCheckbox
                 :model-value="allVisibleSelected"
                 :aria-label="t('common.all')"
-                @update:model-value="(value) => toggleVisible(!!value)"
+                @update:model-value="(value: unknown) => toggleVisible(!!value)"
               />
             </div>
           </template>
@@ -117,7 +117,7 @@
               <UCheckbox
                 :model-value="selectedProxyIds.has(row.id)"
                 :aria-label="row.name"
-                @update:model-value="(value) => (value ? select(row.id) : deselect(row.id))"
+                @update:model-value="(value: unknown) => (value ? select(row.id) : deselect(row.id))"
               />
             </div>
           </template>
@@ -302,7 +302,7 @@
         <UTabs
           :model-value="createMode"
           :items="createModeTabs"
-          @update:model-value="(value) => (createMode = value === 'batch' ? 'batch' : 'standard')"
+          @update:model-value="(value: unknown) => (createMode = value === 'batch' ? 'batch' : 'standard')"
           :content="false"
           variant="link"
           size="sm"

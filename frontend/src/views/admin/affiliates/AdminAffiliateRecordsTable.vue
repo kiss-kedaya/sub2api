@@ -3,6 +3,7 @@
     <TablePageLayout>
       <template #filters>
         <AdminPageHeader class="mb-4" :title="t(pageHeaderKeys.title)" :description="t(pageHeaderKeys.description)" />
+        <AffiliatesSubnav />
         <!-- Toolbar row (template customers page) -->
         <PageToolbar>
           <template #left>
@@ -156,6 +157,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
+import AffiliatesSubnav from './AffiliatesSubnav.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'

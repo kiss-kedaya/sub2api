@@ -76,7 +76,7 @@
                   type="number"
                   step="any"
                   class="w-full"
-                  @update:model-value="(value) => setBalanceValue(groupIndex, condIndex, String(value ?? ''))"
+                  @update:model-value="(value: unknown) => setBalanceValue(groupIndex, condIndex, String(value ?? ''))"
                 />
               </UFormField>
             </template>

@@ -78,7 +78,7 @@
                     { value: '', label: getAttributeDefinitionName(Number(attrId)) },
                     ...(getAttributeDefinition(Number(attrId))?.options || [])
                   ]"
-                  @update:model-value="(val) => { updateAttributeFilter(Number(attrId), String(val ?? '')); applyFilter() }"
+                  @update:model-value="(val: unknown) => { updateAttributeFilter(Number(attrId), String(val ?? '')); applyFilter() }"
                 />
                 <UInput
                   v-else
@@ -86,7 +86,7 @@
                   :type="getAttributeDefinition(Number(attrId))?.type === 'number' ? 'number' : 'text'"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
                   class="w-full"
-                  @update:model-value="(val) => updateAttributeFilter(Number(attrId), String(val ?? ''))"
+                  @update:model-value="(val: unknown) => updateAttributeFilter(Number(attrId), String(val ?? ''))"
                   @keyup.enter="applyFilter"
                 />
               </div>
@@ -181,7 +181,9 @@
           default-sort-key="created_at"
           default-sort-order="desc"
           :sort-storage-key="USER_SORT_STORAGE_KEY"
+          clickable-rows
           @sort="handleSort"
+          @row-click="openQuickLook"
           @update:selected-keys="handleSelectedKeysUpdate"
         >
           <template #cell-email="{ value }">
@@ -226,7 +228,7 @@
           </template>
 
           <template #cell-groups="{ row }">
-            <div v-if="allGroups.length > 0" class="flex flex-col items-start gap-0.5">
+            <div v-if="allGroups.length > 0" class="flex flex-col items-start gap-0.5" @click.stop>
               <!-- Exclusive groups: the menu lists them; picking one opens the replace dialog -->
               <UDropdownMenu
                 v-if="getUserGroups(row).exclusive.length > 0"
@@ -282,7 +284,7 @@
           </template>
 
           <template #cell-balance="{ value, row }">
-            <div class="flex items-center gap-1">
+            <div class="flex items-center gap-1" @click.stop>
               <UTooltip :text="t('admin.users.balanceHistoryTip')">
                 <UButton
                   color="neutral"
@@ -311,7 +313,7 @@
               size="sm"
               class="-mx-2 text-left"
               :title="t('admin.users.platformQuota.cellColumnTooltip')"
-              @click="handlePlatformQuota(row)"
+              @click.stop="handlePlatformQuota(row)"
             >
               <UserPlatformQuotaCell :quotas="platformQuotaStats[row.id]" />
             </UButton>
@@ -384,7 +386,7 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center justify-end gap-0.5">
+            <div class="flex items-center justify-end gap-0.5" @click.stop>
               <AdminRowAction :label="t('common.edit')" icon="edit" tone="primary" @click="handleEdit(row)" />
               <AdminRowAction
                 v-if="row.role !== 'admin'"
@@ -452,6 +454,16 @@
     <UserBalanceHistoryModal :show="showBalanceHistoryModal" :user="balanceHistoryUser" @close="closeBalanceHistoryModal" @deposit="handleDepositFromHistory" @withdraw="handleWithdrawFromHistory" />
     <GroupReplaceModal :show="showGroupReplaceModal" :user="groupReplaceUser" :old-group="groupReplaceOldGroup" :all-groups="allGroups" @close="closeGroupReplaceModal" @success="loadUsers" />
     <UserAttributesConfigModal :show="showAttributesModal" @close="handleAttributesModalClose" />
+    <UserQuickLookSlideover
+      v-model:open="quickLookOpen"
+      :user="quickLookUser"
+      @edit="fromQuickLook(handleEdit)"
+      @deposit="fromQuickLook(handleDeposit)"
+      @withdraw="fromQuickLook(handleWithdraw)"
+      @keys="fromQuickLook(handleViewApiKeys)"
+      @groups="fromQuickLook(handleAllowedGroups)"
+      @history="fromQuickLook(handleBalanceHistory)"
+    />
   </AppLayout>
 </template>
 
@@ -497,6 +509,7 @@ import UserAllowedGroupsModal from '@/components/admin/user/UserAllowedGroupsMod
 import UserBalanceModal from '@/components/admin/user/UserBalanceModal.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
 import GroupReplaceModal from '@/components/admin/user/GroupReplaceModal.vue'
+import UserQuickLookSlideover from '@/components/admin/user/UserQuickLookSlideover.vue'
 
 const appStore = useAppStore()
 
@@ -1513,6 +1526,19 @@ const handleWithdrawFromHistory = () => {
   if (balanceHistoryUser.value) {
     handleWithdraw(balanceHistoryUser.value)
   }
+}
+
+// Row click: quick look slideover; its buttons close it and open the list's own dialogs
+const quickLookOpen = ref(false)
+const quickLookUser = ref<AdminUser | null>(null)
+const openQuickLook = (user: AdminUser) => {
+  quickLookUser.value = user
+  quickLookOpen.value = true
+}
+const fromQuickLook = (action: (user: AdminUser) => void) => {
+  const user = quickLookUser.value
+  quickLookOpen.value = false
+  if (user) action(user)
 }
 
 onMounted(async () => {
