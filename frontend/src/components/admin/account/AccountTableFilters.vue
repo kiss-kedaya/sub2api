@@ -1,6 +1,9 @@
 <template>
   <div ref="rootEl" class="account-table-filters">
-    <div class="account-filter-toolbar">
+    <!-- In the console frame this row goes to the toolbar under the navbar (left: search and
+         filters, right: actions); without the frame it renders here. -->
+    <PageToolbar>
+      <template #left>
       <div class="account-filter-search-row">
         <SearchInput
           :model-value="searchQuery"
@@ -44,10 +47,13 @@
           </UBadge>
         </UButton>
       </div>
-      <div class="account-filter-actions">
-        <slot name="actions"></slot>
-      </div>
-    </div>
+      </template>
+      <template v-if="$slots.actions" #right>
+        <div class="account-filter-actions">
+          <slot name="actions"></slot>
+        </div>
+      </template>
+    </PageToolbar>
 
     <div
       v-show="filtersExpanded"
@@ -117,6 +123,7 @@ import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SearchInput from '@/components/common/SearchInput.vue'
 import Select from '@/components/common/Select.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import type { AdminGroup } from '@/types'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 
@@ -199,8 +206,11 @@ const updateStatus = (value: string | number | boolean | null) => updateFilter('
 const updatePrivacyMode = (value: string | number | boolean | null) => updateFilter('privacy_mode', value)
 const updateGroup = (value: string | number | boolean | null) => updateFilter('group', value)
 
-// The toggle is a UButton; focus the button element it renders.
-const focusToggle = () => rootEl.value?.querySelector<HTMLElement>('.account-filter-toggle')?.focus()
+// The toggle is a UButton; focus the button element it renders. In the console frame the
+// toolbar row is teleported out of this component, so look it up in the document.
+const focusToggle = () =>
+  (rootEl.value?.querySelector<HTMLElement>('.account-filter-toggle') ??
+    document.querySelector<HTMLElement>('.account-filter-toggle'))?.focus()
 
 const clearFilter = (key: FilterKey) => {
   const index = activeFilters.value.findIndex(filter => filter.key === key)
