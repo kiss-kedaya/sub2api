@@ -24,7 +24,13 @@ func AnthropicToResponsesWithOptions(req *AnthropicRequest, opts *AnthropicToRes
 	if err := openai.ValidateGPT61SolReasoningEffort(req.Model, anthropicReasoningEffort(req)); err != nil {
 		return nil, err
 	}
-	input, err := convertAnthropicToResponsesInputWithThinking(req.System, req.Messages, opts != nil && opts.PreserveThinkingContent)
+	var input []ResponsesInputItem
+	var err error
+	if opts != nil && opts.PreserveThinkingContent {
+		input, err = convertAnthropicToResponsesInputWithThinking(req.System, req.Messages, true)
+	} else {
+		input, err = convertAnthropicToResponsesInput(req.System, req.Messages)
+	}
 	if err != nil {
 		return nil, err
 	}
