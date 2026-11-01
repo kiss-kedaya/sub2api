@@ -86,7 +86,7 @@
                   :type="getAttributeDefinition(Number(attrId))?.type === 'number' ? 'number' : 'text'"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
                   class="w-full"
-                  @update:model-value="(val) => updateAttributeFilter(Number(attrId), String(val ?? ''))"
+                  @update:model-value="(val: string | number | null) => updateAttributeFilter(Number(attrId), String(val ?? ''))"
                   @keyup.enter="applyFilter"
                 />
               </div>
