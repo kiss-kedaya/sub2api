@@ -302,7 +302,7 @@
         <UTabs
           :model-value="createMode"
           :items="createModeTabs"
-          @update:model-value="(value) => (createMode = value === 'batch' ? 'batch' : 'standard')"
+          @update:model-value="(value: string | number) => (createMode = value === 'batch' ? 'batch' : 'standard')"
           :content="false"
           variant="link"
           size="sm"

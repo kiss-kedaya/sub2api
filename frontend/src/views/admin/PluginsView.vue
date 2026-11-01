@@ -125,7 +125,7 @@
               :step="1"
               :disabled="hasEnabledBinding(plugin)"
               :aria-label="t('admin.plugins.rollout')"
-              @update:model-value="(value) => setRollout(plugin.id, value)"
+              @update:model-value="(value: number | number[] | undefined) => setRollout(plugin.id, value)"
             />
           </div>
 
