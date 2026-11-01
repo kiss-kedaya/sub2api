@@ -1,14 +1,14 @@
 <template>
-  <div class="card">
-    <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-      <h2 class="text-lg font-medium text-gray-900 dark:text-white">
+  <div class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+    <div class="border-b border-default px-5 py-4 sm:px-6">
+      <h2 class="text-base font-semibold text-highlighted">
         {{ title || t('profile.bark.title') }}
       </h2>
-      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      <p class="mt-1 text-sm text-muted">
         {{ description || t('profile.bark.description') }}
       </p>
     </div>
-    <div class="px-6 py-6 space-y-6">
+    <div class="space-y-6 p-5 sm:p-6">
       <div v-if="loadError" role="alert" class="text-sm text-red-600 dark:text-red-400">
         <p>{{ loadError }}</p>
         <button type="button" class="btn btn-secondary btn-sm mt-2" :disabled="loading" @click="refresh">{{ t('common.refresh') }}</button>
