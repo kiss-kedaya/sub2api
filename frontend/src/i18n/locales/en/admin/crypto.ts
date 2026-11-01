@@ -271,5 +271,13 @@ export default {
     mnemonicsCopiedPart: 'Copied part {part} of the {wallet} mnemonic. Clear it from the clipboard immediately.',
     mnemonicsClipboardFailed: 'The browser could not copy. Reveal only this section and record it on secure offline media.',
     mnemonicsInvalidResponse: 'The wallet returned incomplete data. No mnemonic was displayed; check the server export response.',
+    saveTitle: 'Channel configuration',
+    walletStatusLabel: 'Wallet status',
+    walletToolsLabel: 'Mnemonics',
+    columns: 'Columns',
+    allStatuses: 'All statuses',
+    pageSummary: 'Page {page} of {pages} · {total} total',
+    poolLow: 'Low',
+    gasInsufficient: 'Low balance',
   }
 }

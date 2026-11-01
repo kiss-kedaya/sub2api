@@ -32,6 +32,7 @@ export default {
   "manual": "Manual policy",
   "unavailable": "Unavailable",
   "empty": "No matching retained state on this page. Unconnected and unindexed sources remain unverified.",
+  "columns": "Columns",
   "previous": "Previous",
   "next": "Next",
   "release": "Release this source",

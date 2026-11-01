@@ -37,8 +37,8 @@ describe('ID1 rolling request diagnostics', () => {
   it('does not overwrite configuration or poll an unpinned instance before configuration loads', async () => {
     vi.mocked(captures.getConfig).mockRejectedValueOnce(new Error('Configuration unavailable'))
     const wrapper = mount(RequestCaptureView); await flushPromises()
-    expect(wrapper.get<HTMLInputElement>('[data-testid="id1-diagnostic-enabled"]').element.disabled).toBe(true)
-    expect(wrapper.get<HTMLButtonElement>('[data-testid="capture-config"] button').element.disabled).toBe(true)
+    expect(wrapper.get<HTMLButtonElement>('[data-testid="id1-diagnostic-enabled"]').element.disabled).toBe(true)
+    expect(wrapper.get<HTMLButtonElement>('[data-testid="capture-config-save"]').element.disabled).toBe(true)
     await wrapper.get('[data-testid="capture-config"]').trigger('submit'); await flushPromises()
     expect(captures.saveConfig).not.toHaveBeenCalled()
     expect(captures.listTasks).not.toHaveBeenCalled()
@@ -47,7 +47,9 @@ describe('ID1 rolling request diagnostics', () => {
 
   it('keeps both capture switches off by default and can read retained history while disabled', async () => {
     const wrapper = mount(RequestCaptureView); await flushPromises()
-    expect(wrapper.get<HTMLInputElement>('[data-testid="id1-diagnostic-enabled"]').element.checked).toBe(false)
+    // The capture switches are USwitch (<button role="switch">).
+    expect(wrapper.get('[data-testid="id1-diagnostic-enabled"]').attributes('aria-checked')).toBe('false')
+    expect(wrapper.get('[data-testid="capture-enabled"]').attributes('aria-checked')).toBe('false')
     expect(captures.listTasks).toHaveBeenCalled()
     expect(wrapper.text()).toContain('admin.requestCapture.expiredRecords')
     expect(wrapper.text()).toContain('admin.requestCapture.dropReasons.quota_exceeded')
@@ -66,10 +68,13 @@ describe('ID1 rolling request diagnostics', () => {
     expect(wrapper.text()).toContain('admin.requestCapture.allOutcomes')
     const row = wrapper.get('[data-testid="select-capture-diagnostic"]').element.closest('tr')!
     expect(row.textContent).not.toContain('admin.requestCapture.stop')
-    expect(row.querySelector<HTMLButtonElement>('button.text-red-600')?.disabled).toBe(true)
-    await wrapper.get('[data-testid="id1-diagnostic-enabled"]').setValue(false)
-    // Unsaved checkbox changes must not permit deleting an active diagnostic task.
-    expect(row.querySelector<HTMLButtonElement>('button.text-red-600')?.disabled).toBe(true)
+    expect(row.querySelector<HTMLButtonElement>('[data-testid="delete-capture"]')?.disabled).toBe(true)
+    const diagnosticSwitch = wrapper.get('[data-testid="id1-diagnostic-enabled"]')
+    expect(diagnosticSwitch.attributes('aria-checked')).toBe('true')
+    await diagnosticSwitch.trigger('click')
+    expect(diagnosticSwitch.attributes('aria-checked')).toBe('false')
+    // Unsaved switch changes must not permit deleting an active diagnostic task.
+    expect(row.querySelector<HTMLButtonElement>('[data-testid="delete-capture"]')?.disabled).toBe(true)
     await wrapper.get('[data-testid="capture-config"]').trigger('submit'); await flushPromises()
     expect(captures.saveConfig).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, id1_diagnostic_enabled: false }))
     expect(captures.stopTask).not.toHaveBeenCalled()

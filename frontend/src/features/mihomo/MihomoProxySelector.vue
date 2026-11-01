@@ -1,11 +1,11 @@
 <template>
   <div class="mt-3 space-y-2">
-    <p class="text-sm text-gray-600 dark:text-gray-400">{{ text('订阅、动态代理、地区规则与节点统一在 IP 管理中维护。', 'Manage subscriptions, dynamic proxies, region rules and nodes in IP Management.') }}</p>
+    <p class="text-sm text-muted">{{ text('订阅、动态代理、地区规则与节点统一在 IP 管理中维护。', 'Manage subscriptions, dynamic proxies, region rules and nodes in IP Management.') }}</p>
     <div class="flex flex-wrap gap-2">
-      <router-link to="/admin/proxies#subscriptions" class="btn btn-secondary">{{ text('前往 IP 管理', 'Open IP Management') }}</router-link>
-      <button type="button" class="btn btn-secondary" :disabled="pending" @click="select">{{ text('设为打票代理', 'Use for ticket harvesting') }}</button>
+      <UButton to="/admin/proxies#subscriptions" color="neutral" variant="outline" icon="i-lucide-network" :label="text('前往 IP 管理', 'Open IP Management')" />
+      <UButton color="neutral" variant="outline" :loading="pending" :disabled="pending" :label="text('设为打票代理', 'Use for ticket harvesting')" @click="select" />
     </div>
-    <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
+    <p v-if="error" role="alert" class="text-sm text-error">{{ error }}</p>
   </div>
 </template>
 <script setup lang="ts">

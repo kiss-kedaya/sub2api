@@ -1,44 +1,60 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-[1600px]" :class="activeTab === 'config' && draft ? 'pb-28' : 'pb-8'">
-      <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-600 dark:text-primary-400">{{ t('nav.securityAudit') }}</p>
-          <h1 class="mt-1 text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">{{ t('admin.promptAudit.title') }}</h1>
-          <p class="mt-2 max-w-3xl text-sm text-gray-500 dark:text-dark-300">{{ t('admin.promptAudit.description') }}</p>
-        </div>
-        <div v-if="draft" class="text-right text-xs text-gray-500 dark:text-dark-400">
-          <p>{{ t('admin.promptAudit.configVersion', { version: draft.config_version }) }}</p>
-          <p v-if="draft.updated_at" class="mt-1">{{ formatDate(draft.updated_at) }}</p>
-        </div>
-      </header>
-
-      <div v-if="loadErrors.config && !draft" role="alert" class="rounded-xl border border-red-200 bg-red-50 p-5 dark:border-red-900 dark:bg-red-950/30">
-        <p class="text-sm text-red-700 dark:text-red-300">{{ loadErrors.config }}</p>
-        <button type="button" class="btn btn-secondary btn-sm mt-3" @click="loadConfig">{{ t('admin.promptAudit.actions.retry') }}</button>
-      </div>
+    <div class="mx-auto flex max-w-[1600px] flex-col gap-4 pb-8 sm:gap-6">
+      <UAlert
+        v-if="loadErrors.config && !draft"
+        role="alert"
+        color="error"
+        variant="subtle"
+        icon="i-lucide-circle-alert"
+        :description="loadErrors.config"
+        :actions="[{ label: t('admin.promptAudit.actions.retry'), color: 'neutral', variant: 'outline', onClick: loadConfig }]"
+      />
 
       <template v-else>
-        <div class="mb-4" role="tablist" :aria-label="t('admin.promptAudit.title')">
-          <div class="tabs inline-flex">
-            <button
-              v-for="tab in pageTabs"
-              :key="tab.id"
-              type="button"
-              role="tab"
-              class="tab"
-              :class="{ 'tab-active': activeTab === tab.id }"
-              :aria-selected="activeTab === tab.id"
-              :data-test="`tab-${tab.id}`"
-              @click="activeTab = tab.id"
-            >
-              {{ tab.label }}
-            </button>
+        <PageToolbar>
+          <template #left>
+          <UTabs
+            :model-value="activeTab"
+            :items="pageTabs"
+            :content="false"
+            variant="link"
+            :aria-label="t('admin.promptAudit.title')"
+            :ui="{ list: 'border-b-0' }"
+            @update:model-value="selectTab"
+          />
+          </template>
+          <template #right>
+          <div class="flex items-center gap-2 text-xs text-muted">
+            <span v-if="draft">{{ t('admin.promptAudit.configVersion', { version: draft.config_version }) }}<template v-if="draft.updated_at"> · {{ formatDate(draft.updated_at) }}</template></span>
+            <UPopover :content="{ align: 'end' }">
+              <UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" :aria-label="t('admin.promptAudit.common.about')" :title="t('admin.promptAudit.common.about')" />
+              <template #content>
+                <p class="max-w-sm p-3 text-sm text-toned">{{ t('admin.promptAudit.description') }}</p>
+              </template>
+            </UPopover>
           </div>
-        </div>
+          </template>
+        </PageToolbar>
 
-        <main class="card px-4 sm:px-6 lg:px-8">
-          <div v-show="activeTab === 'config'" data-test="tab-panel-config">
+        <div class="min-w-0">
+          <div v-show="activeTab === 'config'" class="mx-auto flex w-full max-w-4xl flex-col gap-8 lg:gap-12" data-test="tab-panel-config">
+            <section v-if="draft" aria-labelledby="prompt-switches-title">
+              <UPageCard variant="naked" orientation="horizontal" class="mb-4" :ui="{ title: 'text-base' }">
+                <template #title><h2 id="prompt-switches-title">{{ t('admin.promptAudit.saveBar.title') }}</h2></template>
+              </UPageCard>
+              <UPageCard variant="subtle" :ui="{ container: 'divide-y divide-default' }">
+                <UFormField
+                  v-for="row in switchRows"
+                  :key="row.key"
+                  :label="row.label"
+                  class="flex items-center justify-between gap-2 not-last:pb-4"
+                >
+                  <USwitch :model-value="row.value" :disabled="row.disabled" :aria-label="row.label" :data-test="row.test" @update:model-value="toggleSwitch(row.key, $event)" />
+                </UFormField>
+              </UPageCard>
+            </section>
+
             <RuntimeOverview :runtime="runtime" :loading="loading.runtime" :error="loadErrors.runtime" @refresh="loadRuntime" />
 
             <template v-if="draft">
@@ -49,23 +65,23 @@
                 @update:endpoints="updateEndpoints"
                 @probe="runProbe"
               />
-              <div v-if="loadErrors.groups" role="alert" class="mt-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{{ loadErrors.groups }}</div>
+              <UAlert v-if="loadErrors.groups" role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="loadErrors.groups" />
               <PolicyPanel :draft="draft" :groups="groups" @update:draft="replaceDraft" />
             </template>
           </div>
 
-          <div v-show="activeTab === 'events'" data-test="tab-panel-events">
-            <div
+          <div v-show="activeTab === 'events'" class="flex flex-col gap-4" data-test="tab-panel-events">
+            <UAlert
               v-if="draft?.enabled && !draft.store_pass_events"
               data-test="pass-events-disabled-notice"
               role="status"
-              class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200"
-            >
-              <span>{{ t('admin.promptAudit.events.passEventsDisabled') }}</span>
-              <button type="button" class="btn btn-secondary btn-sm" @click="activeTab = 'config'">
-                {{ t('admin.promptAudit.events.openConfiguration') }}
-              </button>
-            </div>
+              color="warning"
+              variant="subtle"
+              icon="i-lucide-info"
+              orientation="horizontal"
+              :description="t('admin.promptAudit.events.passEventsDisabled')"
+              :actions="[{ label: t('admin.promptAudit.events.openConfiguration'), color: 'neutral', variant: 'outline', size: 'xs', onClick: openConfigTab }]"
+            />
             <EventWorkspace
               :events="events.items"
               :total="events.total"
@@ -86,28 +102,20 @@
               @preview-delete="requestFilterDeletePreview"
             />
           </div>
-        </main>
-      </template>
-    </div>
+        </div>
 
-    <div v-if="draft && activeTab === 'config'" class="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-12px_35px_rgba(15,23,42,0.08)] backdrop-blur-sm dark:border-dark-700/80 dark:bg-dark-900/95 dark:shadow-[0_-12px_35px_rgba(0,0,0,0.35)] lg:left-64">
-      <div class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
-        <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <SaveToggle :label="t('admin.promptAudit.saveBar.enabled')" :model-value="draft.enabled" data-test="enabled-toggle" @update:model-value="setEnabled" />
-          <SaveToggle :label="t('admin.promptAudit.saveBar.blocking')" :model-value="draft.blocking_enabled" :disabled="!draft.enabled" data-test="blocking-toggle" @update:model-value="setBlocking" />
-          <SaveToggle :label="t('admin.promptAudit.saveBar.blockingLatestTurnOnly')" :model-value="draft.blocking_latest_turn_only" :disabled="!draft.enabled || !draft.blocking_enabled" data-test="blocking-latest-turn-only-toggle" @update:model-value="replaceDraft({ ...draft!, blocking_latest_turn_only: $event })" />
-          <SaveToggle :label="t('admin.promptAudit.saveBar.storePass')" :model-value="draft.store_pass_events" data-test="store-pass-toggle" @update:model-value="replaceDraft({ ...draft!, store_pass_events: $event })" />
+        <!-- Pinned to the bottom of the scroll area so the long configuration can be saved from anywhere. -->
+        <div v-if="draft && activeTab === 'config'" class="sticky bottom-0 z-30 border-t border-default bg-default py-3">
+          <div class="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-end gap-3">
+            <span class="me-auto flex items-center gap-2 text-sm" :class="dirty ? 'text-warning' : 'text-muted'">
+              <UIcon :name="dirty ? 'i-lucide-circle-alert' : 'i-lucide-check'" class="size-4 shrink-0" />
+              {{ dirty ? t('admin.promptAudit.saveBar.dirty') : t('admin.promptAudit.saveBar.synced') }}
+            </span>
+            <UButton color="neutral" variant="subtle" :label="t('common.reset')" :disabled="!dirty || loading.saving" @click="resetDraft" />
+            <UButton :label="loading.saving ? t('common.saving') : t('common.save')" :loading="loading.saving" :disabled="!dirty || loading.saving" data-test="save-config" @click="saveConfig" />
+          </div>
         </div>
-        <div class="flex items-center gap-3">
-          <span class="text-sm" :class="dirty ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-dark-400'">
-            {{ dirty ? t('admin.promptAudit.saveBar.dirty') : t('admin.promptAudit.saveBar.synced') }}
-          </span>
-          <button type="button" class="btn btn-secondary" :disabled="!dirty || loading.saving" @click="resetDraft">{{ t('common.reset') }}</button>
-          <button type="button" class="btn btn-primary" :disabled="!dirty || loading.saving" data-test="save-config" @click="saveConfig">
-            {{ loading.saving ? t('common.saving') : t('common.save') }}
-          </button>
-        </div>
-      </div>
+      </template>
     </div>
 
     <ConfirmDialog
@@ -144,9 +152,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorCode, extractApiErrorMessage } from '@/utils/apiError'
@@ -176,8 +185,8 @@ const appStore = useAppStore()
 type PromptAuditPageTab = 'config' | 'events'
 const activeTab = ref<PromptAuditPageTab>('events')
 const pageTabs = computed(() => [
-  { id: 'events' as const, label: t('admin.promptAudit.tabs.events') },
-  { id: 'config' as const, label: t('admin.promptAudit.tabs.config') },
+  { value: 'events', label: t('admin.promptAudit.tabs.events'), icon: 'i-lucide-list-filter' },
+  { value: 'config', label: t('admin.promptAudit.tabs.config'), icon: 'i-lucide-settings-2' },
 ])
 const serverConfig = ref<PromptAuditDraft | null>(null)
 const draft = ref<PromptAuditDraft | null>(null)
@@ -200,40 +209,28 @@ const loading = reactive({ config: false, runtime: false, groups: false, events:
 const loadErrors = reactive<PromptLoadErrors>({ config: '', runtime: '', groups: '', events: '' })
 const dirty = computed(() => draftFingerprint(draft.value) !== draftFingerprint(serverConfig.value))
 
-const SaveToggle = defineComponent({
-  inheritAttrs: false,
-  props: { label: { type: String, required: true }, modelValue: { type: Boolean, required: true }, disabled: { type: Boolean, default: false } },
-  emits: ['update:modelValue'],
-  setup(props, { emit, attrs }) {
-    return () => h('label', { class: ['flex items-center gap-2.5 text-sm', props.disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'] }, [
-      h('button', {
-        ...attrs,
-        type: 'button',
-        role: 'switch',
-        'aria-checked': props.modelValue,
-        'aria-label': props.label,
-        disabled: props.disabled,
-        class: [
-          'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
-          props.modelValue ? 'bg-primary-600' : 'bg-gray-300 dark:bg-dark-600',
-          props.disabled ? 'cursor-not-allowed' : 'cursor-pointer',
-        ],
-        onClick: (event: MouseEvent) => {
-          event.preventDefault()
-          if (!props.disabled) emit('update:modelValue', !props.modelValue)
-        },
-      }, [
-        h('span', {
-          class: [
-            'pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ease-in-out',
-            props.modelValue ? 'translate-x-5' : 'translate-x-0',
-          ],
-        }),
-      ]),
-      h('span', { class: 'select-none text-gray-700 dark:text-dark-200' }, props.label),
-    ])
-  },
+type SwitchKey = 'enabled' | 'blocking' | 'latestTurnOnly' | 'storePass'
+const switchRows = computed(() => {
+  const value = draft.value
+  if (!value) return []
+  return [
+    { key: 'enabled' as const, label: t('admin.promptAudit.saveBar.enabled'), value: value.enabled, disabled: false, test: 'enabled-toggle' },
+    { key: 'blocking' as const, label: t('admin.promptAudit.saveBar.blocking'), value: value.blocking_enabled, disabled: !value.enabled, test: 'blocking-toggle' },
+    { key: 'latestTurnOnly' as const, label: t('admin.promptAudit.saveBar.blockingLatestTurnOnly'), value: value.blocking_latest_turn_only, disabled: !value.enabled || !value.blocking_enabled, test: 'blocking-latest-turn-only-toggle' },
+    { key: 'storePass' as const, label: t('admin.promptAudit.saveBar.storePass'), value: value.store_pass_events, disabled: false, test: 'store-pass-toggle' },
+  ]
 })
+function toggleSwitch(key: SwitchKey, value: boolean) {
+  if (!draft.value) return
+  if (key === 'enabled') setEnabled(value)
+  else if (key === 'blocking') setBlocking(value)
+  else if (key === 'latestTurnOnly') replaceDraft({ ...draft.value, blocking_latest_turn_only: value })
+  else replaceDraft({ ...draft.value, store_pass_events: value })
+}
+function selectTab(value: string | number) {
+  activeTab.value = value === 'config' ? 'config' : 'events'
+}
+function openConfigTab() { activeTab.value = 'config' }
 
 function errorMessage(error: unknown, fallbackKey: string): string {
   const code = extractApiErrorCode(error)
