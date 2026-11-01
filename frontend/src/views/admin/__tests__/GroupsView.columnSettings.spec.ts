@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 
 import type { AdminGroup } from '@/types'
 import GroupsView from '../GroupsView.vue'
@@ -34,6 +34,7 @@ const {
 
 const messages: Record<string, string> = {
   'admin.groups.columnSettings': 'Column Settings',
+  'admin.groups.displayColumns': 'Display',
   'admin.groups.columns.name': 'Name',
   'admin.groups.columns.id': 'ID',
   'admin.groups.columns.platform': 'Platform',
@@ -220,16 +221,29 @@ const mountView = async () => {
 const columnKeys = (wrapper: ReturnType<typeof mount>) =>
   wrapper.get('[data-test="columns"]').text().split(',').filter(Boolean)
 
+// Unmount after each test so teleported menus from earlier tests do not stay in <body>
+// (ids restart per app, so a stale menu could answer getElementById).
+enableAutoUnmount(afterEach)
+
+// The "Display" (显示列) control is a Nuxt UI dropdown menu: its content teleports to <body>,
+// so the checkbox items are looked up through the trigger's aria-controls id.
+const displayTrigger = (wrapper: ReturnType<typeof mount>) => wrapper.get('[data-testid="groups-display-columns"]')
+
 const openColumnSettings = async (wrapper: ReturnType<typeof mount>) => {
-  await wrapper.get('button[title="Column Settings"]').trigger('click')
+  const trigger = displayTrigger(wrapper)
+  expect(trigger.text()).toContain('Display')
+  await trigger.trigger('click')
+  await flushPromises()
 }
 
 const clickColumnToggle = async (wrapper: ReturnType<typeof mount>, label: string) => {
-  const button = wrapper
-    .findAll('button')
-    .find((item) => item.text().includes(label))
-  expect(button, `column toggle ${label}`).toBeTruthy()
-  await button!.trigger('click')
+  const menuId = displayTrigger(wrapper).attributes('aria-controls')
+  expect(menuId, 'display columns menu is open').toBeTruthy()
+  const menu = document.getElementById(menuId!)
+  const item = Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]') ?? [])
+    .find((el) => el.querySelector('[data-slot="itemLabel"]')?.textContent?.trim() === label)
+  expect(item, `column toggle ${label}`).toBeTruthy()
+  item!.click()
   await flushPromises()
 }
 
