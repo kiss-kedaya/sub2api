@@ -404,15 +404,7 @@ func TestDeepSeekNativeReasoningReplayKeepsEveryTurnByteForByte(t *testing.T) {
 	}
 	strip(before)
 	strip(after)
-	// A model assistant message after a completed tool output starts a new
-	// thinking turn. It must be demoted when that turn has no reasoning_text;
-	// tool calls and results themselves remain lossless.
-	expectedAssistant := after["input"].([]any)[4].(map[string]any)
-	expectedAssistant["role"] = "user"
-	expectedAssistant["content"].([]any)[0].(map[string]any)["type"] = "input_text"
-	before["input"].([]any)[4].(map[string]any)["role"] = "user"
-	before["input"].([]any)[4].(map[string]any)["content"].([]any)[0].(map[string]any)["type"] = "input_text"
-	require.Equal(t, before, after, "only missing reasoning and the unsafe post-tool assistant turn may change")
+	require.Equal(t, before, after, "only the missing reasoning content may change; every other byte must survive")
 
 	require.Len(t, after["input"].([]any), 7)
 	require.Equal(t, "第一问：😀 用户输入必须原样", gjson.GetBytes(out, "input.0.content.0.text").String())
