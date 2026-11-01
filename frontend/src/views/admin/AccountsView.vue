@@ -241,6 +241,9 @@
             </div>
           </template>
           <template #cell-usage="{ row }">
+            <!-- A fixed width lets the window stats and action row wrap instead of
+                 stretching the column under the sticky actions column. -->
+            <div class="w-60 max-w-60 whitespace-normal">
             <AccountUsageCell
               :account="row"
               :today-stats="todayStatsByAccountId[String(row.id)] ?? null"
@@ -253,6 +256,7 @@
               @account-updated="handleAccountUpdated"
               @usage-loaded="handleAccountUsageLoaded(row.id, $event)"
             />
+            </div>
           </template>
           <template #cell-custom_usage="{ row }">
             <CustomUsageCell
@@ -602,7 +606,11 @@ const showColumnsDropdown = ref(false)
 const hiddenColumns = reactive<Set<string>>(new Set())
 // Fresh layouts start with the most used columns; the rest are one click away in "列显示".
 // The account id also shows under the name while its own column is hidden.
-const DEFAULT_HIDDEN_COLUMNS = ['id', 'today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier', 'expires_at']
+// Saved layouts keep their own choice; only a fresh layout starts with this set.
+const DEFAULT_HIDDEN_COLUMNS = [
+  'id', 'today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier', 'expires_at',
+  'priority', 'created_at', 'custom_usage', 'upstream_billing_rate'
+]
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
