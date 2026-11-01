@@ -67,11 +67,10 @@ const examples = computed<HeaderExample[]>(() => {
         </template>
       </HelpTooltip>
     </div>
-    <input
+    <UInput
       v-model="model"
       data-testid="upstream-request-id-header"
-      type="text"
-      class="input"
+      class="w-full"
       :placeholder="t('admin.accounts.upstreamRequestIdHeaderPlaceholder')"
     />
   </div>

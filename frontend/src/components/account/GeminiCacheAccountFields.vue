@@ -1,33 +1,25 @@
 <template>
-  <section class="rounded-xl border border-gray-200 p-4 dark:border-dark-600">
-    <label class="flex cursor-pointer items-start gap-3">
-      <input
-        type="checkbox"
-        class="mt-1 h-4 w-4 rounded-sm border-gray-300 text-primary-600"
-        :checked="modelValue.enabled"
-        data-testid="gemini-explicit-cache-upstream"
-        @change="updateEnabled"
-      />
-      <span>
-        <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ copy.title }}</span>
-        <span class="mt-1 block text-xs leading-5 text-gray-500 dark:text-gray-400">{{ copy.hint }}</span>
-      </span>
-    </label>
-    <div v-if="modelValue.enabled" class="mt-4">
-      <label class="input-label" :for="ttlID">{{ copy.ttl }}</label>
-      <input
+  <section class="space-y-4">
+    <UCheckbox
+      :model-value="modelValue.enabled"
+      :label="copy.title"
+      :description="copy.hint"
+      data-testid="gemini-explicit-cache-upstream"
+      @update:model-value="setEnabled($event === true)"
+    />
+    <UFormField v-if="modelValue.enabled" :label="copy.ttl" :help="copy.ttlHint">
+      <UInput
         :id="ttlID"
         type="number"
         min="0"
         max="86400"
         step="1"
-        class="input"
-        :value="modelValue.maxTTLSeconds"
+        class="w-full"
+        :model-value="String(modelValue.maxTTLSeconds)"
         data-testid="gemini-explicit-cache-max-ttl"
-        @input="updateTTL"
+        @update:model-value="setTTL"
       />
-      <p class="input-hint">{{ copy.ttlHint }}</p>
-    </div>
+    </UFormField>
   </section>
 </template>
 
@@ -51,11 +43,12 @@ const copy = computed(() => locale.value.startsWith('zh') ? {
   ttl: 'Maximum upstream cache TTL (seconds)',
   ttlHint: '0 uses the site limit; maximum 86400 seconds. Storage is charged by model price and actual lifetime.'
 })
-function updateEnabled(event: Event) {
-  emit('update:modelValue', { ...props.modelValue, enabled: (event.target as HTMLInputElement).checked })
+function setEnabled(enabled: boolean) {
+  emit('update:modelValue', { ...props.modelValue, enabled })
 }
-function updateTTL(event: Event) {
-  const value = Number((event.target as HTMLInputElement).value)
+// UInput type=number emits a number (or '' when cleared).
+function setTTL(raw: unknown) {
+  const value = Number(raw)
   emit('update:modelValue', {
     ...props.modelValue,
     maxTTLSeconds: Number.isSafeInteger(value) && value > 0 ? Math.min(value, 86400) : 0

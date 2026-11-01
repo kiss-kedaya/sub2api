@@ -199,7 +199,7 @@ const updateStatus = (value: string | number | boolean | null) => updateFilter('
 const updatePrivacyMode = (value: string | number | boolean | null) => updateFilter('privacy_mode', value)
 const updateGroup = (value: string | number | boolean | null) => updateFilter('group', value)
 
-// The toggle is a UButton; focus its rendered <button>.
+// The toggle is a UButton; focus the button element it renders.
 const focusToggle = () => rootEl.value?.querySelector<HTMLElement>('.account-filter-toggle')?.focus()
 
 const clearFilter = (key: FilterKey) => {
