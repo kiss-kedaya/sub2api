@@ -3,25 +3,21 @@
     class="sidebar"
     :class="[
       sidebarCollapsed ? 'w-[72px]' : 'w-64',
-      { '-translate-x-full lg:translate-x-0': !mobileOpen, 'signal-sidebar': isConsoleSignal }
+      { '-translate-x-full lg:translate-x-0': !mobileOpen, 'sidebar-mobile-open': mobileOpen, 'signal-sidebar': isConsoleSignal }
     ]"
   >
-    <!-- Logo/Brand -->
+    <!-- Header (UDashboardSidebar header): logo, site name and version -->
     <div class="sidebar-header" :class="{ 'sidebar-header-collapsed': sidebarCollapsed }">
-      <!-- Custom Logo or Default Logo -->
       <router-link
         :to="homePath"
-        class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl shadow-glow transition-opacity hover:opacity-80"
+        class="sidebar-logo flex h-8 w-8 items-center justify-center overflow-hidden rounded-md transition-opacity hover:opacity-80"
+        :title="sidebarCollapsed ? siteName : undefined"
         @click="handleMenuItemClick(homePath)"
       >
         <img v-if="settingsLoaded" :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
       </router-link>
       <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-        <router-link
-          :to="homePath"
-          class="sidebar-brand-title text-lg font-bold text-[#2f2a2c] transition-colors hover:text-[#1d1a1b]"
-          @click="handleMenuItemClick(homePath)"
-        >
+        <router-link :to="homePath" class="sidebar-brand-title" @click="handleMenuItemClick(homePath)">
           {{ siteName }}
         </router-link>
         <!-- Version Badge -->
@@ -29,7 +25,7 @@
       </div>
     </div>
 
-    <!-- Navigation -->
+    <!-- Body: navigation (UNavigationMenu, vertical pills) -->
     <nav ref="sidebarNavRef" class="sidebar-nav scrollbar-hide">
       <!-- Admin View: Admin menu first, then personal menu -->
       <template v-if="isAdmin">
@@ -38,47 +34,54 @@
           <template v-for="item in adminNavItems" :key="item.path">
             <!-- Collapsible group (has children) -->
             <template v-if="item.children?.length">
+              <!-- Collapsed rail: the children open in a menu beside the rail. -->
+              <UDropdownMenu
+                v-if="sidebarCollapsed"
+                :items="collapsedGroupItems(item)"
+                :content="{ side: 'right', align: 'start', sideOffset: 10 }"
+                :ui="{ content: 'min-w-48' }"
+              >
+                <button
+                  type="button"
+                  class="sidebar-link sidebar-link-collapsed sidebar-group-trigger mb-0.5 w-full"
+                  :class="{ 'sidebar-link-active': isGroupActive(item) }"
+                  :title="item.label"
+                  :aria-label="item.label"
+                >
+                  <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+                </button>
+              </UDropdownMenu>
               <button
+                v-else
                 type="button"
-                class="sidebar-link mb-1 w-full"
-                :class="{
-                  'sidebar-link-active': isGroupActive(item) && !isGroupExpanded(item),
-                  'sidebar-link-collapsed': sidebarCollapsed
-                }"
-                :title="sidebarCollapsed ? item.label : undefined"
+                class="sidebar-link mb-0.5 w-full"
+                :class="{ 'sidebar-link-active': isGroupActive(item) && !isGroupExpanded(item) }"
+                :aria-expanded="isGroupExpanded(item) ? 'true' : 'false'"
                 @click="handleGroupClick(item)"
               >
                 <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-                <span
-                  class="sidebar-label sidebar-label-flex"
-                  :class="{ 'sidebar-label-collapsed': sidebarCollapsed }"
-                  :aria-hidden="sidebarCollapsed ? 'true' : 'false'"
-                >
+                <span class="sidebar-label sidebar-label-flex">
                   <span class="min-w-0 truncate">{{ item.label }}</span>
                   <ChevronDownIcon
-                    class="h-4 w-4 flex-shrink-0 transition-transform duration-200"
+                    class="sidebar-group-chevron h-4 w-4 flex-shrink-0 transition-transform duration-200"
                     :class="isGroupExpanded(item) ? 'rotate-180' : ''"
                   />
                 </span>
               </button>
-              <!-- Children -->
-              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="mb-1 ml-4 border-l border-(--signal-nav-line,#efedee) pl-2">
+              <!-- Children: an indented list on a hairline, labels only -->
+              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="sidebar-children">
                 <template v-for="child in item.children" :key="child.path">
-                  <p
-                    v-if="child.section"
-                    class="sidebar-child-section px-2 pb-1 pt-2 text-[11px] font-semibold tracking-wide text-[#6b6266]"
-                  >
+                  <p v-if="child.section" class="sidebar-child-section">
                     {{ child.label }}
                   </p>
                   <router-link
                     v-else
                     :to="child.path"
-                    class="sidebar-link mb-0.5 py-1.5 text-sm"
+                    class="sidebar-link sidebar-child-link"
                     :class="{ 'sidebar-link-active': route.path === child.path }"
                     @click="handleMenuItemClick(child.path)"
                   >
-                    <component :is="child.icon" class="h-4 w-4 flex-shrink-0" />
-                    <span>{{ child.label }}</span>
+                    <span class="min-w-0 truncate">{{ child.label }}</span>
                   </router-link>
                 </template>
               </div>
@@ -87,7 +90,7 @@
             <router-link
               v-else
               :to="item.path"
-              class="sidebar-link mb-1"
+              class="sidebar-link mb-0.5"
               :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
               :title="sidebarCollapsed ? item.label : undefined"
               :id="
@@ -120,7 +123,7 @@
             v-for="item in personalNavItems"
             :key="item.path"
             :to="item.path"
-            class="sidebar-link mb-1"
+            class="sidebar-link mb-0.5"
             :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
             :title="sidebarCollapsed ? item.label : undefined"
             :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
@@ -140,7 +143,7 @@
             v-for="item in userNavItems"
             :key="item.path"
             :to="item.path"
-            class="sidebar-link mb-1"
+            class="sidebar-link mb-0.5"
             :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
             :title="sidebarCollapsed ? item.label : undefined"
             :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
@@ -154,42 +157,17 @@
       </template>
     </nav>
 
-    <!-- Bottom Section -->
-    <div class="sidebar-footer mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
-      <!-- Theme Toggle -->
-      <button
-        @click="toggleTheme"
-        class="sidebar-link mb-2 w-full"
-        data-test="theme-toggle"
-        :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-        :title="sidebarCollapsed ? (isDark ? t('nav.lightMode') : t('nav.darkMode')) : undefined"
-      >
-        <SunIcon v-if="isDark" class="h-5 w-5 flex-shrink-0 text-amber-500" />
-        <MoonIcon v-else class="h-5 w-5 flex-shrink-0" />
-        <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{
-          isDark ? t('nav.lightMode') : t('nav.darkMode')
-        }}</span>
-      </button>
-
-      <!-- Collapse Button -->
-      <button
-        @click="toggleSidebar"
-        class="sidebar-link w-full"
-        :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-        :title="sidebarCollapsed ? t('nav.expand') : t('nav.collapse')"
-      >
-        <ChevronDoubleLeftIcon v-if="!sidebarCollapsed" class="h-5 w-5 flex-shrink-0" />
-        <ChevronDoubleRightIcon v-else class="h-5 w-5 flex-shrink-0" />
-        <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ t('nav.collapse') }}</span>
-      </button>
+    <!-- Footer: the user menu (account, theme, logout). Collapse and light/dark live in the navbar. -->
+    <div v-if="authStore.user" class="sidebar-footer">
+      <UserMenu variant="sidebar" :collapsed="sidebarCollapsed" />
     </div>
   </aside>
 
   <!-- Mobile Overlay -->
-  <transition name="fade">
+  <transition name="sidebar-overlay">
     <div
       v-if="mobileOpen"
-      class="fixed inset-0 z-30 bg-black/50 lg:hidden"
+      class="sidebar-overlay fixed inset-0 z-30 lg:hidden"
       @click="closeMobile"
     ></div>
   </transition>
@@ -207,7 +185,8 @@ import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { useConsoleSignal } from '@/composables/useConsoleSignal'
-import { useSiteColorMode } from '@/composables/useSiteTheme'
+import type { DropdownMenuItem } from '@nuxt/ui'
+import UserMenu from './UserMenu.vue'
 
 interface NavItem {
   path: string
@@ -265,8 +244,6 @@ const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
 const sidebarNavRef = ref<HTMLElement | null>(null)
-// Follows the real `dark` class on <html>; main.ts applies the saved choice or the site default.
-const { isDark, toggle: toggleTheme } = useSiteColorMode()
 
 const homePath = computed(() => authStore.isAdminObserver ? '/admin/usage' : isAdmin.value ? '/admin/dashboard' : '/dashboard')
 
@@ -587,51 +564,6 @@ const CogIcon = {
     )
 }
 
-const SunIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z'
-        })
-      ]
-    )
-}
-
-const MoonIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z'
-        })
-      ]
-    )
-}
-
-const ChevronDoubleLeftIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'm18.75 4.5-7.5 7.5 7.5 7.5m-6-15L5.25 12l7.5 7.5'
-        })
-      ]
-    )
-}
-
 const OrderIcon = {
   render: () =>
     h(
@@ -657,21 +589,6 @@ const OrderListIcon = {
           'stroke-linecap': 'round',
           'stroke-linejoin': 'round',
           d: 'M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z'
-        })
-      ]
-    )
-}
-
-const ChevronDoubleRightIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'm5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5'
         })
       ]
     )
@@ -943,8 +860,21 @@ const adminNavItems = computed((): NavItem[] => {
   return visible
 })
 
-function toggleSidebar() {
-  appStore.toggleSidebar()
+/** Menu for a group on the collapsed rail: its title, tier headers and child links. */
+function collapsedGroupItems(item: NavItem): DropdownMenuItem[] {
+  return [
+    { type: 'label', label: item.label },
+    ...(item.children ?? []).map((child): DropdownMenuItem =>
+      child.section
+        ? { type: 'label', label: child.label, class: 'pt-2 text-xs font-medium text-muted' }
+        : {
+            label: child.label,
+            to: child.path,
+            active: route.path === child.path,
+            onSelect: () => handleMenuItemClick(child.path)
+          }
+    )
+  ]
 }
 
 function closeMobile() {
@@ -1045,19 +975,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .sidebar-logo {
-  flex: 0 0 2.25rem;
-  min-width: 2.25rem;
-}
-
-.sidebar-header-collapsed {
-  gap: 0;
-  padding-left: 1.125rem;
-  padding-right: 1.125rem;
+  flex: 0 0 2rem;
+  min-width: 2rem;
 }
 
 .sidebar-brand {
+  display: flex;
   min-width: 0;
   flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   white-space: nowrap;
   transition:
     max-width 0.22s ease,
@@ -1076,15 +1004,10 @@ onBeforeUnmount(() => {
 
 .sidebar-brand-title {
   display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sidebar-link-collapsed {
-  gap: 0;
-  padding-left: 0.875rem;
-  padding-right: 0.875rem;
 }
 
 .sidebar-section-title {
@@ -1169,5 +1092,196 @@ onBeforeUnmount(() => {
   display: block;
   width: 1.25rem;
   height: 1.25rem;
+}
+
+.sidebar-overlay {
+  background: rgb(0 0 0 / 0.5);
+}
+
+.sidebar-overlay-enter-active,
+.sidebar-overlay-leave-active {
+  transition: opacity 150ms ease;
+}
+
+.sidebar-overlay-enter-from,
+.sidebar-overlay-leave-to {
+  opacity: 0;
+}
+</style>
+
+<style>
+/*
+  Nuxt UI dashboard sidebar (UDashboardSidebar + vertical UNavigationMenu pills).
+  Selectors start with `.console-signal aside.sidebar.signal-sidebar` so they outrank
+  console-signal.css, console-studio.css and console-elevation.css whatever order the
+  stylesheets load in. Sizes apply to both themes; colours below `html:not(.dark)` are
+  the light theme only, so the night theme keeps its --signal-* colours.
+*/
+.console-signal aside.sidebar.signal-sidebar .sidebar-header {
+  height: 64px;
+  gap: 10px;
+  padding-inline: 16px;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-header-collapsed {
+  gap: 0;
+  padding-inline: 20px;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-brand-title {
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-brand > .relative > button {
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-nav {
+  padding: 8px 12px 16px;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-section {
+  margin-bottom: 16px;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-section-title {
+  margin-bottom: 2px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Links: 32px pills, 20px icons, 14px medium labels, 6px radius. */
+.console-signal aside.sidebar.signal-sidebar .sidebar-link {
+  min-height: 32px;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-link-collapsed {
+  gap: 0;
+  padding-inline: 13px;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-group-trigger[data-state='open'] {
+  background: var(--signal-nav-hover);
+  color: var(--signal-nav-strong);
+}
+
+/* Children: indented on a hairline that lines up with the parent icon. */
+.console-signal aside.sidebar.signal-sidebar .sidebar-children {
+  margin: 2px 0 6px 19px;
+  padding-left: 7px;
+  border-left: 1px solid var(--signal-nav-line);
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-child-link {
+  min-height: 30px;
+  margin-bottom: 1px;
+  padding-block: 4px;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-child-section {
+  padding: 8px 10px 2px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-footer {
+  margin-top: auto;
+  padding: 8px 12px;
+  border-top: 1px solid var(--signal-nav-line);
+}
+
+@media (max-width: 639px) {
+  .console-signal aside.sidebar.signal-sidebar .sidebar-link {
+    min-height: 44px;
+  }
+}
+
+/* ---- Light theme colours: Nuxt UI neutral pills, highlighted labels, dimmed icons ---- */
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-brand-title,
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-brand-title:hover {
+  color: #171717;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-brand > .relative > button:not([class*='bg-amber']) {
+  background: #fafafa;
+  color: #525252;
+  box-shadow: inset 0 0 0 1px #e5e5e5;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-section-title {
+  color: #171717;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-child-section {
+  color: #737373;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link {
+  color: #737373;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link > :is(svg, .sidebar-svg-icon),
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-group-chevron {
+  color: #a3a3a3;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link:hover,
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-group-trigger[data-state='open'] {
+  background: #fafafa;
+  color: #171717;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link:hover > :is(svg, .sidebar-svg-icon) {
+  color: #404040;
+}
+
+/* After :hover so an active pill keeps its fill under the pointer. */
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link-active,
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link-active:hover {
+  background: #f4f4f4;
+  color: #171717;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link-active > :is(svg, .sidebar-svg-icon) {
+  color: #171717;
+}
+
+/* The sakura dot marks pages; a group button keeps its chevron there instead. */
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar button.sidebar-link-active::after {
+  content: none;
+}
+
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-children,
+html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-footer {
+  border-color: #e5e5e5;
+}
+
+html:not(.dark) .sidebar-overlay {
+  background: rgb(245 245 245 / 0.75);
+}
+
+@media (max-width: 1023px) {
+  html:not(.dark) .console-signal aside.sidebar.sidebar-mobile-open {
+    box-shadow: 0 20px 25px -5px rgb(10 10 10 / 0.1), 0 8px 10px -6px rgb(10 10 10 / 0.08);
+  }
 }
 </style>
