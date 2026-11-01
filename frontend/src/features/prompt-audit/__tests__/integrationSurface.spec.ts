@@ -19,11 +19,16 @@ describe('Prompt Audit integration surface', () => {
   })
 
   it('keeps the legacy content moderation route and adds both pages under an expand-only security group', () => {
+    // The sidebar groups live in consoleNav.tsx (shared with Ctrl/⌘K); a group is a trigger
+    // without a link, so it only expands (the former `expandOnly: true`).
+    const nav = read('../../../components/layout/consoleNav.tsx')
     const sidebar = read('../../../components/layout/AppSidebar.vue')
-    const group = sidebar.slice(sidebar.indexOf("path: '/admin/security-audit'"), sidebar.indexOf("path: '/admin/redeem'"))
-    expect(group).toContain('expandOnly: true')
-    expect(group).toContain("path: '/admin/risk-control'")
-    expect(group).toContain("path: '/admin/prompt-audit'")
+    const start = nav.lastIndexOf("kind: 'group'", nav.indexOf("key: 'admin-security'"))
+    const group = nav.slice(start, nav.indexOf("kind: 'group', key: 'admin-system'"))
+    expect(group.startsWith("kind: 'group', key: 'admin-security'")).toBe(true)
+    expect(sidebar).toContain("type: 'trigger'")
+    expect(group).toContain("link('/admin/risk-control'")
+    expect(group).toContain("link('/admin/prompt-audit'")
   })
 
   it('keeps Prompt Audit locale trees symmetric and all operational controls named', () => {

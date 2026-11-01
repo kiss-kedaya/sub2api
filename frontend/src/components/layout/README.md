@@ -31,9 +31,18 @@ collapsed / open state is `appStore.sidebarCollapsed` / `appStore.mobileOpen` (p
 
 - Header: logo, site name and `VersionBadge` (where the template has TeamsMenu).
 - `UDashboardSearchButton` (opens the palette; Ctrl/Cmd+K works anywhere).
-- Vertical `UNavigationMenu` built from the nav declarations in the file (items, groups,
-  tier headers, feature flags, simple mode, admin / observer / user roles, custom menu items
-  with sanitized SVG icons). On the rail a group opens its children in a popover.
+- Vertical `UNavigationMenu` built from `consoleNav.tsx` (shared with the palette): admins
+  get closed groups (概览 / 账号与渠道 / 用户与计费 / 运营 / 监控与诊断 / 安全 / 系统 / 我的账户),
+  the group holding the current page opens itself; users get four open groups (概览 /
+  API 与用量 / 充值与订单 / 帮助与账户). Feature flags, simple mode, admin / observer / user
+  roles and custom menu items (with sanitized SVG icons) apply as before. On the rail a
+  group opens its pages in a popover. While the onboarding tour runs, the groups holding
+  its anchors stay open.
+- An area keeps one entry that points at its top route and stays lit on its sub-pages
+  (`match`, a path prefix); detail pages light the entry of their `meta.parent`.
+- To add a page: add a `link(path, label)` to its group in `consoleNav.tsx` (it shows in the
+  sidebar and the palette); `searchOnly: true` lists it in the palette only (sub-pages that
+  the area's `PageSubnav` reaches). Icon names must be literal `i-lucide-*` strings.
 - Bottom group: subscription status, model plaza, docs.
 - Footer: `UserMenu` (account, profile, API keys, theme, language, GitHub, contact,
   onboarding tour, logout).
@@ -62,6 +71,39 @@ Outside the frame (a spec that stubs `AppLayout`, a public page) everything rend
   width).
 - `PageToolbar`: a filter row under the navbar; default slot (or `#left`) on the left,
   `#right` on the right.
+- `PageSubnav`: an area's sub-pages as a horizontal `UNavigationMenu` (highlight) in that
+  toolbar row, like the template's settings page. `items` as for UNavigationMenu
+  (`{ label, icon?, to, badge? }`, or two lists: the second sits on the right); the active
+  item is the deepest `to` that contains the current route; `label` names the nav for
+  screen readers; `#right` puts buttons at the row's end.
+
+```vue
+<!-- views/admin/SettingsView.vue: parent route /admin/settings, children general, security, ... -->
+<AppLayout>
+  <AdminPageHeader :title="t('admin.settings.title')" />
+  <PageSubnav :label="t('admin.settings.title')" :items="[
+    { label: t('admin.settings.tabs.general'), icon: 'i-lucide-house', to: '/admin/settings/general' },
+    { label: t('admin.settings.tabs.security'), icon: 'i-lucide-shield', to: '/admin/settings/security' }
+  ]" />
+  <RouterView />
+</AppLayout>
+```
+
+## Breadcrumb (route meta `parent`)
+
+A detail or sub-page names the page it belongs to; the navbar then shows that trail before
+the title (a back button on phones), and the sidebar lights the parent's entry.
+
+```ts
+{ path: '/admin/accounts/:id', name: 'AdminAccountDetail', component: AccountDetailView,
+  meta: { requiresAdmin: true, titleKey: 'admin.accounts.detail', parent: 'AdminAccounts' } }
+```
+
+`parent` is a route name (its params are taken from the current route, so
+`/admin/groups/:id/pricing` → `parent: 'AdminGroupDetail'` keeps `:id`) or a path
+(`parent: '/admin/accounts'`). The parent's own `meta.parent` continues the trail (up to 4).
+The crumb label is the parent's `titleKey` / `title`; the current page keeps its title
+(the page header's `title` can name the record, e.g. the account name).
 
 ```vue
 <AppLayout>
@@ -90,3 +132,10 @@ Light mode uses Nuxt UI's own tokens (`--ui-*`), so the Appearance settings (pri
 neutral, radius, font) apply. Dark mode maps the plum-charcoal palette onto the same tokens
 (`styles/nuxt-ui-theme.css`). Legacy page classes (`.btn`, `.card`, `.input`, tables) follow
 the tokens through `style.css` and `styles/console-*.css`.
+
+The panel is transparent so the sakura painting shows in empty areas. Translucent fills
+inside it (`bg-elevated/50` subtle cards, soft badges and buttons, table headers) get an
+opaque backing in the colour behind them (`styles/console-surfaces.css`), and bare tables a
+fill, so the painting never shows through content. Nothing to do per page; just don't put
+a translucent veil you want to stay see-through anywhere but on an `absolute` / `fixed`
+element.
