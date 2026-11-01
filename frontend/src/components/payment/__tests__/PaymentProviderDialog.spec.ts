@@ -109,7 +109,7 @@ describe('PaymentProviderDialog callback URLs', () => {
     const findConfigInput = (label: string) => {
       const fieldLabel = wrapper.findAll('label').find(element => element.text().replace('*', '').trim() === label)
       if (!fieldLabel) throw new Error(`config label missing: ${label}`)
-      return fieldLabel.element.parentElement!.querySelector('input, textarea') as HTMLInputElement | HTMLTextAreaElement
+      return fieldLabel.element.closest('[data-slot="root"]')!.querySelector('input, textarea') as HTMLInputElement | HTMLTextAreaElement
     }
     await wrapper.get('input[required]').setValue('EPUSDT deployment')
     const merchant = findConfigInput('PID')
@@ -144,7 +144,7 @@ describe('PaymentProviderDialog callback URLs', () => {
     const wrapper = mountDialog({ editing: provider })
     ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
     await nextTick()
-    const bases = wrapper.findAll('input').filter(input => input.classes().includes('rounded-r-none!'))
+    const bases = [wrapper.get('[data-testid="notify-base-url"]'), wrapper.get('[data-testid="return-base-url"]')]
     await bases[0].setValue(' https://notify.example.com/sub/// ')
     await bases[1].setValue('https://return.example.com/')
     await wrapper.find('form').trigger('submit')
@@ -171,7 +171,7 @@ describe('PaymentProviderDialog callback URLs', () => {
     const wrapper = mountDialog({ editing: provider })
     ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
     await nextTick()
-    const bases = wrapper.findAll('input').filter(input => input.classes().includes('rounded-r-none!'))
+    const bases = [wrapper.get('[data-testid="notify-base-url"]'), wrapper.get('[data-testid="return-base-url"]')]
     await bases[0].setValue(notify)
     await bases[1].setValue(returnUrl)
     await wrapper.find('form').trigger('submit')
@@ -271,7 +271,7 @@ describe('PaymentProviderDialog payment guide', () => {
     ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
     await nextTick()
 
-    await wrapper.find('button.btn-sm').trigger('click')
+    await wrapper.find('[data-testid="easypay-add-custom-method"]').trigger('click')
     await nextTick()
 
     const inputs = wrapper.findAll('input[type="text"]')
@@ -318,7 +318,7 @@ describe('PaymentProviderDialog payment guide', () => {
     ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
     await nextTick()
 
-    await wrapper.find('button.btn-sm').trigger('click')
+    await wrapper.find('[data-testid="easypay-add-custom-method"]').trigger('click')
     await nextTick()
 
     const inputs = wrapper.findAll('input[type="text"]')
