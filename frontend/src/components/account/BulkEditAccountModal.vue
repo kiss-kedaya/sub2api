@@ -2,13 +2,11 @@
   <BaseDialog
     :show="show"
     :title="t('admin.accounts.bulkEdit.title')"
+    :description="t('admin.accounts.bulkEdit.selectionInfo', { count: targetMode === 'filtered' ? targetPreviewCount : accountIds.length })"
     width="wide"
     @close="handleClose"
   >
     <form id="bulk-edit-account-form" class="space-y-5" @submit.prevent="() => handleSubmit()">
-      <!-- Info -->
-      <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.bulkEdit.selectionInfo', { count: targetMode === 'filtered' ? targetPreviewCount : accountIds.length })" />
-
       <!-- Mixed platform warning -->
       <UAlert v-if="isMixedPlatform" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.bulkEdit.mixedPlatformWarning', { platforms: targetSelectedPlatforms.join(', ') })" />
 
