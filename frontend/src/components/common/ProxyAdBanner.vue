@@ -6,13 +6,12 @@
     rel="noopener noreferrer"
   >
     <span class="truncate">{{ t('admin.proxies.ad.inline') }}</span>
-    <Icon name="externalLink" size="xs" />
+    <UIcon name="i-lucide-external-link" class="size-3 shrink-0" />
   </a>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 </script>
