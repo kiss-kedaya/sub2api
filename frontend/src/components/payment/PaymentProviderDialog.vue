@@ -44,7 +44,7 @@
               @click="form.payment_mode = mode.value"
               size="xs"
               :color="form.payment_mode === mode.value ? 'primary' : 'neutral'"
-              :variant="form.payment_mode === mode.value ? 'subtle' : 'outline'"
+              :variant="form.payment_mode === mode.value ? 'solid' : 'outline'"
             >{{ mode.label }}</UButton>
           </div>
         </div>
@@ -94,7 +94,7 @@
               @click="toggleType(pt.value)"
               size="xs"
               :color="isTypeSelected(pt.value) ? 'primary' : 'neutral'"
-              :variant="isTypeSelected(pt.value) ? 'subtle' : 'outline'"
+              :variant="isTypeSelected(pt.value) ? 'solid' : 'outline'"
             >{{ pt.label }}</UButton>
           </div>
         </div>

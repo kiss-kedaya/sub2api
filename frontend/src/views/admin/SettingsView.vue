@@ -10,7 +10,7 @@
       <!-- Settings Form -->
       <UForm v-else :state="form" class="space-y-6" novalidate @submit="saveSettings">
         <!-- Toolbar: tab bar on the left, the form save action on the right (template settings toolbar) -->
-        <div class="sticky top-16 z-20 flex items-center gap-3 border-b border-default bg-default">
+        <div class="sticky top-0 z-20 flex items-center gap-3 border-b border-default bg-default">
           <UTabs
             :model-value="activeTab"
             :items="settingsTabItems"
@@ -1287,7 +1287,7 @@
                       data-testid="tencent-captcha-region-cn"
                       @click="form.tencent_captcha_region = 'cn'"
                       :color="form.tencent_captcha_region !== 'intl' ? 'primary' : 'neutral'"
-                      :variant="form.tencent_captcha_region !== 'intl' ? 'subtle' : 'outline'"
+                      :variant="form.tencent_captcha_region !== 'intl' ? 'solid' : 'outline'"
                       size="sm"
                       class="justify-center"
                     >
@@ -1297,7 +1297,7 @@
                       data-testid="tencent-captcha-region-intl"
                       @click="form.tencent_captcha_region = 'intl'"
                       :color="form.tencent_captcha_region === 'intl' ? 'primary' : 'neutral'"
-                      :variant="form.tencent_captcha_region === 'intl' ? 'subtle' : 'outline'"
+                      :variant="form.tencent_captcha_region === 'intl' ? 'solid' : 'outline'"
                       size="sm"
                       class="justify-center"
                     >
@@ -1408,7 +1408,7 @@
                       <UButton
                         @click="form.aliyun_captcha_region = 'cn'"
                         :color="form.aliyun_captcha_region !== 'sgp' ? 'primary' : 'neutral'"
-                        :variant="form.aliyun_captcha_region !== 'sgp' ? 'subtle' : 'outline'"
+                        :variant="form.aliyun_captcha_region !== 'sgp' ? 'solid' : 'outline'"
                         size="sm"
                         class="justify-center"
                       >
@@ -1417,7 +1417,7 @@
                       <UButton
                         @click="form.aliyun_captcha_region = 'sgp'"
                         :color="form.aliyun_captcha_region === 'sgp' ? 'primary' : 'neutral'"
-                        :variant="form.aliyun_captcha_region === 'sgp' ? 'subtle' : 'outline'"
+                        :variant="form.aliyun_captcha_region === 'sgp' ? 'solid' : 'outline'"
                         size="sm"
                         class="justify-center"
                       >
@@ -4223,7 +4223,7 @@
                         <UButton
                           @click="ep.min_recharge = 0"
                           :color="Number(ep.min_recharge) <= 0 ? 'primary' : 'neutral'"
-                          :variant="Number(ep.min_recharge) <= 0 ? 'subtle' : 'outline'"
+                          :variant="Number(ep.min_recharge) <= 0 ? 'solid' : 'outline'"
                           size="sm"
                         >
                           {{ t( "admin.settings.site.customEndpoints.visibilityEveryone", ) }}
@@ -4236,7 +4236,7 @@
                                 : 1000
                           "
                           :color="Number(ep.min_recharge) > 0 ? 'primary' : 'neutral'"
-                          :variant="Number(ep.min_recharge) > 0 ? 'subtle' : 'outline'"
+                          :variant="Number(ep.min_recharge) > 0 ? 'solid' : 'outline'"
                           size="sm"
                         >
                           {{ t( "admin.settings.site.customEndpoints.visibilityThreshold", ) }}
@@ -5475,7 +5475,7 @@
                     :key="pt.value"
                     @click="togglePaymentType(pt.value)"
                     :color="isPaymentTypeEnabled(pt.value) ? 'primary' : 'neutral'"
-                    :variant="isPaymentTypeEnabled(pt.value) ? 'subtle' : 'outline'"
+                    :variant="isPaymentTypeEnabled(pt.value) ? 'solid' : 'outline'"
                   >
                     {{ pt.label }}
                   </UButton>

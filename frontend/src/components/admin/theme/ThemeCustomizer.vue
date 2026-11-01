@@ -48,7 +48,7 @@
           :tabindex="option.value === draft[row.field] ? 0 : -1"
           :data-value="String(option.value)"
           :color="option.value === draft[row.field] ? 'primary' : 'neutral'"
-          :variant="option.value === draft[row.field] ? 'subtle' : 'outline'"
+          :variant="option.value === draft[row.field] ? 'solid' : 'outline'"
           :disabled="saving || loadFailed"
           @click="select(row.field, option.value)"
           @keydown="onOptionKeydown($event, row, index)"

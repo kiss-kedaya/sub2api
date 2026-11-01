@@ -17,7 +17,7 @@
           :key="pt.value"
           size="xs"
           :color="isSelected(pt.value) ? 'primary' : 'neutral'"
-          :variant="isSelected(pt.value) ? 'subtle' : 'outline'"
+          :variant="isSelected(pt.value) ? 'solid' : 'outline'"
           @click="emit('toggleType', pt.value)"
         >
           {{ pt.label }}
