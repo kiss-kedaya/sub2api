@@ -1,66 +1,70 @@
 <template>
-  <div class="flex min-w-0 flex-col gap-3">
-    <div class="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(168px,220px)_minmax(112px,150px)]">
-      <UInput
-        :model-value="search"
-        icon="i-lucide-search"
-        :placeholder="t('modelPlaza.filters.searchPlaceholder')"
-        :aria-label="t('modelPlaza.filters.modelLabel')"
-        class="col-span-2 min-w-0 md:col-span-1"
-        :ui="{ base: 'plaza-search-input', trailing: 'pe-1' }"
-        @update:model-value="$emit('update:search', String($event ?? ''))"
-      >
-        <template v-if="search" #trailing>
-          <UButton
-            icon="i-lucide-x"
-            color="neutral"
-            variant="link"
-            size="sm"
-            :aria-label="t('common.clear')"
-            @click="$emit('update:search', '')"
-          />
-        </template>
-      </UInput>
+  <!-- Search left, group / rate right: the toolbar row under the navbar in the console,
+       an inline row on the public page. -->
+  <PageToolbar>
+    <UInput
+      :model-value="search"
+      icon="i-lucide-search"
+      :placeholder="t('modelPlaza.filters.searchPlaceholder')"
+      :aria-label="t('modelPlaza.filters.modelLabel')"
+      class="w-60 sm:w-72 lg:w-80"
+      :ui="{ base: 'plaza-search-input', trailing: 'pe-1' }"
+      @update:model-value="$emit('update:search', String($event ?? ''))"
+    >
+      <template v-if="search" #trailing>
+        <UButton
+          icon="i-lucide-x"
+          color="neutral"
+          variant="link"
+          size="sm"
+          :aria-label="t('common.clear')"
+          @click="$emit('update:search', '')"
+        />
+      </template>
+    </UInput>
+    <template #right>
       <Select
         :model-value="groupId"
         :options="groupSelectOptions"
         :aria-label="t('modelPlaza.filters.groupLabel')"
-        class="min-w-0"
+        class="w-44"
         @update:model-value="onGroupChange"
       />
       <Select
         :model-value="rate"
         :options="rateSelectOptions"
         :aria-label="t('modelPlaza.filters.rateLabel')"
-        class="min-w-0"
+        class="w-32"
         @update:model-value="onRateChange"
       />
-    </div>
+    </template>
+  </PageToolbar>
 
-    <!-- pb-px keeps the tab list's bottom line and indicator inside the scroll box -->
-    <div class="min-w-0 overflow-x-auto pb-px">
-      <UTabs
-        :model-value="platform"
-        :items="platformItems"
-        :content="false"
-        variant="link"
-        size="sm"
-        :aria-label="t('modelPlaza.filters.platformLabel')"
-        class="w-max min-w-full"
-        :ui="{ trigger: 'plaza-seg-item' }"
-        @update:model-value="$emit('update:platform', String($event))"
-      >
-        <template #leading="{ item }">
-          <PlatformIcon v-if="item.value !== 'all'" :platform="item.value as GroupPlatform" size="xs" />
-        </template>
-      </UTabs>
-    </div>
+  <!-- Platforms: page tabs at the top of the body. pb-px keeps the tab list's bottom line
+       and indicator inside the scroll box. -->
+  <div class="min-w-0 overflow-x-auto pb-px">
+    <UTabs
+      :model-value="platform"
+      :items="platformItems"
+      :content="false"
+      variant="link"
+      size="sm"
+      :aria-label="t('modelPlaza.filters.platformLabel')"
+      class="w-max min-w-full"
+      :ui="{ trigger: 'plaza-seg-item' }"
+      @update:model-value="$emit('update:platform', String($event))"
+    >
+      <template #leading="{ item }">
+        <PlatformIcon v-if="item.value !== 'all'" :platform="item.value as GroupPlatform" size="xs" />
+      </template>
+    </UTabs>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import type { GroupPlatform } from '@/types'
