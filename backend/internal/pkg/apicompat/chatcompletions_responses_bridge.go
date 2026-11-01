@@ -963,11 +963,13 @@ func isBlankChatContent(raw json.RawMessage) bool {
 	return chatMessageContentText(raw) == ""
 }
 
-// extractResponsesReasoningText pulls the reasoning text out of a Responses
-// reasoning item. The Chat→Responses bridge writes the upstream reasoning_content
-// verbatim into the summary_text parts (see closeChatReasoningItem), so codex
-// round-trips it there; prefer summary[].text and fall back to content.
+// extractResponsesReasoningText pulls replayable reasoning text out of a
+// Responses reasoning item. Genuine reasoning_text content wins; summary is only
+// a display fallback for providers that never emit content.
 func extractResponsesReasoningText(item map[string]json.RawMessage) string {
+	if text := responsesInputReasoningContentText(item["content"]); text != "" {
+		return text
+	}
 	var parts []string
 	collect := func(raw json.RawMessage) {
 		raw = bytesTrimSpace(raw)
@@ -988,17 +990,14 @@ func extractResponsesReasoningText(item map[string]json.RawMessage) string {
 		}
 	}
 	collect(item["summary"])
-	if len(parts) == 0 {
-		collect(item["content"])
-	}
 	return strings.Join(parts, "\n")
 }
 
 // ExtractResponsesReasoningItem parses a raw Responses input item and, when it
-// is a reasoning item, returns its id and extractable plaintext (summary
-// preferred, content fallback). ok is false for non-reasoning items. It exists
-// for the gateway-side reasoning cache: items with plaintext get (re)cached so
-// later encrypted-only replicas of the same item id can be restored.
+// is a reasoning item, returns its id and extractable plaintext. ok is false for
+// non-reasoning items. It exists for the gateway-side reasoning cache: items
+// with plaintext get (re)cached so later encrypted-only replicas of the same
+// item id can be restored.
 func ExtractResponsesReasoningItem(raw json.RawMessage) (id string, text string, ok bool) {
 	raw = bytesTrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
@@ -1476,6 +1475,10 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 		outputs = append(outputs, ResponsesOutput{
 			Type: "reasoning",
 			ID:   generateItemID(),
+			Content: []ResponsesContentPart{{
+				Type: "reasoning_text",
+				Text: reasoning,
+			}},
 			Summary: []ResponsesSummary{{
 				Type: "summary_text",
 				Text: reasoning,
@@ -2118,6 +2121,7 @@ func closeChatReasoningItem(state *ChatCompletionsToResponsesStreamState) []Resp
 				Type:    "reasoning",
 				ID:      state.ReasoningItemID,
 				Status:  "completed",
+				Content: []ResponsesContentPart{{Type: "reasoning_text", Text: reasoning}},
 				Summary: []ResponsesSummary{{Type: "summary_text", Text: reasoning}},
 			},
 		}),
@@ -2382,6 +2386,10 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 		outputs = append(outputs, ResponsesOutput{
 			Type: "reasoning",
 			ID:   generateItemID(),
+			Content: []ResponsesContentPart{{
+				Type: "reasoning_text",
+				Text: state.Reasoning.String(),
+			}},
 			Summary: []ResponsesSummary{{
 				Type: "summary_text",
 				Text: state.Reasoning.String(),

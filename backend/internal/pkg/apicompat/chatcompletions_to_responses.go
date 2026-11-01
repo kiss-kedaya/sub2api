@@ -266,13 +266,17 @@ func chatAssistantToResponses(m ChatMessage, anthropic bool) ([]ResponsesInputIt
 	}
 
 	if thinking != "" {
-		items = append(items, ResponsesInputItem{
+		reasoningItem := ResponsesInputItem{
 			Type: "reasoning",
 			Summary: []ResponsesSummary{{
 				Type: "summary_text",
 				Text: thinking,
 			}},
-		})
+		}
+		if content, ok := responsesReasoningContentJSON(thinking); ok {
+			reasoningItem.Content = content
+		}
+		items = append(items, reasoningItem)
 	}
 
 	if text != "" {

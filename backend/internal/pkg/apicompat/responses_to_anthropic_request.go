@@ -56,8 +56,12 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 	if req.Reasoning != nil && req.Reasoning.Effort != "" {
 		effort := mapResponsesEffortToAnthropic(req.Reasoning.Effort)
 		out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
-		// Enable thinking for non-low efforts
-		if effort != "low" {
+		switch effort {
+		case "none", "off", "disabled":
+			out.Thinking = &AnthropicThinking{Type: "disabled"}
+		case "low":
+			// Keep the existing low-effort behavior: no explicit thinking block.
+		default:
 			out.Thinking = &AnthropicThinking{
 				Type:         "enabled",
 				BudgetTokens: defaultThinkingBudget(effort),
@@ -193,11 +197,19 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			})
 
 		case item.Type == "reasoning":
-			// Anthropic 无法摄入 OpenAI 的 reasoning：encrypted_content 是不透明的，
-			// 而 thinking 块的重放需要 Anthropic 自己签发的 signature，无法伪造。
-			// Codex 常见形态（只带 summary + encrypted_content）本来就会被丢弃，
-			// 这里让带 content 数组的形态保持同样行为——否则 reasoning_text 块会被
-			// 原样塞进 Anthropic 请求体，上游直接回 400。
+			// Preserve genuine provider reasoning_text as a thinking block. Do not
+			// substitute summary text: summary is display-only and is not replayable
+			// chain-of-thought. encrypted_content is intentionally omitted here
+			// because a foreign opaque signature can make Anthropic reject the turn.
+			thinkingText := responsesInputReasoningContentText(item.Content)
+			if thinkingText != "" {
+				block := AnthropicContentBlock{Type: "thinking", Thinking: thinkingText}
+				blockJSON, _ := json.Marshal([]AnthropicContentBlock{block})
+				messages = append(messages, AnthropicMessage{
+					Role:    "assistant",
+					Content: blockJSON,
+				})
+			}
 
 		case item.Role == "user":
 			content, err := convertResponsesUserToAnthropicContent(item.Content)

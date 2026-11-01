@@ -56,11 +56,7 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 				},
 			})
 		case "reasoning":
-			for _, s := range item.Summary {
-				if s.Type == "summary_text" && s.Text != "" {
-					reasoningText += s.Text
-				}
-			}
+			reasoningText += responsesReasoningText(item.Content, item.Summary)
 		case "web_search_call":
 			// silently consumed — results already incorporated into text output
 		}
@@ -127,6 +123,7 @@ type ResponsesEventToChatState struct {
 	SentRole                bool
 	SawToolCall             bool
 	SawText                 bool
+	SawReasoning            bool
 	Finalized               bool        // true after finish chunk has been emitted
 	NextToolCallIndex       int         // next sequential tool_call index to assign
 	OutputIndexToToolIndex  map[int]int // Responses output_index → Chat tool_calls index
@@ -163,7 +160,8 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 	case "response.output_item.added":
 		return resToChatHandleOutputItemAdded(evt, state)
 	case "response.output_item.done":
-		return resToChatHandleToolSnapshot(evt, state)
+		chunks := resToChatHandleReasoningSnapshot(evt, state)
+		return append(chunks, resToChatHandleToolSnapshot(evt, state)...)
 	case "response.function_call_arguments.delta",
 		// custom/freeform 工具（如新版 apply_patch）的输入增量与 function_call 参数增量同形，
 		// 均按 OutputIndex 累加到对应工具调用。
@@ -176,8 +174,9 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 		// 与 reasoning summary 一样映射为 reasoning_content。
 		"response.reasoning_text.delta":
 		return resToChatHandleReasoningDelta(evt, state)
-	case "response.reasoning_summary_text.done":
-		return nil
+	case "response.reasoning_summary_text.done",
+		"response.reasoning_text.done":
+		return resToChatHandleReasoningDone(evt, state)
 	// response.done 是 Realtime/WS 与项目透传路径使用的终止别名；
 	// 普通 Responses HTTP SSE 的公开终止事件仍以 response.completed 为主。
 	case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
@@ -381,8 +380,30 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 	if evt.Delta == "" {
 		return nil
 	}
+	state.SawReasoning = true
 	reasoning := evt.Delta
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
+}
+
+func resToChatHandleReasoningDone(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if evt.Text == "" || state.SawReasoning {
+		return nil
+	}
+	state.SawReasoning = true
+	reasoning := evt.Text
+	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
+}
+
+func resToChatHandleReasoningSnapshot(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if evt.Item == nil || evt.Item.Type != "reasoning" || state.SawReasoning {
+		return nil
+	}
+	text := responsesReasoningText(evt.Item.Content, evt.Item.Summary)
+	if text == "" {
+		return nil
+	}
+	state.SawReasoning = true
+	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &text})}
 }
 
 func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
