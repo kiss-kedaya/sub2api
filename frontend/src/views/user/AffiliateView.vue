@@ -1,214 +1,145 @@
 <template>
   <AppLayout>
-    <div class="signal-account-page signal-affiliate space-y-6">
+    <div class="mx-auto flex w-full max-w-4xl flex-col gap-4 sm:gap-6 lg:gap-10">
       <UserPageHeader flush :title="t('affiliate.title')" :description="t('affiliate.description')" />
       <div v-if="loading" class="flex justify-center py-12">
-        <div
-          class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
-        ></div>
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
       </div>
 
       <template v-else-if="detail">
-        <div class="signal-affiliate-metrics affiliate-metrics grid sm:grid-cols-2 lg:grid-cols-4">
-          <div class="card p-5">
-            <p class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-dark-400">
-              <Icon name="dollar" size="sm" class="text-primary-500" />
-              {{ t('affiliate.stats.rebateRate') }}
-            </p>
-            <p class="mt-2 text-2xl font-semibold text-primary-600 dark:text-primary-400">
-              {{ formattedRebateRate }}<span class="ml-0.5 text-base font-medium">%</span>
-            </p>
-            <p class="mt-1 text-xs text-gray-400 dark:text-dark-500">
-              {{ t('affiliate.stats.rebateRateHint') }}
-            </p>
-          </div>
-          <div class="card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.stats.invitedUsers') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
-              {{ formatCount(detail.aff_count) }}
-            </p>
-          </div>
-          <div class="card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.stats.availableQuota') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-emerald-600 dark:text-emerald-400">
-              {{ formatCurrency(detail.aff_quota) }}
-            </p>
-          </div>
-          <div class="card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.stats.totalQuota') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
-              {{ formatCurrency(detail.aff_history_quota) }}
-            </p>
-            <p v-if="detail.aff_frozen_quota > 0" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
-              {{ t('affiliate.stats.frozenQuota') }}: {{ formatCurrency(detail.aff_frozen_quota) }}
-            </p>
-          </div>
-        </div>
+        <UPageGrid class="gap-4 sm:gap-6 lg:grid-cols-4 lg:gap-px">
+          <UPageCard icon="i-lucide-percent" :title="t('affiliate.stats.rebateRate')" variant="subtle" :ui="statUi" class="first:rounded-l-lg last:rounded-r-lg hover:z-1 lg:rounded-none">
+            <span class="text-2xl font-semibold tabular-nums text-highlighted" :title="t('affiliate.stats.rebateRateHint')">{{ formattedRebateRate }}<span class="ml-0.5 text-base font-medium">%</span></span>
+          </UPageCard>
+          <UPageCard icon="i-lucide-users" :title="t('affiliate.stats.invitedUsers')" variant="subtle" :ui="statUi" class="first:rounded-l-lg last:rounded-r-lg hover:z-1 lg:rounded-none">
+            <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ formatCount(detail.aff_count) }}</span>
+          </UPageCard>
+          <UPageCard icon="i-lucide-wallet" :title="t('affiliate.stats.availableQuota')" variant="subtle" :ui="statUi" class="first:rounded-l-lg last:rounded-r-lg hover:z-1 lg:rounded-none">
+            <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ formatCurrency(detail.aff_quota) }}</span>
+          </UPageCard>
+          <UPageCard icon="i-lucide-history" :title="t('affiliate.stats.totalQuota')" variant="subtle" :ui="statUi" class="first:rounded-l-lg last:rounded-r-lg hover:z-1 lg:rounded-none">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ formatCurrency(detail.aff_history_quota) }}</span>
+              <UBadge v-if="detail.aff_frozen_quota > 0" color="warning" variant="subtle" class="tabular-nums">{{ t('affiliate.stats.frozenQuota') }}: {{ formatCurrency(detail.aff_frozen_quota) }}</UBadge>
+            </div>
+          </UPageCard>
+        </UPageGrid>
 
-        <section class="affiliate-section">
-
-          <div class="grid gap-4 md:grid-cols-2">
-            <div class="space-y-2">
-              <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.yourCode') }}</p>
-              <div class="flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
-                <code class="min-w-0 break-all text-sm font-semibold text-gray-900 dark:text-white sm:flex-1 sm:truncate">{{ detail.aff_code }}</code>
-                <button class="btn btn-secondary btn-sm w-full sm:w-auto sm:shrink-0" @click="copyCode">
-                  <Icon name="copy" size="sm" />
-                  <span>{{ t('affiliate.copyCode') }}</span>
-                </button>
+        <section>
+          <UPageCard :title="t('affiliate.inviteLink')" :description="t('affiliate.stats.rebateRateHint')" variant="naked" orientation="horizontal" class="mb-4">
+            <UPopover :content="{ align: 'end' }">
+              <UButton color="neutral" variant="ghost" icon="i-lucide-info" class="w-fit lg:ms-auto">{{ t('affiliate.tips.title') }}</UButton>
+              <template #content>
+                <ol class="max-w-sm space-y-1 p-4 text-sm text-toned">
+                  <li>1. {{ t('affiliate.tips.line1') }}</li>
+                  <li>2. {{ t('affiliate.tips.line2', { rate: `${formattedRebateRate}%` }) }}</li>
+                  <li>3. {{ t('affiliate.tips.line3') }}</li>
+                  <li v-if="detail.aff_frozen_quota > 0">4. {{ t('affiliate.tips.line4') }}</li>
+                </ol>
+              </template>
+            </UPopover>
+          </UPageCard>
+          <UPageCard variant="subtle">
+            <UFormField :label="t('affiliate.yourCode')" class="flex justify-between gap-4 max-sm:flex-col sm:items-center" :ui="{ container: 'sm:w-[60%]' }">
+              <div class="flex flex-col items-stretch gap-2 rounded-md bg-default py-1.5 pl-3 pr-1.5 ring ring-default sm:flex-row sm:items-center">
+                <code class="min-w-0 break-all font-mono text-sm font-semibold text-highlighted sm:flex-1 sm:truncate">{{ detail.aff_code }}</code>
+                <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-copy" class="w-full justify-center sm:w-auto sm:shrink-0" @click="copyCode">{{ t('affiliate.copyCode') }}</UButton>
               </div>
-            </div>
-
-            <div class="space-y-2">
-              <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.inviteLink') }}</p>
-              <p class="text-xs text-gray-500 dark:text-dark-400">
-                {{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}
-              </p>
-              <div class="flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
-                <code class="min-w-0 break-all text-sm text-gray-700 dark:text-gray-300 sm:flex-1 sm:truncate">{{ inviteLink }}</code>
-                <button class="btn btn-secondary btn-sm w-full sm:w-auto sm:shrink-0" @click="copyInviteLink">
-                  <Icon name="copy" size="sm" />
-                  <span>{{ t('affiliate.copyLink') }}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <UAlert class="mt-5 dark:bg-primary/10 dark:text-primary dark:ring-primary/25" color="neutral" variant="subtle" icon="i-lucide-info" :title="t('affiliate.tips.title')">
-            <template #description>
-              <ul class="mt-1 space-y-1">
-                <li>1. {{ t('affiliate.tips.line1') }}</li>
-                <li>2. {{ t('affiliate.tips.line2', { rate: `${formattedRebateRate}%` }) }}</li>
-                <li>3. {{ t('affiliate.tips.line3') }}</li>
-                <li v-if="detail.aff_frozen_quota > 0">4. {{ t('affiliate.tips.line4') }}</li>
-              </ul>
-            </template>
-          </UAlert>
-        </section>
-
-        <section class="affiliate-section">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.customCodes.title') }}</h2>
-              <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-                {{ t('affiliate.customCodes.description', { max: customCodeQuota.max }) }}
-              </p>
-            </div>
-            <span class="badge badge-gray shrink-0">
-              {{ t('affiliate.customCodes.quota', { used: customCodeQuota.used, max: customCodeQuota.max }) }}
-            </span>
-          </div>
-
-          <!-- 默认码：只读，锁死不可改 -->
-          <div class="mt-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
-            <span class="badge badge-gray shrink-0">{{ t('affiliate.customCodes.defaultBadge') }}</span>
-            <code class="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ detail.aff_code }}</code>
-            <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
-              {{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}
-            </span>
-            <button class="btn btn-secondary btn-sm shrink-0" :disabled="copyingId === 'default'" @click="copyAny(detail.aff_code, 'default')">
-              <Icon name="copy" size="sm" />
-            </button>
-          </div>
-
-          <div v-if="customCodes.length === 0" class="mt-3 rounded-xl border border-dashed border-gray-300 p-5 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
-            {{ t('affiliate.customCodes.empty') }}
-          </div>
-          <ul v-else class="mt-3 space-y-2">
-            <li
-              v-for="item in customCodes"
-              :key="item.code"
-              class="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 dark:border-dark-700"
+            </UFormField>
+            <USeparator />
+            <UFormField
+              :label="t('affiliate.inviteLink')"
+              :description="t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) })"
+              class="flex justify-between gap-4 max-sm:flex-col sm:items-center"
+              :ui="{ container: 'sm:w-[60%]' }"
             >
-              <span class="badge badge-gray shrink-0">{{ item.created_by_admin ? t('affiliate.customCodes.adminBadge') : t('affiliate.customCodes.customBadge') }}</span>
-              <code class="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ item.code }}</code>
-              <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
-                {{ t('affiliate.customCodes.stats', { count: item.invite_count ?? 0, amount: formatCurrency(item.rebate_amount ?? 0) }) }}
-              </span>
-              <span v-if="item.retired" class="badge badge-gray shrink-0">{{ t('affiliate.customCodes.retiredBadge') }}</span>
-              <button class="btn btn-secondary btn-sm shrink-0" :disabled="copyingId === item.code" @click="copyAny(item.code, item.code)">
-                <Icon name="copy" size="sm" />
-              </button>
-              <button
-                v-if="!item.retired"
-                class="btn btn-secondary btn-sm shrink-0 text-red-600 dark:text-red-400"
-                :disabled="deletingId === item.id"
-                @click="removeCode(item)"
-              >
-                <Icon v-if="deletingId === item.id" name="refresh" size="sm" class="animate-spin" />
-                <Icon v-else name="trash" size="sm" />
-                <span class="sr-only">{{ t('affiliate.customCodes.remove') }}</span>
-              </button>
-            </li>
-          </ul>
-
-          <div v-if="customCodeQuota.limit > 0" class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <input
-              v-model="newCode"
-              type="text"
-              maxlength="32"
-              class="input flex-1"
-              :placeholder="t('affiliate.customCodes.addPlaceholder')"
-              @keyup.enter="addCode"
-            />
-            <button class="btn btn-primary shrink-0" :disabled="adding || !newCode.trim()" @click="addCode">
-              <Icon v-if="adding" name="refresh" size="sm" class="animate-spin" />
-              <Icon v-else name="plus" size="sm" />
-              <span>{{ adding ? t('affiliate.customCodes.adding') : t('affiliate.customCodes.addButton') }}</span>
-            </button>
-          </div>
+              <div class="flex flex-col items-stretch gap-2 rounded-md bg-default py-1.5 pl-3 pr-1.5 ring ring-default sm:flex-row sm:items-center">
+                <code class="min-w-0 break-all font-mono text-sm text-toned sm:flex-1 sm:truncate">{{ inviteLink }}</code>
+                <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-copy" class="w-full justify-center sm:w-auto sm:shrink-0" @click="copyInviteLink">{{ t('affiliate.copyLink') }}</UButton>
+              </div>
+            </UFormField>
+          </UPageCard>
         </section>
 
-        <section class="affiliate-section">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.transfer.title') }}</h2>
-              <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.transfer.description') }}</p>
+        <section>
+          <UPageCard :title="t('affiliate.customCodes.title')" :description="t('affiliate.customCodes.description', { max: customCodeQuota.max })" variant="naked" orientation="horizontal" class="mb-4">
+            <UBadge color="neutral" variant="subtle" class="w-fit lg:ms-auto">{{ t('affiliate.customCodes.quota', { used: customCodeQuota.used, max: customCodeQuota.max }) }}</UBadge>
+          </UPageCard>
+          <UPageCard variant="subtle" :ui="{ container: 'p-0 sm:p-0 gap-y-0' }">
+            <ul class="divide-y divide-default">
+              <!-- Default code: read-only, cannot be changed. -->
+              <li class="flex items-center gap-2 px-4 py-3 sm:px-6">
+                <UBadge color="neutral" variant="outline" class="shrink-0">{{ t('affiliate.customCodes.defaultBadge') }}</UBadge>
+                <code class="min-w-0 flex-1 break-all font-mono text-sm font-semibold text-highlighted">{{ detail.aff_code }}</code>
+                <span class="shrink-0 text-xs text-muted">{{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}</span>
+                <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-copy" :aria-label="t('affiliate.copyCode')" :title="t('affiliate.copyCode')" :disabled="copyingId === 'default'" @click="copyAny(detail.aff_code, 'default')" />
+              </li>
+              <li v-for="item in customCodes" :key="item.code" class="flex items-center gap-2 px-4 py-3 sm:px-6">
+                <UBadge color="neutral" variant="outline" class="shrink-0">{{ item.created_by_admin ? t('affiliate.customCodes.adminBadge') : t('affiliate.customCodes.customBadge') }}</UBadge>
+                <code class="min-w-0 flex-1 break-all font-mono text-sm font-semibold text-highlighted">{{ item.code }}</code>
+                <span class="shrink-0 text-xs text-muted">{{ t('affiliate.customCodes.stats', { count: item.invite_count ?? 0, amount: formatCurrency(item.rebate_amount ?? 0) }) }}</span>
+                <UBadge v-if="item.retired" color="neutral" variant="subtle" class="shrink-0">{{ t('affiliate.customCodes.retiredBadge') }}</UBadge>
+                <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-copy" :aria-label="t('affiliate.copyCode')" :title="t('affiliate.copyCode')" :disabled="copyingId === item.code" @click="copyAny(item.code, item.code)" />
+                <UButton
+                  v-if="!item.retired"
+                  color="error"
+                  variant="ghost"
+                  size="sm"
+                  :icon="deletingId === item.id ? 'i-lucide-loader-circle' : 'i-lucide-trash-2'"
+                  :ui="{ leadingIcon: deletingId === item.id ? 'animate-spin' : '' }"
+                  :aria-label="t('affiliate.customCodes.remove')"
+                  :title="t('affiliate.customCodes.remove')"
+                  :disabled="deletingId === item.id"
+                  @click="removeCode(item)"
+                />
+              </li>
+              <li v-if="customCodes.length === 0" class="px-4 py-5 text-center text-sm text-muted sm:px-6">{{ t('affiliate.customCodes.empty') }}</li>
+            </ul>
+            <div v-if="customCodeQuota.limit > 0" class="flex flex-col gap-2 border-t border-default px-4 py-3 sm:flex-row sm:items-center sm:px-6">
+              <UInput v-model="newCode" type="text" maxlength="32" class="flex-1" :placeholder="t('affiliate.customCodes.addPlaceholder')" :aria-label="t('affiliate.customCodes.addPlaceholder')" @keyup.enter="addCode" />
+              <UButton class="shrink-0 justify-center" :loading="adding" :icon="adding ? undefined : 'i-lucide-plus'" :disabled="adding || !newCode.trim()" @click="addCode">
+                {{ adding ? t('affiliate.customCodes.adding') : t('affiliate.customCodes.addButton') }}
+              </UButton>
             </div>
-            <button
-              class="btn btn-primary"
+          </UPageCard>
+        </section>
+
+        <section>
+          <UPageCard :title="t('affiliate.transfer.title')" :description="t('affiliate.transfer.description')" variant="naked" orientation="horizontal">
+            <UButton
+              class="w-fit lg:ms-auto"
+              :loading="transferring"
+              :icon="transferring ? undefined : 'i-lucide-arrow-right-left'"
               :disabled="transferring || detail.aff_quota <= 0"
               @click="transferQuota"
             >
-              <Icon v-if="transferring" name="refresh" size="sm" class="animate-spin" />
-              <Icon v-else name="dollar" size="sm" />
-              <span>{{ transferring ? t('affiliate.transfer.transferring') : t('affiliate.transfer.button') }}</span>
-            </button>
-          </div>
-          <p v-if="detail.aff_quota <= 0" class="mt-3 text-sm text-amber-600 dark:text-amber-400">
-            {{ t('affiliate.transfer.empty') }}
-          </p>
+              {{ transferring ? t('affiliate.transfer.transferring') : t('affiliate.transfer.button') }}
+            </UButton>
+          </UPageCard>
+          <p v-if="detail.aff_quota <= 0" class="mt-2 text-sm text-warning">{{ t('affiliate.transfer.empty') }}</p>
         </section>
 
-        <section class="affiliate-section">
-          <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.invitees.title') }}</h2>
-          <div v-if="detail.invitees.length === 0" class="mt-4 rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
-            {{ t('affiliate.invitees.empty') }}
-          </div>
-          <div v-else class="mt-4 overflow-x-auto">
-            <table class="w-full min-w-[560px] text-left text-sm">
-              <thead>
-                <tr class="border-b border-gray-200 text-gray-500 dark:border-dark-700 dark:text-dark-400">
-                  <th class="px-3 py-2 font-medium">{{ t('affiliate.invitees.columns.email') }}</th>
-                  <th class="px-3 py-2 font-medium">{{ t('affiliate.invitees.columns.username') }}</th>
-                  <th class="px-3 py-2 font-medium text-right">{{ t('affiliate.invitees.columns.rebate') }}</th>
-                  <th class="px-3 py-2 font-medium">{{ t('affiliate.invitees.columns.joinedAt') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="item in detail.invitees"
-                  :key="item.user_id"
-                  class="border-b border-gray-100 last:border-b-0 dark:border-dark-800"
-                >
-                  <td class="px-3 py-3 text-gray-900 dark:text-white">{{ item.email || '-' }}</td>
-                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ item.username || '-' }}</td>
-                  <td class="px-3 py-3 text-right font-medium text-emerald-600 dark:text-emerald-400">{{ formatCurrency(item.total_rebate) }}</td>
-                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatDateTime(item.created_at) || '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+        <section>
+          <UPageCard :title="t('affiliate.invitees.title')" variant="naked" class="mb-4" />
+          <UTable
+            :data="detail.invitees"
+            :columns="inviteeColumns"
+            :ui="{
+              root: 'rounded-lg ring ring-default',
+              base: 'min-w-[560px] border-separate border-spacing-0',
+              thead: '[&>tr]:bg-elevated/50 [&>tr]:after:content-none',
+              tbody: '[&>tr]:last:[&>td]:border-b-0',
+              th: 'py-2 border-b border-default',
+              td: 'border-b border-default',
+              separator: 'h-0'
+            }"
+          >
+            <template #email-cell="{ row }"><span class="text-highlighted">{{ row.original.email || '-' }}</span></template>
+            <template #username-cell="{ row }">{{ row.original.username || '-' }}</template>
+            <template #total_rebate-cell="{ row }"><span class="block text-right font-medium tabular-nums text-highlighted">{{ formatCurrency(row.original.total_rebate) }}</span></template>
+            <template #created_at-cell="{ row }"><span class="tabular-nums">{{ formatDateTime(row.original.created_at) || '-' }}</span></template>
+            <template #empty><p class="py-6 text-center text-sm text-muted">{{ t('affiliate.invitees.empty') }}</p></template>
+          </UTable>
         </section>
       </template>
     </div>
@@ -224,11 +155,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
-import Icon from '@/components/icons/Icon.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import userAPI from '@/api/user'
 import type { UserAffiliateCode, UserAffiliateDetail } from '@/types'
@@ -253,6 +184,22 @@ const copyingId = ref<string | null>(null)
 const pendingDelete = ref<UserAffiliateCode | null>(null)
 
 const customCodes = computed<UserAffiliateCode[]>(() => detail.value?.custom_codes ?? [])
+
+type Invitee = UserAffiliateDetail['invitees'][number]
+const inviteeColumns = computed<TableColumn<Invitee>[]>(() => [
+  { accessorKey: 'email', header: t('affiliate.invitees.columns.email') },
+  { accessorKey: 'username', header: t('affiliate.invitees.columns.username') },
+  { accessorKey: 'total_rebate', header: () => h('span', { class: 'block text-right' }, t('affiliate.invitees.columns.rebate')) },
+  { accessorKey: 'created_at', header: t('affiliate.invitees.columns.joinedAt') }
+])
+
+// Stat cards like the template HomeStats.
+const statUi = {
+  container: 'gap-y-1.5',
+  wrapper: 'items-start',
+  leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25',
+  title: 'font-normal text-muted text-xs uppercase'
+}
 const customCodeQuota = computed(() => detail.value?.custom_code_quota ?? { max: 9, used: 0, limit: 9 })
 
 const inviteLink = computed(() => {
@@ -368,14 +315,3 @@ onMounted(() => {
   void loadAffiliateDetail()
 })
 </script>
-
-<style scoped>
-/* Sections as cards; the four figures as one joined strip. */
-.affiliate-section { padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .affiliate-section { box-shadow: 0 0 0 1px var(--ui-border); }
-.affiliate-metrics { overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .affiliate-metrics { box-shadow: 0 0 0 1px var(--ui-border); }
-.console-signal .affiliate-metrics.signal-affiliate-metrics { border-block: 0; }
-.console-signal .affiliate-metrics > .card { box-shadow: none; }
-@media (min-width: 640px) { .affiliate-section { padding: 24px; } }
-</style>

@@ -1,67 +1,76 @@
 <template>
   <AppLayout>
-    <div class="signal-account-page mx-auto max-w-3xl space-y-6">
+    <div class="mx-auto flex w-full flex-col gap-4 sm:gap-6 lg:max-w-2xl lg:gap-10">
       <UserPageHeader flush :title="t('redeem.title')" />
-      <div class="grid grid-cols-1 divide-y divide-default overflow-hidden rounded-lg bg-default shadow-xs ring ring-default sm:grid-cols-[1.4fr_1fr] sm:divide-x sm:divide-y-0 dark:shadow-none">
-        <div class="px-5 py-4 sm:px-6">
-          <p class="text-sm text-muted">{{ t('redeem.currentBalance') }}</p>
-          <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">
-            ${{ user?.balance?.toFixed(2) || '0.00' }}
-          </p>
-        </div>
-        <div class="px-5 py-4 sm:px-6">
-          <p class="text-sm text-muted">{{ t('redeem.concurrency') }}</p>
-          <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">
-            {{ user?.concurrency || 0 }} <span class="text-xs font-normal text-muted">{{ t('redeem.requests') }}</span>
-          </p>
-        </div>
-      </div>
 
-      <!-- Redeem Form -->
-      <section class="rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none">
-        <form @submit.prevent="handleRedeem" class="space-y-5">
-          <div>
-            <label for="code" class="mb-1.5 block text-sm font-medium text-default">
-              {{ t('redeem.redeemCodeLabel') }}
-            </label>
+      <UPageGrid class="grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-px">
+        <UPageCard
+          icon="i-lucide-wallet"
+          :title="t('redeem.currentBalance')"
+          variant="subtle"
+          :ui="statUi"
+          class="sm:rounded-none sm:rounded-l-lg"
+        >
+          <span class="text-2xl font-semibold tabular-nums text-highlighted">${{ user?.balance?.toFixed(2) || '0.00' }}</span>
+        </UPageCard>
+        <UPageCard
+          icon="i-lucide-gauge"
+          :title="t('redeem.concurrency')"
+          variant="subtle"
+          :ui="statUi"
+          class="sm:rounded-none sm:rounded-r-lg"
+        >
+          <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ user?.concurrency || 0 }} <span class="text-xs font-normal text-muted">{{ t('redeem.requests') }}</span></span>
+        </UPageCard>
+      </UPageGrid>
+
+      <section>
+        <UPageCard :title="t('redeem.redeemCodeLabel')" :description="t('redeem.redeemCodeHint')" variant="naked" orientation="horizontal" class="mb-4">
+          <UPopover :content="{ align: 'end' }">
+            <UButton color="neutral" variant="ghost" icon="i-lucide-info" class="w-fit lg:ms-auto">{{ t('redeem.aboutCodes') }}</UButton>
+            <template #content>
+              <ul class="max-w-xs list-inside list-disc space-y-1 p-4 text-sm text-toned">
+                <li>{{ t('redeem.codeRule1') }}</li>
+                <li>{{ t('redeem.codeRule2') }}</li>
+                <li>
+                  {{ t('redeem.codeRule3') }}
+                  <UBadge v-if="contactInfo" color="neutral" variant="outline" class="ml-1.5">{{ contactInfo }}</UBadge>
+                </li>
+                <li>{{ t('redeem.codeRule4') }}</li>
+              </ul>
+            </template>
+          </UPopover>
+        </UPageCard>
+        <UPageCard variant="subtle">
+          <form class="flex flex-col gap-3 sm:flex-row" @submit.prevent="handleRedeem">
             <UInput
               id="code"
               v-model="redeemCode"
               type="text"
               required
-              size="xl"
+              size="lg"
               icon="i-lucide-gift"
               class="w-full"
+              :aria-label="t('redeem.redeemCodeLabel')"
               :placeholder="t('redeem.redeemCodePlaceholder')"
               :disabled="submitting"
             />
-            <p class="mt-1.5 text-xs text-muted">
-              {{ t('redeem.redeemCodeHint') }}
-            </p>
-          </div>
-
-          <UButton
-            type="submit"
-            size="xl"
-            block
-            :icon="submitting ? 'i-lucide-loader-circle' : 'i-lucide-circle-check'"
-            :ui="{ leadingIcon: submitting ? 'animate-spin' : '' }"
-            :disabled="!redeemCode || submitting"
-          >
-            {{ submitting ? t('redeem.redeeming') : t('redeem.redeemButton') }}
-          </UButton>
-        </form>
+            <UButton
+              type="submit"
+              size="lg"
+              class="shrink-0 justify-center"
+              :loading="submitting"
+              :icon="submitting ? undefined : 'i-lucide-circle-check'"
+              :disabled="!redeemCode || submitting"
+            >
+              {{ submitting ? t('redeem.redeeming') : t('redeem.redeemButton') }}
+            </UButton>
+          </form>
+        </UPageCard>
       </section>
 
-      <!-- Success Message -->
       <transition name="fade">
-        <UAlert
-          v-if="redeemResult"
-          color="success"
-          variant="subtle"
-          icon="i-lucide-circle-check"
-          :title="t('redeem.redeemSuccess')"
-        >
+        <UAlert v-if="redeemResult" color="success" variant="subtle" icon="i-lucide-circle-check" :title="t('redeem.redeemSuccess')">
           <template #description>
             <div class="mt-1 space-y-1">
               <p v-if="redeemResult.type === 'balance'" class="font-medium">
@@ -75,10 +84,7 @@
                 {{ t('redeem.subscriptionAssigned') }}
                 <span v-if="redeemResult.group?.name"> - {{ redeemResult.group.name }}</span>
                 <span v-if="redeemResult.validity_days">
-                  ({{
-                    t('redeem.subscriptionDays', { days: redeemResult.validity_days })
-                  }})</span
-                >
+                  ({{ t('redeem.subscriptionDays', { days: redeemResult.validity_days }) }})</span>
               </p>
               <p v-if="redeemResult.type === 'balance' && userRefreshedAfterRedeem && user">
                 {{ t('redeem.newBalance') }}:
@@ -86,180 +92,65 @@
               </p>
               <p v-if="redeemResult.type === 'concurrency' && userRefreshedAfterRedeem && user">
                 {{ t('redeem.newConcurrency') }}:
-                <span class="font-semibold"
-                  >{{ user.concurrency }} {{ t('redeem.requests') }}</span
-                >
+                <span class="font-semibold">{{ user.concurrency }} {{ t('redeem.requests') }}</span>
               </p>
             </div>
           </template>
         </UAlert>
       </transition>
 
-      <!-- Error Message -->
       <transition name="fade">
-        <UAlert
-          v-if="errorMessage"
-          color="error"
-          variant="subtle"
-          icon="i-lucide-circle-alert"
-          :title="t('redeem.redeemFailed')"
-          :description="errorMessage"
-        />
+        <UAlert v-if="errorMessage" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="t('redeem.redeemFailed')" :description="errorMessage" />
       </transition>
 
-      <!-- Information Card -->
-      <UAlert color="neutral" variant="subtle" icon="i-lucide-info" class="dark:bg-primary/10 dark:text-primary dark:ring-primary/25" :title="t('redeem.aboutCodes')">
-        <template #description>
-          <ul class="mt-1 list-inside list-disc space-y-1">
-            <li>{{ t('redeem.codeRule1') }}</li>
-            <li>{{ t('redeem.codeRule2') }}</li>
-            <li>
-              {{ t('redeem.codeRule3') }}
-              <UBadge v-if="contactInfo" color="neutral" variant="outline" class="ml-1.5">
-                {{ contactInfo }}
-              </UBadge>
-            </li>
-            <li>{{ t('redeem.codeRule4') }}</li>
-          </ul>
-        </template>
-      </UAlert>
-
-      <!-- Recent Activity -->
-      <section class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
-        <header class="border-b border-default px-5 py-4 sm:px-6">
-          <h2 class="text-base font-semibold text-highlighted">
-            {{ t('redeem.recentActivity') }}
-          </h2>
-        </header>
-        <div class="px-5 py-4 sm:px-6">
-          <!-- Loading State -->
-          <div v-if="loadingHistory" class="flex items-center justify-center py-8">
+      <section>
+        <UPageCard :title="t('redeem.recentActivity')" variant="naked" orientation="horizontal" class="mb-4" />
+        <UPageCard variant="subtle" :ui="{ container: 'p-0 sm:p-0 gap-y-0' }">
+          <div v-if="loadingHistory" class="flex items-center justify-center py-10">
             <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
           </div>
 
-          <!-- History List -->
-          <ul v-else-if="history.length > 0" class="-my-1 divide-y divide-default">
-            <li
-              v-for="item in history"
-              :key="item.id"
-              class="flex items-center justify-between gap-4 py-3"
-            >
+          <ul v-else-if="history.length > 0" class="divide-y divide-default">
+            <li v-for="item in history" :key="item.id" class="flex items-center justify-between gap-4 px-4 py-3 sm:px-6">
               <div class="flex min-w-0 items-center gap-3">
-                <div
-                  :class="[
-                    'flex size-9 shrink-0 items-center justify-center rounded-lg',
-                    isBalanceType(item.type)
-                      ? item.value >= 0
-                        ? 'bg-emerald-100 dark:bg-emerald-900/30'
-                        : 'bg-red-100 dark:bg-red-900/30'
-                      : isSubscriptionType(item.type)
-                        ? 'bg-purple-100 dark:bg-purple-900/30'
-                        : item.value >= 0
-                          ? 'bg-blue-100 dark:bg-blue-900/30'
-                          : 'bg-orange-100 dark:bg-orange-900/30'
-                  ]"
-                >
-                  <!-- 余额类型图标 -->
-                  <Icon
-                    v-if="isBalanceType(item.type)"
-                    name="dollar"
-                    size="md"
-                    :class="
-                      item.value >= 0
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-red-600 dark:text-red-400'
-                    "
-                  />
-                  <!-- 订阅类型图标 -->
-                  <Icon
-                    v-else-if="isSubscriptionType(item.type)"
-                    name="badge"
-                    size="md"
-                    class="text-purple-600 dark:text-purple-400"
-                  />
-                  <!-- 并发类型图标 -->
-                  <Icon
-                    v-else
-                    name="bolt"
-                    size="md"
-                    :class="
-                      item.value >= 0
-                        ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-orange-600 dark:text-orange-400'
-                    "
-                  />
-                </div>
+                <UAvatar
+                  :icon="isBalanceType(item.type) ? 'i-lucide-circle-dollar-sign' : isSubscriptionType(item.type) ? 'i-lucide-badge-check' : 'i-lucide-zap'"
+                  size="md"
+                  :class="toneBg(item)"
+                  :ui="{ icon: toneText(item) }"
+                />
                 <div class="min-w-0">
-                  <p class="text-sm font-medium text-highlighted">
-                    {{ getHistoryItemTitle(item) }}
-                  </p>
-                  <p class="text-xs text-muted">
-                    {{ formatDateTime(item.used_at) }}
-                  </p>
+                  <p class="text-sm font-medium text-highlighted">{{ getHistoryItemTitle(item) }}</p>
+                  <p class="text-xs tabular-nums text-muted">{{ formatDateTime(item.used_at) }}</p>
                 </div>
               </div>
               <div class="shrink-0 text-right">
-                <p
-                  :class="[
-                    'text-sm font-semibold tabular-nums',
-                    isBalanceType(item.type)
-                      ? item.value >= 0
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-red-600 dark:text-red-400'
-                      : isSubscriptionType(item.type)
-                        ? 'text-purple-600 dark:text-purple-400'
-                        : item.value >= 0
-                          ? 'text-blue-600 dark:text-blue-400'
-                          : 'text-orange-600 dark:text-orange-400'
-                  ]"
-                >
-                  {{ formatHistoryValue(item) }}
-                </p>
-                <p
-                  v-if="!isAdminAdjustment(item.type)"
-                  class="font-mono text-xs text-dimmed"
-                >
-                  {{ item.code.slice(0, 8) }}...
-                </p>
-                <p v-else class="text-xs text-dimmed">
-                  {{ t('redeem.adminAdjustment') }}
-                </p>
-                <!-- Display notes for admin adjustments -->
-                <p
-                  v-if="item.notes"
-                  class="mt-1 max-w-[200px] truncate text-xs italic text-muted"
-                  :title="item.notes"
-                >
-                  {{ item.notes }}
-                </p>
+                <p class="text-sm font-semibold tabular-nums" :class="toneText(item)">{{ formatHistoryValue(item) }}</p>
+                <p v-if="!isAdminAdjustment(item.type)" class="font-mono text-xs text-dimmed">{{ item.code.slice(0, 8) }}...</p>
+                <p v-else class="text-xs text-dimmed">{{ t('redeem.adminAdjustment') }}</p>
+                <p v-if="item.notes" class="mt-1 max-w-[200px] truncate text-xs italic text-muted" :title="item.notes">{{ item.notes }}</p>
               </div>
             </li>
           </ul>
 
-          <!-- Empty State -->
-          <div v-else class="flex flex-col items-center py-8 text-center">
-            <div class="mb-3 flex size-12 items-center justify-center rounded-lg bg-elevated">
-              <UIcon name="i-lucide-clock" class="size-6 text-dimmed" />
-            </div>
-            <p class="text-sm text-muted">
-              {{ t('redeem.historyWillAppear') }}
-            </p>
+          <div v-else class="flex flex-col items-center gap-2 py-10 text-center">
+            <UIcon name="i-lucide-clock" class="size-8 text-dimmed" />
+            <p class="text-sm text-muted">{{ t('redeem.historyWillAppear') }}</p>
           </div>
-        </div>
-        <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-default px-5 py-3 text-sm text-muted sm:px-6">
-          <span>{{ t('common.total') }}: {{ historyTotal }} {{ t('pagination.results') }}</span>
-          <div class="flex flex-wrap items-center gap-2">
-            <label class="flex items-center gap-2">
-              {{ t('pagination.perPage') }}
-              <select
-                v-model="historyPageSize"
-                class="input w-20 py-1.5"
-                :disabled="loadingHistory || submitting"
-                @change="fetchHistory(1)"
-              >
-                <option v-for="size in [20, 50, 100]" :key="size" :value="size">{{ size }}</option>
-              </select>
-            </label>
+        </UPageCard>
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted">
+          <span class="tabular-nums">{{ t('common.total') }}: {{ historyTotal }} {{ t('pagination.results') }}</span>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span>{{ t('pagination.perPage') }}</span>
+            <Select
+              v-model="historyPageSize"
+              data-testid="history-page-size"
+              class="w-20"
+              :options="pageSizeOptions"
+              :aria-label="t('pagination.perPage')"
+              :disabled="loadingHistory || submitting"
+              @change="fetchHistory(1)"
+            />
             <UButton
               color="neutral"
               variant="outline"
@@ -273,7 +164,7 @@
               @click="fetchHistory(historyPage + 1)"
             >{{ t('pagination.next') }}</UButton>
           </div>
-        </footer>
+        </div>
       </section>
     </div>
   </AppLayout>
@@ -288,7 +179,7 @@ import { useSubscriptionStore } from '@/stores/subscriptions'
 import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import type { RedeemCode } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import Icon from '@/components/icons/Icon.vue'
+import Select from '@/components/common/Select.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import { formatDateTime } from '@/utils/format'
 
@@ -326,6 +217,27 @@ const isSubscriptionType = (type: string) => {
 
 const isAdminAdjustment = (type: string) => {
   return type === 'admin_balance' || type === 'admin_concurrency'
+}
+
+// History row tone: balance in/out = success/error, subscription = info,
+// concurrency up/down = primary/warning (same buckets as before, on theme tokens).
+const tone = (item: RedeemHistoryItem) =>
+  isBalanceType(item.type) ? (item.value >= 0 ? 'success' : 'error')
+    : isSubscriptionType(item.type) ? 'info'
+      : item.value >= 0 ? 'primary' : 'warning'
+const TONE_TEXT = { success: 'text-success', error: 'text-error', info: 'text-info', primary: 'text-primary', warning: 'text-warning' } as const
+const TONE_BG = { success: 'bg-success/10', error: 'bg-error/10', info: 'bg-info/10', primary: 'bg-primary/10', warning: 'bg-warning/10' } as const
+const toneText = (item: RedeemHistoryItem) => TONE_TEXT[tone(item)]
+const toneBg = (item: RedeemHistoryItem) => TONE_BG[tone(item)]
+
+const pageSizeOptions = [20, 50, 100].map((size) => ({ value: size, label: String(size) }))
+
+// Stat cards like the template HomeStats.
+const statUi = {
+  container: 'gap-y-1.5',
+  wrapper: 'items-start',
+  leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25',
+  title: 'font-normal text-muted text-xs uppercase'
 }
 
 const getHistoryItemTitle = (item: RedeemHistoryItem) => {
