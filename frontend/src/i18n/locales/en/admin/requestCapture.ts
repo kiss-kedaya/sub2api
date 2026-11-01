@@ -79,5 +79,10 @@ export default { requestCapture: {
   "client_request": "Client request",
   "upstream_request": "Upstream request",
   "upstream_response": "Upstream response",
-  "client_response": "Client response"
+  "client_response": "Client response",
+  tabs: { tasks: 'Capture tasks', settings: 'Capture settings' },
+  targetedSettings: 'Targeted error capture',
+  diagnosticSettings: 'ID1 full-request diagnostics',
+  columns: 'Columns',
+  captureDisabled: 'Targeted error capture is off. Turn it on in Capture settings first.'
 } }
