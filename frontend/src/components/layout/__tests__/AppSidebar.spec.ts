@@ -8,8 +8,8 @@ const componentPath = resolve(dirname(fileURLToPath(import.meta.url)), '../AppSi
 const componentSource = readFileSync(componentPath, 'utf8')
 const stylePath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../style.css')
 const styleSource = readFileSync(stylePath, 'utf8')
-// The nav declarations (groups and pages) live in consoleNav.ts, shared with the Ctrl/⌘K palette.
-const navPath = resolve(dirname(fileURLToPath(import.meta.url)), '../consoleNav.ts')
+// The nav declarations (groups and pages) live in consoleNav.tsx, shared with the Ctrl/⌘K palette.
+const navPath = resolve(dirname(fileURLToPath(import.meta.url)), '../consoleNav.tsx')
 const navSource = readFileSync(navPath, 'utf8')
 
 describe('AppSidebar custom SVG styles', () => {
@@ -101,5 +101,17 @@ describe('AppSidebar user navigation', () => {
 
   it('includes Infinite Canvas next to API keys', () => {
     expect(navSource).toContain("link('/keys', t('nav.apiKeys')),\n          link('/infinite-canvas', t('nav.infiniteCanvas'))")
+  })
+})
+
+describe('AppSidebar icons', () => {
+  it('names only icons that exist, in a file the icon bundler scans (.tsx)', () => {
+    // The client icon bundle is built from the icon names found in .vue / .tsx sources.
+    expect(navPath.endsWith('.tsx')).toBe(true)
+    const lucide = JSON.parse(readFileSync(resolve(process.cwd(), 'node_modules/@iconify-json/lucide/icons.json'), 'utf8'))
+    const known = new Set([...Object.keys(lucide.icons), ...Object.keys(lucide.aliases ?? {})])
+    const used = [...new Set([...navSource.matchAll(/i-lucide-([a-z0-9-]+)/g)].map((match) => match[1]))]
+    expect(used.length).toBeGreaterThan(10)
+    expect(used.filter((name) => !known.has(name))).toEqual([])
   })
 })

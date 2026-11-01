@@ -7,6 +7,9 @@ import { FeatureFlags, isFeatureFlagEnabled, makeSidebarFlag } from '@/utils/fea
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { routeParentTrail } from './routeTrail'
 
+// .tsx only so Nuxt UI's icon bundler scans this file (it reads .vue/.tsx, not .ts): the
+// i-lucide-* names below are bundled at build time. There is no JSX here.
+
 /**
  * The console navigation in one place: the sidebar (AppSidebar) and the Ctrl/⌘K palette
  * (ConsoleNavigationSearch) both read this tree, so every page in the sidebar is also in

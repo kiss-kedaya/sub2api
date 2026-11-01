@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const dir = dirname(fileURLToPath(import.meta.url))
-// Docs moved from the navbar to the sidebar's bottom group, declared in consoleNav.ts.
-const sidebarSource = readFileSync(resolve(dir, '../consoleNav.ts'), 'utf8')
+// Docs moved from the navbar to the sidebar's bottom group, declared in consoleNav.tsx.
+const sidebarSource = readFileSync(resolve(dir, '../consoleNav.tsx'), 'utf8')
 const homeViewSource = readFileSync(resolve(dir, '../../../views/HomeView.vue'), 'utf8')
 const keyUsageViewSource = readFileSync(resolve(dir, '../../../views/KeyUsageView.vue'), 'utf8')
 

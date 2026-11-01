@@ -30,7 +30,7 @@ const { t } = useI18n()
 const { t: uiT } = useLocale()
 const router = useRouter()
 const colorMode = useSiteColorMode()
-// The same tree as the sidebar (permissions, feature flags, simple mode): consoleNav.ts.
+// The same tree as the sidebar (permissions, feature flags, simple mode): consoleNav.tsx.
 const { tree, secondary } = useConsoleNav()
 const open = ref(false)
 const query = ref('')

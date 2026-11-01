@@ -130,7 +130,7 @@ const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
 const subscriptionStore = useSubscriptionStore()
 const { refreshBatchImageAccess } = useBatchImageAccess()
-// The groups and pages (shared with the Ctrl/⌘K palette): components/layout/consoleNav.ts.
+// The groups and pages (shared with the Ctrl/⌘K palette): components/layout/consoleNav.tsx.
 const { sidebarTree, secondary, activeLeaf, homePath } = useConsoleNav()
 
 // The store stays the source of truth (UDashboardGroup persists the collapsed state too).
@@ -389,6 +389,20 @@ onBeforeUnmount(() => {
 /* VersionBadge: a small neutral tag after the name (its amber update state stays). */
 .sidebar-version {
   flex-shrink: 0;
+}
+
+/* Read-only users see the plain version text; a long one gives way to the site name. */
+.sidebar-version:has(> span) {
+  min-width: 0;
+  flex-shrink: 1;
+  max-width: 45%;
+}
+
+.sidebar-version > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-version > button {
