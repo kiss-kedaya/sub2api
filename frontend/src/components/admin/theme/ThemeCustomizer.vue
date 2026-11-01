@@ -1,85 +1,80 @@
 <template>
-  <section class="card" aria-labelledby="site-theme-title">
-    <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-      <h2 id="site-theme-title" class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('admin.settings.siteTheme.title') }}</h2>
-      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.settings.siteTheme.description') }}</p>
-    </div>
-    <div class="space-y-5 p-6" :aria-busy="loading || saving">
-      <p v-if="loading" role="status" class="text-sm text-gray-500">{{ t('common.loading') }}</p>
-      <template v-else>
-        <div class="divide-y divide-gray-100 rounded-lg border border-gray-200 dark:divide-dark-700 dark:border-dark-700">
-          <div v-for="row in rows" :key="row.field" :data-testid="`site-theme-row-${row.field}`">
-            <button
-              type="button"
-              class="flex w-full items-center gap-3 px-4 py-3 text-left text-sm"
-              :aria-expanded="openField === row.field"
-              :aria-controls="`site-theme-options-${row.field}`"
-              :disabled="saving || loadFailed"
-              @click="toggle(row.field)"
-            >
-              <span :id="`site-theme-label-${row.field}`" class="w-24 shrink-0 font-medium text-gray-900 dark:text-white">{{ row.label }}</span>
-              <span v-if="row.current.swatch" class="site-theme-swatch" :style="row.current.swatch" aria-hidden="true" />
-              <span class="flex-1 truncate text-gray-600 dark:text-gray-300">{{ row.current.label }}</span>
-              <svg class="h-4 w-4 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-90': openField === row.field }" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.17 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd" />
-              </svg>
-            </button>
-            <div
-              v-if="openField === row.field"
-              :id="`site-theme-options-${row.field}`"
-              role="radiogroup"
-              :aria-labelledby="`site-theme-label-${row.field}`"
-              class="flex flex-wrap gap-2 px-4 pb-4"
-            >
-              <button
-                v-for="(option, index) in row.options"
-                :key="String(option.value)"
-                type="button"
-                role="radio"
-                :aria-checked="option.value === draft[row.field]"
-                :tabindex="option.value === draft[row.field] ? 0 : -1"
-                :data-value="String(option.value)"
-                class="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors"
-                :class="option.value === draft[row.field]
-                  ? 'border-gray-900 bg-gray-50 text-gray-900 dark:border-white dark:bg-dark-700 dark:text-white'
-                  : 'border-gray-200 text-gray-600 hover:border-gray-300 dark:border-dark-600 dark:text-gray-300 dark:hover:border-dark-500'"
-                :disabled="saving || loadFailed"
-                @click="select(row.field, option.value)"
-                @keydown="onOptionKeydown($event, row, index)"
-              >
-                <span v-if="option.swatch" class="site-theme-swatch" :style="option.swatch" aria-hidden="true" />
-                {{ option.label }}
-              </button>
-            </div>
-          </div>
-        </div>
+  <SettingsSection
+    :title="t('admin.settings.siteTheme.title')"
+    :description="t('admin.settings.siteTheme.description')"
+    :loading="loading"
+    :aria-busy="loading || saving"
+  >
+    <template #actions>
+      <UButton v-if="loadFailed" color="neutral" variant="outline" data-testid="site-theme-retry" @click="load">
+        {{ t('admin.settings.siteTheme.retry') }}
+      </UButton>
+      <UButton v-else color="neutral" variant="outline" data-testid="site-theme-reset" :disabled="saving || isDefault" @click="resetToDefault">
+        {{ t('admin.settings.siteTheme.reset') }}
+      </UButton>
+      <UButton data-testid="site-theme-save" :loading="saving" :disabled="saving || loadFailed || !dirty" @click="save">
+        {{ saving ? t('common.saving') : t('common.save') }}
+      </UButton>
+    </template>
 
-        <div class="site-theme-preview" :style="previewStyle" data-testid="site-theme-preview">
-          <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.settings.siteTheme.preview') }}</p>
-          <p class="site-theme-preview-text mt-2 text-sm">{{ t('admin.settings.siteTheme.previewText') }}</p>
-          <div class="mt-3 flex flex-wrap items-center gap-3">
-            <span class="site-theme-preview-button">{{ t('admin.settings.siteTheme.previewButton') }}</span>
-            <span class="site-theme-preview-badge">{{ t('admin.settings.siteTheme.previewBadge') }}</span>
-          </div>
-        </div>
-
-        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.siteTheme.modeHint') }}</p>
-        <p v-if="error" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
-        <div class="flex justify-end gap-3 border-t border-gray-100 pt-4 dark:border-dark-700">
-          <button v-if="loadFailed" type="button" class="btn btn-secondary btn-sm" data-testid="site-theme-retry" @click="load">{{ t('admin.settings.siteTheme.retry') }}</button>
-          <button v-else type="button" class="btn btn-secondary btn-sm" data-testid="site-theme-reset" :disabled="saving || isDefault" @click="resetToDefault">{{ t('admin.settings.siteTheme.reset') }}</button>
-          <button type="button" class="btn btn-primary btn-sm" data-testid="site-theme-save" :disabled="saving || loadFailed || !dirty" @click="save">
-            {{ saving ? t('common.saving') : t('common.save') }}
-          </button>
-        </div>
-      </template>
+    <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
+    <div v-for="row in rows" :key="row.field" :data-testid="`site-theme-row-${row.field}`">
+      <UButton
+        color="neutral"
+        variant="ghost"
+        class="-mx-2.5 w-[calc(100%+1.25rem)] justify-start gap-3"
+        :aria-expanded="openField === row.field"
+        :aria-controls="`site-theme-options-${row.field}`"
+        :disabled="saving || loadFailed"
+        @click="toggle(row.field)"
+      >
+        <span :id="`site-theme-label-${row.field}`" class="w-24 shrink-0 text-left font-medium text-highlighted">{{ row.label }}</span>
+        <span v-if="row.current.swatch" class="site-theme-swatch" :style="row.current.swatch" aria-hidden="true" />
+        <span class="flex-1 truncate text-left text-toned">{{ row.current.label }}</span>
+        <UIcon name="i-lucide-chevron-right" class="size-4 shrink-0 text-dimmed transition-transform" :class="{ 'rotate-90': openField === row.field }" />
+      </UButton>
+      <div
+        v-if="openField === row.field"
+        :id="`site-theme-options-${row.field}`"
+        role="radiogroup"
+        :aria-labelledby="`site-theme-label-${row.field}`"
+        class="mt-3 flex flex-wrap gap-2"
+      >
+        <UButton
+          v-for="(option, index) in row.options"
+          :key="String(option.value)"
+          role="radio"
+          :aria-checked="option.value === draft[row.field]"
+          :tabindex="option.value === draft[row.field] ? 0 : -1"
+          :data-value="String(option.value)"
+          :color="option.value === draft[row.field] ? 'primary' : 'neutral'"
+          :variant="option.value === draft[row.field] ? 'subtle' : 'outline'"
+          :disabled="saving || loadFailed"
+          @click="select(row.field, option.value)"
+          @keydown="onOptionKeydown($event, row, index)"
+        >
+          <span v-if="option.swatch" class="site-theme-swatch" :style="option.swatch" aria-hidden="true" />
+          {{ option.label }}
+        </UButton>
+      </div>
     </div>
-  </section>
+
+    <div class="site-theme-preview" :style="previewStyle" data-testid="site-theme-preview">
+      <p class="text-xs font-medium text-muted">{{ t('admin.settings.siteTheme.preview') }}</p>
+      <p class="site-theme-preview-text mt-2 text-sm">{{ t('admin.settings.siteTheme.previewText') }}</p>
+      <div class="mt-3 flex flex-wrap items-center gap-3">
+        <span class="site-theme-preview-button">{{ t('admin.settings.siteTheme.previewButton') }}</span>
+        <span class="site-theme-preview-badge">{{ t('admin.settings.siteTheme.previewBadge') }}</span>
+      </div>
+    </div>
+    <p class="text-xs text-muted">{{ t('admin.settings.siteTheme.modeHint') }}</p>
+  </SettingsSection>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import SettingsSection from '@/views/admin/settings/SettingsSection.vue'
 import { getSiteTheme, updateSiteTheme } from '@/api/admin/siteTheme'
 import {
   DEFAULT_SITE_THEME,

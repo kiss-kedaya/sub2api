@@ -8,333 +8,338 @@
     <form id="provider-form" @submit.prevent="handleSave" class="space-y-4">
       <!-- Name + Key -->
       <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="input-label">
-            {{ t('admin.settings.payment.providerName') }}
-            <span class="text-red-500">*</span>
-          </label>
-          <input v-model="form.name" type="text" class="input" required />
-        </div>
-        <div>
-          <label class="input-label">
-            {{ t('admin.settings.payment.providerKey') }}
-            <span class="text-red-500">*</span>
-          </label>
+        <UFormField :label="t('admin.settings.payment.providerName')" required>
+          <UInput v-model="form.name" type="text" required class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.settings.payment.providerKey')" required>
           <Select
             v-model="form.provider_key"
             :options="(!!editing ? allKeyOptions : enabledKeyOptions) as SelectOption[]"
             :disabled="!!editing"
             @change="onKeyChange"
           />
-        </div>
+        </UFormField>
       </div>
 
       <!-- Toggles + Payment mode + Supported types (single row) -->
       <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
         <ToggleSwitch :label="t('common.enabled')" :checked="form.enabled" @toggle="form.enabled = !form.enabled" />
-        <ToggleSwitch :label="t('admin.settings.payment.refundEnabled')" :checked="form.refund_enabled" @toggle="form.refund_enabled = !form.refund_enabled; if (!form.refund_enabled) form.allow_user_refund = false" />
-        <ToggleSwitch v-if="form.refund_enabled" :label="t('admin.settings.payment.allowUserRefund')" :checked="form.allow_user_refund" @toggle="form.allow_user_refund = !form.allow_user_refund" />
+        <ToggleSwitch
+          :label="t('admin.settings.payment.refundEnabled')"
+          :checked="form.refund_enabled"
+          @toggle="form.refund_enabled = !form.refund_enabled; if (!form.refund_enabled) form.allow_user_refund = false"
+        />
+        <ToggleSwitch
+          v-if="form.refund_enabled"
+          :label="t('admin.settings.payment.allowUserRefund')"
+          :checked="form.allow_user_refund"
+          @toggle="form.allow_user_refund = !form.allow_user_refund"
+        />
         <div v-if="supportsPaymentMode" class="flex items-center gap-2">
-          <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.paymentMode') }}</span>
+          <span class="text-xs font-medium text-muted">{{ t('admin.settings.payment.paymentMode') }}</span>
           <div class="flex gap-1.5">
-            <button
+            <UButton
               v-for="mode in paymentModeOptions"
               :key="mode.value"
-              type="button"
               @click="form.payment_mode = mode.value"
-              :class="[
-                'rounded-lg border px-2.5 py-1 text-xs font-medium transition-all',
-                form.payment_mode === mode.value
-                  ? 'border-primary-500 bg-primary-500 text-white shadow-xs'
-                  : 'border-gray-300 bg-white text-gray-600 hover:border-gray-400 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-dark-500',
-              ]"
-            >{{ mode.label }}</button>
+              size="xs"
+              :color="form.payment_mode === mode.value ? 'primary' : 'neutral'"
+              :variant="form.payment_mode === mode.value ? 'subtle' : 'outline'"
+            >{{ mode.label }}</UButton>
           </div>
         </div>
       </div>
 
       <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="input-label">{{ t('admin.settings.payment.instanceRechargeFeeRate') }}</label>
-          <div class="relative">
-            <input
+        <UFormField
+          :label="t('admin.settings.payment.instanceRechargeFeeRate')"
+          :description="t('admin.settings.payment.instanceRechargeFeeRateHint')"
+        >
+          <UInput
               :value="form.recharge_fee_rate ?? ''"
               @input="onFeeRateInput(($event.target as HTMLInputElement).value)"
               type="number"
               step="0.01"
               min="0"
               max="100"
-              class="input pr-8"
               :placeholder="t('admin.settings.payment.instanceRechargeFeeRatePlaceholder')"
-            />
-            <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400">%</span>
-          </div>
-          <p class="mt-0.5 text-xs text-gray-400">{{ t('admin.settings.payment.instanceRechargeFeeRateHint') }}</p>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.settings.payment.instanceBalanceMultiplier') }}</label>
-          <input
+              class="w-full"
+            >
+              <template #trailing><span class="text-xs text-dimmed">%</span></template>
+            </UInput>
+        </UFormField>
+        <UFormField
+          :label="t('admin.settings.payment.instanceBalanceMultiplier')"
+          :description="t('admin.settings.payment.instanceBalanceMultiplierHint')"
+        >
+          <UInput
             :value="form.balance_recharge_multiplier ?? ''"
             @input="onMultiplierInput(($event.target as HTMLInputElement).value)"
             type="number"
             step="0.01"
             min="0.01"
-            class="input"
             :placeholder="t('admin.settings.payment.instanceBalanceMultiplierPlaceholder')"
+            class="w-full"
           />
-          <p class="mt-0.5 text-xs text-gray-400">{{ t('admin.settings.payment.instanceBalanceMultiplierHint') }}</p>
-        </div>
+        </UFormField>
       </div>
 
       <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
         <div v-if="availableTypes.length > 1" class="flex items-center gap-2">
-          <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.supportedTypes') }}</span>
+          <span class="text-xs font-medium text-muted">{{ t('admin.settings.payment.supportedTypes') }}</span>
           <div class="flex flex-wrap gap-1.5">
-            <button
+            <UButton
               v-for="pt in availableTypes"
               :key="pt.value"
-              type="button"
               @click="toggleType(pt.value)"
-              :class="[
-                'rounded-lg border px-2.5 py-1 text-xs font-medium transition-all',
-                isTypeSelected(pt.value)
-                  ? 'border-primary-500 bg-primary-500 text-white shadow-xs'
-                  : 'border-gray-300 bg-white text-gray-600 hover:border-gray-400 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-dark-500',
-              ]"
-            >{{ pt.label }}</button>
+              size="xs"
+              :color="isTypeSelected(pt.value) ? 'primary' : 'neutral'"
+              :variant="isTypeSelected(pt.value) ? 'subtle' : 'outline'"
+            >{{ pt.label }}</UButton>
           </div>
         </div>
       </div>
 
-      <div v-if="form.provider_key === 'easypay'" class="space-y-3 rounded-lg border border-gray-100 p-3 dark:border-dark-700">
-        <div class="flex items-center justify-between gap-3">
-          <div>
-            <h5 class="text-sm font-medium text-gray-900 dark:text-white">
-              {{ t('admin.settings.payment.easypayCustomMethods') }}
-            </h5>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.settings.payment.easypayCustomMethodsHint') }}
-            </p>
-          </div>
-          <button type="button" class="btn btn-secondary btn-sm" @click="addEasyPayCustomMethod">
+      <div v-if="form.provider_key === 'easypay'" class="space-y-3">
+        <UFormField
+          :label="t('admin.settings.payment.easypayCustomMethods')"
+          :description="t('admin.settings.payment.easypayCustomMethodsHint')"
+          class="flex max-sm:flex-col justify-between sm:items-center gap-4"
+        >
+          <UButton icon="i-lucide-plus" data-testid="easypay-add-custom-method" @click="addEasyPayCustomMethod" color="neutral" variant="outline" size="sm">
             {{ t('admin.settings.payment.addCustomMethod') }}
-          </button>
-        </div>
+          </UButton>
+        </UFormField>
         <div v-if="easyPayCustomMethods.length" class="space-y-2">
           <div
             v-for="(method, index) in easyPayCustomMethods"
             :key="index"
             class="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2"
           >
-            <div>
-              <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.customMethodType') }}</label>
-              <input v-model="method.type" type="text" class="input mt-0.5" placeholder="credit_card" />
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.customMethodUpstreamType') }}</label>
-              <input v-model="method.upstreamType" type="text" class="input mt-0.5" placeholder="credit_card" />
-            </div>
-            <div>
-              <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.customMethodDisplayName') }}</label>
-              <input v-model="method.displayName" type="text" class="input mt-0.5" :placeholder="t('admin.settings.payment.customMethodDisplayNamePlaceholder')" />
-            </div>
-            <button
-              type="button"
-              class="rounded-lg border border-red-200 px-2.5 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-800/60 dark:text-red-300 dark:hover:bg-red-900/20"
+            <UFormField :label="t('admin.settings.payment.customMethodType')">
+              <UInput v-model="method.type" type="text" placeholder="credit_card" class="w-full" />
+            </UFormField>
+            <UFormField :label="t('admin.settings.payment.customMethodUpstreamType')">
+              <UInput v-model="method.upstreamType" type="text" placeholder="credit_card" class="w-full" />
+            </UFormField>
+            <UFormField :label="t('admin.settings.payment.customMethodDisplayName')">
+              <UInput
+                v-model="method.displayName"
+                type="text"
+                :placeholder="t('admin.settings.payment.customMethodDisplayNamePlaceholder')"
+                class="w-full"
+              />
+            </UFormField>
+            <UButton
+              icon="i-lucide-trash-2"
+              color="error"
+              variant="ghost"
+              square
+              :aria-label="t('common.delete')"
               @click="removeEasyPayCustomMethod(index)"
-            >
-              {{ t('common.delete') }}
-            </button>
+            />
           </div>
         </div>
       </div>
 
-
       <!-- Config fields -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-700">
+      <USeparator />
+      <div>
         <div class="mb-3 flex items-center gap-2">
-          <h4 class="text-sm font-semibold text-gray-900 dark:text-white">
+          <h4 class="text-sm font-medium text-highlighted">
             {{ t('admin.settings.payment.providerConfig') }}
           </h4>
           <HelpTooltip v-if="paymentGuide" trigger="click" width-class="w-80">
             <template #trigger>
-              <button
-                type="button"
-                class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-300 text-[11px] font-semibold text-gray-400 transition-colors hover:border-primary-500 hover:text-primary-600 dark:border-dark-500 dark:text-gray-500 dark:hover:border-primary-400 dark:hover:text-primary-400"
+              <UButton
                 :aria-label="t('admin.settings.payment.paymentGuideTrigger')"
                 :title="t('admin.settings.payment.paymentGuideTrigger')"
-              >
-                ?
-              </button>
+                icon="i-lucide-circle-help"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                square
+              />
             </template>
             <div class="space-y-3">
-              <p class="font-medium text-white">{{ paymentGuide.summary }}</p>
+              <p class="font-medium text-highlighted">{{ paymentGuide.summary }}</p>
               <div
                 v-for="item in paymentGuide.items"
                 :key="item.title"
-                class="space-y-1.5 border-t border-white/10 pt-2 first:border-t-0 first:pt-0"
+                class="space-y-1.5 border-t border-default pt-2 first:border-t-0 first:pt-0"
               >
-                <p class="font-medium text-white">{{ item.title }}</p>
-                <p><span class="text-gray-300">{{ t('admin.settings.payment.guideOpenLabel') }}</span>{{ item.open }}</p>
-                <p><span class="text-gray-300">{{ t('admin.settings.payment.guideCallLabel') }}</span>{{ item.call }}</p>
-                <p><span class="text-gray-300">{{ t('admin.settings.payment.guideFallbackLabel') }}</span>{{ item.fallback }}</p>
+                <p class="font-medium text-highlighted">{{ item.title }}</p>
+                <p><span class="text-dimmed">{{ t('admin.settings.payment.guideOpenLabel') }}</span>{{ item.open }}</p>
+                <p><span class="text-dimmed">{{ t('admin.settings.payment.guideCallLabel') }}</span>{{ item.call }}</p>
+                <p><span class="text-dimmed">{{ t('admin.settings.payment.guideFallbackLabel') }}</span>{{ item.fallback }}</p>
               </div>
-              <p v-if="paymentGuide.note" class="border-t border-white/10 pt-2 text-[11px] text-gray-300">
+              <p v-if="paymentGuide.note" class="border-t border-default pt-2 text-[11px] text-dimmed">
                 {{ paymentGuide.note }}
               </p>
             </div>
           </HelpTooltip>
         </div>
-        <p v-if="paymentGuide" class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+        <p v-if="paymentGuide" class="mb-3 text-xs text-muted">
           {{ paymentGuide.summary }}
         </p>
         <div class="space-y-3">
-          <div v-for="field in resolvedFields" :key="field.key">
-            <label class="input-label">
+          <UFormField v-for="field in resolvedFields" :key="field.key" required>
+            <template #label>
               {{ field.label }}
-              <span v-if="field.optional" class="text-xs text-gray-400">({{ t('common.optional') }})</span>
-              <span v-else class="text-red-500"> *</span>
-            </label>
-            <textarea
+              <span v-if="field.optional" class="text-xs text-dimmed">({{ t('common.optional') }})</span>
+            </template>
+            <template #description>
+              <span v-if="field.hintKey" class="leading-relaxed">
+                {{ t(field.hintKey) }}
+              </span>
+            </template>
+            <UTextarea
               v-if="field.sensitive && field.key.toLowerCase().includes('key') && field.key !== 'pkey'"
               v-model="config[field.key]"
-              rows="3"
-              class="input font-mono text-xs"
+              :rows="3"
               autocomplete="new-password"
               data-1p-ignore
               data-lpignore="true"
               data-bwignore="true"
               spellcheck="false"
               :placeholder="editing ? t('admin.accounts.leaveEmptyToKeep') : ''"
+              class="w-full font-mono"
             />
-            <div v-else-if="field.sensitive" class="relative">
-              <input
+            <UInput
+                v-else-if="field.sensitive"
                 :type="visibleFields[field.key] ? 'text' : 'password'"
                 v-model="config[field.key]"
-                class="input pr-10"
                 autocomplete="new-password"
                 data-1p-ignore
                 data-lpignore="true"
                 data-bwignore="true"
                 spellcheck="false"
                 :placeholder="editing ? t('admin.accounts.leaveEmptyToKeep') : (field.defaultValue || '')"
-              />
-              <button
-                type="button"
-                @click="visibleFields[field.key] = !visibleFields[field.key]"
-                class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                class="w-full"
               >
-                <svg v-if="visibleFields[field.key]" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" /></svg>
-                <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-              </button>
-            </div>
+                <template #trailing>
+                  <UButton
+                    :icon="visibleFields[field.key] ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                    color="neutral"
+                    variant="link"
+                    size="sm"
+                    square
+                    :aria-label="field.label"
+                    @click="visibleFields[field.key] = !visibleFields[field.key]"
+                  />
+                </template>
+              </UInput>
             <Select
               v-else-if="field.options?.length"
               v-model="config[field.key]"
               :options="field.options"
               :searchable="field.options.length > 5"
+              class="w-full"
             />
-            <input
+            <UInput
               v-else
               type="text"
               v-model="config[field.key]"
-              class="input"
               :placeholder="field.defaultValue || ''"
+              class="w-full"
             />
-            <p v-if="field.hintKey" class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-              {{ t(field.hintKey) }}
-            </p>
-          </div>
+          </UFormField>
         </div>
 
         <!-- Callback URLs (each = editable URL + fixed path) -->
         <div v-if="callbackPaths" class="mt-4 space-y-3">
-          <div v-if="callbackPaths.notifyUrl">
-            <label class="input-label">{{ t('admin.settings.payment.field_notifyUrl') }} <span class="text-red-500">*</span></label>
-            <div class="flex">
-              <input v-model="notifyBaseUrl" type="text" class="input min-w-0 flex-1 rounded-r-none! border-r-0!" :placeholder="defaultBaseUrl" />
-              <span class="inline-flex items-center whitespace-nowrap rounded-r-lg border border-gray-300 bg-gray-50 px-3 text-xs text-gray-500 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-400">{{ callbackPaths.notifyUrl }}</span>
-            </div>
-          </div>
-          <div v-if="callbackPaths.returnUrl">
-            <label class="input-label">{{ t('admin.settings.payment.field_returnUrl') }} <span class="text-red-500">*</span></label>
-            <div class="flex">
-              <input v-model="returnBaseUrl" type="text" class="input min-w-0 flex-1 rounded-r-none! border-r-0!" :placeholder="defaultBaseUrl" />
-              <span class="inline-flex items-center whitespace-nowrap rounded-r-lg border border-gray-300 bg-gray-50 px-3 text-xs text-gray-500 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-400">{{ callbackPaths.returnUrl }}</span>
-            </div>
-          </div>
+          <UFormField v-if="callbackPaths.notifyUrl" :label="t('admin.settings.payment.field_notifyUrl')" required>
+            <UFieldGroup class="w-full">
+              <UInput v-model="notifyBaseUrl" type="text" :placeholder="defaultBaseUrl" data-testid="notify-base-url" class="min-w-0 flex-1" />
+              <UBadge color="neutral" variant="outline" size="lg" class="whitespace-nowrap font-mono">{{ callbackPaths.notifyUrl }}</UBadge>
+            </UFieldGroup>
+          </UFormField>
+          <UFormField v-if="callbackPaths.returnUrl" :label="t('admin.settings.payment.field_returnUrl')" required>
+            <UFieldGroup class="w-full">
+              <UInput v-model="returnBaseUrl" type="text" :placeholder="defaultBaseUrl" data-testid="return-base-url" class="min-w-0 flex-1" />
+              <UBadge color="neutral" variant="outline" size="lg" class="whitespace-nowrap font-mono">{{ callbackPaths.returnUrl }}</UBadge>
+            </UFieldGroup>
+          </UFormField>
         </div>
 
         <!-- 服务商 Webhook 提示 -->
-        <div v-if="providerWebhookUrl" class="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800/50 dark:bg-blue-900/20">
-          <p class="text-xs text-blue-700 dark:text-blue-300">
-            {{ t(providerWebhookHint) }}
-          </p>
-          <code class="mt-1 block break-all rounded-sm bg-blue-100 px-2 py-1 text-xs text-blue-800 dark:bg-blue-900/40 dark:text-blue-200">
-            {{ providerWebhookUrl }}
-          </code>
-          <p v-if="form.provider_key === 'stripe'" class="mt-2 text-xs leading-relaxed text-blue-700 dark:text-blue-300">
-            {{ t('admin.settings.payment.stripeWebhookApiVersionHint', { version: STRIPE_SDK_API_VERSION }) }}
-          </p>
-        </div>
+        <UAlert v-if="providerWebhookUrl" color="info" variant="subtle" icon="i-lucide-info">
+          <template #description>
+            <p>
+              {{ t(providerWebhookHint) }}
+            </p>
+            <code class="mt-1 block break-all rounded bg-info/10 px-2 py-1 font-mono">
+              {{ providerWebhookUrl }}
+            </code>
+            <p v-if="form.provider_key === 'stripe'" class="mt-2 leading-relaxed">
+              {{ t('admin.settings.payment.stripeWebhookApiVersionHint', { version: STRIPE_SDK_API_VERSION }) }}
+            </p>
+          </template>
+        </UAlert>
       </div>
 
       <!-- Per-type limits (collapsible) -->
-      <div v-if="limitableTypes.length" class="border-t border-gray-200 pt-4 dark:border-dark-700">
-        <button type="button" @click="limitsExpanded = !limitsExpanded" class="flex w-full items-center justify-between">
-          <h4 class="text-sm font-semibold text-gray-900 dark:text-white">
-            {{ t('admin.settings.payment.limitsTitle') }}
-          </h4>
-          <svg :class="['h-4 w-4 text-gray-400 transition-transform', limitsExpanded && 'rotate-180']" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-        </button>
+      <USeparator v-if="limitableTypes.length" />
+      <div v-if="limitableTypes.length">
+        <UButton
+          :label="t('admin.settings.payment.limitsTitle')"
+          :trailing-icon="limitsExpanded ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+          :aria-expanded="limitsExpanded"
+          color="neutral"
+          variant="link"
+          class="px-0"
+          @click="limitsExpanded = !limitsExpanded"
+        />
         <div v-show="limitsExpanded" class="mt-3 space-y-3">
-          <div
-            v-for="lt in limitableTypes"
-            :key="lt.value"
-            class="rounded-lg border border-gray-100 p-3 dark:border-dark-700"
-          >
-            <p class="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">{{ lt.label }}</p>
+          <div v-for="lt in limitableTypes" :key="lt.value">
+            <p class="mb-2 text-xs font-medium text-toned">{{ lt.label }}</p>
             <div class="grid grid-cols-3 gap-3">
-              <div>
-                <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.limitSingleMin') }}</label>
-                <input
+              <UFormField :label="t('admin.settings.payment.limitSingleMin')">
+                <UInput
                   type="number"
                   :value="getLimitVal(lt.value, 'singleMin')"
                   @input="setLimitVal(lt.value, 'singleMin', ($event.target as HTMLInputElement).value)"
-                  class="input mt-0.5" min="1" step="0.01" :placeholder="limitPlaceholder(lt.value)"
+                  min="1"
+                  step="0.01"
+                  :placeholder="limitPlaceholder(lt.value)"
+                  class="w-full"
                 />
-              </div>
-              <div>
-                <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.limitSingleMax') }}</label>
-                <input
+              </UFormField>
+              <UFormField :label="t('admin.settings.payment.limitSingleMax')">
+                <UInput
                   type="number"
                   :value="getLimitVal(lt.value, 'singleMax')"
                   @input="setLimitVal(lt.value, 'singleMax', ($event.target as HTMLInputElement).value)"
-                  class="input mt-0.5" min="1" step="0.01" :placeholder="limitPlaceholder(lt.value)"
+                  min="1"
+                  step="0.01"
+                  :placeholder="limitPlaceholder(lt.value)"
+                  class="w-full"
                 />
-              </div>
-              <div>
-                <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.limitDaily') }}</label>
-                <input
+              </UFormField>
+              <UFormField :label="t('admin.settings.payment.limitDaily')">
+                <UInput
                   type="number"
                   :value="getLimitVal(lt.value, 'dailyLimit')"
                   @input="setLimitVal(lt.value, 'dailyLimit', ($event.target as HTMLInputElement).value)"
-                  class="input mt-0.5" min="1" step="0.01" :placeholder="limitPlaceholder(lt.value)"
+                  min="1"
+                  step="0.01"
+                  :placeholder="limitPlaceholder(lt.value)"
+                  class="w-full"
                 />
-              </div>
+              </UFormField>
             </div>
           </div>
-          <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.settings.payment.limitsHint') }}</p>
+          <p class="text-xs text-dimmed">{{ t('admin.settings.payment.limitsHint') }}</p>
         </div>
       </div>
     </form>
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button type="button" @click="emit('close')" class="btn btn-secondary">{{ t('common.cancel') }}</button>
-        <button type="submit" form="provider-form" :disabled="saving" class="btn btn-primary">
+        <UButton @click="emit('close')" color="neutral" variant="outline">{{ t('common.cancel') }}</UButton>
+        <UButton type="submit" form="provider-form" :loading="saving" :disabled="saving">
           {{ saving ? t('common.saving') : t('common.save') }}
-        </button>
+        </UButton>
       </div>
     </template>
   </BaseDialog>

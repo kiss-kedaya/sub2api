@@ -580,7 +580,7 @@ async function openPaymentTab(wrapper: ReturnType<typeof mountView>) {
     .find((node) => node.text().includes("admin.settings.tabs.payment"));
 
   expect(paymentTabButton).toBeDefined();
-  await paymentTabButton?.trigger("click");
+  await paymentTabButton?.trigger("mousedown");
   await flushPromises();
 }
 
@@ -590,7 +590,7 @@ async function openSecurityTab(wrapper: ReturnType<typeof mountView>) {
     .find((node) => node.text().includes("admin.settings.tabs.security"));
 
   expect(securityTabButton).toBeDefined();
-  await securityTabButton?.trigger("click");
+  await securityTabButton?.trigger("mousedown");
   await flushPromises();
 }
 
@@ -600,7 +600,7 @@ async function openGatewayTab(wrapper: ReturnType<typeof mountView>) {
     .find((node) => node.text().includes("admin.settings.tabs.gateway"));
 
   expect(gatewayTabButton).toBeDefined();
-  await gatewayTabButton?.trigger("click");
+  await gatewayTabButton?.trigger("mousedown");
   await flushPromises();
 }
 
@@ -610,7 +610,7 @@ async function openUsersTab(wrapper: ReturnType<typeof mountView>) {
     .find((node) => node.text().includes("admin.settings.tabs.users"));
 
   expect(usersTabButton).toBeDefined();
-  await usersTabButton?.trigger("click");
+  await usersTabButton?.trigger("mousedown");
   await flushPromises();
 }
 
@@ -889,7 +889,7 @@ describe("admin SettingsView payment visible method controls", () => {
       .findAll("button")
       .find((node) => node.text().includes("admin.settings.tabs.appearance"));
     expect(tab).toBeDefined();
-    await tab!.trigger("click");
+    await tab!.trigger("mousedown");
     await flushPromises();
 
     expect(wrapper.findComponent(ThemeCustomizer).exists()).toBe(true);
@@ -984,7 +984,7 @@ describe("admin SettingsView payment visible method controls", () => {
     await flushPromises();
 
     const card = wrapper
-      .findAll(".card")
+      .findAll(".settings-section")
       .find((node) => node.text().includes("admin.settings.captcha.title"));
     expect(card).toBeDefined();
     expect(card!.text()).not.toContain("admin.settings.turnstile.siteKey");
@@ -1026,7 +1026,7 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.get('[data-testid="tencent-captcha-region-intl"]').trigger("click");
 
     const card = wrapper
-      .findAll(".card")
+      .findAll(".settings-section")
       .find((node) => node.text().includes("admin.settings.captcha.title"));
     expect(card).toBeDefined();
     expect(card!.get('a[href="https://console.tencentcloud.com/captcha/graphical"]').exists()).toBe(
@@ -1057,7 +1057,7 @@ describe("admin SettingsView payment visible method controls", () => {
     await flushPromises();
 
     const card = wrapper
-      .findAll(".card")
+      .findAll(".settings-section")
       .find((node) => node.text().includes("admin.settings.captcha.title"));
     expect(card).toBeDefined();
     expect(card!.text()).toContain("admin.settings.aliyunCaptcha.region");
@@ -1153,7 +1153,7 @@ describe("admin SettingsView payment visible method controls", () => {
     await openSecurityTab(wrapper);
 
     const card = wrapper
-      .findAll(".card")
+      .findAll(".settings-section")
       .find((node) => node.text().includes("admin.settings.apiKeyAcl.title"));
     expect(card).toBeDefined();
     const toggle = card!.get('input[type="checkbox"]');
