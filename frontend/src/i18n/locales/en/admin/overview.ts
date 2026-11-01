@@ -803,10 +803,17 @@ export default {
       formSections: {
         basic: 'Basics',
         billing: 'Billing and access',
+        billingRules: 'Limits and margin',
         models: 'Models',
         pricing: 'Pricing',
         dispatch: 'Dispatch',
         advanced: 'Advanced options',
+        more: 'More settings',
+      },
+      detail: {
+        title: 'Group detail',
+        backToList: 'Back to list',
+        notFound: 'The group does not exist or was deleted',
       },
       sortOrderHint: 'Drag groups to adjust display order, groups at the top will be displayed first',
       sortOrderUpdated: 'Sort order updated',

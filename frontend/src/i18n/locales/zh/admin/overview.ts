@@ -800,10 +800,17 @@ export default {
       formSections: {
         basic: '基本信息',
         billing: '计费与访问',
+        billingRules: '限流与利润',
         models: '模型',
         pricing: '定价',
         dispatch: '调度',
         advanced: '高级选项',
+        more: '更多设置',
+      },
+      detail: {
+        title: '分组详情',
+        backToList: '返回列表',
+        notFound: '分组不存在或已删除',
       },
       sortOrderHint: '拖拽分组调整显示顺序，排在前面的分组会优先显示',
       sortOrderUpdated: '排序已更新',

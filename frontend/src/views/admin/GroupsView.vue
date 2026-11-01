@@ -1,8 +1,9 @@
 <template>
   <AppLayout>
-    <TablePageLayout class="groups-workspace">
+    <TablePageLayout v-show="!showEditModal" class="groups-workspace">
       <template #filters>
         <AdminPageHeader
+          v-if="!showEditModal"
           class="groups-page-header"
           :title="t('admin.groups.title')"
           :description="t('admin.groups.description')"
@@ -17,7 +18,7 @@
             </UButton>
           </template>
         </AdminPageHeader>
-        <PageToolbar>
+        <PageToolbar v-if="!showEditModal">
           <UInput
             v-model="searchQuery"
             icon="i-lucide-search"
@@ -112,10 +113,15 @@
           default-sort-order="asc"
           @sort="handleSort"
         >
-          <template #cell-name="{ value }">
-            <span class="font-medium text-highlighted">{{
-              value
-            }}</span>
+          <template #cell-name="{ row, value }">
+            <UButton
+              color="neutral"
+              variant="link"
+              class="p-0 font-medium text-highlighted"
+              @click="openGroupDetail(row)"
+            >
+              {{ value }}
+            </UButton>
           </template>
 
           <template #cell-id="{ value }">
@@ -316,7 +322,7 @@
                 :label="t('common.edit')"
                 icon="edit"
                 tone="primary"
-                @click="handleEdit(row)"
+                @click="openGroupDetail(row)"
               />
               <AdminRowAction
                 v-if="!authStore.isSimpleMode"
@@ -428,10 +434,7 @@
               class="w-full"
             />
           </UFormField>
-        </section>
-        <template v-if="!authStore.isSimpleMode">
-          <section class="space-y-5">
-            <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.billing") }}</h3>
+          <template v-if="!authStore.isSimpleMode">
             <UFormField
               :label="t('admin.groups.form.rateMultiplier')"
               :help="t('admin.groups.rateMultiplierHint')"
@@ -444,16 +447,6 @@
                 min="0.001"
                 required
                 data-tour="group-form-multiplier"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField :label="t('admin.groups.form.rpmLimit')" :help="t('admin.groups.form.rpmLimitHint')">
-              <UInput
-                v-model.number="createForm.rpm_limit"
-                type="number"
-                min="0"
-                step="1"
-                :placeholder="t('admin.groups.form.rpmLimitPlaceholder')"
                 class="w-full"
               />
             </UFormField>
@@ -521,1133 +514,1151 @@
                 </UFormField>
               </div>
             </div>
-            <!-- 高峰时段倍率配置（仅订阅类型分组） -->
-            <div v-if="createForm.subscription_type === 'subscription'">
-              <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-                <UCheckbox v-model="createForm.peak_rate_enabled" :label="t('admin.groups.peakRate.enable')" />
-              </div>
-              <div
-                v-if="createForm.peak_rate_enabled"
-                class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3"
-              >
-                <UFormField :label="t('admin.groups.peakRate.peakStart')">
-                  <TimeWheelPicker v-model="createForm.peak_start" />
-                </UFormField>
-                <UFormField :label="t('admin.groups.peakRate.peakEnd')">
-                  <TimeWheelPicker v-model="createForm.peak_end" />
-                </UFormField>
-                <UFormField :label="t('admin.groups.peakRate.peakMultiplier')">
-                  <UInput
-                    v-model.number="createForm.peak_rate_multiplier"
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    placeholder="1"
-                    :title="t('admin.groups.peakRate.multiplierHint')"
-                    class="w-full"
-                  />
-                </UFormField>
-              </div>
-            </div>
-            <!-- 分组利润控制（五个平台 token 请求） -->
-            <div v-if="isProfitControlPlatform(createForm.platform)">
-              <UCheckbox
-                v-model="createForm.profit_control_enabled"
-                :label="t('admin.groups.profitControl.enable')"
-              />
-              <p class="mb-3 mt-1.5 text-xs text-muted">
-                {{
-                  createForm.profit_control_enabled
-                    ? t("admin.groups.profitControl.enabledHint")
-                    : t("admin.groups.profitControl.disabledHint")
-                }}
-              </p>
-              <div
-                v-if="createForm.profit_control_enabled"
-                class="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2"
-              >
-                <UFormField :label="t('admin.groups.profitControl.minMargin')">
-                  <UInput
-                    v-model.number="createForm.profit_min_margin_percent"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="99.99"
-                    placeholder="0"
-                    :title="t('admin.groups.profitControl.minMarginHint')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField :label="t('admin.groups.profitControl.safetyBuffer')">
-                  <UInput
-                    v-model.number="createForm.profit_safety_buffer_percent"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="99.99"
-                    placeholder="0"
-                    :title="t('admin.groups.profitControl.safetyBufferHint')"
-                    class="w-full"
-                  />
-                </UFormField>
-              </div>
-            </div>
-          </section>
-          <section class="space-y-5">
-            <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.models") }}</h3>
-            <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
-            <div>
-              <UFormField
-                :label="t('admin.groups.modelAllowlist.title')"
-                :description="t('admin.groups.modelAllowlist.hint')"
-                class="flex items-center justify-between gap-4 mb-3"
-                :ui="{ container: 'mt-0 shrink-0' }"
-              >
-                <Toggle v-model="createModelAllowlistState.enabled" />
-              </UFormField>
-              <div
-                v-if="createModelAllowlistState.enabled"
-                class="overflow-hidden rounded-lg border border-default"
-              >
-                <div
-                  v-if="!createModelAllowlistLoading && createModelAllowlistState.items.length > 0"
-                  class="flex items-center justify-between gap-2 border-b border-default px-3 py-1.5 text-xs"
-                >
-                  <span class="text-muted">
-                    {{
-                      t("admin.groups.modelAllowlist.selectedSummary", {
-                        selected: createModelAllowlistSelectedCount,
-                        total: createModelAllowlistState.items.length,
-                      })
-                    }}
-                  </span>
-                  <div class="flex items-center gap-1.5">
-                    <UButton
-                      @click="selectAllModelAllowlistItems(createModelAllowlistState)"
-                      color="primary"
-                      variant="ghost"
-                      size="sm"
-                    >{{ t("admin.groups.modelAllowlist.selectAll") }}</UButton>
-                    <UButton
-                      @click="invertModelAllowlistSelection(createModelAllowlistState)"
-                      color="neutral"
-                      variant="ghost"
-                      size="sm"
-                    >{{ t("admin.groups.modelAllowlist.invertSelection") }}</UButton>
-                  </div>
-                </div>
-                <div
-                  class="max-h-64 space-y-2 overflow-y-auto p-2"
-                >
-                  <p v-if="createModelAllowlistLoading" class="text-xs text-muted">
-                    {{ t("admin.groups.modelAllowlist.loading") }}
-                  </p>
-                  <p
-                    v-else-if="createModelAllowlistState.items.length === 0"
-                    class="text-xs text-muted"
-                  >
-                    {{ t("admin.groups.modelAllowlist.empty") }}
-                  </p>
-                  <div
-                    v-for="(item, index) in createModelAllowlistState.items"
-                    :key="item.id"
-                    class="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-elevated/50"
-                  >
-                    <UCheckbox v-model="item.selected" />
-                    <span class="min-w-0 flex-1 break-all text-sm text-default">
-                      {{ item.id }}
-                      <span
-                        v-if="item.id.endsWith('*')"
-                        class="ml-1 rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
-                      >
-                        {{ t("admin.groups.modelAllowlist.wildcardTag") }}
-                      </span>
-                    </span>
-                    <UButton
-                      :disabled="index === 0"
-                      @click="moveCreateModelAllowlistItem(index, index - 1)"
-                      icon="i-lucide-arrow-up"
-                      color="neutral"
-                      variant="ghost"
-                      size="sm"
-                      square
-                    />
-                    <UButton
-                      :disabled="index === createModelAllowlistState.items.length - 1"
-                      @click="moveCreateModelAllowlistItem(index, index + 1)"
-                      icon="i-lucide-arrow-down"
-                      color="neutral"
-                      variant="ghost"
-                      size="sm"
-                      square
-                    />
-                  </div>
-                </div>
-                <div class="border-t border-default px-3 py-2">
-                  <div class="flex items-center gap-2">
-                    <UInput
-                      v-model="createAllowlistCustomEntry"
-                      type="text"
-                      :placeholder="t('admin.groups.modelAllowlist.customPlaceholder')"
-                      @keydown.enter.prevent="submitCreateAllowlistCustomEntry"
-                      size="sm"
-                      class="min-w-0 flex-1"
-                    />
-                    <UButton @click="submitCreateAllowlistCustomEntry" color="primary" variant="solid" size="sm">{{ t("admin.groups.modelAllowlist.addCustom") }}</UButton>
-                  </div>
-                  <p
-                    v-if="createAllowlistCustomErrorKey"
-                    class="mt-1 text-xs text-error"
-                  >
-                    {{ t(createAllowlistCustomErrorKey) }}
-                  </p>
-                </div>
-              </div>
-            </div>
-            <ReasoningEffortPolicyFields
-              v-if="supportsReasoningEffortPolicyPlatform(createForm.platform)"
-              ref="createReasoningEffortPolicyRef"
-              id-prefix="create-group-reasoning"
-              :platform="createForm.platform"
-              v-model:max-effort="createForm.max_reasoning_effort"
-              v-model:over-limit="createForm.max_reasoning_effort_over_limit"
-              v-model:mappings="createForm.reasoning_effort_mappings"
+          </template>
+        </section>
+        <template v-if="!authStore.isSimpleMode">
+          <UCollapsible v-model:open="createMoreOpen" :unmount-on-hide="false">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              trailing-icon="i-lucide-chevron-down"
+              :label="t('admin.groups.formSections.more')"
+              class="-mx-2.5 text-base font-semibold text-highlighted"
+              :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }"
             />
-            <!-- 支持的模型系列（仅 antigravity 平台） -->
-            <div v-if="createForm.platform === 'antigravity'">
-              <div class="mb-1.5 flex items-center gap-1">
-                <label class="text-sm font-medium text-default">
-                  {{ t("admin.groups.supportedScopes.title") }}
-                </label>
-                <!-- Help Tooltip -->
-                <GroupFieldHelp :label="t('admin.groups.supportedScopes.title')" :text="t('admin.groups.supportedScopes.tooltip')" />
-              </div>
-              <div class="space-y-2">
-                <UCheckbox
-                  :model-value="createForm.supported_model_scopes.includes('claude')"
-                  @update:model-value="toggleCreateScope('claude')"
-                  :label="t('admin.groups.supportedScopes.claude')"
-                />
-                <UCheckbox
-                  :model-value="createForm.supported_model_scopes.includes('gemini_text')"
-                  @update:model-value="toggleCreateScope('gemini_text')"
-                  :label="t('admin.groups.supportedScopes.geminiText')"
-                />
-                <UCheckbox
-                  :model-value="createForm.supported_model_scopes.includes('gemini_image')"
-                  @update:model-value="toggleCreateScope('gemini_image')"
-                  :label="t('admin.groups.supportedScopes.geminiImage')"
-                />
-              </div>
-              <p class="mt-2 text-xs text-muted">
-                {{ t("admin.groups.supportedScopes.hint") }}
-              </p>
-            </div>
-          </section>
-          <section class="space-y-5">
-            <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.pricing") }}</h3>
-            <div>
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0 flex-1">
-                  <h4 class="text-sm font-medium text-default">{{ t("admin.groups.modelPricing.title") }}</h4>
-                  <p class="mt-1 text-xs text-muted">{{ t("admin.groups.modelPricing.description") }}</p>
-                </div>
-                <UButton
-                  @click="addGroupPricing(createForm.model_pricing)"
-                  icon="i-lucide-plus"
-                  color="neutral"
-                  variant="outline"
-                  class="shrink-0 whitespace-nowrap"
-                >{{ t("admin.groups.modelPricing.add") }}</UButton>
-              </div>
-              <UCheckbox class="mt-3" v-model="createForm.long_context_pricing_enabled">
-                <template #label>
-                  <span><span class="block text-sm text-default">{{ t("admin.groups.modelPricing.longContext") }}</span><span class="block text-xs text-muted">{{ t("admin.groups.modelPricing.longContextHint") }}</span></span>
-                </template>
-              </UCheckbox>
-              <div class="mt-3 space-y-2">
-                <PricingEntryCard v-for="(entry, index) in createForm.model_pricing" :key="index" :entry="entry" :platform="createForm.platform" hide-token-intervals @update="createForm.model_pricing[index] = $event" @remove="createForm.model_pricing.splice(index, 1)" />
-              </div>
-            </div>
-            <!-- 图片生成计费配置 -->
-            <div
-              v-if="supportsImagePricingPlatform(createForm.platform)"
-            >
-              <label
-                class="block mb-2 font-medium text-default"
-              >
-                {{ t(imagePricingI18nKey(createForm.platform, "title")) }}
-              </label>
-              <p class="text-xs text-muted mb-3">
-                {{ t(imagePricingI18nKey(createForm.platform, "description")) }}
-              </p>
-              <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-                <UCheckbox
-                  v-model="createForm.allow_image_generation"
-                  :label="t(imagePricingI18nKey(createForm.platform, 'allowImageGeneration'))"
-                />
-                <UCheckbox
-                  v-model="createForm.image_rate_independent"
-                  :label="t(imagePricingI18nKey(createForm.platform, 'independentMultiplier'))"
-                />
-              </div>
-              <UFormField
-                :label="t(imagePricingI18nKey(createForm.platform, 'imageMultiplier'))"
-                v-if="createForm.image_rate_independent"
-                class="mb-4"
-              >
-                <UInput
-                  v-model.number="createForm.image_rate_multiplier"
-                  type="number"
-                  step="0.0001"
-                  min="0"
-                  placeholder="1"
-                  class="w-full"
-                />
-              </UFormField>
-              <div class="grid grid-cols-3 gap-3">
-                <UFormField label="1K ($)">
-                  <UInput
-                    v-model.number="createForm.image_price_1k"
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    :placeholder="getImagePricePlaceholder(createForm.platform, 'image_price_1k')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField label="2K ($)">
-                  <UInput
-                    v-model.number="createForm.image_price_2k"
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    :placeholder="getImagePricePlaceholder(createForm.platform, 'image_price_2k')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField label="4K ($)">
-                  <UInput
-                    v-model.number="createForm.image_price_4k"
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    :placeholder="getImagePricePlaceholder(createForm.platform, 'image_price_4k')"
-                    class="w-full"
-                  />
-                </UFormField>
-              </div>
-              <p class="mt-3 text-xs text-muted">
-                {{ t(imagePricingI18nKey(createForm.platform, "modeHint")) }}
-              </p>
-              <div class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default">
-                <div class="mb-1 font-medium">
-                  {{ t(imagePricingI18nKey(createForm.platform, "finalPricePreview")) }}
-                </div>
-                <div class="grid grid-cols-3 gap-2">
-                  <div
-                    v-for="item in createImageFinalPricePreview"
-                    :key="item.label"
-                  >
-                    {{ item.label }}: {{ item.value }}
-                  </div>
-                </div>
-              </div>
-              <div v-if="createForm.platform === 'gemini' && createForm.allow_image_generation" class="mt-4">
-                <UCheckbox
-                  v-model="createForm.allow_batch_image_generation"
-                  :label="t('admin.groups.imagePricing.allowBatchImageGeneration')"
-                />
-                <p class="mt-2 text-xs text-muted">
-                  {{ t("admin.groups.imagePricing.batchSectionHint") }}
-                </p>
-                <div
-                  v-if="createForm.allow_batch_image_generation"
-                  class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2"
-                >
-                  <UFormField :label="t('admin.groups.imagePricing.batchDiscountMultiplier')">
+            <template #content>
+              <div class="space-y-8 pt-4">
+                <section class="space-y-5">
+                  <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.billingRules") }}</h3>
+                  <UFormField :label="t('admin.groups.form.rpmLimit')" :help="t('admin.groups.form.rpmLimitHint')">
                     <UInput
-                      v-model.number="createForm.batch_image_discount_multiplier"
+                      v-model.number="createForm.rpm_limit"
                       type="number"
-                      step="0.0001"
                       min="0"
-                      placeholder="0.5"
+                      step="1"
+                      :placeholder="t('admin.groups.form.rpmLimitPlaceholder')"
                       class="w-full"
                     />
                   </UFormField>
-                  <UFormField :label="t('admin.groups.imagePricing.batchHoldMultiplier')">
-                    <UInput
-                      v-model.number="createForm.batch_image_hold_multiplier"
-                      type="number"
-                      step="0.0001"
-                      min="0"
-                      placeholder="0.6"
-                      class="w-full"
-                    />
-                  </UFormField>
-                </div>
-              </div>
-              <p
-                v-else-if="createForm.platform !== 'gemini'"
-                class="mt-4 text-xs text-muted"
-              >
-                {{ t("admin.groups.imagePricing.batchGeminiOnlyHint") }}
-              </p>
-            </div>
-            <MiniMaxH3PricingFields v-if="createForm.platform === 'minimax'" v-model="createForm.video_model_prices" />
-            <!-- 视频生成计费配置（仅 Grok 平台） -->
-            <div
-              v-if="supportsVideoPricingPlatform(createForm.platform)"
-            >
-              <label
-                class="block mb-2 font-medium text-default"
-              >
-                {{ t(videoPricingI18nKey("title")) }}
-              </label>
-              <p class="text-xs text-muted mb-3">
-                {{ t(videoPricingI18nKey("description")) }}
-              </p>
-              <div class="mb-4">
-                <UCheckbox
-                  v-model="createForm.video_rate_independent"
-                  :label="t(videoPricingI18nKey('independentMultiplier'))"
-                />
-              </div>
-              <UFormField
-                :label="t(videoPricingI18nKey('videoMultiplier'))"
-                v-if="createForm.video_rate_independent"
-                class="mb-4"
-              >
-                <UInput
-                  v-model.number="createForm.video_rate_multiplier"
-                  type="number"
-                  step="0.0001"
-                  min="0"
-                  placeholder="1"
-                  class="w-full"
-                />
-              </UFormField>
-              <div class="grid grid-cols-3 gap-3">
-                <UFormField label="480p ($/s)">
-                  <UInput
-                    v-model.number="createForm.video_price_480p"
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    :placeholder="getVideoPricePlaceholder(createForm.platform, 'video_price_480p')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField label="720p ($/s)">
-                  <UInput
-                    v-model.number="createForm.video_price_720p"
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    :placeholder="getVideoPricePlaceholder(createForm.platform, 'video_price_720p')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField label="1080p ($/s)">
-                  <UInput
-                    v-model.number="createForm.video_price_1080p"
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    :placeholder="getVideoPricePlaceholder(createForm.platform, 'video_price_1080p')"
-                    class="w-full"
-                  />
-                </UFormField>
-              </div>
-              <div
-                class="mt-4"
-                data-testid="create-grok-video-model-prices"
-              >
-                <p class="text-sm font-medium text-default">
-                  {{ t("admin.groups.videoPricing.modelOverridesTitle") }}
-                </p>
-                <p class="mt-1 text-xs text-muted">
-                  {{ t("admin.groups.videoPricing.modelOverridesDescription") }}
-                </p>
-                <div class="mt-3 space-y-3">
-                  <div
-                    v-for="family in videoModelPriceFamilyRows(createForm.video_model_prices)"
-                    :key="family.key"
-                    class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_repeat(3,minmax(0,7rem))] sm:items-end"
-                  >
-                    <div class="min-w-0 pb-1 font-mono text-xs text-default">
-                      {{ family.label }}
+                  <!-- 高峰时段倍率配置（仅订阅类型分组） -->
+                  <div v-if="createForm.subscription_type === 'subscription'">
+                    <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <UCheckbox v-model="createForm.peak_rate_enabled" :label="t('admin.groups.peakRate.enable')" />
                     </div>
-                    <label
-                      v-for="resolution in grokVideoPriceResolutions"
-                      :key="resolution.key"
-                      class="block"
+                    <div
+                      v-if="createForm.peak_rate_enabled"
+                      class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3"
                     >
-                      <span class="mb-1 block text-xs text-muted">
-                        {{ resolution.label }} ($/s)
-                      </span>
-                      <UInput
-                        v-model.number.nullable="createForm.video_model_prices[family.key][resolution.key]"
-                        type="number"
-                        step="0.001"
-                        min="0"
-                        :data-testid="`create-grok-video-price-${family.key}-${resolution.key}`"
-                        class="w-full"
-                      />
-                    </label>
-                  </div>
-                </div>
-              </div>
-              <p class="mt-3 text-xs text-muted">
-                {{ t(videoPricingI18nKey("modeHint")) }}
-              </p>
-              <div class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default">
-                <div class="mb-1 font-medium">
-                  {{ t(videoPricingI18nKey("finalPricePreview")) }}
-                </div>
-                <div class="grid grid-cols-3 gap-2">
-                  <div
-                    v-for="item in createVideoFinalPricePreview"
-                    :key="item.label"
-                  >
-                    {{ item.label }}: {{ item.value }}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <!-- Grok Voice 定价 -->
-            <div
-              v-if="createForm.platform === 'grok'"
-            >
-              <h4 class="text-sm font-medium text-default mb-1">
-                {{ t("admin.groups.voicePricing.title") }}
-              </h4>
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <UFormField
-                  :label="t('admin.groups.voicePricing.audioRealtimePerMin')"
-                  v-if="createForm.platform === 'grok'"
-                >
-                  <UInput
-                    v-model.number="createForm.audio_realtime_price_per_min"
-                    type="number"
-                    step="0.000001"
-                    min="0"
-                    :placeholder="t('admin.groups.voicePricing.pricePlaceholder')"
-                    data-testid="create-audio-realtime-price"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField
-                  :label="t('admin.groups.voicePricing.audioTtsPerMillionChars')"
-                  v-if="createForm.platform === 'grok'"
-                >
-                  <UInput
-                    v-model.number="createForm.audio_tts_price_per_million_chars"
-                    type="number"
-                    step="0.000001"
-                    min="0"
-                    :placeholder="t('admin.groups.voicePricing.pricePlaceholder')"
-                    data-testid="create-audio-tts-price"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField
-                  :label="t('admin.groups.voicePricing.audioSttPerHour')"
-                  v-if="createForm.platform === 'grok'"
-                >
-                  <UInput
-                    v-model.number="createForm.audio_stt_price_per_hour"
-                    type="number"
-                    step="0.000001"
-                    min="0"
-                    :placeholder="t('admin.groups.voicePricing.pricePlaceholder')"
-                    data-testid="create-audio-stt-price"
-                    class="w-full"
-                  />
-                </UFormField>
-              </div>
-            </div>
-            <!-- 搜索单价：所有可能走搜索的平台（Grok / DeepSeek） -->
-            <div
-              v-if="supportsSearchPricing(createForm.platform)"
-            >
-              <h4 class="text-sm font-medium text-default mb-1">
-                {{ t("admin.groups.explicitPricing.title") }}
-              </h4>
-              <p class="text-xs text-muted mb-3">
-                {{ t("admin.groups.explicitPricing.description") }}
-              </p>
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <UFormField :label="t('admin.groups.explicitPricing.searchPricePer1k')">
-                  <UInput
-                    v-model.number="createForm.search_price_per_1k"
-                    type="number"
-                    step="0.000001"
-                    min="0"
-                    :placeholder="t('admin.groups.explicitPricing.pricePlaceholder')"
-                    data-testid="create-search-price"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField
-                  :label="t('admin.groups.explicitPricing.searchProviderBaseUrl')"
-                  v-if="createForm.platform === 'deepseek'"
-                >
-                  <UInput
-                    v-model="createForm.search_provider_base_url"
-                    type="text"
-                    :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
-                    data-testid="create-search-provider-url"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField
-                  :label="t('admin.groups.explicitPricing.searchProviderApiKey')"
-                  v-if="createForm.platform === 'deepseek'"
-                >
-                  <UInput
-                    v-model="createForm.search_provider_api_key"
-                    type="password"
-                    autocomplete="new-password"
-                    :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
-                    data-testid="create-search-provider-key"
-                    class="w-full"
-                  />
-                </UFormField>
-              </div>
-            </div>
-            <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
-            <div
-              v-if="createForm.platform === 'openai'"
-            >
-              <h4 class="text-sm font-medium text-default mb-3">
-                {{ t("admin.groups.webSearchPricing.title") }}
-              </h4>
-              <div class="space-y-2">
-                <UFormField :label="t('admin.groups.webSearchPricing.pricePerCall')" :help="t('admin.groups.webSearchPricing.pricePerCallHint')">
-                  <UInput
-                    v-model.number="createForm.web_search_price_per_call"
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    placeholder="0.01"
-                    class="w-full"
-                  />
-                </UFormField>
-                <div
-                  class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default"
-                >
-                  {{
-                    t("admin.groups.webSearchPricing.finalPricePreview", {
-                      price: createWebSearchFinalPricePreview,
-                    })
-                  }}
-                </div>
-              </div>
-            </div>
-            <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
-            <div
-              v-if="createForm.platform === 'grok'"
-            >
-              <h4 class="mb-1 text-sm font-medium text-default">
-                {{ t("admin.groups.moderationRefusalPricing.title") }}
-              </h4>
-              <p class="mb-3 text-xs text-muted">
-                {{ t("admin.groups.moderationRefusalPricing.hint") }}
-              </p>
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <UFormField :label="t('admin.groups.moderationRefusalPricing.pricePerCall')">
-                  <UInput
-                    v-model.number="createForm.grok_moderation_refusal_price"
-                    type="number"
-                    step="0.00000001"
-                    min="0"
-                    :placeholder="t('admin.groups.moderationRefusalPricing.placeholder')"
-                    data-testid="create-grok-moderation-refusal-price"
-                    class="w-full"
-                  />
-                </UFormField>
-              </div>
-            </div>
-          </section>
-          <section class="space-y-5">
-            <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.dispatch") }}</h3>
-            <!-- 跨协议转换开关：所有平台的分组都有（Anthropic 协议族 <-> OpenAI 协议族）。
-                 账号有原生端点时始终先走原生转发，开关只决定"没有原生端点时"能否转换兜底。 -->
-            <div>
-              <UFormField
-                :label="t('admin.groups.openaiMessages.crossProtocolEnabled')"
-                :description="t('admin.groups.openaiMessages.crossProtocolHint')"
-                class="flex items-center justify-between gap-4"
-                :ui="{ container: 'mt-0 shrink-0' }"
-              >
-                <Toggle v-model="createForm.cross_protocol_conversion_enabled" />
-              </UFormField>
-            </div>
-            <!-- OpenAI Messages 调度配置（OpenAI 与 Composite 平台） -->
-            <div
-              v-if="supportsMessagesDispatchPlatform(createForm.platform)"
-            >
-              <h4 class="text-sm font-medium text-default mb-3">
-                {{ t("admin.groups.openaiMessages.title") }}
-              </h4>
-
-              <!-- 允许 Messages 调度开关 -->
-              <UFormField
-                :label="t('admin.groups.openaiMessages.allowDispatch')"
-                :description="t('admin.groups.openaiMessages.allowDispatchHint')"
-                class="flex items-center justify-between gap-4"
-                :ui="{ container: 'mt-0 shrink-0' }"
-              >
-                <Toggle v-model="createForm.allow_messages_dispatch" />
-              </UFormField>
-
-              <div
-                v-if="
-                  createForm.platform === 'openai' &&
-                  createForm.allow_messages_dispatch
-                "
-                class="mt-3"
-              >
-                <div
-                  class="space-y-3"
-                >
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <label
-                        class="text-sm font-medium text-highlighted"
-                        >{{
-                          t("admin.groups.openaiMessages.familyMappingTitle")
-                        }}</label
-                      >
+                      <UFormField :label="t('admin.groups.peakRate.peakStart')">
+                        <TimeWheelPicker v-model="createForm.peak_start" />
+                      </UFormField>
+                      <UFormField :label="t('admin.groups.peakRate.peakEnd')">
+                        <TimeWheelPicker v-model="createForm.peak_end" />
+                      </UFormField>
+                      <UFormField :label="t('admin.groups.peakRate.peakMultiplier')">
+                        <UInput
+                          v-model.number="createForm.peak_rate_multiplier"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          placeholder="1"
+                          :title="t('admin.groups.peakRate.multiplierHint')"
+                          class="w-full"
+                        />
+                      </UFormField>
                     </div>
-                    <p class="mt-1 text-xs text-muted">
-                      {{ t("admin.groups.openaiMessages.familyMappingHint") }}
+                  </div>
+                  <!-- 分组利润控制（五个平台 token 请求） -->
+                  <div v-if="isProfitControlPlatform(createForm.platform)">
+                    <UCheckbox
+                      v-model="createForm.profit_control_enabled"
+                      :label="t('admin.groups.profitControl.enable')"
+                    />
+                    <p class="mb-3 mt-1.5 text-xs text-muted">
+                      {{
+                        createForm.profit_control_enabled
+                          ? t("admin.groups.profitControl.enabledHint")
+                          : t("admin.groups.profitControl.disabledHint")
+                      }}
                     </p>
-                  </div>
-                  <div>
-                    <div class="grid gap-4 md:grid-cols-3">
-                      <UFormField :label="t('admin.groups.openaiMessages.opusModel')">
+                    <div
+                      v-if="createForm.profit_control_enabled"
+                      class="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2"
+                    >
+                      <UFormField :label="t('admin.groups.profitControl.minMargin')">
                         <UInput
-                          v-model="createForm.opus_mapped_model"
-                          type="text"
-                          :placeholder=" t('admin.groups.openaiMessages.opusModelPlaceholder') "
+                          v-model.number="createForm.profit_min_margin_percent"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="99.99"
+                          placeholder="0"
+                          :title="t('admin.groups.profitControl.minMarginHint')"
                           class="w-full"
                         />
                       </UFormField>
-                      <UFormField :label="t('admin.groups.openaiMessages.sonnetModel')">
+                      <UFormField :label="t('admin.groups.profitControl.safetyBuffer')">
                         <UInput
-                          v-model="createForm.sonnet_mapped_model"
-                          type="text"
-                          :placeholder=" t('admin.groups.openaiMessages.sonnetModelPlaceholder') "
-                          class="w-full"
-                        />
-                      </UFormField>
-                      <UFormField :label="t('admin.groups.openaiMessages.haikuModel')">
-                        <UInput
-                          v-model="createForm.haiku_mapped_model"
-                          type="text"
-                          :placeholder=" t('admin.groups.openaiMessages.haikuModelPlaceholder') "
+                          v-model.number="createForm.profit_safety_buffer_percent"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="99.99"
+                          placeholder="0"
+                          :title="t('admin.groups.profitControl.safetyBufferHint')"
                           class="w-full"
                         />
                       </UFormField>
                     </div>
                   </div>
-                </div>
-
-                <div
-                  class="mt-6 space-y-3"
-                >
+                </section>
+                <section class="space-y-5">
+                  <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.models") }}</h3>
+                  <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
                   <div>
-                    <div class="flex items-start justify-between gap-3">
-                      <div>
+                    <UFormField
+                      :label="t('admin.groups.modelAllowlist.title')"
+                      :description="t('admin.groups.modelAllowlist.hint')"
+                      class="flex items-center justify-between gap-4 mb-3"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <Toggle v-model="createModelAllowlistState.enabled" />
+                    </UFormField>
+                    <div
+                      v-if="createModelAllowlistState.enabled"
+                      class="overflow-hidden rounded-lg border border-default"
+                    >
+                      <div
+                        v-if="!createModelAllowlistLoading && createModelAllowlistState.items.length > 0"
+                        class="flex items-center justify-between gap-2 border-b border-default px-3 py-1.5 text-xs"
+                      >
+                        <span class="text-muted">
+                          {{
+                            t("admin.groups.modelAllowlist.selectedSummary", {
+                              selected: createModelAllowlistSelectedCount,
+                              total: createModelAllowlistState.items.length,
+                            })
+                          }}
+                        </span>
+                        <div class="flex items-center gap-1.5">
+                          <UButton
+                            @click="selectAllModelAllowlistItems(createModelAllowlistState)"
+                            color="primary"
+                            variant="ghost"
+                            size="sm"
+                          >{{ t("admin.groups.modelAllowlist.selectAll") }}</UButton>
+                          <UButton
+                            @click="invertModelAllowlistSelection(createModelAllowlistState)"
+                            color="neutral"
+                            variant="ghost"
+                            size="sm"
+                          >{{ t("admin.groups.modelAllowlist.invertSelection") }}</UButton>
+                        </div>
+                      </div>
+                      <div
+                        class="max-h-64 space-y-2 overflow-y-auto p-2"
+                      >
+                        <p v-if="createModelAllowlistLoading" class="text-xs text-muted">
+                          {{ t("admin.groups.modelAllowlist.loading") }}
+                        </p>
+                        <p
+                          v-else-if="createModelAllowlistState.items.length === 0"
+                          class="text-xs text-muted"
+                        >
+                          {{ t("admin.groups.modelAllowlist.empty") }}
+                        </p>
+                        <div
+                          v-for="(item, index) in createModelAllowlistState.items"
+                          :key="item.id"
+                          class="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-elevated/50"
+                        >
+                          <UCheckbox v-model="item.selected" />
+                          <span class="min-w-0 flex-1 break-all text-sm text-default">
+                            {{ item.id }}
+                            <span
+                              v-if="item.id.endsWith('*')"
+                              class="ml-1 rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                            >
+                              {{ t("admin.groups.modelAllowlist.wildcardTag") }}
+                            </span>
+                          </span>
+                          <UButton
+                            :disabled="index === 0"
+                            @click="moveCreateModelAllowlistItem(index, index - 1)"
+                            icon="i-lucide-arrow-up"
+                            color="neutral"
+                            variant="ghost"
+                            size="sm"
+                            square
+                          />
+                          <UButton
+                            :disabled="index === createModelAllowlistState.items.length - 1"
+                            @click="moveCreateModelAllowlistItem(index, index + 1)"
+                            icon="i-lucide-arrow-down"
+                            color="neutral"
+                            variant="ghost"
+                            size="sm"
+                            square
+                          />
+                        </div>
+                      </div>
+                      <div class="border-t border-default px-3 py-2">
                         <div class="flex items-center gap-2">
-                          <label
-                            class="text-sm font-medium text-highlighted"
-                            >{{
-                              t("admin.groups.openaiMessages.exactMappingTitle")
-                            }}</label
-                          >
+                          <UInput
+                            v-model="createAllowlistCustomEntry"
+                            type="text"
+                            :placeholder="t('admin.groups.modelAllowlist.customPlaceholder')"
+                            @keydown.enter.prevent="submitCreateAllowlistCustomEntry"
+                            size="sm"
+                            class="min-w-0 flex-1"
+                          />
+                          <UButton @click="submitCreateAllowlistCustomEntry" color="primary" variant="solid" size="sm">{{ t("admin.groups.modelAllowlist.addCustom") }}</UButton>
                         </div>
                         <p
-                          class="mt-1 text-xs text-muted"
+                          v-if="createAllowlistCustomErrorKey"
+                          class="mt-1 text-xs text-error"
                         >
-                          {{ t("admin.groups.openaiMessages.exactMappingHint") }}
+                          {{ t(createAllowlistCustomErrorKey) }}
                         </p>
                       </div>
                     </div>
                   </div>
-
-                  <div>
-                    <div
-                      v-if="createForm.exact_model_mappings.length === 0"
-                      class="flex items-center justify-between gap-3 rounded-lg bg-elevated/50 px-4 py-3 text-sm text-muted"
-                    >
-                      <span>{{
-                        t("admin.groups.openaiMessages.noExactMappings")
-                      }}</span>
-                      <UButton
-                        @click="addCreateMessagesDispatchMapping"
-                        icon="i-lucide-plus"
-                        color="primary"
-                        variant="ghost"
-                        size="sm"
-                      >{{ t("admin.groups.openaiMessages.addExactMapping") }}</UButton>
+                  <ReasoningEffortPolicyFields
+                    v-if="supportsReasoningEffortPolicyPlatform(createForm.platform)"
+                    ref="createReasoningEffortPolicyRef"
+                    id-prefix="create-group-reasoning"
+                    :platform="createForm.platform"
+                    v-model:max-effort="createForm.max_reasoning_effort"
+                    v-model:over-limit="createForm.max_reasoning_effort_over_limit"
+                    v-model:mappings="createForm.reasoning_effort_mappings"
+                  />
+                  <!-- 支持的模型系列（仅 antigravity 平台） -->
+                  <div v-if="createForm.platform === 'antigravity'">
+                    <div class="mb-1.5 flex items-center gap-1">
+                      <label class="text-sm font-medium text-default">
+                        {{ t("admin.groups.supportedScopes.title") }}
+                      </label>
+                      <!-- Help Tooltip -->
+                      <GroupFieldHelp :label="t('admin.groups.supportedScopes.title')" :text="t('admin.groups.supportedScopes.tooltip')" />
                     </div>
-
-                    <div v-else class="space-y-3">
+                    <div class="space-y-2">
+                      <UCheckbox
+                        :model-value="createForm.supported_model_scopes.includes('claude')"
+                        @update:model-value="toggleCreateScope('claude')"
+                        :label="t('admin.groups.supportedScopes.claude')"
+                      />
+                      <UCheckbox
+                        :model-value="createForm.supported_model_scopes.includes('gemini_text')"
+                        @update:model-value="toggleCreateScope('gemini_text')"
+                        :label="t('admin.groups.supportedScopes.geminiText')"
+                      />
+                      <UCheckbox
+                        :model-value="createForm.supported_model_scopes.includes('gemini_image')"
+                        @update:model-value="toggleCreateScope('gemini_image')"
+                        :label="t('admin.groups.supportedScopes.geminiImage')"
+                      />
+                    </div>
+                    <p class="mt-2 text-xs text-muted">
+                      {{ t("admin.groups.supportedScopes.hint") }}
+                    </p>
+                  </div>
+                </section>
+                <section class="space-y-5">
+                  <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.pricing") }}</h3>
+                  <div>
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                      <div class="min-w-0 flex-1">
+                        <h4 class="text-sm font-medium text-default">{{ t("admin.groups.modelPricing.title") }}</h4>
+                        <p class="mt-1 text-xs text-muted">{{ t("admin.groups.modelPricing.description") }}</p>
+                      </div>
+                      <UButton
+                        @click="addGroupPricing(createForm.model_pricing)"
+                        icon="i-lucide-plus"
+                        color="neutral"
+                        variant="outline"
+                        class="shrink-0 whitespace-nowrap"
+                      >{{ t("admin.groups.modelPricing.add") }}</UButton>
+                    </div>
+                    <UCheckbox class="mt-3" v-model="createForm.long_context_pricing_enabled">
+                      <template #label>
+                        <span><span class="block text-sm text-default">{{ t("admin.groups.modelPricing.longContext") }}</span><span class="block text-xs text-muted">{{ t("admin.groups.modelPricing.longContextHint") }}</span></span>
+                      </template>
+                    </UCheckbox>
+                    <div class="mt-3 space-y-2">
+                      <PricingEntryCard v-for="(entry, index) in createForm.model_pricing" :key="index" :entry="entry" :platform="createForm.platform" hide-token-intervals @update="createForm.model_pricing[index] = $event" @remove="createForm.model_pricing.splice(index, 1)" />
+                    </div>
+                  </div>
+                  <!-- 图片生成计费配置 -->
+                  <div
+                    v-if="supportsImagePricingPlatform(createForm.platform)"
+                  >
+                    <label
+                      class="block mb-2 font-medium text-default"
+                    >
+                      {{ t(imagePricingI18nKey(createForm.platform, "title")) }}
+                    </label>
+                    <p class="text-xs text-muted mb-3">
+                      {{ t(imagePricingI18nKey(createForm.platform, "description")) }}
+                    </p>
+                    <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <UCheckbox
+                        v-model="createForm.allow_image_generation"
+                        :label="t(imagePricingI18nKey(createForm.platform, 'allowImageGeneration'))"
+                      />
+                      <UCheckbox
+                        v-model="createForm.image_rate_independent"
+                        :label="t(imagePricingI18nKey(createForm.platform, 'independentMultiplier'))"
+                      />
+                    </div>
+                    <UFormField
+                      :label="t(imagePricingI18nKey(createForm.platform, 'imageMultiplier'))"
+                      v-if="createForm.image_rate_independent"
+                      class="mb-4"
+                    >
+                      <UInput
+                        v-model.number="createForm.image_rate_multiplier"
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        placeholder="1"
+                        class="w-full"
+                      />
+                    </UFormField>
+                    <div class="grid grid-cols-3 gap-3">
+                      <UFormField label="1K ($)">
+                        <UInput
+                          v-model.number="createForm.image_price_1k"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          :placeholder="getImagePricePlaceholder(createForm.platform, 'image_price_1k')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField label="2K ($)">
+                        <UInput
+                          v-model.number="createForm.image_price_2k"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          :placeholder="getImagePricePlaceholder(createForm.platform, 'image_price_2k')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField label="4K ($)">
+                        <UInput
+                          v-model.number="createForm.image_price_4k"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          :placeholder="getImagePricePlaceholder(createForm.platform, 'image_price_4k')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                    </div>
+                    <p class="mt-3 text-xs text-muted">
+                      {{ t(imagePricingI18nKey(createForm.platform, "modeHint")) }}
+                    </p>
+                    <div class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default">
+                      <div class="mb-1 font-medium">
+                        {{ t(imagePricingI18nKey(createForm.platform, "finalPricePreview")) }}
+                      </div>
+                      <div class="grid grid-cols-3 gap-2">
+                        <div
+                          v-for="item in createImageFinalPricePreview"
+                          :key="item.label"
+                        >
+                          {{ item.label }}: {{ item.value }}
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="createForm.platform === 'gemini' && createForm.allow_image_generation" class="mt-4">
+                      <UCheckbox
+                        v-model="createForm.allow_batch_image_generation"
+                        :label="t('admin.groups.imagePricing.allowBatchImageGeneration')"
+                      />
+                      <p class="mt-2 text-xs text-muted">
+                        {{ t("admin.groups.imagePricing.batchSectionHint") }}
+                      </p>
                       <div
-                        v-for="row in createForm.exact_model_mappings"
-                        :key="getCreateMessagesDispatchRowKey(row)"
-                        class="group relative rounded-lg border border-default p-3"
+                        v-if="createForm.allow_batch_image_generation"
+                        class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2"
                       >
-                        <div class="flex items-center gap-4">
-                          <div
-                            class="grid flex-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start"
+                        <UFormField :label="t('admin.groups.imagePricing.batchDiscountMultiplier')">
+                          <UInput
+                            v-model.number="createForm.batch_image_discount_multiplier"
+                            type="number"
+                            step="0.0001"
+                            min="0"
+                            placeholder="0.5"
+                            class="w-full"
+                          />
+                        </UFormField>
+                        <UFormField :label="t('admin.groups.imagePricing.batchHoldMultiplier')">
+                          <UInput
+                            v-model.number="createForm.batch_image_hold_multiplier"
+                            type="number"
+                            step="0.0001"
+                            min="0"
+                            placeholder="0.6"
+                            class="w-full"
+                          />
+                        </UFormField>
+                      </div>
+                    </div>
+                    <p
+                      v-else-if="createForm.platform !== 'gemini'"
+                      class="mt-4 text-xs text-muted"
+                    >
+                      {{ t("admin.groups.imagePricing.batchGeminiOnlyHint") }}
+                    </p>
+                  </div>
+                  <MiniMaxH3PricingFields v-if="createForm.platform === 'minimax'" v-model="createForm.video_model_prices" />
+                  <!-- 视频生成计费配置（仅 Grok 平台） -->
+                  <div
+                    v-if="supportsVideoPricingPlatform(createForm.platform)"
+                  >
+                    <label
+                      class="block mb-2 font-medium text-default"
+                    >
+                      {{ t(videoPricingI18nKey("title")) }}
+                    </label>
+                    <p class="text-xs text-muted mb-3">
+                      {{ t(videoPricingI18nKey("description")) }}
+                    </p>
+                    <div class="mb-4">
+                      <UCheckbox
+                        v-model="createForm.video_rate_independent"
+                        :label="t(videoPricingI18nKey('independentMultiplier'))"
+                      />
+                    </div>
+                    <UFormField
+                      :label="t(videoPricingI18nKey('videoMultiplier'))"
+                      v-if="createForm.video_rate_independent"
+                      class="mb-4"
+                    >
+                      <UInput
+                        v-model.number="createForm.video_rate_multiplier"
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        placeholder="1"
+                        class="w-full"
+                      />
+                    </UFormField>
+                    <div class="grid grid-cols-3 gap-3">
+                      <UFormField label="480p ($/s)">
+                        <UInput
+                          v-model.number="createForm.video_price_480p"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          :placeholder="getVideoPricePlaceholder(createForm.platform, 'video_price_480p')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField label="720p ($/s)">
+                        <UInput
+                          v-model.number="createForm.video_price_720p"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          :placeholder="getVideoPricePlaceholder(createForm.platform, 'video_price_720p')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField label="1080p ($/s)">
+                        <UInput
+                          v-model.number="createForm.video_price_1080p"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          :placeholder="getVideoPricePlaceholder(createForm.platform, 'video_price_1080p')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                    </div>
+                    <div
+                      class="mt-4"
+                      data-testid="create-grok-video-model-prices"
+                    >
+                      <p class="text-sm font-medium text-default">
+                        {{ t("admin.groups.videoPricing.modelOverridesTitle") }}
+                      </p>
+                      <p class="mt-1 text-xs text-muted">
+                        {{ t("admin.groups.videoPricing.modelOverridesDescription") }}
+                      </p>
+                      <div class="mt-3 space-y-3">
+                        <div
+                          v-for="family in videoModelPriceFamilyRows(createForm.video_model_prices)"
+                          :key="family.key"
+                          class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_repeat(3,minmax(0,7rem))] sm:items-end"
+                        >
+                          <div class="min-w-0 pb-1 font-mono text-xs text-default">
+                            {{ family.label }}
+                          </div>
+                          <label
+                            v-for="resolution in grokVideoPriceResolutions"
+                            :key="resolution.key"
+                            class="block"
                           >
-                            <UFormField :label="t('admin.groups.openaiMessages.claudeModel')">
+                            <span class="mb-1 block text-xs text-muted">
+                              {{ resolution.label }} ($/s)
+                            </span>
+                            <UInput
+                              v-model.number.nullable="createForm.video_model_prices[family.key][resolution.key]"
+                              type="number"
+                              step="0.001"
+                              min="0"
+                              :data-testid="`create-grok-video-price-${family.key}-${resolution.key}`"
+                              class="w-full"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="mt-3 text-xs text-muted">
+                      {{ t(videoPricingI18nKey("modeHint")) }}
+                    </p>
+                    <div class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default">
+                      <div class="mb-1 font-medium">
+                        {{ t(videoPricingI18nKey("finalPricePreview")) }}
+                      </div>
+                      <div class="grid grid-cols-3 gap-2">
+                        <div
+                          v-for="item in createVideoFinalPricePreview"
+                          :key="item.label"
+                        >
+                          {{ item.label }}: {{ item.value }}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Grok Voice 定价 -->
+                  <div
+                    v-if="createForm.platform === 'grok'"
+                  >
+                    <h4 class="text-sm font-medium text-default mb-1">
+                      {{ t("admin.groups.voicePricing.title") }}
+                    </h4>
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <UFormField
+                        :label="t('admin.groups.voicePricing.audioRealtimePerMin')"
+                        v-if="createForm.platform === 'grok'"
+                      >
+                        <UInput
+                          v-model.number="createForm.audio_realtime_price_per_min"
+                          type="number"
+                          step="0.000001"
+                          min="0"
+                          :placeholder="t('admin.groups.voicePricing.pricePlaceholder')"
+                          data-testid="create-audio-realtime-price"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField
+                        :label="t('admin.groups.voicePricing.audioTtsPerMillionChars')"
+                        v-if="createForm.platform === 'grok'"
+                      >
+                        <UInput
+                          v-model.number="createForm.audio_tts_price_per_million_chars"
+                          type="number"
+                          step="0.000001"
+                          min="0"
+                          :placeholder="t('admin.groups.voicePricing.pricePlaceholder')"
+                          data-testid="create-audio-tts-price"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField
+                        :label="t('admin.groups.voicePricing.audioSttPerHour')"
+                        v-if="createForm.platform === 'grok'"
+                      >
+                        <UInput
+                          v-model.number="createForm.audio_stt_price_per_hour"
+                          type="number"
+                          step="0.000001"
+                          min="0"
+                          :placeholder="t('admin.groups.voicePricing.pricePlaceholder')"
+                          data-testid="create-audio-stt-price"
+                          class="w-full"
+                        />
+                      </UFormField>
+                    </div>
+                  </div>
+                  <!-- 搜索单价：所有可能走搜索的平台（Grok / DeepSeek） -->
+                  <div
+                    v-if="supportsSearchPricing(createForm.platform)"
+                  >
+                    <h4 class="text-sm font-medium text-default mb-1">
+                      {{ t("admin.groups.explicitPricing.title") }}
+                    </h4>
+                    <p class="text-xs text-muted mb-3">
+                      {{ t("admin.groups.explicitPricing.description") }}
+                    </p>
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <UFormField :label="t('admin.groups.explicitPricing.searchPricePer1k')">
+                        <UInput
+                          v-model.number="createForm.search_price_per_1k"
+                          type="number"
+                          step="0.000001"
+                          min="0"
+                          :placeholder="t('admin.groups.explicitPricing.pricePlaceholder')"
+                          data-testid="create-search-price"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField
+                        :label="t('admin.groups.explicitPricing.searchProviderBaseUrl')"
+                        v-if="createForm.platform === 'deepseek'"
+                      >
+                        <UInput
+                          v-model="createForm.search_provider_base_url"
+                          type="text"
+                          :placeholder="t('admin.groups.explicitPricing.searchProviderBaseUrlPlaceholder')"
+                          data-testid="create-search-provider-url"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField
+                        :label="t('admin.groups.explicitPricing.searchProviderApiKey')"
+                        v-if="createForm.platform === 'deepseek'"
+                      >
+                        <UInput
+                          v-model="createForm.search_provider_api_key"
+                          type="password"
+                          autocomplete="new-password"
+                          :placeholder="t('admin.groups.explicitPricing.searchProviderApiKeyPlaceholder')"
+                          data-testid="create-search-provider-key"
+                          class="w-full"
+                        />
+                      </UFormField>
+                    </div>
+                  </div>
+                  <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
+                  <div
+                    v-if="createForm.platform === 'openai'"
+                  >
+                    <h4 class="text-sm font-medium text-default mb-3">
+                      {{ t("admin.groups.webSearchPricing.title") }}
+                    </h4>
+                    <div class="space-y-2">
+                      <UFormField :label="t('admin.groups.webSearchPricing.pricePerCall')" :help="t('admin.groups.webSearchPricing.pricePerCallHint')">
+                        <UInput
+                          v-model.number="createForm.web_search_price_per_call"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          placeholder="0.01"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <div
+                        class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default"
+                      >
+                        {{
+                          t("admin.groups.webSearchPricing.finalPricePreview", {
+                            price: createWebSearchFinalPricePreview,
+                          })
+                        }}
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
+                  <div
+                    v-if="createForm.platform === 'grok'"
+                  >
+                    <h4 class="mb-1 text-sm font-medium text-default">
+                      {{ t("admin.groups.moderationRefusalPricing.title") }}
+                    </h4>
+                    <p class="mb-3 text-xs text-muted">
+                      {{ t("admin.groups.moderationRefusalPricing.hint") }}
+                    </p>
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <UFormField :label="t('admin.groups.moderationRefusalPricing.pricePerCall')">
+                        <UInput
+                          v-model.number="createForm.grok_moderation_refusal_price"
+                          type="number"
+                          step="0.00000001"
+                          min="0"
+                          :placeholder="t('admin.groups.moderationRefusalPricing.placeholder')"
+                          data-testid="create-grok-moderation-refusal-price"
+                          class="w-full"
+                        />
+                      </UFormField>
+                    </div>
+                  </div>
+                </section>
+                <section class="space-y-5">
+                  <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.dispatch") }}</h3>
+                  <!-- 跨协议转换开关：所有平台的分组都有（Anthropic 协议族 <-> OpenAI 协议族）。
+                       账号有原生端点时始终先走原生转发，开关只决定"没有原生端点时"能否转换兜底。 -->
+                  <div>
+                    <UFormField
+                      :label="t('admin.groups.openaiMessages.crossProtocolEnabled')"
+                      :description="t('admin.groups.openaiMessages.crossProtocolHint')"
+                      class="flex items-center justify-between gap-4"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <Toggle v-model="createForm.cross_protocol_conversion_enabled" />
+                    </UFormField>
+                  </div>
+                  <!-- OpenAI Messages 调度配置（OpenAI 与 Composite 平台） -->
+                  <div
+                    v-if="supportsMessagesDispatchPlatform(createForm.platform)"
+                  >
+                    <h4 class="text-sm font-medium text-default mb-3">
+                      {{ t("admin.groups.openaiMessages.title") }}
+                    </h4>
+
+                    <!-- 允许 Messages 调度开关 -->
+                    <UFormField
+                      :label="t('admin.groups.openaiMessages.allowDispatch')"
+                      :description="t('admin.groups.openaiMessages.allowDispatchHint')"
+                      class="flex items-center justify-between gap-4"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <Toggle v-model="createForm.allow_messages_dispatch" />
+                    </UFormField>
+
+                    <div
+                      v-if="
+                        createForm.platform === 'openai' &&
+                        createForm.allow_messages_dispatch
+                      "
+                      class="mt-3"
+                    >
+                      <div
+                        class="space-y-3"
+                      >
+                        <div>
+                          <div class="flex items-center gap-2">
+                            <label
+                              class="text-sm font-medium text-highlighted"
+                              >{{
+                                t("admin.groups.openaiMessages.familyMappingTitle")
+                              }}</label
+                            >
+                          </div>
+                          <p class="mt-1 text-xs text-muted">
+                            {{ t("admin.groups.openaiMessages.familyMappingHint") }}
+                          </p>
+                        </div>
+                        <div>
+                          <div class="grid gap-4 md:grid-cols-3">
+                            <UFormField :label="t('admin.groups.openaiMessages.opusModel')">
                               <UInput
-                                v-model="row.claude_model"
+                                v-model="createForm.opus_mapped_model"
                                 type="text"
-                                :placeholder=" t( 'admin.groups.openaiMessages.claudeModelPlaceholder', ) "
+                                :placeholder=" t('admin.groups.openaiMessages.opusModelPlaceholder') "
                                 class="w-full"
                               />
                             </UFormField>
-                            <div
-                              class="hidden md:flex md:justify-center md:pt-7 text-primary"
-                            >
-                              <Icon
-                                name="arrowRight"
-                                size="sm"
-                                class="transition-transform group-hover:translate-x-1"
-                              />
-                            </div>
-                            <UFormField :label="t('admin.groups.openaiMessages.targetModel')">
+                            <UFormField :label="t('admin.groups.openaiMessages.sonnetModel')">
                               <UInput
-                                v-model="row.target_model"
+                                v-model="createForm.sonnet_mapped_model"
                                 type="text"
-                                :placeholder=" t( 'admin.groups.openaiMessages.targetModelPlaceholder', ) "
+                                :placeholder=" t('admin.groups.openaiMessages.sonnetModelPlaceholder') "
+                                class="w-full"
+                              />
+                            </UFormField>
+                            <UFormField :label="t('admin.groups.openaiMessages.haikuModel')">
+                              <UInput
+                                v-model="createForm.haiku_mapped_model"
+                                type="text"
+                                :placeholder=" t('admin.groups.openaiMessages.haikuModelPlaceholder') "
                                 class="w-full"
                               />
                             </UFormField>
                           </div>
+                        </div>
+                      </div>
+
+                      <div
+                        class="mt-6 space-y-3"
+                      >
+                        <div>
+                          <div class="flex items-start justify-between gap-3">
+                            <div>
+                              <div class="flex items-center gap-2">
+                                <label
+                                  class="text-sm font-medium text-highlighted"
+                                  >{{
+                                    t("admin.groups.openaiMessages.exactMappingTitle")
+                                  }}</label
+                                >
+                              </div>
+                              <p
+                                class="mt-1 text-xs text-muted"
+                              >
+                                {{ t("admin.groups.openaiMessages.exactMappingHint") }}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div
+                            v-if="createForm.exact_model_mappings.length === 0"
+                            class="flex items-center justify-between gap-3 rounded-lg bg-elevated/50 px-4 py-3 text-sm text-muted"
+                          >
+                            <span>{{
+                              t("admin.groups.openaiMessages.noExactMappings")
+                            }}</span>
+                            <UButton
+                              @click="addCreateMessagesDispatchMapping"
+                              icon="i-lucide-plus"
+                              color="primary"
+                              variant="ghost"
+                              size="sm"
+                            >{{ t("admin.groups.openaiMessages.addExactMapping") }}</UButton>
+                          </div>
+
+                          <div v-else class="space-y-3">
+                            <div
+                              v-for="row in createForm.exact_model_mappings"
+                              :key="getCreateMessagesDispatchRowKey(row)"
+                              class="group relative rounded-lg border border-default p-3"
+                            >
+                              <div class="flex items-center gap-4">
+                                <div
+                                  class="grid flex-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start"
+                                >
+                                  <UFormField :label="t('admin.groups.openaiMessages.claudeModel')">
+                                    <UInput
+                                      v-model="row.claude_model"
+                                      type="text"
+                                      :placeholder=" t( 'admin.groups.openaiMessages.claudeModelPlaceholder', ) "
+                                      class="w-full"
+                                    />
+                                  </UFormField>
+                                  <div
+                                    class="hidden md:flex md:justify-center md:pt-7 text-primary"
+                                  >
+                                    <Icon
+                                      name="arrowRight"
+                                      size="sm"
+                                      class="transition-transform group-hover:translate-x-1"
+                                    />
+                                  </div>
+                                  <UFormField :label="t('admin.groups.openaiMessages.targetModel')">
+                                    <UInput
+                                      v-model="row.target_model"
+                                      type="text"
+                                      :placeholder=" t( 'admin.groups.openaiMessages.targetModelPlaceholder', ) "
+                                      class="w-full"
+                                    />
+                                  </UFormField>
+                                </div>
+                                <UButton
+                                  @click="removeCreateMessagesDispatchMapping(row)"
+                                  :title=" t('admin.groups.openaiMessages.removeExactMapping') "
+                                  icon="i-lucide-trash-2"
+                                  color="error"
+                                  variant="ghost"
+                                  size="sm"
+                                  square
+                                  class="mt-6"
+                                />
+                              </div>
+                            </div>
+
+                            <UButton
+                              @click="addCreateMessagesDispatchMapping"
+                              icon="i-lucide-plus"
+                              color="neutral"
+                              variant="outline"
+                              size="sm"
+                              block
+                            >{{ t("admin.groups.openaiMessages.addExactMapping") }}</UButton>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- OpenAI Fast 开关（OpenAI 与 Composite 平台） -->
+                  <div
+                    v-if="supportsGroupOpenAIFast(createForm.platform)"
+                  >
+                    <h4 class="text-sm font-medium text-default mb-3">
+                      {{ t("admin.groups.openaiFast.title") }}
+                    </h4>
+                    <UFormField
+                      :label="t('admin.groups.openaiFast.force')"
+                      :description="t('admin.groups.openaiFast.hint')"
+                      class="flex items-center justify-between gap-4"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <Toggle
+                        data-testid="create-force-openai-fast"
+                        :aria-label="t('admin.groups.openaiFast.force')"
+                        v-model="createForm.force_openai_fast"
+                      />
+                    </UFormField>
+                    <UFormField
+                      :label="t('admin.groups.openaiFast.free')"
+                      :description="t('admin.groups.openaiFast.freeHint')"
+                      class="flex items-center justify-between gap-4 mt-4"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <Toggle
+                        data-testid="create-free-openai-fast"
+                        :aria-label="t('admin.groups.openaiFast.free')"
+                        v-model="createForm.free_openai_fast"
+                      />
+                    </UFormField>
+                  </div>
+                  <!-- Claude Code 客户端限制（仅 anthropic 平台） -->
+                  <div v-if="createForm.platform === 'anthropic'">
+                    <UFormField :description="createForm.claude_code_only
+                            ? t('admin.groups.claudeCode.enabled')
+                            : t('admin.groups.claudeCode.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
+                      <template #label>
+                        <span class="inline-flex items-center gap-1">{{ t("admin.groups.claudeCode.title") }} <GroupFieldHelp :label="t('admin.groups.claudeCode.title')" :text="t('admin.groups.claudeCode.tooltip')" /></span>
+                      </template>
+                      <Toggle v-model="createForm.claude_code_only" />
+                    </UFormField>
+                    <!-- 降级分组选择（仅当启用 claude_code_only 时显示） -->
+                    <UFormField
+                      :label="t('admin.groups.claudeCode.fallbackGroup')"
+                      :help="t('admin.groups.claudeCode.fallbackHint')"
+                      v-if="createForm.claude_code_only"
+                      class="mt-3"
+                    >
+                      <Select
+                        v-model="createForm.fallback_group_id"
+                        :options="fallbackGroupOptions"
+                        :placeholder="t('admin.groups.claudeCode.noFallback')"
+                      />
+                    </UFormField>
+                  </div>
+                </section>
+                <section class="space-y-5">
+                  <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.advanced") }}</h3>
+                  <div>
+                    <UFormField
+                      :label="t('admin.groups.returnRequestedModel.label')"
+                      class="flex items-center justify-between gap-4"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <template #description><span id="create-return-requested-model-hint">{{ t("admin.groups.returnRequestedModel.hint") }}</span></template>
+                      <Toggle
+                        data-testid="create-return-requested-model"
+                        :aria-label="t('admin.groups.returnRequestedModel.label')"
+                        aria-describedby="create-return-requested-model-hint"
+                        v-model="createForm.return_requested_model"
+                      />
+                    </UFormField>
+                  </div>
+                  <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
+                  <div
+                    v-if="supportsLivePlatform(createForm.platform)"
+                  >
+                    <h4 class="text-sm font-medium text-default mb-3">
+                      {{ t("admin.groups.openaiLive.title") }}
+                    </h4>
+                    <UFormField
+                      :label="t('admin.groups.openaiLive.allow')"
+                      :description="t('admin.groups.openaiLive.hint')"
+                      class="flex items-center justify-between gap-4"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <Toggle
+                        :model-value="createForm.allow_live"
+                        @update:model-value="toggleLive('create')"
+                      />
+                    </UFormField>
+                  </div>
+                  <!-- 账号过滤控制 (OpenAI/Antigravity/Anthropic/Gemini) -->
+                  <div
+                    v-if="
+                      ['openai', 'antigravity', 'anthropic', 'gemini'].includes(
+                        createForm.platform,
+                      )
+                    "
+                  >
+                    <h4 class="text-sm font-medium text-default mb-3">
+                      {{ t("admin.groups.accountFilters.title") }}
+                    </h4>
+
+                    <!-- require_oauth_only toggle -->
+                    <UFormField
+                      :label="t('admin.groups.accountFilters.oauthOnly')"
+                      :description="createForm.require_oauth_only
+                              ? t('admin.groups.accountFilters.oauthOnlyEnabled')
+                              : t('admin.groups.accountFilters.disabled')"
+                      class="flex items-center justify-between gap-4"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <Toggle v-model="createForm.require_oauth_only" />
+                    </UFormField>
+
+                    <!-- require_privacy_set toggle -->
+                    <UFormField
+                      :label="t('admin.groups.accountFilters.privacySetOnly')"
+                      :description="createForm.require_privacy_set
+                              ? t('admin.groups.accountFilters.privacySetOnlyEnabled')
+                              : t('admin.groups.accountFilters.disabled')"
+                      class="flex items-center justify-between gap-4"
+                      :ui="{ container: 'mt-0 shrink-0' }"
+                    >
+                      <Toggle v-model="createForm.require_privacy_set" />
+                    </UFormField>
+                  </div>
+                  <!-- 无效请求兜底（仅 anthropic/antigravity 平台，且非订阅分组） -->
+                  <div
+                    v-if="
+                      ['anthropic', 'antigravity'].includes(createForm.platform) &&
+                      createForm.subscription_type !== 'subscription'
+                    "
+                  >
+                    <UFormField :label="t('admin.groups.invalidRequestFallback.title')" :help="t('admin.groups.invalidRequestFallback.hint')">
+                      <Select
+                        v-model="createForm.fallback_group_id_on_invalid_request"
+                        :options="invalidRequestFallbackOptions"
+                        :placeholder="t('admin.groups.invalidRequestFallback.noFallback')"
+                      />
+                    </UFormField>
+                  </div>
+                  <!-- 模型路由配置（仅 anthropic 平台） -->
+                  <div v-if="createForm.platform === 'anthropic'">
+                    <UFormField :description="createForm.model_routing_enabled
+                            ? t('admin.groups.modelRouting.enabled')
+                            : t('admin.groups.modelRouting.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
+                      <template #label>
+                        <span class="inline-flex items-center gap-1">{{ t("admin.groups.modelRouting.title") }} <GroupFieldHelp :label="t('admin.groups.modelRouting.title')" :text="t('admin.groups.modelRouting.tooltip')" /></span>
+                      </template>
+                      <Toggle v-model="createForm.model_routing_enabled" />
+                    </UFormField>
+                    <p
+                      v-if="!createForm.model_routing_enabled"
+                      class="text-xs text-muted mb-3"
+                    >
+                      {{ t("admin.groups.modelRouting.disabledHint") }}
+                    </p>
+                    <p v-else class="text-xs text-muted mb-3">
+                      {{ t("admin.groups.modelRouting.noRulesHint") }}
+                    </p>
+                    <!-- 路由规则列表（仅在启用时显示） -->
+                    <div v-if="createForm.model_routing_enabled" class="space-y-3">
+                      <div
+                        v-for="rule in createModelRoutingRules"
+                        :key="getCreateRuleRenderKey(rule)"
+                        class="rounded-lg border border-default p-3"
+                      >
+                        <div class="flex items-start gap-3">
+                          <div class="flex-1 space-y-2">
+                            <UFormField :label="t('admin.groups.modelRouting.modelPattern')" size="sm">
+                              <UInput
+                                v-model="rule.pattern"
+                                type="text"
+                                :placeholder=" t('admin.groups.modelRouting.modelPatternPlaceholder') "
+                                class="w-full"
+                              />
+                            </UFormField>
+                            <div>
+                              <label class="mb-1 block text-xs font-medium text-default">{{
+                                t("admin.groups.modelRouting.accounts")
+                              }}</label>
+                              <!-- 已选账号标签 -->
+                              <div
+                                v-if="rule.accounts.length > 0"
+                                class="flex flex-wrap gap-1.5 mb-2"
+                              >
+                                <span
+                                  v-for="account in rule.accounts"
+                                  :key="account.id"
+                                  class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
+                                >
+                                  {{ account.name }}
+                                  <UButton
+                                    @click="removeSelectedAccount(rule, account.id)"
+                                    icon="i-lucide-x"
+                                    color="primary"
+                                    variant="ghost"
+                                    size="sm"
+                                    square
+                                    class="ml-0.5"
+                                  />
+                                </span>
+                              </div>
+                              <!-- 账号搜索输入框 -->
+                              <div class="relative account-search-container">
+                                <UInput
+                                  v-model=" accountSearchKeyword[getCreateRuleSearchKey(rule)] "
+                                  type="text"
+                                  :placeholder=" t( 'admin.groups.modelRouting.searchAccountPlaceholder', ) "
+                                  @input="searchAccountsByRule(rule)"
+                                  @focus="onAccountSearchFocus(rule)"
+                                  class="w-full"
+                                />
+                                <!-- 搜索结果下拉框 -->
+                                <div
+                                  v-if="
+                                    showAccountDropdown[getCreateRuleSearchKey(rule)] &&
+                                    accountSearchResults[getCreateRuleSearchKey(rule)]
+                                      ?.length > 0
+                                  "
+                                  class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg"
+                                >
+                                  <UButton
+                                    v-for="account in accountSearchResults[ getCreateRuleSearchKey(rule) ]"
+                                    :key="account.id"
+                                    @click="selectAccount(rule, account)"
+                                    :class="{ 'opacity-50': rule.accounts.some( (a) => a.id === account.id, ), }"
+                                    :disabled=" rule.accounts.some((a) => a.id === account.id) "
+                                    color="neutral"
+                                    variant="ghost"
+                                    size="sm"
+                                    block
+                                    class="justify-start"
+                                  ><span>{{ account.name }}</span>
+                                    <span class="ml-2 text-xs text-dimmed"
+                                      >#{{ account.id }}</span
+                                    ></UButton>
+                                </div>
+                              </div>
+                              <p class="text-xs text-dimmed mt-1">
+                                {{ t("admin.groups.modelRouting.accountsHint") }}
+                              </p>
+                            </div>
+                          </div>
                           <UButton
-                            @click="removeCreateMessagesDispatchMapping(row)"
-                            :title=" t('admin.groups.openaiMessages.removeExactMapping') "
+                            @click="removeCreateRoutingRule(rule)"
+                            :title="t('admin.groups.modelRouting.removeRule')"
                             icon="i-lucide-trash-2"
                             color="error"
                             variant="ghost"
                             size="sm"
                             square
-                            class="mt-6"
+                            class="mt-5"
                           />
                         </div>
                       </div>
-
-                      <UButton
-                        @click="addCreateMessagesDispatchMapping"
-                        icon="i-lucide-plus"
-                        color="neutral"
-                        variant="outline"
-                        size="sm"
-                        block
-                      >{{ t("admin.groups.openaiMessages.addExactMapping") }}</UButton>
                     </div>
+                    <!-- 添加规则按钮（仅在启用时显示） -->
+                    <UButton
+                      v-if="createForm.model_routing_enabled"
+                      @click="addCreateRoutingRule"
+                      icon="i-lucide-plus"
+                      color="primary"
+                      variant="ghost"
+                      size="sm"
+                      class="mt-3"
+                    >{{ t("admin.groups.modelRouting.addRule") }}</UButton>
                   </div>
-                </div>
-              </div>
-            </div>
-            <!-- OpenAI Fast 开关（OpenAI 与 Composite 平台） -->
-            <div
-              v-if="supportsGroupOpenAIFast(createForm.platform)"
-            >
-              <h4 class="text-sm font-medium text-default mb-3">
-                {{ t("admin.groups.openaiFast.title") }}
-              </h4>
-              <UFormField
-                :label="t('admin.groups.openaiFast.force')"
-                :description="t('admin.groups.openaiFast.hint')"
-                class="flex items-center justify-between gap-4"
-                :ui="{ container: 'mt-0 shrink-0' }"
-              >
-                <Toggle
-                  data-testid="create-force-openai-fast"
-                  :aria-label="t('admin.groups.openaiFast.force')"
-                  v-model="createForm.force_openai_fast"
-                />
-              </UFormField>
-              <UFormField
-                :label="t('admin.groups.openaiFast.free')"
-                :description="t('admin.groups.openaiFast.freeHint')"
-                class="flex items-center justify-between gap-4 mt-4"
-                :ui="{ container: 'mt-0 shrink-0' }"
-              >
-                <Toggle
-                  data-testid="create-free-openai-fast"
-                  :aria-label="t('admin.groups.openaiFast.free')"
-                  v-model="createForm.free_openai_fast"
-                />
-              </UFormField>
-            </div>
-            <!-- Claude Code 客户端限制（仅 anthropic 平台） -->
-            <div v-if="createForm.platform === 'anthropic'">
-              <UFormField :description="createForm.claude_code_only
-                      ? t('admin.groups.claudeCode.enabled')
-                      : t('admin.groups.claudeCode.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
-                <template #label>
-                  <span class="inline-flex items-center gap-1">{{ t("admin.groups.claudeCode.title") }} <GroupFieldHelp :label="t('admin.groups.claudeCode.title')" :text="t('admin.groups.claudeCode.tooltip')" /></span>
-                </template>
-                <Toggle v-model="createForm.claude_code_only" />
-              </UFormField>
-              <!-- 降级分组选择（仅当启用 claude_code_only 时显示） -->
-              <UFormField
-                :label="t('admin.groups.claudeCode.fallbackGroup')"
-                :help="t('admin.groups.claudeCode.fallbackHint')"
-                v-if="createForm.claude_code_only"
-                class="mt-3"
-              >
-                <Select
-                  v-model="createForm.fallback_group_id"
-                  :options="fallbackGroupOptions"
-                  :placeholder="t('admin.groups.claudeCode.noFallback')"
-                />
-              </UFormField>
-            </div>
-          </section>
-          <UCollapsible v-model:open="createAdvancedOpen" :unmount-on-hide="false" class="space-y-5">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              trailing-icon="i-lucide-chevron-down"
-              :label="t('admin.groups.formSections.advanced')"
-              class="-mx-2.5 text-base font-semibold text-highlighted"
-              :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }"
-            />
-            <template #content>
-              <div class="space-y-5 pt-1">
-                <div>
-                  <UFormField
-                    :label="t('admin.groups.returnRequestedModel.label')"
-                    class="flex items-center justify-between gap-4"
-                    :ui="{ container: 'mt-0 shrink-0' }"
-                  >
-                    <template #description><span id="create-return-requested-model-hint">{{ t("admin.groups.returnRequestedModel.hint") }}</span></template>
-                    <Toggle
-                      data-testid="create-return-requested-model"
-                      :aria-label="t('admin.groups.returnRequestedModel.label')"
-                      aria-describedby="create-return-requested-model-hint"
-                      v-model="createForm.return_requested_model"
-                    />
-                  </UFormField>
-                </div>
-                <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
-                <div
-                  v-if="supportsLivePlatform(createForm.platform)"
-                >
-                  <h4 class="text-sm font-medium text-default mb-3">
-                    {{ t("admin.groups.openaiLive.title") }}
-                  </h4>
-                  <UFormField
-                    :label="t('admin.groups.openaiLive.allow')"
-                    :description="t('admin.groups.openaiLive.hint')"
-                    class="flex items-center justify-between gap-4"
-                    :ui="{ container: 'mt-0 shrink-0' }"
-                  >
-                    <Toggle
-                      :model-value="createForm.allow_live"
-                      @update:model-value="toggleLive('create')"
-                    />
-                  </UFormField>
-                </div>
-                <!-- 账号过滤控制 (OpenAI/Antigravity/Anthropic/Gemini) -->
-                <div
-                  v-if="
-                    ['openai', 'antigravity', 'anthropic', 'gemini'].includes(
-                      createForm.platform,
-                    )
-                  "
-                >
-                  <h4 class="text-sm font-medium text-default mb-3">
-                    {{ t("admin.groups.accountFilters.title") }}
-                  </h4>
-
-                  <!-- require_oauth_only toggle -->
-                  <UFormField
-                    :label="t('admin.groups.accountFilters.oauthOnly')"
-                    :description="createForm.require_oauth_only
-                            ? t('admin.groups.accountFilters.oauthOnlyEnabled')
-                            : t('admin.groups.accountFilters.disabled')"
-                    class="flex items-center justify-between gap-4"
-                    :ui="{ container: 'mt-0 shrink-0' }"
-                  >
-                    <Toggle v-model="createForm.require_oauth_only" />
-                  </UFormField>
-
-                  <!-- require_privacy_set toggle -->
-                  <UFormField
-                    :label="t('admin.groups.accountFilters.privacySetOnly')"
-                    :description="createForm.require_privacy_set
-                            ? t('admin.groups.accountFilters.privacySetOnlyEnabled')
-                            : t('admin.groups.accountFilters.disabled')"
-                    class="flex items-center justify-between gap-4"
-                    :ui="{ container: 'mt-0 shrink-0' }"
-                  >
-                    <Toggle v-model="createForm.require_privacy_set" />
-                  </UFormField>
-                </div>
-                <!-- 无效请求兜底（仅 anthropic/antigravity 平台，且非订阅分组） -->
-                <div
-                  v-if="
-                    ['anthropic', 'antigravity'].includes(createForm.platform) &&
-                    createForm.subscription_type !== 'subscription'
-                  "
-                >
-                  <UFormField :label="t('admin.groups.invalidRequestFallback.title')" :help="t('admin.groups.invalidRequestFallback.hint')">
-                    <Select
-                      v-model="createForm.fallback_group_id_on_invalid_request"
-                      :options="invalidRequestFallbackOptions"
-                      :placeholder="t('admin.groups.invalidRequestFallback.noFallback')"
-                    />
-                  </UFormField>
-                </div>
-                <!-- 模型路由配置（仅 anthropic 平台） -->
-                <div v-if="createForm.platform === 'anthropic'">
-                  <UFormField :description="createForm.model_routing_enabled
-                          ? t('admin.groups.modelRouting.enabled')
-                          : t('admin.groups.modelRouting.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
-                    <template #label>
-                      <span class="inline-flex items-center gap-1">{{ t("admin.groups.modelRouting.title") }} <GroupFieldHelp :label="t('admin.groups.modelRouting.title')" :text="t('admin.groups.modelRouting.tooltip')" /></span>
-                    </template>
-                    <Toggle v-model="createForm.model_routing_enabled" />
-                  </UFormField>
-                  <p
-                    v-if="!createForm.model_routing_enabled"
-                    class="text-xs text-muted mb-3"
-                  >
-                    {{ t("admin.groups.modelRouting.disabledHint") }}
-                  </p>
-                  <p v-else class="text-xs text-muted mb-3">
-                    {{ t("admin.groups.modelRouting.noRulesHint") }}
-                  </p>
-                  <!-- 路由规则列表（仅在启用时显示） -->
-                  <div v-if="createForm.model_routing_enabled" class="space-y-3">
-                    <div
-                      v-for="rule in createModelRoutingRules"
-                      :key="getCreateRuleRenderKey(rule)"
-                      class="rounded-lg border border-default p-3"
-                    >
-                      <div class="flex items-start gap-3">
-                        <div class="flex-1 space-y-2">
-                          <UFormField :label="t('admin.groups.modelRouting.modelPattern')" size="sm">
-                            <UInput
-                              v-model="rule.pattern"
-                              type="text"
-                              :placeholder=" t('admin.groups.modelRouting.modelPatternPlaceholder') "
-                              class="w-full"
-                            />
-                          </UFormField>
-                          <div>
-                            <label class="mb-1 block text-xs font-medium text-default">{{
-                              t("admin.groups.modelRouting.accounts")
-                            }}</label>
-                            <!-- 已选账号标签 -->
-                            <div
-                              v-if="rule.accounts.length > 0"
-                              class="flex flex-wrap gap-1.5 mb-2"
-                            >
-                              <span
-                                v-for="account in rule.accounts"
-                                :key="account.id"
-                                class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
-                              >
-                                {{ account.name }}
-                                <UButton
-                                  @click="removeSelectedAccount(rule, account.id)"
-                                  icon="i-lucide-x"
-                                  color="primary"
-                                  variant="ghost"
-                                  size="sm"
-                                  square
-                                  class="ml-0.5"
-                                />
-                              </span>
-                            </div>
-                            <!-- 账号搜索输入框 -->
-                            <div class="relative account-search-container">
-                              <UInput
-                                v-model=" accountSearchKeyword[getCreateRuleSearchKey(rule)] "
-                                type="text"
-                                :placeholder=" t( 'admin.groups.modelRouting.searchAccountPlaceholder', ) "
-                                @input="searchAccountsByRule(rule)"
-                                @focus="onAccountSearchFocus(rule)"
-                                class="w-full"
-                              />
-                              <!-- 搜索结果下拉框 -->
-                              <div
-                                v-if="
-                                  showAccountDropdown[getCreateRuleSearchKey(rule)] &&
-                                  accountSearchResults[getCreateRuleSearchKey(rule)]
-                                    ?.length > 0
-                                "
-                                class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg"
-                              >
-                                <UButton
-                                  v-for="account in accountSearchResults[ getCreateRuleSearchKey(rule) ]"
-                                  :key="account.id"
-                                  @click="selectAccount(rule, account)"
-                                  :class="{ 'opacity-50': rule.accounts.some( (a) => a.id === account.id, ), }"
-                                  :disabled=" rule.accounts.some((a) => a.id === account.id) "
-                                  color="neutral"
-                                  variant="ghost"
-                                  size="sm"
-                                  block
-                                  class="justify-start"
-                                ><span>{{ account.name }}</span>
-                                  <span class="ml-2 text-xs text-dimmed"
-                                    >#{{ account.id }}</span
-                                  ></UButton>
-                              </div>
-                            </div>
-                            <p class="text-xs text-dimmed mt-1">
-                              {{ t("admin.groups.modelRouting.accountsHint") }}
-                            </p>
-                          </div>
-                        </div>
-                        <UButton
-                          @click="removeCreateRoutingRule(rule)"
-                          :title="t('admin.groups.modelRouting.removeRule')"
-                          icon="i-lucide-trash-2"
-                          color="error"
-                          variant="ghost"
-                          size="sm"
-                          square
-                          class="mt-5"
-                        />
-                      </div>
-                    </div>
+                  <!-- MCP XML 协议注入（仅 antigravity 平台） -->
+                  <div v-if="createForm.platform === 'antigravity'">
+                    <UFormField :description="createForm.mcp_xml_inject
+                            ? t('admin.groups.mcpXml.enabled')
+                            : t('admin.groups.mcpXml.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
+                      <template #label>
+                        <span class="inline-flex items-center gap-1">{{ t("admin.groups.mcpXml.title") }} <GroupFieldHelp :label="t('admin.groups.mcpXml.title')" :text="t('admin.groups.mcpXml.tooltip')" /></span>
+                      </template>
+                      <Toggle v-model="createForm.mcp_xml_inject" />
+                    </UFormField>
                   </div>
-                  <!-- 添加规则按钮（仅在启用时显示） -->
-                  <UButton
-                    v-if="createForm.model_routing_enabled"
-                    @click="addCreateRoutingRule"
-                    icon="i-lucide-plus"
-                    color="primary"
-                    variant="ghost"
-                    size="sm"
-                    class="mt-3"
-                  >{{ t("admin.groups.modelRouting.addRule") }}</UButton>
-                </div>
-                <!-- MCP XML 协议注入（仅 antigravity 平台） -->
-                <div v-if="createForm.platform === 'antigravity'">
-                  <UFormField :description="createForm.mcp_xml_inject
-                          ? t('admin.groups.mcpXml.enabled')
-                          : t('admin.groups.mcpXml.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
-                    <template #label>
-                      <span class="inline-flex items-center gap-1">{{ t("admin.groups.mcpXml.title") }} <GroupFieldHelp :label="t('admin.groups.mcpXml.title')" :text="t('admin.groups.mcpXml.tooltip')" /></span>
-                    </template>
-                    <Toggle v-model="createForm.mcp_xml_inject" />
-                  </UFormField>
-                </div>
+                </section>
               </div>
             </template>
           </UCollapsible>
@@ -1670,20 +1681,45 @@
       </template>
     </BaseDialog>
 
-    <!-- Edit Group Modal -->
-    <BaseDialog
-      :show="showEditModal"
-      :title="t('admin.groups.editGroup')"
-      width="wide"
-      @close="closeEditModal"
-    >
+    <!-- Group detail page (/admin/groups/:id/:section): one section per sub-route -->
+    <div v-if="showEditModal && editingGroup" class="mx-auto w-full max-w-4xl pb-8">
+      <AdminPageHeader :title="editingGroup.name">
+        <template #actions>
+          <UButton
+            icon="i-lucide-arrow-left"
+            color="neutral"
+            variant="ghost"
+            data-testid="group-detail-back"
+            @click="closeEditModal"
+          >
+            {{ t("admin.groups.detail.backToList") }}
+          </UButton>
+          <UButton
+            type="submit"
+            form="edit-group-form"
+            :disabled="submitting"
+            :loading="submitting"
+            data-tour="group-form-submit"
+          >
+            {{ submitting ? t("admin.groups.updating") : t("common.update") }}
+          </UButton>
+        </template>
+      </AdminPageHeader>
+      <PageToolbar v-if="detailSectionItems.length > 1">
+        <UNavigationMenu
+          :items="detailSectionItems"
+          highlight
+          class="-mx-1 flex-1"
+          data-testid="group-detail-nav"
+        />
+      </PageToolbar>
       <form
-        v-if="editingGroup"
         id="edit-group-form"
-        @submit.prevent="handleUpdateGroup"
-        class="space-y-8"
+        novalidate
+        @submit.prevent="onEditSubmit"
+        class="pt-2"
       >
-        <section class="space-y-5">
+        <section v-show="isDetailSection('basic')" data-group-section="basic" class="space-y-5">
           <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.basic") }}</h3>
           <UFormField :label="t('admin.groups.form.name')" required>
             <UInput
@@ -1730,7 +1766,7 @@
           </template>
         </section>
         <template v-if="!authStore.isSimpleMode">
-          <section class="space-y-5">
+          <section v-show="isDetailSection('billing')" data-group-section="billing" class="space-y-5">
             <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.billing") }}</h3>
             <UFormField :label="t('admin.groups.form.rateMultiplier')" required>
               <UInput
@@ -1887,7 +1923,7 @@
               </div>
             </div>
           </section>
-          <section class="space-y-5">
+          <section v-show="isDetailSection('models')" data-group-section="models" class="space-y-5">
             <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.models") }}</h3>
             <div>
               <UFormField
@@ -2046,7 +2082,7 @@
               :account-names="editCodexManifestAccountNames"
             />
           </section>
-          <section class="space-y-5">
+          <section v-show="isDetailSection('pricing')" data-group-section="pricing" class="space-y-5">
             <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.pricing") }}</h3>
             <div>
               <div class="flex flex-wrap items-start justify-between gap-3">
@@ -2482,7 +2518,7 @@
               </div>
             </div>
           </section>
-          <section class="space-y-5">
+          <section v-show="isDetailSection('dispatch')" data-group-section="dispatch" class="space-y-5">
             <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.dispatch") }}</h3>
             <!-- 跨协议转换开关：所有平台的分组都有（Anthropic 协议族 <-> OpenAI 协议族）。
                  账号有原生端点时始终先走原生转发，开关只决定"没有原生端点时"能否转换兜底。 -->
@@ -2725,261 +2761,235 @@
               </UFormField>
             </div>
           </section>
-          <UCollapsible v-model:open="editAdvancedOpen" :unmount-on-hide="false" class="space-y-5">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              trailing-icon="i-lucide-chevron-down"
-              :label="t('admin.groups.formSections.advanced')"
-              class="-mx-2.5 text-base font-semibold text-highlighted"
-              :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }"
-            />
-            <template #content>
-              <div class="space-y-5 pt-1">
-                <div>
-                  <UFormField
-                    :label="t('admin.groups.returnRequestedModel.label')"
-                    class="flex items-center justify-between gap-4"
-                    :ui="{ container: 'mt-0 shrink-0' }"
-                  >
-                    <template #description><span id="edit-return-requested-model-hint">{{ t("admin.groups.returnRequestedModel.hint") }}</span></template>
-                    <Toggle
-                      data-testid="edit-return-requested-model"
-                      :aria-label="t('admin.groups.returnRequestedModel.label')"
-                      aria-describedby="edit-return-requested-model-hint"
-                      v-model="editForm.return_requested_model"
-                    />
-                  </UFormField>
-                </div>
-                <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
-                <div
-                  v-if="supportsLivePlatform(editForm.platform)"
-                >
-                  <h4 class="text-sm font-medium text-default mb-3">
-                    {{ t("admin.groups.openaiLive.title") }}
-                  </h4>
-                  <UFormField
-                    :label="t('admin.groups.openaiLive.allow')"
-                    :description="t('admin.groups.openaiLive.hint')"
-                    class="flex items-center justify-between gap-4"
-                    :ui="{ container: 'mt-0 shrink-0' }"
-                  >
-                    <Toggle
-                      :model-value="editForm.allow_live"
-                      @update:model-value="toggleLive('edit')"
-                    />
-                  </UFormField>
-                </div>
-                <!-- 账号过滤控制 (OpenAI/Antigravity/Anthropic/Gemini) -->
-                <div
-                  v-if="
-                    ['openai', 'antigravity', 'anthropic', 'gemini'].includes(
-                      editForm.platform,
-                    )
-                  "
-                >
-                  <h4 class="text-sm font-medium text-default mb-3">
-                    {{ t("admin.groups.accountFilters.title") }}
-                  </h4>
+          <section v-show="isDetailSection('advanced')" data-group-section="advanced" class="space-y-5">
+            <h3 class="text-base font-semibold text-highlighted">{{ t("admin.groups.formSections.advanced") }}</h3>
+            <div>
+              <UFormField
+                :label="t('admin.groups.returnRequestedModel.label')"
+                class="flex items-center justify-between gap-4"
+                :ui="{ container: 'mt-0 shrink-0' }"
+              >
+                <template #description><span id="edit-return-requested-model-hint">{{ t("admin.groups.returnRequestedModel.hint") }}</span></template>
+                <Toggle
+                  data-testid="edit-return-requested-model"
+                  :aria-label="t('admin.groups.returnRequestedModel.label')"
+                  aria-describedby="edit-return-requested-model-hint"
+                  v-model="editForm.return_requested_model"
+                />
+              </UFormField>
+            </div>
+            <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
+            <div
+              v-if="supportsLivePlatform(editForm.platform)"
+            >
+              <h4 class="text-sm font-medium text-default mb-3">
+                {{ t("admin.groups.openaiLive.title") }}
+              </h4>
+              <UFormField
+                :label="t('admin.groups.openaiLive.allow')"
+                :description="t('admin.groups.openaiLive.hint')"
+                class="flex items-center justify-between gap-4"
+                :ui="{ container: 'mt-0 shrink-0' }"
+              >
+                <Toggle
+                  :model-value="editForm.allow_live"
+                  @update:model-value="toggleLive('edit')"
+                />
+              </UFormField>
+            </div>
+            <!-- 账号过滤控制 (OpenAI/Antigravity/Anthropic/Gemini) -->
+            <div
+              v-if="
+                ['openai', 'antigravity', 'anthropic', 'gemini'].includes(
+                  editForm.platform,
+                )
+              "
+            >
+              <h4 class="text-sm font-medium text-default mb-3">
+                {{ t("admin.groups.accountFilters.title") }}
+              </h4>
 
-                  <!-- require_oauth_only toggle -->
-                  <UFormField
-                    :label="t('admin.groups.accountFilters.oauthOnly')"
-                    :description="editForm.require_oauth_only
-                            ? t('admin.groups.accountFilters.oauthOnlyEnabled')
-                            : t('admin.groups.accountFilters.disabled')"
-                    class="flex items-center justify-between gap-4"
-                    :ui="{ container: 'mt-0 shrink-0' }"
-                  >
-                    <Toggle v-model="editForm.require_oauth_only" />
-                  </UFormField>
+              <!-- require_oauth_only toggle -->
+              <UFormField
+                :label="t('admin.groups.accountFilters.oauthOnly')"
+                :description="editForm.require_oauth_only
+                        ? t('admin.groups.accountFilters.oauthOnlyEnabled')
+                        : t('admin.groups.accountFilters.disabled')"
+                class="flex items-center justify-between gap-4"
+                :ui="{ container: 'mt-0 shrink-0' }"
+              >
+                <Toggle v-model="editForm.require_oauth_only" />
+              </UFormField>
 
-                  <!-- require_privacy_set toggle -->
-                  <UFormField
-                    :label="t('admin.groups.accountFilters.privacySetOnly')"
-                    :description="editForm.require_privacy_set
-                            ? t('admin.groups.accountFilters.privacySetOnlyEnabled')
-                            : t('admin.groups.accountFilters.disabled')"
-                    class="flex items-center justify-between gap-4"
-                    :ui="{ container: 'mt-0 shrink-0' }"
-                  >
-                    <Toggle v-model="editForm.require_privacy_set" />
-                  </UFormField>
-                </div>
-                <!-- 无效请求兜底（仅 anthropic/antigravity 平台，且非订阅分组） -->
+              <!-- require_privacy_set toggle -->
+              <UFormField
+                :label="t('admin.groups.accountFilters.privacySetOnly')"
+                :description="editForm.require_privacy_set
+                        ? t('admin.groups.accountFilters.privacySetOnlyEnabled')
+                        : t('admin.groups.accountFilters.disabled')"
+                class="flex items-center justify-between gap-4"
+                :ui="{ container: 'mt-0 shrink-0' }"
+              >
+                <Toggle v-model="editForm.require_privacy_set" />
+              </UFormField>
+            </div>
+            <!-- 无效请求兜底（仅 anthropic/antigravity 平台，且非订阅分组） -->
+            <div
+              v-if="
+                ['anthropic', 'antigravity'].includes(editForm.platform) &&
+                editForm.subscription_type !== 'subscription'
+              "
+            >
+              <UFormField :label="t('admin.groups.invalidRequestFallback.title')" :help="t('admin.groups.invalidRequestFallback.hint')">
+                <Select
+                  v-model="editForm.fallback_group_id_on_invalid_request"
+                  :options="invalidRequestFallbackOptionsForEdit"
+                  :placeholder="t('admin.groups.invalidRequestFallback.noFallback')"
+                />
+              </UFormField>
+            </div>
+            <!-- 模型路由配置（仅 anthropic 平台） -->
+            <div v-if="editForm.platform === 'anthropic'">
+              <UFormField :description="editForm.model_routing_enabled
+                      ? t('admin.groups.modelRouting.enabled')
+                      : t('admin.groups.modelRouting.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
+                <template #label>
+                  <span class="inline-flex items-center gap-1">{{ t("admin.groups.modelRouting.title") }} <GroupFieldHelp :label="t('admin.groups.modelRouting.title')" :text="t('admin.groups.modelRouting.tooltip')" /></span>
+                </template>
+                <Toggle v-model="editForm.model_routing_enabled" />
+              </UFormField>
+              <p
+                v-if="!editForm.model_routing_enabled"
+                class="text-xs text-muted mb-3"
+              >
+                {{ t("admin.groups.modelRouting.disabledHint") }}
+              </p>
+              <p v-else class="text-xs text-muted mb-3">
+                {{ t("admin.groups.modelRouting.noRulesHint") }}
+              </p>
+              <!-- 路由规则列表（仅在启用时显示） -->
+              <div v-if="editForm.model_routing_enabled" class="space-y-3">
                 <div
-                  v-if="
-                    ['anthropic', 'antigravity'].includes(editForm.platform) &&
-                    editForm.subscription_type !== 'subscription'
-                  "
+                  v-for="rule in editModelRoutingRules"
+                  :key="getEditRuleRenderKey(rule)"
+                  class="rounded-lg border border-default p-3"
                 >
-                  <UFormField :label="t('admin.groups.invalidRequestFallback.title')" :help="t('admin.groups.invalidRequestFallback.hint')">
-                    <Select
-                      v-model="editForm.fallback_group_id_on_invalid_request"
-                      :options="invalidRequestFallbackOptionsForEdit"
-                      :placeholder="t('admin.groups.invalidRequestFallback.noFallback')"
-                    />
-                  </UFormField>
-                </div>
-                <!-- 模型路由配置（仅 anthropic 平台） -->
-                <div v-if="editForm.platform === 'anthropic'">
-                  <UFormField :description="editForm.model_routing_enabled
-                          ? t('admin.groups.modelRouting.enabled')
-                          : t('admin.groups.modelRouting.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
-                    <template #label>
-                      <span class="inline-flex items-center gap-1">{{ t("admin.groups.modelRouting.title") }} <GroupFieldHelp :label="t('admin.groups.modelRouting.title')" :text="t('admin.groups.modelRouting.tooltip')" /></span>
-                    </template>
-                    <Toggle v-model="editForm.model_routing_enabled" />
-                  </UFormField>
-                  <p
-                    v-if="!editForm.model_routing_enabled"
-                    class="text-xs text-muted mb-3"
-                  >
-                    {{ t("admin.groups.modelRouting.disabledHint") }}
-                  </p>
-                  <p v-else class="text-xs text-muted mb-3">
-                    {{ t("admin.groups.modelRouting.noRulesHint") }}
-                  </p>
-                  <!-- 路由规则列表（仅在启用时显示） -->
-                  <div v-if="editForm.model_routing_enabled" class="space-y-3">
-                    <div
-                      v-for="rule in editModelRoutingRules"
-                      :key="getEditRuleRenderKey(rule)"
-                      class="rounded-lg border border-default p-3"
-                    >
-                      <div class="flex items-start gap-3">
-                        <div class="flex-1 space-y-2">
-                          <UFormField :label="t('admin.groups.modelRouting.modelPattern')" size="sm">
-                            <UInput
-                              v-model="rule.pattern"
-                              type="text"
-                              :placeholder=" t('admin.groups.modelRouting.modelPatternPlaceholder') "
-                              class="w-full"
+                  <div class="flex items-start gap-3">
+                    <div class="flex-1 space-y-2">
+                      <UFormField :label="t('admin.groups.modelRouting.modelPattern')" size="sm">
+                        <UInput
+                          v-model="rule.pattern"
+                          type="text"
+                          :placeholder=" t('admin.groups.modelRouting.modelPatternPlaceholder') "
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-default">{{
+                          t("admin.groups.modelRouting.accounts")
+                        }}</label>
+                        <!-- 已选账号标签 -->
+                        <div
+                          v-if="rule.accounts.length > 0"
+                          class="flex flex-wrap gap-1.5 mb-2"
+                        >
+                          <span
+                            v-for="account in rule.accounts"
+                            :key="account.id"
+                            class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
+                          >
+                            {{ account.name }}
+                            <UButton
+                              @click="removeSelectedAccount(rule, account.id, true)"
+                              icon="i-lucide-x"
+                              color="primary"
+                              variant="ghost"
+                              size="sm"
+                              square
+                              class="ml-0.5"
                             />
-                          </UFormField>
-                          <div>
-                            <label class="mb-1 block text-xs font-medium text-default">{{
-                              t("admin.groups.modelRouting.accounts")
-                            }}</label>
-                            <!-- 已选账号标签 -->
-                            <div
-                              v-if="rule.accounts.length > 0"
-                              class="flex flex-wrap gap-1.5 mb-2"
-                            >
-                              <span
-                                v-for="account in rule.accounts"
-                                :key="account.id"
-                                class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
-                              >
-                                {{ account.name }}
-                                <UButton
-                                  @click="removeSelectedAccount(rule, account.id, true)"
-                                  icon="i-lucide-x"
-                                  color="primary"
-                                  variant="ghost"
-                                  size="sm"
-                                  square
-                                  class="ml-0.5"
-                                />
-                              </span>
-                            </div>
-                            <!-- 账号搜索输入框 -->
-                            <div class="relative account-search-container">
-                              <UInput
-                                v-model=" accountSearchKeyword[getEditRuleSearchKey(rule)] "
-                                type="text"
-                                :placeholder=" t( 'admin.groups.modelRouting.searchAccountPlaceholder', ) "
-                                @input="searchAccountsByRule(rule, true)"
-                                @focus="onAccountSearchFocus(rule, true)"
-                                class="w-full"
-                              />
-                              <!-- 搜索结果下拉框 -->
-                              <div
-                                v-if="
-                                  showAccountDropdown[getEditRuleSearchKey(rule)] &&
-                                  accountSearchResults[getEditRuleSearchKey(rule)]
-                                    ?.length > 0
-                                "
-                                class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg"
-                              >
-                                <UButton
-                                  v-for="account in accountSearchResults[ getEditRuleSearchKey(rule) ]"
-                                  :key="account.id"
-                                  @click="selectAccount(rule, account, true)"
-                                  :class="{ 'opacity-50': rule.accounts.some( (a) => a.id === account.id, ), }"
-                                  :disabled=" rule.accounts.some((a) => a.id === account.id) "
-                                  color="neutral"
-                                  variant="ghost"
-                                  size="sm"
-                                  block
-                                  class="justify-start"
-                                ><span>{{ account.name }}</span>
-                                  <span class="ml-2 text-xs text-dimmed"
-                                    >#{{ account.id }}</span
-                                  ></UButton>
-                              </div>
-                            </div>
-                            <p class="text-xs text-dimmed mt-1">
-                              {{ t("admin.groups.modelRouting.accountsHint") }}
-                            </p>
+                          </span>
+                        </div>
+                        <!-- 账号搜索输入框 -->
+                        <div class="relative account-search-container">
+                          <UInput
+                            v-model=" accountSearchKeyword[getEditRuleSearchKey(rule)] "
+                            type="text"
+                            :placeholder=" t( 'admin.groups.modelRouting.searchAccountPlaceholder', ) "
+                            @input="searchAccountsByRule(rule, true)"
+                            @focus="onAccountSearchFocus(rule, true)"
+                            class="w-full"
+                          />
+                          <!-- 搜索结果下拉框 -->
+                          <div
+                            v-if="
+                              showAccountDropdown[getEditRuleSearchKey(rule)] &&
+                              accountSearchResults[getEditRuleSearchKey(rule)]
+                                ?.length > 0
+                            "
+                            class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg"
+                          >
+                            <UButton
+                              v-for="account in accountSearchResults[ getEditRuleSearchKey(rule) ]"
+                              :key="account.id"
+                              @click="selectAccount(rule, account, true)"
+                              :class="{ 'opacity-50': rule.accounts.some( (a) => a.id === account.id, ), }"
+                              :disabled=" rule.accounts.some((a) => a.id === account.id) "
+                              color="neutral"
+                              variant="ghost"
+                              size="sm"
+                              block
+                              class="justify-start"
+                            ><span>{{ account.name }}</span>
+                              <span class="ml-2 text-xs text-dimmed"
+                                >#{{ account.id }}</span
+                              ></UButton>
                           </div>
                         </div>
-                        <UButton
-                          @click="removeEditRoutingRule(rule)"
-                          :title="t('admin.groups.modelRouting.removeRule')"
-                          icon="i-lucide-trash-2"
-                          color="error"
-                          variant="ghost"
-                          size="sm"
-                          square
-                          class="mt-5"
-                        />
+                        <p class="text-xs text-dimmed mt-1">
+                          {{ t("admin.groups.modelRouting.accountsHint") }}
+                        </p>
                       </div>
                     </div>
+                    <UButton
+                      @click="removeEditRoutingRule(rule)"
+                      :title="t('admin.groups.modelRouting.removeRule')"
+                      icon="i-lucide-trash-2"
+                      color="error"
+                      variant="ghost"
+                      size="sm"
+                      square
+                      class="mt-5"
+                    />
                   </div>
-                  <!-- 添加规则按钮（仅在启用时显示） -->
-                  <UButton
-                    v-if="editForm.model_routing_enabled"
-                    @click="addEditRoutingRule"
-                    icon="i-lucide-plus"
-                    color="primary"
-                    variant="ghost"
-                    size="sm"
-                    class="mt-3"
-                  >{{ t("admin.groups.modelRouting.addRule") }}</UButton>
-                </div>
-                <!-- MCP XML 协议注入（仅 antigravity 平台） -->
-                <div v-if="editForm.platform === 'antigravity'">
-                  <UFormField :description="editForm.mcp_xml_inject
-                          ? t('admin.groups.mcpXml.enabled')
-                          : t('admin.groups.mcpXml.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
-                    <template #label>
-                      <span class="inline-flex items-center gap-1">{{ t("admin.groups.mcpXml.title") }} <GroupFieldHelp :label="t('admin.groups.mcpXml.title')" :text="t('admin.groups.mcpXml.tooltip')" /></span>
-                    </template>
-                    <Toggle v-model="editForm.mcp_xml_inject" />
-                  </UFormField>
                 </div>
               </div>
-            </template>
-          </UCollapsible>
+              <!-- 添加规则按钮（仅在启用时显示） -->
+              <UButton
+                v-if="editForm.model_routing_enabled"
+                @click="addEditRoutingRule"
+                icon="i-lucide-plus"
+                color="primary"
+                variant="ghost"
+                size="sm"
+                class="mt-3"
+              >{{ t("admin.groups.modelRouting.addRule") }}</UButton>
+            </div>
+            <!-- MCP XML 协议注入（仅 antigravity 平台） -->
+            <div v-if="editForm.platform === 'antigravity'">
+              <UFormField :description="editForm.mcp_xml_inject
+                      ? t('admin.groups.mcpXml.enabled')
+                      : t('admin.groups.mcpXml.disabled')" class="flex items-center justify-between gap-4" :ui="{ container: 'mt-0 shrink-0' }">
+                <template #label>
+                  <span class="inline-flex items-center gap-1">{{ t("admin.groups.mcpXml.title") }} <GroupFieldHelp :label="t('admin.groups.mcpXml.title')" :text="t('admin.groups.mcpXml.tooltip')" /></span>
+                </template>
+                <Toggle v-model="editForm.mcp_xml_inject" />
+              </UFormField>
+            </div>
+          </section>
         </template>
       </form>
-
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <UButton @click="closeEditModal" color="neutral" variant="subtle">{{ t("common.cancel") }}</UButton>
-          <UButton
-            type="submit"
-            form="edit-group-form"
-            :disabled="submitting"
-            :loading="submitting"
-            data-tour="group-form-submit"
-          >
-            {{ submitting ? t("admin.groups.updating") : t("common.update") }}
-          </UButton>
-        </div>
-      </template>
-    </BaseDialog>
+    </div>
 
     <!-- Delete Confirmation Dialog -->
     <ConfirmDialog
@@ -3348,7 +3358,8 @@
 
 <script setup lang="ts">
 import MiniMaxH3PricingFields from "@/components/group/MiniMaxH3PricingFields.vue";
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
 import { useAuthStore } from "@/stores/auth";
@@ -3370,7 +3381,7 @@ import {
   GROUP_PLATFORM_OPTIONS,
 } from "@/constants/platforms";
 import type { Column } from "@/components/common/types";
-import type { DropdownMenuItem, TableColumn } from "@nuxt/ui";
+import type { DropdownMenuItem, NavigationMenuItem, TableColumn } from "@nuxt/ui";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import TablePageLayout from "@/components/layout/TablePageLayout.vue";
 import PageToolbar from "@/components/layout/PageToolbar.vue";
@@ -3972,8 +3983,8 @@ let abortController: AbortController | null = null;
 
 const showCreateModal = ref(false);
 const showEditModal = ref(false);
-const createAdvancedOpen = ref(false);
-const editAdvancedOpen = ref(false);
+// Create dialog: everything past the basics sits in a collapsed "更多设置".
+const createMoreOpen = ref(false);
 const showDeleteDialog = ref(false);
 const pendingLiveForm = ref<"create" | "edit" | null>(null);
 const showUnsupportedLiveConfirm = computed(
@@ -5344,19 +5355,10 @@ const handleEdit = async (group: AdminGroup) => {
     group.model_routing,
   );
   loadModelAllowlistCandidates("edit", group.id, group.platform);
-  // Open "advanced options" when the group already uses one of them, so nothing set stays hidden.
-  editAdvancedOpen.value =
-    editForm.return_requested_model ||
-    editForm.allow_live ||
-    editForm.require_oauth_only ||
-    editForm.require_privacy_set ||
-    editForm.fallback_group_id_on_invalid_request != null ||
-    editForm.model_routing_enabled ||
-    (editForm.platform === "antigravity" && !editForm.mcp_xml_inject);
   showEditModal.value = true;
 };
 
-const closeEditModal = () => {
+const resetEditState = () => {
   editModelRoutingRules.value.forEach((rule) => {
     accountSearchRunner.clearKey(getEditRuleSearchKey(rule));
   });
@@ -5405,6 +5407,125 @@ const closeEditModal = () => {
   editCodexManifestConfig.value = createCodexManifestDefaults();
   editCodexManifestAccountNames.value = {};
   editCodexManifestRef.value?.resetValidation?.();
+};
+
+// ---- Group detail page: /admin/groups/:id/:section (one section per sub-route) ----
+// The detail reuses this view's edit state; the list stays mounted (hidden) underneath so
+// going back keeps filters and paging. Without a router (specs) the detail is local state.
+const route = useRoute();
+const router = useRouter();
+const GROUP_DETAIL_SECTIONS = ["basic", "billing", "models", "pricing", "dispatch", "advanced"] as const;
+type GroupDetailSection = (typeof GROUP_DETAIL_SECTIONS)[number];
+const localDetailSection = ref<GroupDetailSection>("basic");
+const isGroupDetailSection = (value: unknown): value is GroupDetailSection =>
+  typeof value === "string" && (GROUP_DETAIL_SECTIONS as readonly string[]).includes(value);
+const routeDetailId = computed<number | null>(() => {
+  if (route?.name !== "AdminGroupDetail") return null;
+  const id = Number(route.params.id);
+  return Number.isInteger(id) && id > 0 ? id : null;
+});
+const activeDetailSection = computed<GroupDetailSection>(() => {
+  if (authStore.isSimpleMode) return "basic";
+  const fromRoute = route?.name === "AdminGroupDetail" ? route.params.section : undefined;
+  return isGroupDetailSection(fromRoute) ? fromRoute : localDetailSection.value;
+});
+const isDetailSection = (section: GroupDetailSection) => activeDetailSection.value === section;
+// Settings in "高级选项" the group already uses (shown as a count on the sub-nav item).
+const advancedInUseCount = computed(() =>
+  [
+    editForm.return_requested_model,
+    editForm.allow_live,
+    editForm.require_oauth_only,
+    editForm.require_privacy_set,
+    editForm.fallback_group_id_on_invalid_request != null,
+    editForm.model_routing_enabled,
+    editForm.platform === "antigravity" && !editForm.mcp_xml_inject,
+  ].filter(Boolean).length,
+);
+const goToDetailSection = async (section: GroupDetailSection) => {
+  localDetailSection.value = section;
+  const id = editingGroup.value?.id;
+  if (router && id) await router.push({ name: "AdminGroupDetail", params: { id, section } });
+};
+const detailSectionItems = computed<NavigationMenuItem[]>(() => {
+  const id = editingGroup.value?.id;
+  if (!id || authStore.isSimpleMode) return [];
+  return GROUP_DETAIL_SECTIONS.map((section) => ({
+    label: t(`admin.groups.formSections.${section}`),
+    value: section,
+    active: activeDetailSection.value === section,
+    badge: section === "advanced" && advancedInUseCount.value ? advancedInUseCount.value : undefined,
+    ...(router
+      ? { to: { name: "AdminGroupDetail", params: { id, section } } }
+      : { onSelect: () => { localDetailSection.value = section; } }),
+  }));
+});
+
+// Row edit / name click opens the detail page.
+const openGroupDetail = async (group: AdminGroup) => {
+  localDetailSection.value = "basic";
+  await handleEdit(group);
+  if (router && routeDetailId.value !== group.id) {
+    await router.push({ name: "AdminGroupDetail", params: { id: group.id, section: "basic" } });
+  }
+};
+
+// Back / after save: leave the detail and return to the list.
+const closeEditModal = () => {
+  resetEditState();
+  localDetailSection.value = "basic";
+  if (router && route?.name === "AdminGroupDetail") void router.push({ name: "AdminGroups" });
+};
+
+let initialGroupsLoaded = false;
+const syncDetailFromRoute = async () => {
+  const id = routeDetailId.value;
+  if (id === null) {
+    if (route && showEditModal.value) {
+      resetEditState();
+      localDetailSection.value = "basic";
+    }
+    return;
+  }
+  if (editingGroup.value?.id === id && showEditModal.value) return;
+  if (!initialGroupsLoaded) return;
+  let group: AdminGroup | undefined = groups.value.find((g) => g.id === id);
+  if (!group) {
+    try {
+      const fetched = await adminAPI.groups.getById(id);
+      if (fetched && typeof fetched.id === "number") group = fetched;
+    } catch (error) {
+      console.error("Error loading group:", error);
+    }
+  }
+  if (routeDetailId.value !== id) return;
+  if (!group) {
+    appStore.showError(t("admin.groups.detail.notFound"));
+    void router?.push({ name: "AdminGroups" });
+    return;
+  }
+  await handleEdit(group);
+};
+watch(() => routeDetailId.value, () => { void syncDetailFromRoute(); });
+
+// Hidden sections stay mounted (v-show) and the form has novalidate, so check the native
+// constraints here and open the section that holds the first invalid field.
+const onEditSubmit = (event: Event) => {
+  const form = event.target as HTMLFormElement | null;
+  const elements = form ? (Array.from(form.elements) as HTMLInputElement[]) : [];
+  const invalid = elements.find((el) => typeof el.checkValidity === "function" && !el.checkValidity());
+  if (invalid) {
+    const section = invalid.closest<HTMLElement>("[data-group-section]")?.dataset.groupSection;
+    void (async () => {
+      if (isGroupDetailSection(section) && section !== activeDetailSection.value) {
+        await goToDetailSection(section);
+      }
+      await nextTick();
+      invalid.reportValidity?.();
+    })();
+    return;
+  }
+  void handleUpdateGroup();
 };
 
 const handleUpdateGroup = async () => {
@@ -6078,7 +6199,11 @@ const saveSortOrder = async () => {
 };
 
 onMounted(() => {
-  loadGroups();
+  // A direct /admin/groups/:id link opens the detail once the list (and fallback options) loaded.
+  void loadGroups().finally(() => {
+    initialGroupsLoaded = true;
+    void syncDetailFromRoute();
+  });
   if (!authStore.isSimpleMode) {
     void loadLiveCapability();
     loadModelAllowlistCandidates("create", 0, createForm.platform);

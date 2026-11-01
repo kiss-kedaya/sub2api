@@ -531,6 +531,23 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/groups/:id(\\d+)',
+    redirect: (to) => ({ name: 'AdminGroupDetail', params: { id: to.params.id, section: 'basic' } })
+  },
+  {
+    // Group detail: one sub-route per section of the group form (same view as the list).
+    path: '/admin/groups/:id(\\d+)/:section(basic|billing|models|pricing|dispatch|advanced)',
+    name: 'AdminGroupDetail',
+    component: () => import('@/views/admin/GroupsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Group Detail',
+      titleKey: 'admin.groups.detail.title',
+      parent: 'AdminGroups'
+    }
+  },
+  {
     path: '/admin/channels',
     redirect: '/admin/channels/pricing'
   },
