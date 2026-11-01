@@ -103,14 +103,46 @@
       </template>
 
       <template #table>
+        <div
+          v-if="selectedGroupIds.length > 0"
+          class="mb-2 flex flex-wrap items-center gap-2 rounded-lg bg-elevated/60 px-3 py-2"
+          data-testid="groups-bulk-bar"
+        >
+          <span class="text-sm text-muted">{{
+            t("common.selectedCount", { count: selectedGroupIds.length })
+          }}</span>
+          <UButton
+            size="xs"
+            color="error"
+            variant="soft"
+            icon="i-lucide-trash-2"
+            data-testid="groups-bulk-delete"
+            :loading="bulkDeleting"
+            :disabled="bulkDeleting"
+            :label="t('admin.groups.deleteGroup')"
+            @click="handleBulkDelete"
+          />
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            data-testid="groups-clear-selection"
+            :label="t('common.cancel')"
+            @click="clearGroupSelection"
+          />
+        </div>
         <DataTable
           :columns="columns"
           :data="groups"
           :loading="loading"
+          row-key="id"
+          selectable
+          :selected-keys="selectedGroupIds"
           :server-side-sort="true"
           default-sort-key="sort_order"
           default-sort-order="asc"
           @sort="handleSort"
+          @update:selected-keys="handleSelectionChange"
         >
           <template #cell-name="{ value }">
             <span class="font-medium text-highlighted">{{
@@ -3333,7 +3365,6 @@
       :show="showRateMultipliersModal"
       :group="rateMultipliersGroup"
       @close="showRateMultipliersModal = false"
-      @success="loadGroups"
     />
 
     <!-- Group RPM Overrides Modal -->
@@ -3341,7 +3372,6 @@
       :show="showRPMOverridesModal"
       :group="rpmOverridesGroup"
       @close="showRPMOverridesModal = false"
-      @success="loadGroups"
     />
   </AppLayout>
 </template>
@@ -3925,6 +3955,8 @@ const copyAccountsGroupOptionsForEdit = computed(() => {
 });
 
 const groups = ref<AdminGroup[]>([]);
+const selectedGroupIds = ref<Array<string | number>>([]);
+const bulkDeleting = ref(false);
 const loading = ref(false);
 type GroupUsageSummary = {
   today_cost: number;
@@ -4787,6 +4819,7 @@ const loadGroups = async () => {
     );
     if (signal.aborted) return;
     groups.value = response.items;
+    selectedGroupIds.value = [];
     pagination.total = response.total;
     pagination.pages = response.pages;
     if (hasVisibleUsageSummaryConsumer.value) {
@@ -5590,10 +5623,14 @@ const handleUpdateGroup = async () => {
           description: editForm.description,
         }
       : payload;
-    await adminAPI.groups.update(editingGroup.value.id, requestData);
+    const updatedGroup = await adminAPI.groups.update(
+      editingGroup.value.id,
+      requestData,
+    );
     appStore.showSuccess(t("admin.groups.groupUpdated"));
+    const updatedGroupId = editingGroup.value.id;
     closeEditModal();
-    loadGroups();
+    mergeGroupIntoList(updatedGroupId, updatedGroup);
   } catch (error: any) {
     appStore.showError(
       extractApiErrorMessage(error, t("admin.groups.failedToUpdate")),
@@ -5844,20 +5881,134 @@ const handleDelete = (group: AdminGroup) => {
   showDeleteDialog.value = true;
 };
 
+const clearGroupSelection = () => {
+  selectedGroupIds.value = [];
+};
+
+const handleSelectionChange = (keys: Array<string | number>) => {
+  selectedGroupIds.value = keys;
+};
+
+const selectedGroupIDs = computed(() =>
+  selectedGroupIds.value
+    .map((key) => Number(key))
+    .filter((id) => Number.isFinite(id) && id > 0),
+);
+
+type GroupDeleteSnapshot = Array<{ group: AdminGroup; index: number }>;
+
+const applyTotalDelta = (delta: number) => {
+  pagination.total = Math.max(0, pagination.total + delta);
+  pagination.pages =
+    pagination.page_size > 0
+      ? Math.ceil(pagination.total / pagination.page_size)
+      : 0;
+};
+
+/**
+ * Drop the rows from the list right away and keep them (with their original
+ * position) so a failed request can put them back where the admin expects.
+ */
+const removeGroupsOptimistically = (ids: number[]): GroupDeleteSnapshot => {
+  const idSet = new Set(ids);
+  const snapshot: GroupDeleteSnapshot = [];
+  const remaining: AdminGroup[] = [];
+  groups.value.forEach((group, index) => {
+    if (idSet.has(group.id)) snapshot.push({ group, index });
+    else remaining.push(group);
+  });
+  if (snapshot.length === 0) return snapshot;
+  groups.value = remaining;
+  applyTotalDelta(-snapshot.length);
+  return snapshot;
+};
+
+const restoreGroupsOptimistically = (snapshot: GroupDeleteSnapshot) => {
+  if (snapshot.length === 0) return;
+  const restored = [...groups.value];
+  const ordered = [...snapshot].sort((a, b) => a.index - b.index);
+  for (const entry of ordered) {
+    restored.splice(Math.min(entry.index, restored.length), 0, entry.group);
+  }
+  groups.value = restored;
+  applyTotalDelta(ordered.length);
+};
+
+/**
+ * Patch a single row with the object the server returned instead of reloading
+ * the whole page. Only fall back to a fetch when the row is no longer visible.
+ */
+const mergeGroupIntoList = (
+  id: number,
+  updated: AdminGroup | null | undefined,
+) => {
+  const index = groups.value.findIndex((group) => group.id === id);
+  if (!updated || index === -1) {
+    void loadGroups();
+    return;
+  }
+  groups.value[index] = { ...groups.value[index], ...updated };
+};
+
 const confirmDelete = async () => {
   if (!deletingGroup.value) return;
+  const target = deletingGroup.value;
+  showDeleteDialog.value = false;
+  deletingGroup.value = null;
+  selectedGroupIds.value = selectedGroupIds.value.filter(
+    (key) => Number(key) !== target.id,
+  );
 
+  const snapshot = removeGroupsOptimistically([target.id]);
   try {
-    await adminAPI.groups.delete(deletingGroup.value.id);
+    await adminAPI.groups.delete(target.id);
     appStore.showSuccess(t("admin.groups.groupDeleted"));
-    showDeleteDialog.value = false;
-    deletingGroup.value = null;
-    loadGroups();
   } catch (error: any) {
+    restoreGroupsOptimistically(snapshot);
     appStore.showError(
       error.response?.data?.detail || t("admin.groups.failedToDelete"),
     );
     console.error("Error deleting group:", error);
+  }
+};
+
+const handleBulkDelete = async () => {
+  if (bulkDeleting.value) return;
+  const ids = selectedGroupIDs.value;
+  if (ids.length === 0) return;
+
+  const confirmed = window.confirm(
+    `${t("admin.groups.deleteGroup")} ${t("common.selectedCount", {
+      count: ids.length,
+    })}`,
+  );
+  if (!confirmed) return;
+
+  bulkDeleting.value = true;
+  const snapshot = removeGroupsOptimistically(ids);
+  clearGroupSelection();
+  try {
+    const result = await adminAPI.groups.batchDelete(ids);
+    if (result.failed > 0) {
+      const failedIDs = new Set(result.failed_ids);
+      const failedRows = snapshot.filter((entry) =>
+        failedIDs.has(entry.group.id),
+      );
+      restoreGroupsOptimistically(failedRows);
+      selectedGroupIds.value = failedRows.map((entry) => entry.group.id);
+      appStore.showError(t("admin.groups.failedToDelete"));
+      return;
+    }
+    appStore.showSuccess(t("admin.groups.groupDeleted"));
+  } catch (error: any) {
+    restoreGroupsOptimistically(snapshot);
+    selectedGroupIds.value = snapshot.map((entry) => entry.group.id);
+    appStore.showError(
+      error?.response?.data?.detail || t("admin.groups.failedToDelete"),
+    );
+    console.error("Error bulk deleting groups:", error);
+  } finally {
+    bulkDeleting.value = false;
   }
 };
 

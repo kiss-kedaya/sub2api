@@ -357,7 +357,16 @@ describe('GroupsView duplicate action', () => {
       items: [{ ...sourceGroup, subscription_type: 'subscription', daily_limit_usd: 0, weekly_limit_usd: 0, monthly_limit_usd: 0 }],
       total: 1, page: 1, page_size: 20, pages: 1
     })
-    updateGroup.mockResolvedValue(sourceGroup)
+    // The view now patches the list row with the object the server returns, so the
+    // stub has to echo the saved payload the way the real endpoint does: -1 clears a
+    // price and comes back as null, which keeps the reopened form valid.
+    updateGroup.mockImplementation(async (_id: number, payload: Record<string, unknown>) => {
+      const saved: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(payload)) {
+        saved[key] = value === -1 ? null : value
+      }
+      return { ...sourceGroup, ...saved }
+    })
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.get('[data-testid="group-billing"]').text()).not.toContain('admin.groups.subscription.noLimit')
