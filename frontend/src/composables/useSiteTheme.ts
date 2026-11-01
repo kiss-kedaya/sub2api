@@ -1,4 +1,4 @@
-import { readonly, ref } from 'vue'
+import { computed, readonly, ref } from 'vue'
 import {
   CHROMATIC_PALETTE_NAMES,
   NEUTRAL_PALETTE_NAMES,
@@ -44,10 +44,11 @@ export const DEFAULT_SITE_THEME: Readonly<SiteThemeSettings> = Object.freeze({
 const SYSTEM_FONT_STACK = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
 
 /**
- * Font-family stacks only; nothing is downloaded (Google Fonts is blocked for
- * mainland China visitors). Self-hosted @font-face files for Public Sans, Inter
- * and Noto Sans SC are added at integration; until then a visitor without the
- * font installed gets the system fallbacks. `system` writes nothing, so the
+ * Font-family stacks only; this module writes no @font-face and fetches nothing
+ * (Google Fonts is blocked for mainland China visitors). Public Sans and Inter
+ * are self-hosted, latin only, by src/styles/fonts.css; Chinese text falls
+ * through to PingFang SC / Microsoft YaHei. Noto Sans SC is too large to bundle,
+ * so it is used only where it is installed. `system` writes nothing, so the
  * stylesheet's own font stack stays in charge.
  */
 export const THEME_FONT_STACKS: Readonly<Record<ThemeFont, string | null>> = {
@@ -172,32 +173,68 @@ function writeTheme(theme: SiteThemeSettings): void {
   style.textContent = buildSiteThemeCss(theme)
 }
 
-function savedVisitorMode(): 'light' | 'dark' | null {
+/** The visitor's own choice, kept in localStorage "theme"; null means none yet. */
+function savedVisitorMode(): ThemeMode | null {
   try {
     const saved = localStorage.getItem('theme')
-    return saved === 'light' || saved === 'dark' ? saved : null
+    return saved === 'light' || saved === 'dark' || saved === 'system' ? saved : null
   } catch {
     return null
   }
 }
 
-function modeIsDark(mode: ThemeMode): boolean {
-  if (mode !== 'system') return mode === 'dark'
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches
+const DARK_QUERY = '(prefers-color-scheme: dark)'
+
+function systemPrefersDark(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(DARK_QUERY).matches
 }
 
-/** A visitor's own toggle (localStorage "theme") wins over the site default mode. */
-export function resolveSiteThemeDark(theme: SiteThemeSettings): boolean {
-  const saved = savedVisitorMode()
-  return saved ? saved === 'dark' : modeIsDark(theme.theme_default_mode)
+function modeIsDark(mode: ThemeMode): boolean {
+  return mode === 'system' ? systemPrefersDark() : mode === 'dark'
 }
+
+/**
+ * A visitor's own choice (localStorage "theme": light, dark or system) wins over
+ * the site default mode; "system" follows the operating system.
+ */
+export function resolveSiteThemeDark(theme: SiteThemeSettings): boolean {
+  return modeIsDark(savedVisitorMode() ?? theme.theme_default_mode)
+}
+
+// Mirror of the real `dark` class on <html>, so toggles show the mode actually in
+// force, whoever set it (startup, a preview, or a page with its own toggle).
+const htmlDark = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
+const visitorMode = ref<ThemeMode | null>(savedVisitorMode())
+let colorModeWatched = false
 
 function setDark(dark: boolean): void {
-  if (typeof document !== 'undefined') document.documentElement.classList.toggle('dark', dark)
+  if (typeof document === 'undefined') return
+  document.documentElement.classList.toggle('dark', dark)
+  htmlDark.value = dark
+}
+
+function watchColorMode(): void {
+  if (colorModeWatched || typeof document === 'undefined') return
+  colorModeWatched = true
+  const root = document.documentElement
+  htmlDark.value = root.classList.contains('dark')
+  if (typeof MutationObserver === 'function') {
+    new MutationObserver(() => {
+      htmlDark.value = root.classList.contains('dark')
+    }).observe(root, { attributes: true, attributeFilter: ['class'] })
+  }
+  // With "system" in force, follow the OS switching between light and dark.
+  const query = typeof window.matchMedia === 'function' ? window.matchMedia(DARK_QUERY) : null
+  query?.addEventListener?.('change', () => {
+    if ((savedVisitorMode() ?? appliedTheme.value.theme_default_mode) === 'system') setDark(systemPrefersDark())
+  })
 }
 
 export interface ApplySiteThemeOptions {
-  /** Also set the html.dark class from theme_default_mode (use once at startup). */
+  /**
+   * Also set the html.dark class: the visitor's saved choice, else theme_default_mode.
+   * Use at startup and when the site default mode changes, not for every refresh.
+   */
   colorMode?: boolean
 }
 
@@ -206,7 +243,11 @@ export function applySiteTheme(input: unknown, options: ApplySiteThemeOptions = 
   const theme = normalizeSiteTheme(input)
   appliedTheme.value = theme
   writeTheme(theme)
-  if (options.colorMode) setDark(resolveSiteThemeDark(theme))
+  if (options.colorMode) {
+    watchColorMode()
+    visitorMode.value = savedVisitorMode()
+    setDark(resolveSiteThemeDark(theme))
+  }
   return theme
 }
 
@@ -234,5 +275,39 @@ export function useSiteTheme() {
     preview: previewSiteTheme,
     previewMode: previewSiteThemeMode,
     restore: restoreSiteTheme
+  }
+}
+
+/** Saves the visitor's light / dark / system choice and applies it at once. */
+export function setColorModePreference(mode: ThemeMode): void {
+  const next = pick(THEME_MODE_OPTIONS, mode, DEFAULT_SITE_THEME.theme_default_mode)
+  try {
+    localStorage.setItem('theme', next)
+  } catch {
+    // Private mode: the choice still applies to this page.
+  }
+  visitorMode.value = next
+  setDark(modeIsDark(next))
+}
+
+/** Flips whatever mode is in force now (read from <html>) and saves the result. */
+export function toggleColorMode(): void {
+  const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+  setColorModePreference(dark ? 'light' : 'dark')
+}
+
+/**
+ * Visitor color mode for toggles and menus. `isDark` follows the real `dark` class
+ * on <html>; `preference` is the saved choice, or the site default when none.
+ */
+export function useSiteColorMode() {
+  watchColorMode()
+  // Pages with their own toggle write localStorage directly; pick that up here.
+  visitorMode.value = savedVisitorMode()
+  return {
+    isDark: readonly(htmlDark),
+    preference: computed<ThemeMode>(() => visitorMode.value ?? appliedTheme.value.theme_default_mode),
+    setPreference: setColorModePreference,
+    toggle: toggleColorMode
   }
 }

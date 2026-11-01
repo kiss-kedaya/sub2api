@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
@@ -126,7 +127,8 @@ describe('SIGNAL shell route isolation', () => {
     expect(wrapper!.get('.header-balance-detail').text()).toContain('$23.00')
     expect(wrapper!.get('.header-balance').attributes('tabindex')).toBe('0')
 
-    await wrapper!.get('.sidebar-footer button:last-child').trigger('click')
+    // The collapse button sits in the navbar, as UDashboardSidebarCollapse does.
+    await wrapper!.get('.header-location [data-test="sidebar-collapse"]').trigger('click')
     expect(app.sidebarCollapsed).toBe(true)
     expect(wrapper!.get('.signal-frame').classes()).toContain('lg:ml-[72px]')
     await wrapper!.get('.header-location > button').trigger('click')
@@ -136,5 +138,34 @@ describe('SIGNAL shell route isolation', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(!wasDark)
     expect(wrapper!.find('.sidebar a[href="/keys"]').exists()).toBe(true)
     expect(wrapper!.find('.sidebar a[href="/usage"]').exists()).toBe(true)
+  })
+
+  it('keeps the light/dark toggle in step with the real dark class on <html>', async () => {
+    await renderShell('/keys')
+    // Icon (sun / moon) and label come from the same isDark, read from <html>.
+    const label = () => wrapper!.get('[data-test="theme-toggle"]').attributes('aria-label')
+    expect(label()).toBe('Switch to dark mode')
+    // Something else (a preview, another page's toggle) switches the class directly.
+    document.documentElement.classList.add('dark')
+    await vi.waitFor(() => expect(label()).toBe('Switch to light mode'))
+    await wrapper!.get('[data-test="theme-toggle"]').trigger('click')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(localStorage.getItem('theme')).toBe('light')
+    await vi.waitFor(() => expect(label()).toBe('Switch to dark mode'))
+  })
+
+  it('puts the user menu in the sidebar footer and keeps every collapsed group reachable', async () => {
+    const { app } = await renderShell('/admin/channels/pricing', 'admin')
+    expect(wrapper!.find('.sidebar-footer [data-test="user-menu"]').exists()).toBe(true)
+    expect(wrapper!.find('.sidebar-footer button:last-child').attributes('data-test')).toBe('user-menu')
+    // Expanded: the active group opens and lists its children as links.
+    expect(wrapper!.find('.sidebar-children a[href="/admin/channels/pricing"]').exists()).toBe(true)
+    app.sidebarCollapsed = true
+    await nextTick()
+    // Collapsed rail: no inline children, the group becomes a menu trigger with its label.
+    expect(wrapper!.find('.sidebar-children').exists()).toBe(false)
+    const trigger = wrapper!.get('.sidebar-group-trigger.sidebar-link-active')
+    expect(trigger.attributes('aria-haspopup')).toBe('menu')
+    expect(trigger.attributes('title')).toBeTruthy()
   })
 })

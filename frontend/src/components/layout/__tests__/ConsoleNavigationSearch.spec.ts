@@ -1,11 +1,20 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import ConsoleNavigationSearch from '../ConsoleNavigationSearch.vue'
+
+// UModal teleports its content; render it in place so the palette can be driven.
+const ModalStub = {
+  props: ['open'],
+  emits: ['update:open'],
+  template: '<div v-if="open" data-test="palette"><slot name="content" /></div>'
+}
+
+let wrapper: VueWrapper | undefined
 
 async function render(role: 'user' | 'admin', simpleMode = false, userId = role === 'admin' ? 1 : 900001) {
   const pinia = createPinia()
@@ -18,15 +27,31 @@ async function render(role: 'user' | 'admin', simpleMode = false, userId = role 
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/dashboard')
   const push = vi.spyOn(router, 'push')
-  const wrapper = mount(ConsoleNavigationSearch, {
+  wrapper = mount(ConsoleNavigationSearch, {
+    // Reka only clicks a highlighted item that is connected to the document.
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, createI18n({ legacy: false, locale: 'en', missingWarn: false, fallbackWarn: false, messages: { en: {} } })],
-      stubs: { BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /></div>' } }
+      // Nuxt UI's UModal is the SFC Modal.vue; stubs match the component name.
+      stubs: { Modal: ModalStub }
     }
   })
   await wrapper.get('.console-search-trigger').trigger('click')
   return { wrapper, push }
 }
+
+async function search(term: string) {
+  await wrapper!.get('input').setValue(term)
+  await flushPromises()
+}
+
+afterEach(() => {
+  wrapper?.unmount()
+  wrapper = undefined
+  vi.restoreAllMocks()
+  localStorage.clear()
+  document.documentElement.classList.remove('dark')
+})
 
 describe('console navigation search', () => {
   it('limits secondary administrators to anonymous usage and personal navigation', async () => {
@@ -35,44 +60,66 @@ describe('console navigation search', () => {
     expect(wrapper.text()).not.toContain('admin.users.title')
     expect(wrapper.text()).not.toContain('admin.accounts.title')
     expect(wrapper.text()).not.toContain('admin.settings.title')
-    await wrapper.get('input').setValue('/admin/accounts')
+    await search('/admin/accounts')
+    await vi.waitFor(() => expect(wrapper.findAll('.console-search-result')).toHaveLength(0))
     await wrapper.get('input').trigger('keydown.enter')
     expect(push).not.toHaveBeenCalled()
-    wrapper.unmount()
   })
 
   it('matches the sidebar by hiding users and retaining groups in simple admin mode', async () => {
     const { wrapper } = await render('admin', true)
     expect(wrapper.text()).not.toContain('admin.users.title')
     expect(wrapper.text()).toContain('admin.groups.title')
-    wrapper.unmount()
   })
+
   it('does not expose admin or disabled feature destinations to a user', async () => {
     const { wrapper } = await render('user')
     expect(wrapper.text()).not.toContain('admin.accounts.title')
     expect(wrapper.text()).not.toContain('nav.buySubscription')
     expect(wrapper.text()).not.toContain('nav.channelStatus')
     expect(wrapper.text()).toContain('nav.apiKeys')
-    wrapper.unmount()
   })
 
   it('filters admin destinations and navigates on Enter without triggering a business action', async () => {
     const { wrapper, push } = await render('admin')
-    await wrapper.get('input').setValue('/admin/accounts')
+    await search('/admin/accounts')
     expect(wrapper.findAll('.console-search-result')).toHaveLength(1)
     await wrapper.get('input').trigger('keydown.enter')
     await flushPromises()
     expect(push).toHaveBeenCalledWith('/admin/accounts')
     expect(wrapper.find('input').exists()).toBe(false)
-    wrapper.unmount()
   })
 
   it('keeps an empty query result open and ignores Enter', async () => {
     const { wrapper, push } = await render('user')
-    await wrapper.get('input').setValue('missing-destination')
+    await search('missing-destination')
+    await vi.waitFor(() => expect(wrapper.findAll('[data-slot="item"]')).toHaveLength(0))
     await wrapper.get('input').trigger('keydown.enter')
     expect(wrapper.find('input').exists()).toBe(true)
     expect(push).not.toHaveBeenCalled()
-    wrapper.unmount()
+  })
+
+  it('opens and closes with Ctrl+K (⌘K on macOS), also while typing', async () => {
+    const { wrapper } = await render('user')
+    expect(wrapper.find('[data-test="palette"]').exists()).toBe(true)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-test="palette"]').exists()).toBe(false)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-test="palette"]').exists()).toBe(true)
+    expect(wrapper.find('input').exists()).toBe(true)
+  })
+
+  it('switches the theme from the palette and closes it', async () => {
+    const { wrapper, push } = await render('user')
+    const dark = wrapper.findAll('[data-slot="item"]').find((item) => item.text().includes('admin.settings.siteTheme.modes.dark'))
+    expect(dark).toBeTruthy()
+    await dark!.trigger('click')
+    await flushPromises()
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(localStorage.getItem('theme')).toBe('dark')
+    expect(wrapper.find('[data-test="palette"]').exists()).toBe(false)
+    expect(push).not.toHaveBeenCalled()
   })
 })

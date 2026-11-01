@@ -5,8 +5,10 @@ import router from './router'
 import i18n, { initI18n } from './i18n'
 import nuxtUi from './plugins/nuxtUi'
 import { useAppStore } from '@/stores/app'
+import { applySiteTheme } from '@/composables/useSiteTheme'
 import { updateFavicon } from '@/utils/branding'
 import { isIOSDevice } from '@/utils/device'
+import './styles/fonts.css'
 import './style.css'
 
 function initIOSViewportZoomFix() {
@@ -23,17 +25,7 @@ function initIOSViewportZoomFix() {
   viewport.setAttribute('content', `${content}, maximum-scale=1.0`)
 }
 
-function initThemeClass() {
-  const savedTheme = localStorage.getItem('theme')
-  const shouldUseDark =
-    savedTheme === 'dark' ||
-    (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  document.documentElement.classList.toggle('dark', shouldUseDark)
-}
-
 async function bootstrap() {
-  // Apply theme class globally before app mount to keep all routes consistent.
-  initThemeClass()
   initIOSViewportZoomFix()
 
   const app = createApp(App)
@@ -44,6 +36,9 @@ async function bootstrap() {
   // This must happen after pinia is installed but before router and i18n
   const appStore = useAppStore()
   appStore.initFromInjectedConfig()
+  // Site theme (colors, radius, font) and the light/dark class, before the first paint.
+  // The visitor's saved choice (localStorage "theme") wins over the site default mode.
+  applySiteTheme(appStore.cachedPublicSettings, { colorMode: true })
 
   // Set document title immediately after config is loaded
   if (appStore.siteName && appStore.siteName !== 'Sub2API') {

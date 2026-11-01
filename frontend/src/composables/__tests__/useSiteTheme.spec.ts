@@ -1,13 +1,18 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_SITE_THEME,
   SITE_THEME_STYLE_ID,
+  THEME_FONT_STACKS,
   applySiteTheme,
   buildSiteThemeCss,
   normalizeSiteTheme,
   previewSiteTheme,
   previewSiteThemeMode,
   restoreSiteTheme,
+  toggleColorMode,
+  useSiteColorMode,
   useSiteTheme
 } from '../useSiteTheme'
 import { paletteColor, paletteHex, paletteRgbChannels } from '@/theme/palettes'
@@ -94,6 +99,24 @@ describe('useSiteTheme', () => {
     expect(css()).not.toContain('--font-sans')
   })
 
+  it('self-hosts the latin Public Sans and Inter faces the font stacks name, from bundled packages only', () => {
+    const fonts = readFileSync(resolve(process.cwd(), 'src/styles/fonts.css'), 'utf8')
+    const references = [...fonts.matchAll(/(?:@import\s+|url\()\s*['"]?([^'")\s]+)/g)].map((match) => match[1])
+    expect(references.length).toBeGreaterThan(0)
+    for (const reference of references) {
+      expect(reference).toMatch(/^@fontsource(-variable)?\/[\w-]+\/(files\/)?[\w-]*latin-[\w-]+\.(css|woff2)$/)
+    }
+    expect(fonts).not.toMatch(/https?:|\/\//)
+    expect(fonts).toContain("font-family: 'Inter';")
+    expect(fonts).toContain('@fontsource/public-sans/latin-400.css')
+    expect(THEME_FONT_STACKS.inter?.startsWith("'Inter', ")).toBe(true)
+    expect(THEME_FONT_STACKS['public-sans']?.startsWith("'Public Sans', ")).toBe(true)
+    for (const stack of [THEME_FONT_STACKS.inter, THEME_FONT_STACKS['public-sans']]) {
+      expect(stack).toContain("'PingFang SC'")
+      expect(stack).toContain("'Microsoft YaHei'")
+    }
+  })
+
   it('never writes a value outside the allowlist', () => {
     const hostile = {
       theme_primary: 'red;}body{display:none',
@@ -144,5 +167,45 @@ describe('useSiteTheme', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     previewSiteThemeMode('nonsense')
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+
+  it('lets a visitor choose light, dark or system; system follows the OS over the site default', () => {
+    prefersDark(false)
+    const mode = useSiteColorMode()
+    applySiteTheme({ ...DEFAULT_SITE_THEME, theme_default_mode: 'dark' }, { colorMode: true })
+    expect(mode.preference.value).toBe('dark')
+    expect(mode.isDark.value).toBe(true)
+
+    mode.setPreference('system')
+    expect(localStorage.getItem('theme')).toBe('system')
+    expect(mode.preference.value).toBe('system')
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(mode.isDark.value).toBe(false)
+    // A reload keeps following the OS, not the dark site default.
+    applySiteTheme({ ...DEFAULT_SITE_THEME, theme_default_mode: 'dark' }, { colorMode: true })
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+
+    mode.setPreference('dark')
+    expect(localStorage.getItem('theme')).toBe('dark')
+    expect(mode.isDark.value).toBe(true)
+  })
+
+  it('toggles from the mode actually on <html> and mirrors class changes made elsewhere', async () => {
+    const mode = useSiteColorMode()
+    document.documentElement.classList.add('dark')
+    await Promise.resolve()
+    expect(mode.isDark.value).toBe(true)
+
+    toggleColorMode()
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(localStorage.getItem('theme')).toBe('light')
+    expect(mode.isDark.value).toBe(false)
+
+    // Another page's own toggle writes the class and localStorage directly.
+    document.documentElement.classList.add('dark')
+    localStorage.setItem('theme', 'dark')
+    await Promise.resolve()
+    expect(mode.isDark.value).toBe(true)
+    expect(useSiteColorMode().preference.value).toBe('dark')
   })
 })
