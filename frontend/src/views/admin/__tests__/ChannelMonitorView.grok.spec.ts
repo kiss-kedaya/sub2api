@@ -109,7 +109,10 @@ describe('channel monitor Grok provider', () => {
     expect(grokButton.find('svg').exists()).toBe(true)
     expect(grokButton.text()).toContain('monitorCommon.providers.grok')
     await grokButton.trigger('click')
-    expect(grokButton.classes().join(' ')).toContain('zinc')
+    // Selected tile: pressed state + primary token highlight (no hard-coded brand palette).
+    expect(grokButton.attributes('aria-pressed')).toBe('true')
+    expect(grokButton.classes().join(' ')).toContain('bg-primary/5')
+    expect(wrapper.get('[data-testid="monitor-provider-anthropic"]').attributes('aria-pressed')).toBe('false')
 
     const endpoint = wrapper.get('[data-testid="monitor-endpoint"]')
     const model = wrapper.get('[data-testid="monitor-primary-model"]')

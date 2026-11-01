@@ -1,21 +1,15 @@
 <template>
-  <div class="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+  <div class="flex flex-wrap items-center justify-between gap-1.5">
     <!-- Left: Search + Filters -->
-    <div class="flex flex-1 flex-wrap items-center gap-3">
-      <div class="relative w-full sm:w-64">
-        <Icon
-          name="search"
-          size="md"
-          class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
-        />
-        <input
-          v-model="search"
-          type="text"
-          :placeholder="t('admin.channelMonitor.searchPlaceholder')"
-          class="input pl-10"
-          @input="$emit('search-input')"
-        />
-      </div>
+    <div class="flex flex-1 flex-wrap items-center gap-1.5">
+      <UInput
+        v-model="search"
+        icon="i-lucide-search"
+        class="w-full sm:max-w-sm"
+        :placeholder="t('admin.channelMonitor.searchPlaceholder')"
+        :aria-label="t('admin.channelMonitor.searchPlaceholder')"
+        @update:model-value="$emit('search-input')"
+      />
 
       <Select
         v-model="provider"
@@ -35,27 +29,24 @@
     </div>
 
     <!-- Right: Actions -->
-    <div class="flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-3 lg:w-auto">
-      <button
-        @click="$emit('reload')"
-        :disabled="loading"
-        class="btn btn-secondary"
+    <div class="flex flex-shrink-0 flex-wrap items-center justify-end gap-1.5">
+      <UButton
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-refresh-cw"
+        :loading="loading"
+        :aria-label="t('common.refresh')"
         :title="t('common.refresh')"
-      >
-        <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-      </button>
-      <button
+        @click="$emit('reload')"
+      />
+      <UButton
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-layout-template"
+        :label="t('admin.channelMonitor.template.manageButton')"
         @click="$emit('manage-templates')"
-        class="btn btn-secondary"
-        :title="t('admin.channelMonitor.template.manageButton')"
-      >
-        <Icon name="cog" size="md" class="mr-2" />
-        {{ t('admin.channelMonitor.template.manageButton') }}
-      </button>
-      <button @click="$emit('create')" class="btn btn-primary">
-        <Icon name="plus" size="md" class="mr-2" />
-        {{ t('admin.channelMonitor.createButton') }}
-      </button>
+      />
+      <UButton icon="i-lucide-plus" data-testid="monitor-create" :label="t('admin.channelMonitor.createButton')" @click="$emit('create')" />
     </div>
   </div>
 </template>
@@ -65,7 +56,6 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Provider } from '@/api/admin/channelMonitor'
 import Select from '@/components/common/Select.vue'
-import Icon from '@/components/icons/Icon.vue'
 import {
   PROVIDER_OPENAI,
   PROVIDER_ANTHROPIC,

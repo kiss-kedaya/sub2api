@@ -80,28 +80,34 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).toContain('min-h-[360px]')
   })
 
-  it('FilterMultiSelect uses rounded-xl input chrome and dropdown utility', () => {
+  it('FilterMultiSelect is a Nuxt UI popover with dropdown items', () => {
+    // Hand-built teleported dropdown replaced by UPopover + UButton trigger (rounded-xl chrome gone).
     const src = read('features/channel-monitor-v2/FilterMultiSelect.vue')
-    expect(src).toContain('rounded-xl')
+    expect(src).toContain('<UPopover')
     expect(src).toContain('dropdown')
     expect(src).toContain('dropdown-item')
+    expect(src).not.toMatch(/<button[\s>]/)
   })
 
-  it('MonitorSettingsPanel uses page-header, card, btn-primary, tabs', () => {
+  it('MonitorSettingsPanel uses the settings template: header card, section cards, Nuxt UI button and tabs', () => {
+    // Moved from the legacy utilities (page-header, card, btn-primary, tab-active) to the
+    // dashboard template's settings layout; the checks below follow that.
     const src = read('features/channel-monitor-v2/MonitorSettingsPanel.vue')
-    expect(src).toContain('page-header')
-    expect(src).toContain('btn btn-primary')
-    expect(src).toContain('class="card')
-    expect(src).toContain('tab-active')
+    expect(src).toContain('monitor-settings-header')
+    expect(src).toContain('<UButton')
+    expect(src).toContain('<UPageCard')
+    expect(src).toContain('<UTabs')
     expect(src).toMatch(/max-h-\[min\(40vh/)
+    expect(src).not.toContain('btn btn-primary')
+    expect(src).not.toMatch(/<(button|input)[\s>]/)
   })
 
-  it('admin ChannelMonitorView V2 tab chrome uses project tabs', () => {
+  it('admin ChannelMonitorView V2 tab chrome uses the shared header and Nuxt UI tabs', () => {
     const src = read('views/admin/ChannelMonitorView.vue')
-    expect(src).toContain('page-header')
-    expect(src).toContain('page-title')
-    expect(src).toContain('class="tabs')
-    expect(src).toContain('tab-active')
+    expect(src).toContain('<AdminPageHeader')
+    expect(src).toContain('<UTabs')
+    expect(src).toContain('monitorTabs')
+    expect(src).not.toContain('tab-active')
     expect(src).toContain('MonitorSettingsPanel')
   })
 

@@ -5,57 +5,55 @@
     width="wide"
     @close="$emit('close')"
   >
-    <form id="channel-monitor-form" @submit.prevent="handleSubmit" class="space-y-5">
-      <div>
-        <label class="input-label">{{ t('admin.channelMonitor.form.name') }} <span class="text-red-500">*</span></label>
-        <input v-model="form.name" type="text" required class="input" :placeholder="t('admin.channelMonitor.form.namePlaceholder')" />
-      </div>
+    <form id="channel-monitor-form" class="flex flex-col gap-5" @submit.prevent="handleSubmit">
+      <UFormField :label="t('admin.channelMonitor.form.name')" required>
+        <UInput v-model="form.name" type="text" required class="w-full" :placeholder="t('admin.channelMonitor.form.namePlaceholder')" />
+      </UFormField>
 
       <!-- 检测模式：probe（探活）/ quota（仅配额）/ quota_probe（探活+配额） -->
-      <div>
-        <label class="input-label">{{ t('admin.channelMonitor.form.checkMode') }}</label>
-        <div class="grid gap-3 sm:grid-cols-3" data-testid="monitor-check-mode">
-          <button
+      <UFormField :label="t('admin.channelMonitor.form.checkMode')">
+        <div class="grid gap-2 sm:grid-cols-3" data-testid="monitor-check-mode">
+          <UButton
             v-for="opt in checkModeOptions"
             :key="opt.value"
             type="button"
             :data-testid="`monitor-check-mode-${opt.value}`"
             :aria-pressed="form.check_mode === opt.value"
             :disabled="opt.disabled"
-            class="rounded-lg border-2 px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-            :class="checkModeButtonClass(opt.value)"
+            :color="form.check_mode === opt.value ? 'primary' : 'neutral'"
+            variant="outline"
+            class="block h-auto w-full px-3 py-2 text-left"
+            :class="form.check_mode === opt.value ? 'bg-primary/5' : ''"
             @click="selectCheckMode(opt.value)"
           >
             <span class="block text-sm font-semibold">{{ opt.label }}</span>
-            <span class="mt-0.5 block text-xs opacity-80">{{ opt.hint }}</span>
-          </button>
+            <span class="mt-0.5 block text-xs font-normal text-muted">{{ opt.hint }}</span>
+          </UButton>
         </div>
-      </div>
+      </UFormField>
 
-      <div>
-        <label class="input-label">{{ t('admin.channelMonitor.form.provider') }} <span class="text-red-500">*</span></label>
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <button
+      <UFormField :label="t('admin.channelMonitor.form.provider')" required>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <UButton
             v-for="opt in providerOptions"
             :key="opt.value"
             type="button"
             :data-testid="`monitor-provider-${opt.value}`"
             :aria-pressed="form.provider === opt.value"
-            class="flex items-center justify-center gap-2 rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors"
-            :class="providerPickerClass(opt.value, form.provider === opt.value)"
+            :color="form.provider === opt.value ? 'primary' : 'neutral'"
+            variant="outline"
+            class="h-auto justify-center gap-2 px-3 py-2.5"
+            :class="form.provider === opt.value ? 'bg-primary/5' : ''"
             @click="selectProvider(opt.value)"
           >
             <ProviderIcon :provider="opt.value" :size="18" />
             <span>{{ opt.label }}</span>
-          </button>
+          </UButton>
         </div>
-      </div>
+      </UFormField>
 
       <!-- 配额模式数据源：关联账号（复用账号侧用量/余额服务） -->
-      <div v-if="usesQuotaMode">
-        <label class="input-label">
-          {{ t('admin.channelMonitor.form.linkedAccount') }} <span class="text-red-500">*</span>
-        </label>
+      <UFormField v-if="usesQuotaMode" :label="t('admin.channelMonitor.form.linkedAccount')" :help="t('admin.channelMonitor.form.linkedAccountHint')" required>
         <div data-testid="monitor-linked-account">
           <Select
             v-model="accountSelectValue"
@@ -66,157 +64,128 @@
             @search="onAccountSearch"
           />
         </div>
-        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.linkedAccountHint') }}</p>
-        <p v-if="form.provider === PROVIDER_OPENAI" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
-          {{ t('admin.channelMonitor.form.openAIQuotaProbeHint') }}
-        </p>
-        <p v-if="accountHydrationFailed" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
-          {{ t('admin.channelMonitor.form.linkedAccountMissing') }}
-        </p>
-        <p v-if="accountOptions.length === 0 && !accountsLoading && !accountSearchQuery" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
-          {{ t('admin.channelMonitor.form.linkedAccountEmpty') }}
-        </p>
+      </UFormField>
+      <div v-if="usesQuotaMode && (form.provider === PROVIDER_OPENAI || accountHydrationFailed || (accountOptions.length === 0 && !accountsLoading && !accountSearchQuery))" class="-mt-3 flex flex-col gap-1 text-xs text-warning">
+        <p v-if="form.provider === PROVIDER_OPENAI">{{ t('admin.channelMonitor.form.openAIQuotaProbeHint') }}</p>
+        <p v-if="accountHydrationFailed">{{ t('admin.channelMonitor.form.linkedAccountMissing') }}</p>
+        <p v-if="accountOptions.length === 0 && !accountsLoading && !accountSearchQuery">{{ t('admin.channelMonitor.form.linkedAccountEmpty') }}</p>
       </div>
 
-      <div v-if="form.provider === PROVIDER_OPENAI && usesProbePart" class="rounded-lg border border-blue-100 bg-blue-50/50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
-        <label class="input-label">{{ t('admin.channelMonitor.form.apiMode') }}</label>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <button
+      <UFormField v-if="form.provider === PROVIDER_OPENAI && usesProbePart" :label="t('admin.channelMonitor.form.apiMode')">
+        <div class="grid gap-2 sm:grid-cols-2">
+          <UButton
             v-for="opt in apiModeOptions"
             :key="opt.value"
             type="button"
             :aria-pressed="form.api_mode === opt.value"
-            class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
-            :class="apiModeButtonClass(opt.value)"
+            :color="form.api_mode === opt.value ? 'primary' : 'neutral'"
+            variant="outline"
+            class="block h-auto w-full px-3 py-2 text-left"
+            :class="form.api_mode === opt.value ? 'bg-primary/5' : ''"
             @click="form.api_mode = opt.value"
           >
             <span class="block text-sm font-semibold">{{ opt.label }}</span>
-            <span class="mt-0.5 block text-xs opacity-80">{{ opt.hint }}</span>
-          </button>
+            <span class="mt-0.5 block text-xs font-normal text-muted">{{ opt.hint }}</span>
+          </UButton>
         </div>
-      </div>
+      </UFormField>
 
-      <div v-if="usesProbePart">
-        <label class="input-label">{{ t('admin.channelMonitor.form.endpoint') }} <span class="text-red-500">*</span></label>
+      <UFormField v-if="usesProbePart" :label="t('admin.channelMonitor.form.endpoint')" required>
         <div class="flex gap-2">
-          <input v-model="form.endpoint" data-testid="monitor-endpoint" type="text" required class="input flex-1" :placeholder="t('admin.channelMonitor.form.endpointPlaceholder')" />
-          <button type="button" @click="useCurrentDomain" class="btn btn-secondary whitespace-nowrap">
-            {{ t('admin.channelMonitor.form.useCurrentDomain') }}
-          </button>
+          <UInput v-model="form.endpoint" data-testid="monitor-endpoint" type="text" required class="min-w-0 flex-1" :placeholder="t('admin.channelMonitor.form.endpointPlaceholder')" />
+          <UButton type="button" color="neutral" variant="outline" class="whitespace-nowrap" :label="t('admin.channelMonitor.form.useCurrentDomain')" @click="useCurrentDomain" />
         </div>
-      </div>
+      </UFormField>
 
-      <div v-if="usesProbePart">
-        <label class="input-label">
-          {{ t('admin.channelMonitor.form.apiKey') }}<span v-if="!editing" class="text-red-500"> *</span>
-        </label>
+      <UFormField v-if="usesProbePart" :label="t('admin.channelMonitor.form.apiKey')" :required="!editing" :help="editing && editing.api_key_masked ? editing.api_key_masked : undefined">
         <div class="flex gap-2">
-          <input
+          <UInput
             v-model="form.api_key"
             type="password"
             :required="!editing"
-            class="input flex-1"
+            class="min-w-0 flex-1"
             :placeholder="editing ? t('admin.channelMonitor.form.apiKeyEditPlaceholder') : t('admin.channelMonitor.form.apiKeyPlaceholder')"
           />
-          <button type="button" @click="openMyKeyPicker" class="btn btn-secondary whitespace-nowrap">
-            {{ t('admin.channelMonitor.form.useMyKey') }}
-          </button>
+          <UButton type="button" color="neutral" variant="outline" class="whitespace-nowrap" :label="t('admin.channelMonitor.form.useMyKey')" @click="openMyKeyPicker" />
         </div>
-        <p v-if="editing && editing.api_key_masked" class="mt-1 text-xs text-gray-400">{{ editing.api_key_masked }}</p>
-      </div>
+      </UFormField>
 
-      <div v-if="usesProbePart">
-        <label class="input-label">{{ t('admin.channelMonitor.form.primaryModel') }} <span class="text-red-500">*</span></label>
-        <input
+      <UFormField v-if="usesProbePart" :label="t('admin.channelMonitor.form.primaryModel')" required>
+        <UInput
           v-model="form.primary_model"
           data-testid="monitor-primary-model"
           type="text"
           required
-          class="input font-medium"
-          :class="getPlatformTextClass(form.provider)"
+          class="w-full"
+          :ui="{ base: 'font-medium' }"
           :placeholder="t('admin.channelMonitor.form.primaryModelPlaceholder')"
         />
-      </div>
+      </UFormField>
 
-      <div v-if="usesProbePart">
-        <label class="input-label">{{ t('admin.channelMonitor.form.extraModels') }}</label>
+      <UFormField v-if="usesProbePart" :label="t('admin.channelMonitor.form.extraModels')">
         <ModelTagInput
           :models="form.extra_models"
           :platform="form.provider"
           :placeholder="t('admin.channelMonitor.form.extraModelsPlaceholder')"
           @update:models="form.extra_models = $event"
         />
+      </UFormField>
+
+      <div class="grid gap-4 sm:grid-cols-3">
+        <UFormField :label="t('admin.channelMonitor.form.groupName')">
+          <UInput v-model="form.group_name" type="text" class="w-full" :placeholder="t('admin.channelMonitor.form.groupNamePlaceholder')" />
+        </UFormField>
+        <UFormField :label="t('admin.channelMonitor.form.intervalSeconds')" :help="t('admin.channelMonitor.form.intervalSecondsHint')" required>
+          <UInput v-model.number="form.interval_seconds" type="number" min="15" max="3600" required class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.channelMonitor.form.jitterSeconds')" :help="t('admin.channelMonitor.form.jitterSecondsHint')">
+          <UInput v-model.number="form.jitter_seconds" type="number" min="0" :max="maxJitterSeconds" class="w-full" />
+        </UFormField>
       </div>
 
-      <div>
-        <label class="input-label">{{ t('admin.channelMonitor.form.groupName') }}</label>
-        <input v-model="form.group_name" type="text" class="input" :placeholder="t('admin.channelMonitor.form.groupNamePlaceholder')" />
-      </div>
-
-      <div>
-        <label class="input-label">{{ t('admin.channelMonitor.form.intervalSeconds') }} <span class="text-red-500">*</span></label>
-        <input v-model.number="form.interval_seconds" type="number" min="15" max="3600" required class="input" />
-        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.intervalSecondsHint') }}</p>
-      </div>
-
-      <div>
-        <label class="input-label">{{ t('admin.channelMonitor.form.jitterSeconds') }}</label>
-        <input v-model.number="form.jitter_seconds" type="number" min="0" :max="maxJitterSeconds" class="input" />
-        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.jitterSecondsHint') }}</p>
-      </div>
-
-      <div class="flex items-center justify-between">
-        <label class="input-label mb-0">{{ t('admin.channelMonitor.form.enabled') }}</label>
+      <UFormField :label="t('admin.channelMonitor.form.enabled')" orientation="horizontal" class="flex items-center justify-between gap-4">
         <Toggle v-model="form.enabled" />
-      </div>
+      </UFormField>
 
       <!-- 高级设置区：请求模板 + 自定义 headers/body（仅探活模式有意义） -->
-      <details v-if="usesProbePart" class="rounded-lg border border-gray-200 bg-gray-50/50 p-3 dark:border-dark-700 dark:bg-dark-900/30">
-        <summary class="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300">
-          {{ t('admin.channelMonitor.advanced.section') }}
-        </summary>
-        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.advanced.sectionHint') }}</p>
+      <UCollapsible v-if="usesProbePart" :unmount-on-hide="false" class="flex flex-col gap-3">
+        <UButton type="button" color="neutral" variant="ghost" class="-mx-2.5 self-start" icon="i-lucide-sliders-horizontal" trailing-icon="i-lucide-chevron-down" :label="t('admin.channelMonitor.advanced.section')" />
+        <template #content>
+          <div class="flex flex-col gap-4">
+            <p class="text-xs text-muted">{{ t('admin.channelMonitor.advanced.sectionHint') }}</p>
+            <UFormField :label="t('admin.channelMonitor.templateField.label')" :help="t('admin.channelMonitor.templateField.applyHint')">
+              <Select
+                v-model="templateSelectValue"
+                :options="templateOptions"
+                :placeholder="t('admin.channelMonitor.templateField.placeholder')"
+              />
+            </UFormField>
 
-        <div class="mt-4 space-y-4">
-          <div>
-            <label class="input-label">{{ t('admin.channelMonitor.templateField.label') }}</label>
-            <Select
-              v-model="templateSelectValue"
-              :options="templateOptions"
-              :placeholder="t('admin.channelMonitor.templateField.placeholder')"
+            <MonitorAdvancedRequestConfig
+              :provider="form.provider"
+              :api-mode="form.api_mode"
+              :extra-headers="form.extra_headers"
+              :body-override-mode="form.body_override_mode"
+              :body-override="form.body_override"
+              @update:extra-headers="form.extra_headers = $event"
+              @update:body-override-mode="form.body_override_mode = $event"
+              @update:body-override="form.body_override = $event"
             />
-            <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.templateField.applyHint') }}</p>
           </div>
-
-          <MonitorAdvancedRequestConfig
-            :provider="form.provider"
-            :api-mode="form.api_mode"
-            :extra-headers="form.extra_headers"
-            :body-override-mode="form.body_override_mode"
-            :body-override="form.body_override"
-            @update:extra-headers="form.extra_headers = $event"
-            @update:body-override-mode="form.body_override_mode = $event"
-            @update:body-override="form.body_override = $event"
-          />
-        </div>
-      </details>
+        </template>
+      </UCollapsible>
     </form>
 
     <template #footer>
-      <div class="flex justify-end gap-3">
-        <button @click="$emit('close')" type="button" class="btn btn-secondary">
-          {{ t('common.cancel') }}
-        </button>
-        <button
+      <div class="flex justify-end gap-2">
+        <UButton type="button" color="neutral" variant="outline" :label="t('common.cancel')" @click="$emit('close')" />
+        <UButton
           type="submit"
           form="channel-monitor-form"
+          :loading="submitting"
           :disabled="submitting"
-          class="btn btn-primary"
-        >
-          {{ submitting
-            ? t('common.submitting')
-            : editing ? t('common.update') : t('common.create') }}
-        </button>
+          :label="submitting ? t('common.submitting') : editing ? t('common.update') : t('common.create')"
+        />
       </div>
     </template>
   </BaseDialog>
@@ -256,11 +225,9 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Select from '@/components/common/Select.vue'
 import ModelTagInput from '@/components/admin/channel/ModelTagInput.vue'
-import { getPlatformTextClass } from '@/components/admin/channel/types'
 import MonitorKeyPickerDialog from '@/components/admin/monitor/MonitorKeyPickerDialog.vue'
 import MonitorAdvancedRequestConfig from '@/components/admin/monitor/MonitorAdvancedRequestConfig.vue'
 import ProviderIcon from '@/components/user/monitor/ProviderIcon.vue'
-import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import {
   PROVIDER_OPENAI,
   PROVIDER_ANTHROPIC,
@@ -297,7 +264,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const { providerPickerClass } = useChannelMonitorFormat()
 
 // System-configured default interval for new monitors. Falls back to the static
 // constant when public settings haven't loaded yet or store the legacy 0 value.
@@ -439,14 +405,6 @@ function normalizeAPIMode(mode: APIMode | undefined | null): APIMode {
   return mode === API_MODE_RESPONSES ? API_MODE_RESPONSES : API_MODE_CHAT_COMPLETIONS
 }
 
-function apiModeButtonClass(mode: APIMode): string {
-  const active = form.api_mode === mode
-  if (active) {
-    return 'border-primary-500 bg-white text-primary-700 shadow-xs dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
-  }
-  return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
-}
-
 function templateOptionLabel(tpl: ChannelMonitorTemplate): string {
   if (tpl.provider !== PROVIDER_OPENAI) return tpl.name
   const labelKey = normalizeAPIMode(tpl.api_mode) === API_MODE_RESPONSES
@@ -516,14 +474,6 @@ const checkModeOptions = computed<CheckModeOption[]>(() => [
     disabled: form.provider === PROVIDER_ANTIGRAVITY,
   },
 ])
-
-function checkModeButtonClass(mode: CheckMode): string {
-  const active = form.check_mode === mode
-  if (active) {
-    return 'border-primary-500 bg-white text-primary-700 shadow-xs dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
-  }
-  return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
-}
 
 function selectCheckMode(mode: CheckMode) {
   if (checkModeOptions.value.find((opt) => opt.value === mode)?.disabled) return

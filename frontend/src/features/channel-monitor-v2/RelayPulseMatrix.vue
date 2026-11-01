@@ -17,14 +17,17 @@
       <div class="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 text-xs text-gray-500 dark:text-gray-400 sm:w-auto">
         <span class="badge badge-gray shrink-0">{{ bucketLabel }}</span>
         <span class="hidden text-[11px] text-gray-400 dark:text-dark-400 sm:inline">{{ t('channelMonitorV2.matrix.wheelZoomX') }}</span>
-        <button
+        <UButton
           type="button"
-          class="inline-flex shrink-0 items-center rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-800"
+          color="neutral"
+          variant="outline"
+          size="xs"
+          class="shrink-0"
+          icon="i-lucide-zoom-out"
           :disabled="!zoomed"
+          :label="t('channelMonitorV2.matrix.resetZoom')"
           @click="resetMatrixZoom"
-        >
-          {{ t('channelMonitorV2.matrix.resetZoom') }}
-        </button>
+        />
       </div>
     </div>
 

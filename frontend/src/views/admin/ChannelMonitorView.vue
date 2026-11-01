@@ -1,51 +1,19 @@
 <template>
   <AppLayout>
-    <div class="w-full min-w-0 space-y-6 pb-8">
-      <header
-        class="page-header mb-0 rounded-lg bg-white p-5 shadow-xs ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700 sm:p-6"
-      >
-        <h1 class="page-title flex items-center gap-2 text-xl font-semibold text-gray-900 dark:font-black dark:text-white">
-          <span class="admin-stat-icon inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400">
-            <Icon name="chart" size="sm" />
-          </span>
-          {{ t('admin.channelMonitor.title') }}
-        </h1>
-        <p class="page-description mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-          {{
-            isV1Mode
-              ? t('channelMonitorV2.admin.descriptionV1')
-              : t('channelMonitorV2.admin.descriptionV2')
-          }}
-        </p>
-        <div class="mt-4 border-t border-gray-100 pt-4 dark:border-dark-700">
-          <div
-            class="tabs inline-flex w-full max-w-xl flex-wrap sm:w-auto"
-            role="tablist"
-            :aria-label="t('channelMonitorV2.admin.tabAria')"
-          >
-            <button
-              type="button"
-              role="tab"
-              class="tab flex-1 sm:flex-none"
-              :class="adminMonitorTab === 'v2' ? 'tab-active' : ''"
-              :aria-selected="adminMonitorTab === 'v2'"
-              @click="adminMonitorTab = 'v2'"
-            >
-              {{ t('channelMonitorV2.admin.tabV2') }}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              class="tab flex-1 sm:flex-none"
-              :class="adminMonitorTab === 'legacy' ? 'tab-active' : ''"
-              :aria-selected="adminMonitorTab === 'legacy'"
-              @click="adminMonitorTab = 'legacy'"
-            >
-              {{ isV1Mode ? t('channelMonitorV2.admin.tabV1Active') : t('channelMonitorV2.admin.tabV1History') }}
-            </button>
-          </div>
-        </div>
-      </header>
+    <div class="flex w-full min-w-0 flex-col gap-6 pb-8">
+      <AdminPageHeader
+        :title="t('admin.channelMonitor.title')"
+        :description="isV1Mode ? t('channelMonitorV2.admin.descriptionV1') : t('channelMonitorV2.admin.descriptionV2')"
+      />
+      <UTabs
+        v-model="adminMonitorTab"
+        :items="monitorTabs"
+        :content="false"
+        variant="link"
+        class="w-full"
+        :aria-label="t('channelMonitorV2.admin.tabAria')"
+        :ui="{ list: 'border-b border-default', trigger: 'pb-2.5' }"
+      />
 
       <MonitorSettingsPanel v-if="adminMonitorTab === 'v2'" />
 
@@ -67,20 +35,18 @@
         <DataTable :columns="columns" :data="monitors" :loading="loading">
           <template #cell-name="{ row, value }">
             <div class="flex items-center gap-1.5">
-              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <span class="font-medium text-highlighted">{{ value }}</span>
               <HelpTooltip v-if="row.api_key_decrypt_failed" :content="t('admin.channelMonitor.apiKeyDecryptFailed')">
-                <Icon name="exclamationTriangle" size="sm" class="text-red-500" />
+                <UIcon name="i-lucide-triangle-alert" class="size-4 text-error" />
               </HelpTooltip>
             </div>
           </template>
 
           <template #cell-provider="{ row }">
-            <span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium" :class="providerBadgeClass(row.provider)">
-              {{ providerLabel(row.provider) }}
-            </span>
-            <!-- 三种检测模式并列展示，quota 系配额数据源与纯探活一眼可分 -->
-            <span class="ml-1 inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium" :class="checkModeBadgeClass(row.check_mode)">
-              {{ checkModeLabel(row.check_mode) }}
+            <span class="inline-flex flex-wrap items-center gap-1">
+              <UBadge color="neutral" variant="outline" size="sm">{{ providerLabel(row.provider) }}</UBadge>
+              <!-- 三种检测模式并列展示，quota 系配额数据源与纯探活一眼可分 -->
+              <UBadge :color="checkModeColor(row.check_mode)" variant="subtle" size="sm" :data-check-mode="row.check_mode">{{ checkModeLabel(row.check_mode) }}</UBadge>
             </span>
           </template>
 
@@ -89,11 +55,11 @@
           </template>
 
           <template #cell-availability_7d="{ row }">
-            <span class="text-sm text-gray-900 dark:text-gray-100">{{ formatAvailability(row) }}</span>
+            <span class="text-sm tabular-nums text-default">{{ formatAvailability(row) }}</span>
           </template>
 
           <template #cell-latency="{ row }">
-            <span class="text-sm text-gray-900 dark:text-gray-100">{{ formatLatency(row.primary_latency_ms) }}</span>
+            <span class="text-sm tabular-nums text-default">{{ formatLatency(row.primary_latency_ms) }}</span>
           </template>
 
           <template #cell-enabled="{ row }">
@@ -189,7 +155,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
-import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import MonitorFiltersBar from '@/components/admin/monitor/MonitorFiltersBar.vue'
 import MonitorFormDialog from '@/components/admin/monitor/MonitorFormDialog.vue'
@@ -206,11 +172,15 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const isV1Mode = computed(() => isChannelMonitorV1Mode())
 const adminMonitorTab = ref<'v2' | 'legacy'>(isChannelMonitorV1Mode() ? 'legacy' : 'v2')
+const monitorTabs = computed(() => [
+  { value: 'v2', label: t('channelMonitorV2.admin.tabV2'), icon: 'i-lucide-activity' },
+  { value: 'legacy', label: isV1Mode.value ? t('channelMonitorV2.admin.tabV1Active') : t('channelMonitorV2.admin.tabV1History'), icon: 'i-lucide-history' },
+])
+/** quota 系（账号配额数据源）= info，纯探活 probe = neutral。 */
+function checkModeColor(mode: string): 'info' | 'neutral' { return mode === 'probe' ? 'neutral' : 'info' }
 const {
   providerLabel,
-  providerBadgeClass,
   checkModeLabel,
-  checkModeBadgeClass,
   formatLatency,
   formatAvailability,
 } = useChannelMonitorFormat()

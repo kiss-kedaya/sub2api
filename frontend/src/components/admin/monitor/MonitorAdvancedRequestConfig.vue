@@ -1,105 +1,102 @@
 <template>
-  <div class="space-y-4">
+  <div class="flex flex-col gap-4">
     <!-- Headers key-value rows -->
-    <div>
-      <label class="input-label">{{ t('admin.channelMonitor.advanced.headers') }}</label>
-      <div class="space-y-1.5">
+    <UFormField :label="t('admin.channelMonitor.advanced.headers')" :help="headersError ? undefined : t('admin.channelMonitor.advanced.headersHint')" :error="headersError || undefined">
+      <div class="flex flex-col gap-1.5">
         <div
           v-for="(row, i) in headerRows"
           :key="i"
           class="flex items-center gap-2"
         >
-          <input
+          <UInput
             v-model="row.name"
             type="text"
             spellcheck="false"
             :placeholder="t('admin.channelMonitor.advanced.headerNamePlaceholder')"
-            class="input w-52 flex-none font-mono text-xs"
+            class="w-52 flex-none"
+            :ui="{ base: 'font-mono text-xs' }"
             @blur="commitHeaders"
           />
-          <input
+          <UInput
             v-model="row.value"
             type="text"
             spellcheck="false"
             :placeholder="t('admin.channelMonitor.advanced.headerValuePlaceholder')"
-            class="input flex-1 font-mono text-xs"
+            class="min-w-0 flex-1"
+            :ui="{ base: 'font-mono text-xs' }"
             @blur="commitHeaders"
           />
-          <button
+          <UButton
             type="button"
-            class="flex-none rounded-sm p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            square
+            icon="i-lucide-x"
+            class="flex-none"
             :title="t('common.delete')"
+            :aria-label="t('common.delete')"
             @click="removeRow(i)"
-          >
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          />
         </div>
-        <button
+        <UButton
           type="button"
-          class="inline-flex items-center gap-1 rounded-sm border border-dashed border-gray-300 px-2 py-1 text-xs text-gray-500 hover:border-primary-400 hover:text-primary-600 dark:border-dark-600 dark:text-gray-400 dark:hover:border-primary-500 dark:hover:text-primary-400"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          icon="i-lucide-plus"
+          class="self-start"
+          :label="t('admin.channelMonitor.advanced.headerAddRow')"
           @click="addRow"
-        >
-          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-          {{ t('admin.channelMonitor.advanced.headerAddRow') }}
-        </button>
+        />
       </div>
-      <p v-if="headersError" class="mt-1 text-xs text-red-500">{{ headersError }}</p>
-      <p v-else class="mt-1 text-xs text-gray-400">
-        {{ t('admin.channelMonitor.advanced.headersHint') }}
-      </p>
-    </div>
+    </UFormField>
 
     <!-- Body mode radio -->
-    <div>
-      <label class="input-label">{{ t('admin.channelMonitor.advanced.bodyMode') }}</label>
-      <div class="grid grid-cols-3 gap-3">
-        <button
+    <UFormField :label="t('admin.channelMonitor.advanced.bodyMode')" :help="bodyModeHint">
+      <UFieldGroup class="w-full">
+        <UButton
           v-for="opt in bodyModeOptions"
           :key="opt.value"
           type="button"
-          class="rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors"
-          :class="bodyModeButtonClass(opt.value)"
+          :color="bodyOverrideMode === opt.value ? 'primary' : 'neutral'"
+          :variant="bodyOverrideMode === opt.value ? 'solid' : 'outline'"
+          :aria-pressed="bodyOverrideMode === opt.value"
+          class="flex-1 justify-center"
+          :label="opt.label"
           @click="updateBodyMode(opt.value)"
-        >
-          {{ opt.label }}
-        </button>
-      </div>
-      <p class="mt-1 text-xs text-gray-400">
-        {{ bodyModeHint }}
-      </p>
-    </div>
+        />
+      </UFieldGroup>
+    </UFormField>
 
     <!-- Body JSON (仅当 mode != off) -->
-    <div v-if="bodyOverrideMode !== 'off'">
-      <div class="mb-1 flex items-center justify-between">
-        <label class="input-label mb-0!">{{ t('admin.channelMonitor.advanced.bodyJson') }}</label>
-        <button
+    <UFormField
+      v-if="bodyOverrideMode !== 'off'"
+      :label="t('admin.channelMonitor.advanced.bodyJson')"
+      :help="bodyError ? undefined : t('admin.channelMonitor.advanced.bodyJsonHint')"
+      :error="bodyError || undefined"
+    >
+      <template #hint>
+        <UButton
           type="button"
-          class="text-xs text-primary-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400 disabled:no-underline dark:text-primary-400"
+          variant="link"
+          size="xs"
+          class="p-0"
           :disabled="!bodyText.trim()"
+          :label="t('admin.channelMonitor.advanced.bodyJsonFormat')"
           @click="formatBody"
-        >
-          {{ t('admin.channelMonitor.advanced.bodyJsonFormat') }}
-        </button>
-      </div>
-      <textarea
+        />
+      </template>
+      <UTextarea
         v-model="bodyText"
-        rows="10"
+        :rows="10"
         :placeholder="bodyPlaceholder"
-        class="input font-mono text-xs"
-        style="white-space: pre; overflow-wrap: normal; overflow-x: auto;"
+        class="w-full"
+        :ui="{ base: 'font-mono text-xs whitespace-pre overflow-x-auto [overflow-wrap:normal]' }"
         spellcheck="false"
         @blur="commitBody"
       />
-      <p v-if="bodyError" class="mt-1 text-xs text-red-500">{{ bodyError }}</p>
-      <p v-else class="mt-1 text-xs text-gray-400">
-        {{ t('admin.channelMonitor.advanced.bodyJsonHint') }}
-      </p>
-    </div>
+    </UFormField>
   </div>
 </template>
 
@@ -280,14 +277,6 @@ const bodyModeOptions = computed<{ value: BodyOverrideMode; label: string }[]>((
   { value: 'merge', label: t('admin.channelMonitor.advanced.bodyModeMerge') },
   { value: 'replace', label: t('admin.channelMonitor.advanced.bodyModeReplace') },
 ])
-
-function bodyModeButtonClass(mode: BodyOverrideMode): string {
-  const active = props.bodyOverrideMode === mode
-  if (active) {
-    return 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300 dark:border-primary-400'
-  }
-  return 'border-gray-200 bg-white text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
-}
 
 const bodyModeHint = computed(() => {
   switch (props.bodyOverrideMode) {

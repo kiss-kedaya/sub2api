@@ -145,14 +145,16 @@ describe('ChannelMonitorView check-mode badge', () => {
     const badges = cell.findAll('span')
     const modeBadge = badges.find(el => el.text() === label)
     expect(modeBadge).toBeDefined()
-    // quota 系=蓝、probe=中性灰的配色区分。
-    const cls = modeBadge!.attributes('class')
+    // quota 系 = info、probe = 中性 neutral 的配色区分（Nuxt UI UBadge 语义色，不再写死调色板）。
+    const badge = wrapper.findAllComponents({ name: 'Badge' }).find(b => b.text() === label)
+    expect(badge).toBeDefined()
+    expect(badge!.attributes('data-check-mode')).toBe(mode)
     if (mode === 'probe') {
-      expect(cls).toContain('bg-gray-100')
-      expect(cls).not.toContain('bg-blue-100')
+      expect(badge!.props('color')).toBe('neutral')
+      expect(badge!.props('color')).not.toBe('info')
     } else {
-      expect(cls).toContain('bg-blue-100')
-      expect(cls).not.toContain('bg-gray-100')
+      expect(badge!.props('color')).toBe('info')
+      expect(badge!.props('color')).not.toBe('neutral')
     }
     wrapper.unmount()
   })

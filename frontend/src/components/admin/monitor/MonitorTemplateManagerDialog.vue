@@ -6,172 +6,134 @@
     @close="$emit('close')"
   >
     <!-- provider tabs -->
-    <div class="mb-4 border-b border-gray-200 dark:border-dark-700">
-      <div role="tablist" class="flex flex-wrap gap-1">
-        <button
-          v-for="tab in providerTabs"
-          :key="tab.value"
-          type="button"
-          role="tab"
-          :aria-selected="activeProvider === tab.value"
-          class="px-4 py-2 text-sm font-medium transition-colors"
-          :class="tabClass(tab.value)"
-          @click="activeProvider = tab.value"
-        >
-          {{ tab.label }}
-          <span
-            v-if="countByProvider[tab.value] > 0"
-            class="ml-1.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-dark-700"
-          >
-            {{ countByProvider[tab.value] }}
-          </span>
-        </button>
-      </div>
-    </div>
+    <UTabs
+      v-model="activeProvider"
+      :items="providerTabItems"
+      :content="false"
+      variant="link"
+      class="mb-4 w-full"
+      :ui="{ list: 'border-b border-default overflow-x-auto', trigger: 'pb-2.5' }"
+    >
+      <template #trailing="{ item }">
+        <UBadge v-if="countByProvider[item.value as Provider] > 0" color="neutral" variant="subtle" size="sm">{{ countByProvider[item.value as Provider] }}</UBadge>
+      </template>
+    </UTabs>
 
     <!-- active provider list -->
-    <div v-if="!editing" class="space-y-2">
+    <div v-if="!editing" class="flex flex-col gap-2">
       <div class="flex justify-end">
-        <button class="btn btn-primary btn-sm" @click="openCreateForm">
-          <Icon name="plus" size="sm" class="mr-1" />
-          {{ t('admin.channelMonitor.template.createButton') }}
-        </button>
+        <UButton size="sm" icon="i-lucide-plus" :label="t('admin.channelMonitor.template.createButton')" @click="openCreateForm" />
       </div>
 
-      <div v-if="loading" class="py-8 text-center text-sm text-gray-400">
+      <div v-if="loading" class="py-8 text-center text-sm text-muted">
         {{ t('common.loading') }}
       </div>
 
       <div
         v-else-if="templatesForActiveProvider.length === 0"
-        class="py-8 text-center text-sm text-gray-400"
+        class="py-8 text-center text-sm text-muted"
       >
         {{ t('admin.channelMonitor.template.emptyState') }}
       </div>
 
-      <div
-        v-for="tpl in templatesForActiveProvider"
-        v-else
-        :key="tpl.id"
-        class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-800"
-      >
-        <div class="flex items-start justify-between gap-3">
+      <ul v-else class="flex flex-col divide-y divide-default">
+        <li
+          v-for="tpl in templatesForActiveProvider"
+          :key="tpl.id"
+          class="flex items-start justify-between gap-3 py-3"
+        >
           <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <span class="font-medium text-gray-900 dark:text-white">{{ tpl.name }}</span>
-              <span
-                class="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs"
-                :class="modeBadgeClass(tpl.body_override_mode)"
-              >
-                {{ modeLabel(tpl.body_override_mode) }}
-              </span>
-              <span
-                v-if="tpl.provider === PROVIDER_OPENAI"
-                class="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs"
-                :class="apiModeBadgeClass(tpl.api_mode)"
-              >
-                {{ apiModeLabel(tpl.api_mode) }}
-              </span>
-              <span
-                v-if="tpl.associated_monitors > 0"
-                class="text-xs text-gray-500 dark:text-gray-400"
-              >
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="font-medium text-highlighted">{{ tpl.name }}</span>
+              <UBadge :color="modeColor(tpl.body_override_mode)" variant="subtle" size="sm">{{ modeLabel(tpl.body_override_mode) }}</UBadge>
+              <UBadge v-if="tpl.provider === PROVIDER_OPENAI" color="neutral" variant="outline" size="sm">{{ apiModeLabel(tpl.api_mode) }}</UBadge>
+              <span v-if="tpl.associated_monitors > 0" class="text-xs text-muted">
                 {{ t('admin.channelMonitor.template.associatedCount', { n: tpl.associated_monitors }) }}
               </span>
             </div>
-            <p v-if="tpl.description" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+            <p v-if="tpl.description" class="mt-0.5 text-xs text-muted">
               {{ tpl.description }}
             </p>
-            <p class="mt-1 text-xs text-gray-400">
+            <p class="mt-1 text-xs text-dimmed">
               {{ t('admin.channelMonitor.template.headersSummary', {
                 n: Object.keys(tpl.extra_headers || {}).length,
               }) }}
             </p>
           </div>
-          <div class="flex flex-shrink-0 gap-2">
-            <button
-              class="btn btn-secondary btn-sm"
+          <div class="flex flex-shrink-0 items-center gap-1">
+            <UButton
+              color="neutral"
+              variant="outline"
+              size="sm"
+              icon="i-lucide-refresh-cw"
               :disabled="tpl.associated_monitors === 0"
               :title="t('admin.channelMonitor.template.applyTooltip')"
+              :label="t('admin.channelMonitor.template.applyButton')"
               @click="confirmApply(tpl)"
-            >
-              <Icon name="refresh" size="sm" class="mr-1" />
-              {{ t('admin.channelMonitor.template.applyButton') }}
-            </button>
-            <button class="btn btn-secondary btn-sm" @click="openEditForm(tpl)">
-              {{ t('common.edit') }}
-            </button>
-            <button class="btn btn-secondary btn-sm text-red-600" @click="handleDelete(tpl)">
-              {{ t('common.delete') }}
-            </button>
+            />
+            <UButton color="neutral" variant="ghost" size="sm" square icon="i-lucide-pencil" :title="t('common.edit')" :aria-label="t('common.edit')" @click="openEditForm(tpl)" />
+            <UButton color="error" variant="ghost" size="sm" square icon="i-lucide-trash-2" :title="t('common.delete')" :aria-label="t('common.delete')" @click="handleDelete(tpl)" />
           </div>
-        </div>
-      </div>
+        </li>
+      </ul>
     </div>
 
     <!-- edit / create form -->
-    <div v-else class="space-y-4">
-      <div>
-        <label class="input-label">
-          {{ t('admin.channelMonitor.template.form.name') }}
-          <span class="text-red-500">*</span>
-        </label>
-        <input
+    <div v-else class="flex flex-col gap-4">
+      <UFormField :label="t('admin.channelMonitor.template.form.name')" required>
+        <UInput
           v-model="form.name"
           type="text"
           required
-          class="input"
+          class="w-full"
           :placeholder="t('admin.channelMonitor.template.form.namePlaceholder')"
         />
-      </div>
+      </UFormField>
 
-      <div v-if="editing === 'new'">
-        <label class="input-label">
-          {{ t('admin.channelMonitor.form.provider') }}
-          <span class="text-red-500">*</span>
-        </label>
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <button
+      <UFormField v-if="editing === 'new'" :label="t('admin.channelMonitor.form.provider')" required>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <UButton
             v-for="opt in providerTabs"
             :key="opt.value"
             type="button"
-            class="rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors"
-            :class="providerPickerClass(opt.value, form.provider === opt.value)"
+            :aria-pressed="form.provider === opt.value"
+            :color="form.provider === opt.value ? 'primary' : 'neutral'"
+            variant="outline"
+            class="h-auto justify-center px-3 py-2"
+            :class="form.provider === opt.value ? 'bg-primary/5' : ''"
+            :label="opt.label"
             @click="form.provider = opt.value"
-          >
-            {{ opt.label }}
-          </button>
+          />
         </div>
-      </div>
+      </UFormField>
 
-      <div v-if="form.provider === PROVIDER_OPENAI" class="rounded-lg border border-blue-100 bg-blue-50/50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
-        <label class="input-label">{{ t('admin.channelMonitor.form.apiMode') }}</label>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <button
+      <UFormField v-if="form.provider === PROVIDER_OPENAI" :label="t('admin.channelMonitor.form.apiMode')">
+        <div class="grid gap-2 sm:grid-cols-2">
+          <UButton
             v-for="opt in apiModeOptions"
             :key="opt.value"
             type="button"
-            class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
-            :class="apiModeButtonClass(opt.value)"
+            :aria-pressed="form.api_mode === opt.value"
+            :color="form.api_mode === opt.value ? 'primary' : 'neutral'"
+            variant="outline"
+            class="block h-auto w-full px-3 py-2 text-left"
+            :class="form.api_mode === opt.value ? 'bg-primary/5' : ''"
             @click="form.api_mode = opt.value"
           >
             <span class="block text-sm font-semibold">{{ opt.label }}</span>
-            <span class="mt-0.5 block text-xs opacity-80">{{ opt.hint }}</span>
-          </button>
+            <span class="mt-0.5 block text-xs font-normal text-muted">{{ opt.hint }}</span>
+          </UButton>
         </div>
-      </div>
+      </UFormField>
 
-      <div>
-        <label class="input-label">
-          {{ t('admin.channelMonitor.template.form.description') }}
-        </label>
-        <input
+      <UFormField :label="t('admin.channelMonitor.template.form.description')">
+        <UInput
           v-model="form.description"
           type="text"
-          class="input"
+          class="w-full"
           :placeholder="t('admin.channelMonitor.template.form.descriptionPlaceholder')"
         />
-      </div>
+      </UFormField>
 
       <MonitorAdvancedRequestConfig
         :provider="form.provider"
@@ -189,18 +151,18 @@
       <div class="flex w-full items-center justify-between">
         <!-- Left: back to list / nothing -->
         <div>
-          <button v-if="editing" class="btn btn-secondary" @click="backToList">
-            {{ t('common.back') }}
-          </button>
+          <UButton v-if="editing" color="neutral" variant="ghost" icon="i-lucide-arrow-left" :label="t('common.back')" @click="backToList" />
         </div>
         <!-- Right: save or close -->
         <div class="flex gap-2">
-          <button class="btn btn-secondary" @click="$emit('close')">
-            {{ t('common.close') }}
-          </button>
-          <button v-if="editing" class="btn btn-primary" :disabled="submitting" @click="handleSubmit">
-            {{ submitting ? t('common.submitting') : editing === 'new' ? t('common.create') : t('common.update') }}
-          </button>
+          <UButton color="neutral" variant="outline" :label="t('common.close')" @click="$emit('close')" />
+          <UButton
+            v-if="editing"
+            :loading="submitting"
+            :disabled="submitting"
+            :label="submitting ? t('common.submitting') : editing === 'new' ? t('common.create') : t('common.update')"
+            @click="handleSubmit"
+          />
         </div>
       </div>
     </template>
@@ -240,10 +202,8 @@ import type {
 import type { ChannelMonitorTemplate } from '@/api/admin/channelMonitorTemplate'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import Icon from '@/components/icons/Icon.vue'
 import MonitorAdvancedRequestConfig from '@/components/admin/monitor/MonitorAdvancedRequestConfig.vue'
 import MonitorTemplateApplyPickerDialog from '@/components/admin/monitor/MonitorTemplateApplyPickerDialog.vue'
-import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import {
   PROVIDER_ANTHROPIC,
   PROVIDER_OPENAI,
@@ -268,7 +228,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const { providerPickerClass } = useChannelMonitorFormat()
 
 const providerTabs = computed<{ value: Provider; label: string }[]>(() => [
   { value: PROVIDER_ANTHROPIC, label: t('monitorCommon.providers.anthropic') },
@@ -283,6 +242,7 @@ const providerTabs = computed<{ value: Provider; label: string }[]>(() => [
 ])
 
 const activeProvider = ref<Provider>(PROVIDER_ANTHROPIC)
+const providerTabItems = computed(() => providerTabs.value.map(tab => ({ value: tab.value, label: tab.label })))
 const templates = ref<ChannelMonitorTemplate[]>([])
 const loading = ref(false)
 
@@ -467,21 +427,10 @@ async function doDelete() {
 }
 
 // --- misc ---
-function tabClass(value: Provider): string {
-  return activeProvider.value === value
-    ? 'border-b-2 border-primary-500 text-primary-600 dark:text-primary-400'
-    : 'border-b-2 border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-}
-
-function modeBadgeClass(mode: BodyOverrideMode): string {
-  switch (mode) {
-    case 'merge':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
-    case 'replace':
-      return 'bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300'
-    default:
-      return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
-  }
+function modeColor(mode: BodyOverrideMode): 'warning' | 'info' | 'neutral' {
+  if (mode === 'merge') return 'warning'
+  if (mode === 'replace') return 'info'
+  return 'neutral'
 }
 
 function modeLabel(mode: BodyOverrideMode): string {
@@ -511,24 +460,10 @@ function normalizeAPIMode(mode: APIMode | undefined | null): APIMode {
   return mode === API_MODE_RESPONSES ? API_MODE_RESPONSES : API_MODE_CHAT_COMPLETIONS
 }
 
-function apiModeButtonClass(mode: APIMode): string {
-  const active = form.api_mode === mode
-  if (active) {
-    return 'border-primary-500 bg-white text-primary-700 shadow-xs dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
-  }
-  return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
-}
-
 function apiModeLabel(mode: APIMode): string {
   return normalizeAPIMode(mode) === API_MODE_RESPONSES
     ? t('admin.channelMonitor.form.apiModeResponses')
     : t('admin.channelMonitor.form.apiModeChatCompletions')
 }
 
-function apiModeBadgeClass(mode: APIMode): string {
-  if (normalizeAPIMode(mode) === API_MODE_RESPONSES) {
-    return 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
-  }
-  return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-}
 </script>

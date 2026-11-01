@@ -25,14 +25,17 @@
           <span class="h-2 w-2 rounded-full bg-sky-500"></span>{{ t('channelMonitorV2.chart.ttftLegend') }}
         </span>
         <span class="badge badge-gray shrink-0">{{ bucketLabel }}</span>
-        <button
+        <UButton
           type="button"
-          class="inline-flex shrink-0 items-center rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-800"
+          color="neutral"
+          variant="outline"
+          size="xs"
+          class="shrink-0"
+          icon="i-lucide-zoom-out"
           :disabled="!zoomed"
+          :label="t('channelMonitorV2.chart.resetZoom')"
           @click="resetChartZoom"
-        >
-          {{ t('channelMonitorV2.chart.resetZoom') }}
-        </button>
+        />
       </div>
     </div>
     <div class="card-body min-h-0 flex-1 p-0!">
