@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
 import type { InlineConfig, Plugin } from 'vite'
-import { DEMO_TOKEN, PREVIEW_LABEL, settings } from './fixtures'
+import { DEMO_TOKEN, DEMO_USER_ID, PREVIEW_LABEL, settings } from './fixtures'
 import { createMockApi, PreviewError } from './mock-api'
 
 export const PREVIEW_MODE = 'console-preview'
@@ -105,6 +105,8 @@ export function consolePreviewPlugin(): Plugin {
         if (path === '/__preview/admin' || path === '/__preview/user') {
           const role = path.endsWith('/admin') ? 'admin' : 'user'
           api.handle('POST', '/api/v1/__preview/role', new URLSearchParams(), { role })
+          // Only admin id 1 is a full admin; other admin ids are observers limited to /admin/usage.
+          api.user.id = role === 'admin' ? 1 : DEMO_USER_ID
           res.writeHead(302, { Location: role === 'admin' ? '/admin/dashboard' : '/dashboard' })
           res.end()
           return
@@ -131,7 +133,10 @@ export function consolePreviewPlugin(): Plugin {
         const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c')
         return {
           html: html.replace(/<title>[^<]*<\/title>/i, `<title>kedaya.ai · ${PREVIEW_LABEL}</title>`),
-          tags: [{ tag: 'script', injectTo: 'head-prepend', children: `
+          // 'head', not 'head-prepend': this script carries Chinese text, and putting it before
+          // <meta charset> pushes the charset past the first 1024 bytes, so a zh-CN browser decodes
+          // the page as GBK and the string literals break.
+          tags: [{ tag: 'script', injectTo: 'head', children: `
             window.__APP_CONFIG__ = ${json(settings)};
             window.__APP_CONFIG__.api_base_url = location.origin;
             localStorage.setItem('auth_token', ${json(DEMO_TOKEN)});
@@ -177,6 +182,10 @@ export function consolePreviewConfig(): InlineConfig {
     // Do not expose inherited VITE_* variables in this isolated mode either.
     envPrefix: '__CONSOLE_PREVIEW_NO_ENV__',
     cacheDir: resolve(root, 'dev/.cache/vite'),
+    // The app pins @vueuse/core 10 while Nuxt UI needs 14. Vite's dep optimizer keys pre-bundled deps by
+    // bare name, so Nuxt UI's raw .vue files would get the app's v10 copy (no `createRef`). Excluding both
+    // packages lets each importer resolve its own version.
+    optimizeDeps: { exclude: ['@vueuse/core', '@vueuse/shared'] },
     // Same Nuxt UI options as vite.config.ts.
     plugins: [consolePreviewPlugin(), vue(), ui({
       colorMode: false,
