@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="mx-auto max-w-6xl space-y-5">
-      <header class="flex flex-wrap items-start justify-between gap-3"><div><h1 class="text-2xl font-semibold">{{ t('opsAutomation.title') }}</h1><p class="mt-1 text-sm text-gray-500">{{ t('opsAutomation.description') }}</p></div><button class="btn btn-secondary" :disabled="busy" @click="load">{{ t('opsAutomation.refresh') }}</button></header>
+      <AdminPageHeader :title="t('opsAutomation.title')" :description="t('opsAutomation.description')"><template #actions><button class="btn btn-secondary" :disabled="busy" @click="load">{{ t('opsAutomation.refresh') }}</button></template></AdminPageHeader>
       <p v-if="error" role="alert" class="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ error }}</p>
       <p v-if="notice" role="status" class="text-sm text-emerald-600">{{ notice }}</p>
       <p v-if="draft?.ramp_suspended" role="alert" class="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ t('opsAutomation.rampSuspended') }}</p>
@@ -22,6 +22,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import Select from '@/components/common/Select.vue'

@@ -2,10 +2,9 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <header class="flex flex-wrap items-start justify-between gap-4">
-        <div><h1 class="text-2xl font-semibold text-gray-900 dark:text-white">{{ t('admin.groupCacheTest.title') }}</h1><p class="mt-2 max-w-3xl text-sm text-gray-500 dark:text-gray-400">{{ t('admin.groupCacheTest.description') }}</p></div>
-        <button class="btn btn-secondary" :disabled="busy || loading" @click="loadGroups">{{ t('admin.groupCacheTest.reload') }}</button>
-      </header>
+      <AdminPageHeader :title="t('admin.groupCacheTest.title')" :description="t('admin.groupCacheTest.description')">
+        <template #actions><button class="btn btn-secondary" :disabled="busy || loading" @click="loadGroups">{{ t('admin.groupCacheTest.reload') }}</button></template>
+      </AdminPageHeader>
       <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">{{ error }}</p>
       <p v-if="storageError" role="status" class="text-sm text-amber-600">{{ t('admin.groupCacheTest.storageError') }}</p>
       <div class="grid items-start gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
@@ -90,6 +89,7 @@ import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import * as groupsAPI from '@/api/admin/groups'
 import * as keysAPI from '@/api/keys'

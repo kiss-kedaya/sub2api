@@ -1,10 +1,9 @@
 <template>
   <AppLayout>
     <div class="space-y-5">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div><h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ text('凭证守护', 'Credential inspection') }}</h1><p class="mt-1 text-sm text-gray-500">{{ text('按账号开启巡检，失效凭证按需恢复；风控验证交由人工处理。', 'Opt in per account to inspect credentials and recover expired sessions. Security verification always requires an operator.') }}</p></div>
-        <div class="flex gap-2"><button class="btn btn-secondary" :disabled="busy" @click="refresh">{{ text('刷新', 'Refresh') }}</button><button class="btn btn-primary" :disabled="busy" @click="openNew">{{ text('添加账号', 'Add account') }}</button></div>
-      </div>
+      <AdminPageHeader :title="text('凭证守护', 'Credential inspection')" :description="text('按账号开启巡检，失效凭证按需恢复；风控验证交由人工处理。', 'Opt in per account to inspect credentials and recover expired sessions. Security verification always requires an operator.')">
+        <template #actions><button class="btn btn-secondary" :disabled="busy" @click="refresh">{{ text('刷新', 'Refresh') }}</button><button class="btn btn-primary" :disabled="busy" @click="openNew">{{ text('添加账号', 'Add account') }}</button></template>
+      </AdminPageHeader>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20">{{ error }}</p>
       <p class="text-xs text-gray-500">{{ text('保留手工停调及已有错误状态。需要恢复这类账号时，先检查原停调原因；本功能不会直接重新开启。', 'Manual scheduling choices and existing error states are preserved. Review their original cause before restoring an account; this feature never overrides them.') }}</p>
       <div v-if="!rows.length && !busy" class="rounded-xl border border-dashed border-gray-300 p-10 text-center dark:border-dark-600"><p class="font-medium">{{ text('还没有开启凭证巡检', 'No accounts are being inspected') }}</p><p class="mt-2 text-sm text-gray-500">{{ text('添加账号后默认保持关闭，保存并开启才会运行。', 'New inspection settings are disabled by default. Save and enable them when ready.') }}</p></div>
@@ -47,6 +46,7 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'

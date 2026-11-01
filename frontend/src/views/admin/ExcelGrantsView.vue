@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="space-y-5">
-      <div class="flex flex-wrap items-center justify-between gap-3"><div><h1 class="text-2xl font-bold text-gray-900 dark:text-white">Excel / BPS</h1><p class="mt-1 text-sm text-gray-500">{{ text('为现有 OpenAI OAuth 账号单独授权，按模型选择 BPS 通道。', 'Authorize an independent grant for an existing OpenAI OAuth account and select BPS models explicitly.') }}</p></div><div class="flex gap-2"><button class="btn btn-secondary" :disabled="busy" @click="refresh">{{ text('刷新', 'Refresh') }}</button><button class="btn btn-primary" :disabled="busy" @click="edit()">{{ text('添加账号', 'Add account') }}</button></div></div>
+      <AdminPageHeader title="Excel / BPS" :description="text('为现有 OpenAI OAuth 账号单独授权，按模型选择 BPS 通道。', 'Authorize an independent grant for an existing OpenAI OAuth account and select BPS models explicitly.')"><template #actions><button class="btn btn-secondary" :disabled="busy" @click="refresh">{{ text('刷新', 'Refresh') }}</button><button class="btn btn-primary" :disabled="busy" @click="edit()">{{ text('添加账号', 'Add account') }}</button></template></AdminPageHeader>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20">{{ error }}</p>
       <p class="text-xs text-gray-500">{{ text('默认关闭。只对所选模型生效，Codex 主凭证独立保存。授权完成后在模型设置中开启通道。', 'Disabled by default. Only selected models use this channel; primary Codex credentials remain separate. Enable routing in model settings after authorization.') }}</p>
       <div v-if="!rows.length && !busy" class="rounded-xl border border-dashed border-gray-300 p-10 text-center dark:border-dark-600"><p class="font-medium">{{ text('尚未配置 BPS 账号', 'No BPS accounts configured') }}</p><p class="mt-2 text-sm text-gray-500">{{ text('添加已有账号，选择模型，再完成官方授权。', 'Add an existing account, select exact models, then complete official authorization.') }}</p></div>
@@ -16,6 +16,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { useStepUp } from '@/composables/useStepUp'

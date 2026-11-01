@@ -1,17 +1,15 @@
 <template>
   <AppLayout>
     <div class="crypto-view">
-      <header class="crypto-view__header">
-        <div>
-          <h1 class="crypto-view__title">{{ t('admin.crypto.title') }}</h1>
-          <p class="crypto-view__desc">{{ t('admin.crypto.description') }}</p>
-        </div>
-        <div v-if="loadedSnapshot" class="crypto-view__header-status">
+      <AdminPageHeader class="crypto-view__header" :title="t('admin.crypto.title')" :description="t('admin.crypto.description')">
+        <template v-if="loadedSnapshot" #actions>
+        <div class="crypto-view__header-status">
           <span class="crypto-view__badge" :class="loadedSnapshot.enabled && !walletSecurityLocked ? 'crypto-view__badge--active' : 'crypto-view__badge--disabled'">{{ t(loadedSnapshot.enabled && !walletSecurityLocked ? 'admin.crypto.channelActive' : 'admin.crypto.channelPaused') }}</span>
           <span class="crypto-view__badge" :class="walletReady ? 'crypto-view__badge--active' : 'crypto-view__badge--pending'">{{ t(walletStateLabel) }}</span>
           <CryptoGrantStatus />
         </div>
-      </header>
+        </template>
+      </AdminPageHeader>
       <CryptoWalletSecurityPanel class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
       <details class="crypto-view__notifications">
         <summary>{{ t('admin.crypto.walletNotificationSettings') }}<span>{{ t('admin.crypto.walletNotificationOptional') }}</span></summary>
@@ -796,6 +794,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
@@ -1749,7 +1748,7 @@ onMounted(() => {
   overflow: hidden;
   min-width: 0;
   padding: 0;
-  border-radius: 1rem;
+  border-radius: 0.5rem;
 }
 .crypto-view__header {
   display: flex;
@@ -1769,17 +1768,6 @@ onMounted(() => {
   background: var(--signal-accent-soft, rgba(99, 102, 241, 0.12));
   color: var(--signal-accent, #6366f1);
   font-size: 1.125rem;
-}
-.crypto-view__title {
-  font-size: 1.5rem;
-  font-weight: 650;
-  letter-spacing: -0.025em;
-}
-.crypto-view__desc {
-  font-size: 0.8125rem;
-  line-height: 1.6;
-  margin-top: 0.375rem;
-  color: var(--signal-muted, #8c99a6);
 }
 .crypto-view__tabs {
   display: flex;
@@ -2230,7 +2218,6 @@ details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
 }
 @media (max-width: 640px) {
   .crypto-view { padding: 1rem .75rem; }
-  .crypto-view__title { font-size: 1.25rem; }
   .crypto-view__panel { padding: 1rem; }
   .crypto-view__tabs { gap: 1.25rem; padding: 0 1rem; }
   .crypto-view__tab { min-height: 3rem; font-size: .8125rem; }

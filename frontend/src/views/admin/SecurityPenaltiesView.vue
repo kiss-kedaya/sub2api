@@ -1,8 +1,7 @@
 <template>
   <AppLayout>
     <div class="mx-auto max-w-6xl space-y-5">
-      <h1 class="text-2xl font-semibold">{{ text('分层安全限制', 'Layered API restrictions') }}</h1>
-      <p class="text-sm text-gray-500">{{ text('复用现有内容审核和提示词审计，不增加扫描器或收费；只限制 API，不关闭用户的网站登录。', 'Reuses existing moderation and prompt audits. Adds no scanner or charge. Only API access is restricted; website sign-in remains available.') }}</p>
+      <AdminPageHeader :title="text('分层安全限制', 'Layered API restrictions')" :description="text('复用现有内容审核和提示词审计，不增加扫描器或收费；只限制 API，不关闭用户的网站登录。', 'Reuses existing moderation and prompt audits. Adds no scanner or charge. Only API access is restricted; website sign-in remains available.')" />
       <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-red-700 dark:bg-red-950">{{ error }}</p>
       <p v-if="success" role="status" class="text-sm text-green-700">{{ success }}</p>
       <form v-if="config" class="card space-y-5 p-5" @submit.prevent="save">
@@ -20,6 +19,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import { getAll as getGroups } from '@/api/admin/groups'
 import type { AdminGroup } from '@/types'
