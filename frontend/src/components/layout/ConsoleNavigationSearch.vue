@@ -1,6 +1,7 @@
 <template>
   <!-- UDashboardSearch: opened by the sidebar's UDashboardSearchButton or Ctrl/⌘ K
-       (its own shortcut, also while typing). Pages the visitor may open, then the theme. -->
+       (its own shortcut, also while typing). Every sidebar page in the same groups, the
+       sub-pages reached through an area's sub-nav, then the theme. -->
   <UDashboardSearch
     v-model:open="open"
     v-model:search-term="query"
@@ -22,59 +23,56 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import type { CommandPaletteGroup, CommandPaletteItem } from '@nuxt/ui'
 import { useLocale } from '@nuxt/ui/composables/useLocale'
-import { useAuthStore } from '@/stores/auth'
-import { useAppStore } from '@/stores/app'
-import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { THEME_MODE_OPTIONS, useSiteColorMode, type ThemeMode } from '@/composables/useSiteTheme'
+import { useConsoleNav, type NavLeaf } from './consoleNav'
 
 const { t } = useI18n()
 const { t: uiT } = useLocale()
 const router = useRouter()
-const auth = useAuthStore()
-const app = useAppStore()
 const colorMode = useSiteColorMode()
+// The same tree as the sidebar (permissions, feature flags, simple mode): consoleNav.ts.
+const { tree, secondary } = useConsoleNav()
 const open = ref(false)
 const query = ref('')
 
 interface Destination {
   path: string
   label: string
-  icon: string
-  group: 'admin' | 'personal'
+  icon?: string
+  external?: boolean
 }
 
-// The same permission and feature-flag rules as before; only the presentation changed.
-const destinations = computed((): Destination[] => {
-  const personal: Destination[] = [
-    { path: '/dashboard', label: t('nav.dashboard'), icon: 'i-lucide-layout-dashboard', group: 'personal' },
-    { path: '/keys', label: t('nav.apiKeys'), icon: 'i-lucide-key-round', group: 'personal' },
-    ...(!auth.isSimpleMode ? [{ path: '/usage', label: t('nav.usage'), icon: 'i-lucide-chart-column', group: 'personal' } as const] : []),
-    ...(!auth.isSimpleMode ? [{ path: '/redeem', label: t('nav.redeem'), icon: 'i-lucide-gift', group: 'personal' } as const] : []),
-    { path: '/profile', label: t('nav.profile'), icon: 'i-lucide-user', group: 'personal' },
-    { path: '/tickets', label: t('tickets.title'), icon: 'i-lucide-message-circle', group: 'personal' },
-    ...(isFeatureFlagEnabled(FeatureFlags.channelMonitor) ? [{ path: '/monitor', label: t('nav.channelStatus'), icon: 'i-lucide-activity', group: 'personal' } as const] : []),
-    ...(!auth.isSimpleMode && isFeatureFlagEnabled(FeatureFlags.payment) ? [{ path: '/purchase', label: t('nav.buySubscription'), icon: 'i-lucide-credit-card', group: 'personal' } as const] : []),
-  ]
-  if (auth.user?.role !== 'admin') return app.backendModeEnabled ? [] : personal
-  if (auth.isAdminObserver) {
-    return [{ path: '/admin/usage', label: t('admin.usage.title'), icon: 'i-lucide-chart-column', group: 'admin' }, ...personal]
+interface DestinationGroup {
+  id: string
+  label?: string
+  items: Destination[]
+}
+
+const toDestination = (leaf: NavLeaf, icon?: string): Destination => ({ path: leaf.path, label: leaf.label, icon: leaf.icon ?? icon, external: leaf.external })
+
+// Groups as in the sidebar; consecutive top-level pages share an unnamed group.
+const destinationGroups = computed((): DestinationGroup[] => {
+  const out: DestinationGroup[] = []
+  for (const node of tree.value) {
+    if (node.kind === 'group') {
+      const items = node.children.filter((child): child is NavLeaf => child.kind === 'link').map((leaf) => toDestination(leaf, node.icon))
+      out.push({ id: `nav-${node.key}`, label: node.label, items })
+    } else if (out.at(-1)?.label === undefined && out.length) {
+      out[out.length - 1].items.push(toDestination(node))
+    } else {
+      out.push({ id: `nav-top-${out.length}`, items: [toDestination(node)] })
+    }
   }
-  const admin: Destination[] = [
-    { path: '/admin/dashboard', label: t('admin.dashboard.title'), icon: 'i-lucide-layout-dashboard', group: 'admin' },
-    { path: '/admin/accounts', label: t('admin.accounts.title'), icon: 'i-lucide-server', group: 'admin' },
-    { path: '/admin/users', label: t('admin.users.title'), icon: 'i-lucide-users', group: 'admin' },
-    { path: '/admin/tickets', label: t('tickets.adminTitle'), icon: 'i-lucide-message-circle', group: 'admin' },
-    { path: '/admin/groups', label: t('admin.groups.title'), icon: 'i-lucide-layout-grid', group: 'admin' },
-    { path: '/admin/usage', label: t('admin.usage.title'), icon: 'i-lucide-chart-column', group: 'admin' },
-    { path: '/admin/settings', label: t('admin.settings.title'), icon: 'i-lucide-settings', group: 'admin' },
-  ]
-  return auth.isSimpleMode ? admin.filter(item => item.path !== '/admin/users') : [...admin, ...personal]
+  if (secondary.value.length) out.push({ id: 'nav-more', items: secondary.value.map((leaf) => toDestination(leaf)) })
+  return out
 })
 
 // Plain substring match on label and path, as before (a path such as /admin/accounts works too).
 const results = computed(() => {
   const term = query.value.trim().toLocaleLowerCase()
-  return destinations.value.filter(item => !term || (item.label + ' ' + item.path).toLocaleLowerCase().includes(term))
+  return destinationGroups.value
+    .map((group) => ({ ...group, items: group.items.filter((item) => !term || (item.label + ' ' + item.path).toLocaleLowerCase().includes(term)) }))
+    .filter((group) => group.items.length)
 })
 
 const MODE_ICONS: Record<ThemeMode, string> = {
@@ -84,18 +82,17 @@ const MODE_ICONS: Record<ThemeMode, string> = {
 }
 
 const groups = computed((): CommandPaletteGroup<CommandPaletteItem>[] => {
-  const toItem = (item: Destination): CommandPaletteItem => ({
-    label: item.label,
-    icon: item.icon,
-    class: 'console-search-result',
-    onSelect: () => navigate(item.path)
-  })
-  const navigation = ['admin', 'personal'].map((group) => ({
-    id: `nav-${group}`,
-    label: group === 'personal' && results.value.some(item => item.group === 'admin') ? t('nav.myAccount') : undefined,
+  const navigation = results.value.map((group) => ({
+    id: group.id,
+    label: group.label,
     // Already filtered above; Fuse must not drop or reorder these.
     ignoreFilter: true,
-    items: results.value.filter(item => item.group === group).map(toItem)
+    items: group.items.map((item): CommandPaletteItem => ({
+      label: item.label,
+      icon: item.icon,
+      class: 'console-search-result',
+      onSelect: () => navigate(item)
+    }))
   }))
   // Our own theme group: Nuxt UI's colorMode is off, the site keeps its own light / dark state.
   const theme = {
@@ -108,16 +105,19 @@ const groups = computed((): CommandPaletteGroup<CommandPaletteItem>[] => {
       onSelect: () => colorMode.setPreference(mode)
     }))
   }
-  return [...navigation.filter(group => group.items.length), theme]
+  return [...navigation, theme]
 })
 
 watch(open, (value) => {
   if (value) query.value = ''
 })
 
-function navigate(path?: string) {
-  if (!path) return
+function navigate(item: Destination) {
   open.value = false
-  void router.push(path)
+  if (item.external) {
+    window.open(item.path, '_blank', 'noopener,noreferrer')
+    return
+  }
+  void router.push(item.path)
 }
 </script>

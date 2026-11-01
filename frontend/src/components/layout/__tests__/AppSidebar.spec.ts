@@ -8,6 +8,9 @@ const componentPath = resolve(dirname(fileURLToPath(import.meta.url)), '../AppSi
 const componentSource = readFileSync(componentPath, 'utf8')
 const stylePath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../style.css')
 const styleSource = readFileSync(stylePath, 'utf8')
+// The nav declarations (groups and pages) live in consoleNav.ts, shared with the Ctrl/⌘K palette.
+const navPath = resolve(dirname(fileURLToPath(import.meta.url)), '../consoleNav.ts')
+const navSource = readFileSync(navPath, 'utf8')
 
 describe('AppSidebar custom SVG styles', () => {
   it('does not override uploaded SVG fill or stroke colors', () => {
@@ -54,22 +57,26 @@ describe('AppSidebar collapsible groups', () => {
 describe('AppSidebar operations center group', () => {
   it('renders tier headers inside a collapsible group', () => {
     // Section children become UNavigationMenu label items (expanded) and flyout headers (rail).
-    expect(componentSource).toContain("child.section\n          ? { type: 'label'")
+    expect(componentSource).toContain("child.kind === 'section'\n        ? sectionItem(child)")
     expect(componentSource).toContain('sidebar-child-section')
     expect(componentSource).toContain('v-if="row.section"')
   })
 
-  it('groups account, channel and diagnostics entries under one expandable parent', () => {
-    expect(componentSource).toContain("path: '/admin/ops-center'")
-    expect(componentSource).toContain("label: locale.value === 'zh' ? '运营中心' : 'Operations center'")
-    expect(componentSource).toContain("path: '#ops-tier-accounts'")
-    expect(componentSource).toContain("path: '#ops-tier-channels'")
-    expect(componentSource).toContain("path: '#ops-tier-diagnostics'")
-    expect(componentSource).toContain("path: '#ops-tier-platform'")
+  it('groups the former operations-center tiers into their own sidebar groups', () => {
+    // 运营中心 used to hold four tiers (accounts, channels, diagnostics, platform tools); they are
+    // now groups of their own, with the overview page first in "运营".
+    expect(navSource).toContain("link('/admin/ops-center', text('运营总览', 'Operations overview'))")
+    for (const key of ['admin-overview', 'admin-accounts', 'admin-billing', 'admin-operations', 'admin-monitoring', 'admin-security', 'admin-system']) {
+      expect(navSource).toContain(`key: '${key}'`)
+    }
+    expect(navSource).toContain("link('/admin/account-ops', text('账号通知', 'Account notifications'))")
+    expect(navSource).toContain("link('/admin/channel-operations', text('渠道运维', 'Channel operations'))")
+    expect(navSource).toContain("link('/admin/connections', text('连接诊断', 'Connections'))")
+    expect(navSource).toContain("link('/admin/serverless', text('地区路由', 'Regional routing'))")
   })
 
   it('no longer shows the standalone ops entry next to the group', () => {
-    expect(componentSource).not.toContain("{ path: '/admin/ops', label: t('nav.ops')")
+    expect(navSource).not.toContain("link('/admin/ops', t('nav.ops')")
   })
 })
 
@@ -89,11 +96,10 @@ describe('AppSidebar header styles', () => {
 
 describe('AppSidebar user navigation', () => {
   it('hides the legacy subscriptions entry while keeping the route available', () => {
-    expect(componentSource).not.toContain("{ path: '/subscriptions'")
+    expect(navSource).not.toContain("link('/subscriptions'")
   })
 
   it('includes Infinite Canvas next to API keys', () => {
-    expect(componentSource).toContain("{ path: '/infinite-canvas'")
-    expect(componentSource).toContain("t('nav.infiniteCanvas')")
+    expect(navSource).toContain("link('/keys', t('nav.apiKeys')),\n          link('/infinite-canvas', t('nav.infiniteCanvas'))")
   })
 })

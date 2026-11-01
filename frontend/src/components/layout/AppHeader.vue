@@ -105,7 +105,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute, useRouter, type RouteLocationRaw, type RouteLocationResolved, type RouteMeta } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationRaw, type RouteMeta } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useLocale } from '@nuxt/ui/composables/useLocale'
 import { useAuthStore, useAppStore } from '@/stores'
@@ -114,6 +114,7 @@ import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import { useSiteColorMode } from '@/composables/useSiteTheme'
 import UserMenu from './UserMenu.vue'
 import { FRAME_TARGETS, useDashboardFrame } from './dashboardFrame'
+import { routeParentTrail } from './routeTrail'
 
 const route = useRoute()
 const router = useRouter()
@@ -169,37 +170,14 @@ function metaTitle(meta: RouteMeta): string {
   return meta.title || ''
 }
 
-// meta.parent: a route name (params are taken from the current route) or a path.
-function resolveParent(parent: NonNullable<RouteMeta['parent']>): RouteLocationResolved | null {
-  const target = typeof parent === 'string' ? (parent.startsWith('/') ? { path: parent } : { name: parent }) : parent
-  try {
-    if ('name' in target) {
-      if (!router.hasRoute(target.name)) return null
-      const record = router.getRoutes().find((entry) => entry.name === target.name)
-      const keys = [...(record?.path.matchAll(/:(\w+)/g) ?? [])].map((match) => match[1])
-      const params = Object.fromEntries(keys.filter((key) => key in route.params).map((key) => [key, route.params[key]]))
-      return router.resolve({ name: target.name, params })
-    }
-    return router.resolve(target.path)
-  } catch {
-    return null
-  }
-}
-
-// The trail of parents, outermost first (the current page is the title after it).
-const crumbs = computed<Crumb[]>(() => {
-  const trail: Crumb[] = []
-  const seen = new Set<string>([route.path])
-  let parent = route.meta.parent
-  while (parent && trail.length < 4) {
-    const target = resolveParent(parent)
-    if (!target || seen.has(target.path)) break
-    seen.add(target.path)
-    trail.unshift({ label: metaTitle(target.meta) || target.path, path: target.path, to: target.fullPath })
-    parent = target.meta.parent
-  }
-  return trail
-})
+// The trail of meta.parent pages, outermost first (the current page is the title after it).
+const crumbs = computed<Crumb[]>(() =>
+  routeParentTrail(router, route).map((target) => ({
+    label: metaTitle(target.meta) || target.path,
+    path: target.path,
+    to: target.fullPath
+  }))
+)
 
 function formatHeaderMoney(value: number) {
   if (!Number.isFinite(value)) return '$0.00'

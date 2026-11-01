@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
+import { useAdminSettingsStore } from '@/stores/adminSettings'
 import ConsoleNavigationSearch from '../ConsoleNavigationSearch.vue'
 
 // UModal teleports its content; render it in place so the palette can be driven.
@@ -66,12 +67,16 @@ afterEach(() => {
 })
 
 describe('console navigation search', () => {
+  // The palette lists the sidebar's pages with the sidebar's labels (nav.*).
   it('limits secondary administrators to anonymous usage and personal navigation', async () => {
     const { wrapper, push } = await render('admin', false, 2)
-    expect(wrapper.text()).toContain('admin.usage.title')
-    expect(wrapper.text()).not.toContain('admin.users.title')
-    expect(wrapper.text()).not.toContain('admin.accounts.title')
-    expect(wrapper.text()).not.toContain('admin.settings.title')
+    await search('/admin/usage')
+    await vi.waitFor(() => expect(wrapper.findAll('.console-search-result')).toHaveLength(1))
+    expect(wrapper.text()).toContain('nav.usage')
+    await search('')
+    expect(wrapper.text()).not.toContain('nav.users')
+    expect(wrapper.text()).not.toContain('nav.accounts')
+    expect(wrapper.text()).not.toContain('nav.settings')
     await search('/admin/accounts')
     await vi.waitFor(() => expect(wrapper.findAll('.console-search-result')).toHaveLength(0))
     await wrapper.get('input').trigger('keydown.enter')
@@ -80,13 +85,30 @@ describe('console navigation search', () => {
 
   it('matches the sidebar by hiding users and retaining groups in simple admin mode', async () => {
     const { wrapper } = await render('admin', true)
-    expect(wrapper.text()).not.toContain('admin.users.title')
-    expect(wrapper.text()).toContain('admin.groups.title')
+    expect(wrapper.text()).not.toContain('nav.users')
+    expect(wrapper.text()).toContain('nav.groups')
+  })
+
+  it('reaches every page of a group, also the sub-pages behind an area sub-nav', async () => {
+    const { wrapper, push } = await render('admin')
+    // Switch the gated areas on so their pages are listed.
+    const app = useAppStore()
+    app.cachedPublicSettings = { payment_enabled: true, channel_monitor_enabled: true, affiliate_enabled: true, risk_control_enabled: true } as NonNullable<typeof app.cachedPublicSettings>
+    useAdminSettingsStore().paymentEnabled = true
+    for (const path of ['/admin/orders/plans', '/admin/affiliates/transfers', '/admin/mihomo', '/admin/serverless', '/admin/security-penalties', '/keys']) {
+      await search(path)
+      await vi.waitFor(() => expect(wrapper.findAll('.console-search-result').length, path).toBeGreaterThan(0))
+    }
+    await search('/admin/orders/plans')
+    await vi.waitFor(() => expect(wrapper.findAll('.console-search-result')).toHaveLength(1))
+    await wrapper.get('input').trigger('keydown.enter')
+    await flushPromises()
+    expect(push).toHaveBeenCalledWith('/admin/orders/plans')
   })
 
   it('does not expose admin or disabled feature destinations to a user', async () => {
     const { wrapper } = await render('user')
-    expect(wrapper.text()).not.toContain('admin.accounts.title')
+    expect(wrapper.text()).not.toContain('nav.accounts')
     expect(wrapper.text()).not.toContain('nav.buySubscription')
     expect(wrapper.text()).not.toContain('nav.channelStatus')
     expect(wrapper.text()).toContain('nav.apiKeys')

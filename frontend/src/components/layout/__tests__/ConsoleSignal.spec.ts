@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import UApp from '@nuxt/ui/components/App.vue'
-import { useAppStore, useAuthStore, useSubscriptionStore } from '@/stores'
+import { useAppStore, useAuthStore, useOnboardingStore, useSubscriptionStore } from '@/stores'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import AppLayout from '../AppLayout.vue'
@@ -89,6 +89,11 @@ async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
 
 const frame = () => wrapper!.get('.console-frame')
 const navbar = () => wrapper!.get('header.console-navbar')
+// Top-level sidebar entries (groups and pages), in order.
+const groupLabels = () => [...wrapper!.get('.sidebar-nav [data-slot="list"]').element.children]
+  .filter((item) => item.tagName === 'LI')
+  .map((item) => item.querySelector('[data-slot="linkLabel"]')?.textContent?.trim() ?? '')
+  .filter(Boolean)
 
 beforeEach(() => {
   localStorage.clear()
@@ -133,6 +138,8 @@ describe('console frame (Nuxt UI dashboard)', () => {
     const { router } = await renderShell('/keys', 'admin')
     expect(frame().classes()).toContain('console-signal')
     expect(wrapper!.find('.console-sidebar a[href="/admin/dashboard"]').exists()).toBe(true)
+    // On a personal page the admin groups are there, closed.
+    expect(groupLabels()).toContain('nav.groupAccountsChannels')
     await router.push('/admin/dashboard')
     expect(frame().classes()).toContain('console-signal')
     expect(frame().classes()).toContain('signal-admin')
@@ -169,8 +176,9 @@ describe('console frame (Nuxt UI dashboard)', () => {
     const wasDark = document.documentElement.classList.contains('dark')
     await wrapper!.get('[data-test="theme-toggle"]').trigger('click')
     expect(document.documentElement.classList.contains('dark')).toBe(!wasDark)
-    expect(wrapper!.find('.console-sidebar a[href="/keys"]').exists()).toBe(true)
-    expect(wrapper!.find('.console-sidebar a[href="/usage"]').exists()).toBe(true)
+    // The drawer (teleported) lists the groups open, with their pages as links.
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"] a[href="/keys"]')).not.toBeNull())
+    expect(document.body.querySelector('[role="dialog"] a[href="/usage"]')).not.toBeNull()
   })
 
   it('keeps the light/dark toggle in step with the real dark class on <html>', async () => {
@@ -217,7 +225,7 @@ describe('console frame (Nuxt UI dashboard)', () => {
     await flushPromises()
     // Collapsed rail: no inline children, the group becomes a popover trigger with its label.
     expect(wrapper!.find('.sidebar-nav [data-slot="childList"]').exists()).toBe(false)
-    const trigger = wrapper!.get('.sidebar-nav [aria-label="nav.channelManagement"]')
+    const trigger = wrapper!.get('.sidebar-nav [aria-label="nav.groupAccountsChannels"]')
     expect(trigger.attributes('aria-haspopup')).toBe('dialog')
     // The rail button of the group holding the current page is drawn active (primary pill).
     expect(trigger.classes()).toContain('text-primary')
@@ -225,11 +233,32 @@ describe('console frame (Nuxt UI dashboard)', () => {
     await vi.waitFor(() => expect(document.body.querySelector('.console-flyout-list a[href="/admin/channels/pricing"]')).not.toBeNull())
   })
 
-  it('shows the operations center tier headers inside the expanded group', async () => {
-    await renderShell('/admin/account-ops', 'admin')
-    const headers = wrapper!.findAll('.sidebar-nav .sidebar-child-section').map((node) => node.text())
-    expect(headers).toEqual(['Account operations', 'Channel operations', 'Monitoring and diagnostics', 'Platform tools'])
+  it('regroups the admin sidebar into closed groups; the current page opens its own', async () => {
+    const { app } = await renderShell('/admin/account-ops', 'admin')
+    expect(groupLabels()).toEqual(['nav.groupOverview', 'nav.groupAccountsChannels', 'nav.groupUsersBilling', 'nav.groupOperations', 'nav.groupMonitoring', 'nav.groupSystem', 'nav.myAccount'])
+    // Only "运营" is open (it holds the page), with the former ops-center tiers as pages.
+    const open = wrapper!.findAll('.sidebar-nav [data-slot="childList"] a').map((link) => link.attributes('href'))
+    expect(open).toEqual(['/admin/ops-center', '/admin/account-ops', '/admin/ops-automation', '/admin/credential-guard', '/admin/channel-operations', '/admin/announcements', '/admin/tickets'])
     expect(wrapper!.find('.sidebar-nav a[href="/admin/account-ops"][aria-current="page"]').exists()).toBe(true)
+    // Security appears with its feature flag.
+    app.cachedPublicSettings = { ...app.cachedPublicSettings, risk_control_enabled: true } as NonNullable<typeof app.cachedPublicSettings>
+    await nextTick()
+    expect(groupLabels()).toContain('nav.groupSecurity')
+  })
+
+  it('shows section headers inside the admin "My account" group', async () => {
+    await renderShell('/keys', 'admin')
+    const headers = wrapper!.findAll('.sidebar-nav .sidebar-child-section').map((node) => node.text())
+    expect(headers).toEqual(['nav.groupOverview', 'nav.groupApiUsage', 'nav.groupRecharge', 'nav.groupHelpAccount'])
+    expect(wrapper!.find('.sidebar-nav a[href="/keys"][aria-current="page"]').exists()).toBe(true)
+  })
+
+  it('gives users four open groups', async () => {
+    await renderShell('/keys')
+    expect(groupLabels()).toEqual(['nav.groupOverview', 'nav.groupApiUsage', 'nav.groupRecharge', 'nav.groupHelpAccount'])
+    for (const href of ['/dashboard', '/keys', '/usage', '/purchase', '/tickets', '/profile']) {
+      expect(wrapper!.find(`.sidebar-nav a[href="${href}"]`).exists(), href).toBe(true)
+    }
   })
 
   it('shows a breadcrumb back to the parent page on detail pages (meta.parent)', async () => {
@@ -254,8 +283,12 @@ describe('console frame (Nuxt UI dashboard)', () => {
     expect(navbar().find('.console-back').exists()).toBe(false)
   })
 
-  it('anchors the onboarding tour on the sidebar links', async () => {
+  it('anchors the onboarding tour on the sidebar links (their groups open while it runs)', async () => {
     await renderShell('/admin/dashboard', 'admin')
+    // Closed groups first: the tour's links are not rendered yet.
+    expect(wrapper!.find('[data-tour="sidebar-channel-manage"]').exists()).toBe(false)
+    useOnboardingStore().setDriverInstance({ isActive: () => true } as never)
+    await vi.waitFor(() => expect(wrapper!.find('[data-tour="sidebar-channel-manage"]').exists()).toBe(true))
     expect(wrapper!.find('.sidebar-nav a[href="/admin/groups"][data-tour="sidebar-group-manage"]').exists()).toBe(true)
     expect(wrapper!.find('.sidebar-nav a[href="/admin/accounts"][data-tour="sidebar-channel-manage"]').exists()).toBe(true)
     expect(wrapper!.find('.sidebar-nav a[href="/keys"][data-tour="sidebar-my-keys"]').exists()).toBe(true)
