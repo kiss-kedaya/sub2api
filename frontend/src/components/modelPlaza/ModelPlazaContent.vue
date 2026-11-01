@@ -1,33 +1,31 @@
 <template>
-  <div class="model-plaza-content space-y-5">
+  <div class="model-plaza-content min-w-0 space-y-5">
     <UserPageHeader flush :title="t('modelPlaza.title')" :description="t('modelPlaza.description')" />
 
     <!-- 全局价格说明(管理员配置,Markdown) -->
     <div
       v-if="descriptionHtml"
-      class="plaza-description px-1 py-3 text-sm"
+      class="plaza-description border-b border-default pb-4 text-sm"
       v-html="descriptionHtml"
     ></div>
 
     <!-- 未登录提示 -->
-    <p
-      v-if="!isAuthenticated"
-      class="plaza-hint"
-    >
-      <Icon name="infoCircle" size="xs" class="h-3.5 w-3.5" />
+    <p v-if="!isAuthenticated" class="flex items-center gap-1.5 text-[13px] text-muted">
+      <UIcon name="i-lucide-info" class="size-3.5 shrink-0" />
       {{ t('modelPlaza.anonymousHint') }}
     </p>
 
     <!-- 加载/错误/空 -->
-    <div v-if="loading" class="flex min-h-[240px] items-center justify-center">
-      <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-600/25 border-t-primary-600 dark:border-primary-400/25 dark:border-t-primary-400"></div>
+    <div v-if="loading" class="flex min-h-60 items-center justify-center">
+      <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
     </div>
-    <div
+    <UAlert
       v-else-if="error"
-      class="plaza-status plaza-status-error"
-    >
-      {{ t('modelPlaza.loadFailed') }}
-    </div>
+      :description="t('modelPlaza.loadFailed')"
+      icon="i-lucide-circle-alert"
+      color="error"
+      variant="subtle"
+    />
     <template v-else>
       <!-- 筛选区:平台 → 分组 → 倍率 -->
       <PlazaFilterBar
@@ -48,12 +46,9 @@
       <div v-if="filteredGroups.length > 0" class="space-y-5">
         <PlazaGroupSection v-for="g in filteredGroups" :key="g.id" :group="g" />
       </div>
-      <div
-        v-else
-        class="plaza-status"
-      >
+      <p v-else class="py-12 text-center text-sm text-muted">
         {{ searchActive ? t('modelPlaza.noSearchResult') : t('modelPlaza.empty') }}
-      </div>
+      </p>
     </template>
   </div>
 </template>
@@ -63,7 +58,6 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import Icon from '@/components/icons/Icon.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import PlazaFilterBar from './PlazaFilterBar.vue'
 import PlazaGroupSection from './PlazaGroupSection.vue'
@@ -74,7 +68,7 @@ const props = defineProps<{
   response: ModelPlazaResponse | null
   loading: boolean
   error?: boolean
-  /** 后台内嵌形态(AppLayout 内):隐藏页头。 */
+  /** 后台内嵌形态(AppLayout 内)。 */
   embedded?: boolean
 }>()
 
@@ -151,77 +145,67 @@ const filteredGroups = computed(() => {
 </script>
 
 <style scoped>
-@reference "../../style.css";
-.model-plaza-content {
-  min-width: 0;
-  color: var(--signal-text, #1c1c1e);
-}
-
-.plaza-hint {
-  margin-top: 6px;
-  color: var(--signal-muted, #63636c);
-  font-size: 13px;
-}
-
-.plaza-hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.plaza-status {
-  padding: 32px 20px;
-  border: 1px dashed var(--signal-line, #dedee4);
-  border-radius: 8px;
-  color: var(--signal-muted, #63636c);
-  text-align: center;
-  font-size: 14px;
-}
-
-.plaza-status-error {
-  border-style: solid;
-  border-color: #eb4d3d55;
-  background: #eb4d3d0f;
-  color: #c4291c;
-}
-
+/* Admin-written Markdown, in Nuxt UI tokens. */
 .plaza-description {
-  border-bottom: 1px solid var(--signal-line, #dedee4);
   line-height: 1.7;
   overflow-wrap: anywhere;
+  color: var(--ui-text);
 }
 
 .plaza-description :deep(h1),
 .plaza-description :deep(h2),
 .plaza-description :deep(h3) {
-  @apply mb-2 mt-3 font-semibold text-gray-900 first:mt-0 dark:text-white;
+  margin: 0.75rem 0 0.5rem;
+  color: var(--ui-text-highlighted);
+  font-weight: 600;
+}
+
+.plaza-description :deep(:is(h1, h2, h3):first-child) {
+  margin-top: 0;
 }
 
 .plaza-description :deep(p) {
-  @apply mb-2 text-gray-700 last:mb-0 dark:text-dark-200;
+  margin-bottom: 0.5rem;
+}
+
+.plaza-description :deep(p:last-child) {
+  margin-bottom: 0;
 }
 
 .plaza-description :deep(a) {
-  @apply text-primary-600 underline underline-offset-4 hover:text-primary-700 dark:text-primary-300;
+  color: var(--ui-primary);
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 .plaza-description :deep(ul) {
-  @apply mb-2 list-disc pl-5;
+  margin-bottom: 0.5rem;
+  padding-left: 1.25rem;
+  list-style: disc;
 }
 
 .plaza-description :deep(ol) {
-  @apply mb-2 list-decimal pl-5;
+  margin-bottom: 0.5rem;
+  padding-left: 1.25rem;
+  list-style: decimal;
 }
 
 .plaza-description :deep(li) {
-  @apply mb-0.5 text-gray-700 dark:text-dark-200;
+  margin-bottom: 0.125rem;
 }
 
 .plaza-description :deep(code) {
-  @apply rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs dark:bg-dark-800;
+  border-radius: 0.25rem;
+  background: var(--ui-bg-elevated);
+  padding: 0.125rem 0.375rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
 }
 
 .plaza-description :deep(blockquote) {
-  @apply my-2 border-l-4 border-gray-300 pl-3 text-gray-600 dark:border-dark-600 dark:text-dark-300;
+  margin: 0.5rem 0;
+  border-left: 3px solid var(--ui-border-accented);
+  padding-left: 0.75rem;
+  color: var(--ui-text-muted);
 }
 </style>

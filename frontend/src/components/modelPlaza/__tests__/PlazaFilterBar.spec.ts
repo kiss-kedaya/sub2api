@@ -87,7 +87,10 @@ describe('PlazaFilterBar faceted filters', () => {
     expect(wrapper.emitted('update:groupId')?.at(-1)).toEqual([2])
     await wrapper.get('[aria-label="modelPlaza.filters.rateLabel"]').get('[data-option="0.07"]').trigger('click')
     expect(wrapper.emitted('update:rate')?.at(-1)).toEqual([0.07])
-    await wrapper.get('.plaza-seg-item[aria-checked="true"]').trigger('click')
+    // Platform tabs (UTabs) select on mousedown, like reka-ui's TabsTrigger.
+    await wrapper.get('.plaza-seg-item[aria-selected="true"]').trigger('mousedown')
     expect(wrapper.emitted('update:platform')?.at(-1)).toEqual(['all'])
+    await wrapper.findAll('.plaza-seg-item')[2].trigger('mousedown')
+    expect(wrapper.emitted('update:platform')?.at(-1)).toEqual(['openai'])
   })
 })

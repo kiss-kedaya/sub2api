@@ -4,22 +4,19 @@
     <ModelPlazaContent :response="data" :loading="loading" :error="loadFailed" embedded />
   </AppLayout>
 
-  <!-- 独立形态:自带导航条(logo/站名 + 登录/回后台) -->
-  <div v-else class="console-signal model-plaza-public min-h-screen">
+  <!-- 独立形态:自带导航条(logo/站名 + 登录/回后台),背景为水墨樱花 -->
+  <div v-else class="relative isolate min-h-screen bg-default text-default">
     <InkSakura />
     <PlazaNavBar />
-    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+    <UContainer as="main" class="py-6 lg:py-8">
       <ModelPlazaContent :response="data" :loading="loading" :error="loadFailed" />
-    </main>
+    </UContainer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import '@/styles/console-signal.css'
-import '@/styles/console-studio.css'
-import '@/styles/console-elevation.css'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import InkSakura from '@/components/layout/InkSakura.vue'
 import PlazaNavBar from '@/components/modelPlaza/PlazaNavBar.vue'

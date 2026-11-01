@@ -1,62 +1,59 @@
 <template>
-  <div class="plaza-filters">
-    <div class="plaza-toolbar">
-      <div class="plaza-search">
-        <Icon name="search" size="sm" class="plaza-search-icon" />
-        <input
-          :value="search"
-          type="text"
-          :placeholder="t('modelPlaza.filters.searchPlaceholder')"
-          :aria-label="t('modelPlaza.filters.modelLabel')"
-          class="input plaza-search-input"
-          @input="$emit('update:search', ($event.target as HTMLInputElement).value)"
-        />
-        <button
-          v-if="search"
-          type="button"
-          class="plaza-search-clear"
-          :aria-label="t('common.clear')"
-          @click="$emit('update:search', '')"
-        >
-          <Icon name="x" size="xs" class="h-3.5 w-3.5" />
-        </button>
-      </div>
+  <div class="flex min-w-0 flex-col gap-3">
+    <div class="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(168px,220px)_minmax(112px,150px)]">
+      <UInput
+        :model-value="search"
+        icon="i-lucide-search"
+        :placeholder="t('modelPlaza.filters.searchPlaceholder')"
+        :aria-label="t('modelPlaza.filters.modelLabel')"
+        class="col-span-2 min-w-0 md:col-span-1"
+        :ui="{ base: 'plaza-search-input', trailing: 'pe-1' }"
+        @update:model-value="$emit('update:search', String($event ?? ''))"
+      >
+        <template v-if="search" #trailing>
+          <UButton
+            icon="i-lucide-x"
+            color="neutral"
+            variant="link"
+            size="sm"
+            :aria-label="t('common.clear')"
+            @click="$emit('update:search', '')"
+          />
+        </template>
+      </UInput>
       <Select
         :model-value="groupId"
         :options="groupSelectOptions"
         :aria-label="t('modelPlaza.filters.groupLabel')"
-        class="plaza-select"
+        class="min-w-0"
         @update:model-value="onGroupChange"
       />
       <Select
         :model-value="rate"
         :options="rateSelectOptions"
         :aria-label="t('modelPlaza.filters.rateLabel')"
-        class="plaza-select plaza-select-rate"
+        class="min-w-0"
         @update:model-value="onRateChange"
       />
     </div>
 
-    <div class="plaza-seg-wrap">
-      <div
-        class="plaza-seg"
-        role="radiogroup"
+    <!-- pb-px keeps the tab list's bottom line and indicator inside the scroll box -->
+    <div class="min-w-0 overflow-x-auto pb-px">
+      <UTabs
+        :model-value="platform"
+        :items="platformItems"
+        :content="false"
+        variant="link"
+        size="sm"
         :aria-label="t('modelPlaza.filters.platformLabel')"
+        class="w-max min-w-full"
+        :ui="{ trigger: 'plaza-seg-item' }"
+        @update:model-value="$emit('update:platform', String($event))"
       >
-        <button
-          v-for="p in platformChoices"
-          :key="`platform-${p}`"
-          type="button"
-          role="radio"
-          class="plaza-seg-item"
-          :aria-checked="platform === p"
-          :disabled="p !== 'all' && !platformEnabled(p)"
-          @click="$emit('update:platform', p)"
-        >
-          <PlatformIcon v-if="p !== 'all'" :platform="p as GroupPlatform" size="xs" />
-          {{ p === 'all' ? t('modelPlaza.filters.all') : p }}
-        </button>
-      </div>
+        <template #leading="{ item }">
+          <PlatformIcon v-if="item.value !== 'all'" :platform="item.value as GroupPlatform" size="xs" />
+        </template>
+      </UTabs>
     </div>
   </div>
 </template>
@@ -64,7 +61,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import type { GroupPlatform } from '@/types'
@@ -92,7 +88,14 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const platformChoices = computed(() => ['all', ...props.platforms])
+/** 平台页签:「全部」恒可点,其余在另两维当前选择下无命中时置灰。 */
+const platformItems = computed(() =>
+  ['all', ...props.platforms].map((p) => ({
+    value: p,
+    label: p === 'all' ? t('modelPlaza.filters.all') : p,
+    disabled: p !== 'all' && !platformEnabled(p)
+  }))
+)
 
 const groupSelectOptions = computed<SelectOption[]>(() => [
   { value: 'all', label: t('modelPlaza.filters.groupLabel') },
@@ -149,118 +152,3 @@ function onRateChange(value: string | number | boolean | null) {
   emit('update:rate', value === 'all' || value === null ? 'all' : Number(value))
 }
 </script>
-
-<style scoped>
-.plaza-filters {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-
-.plaza-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(168px, 220px) minmax(112px, 150px);
-  gap: 8px;
-  align-items: stretch;
-}
-
-.plaza-search {
-  position: relative;
-  min-width: 0;
-}
-
-.plaza-search-icon {
-  position: absolute;
-  top: 50%;
-  left: 12px;
-  z-index: 1;
-  color: var(--signal-muted, #63636c);
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.plaza-search-input {
-  width: 100%;
-  min-height: 36px;
-  padding: 8px 36px 8px 36px;
-  border-radius: 8px;
-}
-
-.plaza-search-clear {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--signal-muted, #63636c);
-  transform: translateY(-50%);
-}
-
-.plaza-search-clear:hover {
-  color: var(--signal-text, #1c1c1e);
-}
-
-.plaza-select {
-  min-width: 0;
-}
-
-.plaza-seg-wrap {
-  min-width: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.plaza-seg {
-  display: inline-flex;
-  min-height: 36px;
-  padding: 2px 0;
-  border-bottom: 1px solid var(--signal-line, #dde2e4);
-  gap: 6px;
-}
-
-.plaza-seg-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--signal-muted, #63636c);
-  font-size: 13px;
-  line-height: 18px;
-  white-space: nowrap;
-}
-
-.plaza-seg-item[aria-checked='true'] {
-  border-bottom-color: var(--signal-accent, #2f2a2c);
-  color: var(--signal-text, #2f2a2c);
-}
-
-.plaza-seg-item:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-@media (max-width: 767px) {
-  .plaza-toolbar {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  .plaza-search {
-    grid-column: 1 / -1;
-  }
-
-  .plaza-seg-item {
-    min-height: 40px;
-  }
-}
-</style>
