@@ -12,17 +12,17 @@
             <UButton icon="i-lucide-plus" :label="t('admin.users.createUser')" @click="showCreateModal = true" />
           </template>
         </AdminPageHeader>
-        <div class="flex flex-wrap items-center justify-between gap-1.5">
-          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        <PageToolbar>
+          <template #left>
             <UInput
               v-model="searchQuery"
               icon="i-lucide-search"
               :placeholder="t('admin.users.searchUsers')"
-              class="w-full sm:max-w-sm"
+              class="w-56 sm:w-64"
               @update:model-value="handleSearch"
             />
 
-            <div v-if="visibleFilters.has('role')" class="w-full sm:w-32">
+            <div v-if="visibleFilters.has('role')" class="w-32">
               <Select
                 v-model="filters.role"
                 :options="[
@@ -34,7 +34,7 @@
               />
             </div>
 
-            <div v-if="visibleFilters.has('status')" class="w-full sm:w-32">
+            <div v-if="visibleFilters.has('status')" class="w-32">
               <Select
                 v-model="filters.status"
                 :options="[
@@ -46,7 +46,7 @@
               />
             </div>
 
-            <div v-if="visibleFilters.has('group')" class="w-full sm:w-44">
+            <div v-if="visibleFilters.has('group')" class="w-44">
               <Select
                 v-model="filters.group"
                 :options="groupFilterOptions"
@@ -58,7 +58,7 @@
               />
             </div>
 
-            <div v-if="visibleFilters.has('apiKeyGroup')" class="w-full sm:w-44">
+            <div v-if="visibleFilters.has('apiKeyGroup')" class="w-44">
               <Select
                 v-model="filters.apiKeyGroup"
                 :options="apiKeyGroupFilterOptions"
@@ -70,7 +70,7 @@
 
             <!-- Dynamic attribute filters -->
             <template v-for="(value, attrId) in activeAttributeFilters" :key="attrId">
-              <div v-if="visibleFilters.has(`attr_${attrId}`)" class="w-full sm:w-36">
+              <div v-if="visibleFilters.has(`attr_${attrId}`)" class="w-36">
                 <Select
                   v-if="['select', 'multi_select'].includes(getAttributeDefinition(Number(attrId))?.type || '')"
                   :model-value="value"
@@ -91,9 +91,8 @@
                 />
               </div>
             </template>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-1.5">
+          </template>
+          <template #right>
             <template v-if="selectedCount > 0">
               <UButton
                 color="neutral"
@@ -121,7 +120,6 @@
                 </template>
               </UButton>
             </template>
-
             <UButton
               color="neutral"
               variant="outline"
@@ -164,8 +162,8 @@
               :aria-label="t('admin.users.attributes.configButton')"
               @click="showAttributesModal = true"
             />
-          </div>
-        </div>
+          </template>
+        </PageToolbar>
       </template>
 
       <!-- Users Table -->
@@ -466,6 +464,7 @@ import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDateTime } from '@/utils/format'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 
 const { t } = useI18n()

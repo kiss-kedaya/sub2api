@@ -4,21 +4,21 @@
       <template #filters>
         <AdminPageHeader class="mb-4" :title="t(pageHeaderKeys.title)" :description="t(pageHeaderKeys.description)" />
         <!-- Toolbar row (template customers page) -->
-        <div class="flex flex-wrap items-center justify-between gap-1.5">
-          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-            <UInput v-model="filters.search" icon="i-lucide-search" class="w-full md:max-w-xs" :placeholder="t('admin.affiliates.records.searchPlaceholder')" @update:model-value="debounceLoad" />
-            <UInput v-model="filters.start_at" type="date" class="w-full sm:w-40" :title="t('admin.affiliates.records.startAt')" :aria-label="t('admin.affiliates.records.startAt')" @change="reloadFromFirstPage" />
-            <UInput v-model="filters.end_at" type="date" class="w-full sm:w-40" :title="t('admin.affiliates.records.endAt')" :aria-label="t('admin.affiliates.records.endAt')" @change="reloadFromFirstPage" />
-          </div>
-          <div class="flex flex-wrap items-center gap-1.5">
+        <PageToolbar>
+          <template #left>
+            <UInput v-model="filters.search" icon="i-lucide-search" class="w-56 sm:w-64" :placeholder="t('admin.affiliates.records.searchPlaceholder')" @update:model-value="debounceLoad" />
+            <UInput v-model="filters.start_at" type="date" class="w-40" :title="t('admin.affiliates.records.startAt')" :aria-label="t('admin.affiliates.records.startAt')" @change="reloadFromFirstPage" />
+            <UInput v-model="filters.end_at" type="date" class="w-40" :title="t('admin.affiliates.records.endAt')" :aria-label="t('admin.affiliates.records.endAt')" @change="reloadFromFirstPage" />
+          </template>
+          <template #right>
             <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" square :disabled="loading" :ui="{ leadingIcon: loading ? 'animate-spin' : '' }" :title="t('common.refresh')" :aria-label="t('common.refresh')" @click="loadRecords" />
             <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }">
               <UButton color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" :aria-label="t('admin.affiliates.displayColumns')">
                 <span class="hidden sm:inline">{{ t('admin.affiliates.displayColumns') }}</span>
               </UButton>
             </UDropdownMenu>
-          </div>
-        </div>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
@@ -155,6 +155,7 @@ import { computed, defineComponent, h, onMounted, reactive, ref, resolveComponen
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'

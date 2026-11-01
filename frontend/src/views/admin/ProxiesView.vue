@@ -12,16 +12,16 @@
           </template>
         </AdminPageHeader>
         <!-- Toolbar row (template customers page) -->
-        <div class="flex flex-wrap items-center justify-between gap-1.5">
-          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        <PageToolbar>
+          <template #left>
             <UInput
               v-model="searchQuery"
               icon="i-lucide-search"
               :placeholder="t('admin.proxies.searchProxies')"
-              class="w-full sm:max-w-xs"
+              class="w-56 sm:w-64"
               @update:model-value="handleSearch"
             />
-            <div class="w-full sm:w-40">
+            <div class="w-40">
               <Select
                 v-model="filters.protocol"
                 :options="protocolOptions"
@@ -29,7 +29,7 @@
                 @change="handleFilterChange"
               />
             </div>
-            <div class="w-full sm:w-36">
+            <div class="w-36">
               <Select
                 v-model="filters.status"
                 :options="statusOptions"
@@ -37,9 +37,8 @@
                 @change="handleFilterChange"
               />
             </div>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-1.5">
+          </template>
+          <template #right>
             <UButton
               v-if="selectedCount > 0"
               color="error"
@@ -88,8 +87,8 @@
                 <span class="hidden sm:inline">{{ t('admin.proxies.displayColumns') }}</span>
               </UButton>
             </UDropdownMenu>
-          </div>
-        </div>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
@@ -698,6 +697,7 @@ import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import { useClipboard } from '@/composables/useClipboard'

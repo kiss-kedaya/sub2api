@@ -8,20 +8,20 @@
           :title="t('admin.audit.title')"
           :description="t('admin.audit.description')"
         />
-        <div class="flex flex-wrap items-center justify-between gap-1.5">
-          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        <PageToolbar>
+          <template #left>
             <UInput
               v-model.trim="filters.q"
               icon="i-lucide-search"
-              class="w-full sm:max-w-xs"
+              class="w-56 sm:w-64"
               :placeholder="t('admin.audit.filters.qPlaceholder')"
               :aria-label="t('admin.audit.filters.q')"
               @keyup.enter="search"
             />
-            <div class="w-full sm:w-32">
+            <div class="w-32">
               <Select v-model="filters.success" :options="resultOptions" :aria-label="t('admin.audit.filters.result')" @change="search" />
             </div>
-            <div class="w-full sm:w-36">
+            <div class="w-36">
               <Select :model-value="timeRange" :options="timeRangeOptions" :aria-label="t('admin.dashboard.timeRange')" @update:model-value="handleTimeRangeChange" />
             </div>
             <UPopover :content="{ align: 'start' }">
@@ -54,8 +54,8 @@
                 </div>
               </template>
             </UPopover>
-          </div>
-          <div class="flex flex-wrap items-center gap-1.5">
+          </template>
+          <template #right>
             <UButton
               color="neutral"
               variant="outline"
@@ -73,8 +73,8 @@
                 <span class="hidden sm:inline">{{ t('admin.audit.displayColumns') }}</span>
               </UButton>
             </UDropdownMenu>
-          </div>
-        </div>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
@@ -266,6 +266,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import { useListColumnMenu } from './useListColumnMenu'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import { useAppStore } from '@/stores'
 
 const { t } = useI18n()

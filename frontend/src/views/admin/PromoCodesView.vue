@@ -12,18 +12,18 @@
           </template>
         </AdminPageHeader>
         <!-- Toolbar row (template customers page) -->
-        <div class="flex flex-wrap items-center justify-between gap-1.5">
-          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        <PageToolbar>
+          <template #left>
             <UInput
               v-model="searchQuery"
               icon="i-lucide-search"
               :placeholder="t('admin.promo.searchCodes')"
-              class="w-full sm:max-w-xs"
+              class="w-56 sm:w-64"
               @update:model-value="handleSearch"
             />
-            <Select v-model="filters.status" :options="filterStatusOptions" class="w-full sm:w-36" @change="loadCodes" />
-          </div>
-          <div class="flex flex-wrap items-center gap-1.5">
+            <Select v-model="filters.status" :options="filterStatusOptions" class="w-36" @change="loadCodes" />
+          </template>
+          <template #right>
             <UButton
               color="neutral"
               variant="outline"
@@ -40,8 +40,8 @@
                 <span class="hidden sm:inline">{{ t('admin.promo.displayColumns') }}</span>
               </UButton>
             </UDropdownMenu>
-          </div>
-        </div>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
@@ -243,6 +243,7 @@ import Select from '@/components/common/Select.vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { useListColumnMenu } from './useListColumnMenu'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 const { t } = useI18n()

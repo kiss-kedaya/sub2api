@@ -3,31 +3,33 @@
     <div class="space-y-4">
       <AdminPageHeader :title="t('nav.orderManagement')" />
       <!-- Toolbar row (template customers page) -->
-      <div class="flex flex-wrap items-center justify-between gap-1.5">
-        <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      <PageToolbar>
+        <template #left>
           <UInput
             v-model="orderSearch"
             icon="i-lucide-search"
-            class="w-full sm:max-w-xs"
+            class="w-56 sm:w-64"
             :placeholder="t('payment.admin.searchOrders')"
             @update:model-value="debounceLoadOrders"
           />
-          <Select v-model="orderFilters.status" :options="statusFilterOptions" class="w-full sm:w-36" @change="loadOrders" />
-          <Select v-model="orderFilters.payment_type" :options="paymentTypeFilterOptions" class="w-full sm:w-40" @change="loadOrders" />
-          <Select v-model="orderFilters.order_type" :options="orderTypeFilterOptions" class="w-full sm:w-36" @change="loadOrders" />
-        </div>
-        <UButton
-          color="neutral"
-          variant="outline"
-          icon="i-lucide-refresh-cw"
-          square
-          :disabled="ordersLoading"
-          :ui="{ leadingIcon: ordersLoading ? 'animate-spin' : '' }"
-          :title="t('common.refresh')"
-          :aria-label="t('common.refresh')"
-          @click="loadOrders"
-        />
-      </div>
+          <Select v-model="orderFilters.status" :options="statusFilterOptions" class="w-36" @change="loadOrders" />
+          <Select v-model="orderFilters.payment_type" :options="paymentTypeFilterOptions" class="w-40" @change="loadOrders" />
+          <Select v-model="orderFilters.order_type" :options="orderTypeFilterOptions" class="w-36" @change="loadOrders" />
+        </template>
+        <template #right>
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            square
+            :disabled="ordersLoading"
+            :ui="{ leadingIcon: ordersLoading ? 'animate-spin' : '' }"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            @click="loadOrders"
+          />
+        </template>
+      </PageToolbar>
 
       <!-- Table: view + the one action the order state allows -->
       <OrderTable :orders="orders" :loading="ordersLoading" show-user>
@@ -124,6 +126,7 @@ import { formatOrderDateTime } from '@/components/payment/orderUtils'
 import type { PaymentOrder } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'

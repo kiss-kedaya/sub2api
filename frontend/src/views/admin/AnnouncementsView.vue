@@ -12,18 +12,18 @@
           </template>
         </AdminPageHeader>
         <!-- Toolbar row (template customers page) -->
-        <div class="flex flex-wrap items-center justify-between gap-1.5">
-          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        <PageToolbar>
+          <template #left>
             <UInput
               v-model="searchQuery"
               icon="i-lucide-search"
               :placeholder="t('admin.announcements.searchAnnouncements')"
-              class="w-full sm:max-w-xs"
+              class="w-56 sm:w-64"
               @update:model-value="handleSearch"
             />
-            <Select v-model="filters.status" :options="statusFilterOptions" class="w-full sm:w-40" @change="handleStatusChange" />
-          </div>
-          <div class="flex flex-wrap items-center gap-1.5">
+            <Select v-model="filters.status" :options="statusFilterOptions" class="w-40" @change="handleStatusChange" />
+          </template>
+          <template #right>
             <UButton
               color="neutral"
               variant="outline"
@@ -40,8 +40,8 @@
                 <span class="hidden sm:inline">{{ t('admin.announcements.displayColumns') }}</span>
               </UButton>
             </UDropdownMenu>
-          </div>
-        </div>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
@@ -211,6 +211,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { useListColumnMenu } from './useListColumnMenu'
 
