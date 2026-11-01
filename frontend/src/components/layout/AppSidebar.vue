@@ -1,5 +1,5 @@
 <template>
-  <!-- UDashboardSidebar: a fixed 14rem desktop rail (the old main sidebar's reading width),
+  <!-- UDashboardSidebar: a fixed 16rem desktop rail (the main sidebar's reading width),
        collapsible to a 4rem rail, and a slideover on phones. -->
   <UDashboardSidebar
     id="console"
@@ -115,6 +115,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { NavigationMenuItem } from '@nuxt/ui'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore, useSubscriptionStore } from '@/stores'
+import { useTicketNotificationStore, type TicketScope } from '@/stores/ticketNotifications'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
@@ -176,6 +177,7 @@ const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
 const subscriptionStore = useSubscriptionStore()
+const ticketStore = useTicketNotificationStore()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 
 // The store stays the source of truth (UDashboardGroup persists the collapsed state too).
@@ -440,7 +442,23 @@ function isActive(path: string): boolean {
 
 function isGroupActive(item: NavItem): boolean {
   if (!item.children) return false
-  return item.children.some(child => !child.section && route.path === child.path)
+  return item.children.some(child => !child.section && isActive(child.path))
+}
+
+/**
+ * Counts come from the existing ticket stats endpoints (authenticated, counts
+ * only). A failed fetch keeps the last number and shows a warning badge, so the
+ * failure is visible instead of being reported as zero.
+ */
+function ticketBadge(path: string): NavigationMenuItem['badge'] | undefined {
+  const scope: TicketScope | null = path === '/admin/tickets' ? 'admin' : path === '/tickets' ? 'user' : null
+  if (!scope) return undefined
+  if (ticketStore.errorFor(scope)) {
+    return { label: '!', color: 'warning', variant: 'subtle', size: 'sm' }
+  }
+  const unread = ticketStore.unreadFor(scope)
+  if (!unread) return undefined
+  return { label: unread > 99 ? '99+' : unread, color: 'neutral', variant: 'subtle', size: 'sm' }
 }
 
 // Onboarding tour anchors (components/Guide/steps.ts) on the matching links.
@@ -471,7 +489,8 @@ function toMenuItems(items: NavItem[], collapsed: boolean): NavigationMenuItem[]
               label: child.label,
               to: child.path,
               value: child.path,
-              active: route.path === child.path,
+              active: isActive(child.path),
+              badge: ticketBadge(child.path),
               onSelect: () => handleMenuItemClick(child.path)
             })
       }
@@ -483,6 +502,7 @@ function toMenuItems(items: NavItem[], collapsed: boolean): NavigationMenuItem[]
       to: item.path,
       value: item.path,
       active: isActive(item.path),
+      badge: ticketBadge(item.path),
       'aria-label': item.label,
       ...tourAttrs(item.path),
       onSelect: () => handleMenuItemClick(item.path)
@@ -680,15 +700,24 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
   overflow-y: auto;
 }
 
+/* Section headers read as quiet labels, never as links. */
 .sidebar-section-label {
   padding-top: 14px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .sidebar-child-section,
 .sidebar-flyout-section {
-  padding-top: 8px;
-  color: var(--ui-text-muted);
+  padding-top: 10px;
+  padding-bottom: 2px;
+  color: var(--ui-text-dimmed);
+  font-size: 11px;
   font-weight: 500;
+  letter-spacing: 0.02em;
+  pointer-events: none;
 }
 
 /* Custom SVG icon in sidebar: constrain size without overriding uploaded SVG colors */
@@ -787,12 +816,12 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
 
 /* Desktop width: UDashboardSidebar is resizable with a 15rem default and a 10rem
    minimum, and the stored size survives reloads - that is why the console sidebar
-   could read as a narrow strip. Pin the expanded rail to the old main sidebar's
-   reading width (14rem = 224px) and let collapse alone change it.
+   could read as a narrow strip. Pin the expanded rail to the main sidebar's
+   reading width (16rem = 256px) and let collapse alone change it.
    Unlayered CSS beats the component's `w-(--width)` utility, so this wins. */
 @media (min-width: 1024px) {
   .console-sidebar:not([data-collapsed='true']) {
-    width: 14rem;
+    width: 16rem;
   }
 }
 
@@ -812,6 +841,14 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
   padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
   font-size: 0.875rem;
+}
+
+/* Touch: finger-sized rows in the phone drawer (40px is a mouse target). */
+@media (pointer: coarse) {
+  .console-sidebar [data-slot='link'],
+  .console-sidebar [data-slot='childLink'] {
+    min-height: 2.75rem;
+  }
 }
 
 .console-sidebar [data-slot='label'] {

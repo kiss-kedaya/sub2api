@@ -135,6 +135,9 @@ func RegisterUserRoutes(
 		announcements := authenticated.Group("/announcements")
 		{
 			announcements.GET("", h.Announcement.List)
+			announcements.GET("/summary", h.Announcement.Summary)
+			announcements.GET("/popups", h.Announcement.Popups)
+			announcements.GET("/item/:id", h.Announcement.Get)
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
 

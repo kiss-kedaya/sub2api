@@ -43,9 +43,70 @@ func (h *AnnouncementHandler) List(c *gin.Context) {
 
 	out := make([]dto.UserAnnouncement, 0, len(items))
 	for i := range items {
+		out = append(out, *dto.UserAnnouncementListFromService(&items[i]))
+	}
+	response.Success(c, out)
+}
+
+// Summary returns the badge counts only.
+// GET /api/v1/announcements/summary
+func (h *AnnouncementHandler) Summary(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+
+	total, unread, err := h.announcementService.SummaryForUser(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"total": total, "unread": unread})
+}
+
+// Popups returns the unread popup announcements that must be acknowledged.
+// GET /api/v1/announcements/popups
+func (h *AnnouncementHandler) Popups(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+
+	items, err := h.announcementService.PopupsForUser(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make([]dto.UserAnnouncement, 0, len(items))
+	for i := range items {
 		out = append(out, *dto.UserAnnouncementFromService(&items[i]))
 	}
 	response.Success(c, out)
+}
+
+// Get returns a single visible announcement with its body.
+// GET /api/v1/announcements/item/:id
+func (h *AnnouncementHandler) Get(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+
+	announcementID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || announcementID <= 0 {
+		response.BadRequest(c, "Invalid announcement ID")
+		return
+	}
+
+	item, err := h.announcementService.GetForUser(c.Request.Context(), subject.UserID, announcementID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.UserAnnouncementFromService(item))
 }
 
 // MarkRead marks an announcement as read for current user

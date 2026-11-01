@@ -13,7 +13,7 @@
       </UChip>
     </UButton>
 
-    <!-- 公告列表 -->
+    <!-- 公告列表（时间轴）：打开时才拉列表，列表里不带正文 -->
     <USlideover
       v-model:open="isModalOpen"
       :title="t('announcements.title')"
@@ -34,8 +34,22 @@
 
       <template #body>
         <!-- Loading -->
-        <div v-if="loading" class="flex items-center justify-center py-16">
+        <div v-if="loading && announcements.length === 0" class="flex items-center justify-center py-16">
           <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
+        </div>
+
+        <!-- Failure: keep it visible instead of falling back to an empty timeline -->
+        <div v-else-if="listError" class="flex flex-col items-center gap-3 py-16 text-center">
+          <UIcon name="i-lucide-triangle-alert" class="size-6 text-error" />
+          <p class="text-sm text-muted">{{ t('announcements.loadFailed') }}</p>
+          <UButton
+            color="neutral"
+            variant="subtle"
+            size="sm"
+            icon="i-lucide-refresh-cw"
+            :label="t('common.tryAgain')"
+            @click="retryList"
+          />
         </div>
 
         <!-- Announcements List -->
@@ -62,7 +76,7 @@
                 <span class="truncate font-medium text-highlighted">{{ item.title }}</span>
                 <time class="shrink-0 text-xs text-muted">{{ formatRelativeTime(item.created_at) }}</time>
               </p>
-              <p class="truncate text-dimmed">{{ excerpt(item.content) }}</p>
+              <p class="truncate text-dimmed">{{ rowExcerpt(item) }}</p>
             </div>
           </UButton>
         </div>
@@ -76,12 +90,12 @@
       </template>
     </USlideover>
 
-    <!-- 公告详情 -->
+    <!-- 公告详情：点开才拉正文 -->
     <UModal
       v-model:open="detailModalOpen"
       :title="selectedAnnouncement?.title"
       :ui="{ content: 'sm:max-w-3xl', body: 'max-h-[60vh] overflow-y-auto', footer: 'justify-between gap-3' }"
-      @after:leave="selectedAnnouncement = null"
+      @after:leave="onDetailClosed"
     >
       <template #description>
         <span v-if="selectedAnnouncement" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted">
@@ -99,11 +113,27 @@
       </template>
 
       <template #body>
+        <div v-if="detailLoading" class="flex items-center justify-center py-12">
+          <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
+        </div>
+        <div v-else-if="detailError" class="flex flex-col items-center gap-3 py-12 text-center">
+          <UIcon name="i-lucide-triangle-alert" class="size-6 text-error" />
+          <p class="text-sm text-muted">{{ t('announcements.loadFailed') }}</p>
+          <UButton
+            color="neutral"
+            variant="subtle"
+            size="sm"
+            icon="i-lucide-refresh-cw"
+            :label="t('common.tryAgain')"
+            @click="retryDetail"
+          />
+        </div>
         <div
-          v-if="selectedAnnouncement"
+          v-else-if="detailContent"
           class="markdown-body prose prose-sm max-w-none dark:prose-invert"
-          v-html="renderMarkdown(selectedAnnouncement.content)"
+          v-html="renderMarkdown(detailContent)"
         ></div>
+        <p v-else class="py-8 text-center text-sm text-muted">{{ t('announcements.empty') }}</p>
       </template>
 
       <template #footer>
@@ -133,7 +163,7 @@ import DOMPurify from 'dompurify'
 import { useAppStore } from '@/stores/app'
 import { useAnnouncementStore } from '@/stores/announcements'
 import { formatRelativeTime, formatRelativeWithDateTime } from '@/utils/format'
-import type { UserAnnouncement } from '@/types'
+import type { AnnouncementListItem } from '@/api/announcements'
 import EmptyState from './EmptyState.vue'
 import '@/styles/announcement-markdown.css'
 
@@ -147,21 +177,30 @@ marked.setOptions({
   gfm: true,
 })
 
-// Use store state (storeToRefs for reactivity)
-const { announcements, loading } = storeToRefs(announcementStore)
-const unreadCount = computed(() => announcementStore.unreadCount)
+// Badge counts come from the summary endpoint; the timeline is fetched on open.
+const { announcements, loading, listError, unreadCount } = storeToRefs(announcementStore)
 
 // Local overlay state (the slideover / modal handle Escape, outside click and body scroll lock)
 const isModalOpen = ref(false)
 const detailModalOpen = ref(false)
-const selectedAnnouncement = ref<UserAnnouncement | null>(null)
+const selectedAnnouncement = ref<AnnouncementListItem | null>(null)
+const detailId = ref<number | null>(null)
 
-// Read state from the store, so the detail updates as soon as it is marked read.
 const selectedRead = computed(() => {
   const selected = selectedAnnouncement.value
   if (!selected) return false
   const current = announcements.value.find((item) => item.id === selected.id)
   return !!(current ?? selected).read_at
+})
+
+const detailLoading = computed(() => announcementStore.isDetailLoading(detailId.value ?? 0))
+const detailError = computed(() => announcementStore.detailErrorFor(detailId.value))
+
+const detailContent = computed(() => {
+  const id = detailId.value
+  if (!id) return ''
+  const cached = announcementStore.detailFor(id)
+  return cached?.content || selectedAnnouncement.value?.content || ''
 })
 
 // Methods
@@ -172,6 +211,12 @@ function renderMarkdown(content: string): string {
 }
 
 // One line of plain text under each title, like the template's notification rows.
+// The list endpoint already ships an excerpt; older payloads fall back to the body.
+function rowExcerpt(item: AnnouncementListItem): string {
+  if (item.excerpt) return item.excerpt
+  return excerpt(item.content || '')
+}
+
 function excerpt(content: string): string {
   if (!content) return ''
   const html = renderMarkdown(content)
@@ -181,18 +226,38 @@ function excerpt(content: string): string {
 
 function openModal() {
   isModalOpen.value = true
+  // Lazy: the timeline is only fetched when the panel is actually opened.
+  void announcementStore.ensureList()
 }
 
-function openDetail(announcement: UserAnnouncement) {
+function retryList() {
+  void announcementStore.ensureList(true)
+}
+
+function openDetail(announcement: AnnouncementListItem) {
   selectedAnnouncement.value = announcement
+  detailId.value = announcement.id
   detailModalOpen.value = true
+  // The row has no body: load it now, and keep the failure visible if it fails.
+  if (!announcement.content && !announcementStore.detailFor(announcement.id)) {
+    void announcementStore.fetchDetail(announcement.id)
+  }
   if (!announcement.read_at) {
     markAsRead(announcement.id)
   }
 }
 
+function retryDetail() {
+  if (detailId.value) void announcementStore.fetchDetail(detailId.value, true)
+}
+
 function closeDetail() {
   detailModalOpen.value = false
+}
+
+function onDetailClosed() {
+  selectedAnnouncement.value = null
+  detailId.value = null
 }
 
 async function markAsRead(id: number) {

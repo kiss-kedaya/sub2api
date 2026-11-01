@@ -8,6 +8,7 @@ import { resolveRouteDocumentTitle } from '@/router/title'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import ConfirmHost from '@/components/common/ConfirmHost.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
+import { useTicketNotificationStore } from '@/stores/ticketNotifications'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
 import { nuxtUiLocale } from '@/plugins/nuxtUi'
@@ -19,6 +20,7 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
+const ticketStore = useTicketNotificationStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 
@@ -69,10 +71,18 @@ watch(
   { deep: true }
 )
 
+// Badge counts only. Announcement bodies, the announcement timeline and the
+// ticket lists stay lazy and are fetched by the panel that shows them.
+function refreshBadges(force = false) {
+  if (!authStore.isAuthenticated) return
+  void announcementStore.fetchSummary(force)
+  void ticketStore.fetchAll(authStore.isAdmin && !authStore.isAdminObserver, force)
+}
+
 // Watch for authentication state and manage subscription data + announcements
 function onVisibilityChange() {
   if (document.visibilityState === 'visible' && authStore.isAuthenticated) {
-    announcementStore.fetchAnnouncements()
+    refreshBadges()
   }
 }
 
@@ -98,13 +108,17 @@ watch(
       })
       subscriptionStore.startPolling()
 
-      // Announcements: new login vs page refresh restore
+      // Announcements: new login vs page refresh restore.
+      // The summary carries the bell count; the popup bootstrap is the only
+      // first-paint call that carries bodies, and the server bounds it.
       if (oldValue === false) {
-        // New login: delay 3s then force fetch
-        setTimeout(() => announcementStore.fetchAnnouncements(true), 3000)
+        // New login: delay 3s so the session settles, then refetch counts.
+        setTimeout(() => refreshBadges(true), 3000)
+        setTimeout(() => void announcementStore.fetchPopups(true), 3000)
       } else {
         // Page refresh restore (oldValue was undefined)
-        announcementStore.fetchAnnouncements()
+        refreshBadges()
+        void announcementStore.fetchPopups()
       }
 
       // Register visibility change listener
@@ -113,6 +127,7 @@ watch(
       // User logged out: clear data and stop polling
       subscriptionStore.clear()
       announcementStore.reset()
+      ticketStore.reset()
       adminComplianceStore.reset()
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
@@ -120,11 +135,10 @@ watch(
   { immediate: true }
 )
 
-// Route change trigger (throttled by store)
+// Route change trigger (throttled by the stores). Counts only: navigating must
+// never pull the announcement timeline or a ticket list.
 router.afterEach(() => {
-  if (authStore.isAuthenticated) {
-    announcementStore.fetchAnnouncements()
-  }
+  refreshBadges()
 })
 
 onBeforeUnmount(() => {

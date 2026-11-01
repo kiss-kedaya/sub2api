@@ -102,7 +102,7 @@ describe('AppSidebar desktop sizing', () => {
   it('pins the expanded rail to a readable width instead of the resizable default', () => {
     // UDashboardSidebar's resizable size defaulted to 15rem with a 10rem floor, and the
     // stored value survived reloads, so the console sidebar could collapse into a strip.
-    expect(componentSource).toContain(".console-sidebar:not([data-collapsed='true']) {\n    width: 14rem;")
+    expect(componentSource).toContain(".console-sidebar:not([data-collapsed='true']) {\n    width: 16rem;")
     expect(componentSource).toContain('@media (min-width: 1024px)')
     expect(componentSource).not.toMatch(/\n\s+resizable\b/)
   })
@@ -111,5 +111,46 @@ describe('AppSidebar desktop sizing', () => {
     expect(componentSource).toContain('min-height: 2.5rem;')
     expect(componentSource).toContain("gap: 0.75rem;")
     expect(componentSource).toContain(".console-sidebar:not([data-collapsed='true']) [data-slot='link']")
+  })
+})
+
+describe('AppSidebar rail size and density', () => {
+  it('pins the expanded rail to the main sidebar width (16rem = 256px)', () => {
+    expect(componentSource).toContain('width: 16rem;')
+    expect(componentSource).not.toContain('width: 14rem;')
+  })
+
+  it('keeps 40px rows on desktop and 44px rows on touch', () => {
+    expect(componentSource).toContain('min-height: 2.5rem;')
+    expect(componentSource).toMatch(/@media \(pointer: coarse\)[\s\S]*min-height: 2\.75rem;/)
+  })
+
+  it('marks second-level section headers as non-interactive labels with their own density', () => {
+    expect(componentSource).toContain('.sidebar-child-section,')
+    expect(componentSource).toMatch(/\.sidebar-child-section,[\s\S]*?pointer-events: none;/)
+    expect(componentSource).toContain('sidebar-flyout-section')
+  })
+
+  it('highlights a nested child route, not only an exact match', () => {
+    expect(componentSource).toContain('children.some(child => !child.section && isActive(child.path))')
+    expect(componentSource).toContain('active: isActive(child.path),')
+  })
+})
+
+describe('AppSidebar ticket badge', () => {
+  it('renders a quiet neutral badge from the authenticated stats counts', () => {
+    expect(componentSource).toContain('ticketStore.unreadFor(scope)')
+    expect(componentSource).toContain("color: 'neutral'")
+    expect(componentSource).toContain('badge: ticketBadge(item.path),')
+    expect(componentSource).toContain('badge: ticketBadge(child.path),')
+  })
+
+  it('shows a warning badge when the count could not be loaded', () => {
+    expect(componentSource).toContain('ticketStore.errorFor(scope)')
+    expect(componentSource).toContain("color: 'warning'")
+  })
+
+  it('never renders a badge for scopes without unread messages', () => {
+    expect(componentSource).toContain('if (!unread) return undefined')
   })
 })
