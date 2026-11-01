@@ -1,12 +1,11 @@
 <template>
-  <!-- UDashboardSidebar: collapsible to a 4rem rail, resizable, a slideover on phones.
-       Root is the sidebar's own fragment (rail + resize handle + drawer). -->
+  <!-- UDashboardSidebar: a fixed 14rem desktop rail (the old main sidebar's reading width),
+       collapsible to a 4rem rail, and a slideover on phones. -->
   <UDashboardSidebar
     id="console"
     v-model:open="mobileOpen"
     v-model:collapsed="sidebarCollapsed"
     collapsible
-    resizable
     class="console-sidebar bg-(--app-sidebar-bg)"
     :ui="{ body: 'min-h-0 overflow-visible', footer: 'sidebar-footer lg:border-t lg:border-default' }"
   >
@@ -780,5 +779,37 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
 .console-flyout-list {
   max-height: min(70vh, 560px);
   overflow-y: auto;
+}
+/* Desktop width: UDashboardSidebar is resizable with a 15rem default and a 10rem
+   minimum, and the stored size survives reloads - that is why the console sidebar
+   could read as a narrow strip. Pin the expanded rail to the old main sidebar's
+   reading width (14rem = 224px) and let collapse alone change it.
+   Unlayered CSS beats the component's `w-(--width)` utility, so this wins. */
+@media (min-width: 1024px) {
+  .console-sidebar:not([data-collapsed='true']) {
+    width: 14rem;
+  }
+}
+
+/* Nav density: restore the main sidebar's 40px rows, 12px icon gap and 14px medium
+   labels. Nuxt UI's vertical default is a 32px row with 10px inline padding. */
+.console-sidebar:not([data-collapsed='true']) [data-slot='link'] {
+  min-height: 2.5rem;
+  gap: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.console-sidebar:not([data-collapsed='true']) [data-slot='childLink'] {
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.console-sidebar [data-slot='label'] {
+  padding-inline: 0.75rem;
 }
 </style>

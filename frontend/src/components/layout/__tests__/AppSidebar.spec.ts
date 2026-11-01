@@ -97,3 +97,19 @@ describe('AppSidebar user navigation', () => {
     expect(componentSource).toContain("t('nav.infiniteCanvas')")
   })
 })
+
+describe('AppSidebar desktop sizing', () => {
+  it('pins the expanded rail to a readable width instead of the resizable default', () => {
+    // UDashboardSidebar's resizable size defaulted to 15rem with a 10rem floor, and the
+    // stored value survived reloads, so the console sidebar could collapse into a strip.
+    expect(componentSource).toContain(".console-sidebar:not([data-collapsed='true']) {\n    width: 14rem;")
+    expect(componentSource).toContain('@media (min-width: 1024px)')
+    expect(componentSource).not.toMatch(/\n\s+resizable\b/)
+  })
+
+  it('restores the main-branch row density for expanded navigation links', () => {
+    expect(componentSource).toContain('min-height: 2.5rem;')
+    expect(componentSource).toContain("gap: 0.75rem;")
+    expect(componentSource).toContain(".console-sidebar:not([data-collapsed='true']) [data-slot='link']")
+  })
+})
