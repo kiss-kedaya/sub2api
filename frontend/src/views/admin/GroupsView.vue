@@ -17,12 +17,12 @@
             </UButton>
           </template>
         </AdminPageHeader>
-        <div class="flex flex-wrap items-center gap-2">
+        <PageToolbar>
           <UInput
             v-model="searchQuery"
             icon="i-lucide-search"
             :placeholder="t('admin.groups.searchGroups')"
-            class="w-full sm:max-w-sm"
+            class="w-96 max-w-full sm:w-72"
             @input="handleSearch"
           />
           <UButton
@@ -40,7 +40,7 @@
           <div
             :class="[
               groupFiltersExpanded ? 'grid' : 'hidden',
-              'w-full grid-cols-2 gap-2 max-[359px]:grid-cols-1 md:flex md:w-auto md:items-center',
+              'w-[48rem] max-w-full grid-cols-2 gap-2 max-[359px]:grid-cols-1 md:flex md:w-auto md:items-center',
             ]"
           >
             <Select
@@ -66,7 +66,7 @@
               @change="loadGroups"
             />
           </div>
-          <div class="ms-auto flex items-center gap-2">
+          <template #right>
             <UButton
               icon="i-lucide-refresh-cw"
               color="neutral"
@@ -98,8 +98,8 @@
             >
               <span class="max-sm:hidden">{{ t("admin.groups.sortOrder") }}</span>
             </UButton>
-          </div>
-        </div>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
@@ -772,7 +772,6 @@
             <!-- 图片生成计费配置 -->
             <div
               v-if="supportsImagePricingPlatform(createForm.platform)"
-         
             >
               <label
                 class="block mb-2 font-medium text-default"
@@ -899,7 +898,6 @@
             <!-- 视频生成计费配置（仅 Grok 平台） -->
             <div
               v-if="supportsVideoPricingPlatform(createForm.platform)"
-         
             >
               <label
                 class="block mb-2 font-medium text-default"
@@ -1020,7 +1018,6 @@
             <!-- Grok Voice 定价 -->
             <div
               v-if="createForm.platform === 'grok'"
-         
             >
               <h4 class="text-sm font-medium text-default mb-1">
                 {{ t("admin.groups.voicePricing.title") }}
@@ -1073,7 +1070,6 @@
             <!-- 搜索单价：所有可能走搜索的平台（Grok / DeepSeek） -->
             <div
               v-if="supportsSearchPricing(createForm.platform)"
-         
             >
               <h4 class="text-sm font-medium text-default mb-1">
                 {{ t("admin.groups.explicitPricing.title") }}
@@ -1123,26 +1119,21 @@
             <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
             <div
               v-if="createForm.platform === 'openai'"
-         
             >
               <h4 class="text-sm font-medium text-default mb-3">
                 {{ t("admin.groups.webSearchPricing.title") }}
               </h4>
-              <div>
-                <label class="input-label">{{
-                  t("admin.groups.webSearchPricing.pricePerCall")
-                }}</label>
-                <UInput
-                  v-model.number="createForm.web_search_price_per_call"
-                  type="number"
-                  step="0.001"
-                  min="0"
-                  placeholder="0.01"
-                  class="w-full"
-                />
-                <p class="input-hint">
-                  {{ t("admin.groups.webSearchPricing.pricePerCallHint") }}
-                </p>
+              <div class="space-y-2">
+                <UFormField :label="t('admin.groups.webSearchPricing.pricePerCall')" :help="t('admin.groups.webSearchPricing.pricePerCallHint')">
+                  <UInput
+                    v-model.number="createForm.web_search_price_per_call"
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    placeholder="0.01"
+                    class="w-full"
+                  />
+                </UFormField>
                 <div
                   class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default"
                 >
@@ -1157,7 +1148,6 @@
             <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
             <div
               v-if="createForm.platform === 'grok'"
-         
             >
               <h4 class="mb-1 text-sm font-medium text-default">
                 {{ t("admin.groups.moderationRefusalPricing.title") }}
@@ -1197,7 +1187,6 @@
             <!-- OpenAI Messages 调度配置（OpenAI 与 Composite 平台） -->
             <div
               v-if="supportsMessagesDispatchPlatform(createForm.platform)"
-         
             >
               <h4 class="text-sm font-medium text-default mb-3">
                 {{ t("admin.groups.openaiMessages.title") }}
@@ -1371,7 +1360,6 @@
             <!-- OpenAI Fast 开关（OpenAI 与 Composite 平台） -->
             <div
               v-if="supportsGroupOpenAIFast(createForm.platform)"
-         
             >
               <h4 class="text-sm font-medium text-default mb-3">
                 {{ t("admin.groups.openaiFast.title") }}
@@ -1455,7 +1443,6 @@
                 <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
                 <div
                   v-if="supportsLivePlatform(createForm.platform)"
-         
                 >
                   <h4 class="text-sm font-medium text-default mb-3">
                     {{ t("admin.groups.openaiLive.title") }}
@@ -1479,7 +1466,6 @@
                       createForm.platform,
                     )
                   "
-         
                 >
                   <h4 class="text-sm font-medium text-default mb-3">
                     {{ t("admin.groups.accountFilters.title") }}
@@ -1515,19 +1501,14 @@
                     ['anthropic', 'antigravity'].includes(createForm.platform) &&
                     createForm.subscription_type !== 'subscription'
                   "
-         
                 >
-                  <label class="input-label">{{
-                    t("admin.groups.invalidRequestFallback.title")
-                  }}</label>
-                  <Select
-                    v-model="createForm.fallback_group_id_on_invalid_request"
-                    :options="invalidRequestFallbackOptions"
-                    :placeholder="t('admin.groups.invalidRequestFallback.noFallback')"
-                  />
-                  <p class="input-hint">
-                    {{ t("admin.groups.invalidRequestFallback.hint") }}
-                  </p>
+                  <UFormField :label="t('admin.groups.invalidRequestFallback.title')" :help="t('admin.groups.invalidRequestFallback.hint')">
+                    <Select
+                      v-model="createForm.fallback_group_id_on_invalid_request"
+                      :options="invalidRequestFallbackOptions"
+                      :placeholder="t('admin.groups.invalidRequestFallback.noFallback')"
+                    />
+                  </UFormField>
                 </div>
                 <!-- 模型路由配置（仅 anthropic 平台） -->
                 <div v-if="createForm.platform === 'anthropic'">
@@ -1566,7 +1547,7 @@
                             />
                           </UFormField>
                           <div>
-                            <label class="input-label text-xs">{{
+                            <label class="mb-1 block text-xs font-medium text-default">{{
                               t("admin.groups.modelRouting.accounts")
                             }}</label>
                             <!-- 已选账号标签 -->
@@ -2093,7 +2074,6 @@
             <!-- 图片生成计费配置 -->
             <div
               v-if="supportsImagePricingPlatform(editForm.platform)"
-         
             >
               <label
                 class="block mb-2 font-medium text-default"
@@ -2220,7 +2200,6 @@
             <!-- 视频生成计费配置（仅 Grok 平台） -->
             <div
               v-if="supportsVideoPricingPlatform(editForm.platform)"
-         
             >
               <label
                 class="block mb-2 font-medium text-default"
@@ -2341,7 +2320,6 @@
             <!-- Grok Voice 定价 -->
             <div
               v-if="editForm.platform === 'grok'"
-         
             >
               <h4 class="text-sm font-medium text-default mb-1">
                 {{ t("admin.groups.voicePricing.title") }}
@@ -2394,7 +2372,6 @@
             <!-- 搜索单价：所有可能走搜索的平台（Grok / DeepSeek） -->
             <div
               v-if="supportsSearchPricing(editForm.platform)"
-         
             >
               <h4 class="text-sm font-medium text-default mb-1">
                 {{ t("admin.groups.explicitPricing.title") }}
@@ -2427,7 +2404,7 @@
                   />
                 </UFormField>
                 <div v-if="editForm.platform === 'deepseek'">
-                  <label class="input-label">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
+                  <label class="mb-1 block text-sm font-medium text-default">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
                   <UInput
                     v-model="editForm.search_provider_api_key"
                     type="password"
@@ -2454,26 +2431,21 @@
             <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
             <div
               v-if="editForm.platform === 'openai'"
-         
             >
               <h4 class="text-sm font-medium text-default mb-3">
                 {{ t("admin.groups.webSearchPricing.title") }}
               </h4>
-              <div>
-                <label class="input-label">{{
-                  t("admin.groups.webSearchPricing.pricePerCall")
-                }}</label>
-                <UInput
-                  v-model.number="editForm.web_search_price_per_call"
-                  type="number"
-                  step="0.001"
-                  min="0"
-                  placeholder="0.01"
-                  class="w-full"
-                />
-                <p class="input-hint">
-                  {{ t("admin.groups.webSearchPricing.pricePerCallHint") }}
-                </p>
+              <div class="space-y-2">
+                <UFormField :label="t('admin.groups.webSearchPricing.pricePerCall')" :help="t('admin.groups.webSearchPricing.pricePerCallHint')">
+                  <UInput
+                    v-model.number="editForm.web_search_price_per_call"
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    placeholder="0.01"
+                    class="w-full"
+                  />
+                </UFormField>
                 <div
                   class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default"
                 >
@@ -2488,7 +2460,6 @@
             <!-- Grok 安全拒绝单次扣费（放在模型白名单上方） -->
             <div
               v-if="editForm.platform === 'grok'"
-         
             >
               <h4 class="mb-1 text-sm font-medium text-default">
                 {{ t("admin.groups.moderationRefusalPricing.title") }}
@@ -2528,7 +2499,6 @@
             <!-- OpenAI Messages 调度配置（OpenAI 与 Composite 平台） -->
             <div
               v-if="supportsMessagesDispatchPlatform(editForm.platform)"
-         
             >
               <h4 class="text-sm font-medium text-default mb-3">
                 {{ t("admin.groups.openaiMessages.title") }}
@@ -2701,7 +2671,6 @@
             <!-- OpenAI Fast 开关（OpenAI 与 Composite 平台） -->
             <div
               v-if="supportsGroupOpenAIFast(editForm.platform)"
-         
             >
               <h4 class="text-sm font-medium text-default mb-3">
                 {{ t("admin.groups.openaiFast.title") }}
@@ -2785,7 +2754,6 @@
                 <!-- Codex Live 开关（OpenAI 与 Composite 平台） -->
                 <div
                   v-if="supportsLivePlatform(editForm.platform)"
-         
                 >
                   <h4 class="text-sm font-medium text-default mb-3">
                     {{ t("admin.groups.openaiLive.title") }}
@@ -2809,7 +2777,6 @@
                       editForm.platform,
                     )
                   "
-         
                 >
                   <h4 class="text-sm font-medium text-default mb-3">
                     {{ t("admin.groups.accountFilters.title") }}
@@ -2845,19 +2812,14 @@
                     ['anthropic', 'antigravity'].includes(editForm.platform) &&
                     editForm.subscription_type !== 'subscription'
                   "
-         
                 >
-                  <label class="input-label">{{
-                    t("admin.groups.invalidRequestFallback.title")
-                  }}</label>
-                  <Select
-                    v-model="editForm.fallback_group_id_on_invalid_request"
-                    :options="invalidRequestFallbackOptionsForEdit"
-                    :placeholder="t('admin.groups.invalidRequestFallback.noFallback')"
-                  />
-                  <p class="input-hint">
-                    {{ t("admin.groups.invalidRequestFallback.hint") }}
-                  </p>
+                  <UFormField :label="t('admin.groups.invalidRequestFallback.title')" :help="t('admin.groups.invalidRequestFallback.hint')">
+                    <Select
+                      v-model="editForm.fallback_group_id_on_invalid_request"
+                      :options="invalidRequestFallbackOptionsForEdit"
+                      :placeholder="t('admin.groups.invalidRequestFallback.noFallback')"
+                    />
+                  </UFormField>
                 </div>
                 <!-- 模型路由配置（仅 anthropic 平台） -->
                 <div v-if="editForm.platform === 'anthropic'">
@@ -2896,7 +2858,7 @@
                             />
                           </UFormField>
                           <div>
-                            <label class="input-label text-xs">{{
+                            <label class="mb-1 block text-xs font-medium text-default">{{
                               t("admin.groups.modelRouting.accounts")
                             }}</label>
                             <!-- 已选账号标签 -->
@@ -3411,6 +3373,7 @@ import type { Column } from "@/components/common/types";
 import type { DropdownMenuItem, TableColumn } from "@nuxt/ui";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import TablePageLayout from "@/components/layout/TablePageLayout.vue";
+import PageToolbar from "@/components/layout/PageToolbar.vue";
 import DataTable from "@/components/common/DataTable.vue";
 import Pagination from "@/components/common/Pagination.vue";
 import Toggle from "@/components/common/Toggle.vue";
@@ -3578,14 +3541,17 @@ const authStore = useAuthStore();
 const onboardingStore = useOnboardingStore();
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(["name", "actions"]);
-// Default hidden columns (hidden on first load / after schema bumps).
-const DEFAULT_HIDDEN_COLUMNS = ["id"];
+// Default hidden columns (hidden on first load / after schema bumps). Capacity (live
+// concurrency badges) and type (exclusive/public, also a toolbar filter) are behind "显示列"
+// so the default columns fit next to the sidebar.
+const DEFAULT_HIDDEN_COLUMNS = ["id", "capacity", "is_exclusive"];
 const HIDDEN_COLUMNS_KEY = "group-hidden-columns";
 // Bump when adding new default-hidden columns so existing admins pick them up once.
 const COLUMN_SETTINGS_VERSION_KEY = "group-column-settings-version";
-const COLUMN_SETTINGS_VERSION = 2;
+const COLUMN_SETTINGS_VERSION = 3;
 const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
   2: ["id"],
+  3: ["capacity", "is_exclusive"],
 };
 
 const allColumns = computed<Column[]>(() => {

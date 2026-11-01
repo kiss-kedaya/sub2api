@@ -15,9 +15,9 @@
             />
           </template>
         </AdminPageHeader>
-        <AdminToolbar>
+        <PageToolbar>
           <!-- Fuzzy user search (deleted users included) -> user_id filter -->
-          <div class="relative w-full sm:w-72" data-filter-user-search>
+          <div class="relative w-96 max-w-full sm:w-72" data-filter-user-search>
             <UInput
               v-model="filterUserKeyword"
               icon="i-lucide-search"
@@ -60,17 +60,17 @@
               </UButton>
             </div>
           </div>
-          <div class="w-full sm:w-40">
+          <div class="w-96 max-w-full sm:w-40">
             <Select v-model="filters.status" :options="statusOptions" :placeholder="t('admin.subscriptions.allStatus')" @change="applyFilters" />
           </div>
-          <div class="w-full sm:w-48">
+          <div class="w-96 max-w-full sm:w-48">
             <Select v-model="filters.group_id" :options="groupOptions" :placeholder="t('admin.subscriptions.allGroups')" @change="applyFilters" />
           </div>
-          <div class="w-full sm:w-40">
+          <div class="w-96 max-w-full sm:w-40">
             <Select v-model="filters.platform" :options="platformFilterOptions" :placeholder="t('admin.subscriptions.allPlatforms')" @change="applyFilters" />
           </div>
 
-          <template #end>
+          <template #right>
             <UButton
               icon="i-lucide-refresh-cw"
               color="neutral"
@@ -100,7 +100,7 @@
               @click="showGuideModal = true"
             />
           </template>
-        </AdminToolbar>
+        </PageToolbar>
       </template>
 
       <!-- Subscriptions Table -->
@@ -554,7 +554,7 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
-import AdminToolbar from '@/components/admin/page/AdminToolbar.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import {
   getRemainingDurationParts,
   getRemainingExpiryDuration,

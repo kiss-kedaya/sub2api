@@ -16,16 +16,16 @@
         </AdminPageHeader>
       </template>
       <template #filters>
-        <AdminToolbar>
+        <PageToolbar>
           <UInput
             v-model="searchQuery"
             icon="i-lucide-search"
             type="text"
             :placeholder="t('admin.channels.searchChannels', 'Search channels...')"
-            class="w-full max-w-sm"
+            class="w-96 max-w-full sm:w-72"
             @update:model-value="handleSearch"
           />
-          <template #end>
+          <template #right>
             <Select
               v-model="filters.status"
               :options="statusFilterOptions"
@@ -53,7 +53,7 @@
               />
             </UDropdownMenu>
           </template>
-        </AdminToolbar>
+        </PageToolbar>
       </template>
 
       <template #table>
@@ -592,7 +592,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
-import AdminToolbar from '@/components/admin/page/AdminToolbar.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import PricingEntryCard from '@/components/admin/channel/PricingEntryCard.vue'
