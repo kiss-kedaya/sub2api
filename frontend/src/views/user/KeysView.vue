@@ -449,7 +449,7 @@
             v-model="formData.name"
             type="text"
             required
-            size="lg"
+            size="lg" :ui="{ base: 'py-[11px]' }"
             class="w-full"
             :placeholder="t('keys.namePlaceholder')"
             data-tour="key-form-name"
@@ -473,7 +473,7 @@
                 class="peer sr-only"
                 @change="selectKeyProvider(provider.value)"
               />
-              <span class="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-accented bg-default px-2 py-3 text-sm font-semibold text-highlighted transition-colors peer-enabled:cursor-pointer hover:peer-enabled:border-inverted peer-checked:border-inverted peer-checked:bg-elevated peer-checked:ring-1 peer-checked:ring-inverted peer-focus-visible:outline-solid peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-inverted peer-disabled:cursor-not-allowed peer-disabled:opacity-40 dark:border-dark-500 dark:bg-transparent dark:text-gray-100 dark:hover:peer-enabled:border-teal-400 dark:peer-checked:border-teal-500 dark:peer-checked:bg-teal-500/10 dark:peer-checked:ring-teal-500 dark:peer-focus-visible:outline-teal-500">
+              <span class="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-accented bg-default px-2 py-3 text-sm font-semibold text-highlighted transition-colors peer-enabled:cursor-pointer hover:peer-enabled:border-inverted peer-checked:border-inverted peer-checked:bg-elevated peer-checked:ring-1 peer-checked:ring-inverted peer-focus-visible:outline-solid peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-inverted peer-disabled:cursor-not-allowed peer-disabled:opacity-40 dark:border-dark-500 dark:bg-transparent dark:text-gray-100 dark:hover:peer-enabled:border-primary/60 dark:peer-checked:border-primary dark:peer-checked:bg-primary/10 dark:peer-checked:ring-primary dark:peer-focus-visible:outline-primary">
                 <span class="flex h-8 items-center justify-center gap-1" aria-hidden="true">
                   <span
                     v-for="platform in provider.icons"
@@ -487,7 +487,7 @@
               </span>
               <span
                 v-if="activeKeyProvider === provider.value"
-                class="pointer-events-none absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-inverted text-inverted dark:bg-teal-500 dark:text-white"
+                class="pointer-events-none absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-inverted text-inverted dark:bg-primary dark:text-inverted"
                 aria-hidden="true"
               >
                 <UIcon name="i-lucide-check" class="size-3" />
@@ -601,7 +601,7 @@
               type="text"
               size="lg"
               class="w-full"
-              :ui="{ base: 'font-mono' }"
+              :ui="{ base: 'font-mono py-[11px]' }"
               :placeholder="t('keys.customKeyPlaceholder')"
             />
           </UFormField>
@@ -654,7 +654,7 @@
               type="number"
               step="0.01"
               min="0"
-              size="lg"
+              size="lg" :ui="{ base: 'py-[11px]' }"
               class="w-full"
               :placeholder="t('keys.quotaAmountPlaceholder')"
             >
@@ -698,7 +698,7 @@
             <p class="text-xs text-muted">{{ t('keys.rateLimitHint') }}</p>
             <!-- 5-Hour Limit -->
             <UFormField :label="t('keys.rateLimit5h')" size="lg">
-              <UInput v-model.number="formData.rate_limit_5h" type="number" step="0.01" min="0" size="lg" class="w-full" :placeholder="'0'">
+              <UInput v-model.number="formData.rate_limit_5h" type="number" step="0.01" min="0" size="lg" :ui="{ base: 'py-[11px]' }" class="w-full" :placeholder="'0'">
                 <template #leading><span class="text-sm text-muted">$</span></template>
               </UInput>
               <!-- Usage info (edit mode only) -->
@@ -733,7 +733,7 @@
 
             <!-- Daily Limit -->
             <UFormField :label="t('keys.rateLimit1d')" size="lg">
-              <UInput v-model.number="formData.rate_limit_1d" type="number" step="0.01" min="0" size="lg" class="w-full" :placeholder="'0'">
+              <UInput v-model.number="formData.rate_limit_1d" type="number" step="0.01" min="0" size="lg" :ui="{ base: 'py-[11px]' }" class="w-full" :placeholder="'0'">
                 <template #leading><span class="text-sm text-muted">$</span></template>
               </UInput>
               <!-- Usage info (edit mode only) -->
@@ -768,7 +768,7 @@
 
             <!-- 7-Day Limit -->
             <UFormField :label="t('keys.rateLimit7d')" size="lg">
-              <UInput v-model.number="formData.rate_limit_7d" type="number" step="0.01" min="0" size="lg" class="w-full" :placeholder="'0'">
+              <UInput v-model.number="formData.rate_limit_7d" type="number" step="0.01" min="0" size="lg" :ui="{ base: 'py-[11px]' }" class="w-full" :placeholder="'0'">
                 <template #leading><span class="text-sm text-muted">$</span></template>
               </UInput>
               <!-- Usage info (edit mode only) -->
@@ -811,7 +811,7 @@
         </div>
 
         <UFormField :label="t('keys.concurrencyLimit')" :help="t('keys.concurrencyLimitHint')" size="lg">
-          <UInput v-model.number="formData.concurrency_limit" type="number" min="0" max="100000" step="1" size="lg" class="w-full" />
+          <UInput v-model.number="formData.concurrency_limit" type="number" min="0" max="100000" step="1" size="lg" :ui="{ base: 'py-[11px]' }" class="w-full" />
         </UFormField>
 
         <!-- DeepSeek automatic tools -->
@@ -833,11 +833,9 @@
 
         <!-- Anthropic Cache TTL Override -->
         <UFormField :label="t('keys.anthropicCacheTtlMode')" :help="t('keys.anthropicCacheTtlModeHint')" size="lg">
-          <USelect
+          <Select
             v-model="formData.anthropic_cache_ttl_mode"
-            size="lg"
-            class="w-full"
-            :items="[
+            :options="[
               { value: 'inherit', label: t('keys.anthropicCacheTtlInherit') },
               { value: 'off', label: t('keys.anthropicCacheTtlOff') },
               { value: '1h', label: t('keys.anthropicCacheTtl1h') },
@@ -876,7 +874,7 @@
 
             <!-- Date picker (always show for precise adjustment) -->
             <UFormField :label="t('keys.expirationDate')" :help="t('keys.expirationDateHint')" size="lg">
-              <UInput v-model="formData.expiration_date" type="datetime-local" size="lg" class="w-full" :ui="{ base: 'dark:[color-scheme:dark]' }" />
+              <UInput v-model="formData.expiration_date" type="datetime-local" size="lg" class="w-full" :ui="{ base: 'dark:[color-scheme:dark] py-[11px]' }" />
             </UFormField>
 
             <!-- Current expiration display (only in edit mode) -->
@@ -900,7 +898,6 @@
             size="lg"
             :loading="submitting"
             :disabled="submitting"
-            class="dark:bg-teal-500 dark:text-white dark:hover:bg-teal-600 dark:disabled:bg-teal-500"
             data-tour="key-form-submit"
           >
             {{
