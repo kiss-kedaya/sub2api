@@ -1,31 +1,41 @@
 <template>
-  <div ref="scroller" class="ticket-timeline-scroll" tabindex="0" :aria-label="t('tickets.conversation')" @scroll="handleScroll">
-    <div class="timeline-participants" aria-hidden="true">
-      <span><Icon :name="admin ? 'user' : 'shield'" size="sm" />{{ t(admin ? 'tickets.user' : 'tickets.team') }}</span>
-      <span><Icon :name="admin ? 'shield' : 'user'" size="sm" />{{ t(admin ? 'tickets.admin' : 'tickets.you') }}</span>
+  <div ref="scroller" class="relative min-h-[140px] flex-1 overflow-auto overscroll-contain px-4 pb-6 sm:px-6" tabindex="0" :aria-label="t('tickets.conversation')" @scroll="handleScroll">
+    <div class="sticky top-0 z-[2] flex justify-between bg-default py-3 text-xs text-muted" aria-hidden="true">
+      <span class="flex items-center gap-1.5"><UIcon :name="admin ? 'i-lucide-user' : 'i-lucide-shield'" class="size-3.5" />{{ t(admin ? 'tickets.user' : 'tickets.team') }}</span>
+      <span class="flex items-center gap-1.5"><UIcon :name="admin ? 'i-lucide-shield' : 'i-lucide-user'" class="size-3.5" />{{ t(admin ? 'tickets.admin' : 'tickets.you') }}</span>
     </div>
-    <div v-if="hasMore" class="timeline-older">
-      <button type="button" class="ticket-text-button" :disabled="loadingOlder" @click="emit('older')">
-        <Icon :name="loadingOlder ? 'refresh' : 'chevronUp'" size="sm" :class="{ 'animate-spin': loadingOlder }" />{{ t('tickets.older') }}
-      </button>
+    <div v-if="hasMore" class="timeline-older mb-4 text-center">
+      <UButton variant="link" size="sm" :icon="loadingOlder ? 'i-lucide-loader-circle' : 'i-lucide-chevron-up'" :ui="{ leadingIcon: loadingOlder ? 'animate-spin' : '' }" :disabled="loadingOlder" @click="emit('older')">
+        {{ t('tickets.older') }}
+      </UButton>
     </div>
-    <ol class="ticket-timeline" role="log" aria-live="polite" :aria-label="t('tickets.conversation')">
-      <li v-for="message in visibleMessages" :key="message.id" class="timeline-entry" :class="message.kind === 'event' ? 'timeline-event' : isSelf(message) ? 'timeline-self' : 'timeline-other'" :data-message-id="message.id" :data-author-role="message.author_role">
+    <ol class="m-0 flex list-none flex-col gap-4 p-0" role="log" aria-live="polite" :aria-label="t('tickets.conversation')">
+      <li
+        v-for="message in visibleMessages"
+        :key="message.id"
+        class="timeline-entry flex"
+        :class="message.kind === 'event' ? 'timeline-event justify-center' : isSelf(message) ? 'timeline-self justify-end' : 'timeline-other justify-start'"
+        :data-message-id="message.id"
+        :data-author-role="message.author_role"
+      >
         <template v-if="message.kind === 'event'">
-          <span class="timeline-event-label">{{ eventText(message) }}</span>
-          <time :datetime="message.created_at" :title="fullTime(message.created_at)">{{ fullTime(message.created_at) }}</time>
+          <p class="flex max-w-[92%] flex-wrap items-center justify-center gap-x-2 text-center text-xs text-muted">
+            <span class="break-words">{{ eventText(message) }}</span>
+            <time class="tabular-nums text-dimmed" :datetime="message.created_at" :title="fullTime(message.created_at)">{{ fullTime(message.created_at) }}</time>
+          </p>
         </template>
-        <template v-else>
-          <div class="timeline-marker" aria-hidden="true"><Icon :name="message.author_role === 'admin' ? 'shield' : 'user'" size="sm" /></div>
-          <article class="timeline-message">
-            <div class="timeline-author">
-              <strong>{{ author(message) }}</strong>
-              <span>{{ t(message.author_role === 'admin' ? 'tickets.admin' : 'tickets.user') }}</span>
-            </div>
-            <p>{{ message.content }}</p>
-            <time :datetime="message.created_at" :title="fullTime(message.created_at)">{{ fullTime(message.created_at) }}</time>
-          </article>
-        </template>
+        <article
+          v-else
+          class="min-w-0 max-w-[85%] rounded-lg px-3.5 py-2.5 sm:max-w-[75%]"
+          :class="isSelf(message) ? 'bg-primary/10' : 'bg-elevated'"
+        >
+          <div class="mb-1 flex flex-wrap items-baseline gap-x-2 break-words">
+            <strong class="text-xs font-semibold text-highlighted">{{ author(message) }}</strong>
+            <span class="text-xs text-muted">{{ t(message.author_role === 'admin' ? 'tickets.admin' : 'tickets.user') }}</span>
+          </div>
+          <p class="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-default">{{ message.content }}</p>
+          <time class="mt-1.5 block text-xs tabular-nums text-dimmed" :datetime="message.created_at" :title="fullTime(message.created_at)">{{ fullTime(message.created_at) }}</time>
+        </article>
       </li>
     </ol>
   </div>
@@ -34,7 +44,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import type { TicketMessage } from '@/api/tickets'
 
 const props = defineProps<{ messages: TicketMessage[]; admin: boolean; hasMore: boolean; loadingOlder: boolean }>()
@@ -85,35 +94,3 @@ async function restorePosition(position: ReturnType<typeof capturePosition>) {
 }
 defineExpose({ scrollToBottom, capturePosition, restorePosition })
 </script>
-
-<style scoped>
-.ticket-timeline-scroll { position: relative; min-height: 140px; flex: 1; overflow: auto; overscroll-behavior: contain; padding: 0 20px 28px; scrollbar-gutter: stable; }
-.timeline-participants { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; padding: 12px 0; background: var(--signal-bg); color: var(--signal-muted); font-size: 12px; }
-.timeline-participants > span { display: flex; align-items: center; gap: 6px; }
-.timeline-older { position: relative; z-index: 1; text-align: center; margin: 0 0 18px; }
-.ticket-timeline { position: relative; display: flex; flex-direction: column; gap: 22px; margin: 4px 0 0; padding: 0; list-style: none; }
-.ticket-timeline::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--signal-line); }
-.timeline-entry { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr); align-items: start; animation: ticket-entry-in 180ms ease-out; }
-.timeline-marker { grid-column: 2; grid-row: 1; justify-self: center; display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--signal-line); border-radius: 50%; background: var(--signal-surface); color: var(--signal-muted); box-shadow: 0 0 0 5px var(--signal-bg); margin-top: 8px; }
-.timeline-self .timeline-marker { color: var(--signal-accent); border-color: var(--signal-accent); }
-.timeline-message { grid-row: 1; grid-column: 1; min-width: 0; padding: 14px; border: 1px solid var(--signal-line); border-radius: 8px; background: var(--signal-surface); box-shadow: 0 1px 2px #00000004; }
-.timeline-self .timeline-message { grid-column: 3; background: var(--signal-accent-soft); border-color: color-mix(in srgb, var(--signal-accent) 22%, var(--signal-line)); }
-.timeline-author { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-bottom: 8px; overflow-wrap: anywhere; }
-.timeline-author strong { font-size: 12px; font-weight: 600; }
-.timeline-author span { font-size: 11px; color: var(--signal-muted); }
-.timeline-message p { margin: 0 0 12px; font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
-.timeline-entry time { display: block; color: var(--signal-muted); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1.6; }
-.timeline-event { display: flex; align-items: center; flex-direction: column; gap: 3px; text-align: center; }
-.timeline-event-label { max-width: 92%; padding: 5px 10px; background: var(--signal-bg); color: var(--signal-muted); font-size: 11px; overflow-wrap: anywhere; }
-.timeline-event time { padding-inline: 8px; background: var(--signal-bg); }
-@keyframes ticket-entry-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { .timeline-entry { animation: none; } }
-@media (max-width: 640px) {
-  .ticket-timeline-scroll { padding: 0 10px 20px; }
-  .timeline-entry { grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr); }
-  .timeline-message { padding: 10px; }
-  .timeline-message p { font-size: 13px; line-height: 1.7; }
-  .timeline-marker { width: 22px; height: 22px; box-shadow: 0 0 0 3px var(--signal-bg); }
-  .ticket-timeline { gap: 18px; }
-}
-</style>

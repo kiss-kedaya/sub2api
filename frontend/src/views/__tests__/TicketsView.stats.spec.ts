@@ -182,7 +182,9 @@ describe('TicketsView requester statistics availability', () => {
     await mountDetail(detailFixture({ usage_stats_available: false, recharge_stats_available: false }))
     expectStats(['—', '—', '—'], [false, false, false])
     mocks.detail.mockResolvedValue(detailFixture({ usage_stats_available: true, recharge_stats_available: true }))
-    await wrapper!.get('button[aria-label="tickets.refresh"]').trigger('click')
+    // shallowMount stubs UButton; Nuxt UI declares onClick as a prop, so call that handler directly.
+    const refreshButton = wrapper!.findComponent('[aria-label="tickets.refresh"]') as unknown as VueWrapper
+    await (refreshButton.props('onClick') as (event?: Event) => unknown)()
     await flushPromises()
     expectStats(['0', formatCurrency(0), formatCurrency(0)], [true, true, true])
   })

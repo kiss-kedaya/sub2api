@@ -1,25 +1,22 @@
 <template>
   <div class="group/usage relative text-sm">
     <div class="flex items-center gap-1.5">
-      <span class="text-gray-500 dark:text-gray-400">{{ t('admin.users.today') }}:</span>
-      <span class="font-medium text-gray-900 dark:text-white">${{ today.toFixed(4) }}</span>
-      <Icon
-        v-if="hasBreakdown"
-        name="infoCircle"
-        size="xs"
-        class="text-gray-400 dark:text-gray-500"
-      />
+      <span class="text-muted">{{ t('admin.users.today') }}:</span>
+      <span class="font-medium tabular-nums text-highlighted">${{ today.toFixed(4) }}</span>
+      <UIcon v-if="hasBreakdown" name="i-lucide-info" class="size-3.5 text-dimmed" />
     </div>
     <div class="mt-0.5 flex items-center gap-1.5">
-      <span class="text-gray-500 dark:text-gray-400">{{ t('admin.users.total') }}:</span>
-      <span class="font-medium text-gray-900 dark:text-white">${{ total.toFixed(4) }}</span>
+      <span class="text-muted">{{ t('admin.users.total') }}:</span>
+      <span class="font-medium tabular-nums text-highlighted">${{ total.toFixed(4) }}</span>
     </div>
 
+    <!-- Hover breakdown, styled like UTooltip (kept in place: the admin users table renders
+         many of these cells and a tooltip provider is not guaranteed around them). -->
     <div
       v-if="hasBreakdown"
-      class="pointer-events-none absolute left-full top-0 z-50 ml-2 min-w-[220px] whitespace-nowrap rounded-md bg-gray-900 px-3 py-2 text-xs text-white opacity-0 shadow-xl transition-opacity duration-100 group-hover/usage:opacity-100 dark:bg-dark-600"
+      class="pointer-events-none absolute left-full top-0 z-50 ml-2 min-w-[220px] whitespace-nowrap rounded-sm bg-default px-2.5 py-2 text-xs text-highlighted opacity-0 shadow-sm ring ring-default transition-opacity duration-100 group-hover/usage:opacity-100"
     >
-      <div class="mb-1.5 flex items-center justify-between gap-3 border-b border-white/10 pb-1 text-[11px] opacity-80">
+      <div class="mb-1.5 flex items-center justify-between gap-3 border-b border-default pb-1 text-muted">
         <span>{{ t('admin.users.platformBreakdown') }}</span>
         <span class="font-mono">{{ t('admin.users.today') }} / {{ t('admin.users.total') }}</span>
       </div>
@@ -27,14 +24,14 @@
         v-for="item in sortedBreakdown"
         :key="item.platform"
         class="flex items-center justify-between gap-3 py-0.5"
-        :class="{ 'opacity-70 italic': item.isOther }"
+        :class="{ 'italic text-muted': item.isOther }"
       >
         <span class="capitalize">
           {{ item.isOther ? t('admin.users.platformOther') : platformLabel(item.platform) }}
         </span>
-        <span class="font-mono">
+        <span class="font-mono tabular-nums">
           ${{ item.today_actual_cost.toFixed(4) }}
-          <span class="opacity-50">/</span>
+          <span class="text-dimmed">/</span>
           ${{ item.total_actual_cost.toFixed(4) }}
         </span>
       </div>
@@ -45,7 +42,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import type { PlatformUsage } from '@/api/admin/dashboard'
 
 const props = defineProps<{
