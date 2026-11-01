@@ -102,10 +102,12 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).not.toMatch(/<(button|input)[\s>]/)
   })
 
-  it('admin ChannelMonitorView V2 tab chrome uses the shared header and Nuxt UI tabs', () => {
+  it('admin ChannelMonitorView sub-pages use the shared header and a Nuxt UI sub-nav in the toolbar', () => {
     const src = read('views/admin/ChannelMonitorView.vue')
     expect(src).toContain('<AdminPageHeader')
-    expect(src).toContain('<UTabs')
+    expect(src).toContain('<PageToolbar>')
+    expect(src).toContain('<UNavigationMenu')
+    expect(src).toContain('<USlideover')
     expect(src).toContain('monitorTabs')
     expect(src).not.toContain('tab-active')
     expect(src).toContain('MonitorSettingsPanel')

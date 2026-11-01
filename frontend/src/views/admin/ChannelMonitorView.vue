@@ -5,15 +5,9 @@
         :title="t('admin.channelMonitor.title')"
         :description="isV1Mode ? t('channelMonitorV2.admin.descriptionV1') : t('channelMonitorV2.admin.descriptionV2')"
       />
-      <UTabs
-        v-model="adminMonitorTab"
-        :items="monitorTabs"
-        :content="false"
-        variant="link"
-        class="w-full"
-        :aria-label="t('channelMonitorV2.admin.tabAria')"
-        :ui="{ list: 'border-b border-default', trigger: 'pb-2.5' }"
-      />
+      <PageToolbar>
+        <UNavigationMenu :items="monitorSubnav" highlight class="-mx-1 overflow-x-auto" :aria-label="t('channelMonitorV2.admin.tabAria')" />
+      </PageToolbar>
 
       <MonitorSettingsPanel v-if="adminMonitorTab === 'v2'" />
 
@@ -35,7 +29,7 @@
         <DataTable :columns="columns" :data="monitors" :loading="loading">
           <template #cell-name="{ row, value }">
             <div class="flex items-center gap-1.5">
-              <span class="font-medium text-highlighted">{{ value }}</span>
+              <UButton variant="link" class="p-0 font-medium" data-testid="monitor-open-detail" @click="openDetail(row)">{{ value }}</UButton>
               <HelpTooltip v-if="row.api_key_decrypt_failed" :content="t('admin.channelMonitor.apiKeyDecryptFailed')">
                 <UIcon name="i-lucide-triangle-alert" class="size-4 text-error" />
               </HelpTooltip>
@@ -102,6 +96,36 @@
       </TablePageLayout>
     </div>
 
+    <USlideover v-model:open="detailOpen" :title="detail?.name || ''" :description="detail ? providerLabel(detail.provider) + ' · ' + checkModeLabel(detail.check_mode) : ''">
+      <template #body>
+        <div v-if="detail" class="flex flex-col gap-5 text-sm">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <UBadge color="neutral" variant="outline" size="sm">{{ providerLabel(detail.provider) }}</UBadge>
+            <UBadge :color="checkModeColor(detail.check_mode)" variant="subtle" size="sm">{{ checkModeLabel(detail.check_mode) }}</UBadge>
+            <UBadge :color="detail.enabled ? 'success' : 'neutral'" variant="subtle" size="sm">{{ t('admin.channelMonitor.columns.enabled') }}: {{ detail.enabled ? '✓' : '—' }}</UBadge>
+          </div>
+          <MonitorPrimaryModelCell :row="detail" />
+          <dl class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+            <dt class="text-muted">{{ t('admin.channelMonitor.form.endpoint') }}</dt><dd class="break-all font-mono text-xs text-default">{{ detail.endpoint || '—' }}</dd>
+            <dt class="text-muted">{{ t('admin.channelMonitor.form.extraModels') }}</dt><dd class="text-default">{{ detail.extra_models?.length ? detail.extra_models.join(', ') : '—' }}</dd>
+            <dt class="text-muted">{{ t('admin.channelMonitor.columns.availability7d') }}</dt><dd class="tabular-nums text-default">{{ formatAvailability(detail) }}</dd>
+            <dt class="text-muted">{{ t('admin.channelMonitor.columns.latency') }}</dt><dd class="tabular-nums text-default">{{ formatLatency(detail.primary_latency_ms) }}</dd>
+            <dt class="text-muted">{{ t('admin.channelMonitor.form.intervalSeconds') }}</dt><dd class="tabular-nums text-default">{{ detail.interval_seconds }}s · ±{{ detail.jitter_seconds }}s</dd>
+            <dt class="text-muted">{{ t('admin.channelMonitor.form.groupName') }}</dt><dd class="text-default">{{ detail.group_name || '—' }}</dd>
+          </dl>
+          <UAlert v-if="detail.api_key_decrypt_failed" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.channelMonitor.apiKeyDecryptFailed')" />
+        </div>
+      </template>
+      <template #footer>
+        <div v-if="detail" class="flex w-full flex-wrap justify-end gap-2">
+          <UButton color="error" variant="ghost" icon="i-lucide-trash-2" :label="t('common.delete')" @click="detailAction('delete')" />
+          <UButton color="neutral" variant="outline" icon="i-lucide-copy" :label="t('admin.channelMonitor.duplicate')" :disabled="Boolean(detail.api_key_decrypt_failed) || duplicatingIds.has(detail.id)" @click="detailAction('duplicate')" />
+          <UButton color="neutral" variant="outline" icon="i-lucide-play" :label="t('admin.channelMonitor.runNow')" :loading="runningId === detail.id" @click="detailAction('run')" />
+          <UButton icon="i-lucide-pencil" :label="t('common.edit')" @click="detailAction('edit')" />
+        </div>
+      </template>
+    </USlideover>
+
     <MonitorFormDialog
       :show="showDialog"
       :monitor="editing"
@@ -135,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, getCurrentInstance, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -156,6 +180,8 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import { PageToolbar } from '@/components/layout'
+import { useRoute } from 'vue-router'
 import Toggle from '@/components/common/Toggle.vue'
 import MonitorFiltersBar from '@/components/admin/monitor/MonitorFiltersBar.vue'
 import MonitorFormDialog from '@/components/admin/monitor/MonitorFormDialog.vue'
@@ -172,6 +198,18 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const isV1Mode = computed(() => isChannelMonitorV1Mode())
 const adminMonitorTab = ref<'v2' | 'legacy'>(isChannelMonitorV1Mode() ? 'legacy' : 'v2')
+// Sub-pages: /admin/channels/monitor/settings (V2) and /list (V1 monitors); the bare path follows the system mode.
+const monitorRoute = useRoute() as ReturnType<typeof useRoute> | undefined
+const monitorRouter = getCurrentInstance()?.proxy?.$router
+const monitorPaths = { v2: '/admin/channels/monitor/settings', legacy: '/admin/channels/monitor/list' } as const
+watch(() => monitorRoute?.meta?.monitorSection, (section) => {
+  if (section === 'v2' || section === 'legacy') adminMonitorTab.value = section
+}, { immediate: true })
+function selectMonitorSection(section: 'v2' | 'legacy') {
+  adminMonitorTab.value = section
+  if (monitorRouter && monitorRoute?.path !== monitorPaths[section]) void monitorRouter.push(monitorPaths[section])
+}
+const monitorSubnav = computed(() => monitorTabs.value.map(tab => ({ ...tab, active: adminMonitorTab.value === tab.value, onSelect: () => selectMonitorSection(tab.value as 'v2' | 'legacy') })))
 const monitorTabs = computed(() => [
   { value: 'v2', label: t('channelMonitorV2.admin.tabV2'), icon: 'i-lucide-activity' },
   { value: 'legacy', label: isV1Mode.value ? t('channelMonitorV2.admin.tabV1Active') : t('channelMonitorV2.admin.tabV1History'), icon: 'i-lucide-history' },
@@ -268,6 +306,23 @@ function onPageSizeChange(size: number) {
   pagination.page_size = size
   pagination.page = 1
   reload()
+}
+
+// List + detail: a row's name opens its detail slideover.
+const detailOpen = ref(false)
+const detail = ref<ChannelMonitor | null>(null)
+function openDetail(row: ChannelMonitor) {
+  detail.value = row
+  detailOpen.value = true
+}
+function detailAction(action: 'run' | 'duplicate' | 'edit' | 'delete') {
+  const row = detail.value
+  if (!row) return
+  if (action !== 'run') detailOpen.value = false
+  if (action === 'run') void handleRunNow(row)
+  else if (action === 'duplicate') void handleDuplicate(row)
+  else if (action === 'edit') openEditDialog(row)
+  else handleDelete(row)
 }
 
 function openCreateDialog() {

@@ -15,6 +15,9 @@
           <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="loading" :label="text('刷新', 'Refresh')" @click="refresh" />
         </template>
       </AdminPageHeader>
+      <PageToolbar>
+        <UNavigationMenu :items="subnavItems" highlight class="-mx-1 overflow-x-auto" :aria-label="text('运营中心', 'Operations center')" />
+      </PageToolbar>
 
       <UAlert v-if="error" role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
       <UAlert
@@ -25,7 +28,7 @@
         :description="text('账号资产与告警需要主管理员权限，当前只显示系统统计。', 'Account assets and alerts require the primary administrator; only system totals are shown.')"
       />
 
-      <UPageGrid as="section" class="gap-4 sm:gap-6 lg:grid-cols-4 lg:gap-px" :aria-label="text('运营概览', 'Operations overview')">
+      <UPageGrid v-if="section === 'overview'" as="section" class="gap-4 sm:gap-6 lg:grid-cols-4 lg:gap-px" :aria-label="text('运营概览', 'Operations overview')">
         <UPageCard icon="i-lucide-wallet" :title="text('上游总余额', 'Total upstream balance')" variant="subtle" :ui="statUi" :class="statClass">
           <div class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
             <span v-for="total in balanceTotals.slice(0, 2)" :key="total.unit" class="text-2xl font-semibold tabular-nums text-highlighted">
@@ -64,7 +67,7 @@
         </UPageCard>
       </UPageGrid>
 
-      <section class="flex flex-col gap-3">
+      <section v-if="section !== 'assets'" class="flex flex-col gap-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="flex items-center gap-1.5">
             <h2 class="text-base font-semibold text-highlighted">{{ text('需要处理', 'Needs attention') }}</h2>
@@ -72,10 +75,11 @@
               <UIcon name="i-lucide-info" class="size-4 text-dimmed" />
             </UTooltip>
           </div>
-          <UButton to="/admin/account-ops" color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-arrow-right" :label="text('打开账号通知', 'Open account notifications')" />
+          <UButton v-if="section === 'overview'" to="/admin/ops-center/attention" color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-arrow-right" :label="text('查看全部', 'View all') + (attentionAll.length > attentionPreview.length ? ` (${attentionAll.length})` : '')" />
+          <UButton v-else to="/admin/account-ops" color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-arrow-right" :label="text('打开账号通知', 'Open account notifications')" />
         </div>
         <UTable
-          :data="attention"
+          :data="section === 'overview' ? attentionPreview : attentionAll"
           :columns="attentionColumns"
           :empty="loading ? text('加载中…', 'Loading…') : text('当前没有需要处理的账号。', 'Nothing needs attention right now.')"
           :ui="tableUi"
@@ -102,7 +106,7 @@
         </UTable>
       </section>
 
-      <section class="flex flex-col gap-3">
+      <section v-if="section !== 'attention'" class="flex flex-col gap-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="flex items-center gap-1.5">
             <h2 class="text-base font-semibold text-highlighted">{{ text('账号资产', 'Account assets') }}</h2>
@@ -110,7 +114,8 @@
               <UIcon name="i-lucide-info" class="size-4 text-dimmed" />
             </UTooltip>
           </div>
-          <div class="flex flex-wrap items-center gap-1.5">
+          <UButton v-if="section === 'overview'" to="/admin/ops-center/assets" color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-arrow-right" :label="text('查看全部', 'View all') + ` (${accounts.length})`" />
+          <div v-else class="flex flex-wrap items-center gap-1.5">
             <UInput v-model="search" icon="i-lucide-search" class="w-full sm:w-56" :placeholder="text('搜索账号 / 分组', 'Search account or group')" :aria-label="text('搜索账号', 'Search accounts')" />
             <USelect
               v-model="riskFilter"
@@ -144,7 +149,7 @@
         />
         <template v-else>
           <UTable
-            :data="pageRows"
+            :data="section === 'overview' ? assetPreview : pageRows"
             :columns="assetColumns"
             :get-row-id="(row: AccountRow) => String(row.account.account_id)"
             :empty="loading ? text('加载中…', 'Loading…') : text('没有匹配的账号。', 'No accounts match the filters.')"
@@ -184,14 +189,14 @@
               <span class="text-xs text-muted">{{ date(row.original.account.received_at) }}</span>
             </template>
           </UTable>
-          <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4">
+          <div v-if="section === 'assets'" class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4">
             <span class="text-sm text-muted">{{ text('显示', 'Showing') }} {{ rangeStart }}–{{ rangeEnd }} / {{ filteredAccounts.length }}</span>
             <UPagination v-model:page="page" :items-per-page="pageSize" :total="filteredAccounts.length" />
           </div>
         </template>
       </section>
 
-      <section class="flex flex-col gap-3">
+      <section v-if="section === 'overview'" class="flex flex-col gap-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="flex items-center gap-1.5">
             <h2 class="text-base font-semibold text-highlighted">{{ text('功能分级', 'Feature tiers') }}</h2>
@@ -240,6 +245,8 @@ import { useI18n } from 'vue-i18n'
 import type { TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import { PageToolbar } from '@/components/layout'
+import { useRoute } from 'vue-router'
 import { statCardClass, statCardUi, templateTableUi } from '@/views/admin/ops/utils/templateUi'
 import {
   getAccountOpsEvents,
@@ -315,6 +322,19 @@ const balanceTotals = computed(() => summarizeBalances(accounts.value))
 const accountsWithBalance = computed(() => accounts.value.filter(account => typeof account.balance === 'number' && Number.isFinite(account.balance)).length)
 const attentionAll = computed(() => buildAttentionItems(accounts.value, events.value, 100))
 const attention = computed(() => attentionAll.value.slice(0, 8))
+// Sub-pages: /admin/ops-center (overview), /attention, /assets — one view, section from the route.
+type OpsCenterSection = 'overview' | 'attention' | 'assets'
+const route = useRoute()
+const section = computed<OpsCenterSection>(() => {
+  const value = route.meta?.opsCenterSection
+  return value === 'attention' || value === 'assets' ? value : 'overview'
+})
+const subnavItems = computed(() => [
+  { label: text('概览', 'Overview'), icon: 'i-lucide-layout-dashboard', to: '/admin/ops-center', active: section.value === 'overview' },
+  { label: text('需要处理', 'Needs attention'), icon: 'i-lucide-bell', to: '/admin/ops-center/attention', active: section.value === 'attention', badge: attentionAll.value.length || undefined },
+  { label: text('账号资产', 'Account assets'), icon: 'i-lucide-wallet', to: '/admin/ops-center/assets', active: section.value === 'assets' },
+])
+const attentionPreview = computed(() => attentionAll.value.slice(0, 5))
 const pendingEvents = computed(() => events.value.filter(event => ['pending', 'sending', 'failed'].includes(event.state)).length)
 const riskAccounts = computed(() => accounts.value.filter(account => riskScore(account) > 0))
 
@@ -334,6 +354,7 @@ const filteredAccounts = computed(() => {
     return riskScore(b) - riskScore(a) || a.account_name.localeCompare(b.account_name)
   })
 })
+const assetPreview = computed(() => [...accounts.value].sort((a, b) => riskScore(b) - riskScore(a) || a.account_name.localeCompare(b.account_name)).slice(0, 5).map(toRow))
 const pageCount = computed(() => Math.max(1, Math.ceil(filteredAccounts.value.length / pageSize)))
 const pageRows = computed(() => filteredAccounts.value.slice((page.value - 1) * pageSize, page.value * pageSize).map(toRow))
 const rangeStart = computed(() => (filteredAccounts.value.length ? (page.value - 1) * pageSize + 1 : 0))
