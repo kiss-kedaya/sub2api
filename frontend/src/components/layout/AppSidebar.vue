@@ -7,7 +7,11 @@
     v-model:collapsed="sidebarCollapsed"
     collapsible
     class="console-sidebar bg-(--app-sidebar-bg)"
-    :ui="{ body: 'min-h-0 overflow-visible', footer: 'sidebar-footer lg:border-t lg:border-default' }"
+    :ui="{
+      body: 'min-h-0 overflow-visible',
+      footer: 'sidebar-footer lg:border-t lg:border-default',
+      content: 'console-sidebar-drawer w-[86vw] max-w-[20rem] sm:w-80 sm:max-w-80'
+    }"
   >
     <!-- Header (TeamsMenu in the template): logo, site name and version. -->
     <template #header="{ collapsed }">
@@ -780,6 +784,7 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
   max-height: min(70vh, 560px);
   overflow-y: auto;
 }
+
 /* Desktop width: UDashboardSidebar is resizable with a 15rem default and a 10rem
    minimum, and the stored size survives reloads - that is why the console sidebar
    could read as a narrow strip. Pin the expanded rail to the old main sidebar's
@@ -811,5 +816,25 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
 
 .console-sidebar [data-slot='label'] {
   padding-inline: 0.75rem;
+}
+
+/* Phone / tablet drawer. Nuxt UI leaves the slideover at w-full below sm, so the drawer
+   covered the whole viewport; cap it and leave a tappable strip of the page behind. */
+.console-sidebar-drawer {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+/* Touch screens: nav rows and the footer account button get a 44px target. */
+@media (pointer: coarse) {
+  .console-sidebar-drawer [data-slot='body'] :is(a, button) {
+    min-height: 44px;
+  }
+
+  .console-sidebar-drawer [data-slot='header'] button {
+    min-width: 40px;
+    min-height: 40px;
+  }
 }
 </style>
