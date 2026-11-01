@@ -1,0 +1,72 @@
+/*
+  Opaque content surfaces inside the console panel.
+
+  The panel itself stays transparent so the sakura canvas shows in empty areas. Nuxt UI's
+  subtle / soft surfaces (UCard and UPageCard variant="subtle", soft buttons and badges,
+  table header rows, ...) are translucent fills such as `bg-elevated/50`: the template has a
+  white panel behind them, we have the painting. This file gives them that white panel.
+
+  How: every translucent fill gets a backing layer in the colour that sits behind it
+  (`--app-under`, the page colour on the bare panel). The backing is a background-image,
+  which paints above the background colour, so it is blended with `darken` by day and
+  `lighten` at night: against the page colour that equals painting the fill over the page,
+  i.e. the same colour as before, only opaque. Inside an opaque surface `--app-under` is
+  transparent and nothing changes. Bare tables (UTable rows have no fill) get the backing as
+  their own colour. Overlays, veils and gradients are left alone.
+*/
+.console-frame .console-panel {
+  --app-under: var(--app-page-bg);
+  --app-under-blend: darken;
+}
+
+.dark .console-frame .console-panel {
+  --app-under-blend: lighten;
+}
+
+/* Opaque surfaces: whatever is inside them already has a solid colour behind it. */
+.console-frame .console-panel :is(.bg-default, .bg-muted, .bg-elevated, .bg-accented, .bg-inverted, .bg-white, .card, .glass-card, .table-container, .table-scroll-container, .modal-content, .dialog-container, .dropdown, .table-pagination) {
+  --app-under: transparent;
+}
+
+/* Translucent fills: an opaque backing in the colour behind them. */
+.console-frame .console-panel :is(
+  [class^='bg-default/'], [class*=' bg-default/'],
+  [class^='bg-muted/'], [class*=' bg-muted/'],
+  [class^='bg-elevated/'], [class*=' bg-elevated/'],
+  [class^='bg-accented/'], [class*=' bg-accented/'],
+  [class^='bg-inverted/'], [class*=' bg-inverted/'],
+  [class^='bg-primary/'], [class*=' bg-primary/'],
+  [class^='bg-secondary/'], [class*=' bg-secondary/'],
+  [class^='bg-success/'], [class*=' bg-success/'],
+  [class^='bg-info/'], [class*=' bg-info/'],
+  [class^='bg-warning/'], [class*=' bg-warning/'],
+  [class^='bg-error/'], [class*=' bg-error/'],
+  [class^='bg-neutral/'], [class*=' bg-neutral/'],
+  [class^='bg-white/'], [class*=' bg-white/']
+):not(.absolute, .fixed, [data-slot='overlay'], [class*='bg-linear'], [class*='bg-gradient'], [class*='bg-radial'], [class*='bg-conic'], [class*='bg-[url'], [class*='bg-[image']) {
+  background-image: linear-gradient(var(--app-under), var(--app-under));
+  background-blend-mode: var(--app-under-blend);
+}
+
+.console-frame .console-panel :is(
+  [class^='bg-default/'], [class*=' bg-default/'],
+  [class^='bg-muted/'], [class*=' bg-muted/'],
+  [class^='bg-elevated/'], [class*=' bg-elevated/'],
+  [class^='bg-accented/'], [class*=' bg-accented/'],
+  [class^='bg-inverted/'], [class*=' bg-inverted/'],
+  [class^='bg-primary/'], [class*=' bg-primary/'],
+  [class^='bg-secondary/'], [class*=' bg-secondary/'],
+  [class^='bg-success/'], [class*=' bg-success/'],
+  [class^='bg-info/'], [class*=' bg-info/'],
+  [class^='bg-warning/'], [class*=' bg-warning/'],
+  [class^='bg-error/'], [class*=' bg-error/'],
+  [class^='bg-neutral/'], [class*=' bg-neutral/'],
+  [class^='bg-white/'], [class*=' bg-white/']
+):not(.absolute, .fixed, [data-slot='overlay'], [class*='bg-linear'], [class*='bg-gradient'], [class*='bg-radial'], [class*='bg-conic'], [class*='bg-[url'], [class*='bg-[image']) > * {
+  --app-under: transparent;
+}
+
+/* Tables (UTable rows and cells have no fill of their own). */
+.console-frame .console-panel table {
+  background-color: var(--app-under);
+}

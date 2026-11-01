@@ -89,7 +89,8 @@
   --signal-hero-muted: #c3a9b3;
   --signal-hero-mark: #f0aec3;
   --signal-hero-line: #4a3640;
-  --signal-page-surface: rgba(38, 28, 33, 0.78);
+  /* Same colour as the former rgba(38, 28, 33, 0.78) over the page, but opaque. */
+  --signal-page-surface: color-mix(in srgb, #261c21 78%, #1c1519);
   --signal-sakura: #e89ab3;
 }
 
@@ -196,7 +197,7 @@ body:has(.console-signal) > .select-dropdown-portal {
 
 .console-signal .table-pagination {
   border-color: var(--signal-line);
-  background: transparent;
+  background: var(--app-page-bg);
   padding-inline: 0;
 }
 
