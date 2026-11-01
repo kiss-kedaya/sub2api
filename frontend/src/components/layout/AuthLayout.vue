@@ -1,55 +1,39 @@
 <template>
-  <div class="auth-paper relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-    <!-- Background: plain white paper by day; the night background and grid are unchanged -->
-    <div
-      class="absolute inset-0 hidden bg-linear-to-br/srgb dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
-    ></div>
-    <div class="pointer-events-none absolute inset-0 hidden overflow-hidden dark:block">
-      <div class="auth-grid absolute inset-0"></div>
-    </div>
-
-    <!-- Ink-wash sakura on the right, above the background and below the form -->
+  <!-- Nuxt UI's sign-in layout: one card in the middle of a plain page, brand in the corner. -->
+  <div class="auth-paper relative flex min-h-screen flex-col bg-default">
+    <!-- Ink-wash sakura on the right, above the page and below the card -->
     <InkSakura front />
 
-    <!-- Content: brand above a centred card, as in Nuxt UI's auth pages -->
-    <div class="relative z-10 w-full max-w-md">
-      <!-- Logo/Brand -->
-      <div class="mb-6 flex flex-col items-center text-center">
-        <!-- Custom Logo or Default Logo -->
-        <template v-if="settingsLoaded">
-          <div
-            class="mb-4 inline-flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl dark:shadow-lg dark:shadow-primary-500/30"
-          >
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
-          </div>
-          <h1 class="text-gradient text-2xl font-semibold">
-            {{ siteName }}
-          </h1>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-            {{ siteSubtitle }}
-          </p>
-        </template>
-      </div>
+    <header class="relative z-10 flex h-16 shrink-0 items-center px-4 sm:px-8">
+      <template v-if="settingsLoaded">
+        <router-link
+          v-if="!backendModeEnabled"
+          to="/home"
+          class="inline-flex items-center gap-2.5 rounded-md text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <img :src="siteLogo || '/logo.svg'" alt="" class="size-7 rounded-md object-contain" />
+          <span class="text-base font-semibold">{{ siteName }}</span>
+        </router-link>
+        <div v-else class="inline-flex items-center gap-2.5 text-highlighted">
+          <img :src="siteLogo || '/logo.svg'" alt="" class="size-7 rounded-md object-contain" />
+          <span class="text-base font-semibold">{{ siteName }}</span>
+        </div>
+      </template>
+    </header>
 
-      <!-- Card Container -->
-      <div class="auth-card rounded-2xl border border-[#ebe8e9] bg-white/85 p-6 sm:p-8 dark:border-dark-700/50 dark:bg-dark-800/70 dark:shadow-glass dark:backdrop-blur-xl">
+    <main class="relative z-10 flex flex-1 items-center justify-center px-4 py-6">
+      <UPageCard variant="subtle" class="w-full max-w-sm bg-muted">
         <slot />
-      </div>
+        <div v-if="$slots.footer" class="text-center text-sm text-muted">
+          <slot name="footer" />
+        </div>
+      </UPageCard>
+    </main>
 
-      <!-- Footer Links -->
-      <div class="mt-6 text-center text-sm">
-        <slot name="footer" />
-      </div>
-
-      <div class="mt-5 text-gray-400 dark:text-dark-500">
-        <LegalFooterLinks />
-      </div>
-
-      <!-- Copyright -->
-      <div class="mt-8 text-center text-xs text-gray-400 dark:text-dark-500">
-        &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
-      </div>
-    </div>
+    <footer class="relative z-10 space-y-2 px-4 pb-6 text-center text-muted">
+      <LegalFooterLinks />
+      <p class="text-xs text-dimmed">&copy; {{ currentYear }} {{ siteName }}</p>
+    </footer>
   </div>
 </template>
 
@@ -58,6 +42,7 @@ import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import InkSakura from './InkSakura.vue'
+// The OAuth callback pages still use the shared .btn/.input classes, styled under .auth-paper.
 import '@/styles/console-elevation.css'
 import { sanitizeUrl } from '@/utils/url'
 
@@ -65,8 +50,9 @@ const appStore = useAppStore()
 
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
-const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'Subscription to API Conversion Platform')
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
+// In backend mode every public page redirects to /login, so the brand is not a link there.
+const backendModeEnabled = computed(() => appStore.backendModeEnabled)
 
 const currentYear = computed(() => new Date().getFullYear())
 
@@ -74,50 +60,3 @@ onMounted(() => {
   appStore.fetchPublicSettings()
 })
 </script>
-
-<style scoped>
-@reference "../../style.css";
-/* Plain ink title by day; the night keeps its rose gradient. */
-.text-gradient {
-  color: #171717;
-}
-
-:global(html.dark) .text-gradient {
-  @apply bg-linear-to-r/srgb from-primary-600 to-primary-500 bg-clip-text text-transparent;
-}
-
-.auth-grid {
-  background-image:
-    linear-gradient(rgba(58, 83, 117, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(58, 83, 117, 0.07) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(circle at center, black 0%, transparent 78%);
-  animation: auth-grid-drift 28s linear infinite;
-}
-
-:global(html.dark) .auth-grid {
-  background-image:
-    linear-gradient(rgba(145, 169, 201, 0.11) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(145, 169, 201, 0.11) 1px, transparent 1px);
-}
-
-@keyframes auth-grid-drift {
-  from { background-position: 0 0; }
-  to { background-position: 48px 48px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .auth-grid { animation: none; }
-}
-</style>
-
-<style>
-/* By day the card is a Nuxt UI card: white, hairline ring, 8px corners, a small shadow,
-   no glass. `div.auth-card` outranks console-elevation.css in any load order. */
-html:not(.dark) .auth-paper div.auth-card {
-  border-color: #e5e5e5;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgb(10 10 10 / 0.06), 0 1px 2px -1px rgb(10 10 10 / 0.06);
-}
-</style>
