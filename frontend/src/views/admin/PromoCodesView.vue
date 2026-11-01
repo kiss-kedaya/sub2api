@@ -8,47 +8,45 @@
           :description="t('admin.promo.description')"
         >
           <template #actions>
-            <button @click="showCreateDialog = true" class="btn btn-primary">
-              <Icon name="plus" size="md" class="mr-1" />
-              {{ t('admin.promo.createCode') }}
-            </button>
+            <UButton icon="i-lucide-plus" :label="t('admin.promo.createCode')" @click="showCreateDialog = true" />
           </template>
         </AdminPageHeader>
-        <div class="flex flex-wrap items-center gap-3">
-          <!-- Left: Search + Filters -->
-          <div class="flex-1 sm:max-w-64">
-            <input
+        <!-- Toolbar row (template customers page) -->
+        <div class="flex flex-wrap items-center justify-between gap-1.5">
+          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            <UInput
               v-model="searchQuery"
-              type="text"
+              icon="i-lucide-search"
               :placeholder="t('admin.promo.searchCodes')"
-              class="input"
-              @input="handleSearch"
+              class="w-full sm:max-w-xs"
+              @update:model-value="handleSearch"
             />
+            <Select v-model="filters.status" :options="filterStatusOptions" class="w-full sm:w-36" @change="loadCodes" />
           </div>
-          <Select
-            v-model="filters.status"
-            :options="filterStatusOptions"
-            class="w-36"
-            @change="loadCodes"
-          />
-
-          <!-- Right: Action buttons -->
-          <div class="flex flex-1 flex-wrap items-center justify-end gap-2">
-            <button
-              @click="loadCodes"
+          <div class="flex flex-wrap items-center gap-1.5">
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-refresh-cw"
+              square
               :disabled="loading"
-              class="btn btn-secondary"
+              :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
               :title="t('common.refresh')"
-            >
-              <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-            </button>
+              :aria-label="t('common.refresh')"
+              @click="loadCodes"
+            />
+            <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }">
+              <UButton color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" :aria-label="t('admin.promo.displayColumns')">
+                <span class="hidden sm:inline">{{ t('admin.promo.displayColumns') }}</span>
+              </UButton>
+            </UDropdownMenu>
           </div>
         </div>
       </template>
 
       <template #table>
         <DataTable
-          :columns="columns"
+          :columns="visibleColumns"
           :data="codes"
           :loading="loading"
           :server-side-sort="true"
@@ -57,72 +55,48 @@
           @sort="handleSort"
         >
           <template #cell-code="{ value }">
-            <div class="flex items-center space-x-2">
-              <code class="font-mono text-sm text-gray-900 dark:text-gray-100">{{ value }}</code>
-              <button
-                @click="copyToClipboard(value)"
-                :class="[
-                  'flex items-center transition-colors',
-                  copiedCode === value
-                    ? 'text-green-500'
-                    : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
-                ]"
+            <div class="flex items-center gap-1">
+              <code class="font-mono text-sm text-highlighted">{{ value }}</code>
+              <UButton
+                :color="copiedCode === value ? 'success' : 'neutral'"
+                variant="ghost"
+                size="xs"
+                square
+                :icon="copiedCode === value ? 'i-lucide-check' : 'i-lucide-copy'"
                 :title="copiedCode === value ? t('admin.promo.copied') : t('keys.copyToClipboard')"
-              >
-                <Icon v-if="copiedCode !== value" name="copy" size="sm" :stroke-width="2" />
-                <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              </button>
+                :aria-label="copiedCode === value ? t('admin.promo.copied') : t('keys.copyToClipboard')"
+                @click="copyToClipboard(value)"
+              />
             </div>
           </template>
 
           <template #cell-bonus_amount="{ value }">
-            <span class="text-sm font-medium text-gray-900 dark:text-white">
-              ${{ value.toFixed(2) }}
-            </span>
+            <span class="font-medium tabular-nums text-highlighted">${{ value.toFixed(2) }}</span>
           </template>
 
           <template #cell-usage="{ row }">
-            <span class="text-sm text-gray-600 dark:text-gray-300">
-              {{ row.used_count }} / {{ row.max_uses === 0 ? '∞' : row.max_uses }}
-            </span>
+            <span class="tabular-nums text-default">{{ row.used_count }} / {{ row.max_uses === 0 ? '∞' : row.max_uses }}</span>
           </template>
 
           <template #cell-status="{ value, row }">
-            <span
-              :class="[
-                'badge',
-                getStatusClass(value, row)
-              ]"
-            >
-              {{ getStatusLabel(value, row) }}
-            </span>
+            <UBadge :color="getStatusColor(value, row)" variant="subtle" :label="getStatusLabel(value, row)" />
           </template>
 
           <template #cell-expires_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">
-              {{ value ? formatDateTime(value) : t('admin.promo.neverExpires') }}
-            </span>
+            <span class="text-muted">{{ value ? formatDateTime(value) : t('admin.promo.neverExpires') }}</span>
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">
-              {{ formatDateTime(value) }}
-            </span>
+            <span class="text-muted">{{ formatDateTime(value) }}</span>
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center space-x-1">
-              <AdminRowAction @click="copyRegisterLink(row)" :label="t('admin.promo.copyRegisterLink')" icon="link" tone="success" />
-              <AdminRowAction @click="handleViewUsages(row)" :label="t('admin.promo.viewUsages')" icon="eye" />
-              <AdminRowAction @click="handleEdit(row)" :label="t('common.edit')" icon="edit" />
-              <AdminRowAction @click="handleDelete(row)" :label="t('common.delete')" icon="trash" tone="danger" />
+            <div class="flex items-center justify-end gap-0.5">
+              <AdminRowAction :label="t('admin.promo.copyRegisterLink')" icon="link" tone="success" @click="copyRegisterLink(row)" />
+              <AdminRowAction :label="t('common.edit')" icon="edit" @click="handleEdit(row)" />
+              <UDropdownMenu :items="rowMenuItems(row)" :content="{ align: 'end' }">
+                <AdminRowAction :label="t('common.more')" icon="more" />
+              </UDropdownMenu>
             </div>
           </template>
         </DataTable>
@@ -141,201 +115,83 @@
     </TablePageLayout>
 
     <!-- Create Dialog -->
-    <BaseDialog
-      :show="showCreateDialog"
-      :title="t('admin.promo.createCode')"
-      width="normal"
-      @close="showCreateDialog = false"
-    >
-      <form id="create-promo-form" @submit.prevent="handleCreate" class="space-y-4">
-        <div>
-          <label class="input-label">
-            {{ t('admin.promo.code') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('admin.promo.autoGenerate') }})</span>
-          </label>
-          <input
-            v-model="createForm.code"
-            type="text"
-            class="input font-mono uppercase"
-            :placeholder="t('admin.promo.codePlaceholder')"
-          />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.promo.bonusAmount') }}</label>
-          <input
-            v-model.number="createForm.bonus_amount"
-            type="number"
-            step="0.01"
-            min="0"
-            required
-            class="input"
-          />
-        </div>
-        <div>
-          <label class="input-label">
-            {{ t('admin.promo.maxUses') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('admin.promo.zeroUnlimited') }})</span>
-          </label>
-          <input
-            v-model.number="createForm.max_uses"
-            type="number"
-            min="0"
-            class="input"
-          />
-        </div>
-        <div>
-          <label class="input-label">
-            {{ t('admin.promo.expiresAt') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('common.optional') }})</span>
-          </label>
-          <input
-            v-model="createForm.expires_at_str"
-            type="datetime-local"
-            class="input"
-          />
-        </div>
-        <div>
-          <label class="input-label">
-            {{ t('admin.promo.notes') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('common.optional') }})</span>
-          </label>
-          <textarea
-            v-model="createForm.notes"
-            rows="2"
-            class="input"
-            :placeholder="t('admin.promo.notesPlaceholder')"
-          ></textarea>
-        </div>
-      </form>
+    <BaseDialog :show="showCreateDialog" :title="t('admin.promo.createCode')" width="normal" @close="showCreateDialog = false">
+      <UForm id="create-promo-form" :state="createForm" class="space-y-4" @submit="handleCreate">
+        <UFormField :label="t('admin.promo.code')" :hint="t('admin.promo.autoGenerate')">
+          <UInput v-model="createForm.code" class="w-full" :ui="{ base: 'font-mono uppercase' }" :placeholder="t('admin.promo.codePlaceholder')" />
+        </UFormField>
+        <UFormField :label="t('admin.promo.bonusAmount')" required>
+          <UInput v-model.number="createForm.bonus_amount" type="number" step="0.01" min="0" required class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.promo.maxUses')" :hint="t('admin.promo.zeroUnlimited')">
+          <UInput v-model.number="createForm.max_uses" type="number" min="0" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.promo.expiresAt')" :hint="t('common.optional')">
+          <UInput v-model="createForm.expires_at_str" type="datetime-local" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.promo.notes')" :hint="t('common.optional')">
+          <UTextarea v-model="createForm.notes" :rows="2" class="w-full" :placeholder="t('admin.promo.notesPlaceholder')" />
+        </UFormField>
+      </UForm>
       <template #footer>
-        <div class="flex justify-end gap-3">
-          <button type="button" @click="showCreateDialog = false" class="btn btn-secondary">
-            {{ t('common.cancel') }}
-          </button>
-          <button type="submit" form="create-promo-form" :disabled="creating" class="btn btn-primary">
-            {{ creating ? t('common.creating') : t('common.create') }}
-          </button>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="showCreateDialog = false" />
+          <UButton type="submit" form="create-promo-form" :loading="creating" :label="creating ? t('common.creating') : t('common.create')" />
         </div>
       </template>
     </BaseDialog>
 
     <!-- Edit Dialog -->
-    <BaseDialog
-      :show="showEditDialog"
-      :title="t('admin.promo.editCode')"
-      width="normal"
-      @close="closeEditDialog"
-    >
-      <form id="edit-promo-form" @submit.prevent="handleUpdate" class="space-y-4">
-        <div>
-          <label class="input-label">{{ t('admin.promo.code') }}</label>
-          <input
-            v-model="editForm.code"
-            type="text"
-            class="input font-mono uppercase"
-          />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.promo.bonusAmount') }}</label>
-          <input
-            v-model.number="editForm.bonus_amount"
-            type="number"
-            step="0.01"
-            min="0"
-            required
-            class="input"
-          />
-        </div>
-        <div>
-          <label class="input-label">
-            {{ t('admin.promo.maxUses') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('admin.promo.zeroUnlimited') }})</span>
-          </label>
-          <input
-            v-model.number="editForm.max_uses"
-            type="number"
-            min="0"
-            class="input"
-          />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.promo.status') }}</label>
+    <BaseDialog :show="showEditDialog" :title="t('admin.promo.editCode')" width="normal" @close="closeEditDialog">
+      <UForm id="edit-promo-form" :state="editForm" class="space-y-4" @submit="handleUpdate">
+        <UFormField :label="t('admin.promo.code')">
+          <UInput v-model="editForm.code" class="w-full" :ui="{ base: 'font-mono uppercase' }" />
+        </UFormField>
+        <UFormField :label="t('admin.promo.bonusAmount')" required>
+          <UInput v-model.number="editForm.bonus_amount" type="number" step="0.01" min="0" required class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.promo.maxUses')" :hint="t('admin.promo.zeroUnlimited')">
+          <UInput v-model.number="editForm.max_uses" type="number" min="0" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.promo.status')">
           <Select v-model="editForm.status" :options="statusOptions" />
-        </div>
-        <div>
-          <label class="input-label">
-            {{ t('admin.promo.expiresAt') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('common.optional') }})</span>
-          </label>
-          <input
-            v-model="editForm.expires_at_str"
-            type="datetime-local"
-            class="input"
-          />
-        </div>
-        <div>
-          <label class="input-label">
-            {{ t('admin.promo.notes') }}
-            <span class="ml-1 text-xs font-normal text-gray-400">({{ t('common.optional') }})</span>
-          </label>
-          <textarea
-            v-model="editForm.notes"
-            rows="2"
-            class="input"
-          ></textarea>
-        </div>
-      </form>
+        </UFormField>
+        <UFormField :label="t('admin.promo.expiresAt')" :hint="t('common.optional')">
+          <UInput v-model="editForm.expires_at_str" type="datetime-local" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.promo.notes')" :hint="t('common.optional')">
+          <UTextarea v-model="editForm.notes" :rows="2" class="w-full" />
+        </UFormField>
+      </UForm>
       <template #footer>
-        <div class="flex justify-end gap-3">
-          <button type="button" @click="closeEditDialog" class="btn btn-secondary">
-            {{ t('common.cancel') }}
-          </button>
-          <button type="submit" form="edit-promo-form" :disabled="updating" class="btn btn-primary">
-            {{ updating ? t('common.saving') : t('common.save') }}
-          </button>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="closeEditDialog" />
+          <UButton type="submit" form="edit-promo-form" :loading="updating" :label="updating ? t('common.saving') : t('common.save')" />
         </div>
       </template>
     </BaseDialog>
 
     <!-- Usages Dialog -->
-    <BaseDialog
-      :show="showUsagesDialog"
-      :title="t('admin.promo.usageRecords')"
-      width="wide"
-      @close="showUsagesDialog = false"
-    >
+    <BaseDialog :show="showUsagesDialog" :title="t('admin.promo.usageRecords')" width="wide" @close="showUsagesDialog = false">
       <div v-if="usagesLoading" class="flex items-center justify-center py-8">
-        <Icon name="refresh" size="lg" class="animate-spin text-gray-400" />
+        <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-dimmed" />
       </div>
-      <div v-else-if="usages.length === 0" class="py-8 text-center text-gray-500 dark:text-gray-400">
-        {{ t('admin.promo.noUsages') }}
-      </div>
-      <div v-else class="space-y-3">
-        <div
-          v-for="usage in usages"
-          :key="usage.id"
-          class="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-dark-600"
-        >
-          <div class="flex items-center gap-3">
-            <div class="flex h-8 w-8 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
-              <Icon name="user" size="sm" class="text-green-600 dark:text-green-400" />
+      <p v-else-if="usages.length === 0" class="py-8 text-center text-sm text-muted">{{ t('admin.promo.noUsages') }}</p>
+      <div v-else>
+        <ul class="divide-y divide-default">
+          <li v-for="usage in usages" :key="usage.id" class="flex items-center justify-between gap-3 py-3">
+            <div class="flex min-w-0 items-center gap-3">
+              <UAvatar :alt="usage.user?.email || String(usage.user_id)" size="sm" />
+              <div class="min-w-0">
+                <p class="truncate text-sm font-medium text-highlighted">
+                  {{ usage.user?.email || t('admin.promo.userPrefix', { id: usage.user_id }) }}
+                </p>
+                <p class="text-xs text-muted">{{ formatDateTime(usage.used_at) }}</p>
+              </div>
             </div>
-            <div>
-              <p class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ usage.user?.email || t('admin.promo.userPrefix', { id: usage.user_id }) }}
-              </p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                {{ formatDateTime(usage.used_at) }}
-              </p>
-            </div>
-          </div>
-          <div class="text-right">
-            <span class="text-sm font-medium text-green-600 dark:text-green-400">
-              +${{ usage.bonus_amount.toFixed(2) }}
-            </span>
-          </div>
-        </div>
-        <!-- Usages Pagination -->
+            <span class="text-sm font-medium tabular-nums text-success">+${{ usage.bonus_amount.toFixed(2) }}</span>
+          </li>
+        </ul>
         <div v-if="usagesTotal > usagesPageSize" class="mt-4">
           <Pagination
             :page="usagesPage"
@@ -348,9 +204,7 @@
       </div>
       <template #footer>
         <div class="flex justify-end">
-          <button type="button" @click="showUsagesDialog = false" class="btn btn-secondary">
-            {{ t('common.close') }}
-          </button>
+          <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="showUsagesDialog = false" />
         </div>
       </template>
     </BaseDialog>
@@ -386,7 +240,8 @@ import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
-import Icon from '@/components/icons/Icon.vue'
+import type { DropdownMenuItem } from '@nuxt/ui'
+import { useListColumnMenu } from './useListColumnMenu'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
@@ -463,7 +318,7 @@ const statusOptions = computed(() => [
   { value: 'disabled', label: t('admin.promo.statusDisabled') }
 ])
 
-const columns = computed<Column[]>(() => [
+const allColumns = computed<Column[]>(() => [
   { key: 'code', label: t('admin.promo.columns.code') },
   { key: 'bonus_amount', label: t('admin.promo.columns.bonusAmount'), sortable: true },
   { key: 'usage', label: t('admin.promo.columns.usage') },
@@ -473,15 +328,28 @@ const columns = computed<Column[]>(() => [
   { key: 'actions', label: t('admin.promo.columns.actions') }
 ])
 
+// "显示列": code and actions are fixed; every column starts visible
+const { visibleColumns, menuItems: columnMenuItems } = useListColumnMenu({
+  storageKey: 'admin-promo-hidden-columns',
+  columns: allColumns,
+  fixed: ['code', 'actions']
+})
+
+// Row "…" menu: usage records, delete
+const rowMenuItems = (row: PromoCode): DropdownMenuItem[][] => [
+  [{ label: t('admin.promo.viewUsages'), icon: 'i-lucide-eye', onSelect: () => handleViewUsages(row) }],
+  [{ label: t('common.delete'), icon: 'i-lucide-trash', color: 'error', onSelect: () => handleDelete(row) }]
+]
+
 // Helpers
-const getStatusClass = (status: string, row: PromoCode) => {
+const getStatusColor = (status: string, row: PromoCode): 'error' | 'neutral' | 'success' => {
   if (row.expires_at && new Date(row.expires_at) < new Date()) {
-    return 'badge-danger'
+    return 'error'
   }
   if (row.max_uses > 0 && row.used_count >= row.max_uses) {
-    return 'badge-gray'
+    return 'neutral'
   }
-  return status === 'active' ? 'badge-success' : 'badge-gray'
+  return status === 'active' ? 'success' : 'neutral'
 }
 
 const getStatusLabel = (status: string, row: PromoCode) => {
