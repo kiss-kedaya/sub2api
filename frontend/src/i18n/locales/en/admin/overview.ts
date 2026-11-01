@@ -435,6 +435,7 @@ export default {
     // Users
     users: {
       displayColumns: 'Columns',
+      advancedOptions: 'Advanced options',
       title: 'User Management',
       description: 'Manage users and their permissions',
       createUser: 'Create User',
