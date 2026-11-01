@@ -182,6 +182,17 @@ describe('HomeView compact mode', () => {
     expect(modelPlazaDestination(wrapper)).toBeUndefined()
   })
 
+  it('default home links one level deeper: model plaza, docs and usage lookup', () => {
+    const wrapper = mountHome({ model_plaza_enabled: true, model_plaza_require_auth: false })
+    const targets = wrapper.findAllComponents(RouterLinkStub).map((link) => {
+      const to = link.props('to') as string | { path?: string }
+      return typeof to === 'string' ? to : to.path
+    })
+    expect(targets).toContain('/model-plaza')
+    expect(targets).toContain('/docs/quick-start')
+    expect(targets).toContain('/key-usage')
+  })
+
   it('keeps the site light/dark mode instead of forcing the OS preference', () => {
     // No saved choice and a dark OS: the startup theme (site default) stays in force.
     vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList)

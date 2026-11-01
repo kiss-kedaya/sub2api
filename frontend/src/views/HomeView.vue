@@ -185,7 +185,7 @@
         :title="t('home.providers.title')"
         :description="t('home.providers.description')"
         :ui="{
-          container: 'max-w-5xl pt-0 sm:pt-0 lg:pt-0 pb-20 sm:pb-24 lg:pb-28 gap-8 sm:gap-10',
+          container: 'max-w-5xl pt-0 sm:pt-0 lg:pt-0 pb-16 sm:pb-20 lg:pb-20 gap-8 sm:gap-10',
           title: 'text-2xl sm:text-3xl lg:text-3xl',
           description: 'mt-3 text-sm sm:text-base'
         }"
@@ -214,6 +214,43 @@
             </div>
           </div>
         </div>
+        <template v-if="showModelPlazaEntry" #links>
+          <UButton
+            to="/model-plaza"
+            :label="t('home.providers.viewAll')"
+            trailing-icon="i-lucide-arrow-right"
+            color="neutral"
+            variant="link"
+          />
+        </template>
+      </UPageSection>
+
+      <!-- Where to go next: one short row, each card opens its own page -->
+      <UPageSection :ui="{ container: 'max-w-5xl pt-0 sm:pt-0 lg:pt-0 pb-20 sm:pb-24 lg:pb-28' }">
+        <UPageGrid :class="['gap-4', showModelPlazaEntry ? 'lg:grid-cols-3' : 'lg:grid-cols-2']">
+          <UPageCard
+            v-if="showModelPlazaEntry"
+            to="/model-plaza"
+            icon="i-lucide-layout-grid"
+            :title="t('nav.modelPlaza')"
+            :description="t('modelPlaza.description')"
+            variant="subtle"
+          />
+          <UPageCard
+            :to="docsLocation(DOCS_HOME_PAGE)"
+            icon="i-lucide-book-open"
+            :title="t('docs.title')"
+            :description="t('docs.sidebarNote')"
+            variant="subtle"
+          />
+          <UPageCard
+            to="/key-usage"
+            icon="i-lucide-gauge"
+            :title="t('keyUsage.title')"
+            :description="t('keyUsage.subtitle')"
+            variant="subtle"
+          />
+        </UPageGrid>
       </UPageSection>
     </main>
 
@@ -261,6 +298,7 @@ import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import PublicHeader from '@/views/public/components/PublicHeader.vue'
 import ThemeToggleButton from '@/views/public/components/ThemeToggleButton.vue'
+import { DOCS_HOME_PAGE, docsLocation } from '@/views/public/docsRoute'
 import { sanitizeUrl } from '@/utils/url'
 import { resolveDocsUrl } from '@/utils/docsUrl'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'

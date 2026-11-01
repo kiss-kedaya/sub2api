@@ -101,7 +101,8 @@ export default {
       claude: 'Claude',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
-      more: 'More'
+      more: 'More',
+      viewAll: 'View all models and prices'
     },
     // CTA section
     cta: {

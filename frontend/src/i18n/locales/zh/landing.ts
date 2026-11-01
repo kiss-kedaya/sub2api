@@ -101,7 +101,8 @@ export default {
       claude: 'Claude',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
-      more: '更多'
+      more: '更多',
+      viewAll: '查看全部模型与价格'
     },
     // CTA 区块
     cta: {
