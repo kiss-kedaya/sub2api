@@ -14,6 +14,7 @@ import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
 import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadError'
+import { docsRedirect } from '@/views/public/docsRoute'
 
 /**
  * Route definitions with lazy loading
@@ -50,8 +51,13 @@ const routes: RouteRecordRaw[] = [
   },
 
   // ==================== Public Routes ====================
+  // Docs: one URL per page (/docs/<page>); /docs and old /docs?page=<id> links redirect.
   {
     path: '/docs',
+    redirect: docsRedirect
+  },
+  {
+    path: '/docs/:page',
     name: 'Docs',
     component: () => import('@/views/public/DocsView.vue'),
     meta: { requiresAuth: false, title: 'API documentation', titleKey: 'docs.title' }

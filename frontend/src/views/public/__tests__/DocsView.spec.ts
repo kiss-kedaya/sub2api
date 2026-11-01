@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import DocsView from '../DocsView.vue'
+import { docsRedirect } from '../docsRoute'
 import english from '@/i18n/locales/en/docs'
 
 const mocks = vi.hoisted(() => ({
@@ -19,11 +20,13 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   }),
 }))
 
+// Same records as src/router/index.ts: one URL per page, old ?page= links redirect.
 async function openDocs(query = 'quick-start') {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/docs', component: DocsView, meta: { requiresAuth: false } },
+      { path: '/docs', redirect: docsRedirect },
+      { path: '/docs/:page', component: DocsView, meta: { requiresAuth: false } },
       ...['/home', '/login', '/model-plaza'].map(path => ({ path, component: { template: '<div />' } })),
     ],
   })
@@ -59,6 +62,22 @@ describe('public API documentation page', () => {
     wrapper.unmount()
   })
 
+  it('left table of contents lists categories, pages and the open page sections', async () => {
+    const { wrapper, router } = await openDocs('quick-start')
+    expect(router.currentRoute.value.fullPath).toBe('/docs/quick-start')
+    const toc = wrapper.get('#docs-sidebar')
+    expect(toc.text()).toContain(english.docs.category.start)
+    expect(toc.text()).toContain('Your first API request')
+    // the open page's sections sit under it; other pages' sections do not
+    const sectionTitle = wrapper.findAll('.docs-section h2')[0].text().replace('#', '').trim()
+    expect(toc.text()).toContain(sectionTitle)
+    await router.push('/docs?page=deepseek-fetch#fetch-access')
+    await flushPromises()
+    expect(router.currentRoute.value.fullPath).toBe('/docs/deepseek-fetch#fetch-access')
+    expect(wrapper.get('#docs-sidebar').text()).not.toContain(sectionTitle)
+    wrapper.unmount()
+  })
+
   it('theme button flips the mode in force, even after it changed outside the page', async () => {
     document.documentElement.classList.remove('dark')
     const { wrapper } = await openDocs()
@@ -76,6 +95,8 @@ describe('public API documentation page', () => {
     expect(wrapper.get('h1').text()).toBe('Your first API request')
     await router.push('/docs?page=deepseek-fetch')
     await flushPromises()
+    // Old ?page= links land on the page's own URL.
+    expect(router.currentRoute.value.path).toBe('/docs/deepseek-fetch')
     expect(wrapper.get('h1').text()).toBe('Web fetch')
     expect(wrapper.text()).toContain('8192')
     expect(wrapper.text()).toContain('POST /v1/tools/fetch')

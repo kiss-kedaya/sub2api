@@ -48,12 +48,16 @@
               :aria-label="t('docs.search')"
               class="w-full"
             />
+            <!-- Table of contents: category → page → sections of the open page -->
             <div class="mt-5 min-h-0 flex-1 overflow-y-auto pe-1">
               <UNavigationMenu
                 v-if="navigationGroups.length"
+                :key="tocKey"
                 :items="sidebarItems"
                 orientation="vertical"
-                :ui="{ separator: 'my-2 bg-transparent', label: 'px-2.5 pt-3 pb-1 text-xs' }"
+                highlight
+                :aria-label="t('docs.navigation')"
+                :ui="{ link: 'text-[13px]', childLink: 'text-[13px]' }"
               />
               <p v-else class="px-2 text-sm text-muted">{{ t('docs.noResults') }}</p>
             </div>
@@ -65,7 +69,7 @@
         </template>
 
         <main id="docs-content">
-          <article :key="page.id" class="min-w-0" data-testid="docs-article">
+          <article :key="page.id" class="min-w-0 max-w-3xl" data-testid="docs-article">
             <UPageHeader
               :headline="t(`docs.category.${page.category}`)"
               :title="page.title"
@@ -182,21 +186,6 @@
             </footer>
           </article>
         </main>
-
-        <template #right>
-          <nav class="sticky top-16 hidden self-start py-8 text-sm lg:block" :aria-label="t('docs.onThisPage')">
-            <p class="mb-3 text-sm font-semibold text-highlighted">{{ t('docs.onThisPage') }}</p>
-            <div class="space-y-1 border-s border-default">
-              <a
-                v-for="section in page.sections"
-                :key="section.id"
-                :href="`#${section.id}`"
-                class="-ms-px block border-s border-transparent py-1 ps-4 text-muted transition-colors hover:border-accented hover:text-default"
-                @click.prevent="jumpTo(section.id)"
-              >{{ section.title }}</a>
-            </div>
-          </nav>
-        </template>
       </UPage>
     </UContainer>
   </div>
@@ -215,6 +204,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useClipboard } from '@/composables/useClipboard'
 import { sanitizeUrl } from '@/utils/url'
 import { getApiDocs, resolveDocsOrigin, resolveDocsPage, type DocsCategory, type DocsField, type DocsLanguage, type DocsSection } from '@/data/apiDocs'
+import { docsLocation } from './docsRoute'
 
 const route = useRoute()
 const router = useRouter()
@@ -224,7 +214,8 @@ const { t, locale } = useI18n()
 const { copyToClipboard } = useClipboard()
 const origin = resolveDocsOrigin(window.location.origin)
 const pages = computed(() => getApiDocs(locale.value, origin))
-const page = computed(() => resolveDocsPage(pages.value, route.query.page))
+// /docs/<page>; the router redirects old ?page= links, the query is only a fallback.
+const page = computed(() => resolveDocsPage(pages.value, route.params.page ?? route.query.page))
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const showModels = computed(() => appStore.cachedPublicSettings?.model_plaza_enabled === true)
@@ -246,28 +237,44 @@ const navigationGroups = computed(() => categories.map(category => ({
 const pageIndex = computed(() => pages.value.findIndex(entry => entry.id === page.value.id))
 const previousPage = computed(() => pages.value[pageIndex.value - 1])
 const nextPage = computed(() => pages.value[pageIndex.value + 1])
-const docLocation = (id: string) => ({ path: '/docs', query: { page: id } })
+const docLocation = (id: string) => docsLocation(id)
 const firstInCategory = (category: DocsCategory) => pages.value.find(entry => entry.category === category)?.id || 'quick-start'
 const languages = (section: DocsSection) => Object.keys(section.examples || {}) as DocsLanguage[]
 const selectedLanguage = (section: DocsSection) => languages(section).includes(selectedLanguages[section.id]) ? selectedLanguages[section.id] : languages(section)[0]
 const example = (section: DocsSection) => section.examples?.[selectedLanguage(section)] || ''
 
-// Every docs link shares the /docs path, so the current page and category are marked explicitly.
+// The header links open the first page of each category; the current one is marked explicitly.
 const categoryItems = computed<NavigationMenuItem[]>(() => categories.map(category => ({
   label: t(`docs.category.${category}`),
   to: docLocation(firstInCategory(category)),
   active: page.value.category === category,
 })))
 
-const sidebarItems = computed<NavigationMenuItem[][]>(() => navigationGroups.value.map(group => [
-  { label: t(`docs.category.${group.category}`), type: 'label' as const },
-  ...group.pages.map(entry => ({
+// Left table of contents, three levels: category (open) → page → the open page's sections.
+const sidebarItems = computed<NavigationMenuItem[]>(() => navigationGroups.value.map(group => ({
+  label: t(`docs.category.${group.category}`),
+  value: `category-${group.category}`,
+  defaultOpen: true,
+  class: 'font-semibold text-highlighted',
+  children: group.pages.map(entry => ({
     label: entry.title,
+    value: `page-${entry.id}`,
     to: docLocation(entry.id),
     active: entry.id === page.value.id,
+    defaultOpen: entry.id === page.value.id,
     onSelect: () => { mobileOpen.value = false },
+    children: entry.id === page.value.id && entry.sections.length > 1
+      ? entry.sections.map(section => ({
+        label: section.title,
+        value: `section-${section.id}`,
+        active: route.hash === `#${section.id}`,
+        onSelect: () => { mobileOpen.value = false; void jumpTo(section.id) },
+      }))
+      : undefined,
   })),
-]))
+})))
+// Re-create the tree (and its open state) when the page or the search changes.
+const tocKey = computed(() => `${page.value.id}:${search.value.trim()}`)
 
 const fieldColumns: TableColumn<DocsField>[] = [
   { id: 'name', header: () => t('docs.field'), meta: { class: { th: 'w-1/4', td: 'w-1/4' } } },
@@ -285,11 +292,11 @@ async function copyExample(section: DocsSection) {
 }
 
 async function jumpTo(id: string) {
-  await router.replace({ path: '/docs', query: { page: page.value.id }, hash: `#${id}` })
+  await router.replace({ ...docLocation(page.value.id), hash: `#${id}` })
   document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
 }
 
-watch(() => route.query.page, async () => {
+watch(() => page.value.id, async () => {
   mobileOpen.value = false
   copiedSection.value = ''
   await nextTick()
