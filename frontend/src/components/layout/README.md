@@ -1,216 +1,92 @@
 # Layout Components
 
-Vue 3 layout components for the Sub2API frontend, built with Composition API, TypeScript, and TailwindCSS.
+The console frame is the Nuxt UI dashboard (Vue mode), laid out like the official
+`nuxt-ui-templates/dashboard-vue` template.
 
-## Components
+## AppLayout.vue
 
-### 1. AppLayout.vue
-
-Main application layout with sidebar and header.
-
-**Usage:**
+`UDashboardGroup` > `AppSidebar` + one `UDashboardPanel` (navbar, optional toolbar row, body)
++ `ConsoleNavigationSearch` (`UDashboardSearch`). Every page wraps itself in it:
 
 ```vue
 <template>
   <AppLayout>
-    <!-- Your page content here -->
-    <h1>Dashboard</h1>
-    <p>Welcome to your dashboard!</p>
-  </AppLayout>
-</template>
-
-<script setup lang="ts">
-import { AppLayout } from '@/components/layout'
-</script>
-```
-
-**Features:**
-
-- Responsive sidebar (collapsible)
-- Fixed header at top
-- Main content area with slot
-- Automatically adjusts margin based on sidebar state
-
----
-
-### 2. AppSidebar.vue
-
-Navigation sidebar with user and admin sections.
-
-**Features:**
-
-- Logo/brand at top
-- User navigation links:
-  - Dashboard
-  - API Keys
-  - Usage
-  - Redeem
-  - Profile
-- Admin navigation links (shown only if user is admin):
-  - Admin Dashboard
-  - Users
-  - Groups
-  - Accounts
-  - Proxies
-  - Redeem Codes
-- Collapsible to an icon rail (collapse button in the header); on the rail a group opens its children in a menu
-- Search button for the command palette (`ConsoleNavigationSearch.vue`, also Ctrl/⌘ K)
-- User menu in the footer (`UserMenu.vue`): profile, API keys, System / Light / Dark theme, logout
-- Active route highlighting
-- Responsive (a drawer on phones)
-
-**Used automatically by AppLayout** - no need to import separately.
-
----
-
-### 3. AppHeader.vue
-
-Top navbar of the dashboard panel.
-
-**Features:**
-
-- Mobile menu toggle and desktop sidebar collapse buttons
-- Breadcrumb with the page title (from route meta)
-- Light/dark button; its icon follows the real `dark` class on `<html>`
-- User balance display (from 640px wide)
-- On phones, the user menu (with the balance)
-- Responsive design
-
-**Usage with custom title:**
-
-```vue
-<template>
-  <AppLayout>
-    <template #title> Custom Page Title </template>
-
-    <!-- Your content -->
+    <!-- page content (goes into the panel body) -->
   </AppLayout>
 </template>
 ```
 
-**Used automatically by AppLayout** - no need to import separately.
+- The panel body is the scroll container, not the window. `panelScroll.ts` starts a new
+  page at the top and restores the position on back / forward. Sticky elements count from
+  the top of the body (inside its padding).
+- The sakura canvas (`InkSakura`) sits behind the frame and shows in empty areas.
+- Root classes `console-signal`, `signal-admin` (admin routes) and `signal-nav-collapsed`
+  are kept for page styles.
 
----
+## AppSidebar.vue
 
-### 4. AuthLayout.vue
+`UDashboardSidebar`, collapsible to a 4rem rail, resizable, a slideover on phones. Its
+collapsed / open state is `appStore.sidebarCollapsed` / `appStore.mobileOpen` (persisted by
+`UDashboardGroup` under the `sub2api-console` storage key).
 
-Simple centered layout for authentication pages (login/register).
+- Header: logo, site name and `VersionBadge` (where the template has TeamsMenu).
+- `UDashboardSearchButton` (opens the palette; Ctrl/Cmd+K works anywhere).
+- Vertical `UNavigationMenu` built from the nav declarations in the file (items, groups,
+  tier headers, feature flags, simple mode, admin / observer / user roles, custom menu items
+  with sanitized SVG icons). On the rail a group opens its children in a popover.
+- Bottom group: subscription status, model plaza, docs.
+- Footer: `UserMenu` (account, profile, API keys, theme, language, GitHub, contact,
+  onboarding tour, logout).
+- Onboarding anchors are `data-tour` attributes from `SIDEBAR_TOUR_ANCHORS` in
+  `components/Guide/steps.ts`.
 
-**Usage:**
+## AppHeader.vue
+
+`UDashboardNavbar` (collapse button and page title on the left; page actions,
+notifications, light / dark and balance on the right) and the `UDashboardToolbar` row,
+which appears only while a page puts something in it.
+
+The title is the route's `meta.titleKey` / `meta.title` (custom pages: the menu label),
+unless a page header names the page itself.
+
+## Putting page content in the navbar / toolbar
+
+Pages reach the frame through `dashboardFrame.ts` (provide / inject + Teleport targets).
+Outside the frame (a spec that stubs `AppLayout`, a public page) everything renders in place.
+
+- `AdminPageHeader` / `UserPageHeader`: `title` (or a `#title` slot) names the page in the
+  navbar, `#badge` and a live `#description` status follow the title, `#actions` go to the
+  navbar right side from 1280px and to the toolbar row below that. A plain `description`
+  prop is not shown in the frame; `#meta` stays in the page.
+- `PageNavbar`: any buttons for the navbar right side (`pinned` keeps them there on every
+  width).
+- `PageToolbar`: a filter row under the navbar; default slot (or `#left`) on the left,
+  `#right` on the right.
 
 ```vue
-<template>
-  <AuthLayout>
-    <!-- Login/Register form content -->
-    <h2 class="mb-6 text-2xl font-bold">Login</h2>
-
-    <form @submit.prevent="handleLogin">
-      <!-- Form fields -->
-    </form>
-
-    <!-- Optional footer slot -->
-    <template #footer>
-      <p>
-        Don't have an account?
-        <router-link to="/register" class="text-indigo-600 hover:underline"> Sign up </router-link>
-      </p>
-    </template>
-  </AuthLayout>
-</template>
-
-<script setup lang="ts">
-import { AuthLayout } from '@/components/layout'
-
-function handleLogin() {
-  // Login logic
-}
-</script>
+<AppLayout>
+  <AdminPageHeader :title="t('admin.usage.title')">
+    <template #actions><UButton icon="i-lucide-plus" :label="t('common.create')" /></template>
+  </AdminPageHeader>
+  <PageToolbar>
+    <DateRangePicker v-model:start-date="start" v-model:end-date="end" />
+    <template #right><Select v-model="granularity" :options="options" /></template>
+  </PageToolbar>
+  <!-- body -->
+</AppLayout>
 ```
 
-**Features:**
+## TablePageLayout.vue
 
-- Centered card container
-- Gradient background
-- Logo/brand at top
-- Main content slot
-- Optional footer slot for links
-- Fully responsive
+Fills the panel height on desktop (the table scrolls inside); on phones the panel scrolls.
 
----
+## AuthLayout.vue
 
-## Route Configuration
-
-To set page titles in the header, add meta to your routes:
-
-```typescript
-// router/index.ts
-const routes = [
-  {
-    path: '/dashboard',
-    component: DashboardView,
-    meta: { title: 'Dashboard' }
-  },
-  {
-    path: '/api-keys',
-    component: ApiKeysView,
-    meta: { title: 'API Keys' }
-  }
-  // ...
-]
-```
-
----
-
-## Store Dependencies
-
-These components use the following Pinia stores:
-
-- **useAuthStore**: For user authentication state, role checking, and logout
-- **useAppStore**: For sidebar state management and toast notifications
-
-Make sure these stores are properly initialized in your app.
-
----
+Centered card layout for the sign-in pages (not part of the console frame).
 
 ## Styling
 
-All components use TailwindCSS utility classes. Make sure your `tailwind.config.js` includes the component paths:
-
-```js
-module.exports = {
-  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}']
-  // ...
-}
-```
-
----
-
-## Icons
-
-Components use HTML entity icons for simplicity:
-
-- &#128200; Chart (Dashboard)
-- &#128273; Key (API Keys)
-- &#128202; Bar Chart (Usage)
-- &#127873; Gift (Redeem)
-- &#128100; User (Profile)
-- &#128268; Admin
-- &#128101; Users
-- &#128193; Folder (Groups)
-- &#127760; Globe (Accounts)
-- &#128260; Network (Proxies)
-- &#127991; Ticket (Redeem Codes)
-
-You can replace these with your preferred icon library (e.g., Heroicons, Font Awesome) if needed.
-
----
-
-## Mobile Responsiveness
-
-All components are fully responsive:
-
-- **AppSidebar**: Fixed positioning on desktop, hidden by default on mobile
-- **AppHeader**: Shows mobile menu toggle on small screens, hides balance display
-- **AuthLayout**: Adapts padding and card size for mobile devices
-
-The sidebar uses Tailwind's responsive breakpoints (md:) to adjust behavior.
+Light mode uses Nuxt UI's own tokens (`--ui-*`), so the Appearance settings (primary,
+neutral, radius, font) apply. Dark mode maps the plum-charcoal palette onto the same tokens
+(`styles/nuxt-ui-theme.css`). Legacy page classes (`.btn`, `.card`, `.input`, tables) follow
+the tokens through `style.css` and `styles/console-*.css`.
