@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="flex w-full min-w-0 flex-col gap-6 pb-8">
-      <UTabs v-model="tabModel" :items="tabs" :content="false" variant="link" class="w-full" :ui="{ list: 'border-b border-default' }" :aria-label="t('ipAudit.title')" />
+      <PageToolbar><template #left><UTabs v-model="tabModel" :items="tabs" :content="false" variant="link" class="-mx-1" :ui="{ list: 'border-b-0' }" :aria-label="t('ipAudit.title')" /></template></PageToolbar>
       <KeepAlive>
         <IPRiskSettings v-if="activeTab === 'config'" expanded />
         <IPAuditPanel v-else @configure="selectTab('config')" />
@@ -14,6 +14,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import IPRiskSettings from '@/features/ip-risk/IPRiskSettings.vue'
 import IPAuditPanel from './IPAuditPanel.vue'
 

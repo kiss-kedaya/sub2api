@@ -239,7 +239,7 @@
 
               <!-- Health: an empty pool blocks new deposits; a dry hot wallet blocks sweeps. Both are silent failures without this. -->
               <section class="crypto-view__group" data-testid="crypto-health">
-                <UPageCard :title="t('admin.crypto.healthTitle')" :description="t('admin.crypto.healthDesc')" variant="naked" orientation="horizontal" class="mb-4">
+                <UPageCard :title="t('admin.crypto.healthTitle')" :description="t('admin.crypto.healthDesc')" variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }" class="mb-4">
                   <div class="flex items-center gap-3 lg:ms-auto">
                     <span v-if="healthError" class="text-sm text-error">{{ healthError }}</span>
                     <UButton color="neutral" variant="outline" size="sm" class="w-fit" :disabled="loadingHealth || !walletCanDerive" @click="loadHealth">{{ t('common.refresh') }}</UButton>

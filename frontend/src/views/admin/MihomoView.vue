@@ -13,9 +13,13 @@
           />
         </template>
       </AdminPageHeader>
-      <nav :aria-label="text('代理管理', 'Proxy management')" class="-mt-2">
-        <UTabs v-model="activeTab" :items="tabs" :content="false" variant="link" class="w-full" :ui="{ list: 'border-b border-default', indicator: section === 'kernel' ? 'hidden' : '' }" />
+      <PageToolbar>
+        <template #left>
+        <nav :aria-label="text('代理管理', 'Proxy management')" class="-mx-1">
+        <UTabs v-model="activeTab" :items="tabs" :content="false" variant="link" :ui="{ list: 'border-b-0', indicator: section === 'kernel' ? 'hidden' : '' }" />
       </nav>
+        </template>
+      </PageToolbar>
       <MihomoSettings :section="section" />
     </div>
   </AppLayout>
@@ -24,6 +28,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import MihomoSettings from '@/features/mihomo/MihomoSettings.vue'
 type Section = 'subscriptions' | 'nodes' | 'dynamic' | 'kernel'

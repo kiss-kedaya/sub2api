@@ -58,8 +58,7 @@
           <UCard data-test="pre-block-sync-card" :ui="{ header: 'flex items-start justify-between gap-3' }">
             <template #header>
               <div class="min-w-0">
-                <h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.preBlockSyncStatus') }}</h2>
-                <p class="mt-1 text-sm text-muted">{{ t('admin.riskControl.preBlockSyncHint') }}</p>
+                <div class="flex items-center gap-1"><h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.preBlockSyncStatus') }}</h2><UPopover :content="{ align: 'start', side: 'bottom' }"><UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" square class="text-dimmed"><span class="sr-only">{{ t('admin.riskControl.preBlockSyncHint') }}</span></UButton><template #content><p class="max-w-sm p-3 text-sm text-pretty text-muted">{{ t('admin.riskControl.preBlockSyncHint') }}</p></template></UPopover></div>
               </div>
               <UBadge color="neutral" variant="subtle" class="shrink-0">{{ modeLabel(status?.mode ?? configForm.mode) }}</UBadge>
             </template>
@@ -75,8 +74,7 @@
           <UCard data-test="pre-block-api-key-load-card" :ui="{ header: 'flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between' }">
             <template #header>
               <div class="min-w-0">
-                <h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.preBlockAPIKeyLoad') }}</h2>
-                <p class="mt-1 text-sm text-muted">{{ t('admin.riskControl.preBlockAPIKeyLoadHint') }}</p>
+                <div class="flex items-center gap-1"><h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.preBlockAPIKeyLoad') }}</h2><UPopover :content="{ align: 'start', side: 'bottom' }"><UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" square class="text-dimmed"><span class="sr-only">{{ t('admin.riskControl.preBlockAPIKeyLoadHint') }}</span></UButton><template #content><p class="max-w-sm p-3 text-sm text-pretty text-muted">{{ t('admin.riskControl.preBlockAPIKeyLoadHint') }}</p></template></UPopover></div>
               </div>
               <p class="shrink-0 text-xs text-muted lg:max-w-xs lg:text-right">{{ preBlockAPIKeyLoadSummaryText }}</p>
             </template>
@@ -126,8 +124,7 @@
         <UCard v-if="showWorkerRuntimeCard" :ui="{ header: 'flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between' }">
           <template #header>
             <div class="min-w-0">
-              <h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.workerStatus') }}</h2>
-              <p class="mt-1 text-sm text-muted">{{ t('admin.riskControl.workerStatusHint') }}</p>
+              <div class="flex items-center gap-1"><h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.workerStatus') }}</h2><UPopover :content="{ align: 'start', side: 'bottom' }"><UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" square class="text-dimmed"><span class="sr-only">{{ t('admin.riskControl.workerStatusHint') }}</span></UButton><template #content><p class="max-w-sm p-3 text-sm text-pretty text-muted">{{ t('admin.riskControl.workerStatusHint') }}</p></template></UPopover></div>
             </div>
             <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
               <span>{{ t('admin.riskControl.autoRefresh') }}</span>
@@ -193,8 +190,7 @@
 
         <section class="flex flex-col gap-4">
           <div class="flex flex-col gap-1">
-            <h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.records') }}</h2>
-            <p class="text-sm text-muted">{{ t('admin.riskControl.recordsHint') }}</p>
+            <div class="flex items-center gap-1"><h2 class="font-semibold text-highlighted">{{ t('admin.riskControl.records') }}</h2><UPopover :content="{ align: 'start', side: 'bottom' }"><UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" square class="text-dimmed"><span class="sr-only">{{ t('admin.riskControl.recordsHint') }}</span></UButton><template #content><p class="max-w-sm p-3 text-sm text-pretty text-muted">{{ t('admin.riskControl.recordsHint') }}</p></template></UPopover></div>
           </div>
 
           <div class="flex flex-wrap items-center justify-between gap-1.5">
@@ -790,7 +786,7 @@
           </div>
 
           <div v-else-if="activeSettingsTab === 'riskThresholds'" class="flex flex-col gap-4">
-            <UPageCard :title="t('admin.riskControl.riskThresholds')" :description="t('admin.riskControl.riskThresholdsHint')" variant="naked" orientation="horizontal">
+            <UPageCard :title="t('admin.riskControl.riskThresholds')" :description="t('admin.riskControl.riskThresholdsHint')" variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }">
               <div class="flex flex-wrap items-center gap-2 lg:justify-end">
                 <UBadge color="neutral" variant="subtle">{{ engineLabel(configForm.engine) }}</UBadge>
                 <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :label="t('admin.riskControl.riskThresholdReset')" @click="resetRiskThresholds" />

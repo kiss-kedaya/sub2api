@@ -1,6 +1,6 @@
 <template>
   <section aria-labelledby="prompt-policy-title">
-    <UPageCard variant="naked" orientation="horizontal" class="mb-4" :description="t('admin.promptAudit.policy.description')">
+    <UPageCard variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }" class="mb-4" :description="t('admin.promptAudit.policy.description')">
       <template #title><h2 id="prompt-policy-title">{{ t('admin.promptAudit.policy.title') }}</h2></template>
     </UPageCard>
 

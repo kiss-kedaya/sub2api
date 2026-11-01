@@ -2,7 +2,16 @@
   <AppLayout>
     <div class="flex flex-col gap-4">
       <AdminPageHeader :title="text('分层安全限制', 'Layered API restrictions')" :description="text('复用现有内容审核和提示词审计，不增加扫描器或收费；只限制 API，不关闭用户的网站登录。', 'Reuses existing moderation and prompt audits. Adds no scanner or charge. Only API access is restricted; website sign-in remains available.')" />
-      <UTabs v-model="tab" :items="tabs" :content="false" variant="link" class="-mx-1 border-b border-default" />
+      <PageToolbar>
+        <template #left><UTabs v-model="tab" :items="tabs" :content="false" variant="link" class="-mx-1" :ui="{ list: 'border-b-0' }" /></template>
+        <template v-if="tab === 'records'" #right>
+          <form class="flex flex-wrap items-center gap-1.5" @submit.prevent="page = 1; loadEvents()">
+            <UInput v-model.number="userID" type="number" min="1" icon="i-lucide-search" class="w-48" :placeholder="text('用户 ID，可留空', 'User ID, optional')" :aria-label="text('用户 ID', 'User ID')" />
+            <UButton type="submit" color="neutral" variant="outline" :label="text('查询', 'Search')" :disabled="busy" />
+            <UButton type="button" icon="i-lucide-unlock" color="error" variant="soft" :label="text('解除此用户的 API 限制', 'Release this user’s API restrictions')" :disabled="busy || !userID" @click="releaseOpen = true" />
+          </form>
+        </template>
+      </PageToolbar>
       <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="error" />
       <UAlert v-if="success" role="status" color="success" variant="subtle" icon="i-lucide-circle-check" :title="success" />
 
@@ -45,13 +54,6 @@
       </div>
 
       <div v-show="tab === 'records'" class="flex flex-col gap-4">
-        <form class="flex flex-wrap items-center justify-between gap-1.5" @submit.prevent="page = 1; loadEvents()">
-          <div class="flex flex-wrap items-center gap-1.5">
-            <UInput v-model.number="userID" type="number" min="1" icon="i-lucide-search" class="w-56" :placeholder="text('用户 ID，可留空', 'User ID, optional')" :aria-label="text('用户 ID', 'User ID')" />
-            <UButton type="submit" color="neutral" variant="outline" :label="text('查询', 'Search')" :disabled="busy" />
-          </div>
-          <UButton type="button" icon="i-lucide-unlock" color="error" variant="soft" :label="text('解除此用户的 API 限制', 'Release this user’s API restrictions')" :disabled="busy || !userID" @click="releaseOpen = true" />
-        </form>
         <UTable :data="events" :columns="columns" :ui="tableUi">
           <template #created_at-cell="{ row }">{{ new Date(row.original.created_at).toLocaleString() }}</template>
           <template #user_id-cell="{ row }">#{{ row.original.user_id }}</template>
@@ -83,6 +85,7 @@ import { useI18n } from 'vue-i18n'
 import type { TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import { getAll as getGroups } from '@/api/admin/groups'

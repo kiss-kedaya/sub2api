@@ -17,7 +17,7 @@
       <template #content>
         <div class="flex flex-col gap-10 pt-1 pb-8">
           <section class="flex flex-col gap-4">
-            <UPageCard :title="tr('title')" :description="tr('description')" variant="naked" orientation="horizontal">
+            <UPageCard :title="tr('title')" :description="tr('description')" variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }">
               <div class="flex flex-wrap items-center gap-2 lg:ms-auto">
                 <UButton :label="tr('load')" icon="i-lucide-refresh-cw" color="neutral" variant="outline" :disabled="busy" @click="load" />
                 <UButton v-if="draft && snapshot" :label="tr('save')" type="submit" form="ip-risk-form" :disabled="busy" data-testid="risk-save" />
@@ -139,7 +139,7 @@
             <BlacklistDialog :show="showBlacklist" :blacklist="draft.blacklist" @close="showBlacklist = false" @apply="applyBlacklist" />
 
             <section class="flex flex-col gap-4">
-              <UPageCard :title="tr('records')" variant="naked" orientation="horizontal">
+              <UPageCard :title="tr('records')" variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }">
                 <UButton :label="tr('refreshRecords')" icon="i-lucide-refresh-cw" color="neutral" variant="outline" class="w-fit lg:ms-auto" :disabled="busy" @click="refreshRecords" />
               </UPageCard>
               <UPageCard variant="subtle" :ui="{ container: 'gap-y-2 sm:py-4' }">

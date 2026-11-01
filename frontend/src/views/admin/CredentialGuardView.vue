@@ -8,10 +8,10 @@
         </template>
       </AdminPageHeader>
       <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="error" />
-      <div class="flex flex-wrap items-center justify-between gap-1.5">
-        <UInput v-model="search" icon="i-lucide-search" class="w-full max-w-sm" :placeholder="text('搜索账号名称或 ID', 'Search account name or ID')" :aria-label="text('搜索账号', 'Search accounts')" />
-        <USelect v-model="stateFilter" :items="stateItems" class="min-w-36" :aria-label="text('状态', 'Status')" />
-      </div>
+      <PageToolbar>
+        <template #left><UInput v-model="search" icon="i-lucide-search" class="w-64 max-w-full" :placeholder="text('搜索账号名称或 ID', 'Search account name or ID')" :aria-label="text('搜索账号', 'Search accounts')" /></template>
+        <template #right><USelect v-model="stateFilter" :items="stateItems" class="min-w-36" :aria-label="text('状态', 'Status')" /></template>
+      </PageToolbar>
       <UTable :data="visibleRows" :columns="columns" :loading="busy" :ui="tableUi">
         <template #account-cell="{ row }">
           <p class="font-medium text-highlighted">{{ row.original.account_name }}</p>
@@ -87,6 +87,7 @@ import { useI18n } from 'vue-i18n'
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'

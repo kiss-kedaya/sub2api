@@ -1,6 +1,6 @@
 <template>
   <section aria-labelledby="prompt-pool-title">
-    <UPageCard variant="naked" orientation="horizontal" class="mb-4" :description="t('admin.promptAudit.pool.description')">
+    <UPageCard variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }" class="mb-4" :description="t('admin.promptAudit.pool.description')">
       <template #title><h2 id="prompt-pool-title">{{ t('admin.promptAudit.pool.title') }}</h2></template>
       <UButton icon="i-lucide-plus" :label="t('admin.promptAudit.pool.add')" class="w-fit lg:ms-auto" data-test="add-endpoint" @click="openCreate" />
     </UPageCard>

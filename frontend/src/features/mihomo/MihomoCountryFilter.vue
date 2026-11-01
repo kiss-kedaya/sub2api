@@ -1,6 +1,6 @@
 <template>
   <section class="flex flex-col gap-4" aria-labelledby="country-filter-title">
-    <UPageCard variant="naked" orientation="horizontal" :description="text('机场节点按最近的出口 IP 检测结果筛选。动态代理每次连接可能更换 IP，历史检测结果不用于准入。', 'Subscription nodes use the last exit-IP country check. Dynamic proxies may change IP on every connection; previous checks do not determine eligibility.')">
+    <UPageCard variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }" :description="text('机场节点按最近的出口 IP 检测结果筛选。动态代理每次连接可能更换 IP，历史检测结果不用于准入。', 'Subscription nodes use the last exit-IP country check. Dynamic proxies may change IP on every connection; previous checks do not determine eligibility.')">
       <template #title>
         <span class="flex flex-wrap items-center gap-2">
           <span id="country-filter-title">{{ text('国家／地区过滤', 'Country / region filter') }}</span>

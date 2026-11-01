@@ -34,7 +34,7 @@
     <p v-if="busy" role="status" class="flex items-center gap-2 text-sm text-muted"><UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" />{{ text('正在应用，请等待完成…', 'Applying changes. Please wait…') }}</p>
 
     <template v-if="section === 'subscriptions'">
-      <UPageCard variant="naked" orientation="horizontal" :title="text('Mihomo 订阅', 'Mihomo subscriptions')" :description="text('按订阅管理来源；地址和令牌不回显。添加订阅不会替换其他来源。', 'Manage each source independently. URLs and tokens stay hidden; adding a subscription preserves other sources.')">
+      <UPageCard variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }" :title="text('Mihomo 订阅', 'Mihomo subscriptions')" :description="text('按订阅管理来源；地址和令牌不回显。添加订阅不会替换其他来源。', 'Manage each source independently. URLs and tokens stay hidden; adding a subscription preserves other sources.')">
         <UButton icon="i-lucide-plus" class="w-fit lg:ms-auto" :disabled="busy || !status?.installed" :label="text('添加订阅', 'Add subscription')" @click="openSubscription()" />
       </UPageCard>
       <div class="flex flex-wrap items-center justify-between gap-1.5">
@@ -76,7 +76,7 @@
     </template>
 
     <template v-if="section === 'dynamic' || section === 'nodes'">
-      <UPageCard variant="naked" orientation="horizontal">
+      <UPageCard variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }">
         <template #title>
           <span class="inline-flex items-center gap-1">{{ section === 'dynamic' ? text('动态代理', 'Dynamic proxies') : text('节点管理', 'Node management') }}
             <UPopover>
@@ -144,7 +144,7 @@
       </div>
     </template>
     <div v-if="section === 'kernel'" class="mx-auto flex w-full flex-col gap-4 sm:gap-6 lg:max-w-2xl">
-      <UPageCard variant="naked" orientation="horizontal" :title="text('内核与地区规则', 'Kernel and region rules')" :description="text('这些设置只影响当前服务器。应用滚动更新保留内核；手动停止会中断使用本机出口的连接。', 'These settings apply only to the selected server. Application rolling updates retain the kernel; manually stopping it interrupts connections using its exits.')">
+      <UPageCard variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }" :title="text('内核与地区规则', 'Kernel and region rules')" :description="text('这些设置只影响当前服务器。应用滚动更新保留内核；手动停止会中断使用本机出口的连接。', 'These settings apply only to the selected server. Application rolling updates retain the kernel; manually stopping it interrupts connections using its exits.')">
         <div class="flex flex-wrap gap-2 lg:justify-end">
           <UButton v-if="status && !status.installed" icon="i-lucide-download" :disabled="busy || !status.supported" :label="text('检测并安装', 'Install kernel')" @click="operate('install')" />
           <UButton v-else-if="!status?.running" color="neutral" variant="outline" icon="i-lucide-play" :disabled="busy || !status?.nodes" :label="text('启动内核', 'Start kernel')" @click="operate('start')" />

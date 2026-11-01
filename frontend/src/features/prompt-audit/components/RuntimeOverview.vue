@@ -1,6 +1,6 @@
 <template>
   <section aria-labelledby="prompt-runtime-title">
-    <UPageCard variant="naked" orientation="horizontal" class="mb-4" :description="t('admin.promptAudit.runtime.description')">
+    <UPageCard variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }" class="mb-4" :description="t('admin.promptAudit.runtime.description')">
       <template #title><h2 id="prompt-runtime-title">{{ t('admin.promptAudit.runtime.title') }}</h2></template>
       <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="loading" :label="t('admin.promptAudit.actions.refresh')" class="w-fit lg:ms-auto" @click="$emit('refresh')" />
     </UPageCard>

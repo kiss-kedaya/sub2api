@@ -12,7 +12,8 @@
       />
 
       <template v-else>
-        <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-default">
+        <PageToolbar>
+          <template #left>
           <UTabs
             :model-value="activeTab"
             :items="pageTabs"
@@ -22,7 +23,9 @@
             :ui="{ list: 'border-b-0' }"
             @update:model-value="selectTab"
           />
-          <div class="flex items-center gap-2 pb-1 text-xs text-muted">
+          </template>
+          <template #right>
+          <div class="flex items-center gap-2 text-xs text-muted">
             <span v-if="draft">{{ t('admin.promptAudit.configVersion', { version: draft.config_version }) }}<template v-if="draft.updated_at"> · {{ formatDate(draft.updated_at) }}</template></span>
             <UPopover :content="{ align: 'end' }">
               <UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" :aria-label="t('admin.promptAudit.common.about')" :title="t('admin.promptAudit.common.about')" />
@@ -31,7 +34,8 @@
               </template>
             </UPopover>
           </div>
-        </div>
+          </template>
+        </PageToolbar>
 
         <div class="min-w-0">
           <div v-show="activeTab === 'config'" class="mx-auto flex w-full max-w-4xl flex-col gap-8 lg:gap-12" data-test="tab-panel-config">
@@ -151,6 +155,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorCode, extractApiErrorMessage } from '@/utils/apiError'

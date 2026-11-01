@@ -1,6 +1,6 @@
 <template>
   <section class="gas-wallet" aria-labelledby="gas-wallet-title" data-testid="crypto-gas-wallet">
-    <UPageCard :description="t('admin.crypto.gasFundingHint')" variant="naked" orientation="horizontal" class="mb-4">
+    <UPageCard :description="t('admin.crypto.gasFundingHint')" variant="naked" orientation="horizontal" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }" class="mb-4">
       <template #title><h2 id="gas-wallet-title">{{ t('admin.crypto.gasFundingTitle') }}</h2></template>
       <UButton color="neutral" variant="outline" size="sm" class="w-fit lg:ms-auto" :disabled="loading || !available" @click="refresh">
         {{ loading ? t('common.loading') : t('common.refresh') }}

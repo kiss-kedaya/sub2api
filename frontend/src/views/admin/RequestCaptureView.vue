@@ -7,7 +7,14 @@
           <UButton icon="i-lucide-plus" :label="t('admin.requestCapture.create')" @click="openCreate" />
         </template>
       </AdminPageHeader>
-      <UTabs v-model="tab" :items="tabs" :content="false" variant="link" class="-mx-1 border-b border-default" />
+      <PageToolbar>
+        <template #left><UTabs v-model="tab" :items="tabs" :content="false" variant="link" class="-mx-1" :ui="{ list: 'border-b-0' }" /></template>
+        <template v-if="tab === 'tasks'" #right>
+          <UDropdownMenu :items="columnMenu" :content="{ align: 'end' }">
+            <UButton :label="t('admin.requestCapture.columns')" color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" />
+          </UDropdownMenu>
+        </template>
+      </PageToolbar>
       <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="error" />
       <p class="text-sm text-muted">{{ t('admin.requestCapture.instanceScope') }} <code v-if="captureConfig.instance_id" class="text-default">{{ captureConfig.instance_id }}</code><span v-else class="text-warning">{{ t('admin.requestCapture.storageNotConfigured') }}</span></p>
 
@@ -30,11 +37,6 @@
           </div>
         </template>
         <UAlert color="warning" variant="subtle" icon="i-lucide-shield-alert" :description="t('admin.requestCapture.privacy')" />
-        <div class="flex flex-wrap items-center justify-end gap-1.5">
-          <UDropdownMenu :items="columnMenu" :content="{ align: 'end' }">
-            <UButton :label="t('admin.requestCapture.columns')" color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" />
-          </UDropdownMenu>
-        </div>
         <UTable v-model:column-visibility="columnVisibility" :data="tasks" :columns="taskColumns" :meta="taskMeta" :ui="tableUi">
           <template #target-cell="{ row: { original: task } }">
             <UButton variant="link" class="p-0 text-left font-medium" :data-testid="'select-capture-' + task.id" @click="selectTask(task)">{{ t('admin.requestCapture.' + task.target_type) }} #{{ task.target_id }} {{ task.target_name }}</UButton>
@@ -180,6 +182,7 @@ import { useI18n } from 'vue-i18n'
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
