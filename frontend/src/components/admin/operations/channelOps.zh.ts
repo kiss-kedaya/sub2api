@@ -1,4 +1,5 @@
 export default {
+  "cancel": "取消",
   "scopeTitle": "统计范围与数据说明",
   "advancedFilters": "时间、分组与模型筛选",
   "previousData": "刷新失败，继续显示上次成功数据；下方范围和读取时间为准。请刷新后再变更归属。",

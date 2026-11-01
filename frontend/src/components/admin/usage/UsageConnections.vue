@@ -1,43 +1,62 @@
 <template>
-  <div class="space-y-4 p-4 sm:p-6" data-testid="usage-connections">
-    <p class="rounded-lg bg-sky-50 p-3 text-sm text-sky-800 dark:bg-sky-950/30 dark:text-sky-200">{{ t('connections.scope') }}</p>
-    <form class="flex flex-wrap items-end gap-3" @submit.prevent="reload()">
-      <label class="text-sm">{{ t('connections.state') }}<select v-model="state" class="input mt-1" @change="reload()"><option v-for="s in states" :key="s" :value="s">{{ t(`connections.states.${s}`) }}</option></select></label>
-      <label class="text-sm">{{ t('connections.source') }}<select v-model="source" class="input mt-1" @change="reload()"><option v-for="s in sources" :key="s" :value="s">{{ t(`connections.sources.${s}`) }}</option></select></label>
-      <label class="text-sm">{{ t('connections.host') }}<input v-model="host" class="input mt-1" maxlength="255" placeholder="api.example.com" /></label>
-      <label class="text-sm">{{ t('connections.requestId') }}<input v-model="requestId" class="input mt-1" maxlength="128" /></label>
-      <label class="text-sm">IP<input v-model="clientIp" class="input mt-1" maxlength="64" /></label>
-      <button class="btn btn-secondary" type="submit">{{ t('common.search') }}</button>
-      <button class="btn btn-secondary" type="button" @click="resetLocal">{{ t('common.reset') }}</button>
+  <div class="flex flex-col gap-4 p-4 sm:p-6" data-testid="usage-connections">
+    <form class="flex flex-wrap items-center gap-1.5" @submit.prevent="reload()">
+      <USelect v-model="state" :items="stateItems" class="min-w-36" :aria-label="t('connections.state')" @update:model-value="reload()" />
+      <USelect v-model="source" :items="sourceItems" class="min-w-32" :aria-label="t('connections.source')" @update:model-value="reload()" />
+      <UInput v-model="host" icon="i-lucide-globe" class="w-full sm:w-48" maxlength="255" placeholder="api.example.com" :aria-label="t('connections.host')" />
+      <UInput v-model="requestId" icon="i-lucide-search" class="w-full sm:w-56" maxlength="128" :placeholder="t('connections.requestId')" :aria-label="t('connections.requestId')" />
+      <UInput v-model="clientIp" class="w-full sm:w-36" maxlength="64" placeholder="IP" aria-label="IP" />
+      <UButton type="submit" color="neutral" variant="outline" icon="i-lucide-search" :label="t('common.search')" />
+      <UButton type="button" color="neutral" variant="ghost" :label="t('common.reset')" @click="resetLocal" />
+      <UPopover :content="{ align: 'end' }" class="ml-auto">
+        <UButton type="button" color="neutral" variant="ghost" icon="i-lucide-info" :label="t('connections.aboutData')" />
+        <template #content>
+          <div class="flex max-w-sm flex-col gap-2 p-3 text-xs text-muted">
+            <p>{{ t('connections.scope') }}</p>
+            <p>{{ t('connections.identityScope') }}</p>
+          </div>
+        </template>
+      </UPopover>
     </form>
-    <p class="text-xs text-gray-500">{{ t('connections.identityScope') }}</p>
-    <div v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ error }} <button class="underline" @click="load">{{ t('requestTiming.retry') }}</button></div>
+    <UAlert
+      v-if="error"
+      role="alert"
+      color="error"
+      variant="subtle"
+      icon="i-lucide-circle-alert"
+      :description="error"
+      :actions="[{ label: t('requestTiming.retry'), color: 'error', variant: 'outline', size: 'xs', onClick: load }]"
+    />
     <DataTable :columns="columns" :data="rows" :loading="loading" row-key="trace_id">
       <template #cell-started_at="{ row }"><span class="whitespace-nowrap">{{ formatDateTime(row.started_at) }}</span></template>
-      <template #cell-url="{ row }"><span class="block text-xs text-gray-500">{{ row.method }} · {{ row.http_version || '—' }} · {{ row.tls_version || '—' }}</span><span class="break-all font-mono text-xs">{{ url(row) }}</span></template>
-      <template #cell-source="{ row }">{{ t(`connections.sources.${row.source}`) }}<span v-if="row.legacy" class="block text-xs text-gray-500">{{ t('connections.legacy') }}</span></template>
-      <template #cell-user="{ row }"><span>{{ row.user_name || row.user_email || (row.user_id ? `#${row.user_id}` : t('connections.unidentified')) }}</span><span v-if="row.detail.identity_source === 'recognized_credential'" class="block text-xs text-amber-700">{{ t('connections.recognizedCredential') }}</span><span v-if="row.api_key_id" class="block text-xs text-gray-500">{{ row.api_key_name || `#${row.api_key_id}` }}</span></template>
-      <template #cell-state="{ row }"><span class="rounded-sm px-2 py-1 text-xs" :class="stateClass(row.state)">{{ t(`connections.states.${row.state}`) }}</span><span class="mt-1 block text-xs text-gray-500">HTTP {{ row.legacy && !row.detail.version ? '—' : row.detail.status || '—' }}</span><span v-if="row.detail.auth_rejection || row.error_type" class="mt-1 block text-xs text-gray-500">{{ row.detail.auth_rejection || row.error_type }} · {{ row.error_status || row.detail.status }}</span></template>
-      <template #cell-model="{ row }">{{ row.model || '—' }}<span v-if="row.account_id" class="block text-xs text-gray-500">{{ row.account_name || `#${row.account_id}` }}</span></template>
-      <template #cell-total="{ row }">{{ elapsed(row) }}<span class="block text-xs text-gray-500">{{ row.detail.downstream_bytes == null || (row.network_error === 'tls_error' && !row.detail.status) || (row.legacy && !row.detail.version) ? t('requestTiming.missing') : t('connections.bytes', { count: row.detail.downstream_bytes }) }}</span></template>
-      <template #cell-actions="{ row }"><button class="btn btn-secondary btn-sm" @click="selected = row">{{ t('connections.details') }}</button></template>
-      <template #empty><p class="p-6 text-center text-sm text-gray-500">{{ t('connections.empty') }}</p></template>
+      <template #cell-url="{ row }"><span class="block text-xs text-muted">{{ row.method }} · {{ row.http_version || '—' }} · {{ row.tls_version || '—' }}</span><span class="break-all font-mono text-xs">{{ url(row) }}</span></template>
+      <template #cell-source="{ row }">{{ t(`connections.sources.${row.source}`) }}<span v-if="row.legacy" class="block text-xs text-muted">{{ t('connections.legacy') }}</span></template>
+      <template #cell-user="{ row }"><span>{{ row.user_name || row.user_email || (row.user_id ? `#${row.user_id}` : t('connections.unidentified')) }}</span><span v-if="row.detail.identity_source === 'recognized_credential'" class="block text-xs text-warning">{{ t('connections.recognizedCredential') }}</span><span v-if="row.api_key_id" class="block text-xs text-muted">{{ row.api_key_name || `#${row.api_key_id}` }}</span></template>
+      <template #cell-state="{ row }"><UBadge :color="stateColor(row.state)" variant="subtle" size="sm">{{ t(`connections.states.${row.state}`) }}</UBadge><span class="mt-1 block text-xs text-muted">HTTP {{ row.legacy && !row.detail.version ? '—' : row.detail.status || '—' }}</span><span v-if="row.detail.auth_rejection || row.error_type" class="mt-1 block text-xs text-muted">{{ row.detail.auth_rejection || row.error_type }} · {{ row.error_status || row.detail.status }}</span></template>
+      <template #cell-model="{ row }">{{ row.model || '—' }}<span v-if="row.account_id" class="block text-xs text-muted">{{ row.account_name || `#${row.account_id}` }}</span></template>
+      <template #cell-total="{ row }">{{ elapsed(row) }}<span class="block text-xs text-muted">{{ row.detail.downstream_bytes == null || (row.network_error === 'tls_error' && !row.detail.status) || (row.legacy && !row.detail.version) ? t('requestTiming.missing') : t('connections.bytes', { count: row.detail.downstream_bytes }) }}</span></template>
+      <template #cell-actions="{ row }"><UTooltip :text="t('connections.details')"><UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-panel-right-open" :aria-label="t('connections.details')" @click="selected = row" /></UTooltip></template>
+      <template #empty><p class="p-6 text-center text-sm text-muted">{{ t('connections.empty') }}</p></template>
     </DataTable>
-    <div class="flex items-center justify-between gap-3 text-sm">
-      <span>{{ t('connections.page', { page }) }}</span>
-      <div class="flex gap-2"><button class="btn btn-secondary" :disabled="loading || page <= 1" @click="changePage(-1)">{{ t('connections.previous') }}</button><button class="btn btn-secondary" :disabled="loading || !hasMore || page >= 500" @click="changePage(1)">{{ t('connections.next') }}</button></div>
+    <div class="flex items-center justify-between gap-3 border-t border-default pt-4 text-sm">
+      <span class="text-muted">{{ t('connections.page', { page }) }}</span>
+      <div class="flex gap-1.5">
+        <UButton color="neutral" variant="outline" icon="i-lucide-chevron-left" :label="t('connections.previous')" :disabled="loading || page <= 1" @click="changePage(-1)" />
+        <UButton color="neutral" variant="outline" trailing-icon="i-lucide-chevron-right" :label="t('connections.next')" :disabled="loading || !hasMore || page >= 500" @click="changePage(1)" />
+      </div>
     </div>
     <OpsErrorDetailModal v-model:show="showErrorDetail" :error-id="errorDetailId" error-type="request" />
     <BaseDialog :show="!!selected" :title="t('connections.details')" width="extra-wide" close-on-click-outside @close="selected = null">
-      <div v-if="selected" class="space-y-5">
-        <p class="rounded-lg bg-sky-50 p-3 text-sm text-sky-800 dark:bg-sky-950/30 dark:text-sky-200">{{ t('connections.scope') }}</p>
+      <div v-if="selected" class="flex flex-col gap-5">
+        <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('connections.scope')" />
         <dl class="grid gap-4 text-sm sm:grid-cols-2">
-          <div v-for="item in summary(selected)" :key="item.label"><dt class="text-gray-500">{{ item.label }}</dt><dd class="mt-1 break-all font-mono text-xs">{{ item.value }}</dd></div>
+          <div v-for="item in summary(selected)" :key="item.label"><dt class="text-muted">{{ item.label }}</dt><dd class="mt-1 break-all font-mono text-xs text-default">{{ item.value }}</dd></div>
         </dl>
-        <button v-if="selected.error_log_id" class="btn btn-secondary" @click="openError(selected)">{{ t('connections.errorDetail') }}</button>
-        <p v-if="selected.detail.truncated" class="text-sm text-amber-600">{{ t('requestTiming.truncated') }}</p>
-        <section><h4 class="mb-3 font-semibold">{{ t('requestTiming.timeline') }}</h4><p v-if="!events.length" class="text-sm text-gray-500">{{ t('connections.noTimeline') }}</p><ol v-else class="space-y-2 border-l border-primary-200 pl-4 dark:border-primary-800"><li v-for="[name, value] in events" :key="name" class="flex justify-between gap-4 text-sm"><span>{{ field(name) }}</span><span class="tabular-nums">{{ ms(value) }}</span></li></ol></section>
-        <section v-if="selected.detail.attempts?.length"><h4 class="mb-3 font-semibold">{{ t('requestTiming.attempt') }}</h4><div v-for="a in selected.detail.attempts" :key="a.number" class="mb-3 rounded-lg border border-gray-200 p-3 text-sm dark:border-dark-600"><p>#{{ a.number }} · {{ a.kind }} · {{ t('requestTiming.account') }} #{{ a.account_id }} · HTTP {{ a.status || '—' }}</p><p class="mt-1 text-xs text-gray-500">{{ a.cleanup_canceled ? t('requestTiming.health.normalClose') : a.error ? field(a.error) : t('requestTiming.health.noTransportError') }} · {{ a.terminal || '—' }}</p></div></section>
+        <div v-if="selected.error_log_id"><UButton color="neutral" variant="outline" icon="i-lucide-file-warning" :label="t('connections.errorDetail')" @click="openError(selected)" /></div>
+        <UAlert v-if="selected.detail.truncated" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('requestTiming.truncated')" />
+        <USeparator />
+        <section><h4 class="mb-3 text-sm font-semibold text-highlighted">{{ t('requestTiming.timeline') }}</h4><p v-if="!events.length" class="text-sm text-muted">{{ t('connections.noTimeline') }}</p><ol v-else class="flex flex-col gap-2 border-l border-default pl-4"><li v-for="[name, value] in events" :key="name" class="flex justify-between gap-4 text-sm"><span class="text-default">{{ field(name) }}</span><span class="tabular-nums text-muted">{{ ms(value) }}</span></li></ol></section>
+        <section v-if="selected.detail.attempts?.length"><h4 class="mb-3 text-sm font-semibold text-highlighted">{{ t('requestTiming.attempt') }}</h4><ul class="divide-y divide-default"><li v-for="a in selected.detail.attempts" :key="a.number" class="py-2.5 text-sm first:pt-0"><p class="text-default">#{{ a.number }} · {{ a.kind }} · {{ t('requestTiming.account') }} #{{ a.account_id }} · HTTP {{ a.status || '—' }}</p><p class="mt-1 text-xs text-muted">{{ a.cleanup_canceled ? t('requestTiming.health.normalClose') : a.error ? field(a.error) : t('requestTiming.health.noTransportError') }} · {{ a.terminal || '—' }}</p></li></ul></section>
       </div>
     </BaseDialog>
   </div>
@@ -73,7 +92,9 @@ const url = (r: ConnectionTrace) => r.host ? `${r.scheme ? r.scheme + '://' : ''
 const ms = (v: number | null | undefined) => v == null ? t('requestTiming.missing') : v < 1000 ? `${v.toFixed(0)}ms` : `${(v / 1000).toFixed(2)}s`
 const elapsed = (r: ConnectionTrace) => r.network_error === 'tls_error' && !r.detail.status ? t('requestTiming.missing') : ms(r.detail.total_ms)
 const field = (name: string) => te(`requestTiming.fields.${name}`) ? t(`requestTiming.fields.${name}`) : te(`requestTiming.${name}`) ? t(`requestTiming.${name}`) : name
-const stateClass = (s: ConnectionState) => s === 'completed' || s === 'edge_completed' ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200' : s === 'unknown' ? 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'
+const stateColor = (s: ConnectionState) => s === 'completed' || s === 'edge_completed' ? 'info' as const : s === 'unknown' ? 'neutral' as const : 'warning' as const
+const stateItems = computed(() => states.map(s => ({ value: s, label: t(`connections.states.${s}`) })))
+const sourceItems = computed(() => sources.map(s => ({ value: s, label: t(`connections.sources.${s}`) })))
 const events = computed(() => Object.entries(selected.value?.detail.events ?? {}).sort((a, b) => a[1] - b[1]))
 function summary(r: ConnectionTrace) {
   const missing = t('requestTiming.missing'), yes = (value: boolean) => t(value ? 'requestTiming.yes' : 'requestTiming.no')

@@ -1,68 +1,305 @@
 <template>
   <AppLayout>
-    <div class="space-y-5 min-w-0">
+    <div class="flex min-w-0 flex-col gap-6">
       <AdminPageHeader :title="t('channelOps.title')" :description="t('channelOps.description')">
-        <template #actions><button class="btn btn-secondary" :disabled="loading || busy" @click="refresh">{{ t('channelOps.refresh') }}</button></template>
+        <template #actions>
+          <UPopover :content="{ align: 'end' }">
+            <UButton color="neutral" variant="ghost" icon="i-lucide-info" :label="t('channelOps.scopeTitle')" />
+            <template #content><p class="max-w-sm p-3 text-xs leading-5 text-muted">{{ t('channelOps.scope') }}</p></template>
+          </UPopover>
+          <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="loading" :disabled="loading || busy" :label="t('channelOps.refresh')" @click="refresh" />
+        </template>
       </AdminPageHeader>
-      <details class="rounded-lg bg-primary-50 p-3 text-sm dark:bg-dark-800"><summary class="cursor-pointer font-medium">{{ t('channelOps.scopeTitle') }}</summary><p class="mt-2 leading-6">{{ t('channelOps.scope') }}</p></details>
-      <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
-      <p v-if="notice" role="status" class="text-emerald-600">{{ notice }}</p>
-      <p v-if="loading" role="status">{{ t('channelOps.loading') }}</p>
-      <p v-if="snapshotStale" role="status" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ t('channelOps.previousData') }}</p>
-      <fieldset :disabled="busy || loading" class="min-w-0 space-y-5">
-        <section class="card space-y-4 p-4">
-          <div class="flex flex-wrap items-center gap-3"><h2 class="font-semibold">{{ t('channelOps.channels') }}</h2><button class="btn btn-primary" data-testid="new-channel" @click="editChannel(null)">{{ t('channelOps.createChannel') }}</button><RouterLink class="text-primary-600 underline" to="/admin/channels/pricing">{{ t('channelOps.pricing') }}</RouterLink></div>
-          <form class="flex flex-wrap gap-2" @submit.prevent="channelPage = 1; refresh()"><label>{{ t('channelOps.search') }}<input v-model="channelSearch" class="input" maxlength="100" /></label><button class="btn btn-secondary">{{ t('channelOps.apply') }}</button><button type="button" class="btn btn-secondary" @click="selectChannel(0)">{{ t('channelOps.overview') }}</button></form>
-          <p v-if="channelsError" role="alert" class="text-red-600">{{ channelsError }}</p>
-          <div class="flex flex-wrap gap-2"><button v-for="channel in channels" :key="channel.id" class="btn" :class="channelId === channel.id ? 'btn-primary' : 'btn-secondary'" :aria-pressed="channelId === channel.id" @click="selectChannel(channel.id)">{{ channel.name }} · {{ channel.status }}</button></div>
-          <p v-if="!channels.length && !channelsError">{{ t('channelOps.empty') }}</p>
-          <div class="flex items-center gap-3"><button class="btn btn-secondary" :disabled="channelPage <= 1" @click="channelPage--; refresh()">{{ t('channelOps.previous') }}</button><span>{{ channelPage }} · {{ channelTotal }}</span><button class="btn btn-secondary" :disabled="channelPage * pageSize >= channelTotal" @click="channelPage++; refresh()">{{ t('channelOps.next') }}</button></div>
-          <div v-if="selectedChannel && selectedChannel.id === channelId" class="flex flex-wrap items-center gap-3"><strong>{{ selectedChannel.name }} #{{ channelId }}</strong><span>{{ t('channelOps.groups') }}: {{ selectedChannel.group_ids?.join(', ') || '—' }}</span><button class="btn btn-secondary" data-testid="edit-channel" @click="editChannel(selectedChannel)">{{ t('channelOps.edit') }}</button><button class="btn btn-danger" data-testid="delete-channel" @click="pending = { kind: 'channel', channel: selectedChannel }">{{ t('channelOps.deleteChannel') }}</button><RouterLink class="text-primary-600 underline" :to="{ path: '/admin/channels/pricing', query: { edit_channel: channelId } }">{{ t('channelOps.fullConfig') }}</RouterLink></div>
+      <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
+      <UAlert v-if="notice" role="status" color="success" variant="subtle" icon="i-lucide-circle-check" :description="notice" />
+      <p v-if="loading" role="status" class="text-sm text-muted">{{ t('channelOps.loading') }}</p>
+      <UAlert v-if="snapshotStale" role="status" color="warning" variant="subtle" icon="i-lucide-history" :description="t('channelOps.previousData')" />
+      <fieldset :disabled="busy || loading" class="flex min-w-0 flex-col gap-6">
+        <section class="flex flex-col gap-3">
+          <form class="flex flex-wrap items-center gap-1.5" @submit.prevent="channelPage = 1; refresh()">
+            <UInput v-model="channelSearch" icon="i-lucide-search" class="w-full sm:w-64" maxlength="100" :placeholder="t('channelOps.search')" :aria-label="t('channelOps.search')" />
+            <UButton type="submit" color="neutral" variant="outline" :label="t('channelOps.apply')" />
+            <UButton type="button" color="neutral" variant="ghost" icon="i-lucide-layout-grid" :label="t('channelOps.overview')" @click="selectChannel(0)" />
+            <div class="ml-auto flex flex-wrap items-center gap-1.5">
+              <UButton to="/admin/channels/pricing" color="neutral" variant="ghost" trailing-icon="i-lucide-arrow-up-right" :label="t('channelOps.pricing')" />
+              <UButton icon="i-lucide-plus" data-testid="new-channel" :label="t('channelOps.createChannel')" @click="editChannel(null)" />
+            </div>
+          </form>
+          <UAlert v-if="channelsError" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="channelsError" />
+          <div class="flex flex-wrap items-center gap-1.5" :aria-label="t('channelOps.channels')">
+            <UButton
+              v-for="channel in channels"
+              :key="channel.id"
+              size="sm"
+              :color="channelId === channel.id ? 'primary' : 'neutral'"
+              :variant="channelId === channel.id ? 'solid' : 'outline'"
+              :aria-pressed="channelId === channel.id"
+              @click="selectChannel(channel.id)"
+            >{{ channel.name }} · {{ channel.status }}</UButton>
+            <span v-if="!channels.length && !channelsError" class="text-sm text-muted">{{ t('channelOps.empty') }}</span>
+            <div class="ml-auto flex items-center gap-1.5 text-xs text-muted">
+              <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-chevron-left" :aria-label="t('channelOps.previous')" :disabled="channelPage <= 1" @click="channelPage--; refresh()" />
+              <span class="tabular-nums">{{ channelPage }} · {{ channelTotal }}</span>
+              <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-chevron-right" :aria-label="t('channelOps.next')" :disabled="channelPage * pageSize >= channelTotal" @click="channelPage++; refresh()" />
+            </div>
+          </div>
+          <div v-if="selectedChannel && selectedChannel.id === channelId" class="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg bg-elevated/50 px-3 py-2 text-sm">
+            <strong class="text-highlighted">{{ selectedChannel.name }} #{{ channelId }}</strong>
+            <span class="text-muted">{{ t('channelOps.groups') }}: {{ selectedChannel.group_ids?.join(', ') || '—' }}</span>
+            <div class="ml-auto flex flex-wrap items-center gap-1">
+              <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-pencil" data-testid="edit-channel" :label="t('channelOps.edit')" @click="editChannel(selectedChannel)" />
+              <UButton color="error" variant="ghost" size="sm" icon="i-lucide-trash-2" data-testid="delete-channel" :label="t('channelOps.deleteChannel')" @click="pending = { kind: 'channel', channel: selectedChannel }" />
+              <RouterLink class="px-2 text-sm text-muted underline-offset-4 hover:text-default hover:underline" :to="{ path: '/admin/channels/pricing', query: { edit_channel: channelId } }">{{ t('channelOps.fullConfig') }}</RouterLink>
+            </div>
+          </div>
         </section>
-        <details class="card p-4"><summary class="cursor-pointer text-sm font-medium">{{ t('channelOps.advancedFilters') }}</summary><form class="mt-4 grid gap-3 md:grid-cols-3" @submit.prevent="applyFilters">
-          <label>{{ t('channelOps.from') }}<input v-model="from" class="input w-full" type="datetime-local" required /></label><label>{{ t('channelOps.until') }}<input v-model="until" class="input w-full" type="datetime-local" required /></label>
-          <label>{{ t('channelOps.groups') }}<input v-model.number="groupId" class="input w-full" type="number" min="0" step="1" /></label>
-          <label>{{ t('channelOps.modelScope') }}<select v-model="modelScope" class="input w-full"><option value="public">{{ t('channelOps.public') }}</option><option value="recorded">{{ t('channelOps.recorded') }}</option><option value="upstream">{{ t('channelOps.upstreamModel') }}</option></select></label>
-          <label>{{ t('channelOps.model') }}<input v-model="model" class="input w-full" maxlength="200" /></label><button class="btn btn-primary self-end">{{ t('channelOps.apply') }}</button>
-        </form></details>
-        <nav class="flex flex-wrap items-center gap-2" :aria-label="t('channelOps.drilldown')"><button class="btn btn-secondary" @click="selectChannel(0)">{{ t('channelOps.overview') }}</button><template v-if="channelId"><span>›</span><button class="btn btn-secondary" @click="selectChannel(channelId)">{{ selectedChannel?.name || `#${channelId}` }}</button></template><template v-if="upstreamId"><span>›</span><button class="btn btn-secondary" @click="accountId = 0; statsPage = 1; qualityBefore = 0; refresh()">{{ upstreamLabel(upstreamId) }}</button></template><span v-if="accountId">› {{ t('channelOps.account') }} #{{ accountId }}</span></nav>
-        <p v-if="snapshot" class="rounded-lg border p-3 text-xs leading-6 dark:border-dark-700" data-testid="applied-scope">{{ t('channelOps.appliedScope') }}: {{ date(snapshot.from) }} → {{ date(snapshot.until) }} · {{ t('channelOps.channels') }} #{{ snapshot.scope.channel_id || '*' }} · {{ t('channelOps.upstream') }} #{{ snapshot.scope.upstream_id || '*' }} · {{ t('channelOps.account') }} #{{ snapshot.scope.account_id || '*' }} · {{ t('channelOps.groups') }} {{ snapshot.scope.group_id || '*' }} · {{ t('channelOps.modelScope') }} {{ snapshot.scope.model_scope }} · {{ snapshot.scope.model || '*' }}</p>
-        <section v-if="snapshot" class="card space-y-4 p-4" data-testid="usage-section">
-          <h2 class="font-semibold">{{ t('channelOps.latency') }}</h2><p class="text-sm text-gray-500">{{ t('channelOps.latencyNote') }}</p>
-          <p v-if="snapshot.usage.status !== 'ready'" role="alert" class="text-red-600">{{ snapshot.usage.error }}</p>
+        <UCollapsible v-model:open="filtersOpen" :unmount-on-hide="false" class="flex flex-col gap-3">
+          <UButton color="neutral" variant="ghost" class="self-start" icon="i-lucide-sliders-horizontal" :trailing-icon="filtersOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" :label="t('channelOps.advancedFilters')" />
+          <template #content>
+            <UForm :state="filterState" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" @submit="applyFilters">
+              <UFormField :label="t('channelOps.from')" required><UInput v-model="from" class="w-full" type="datetime-local" required /></UFormField>
+              <UFormField :label="t('channelOps.until')" required><UInput v-model="until" class="w-full" type="datetime-local" required /></UFormField>
+              <UFormField :label="t('channelOps.groups')"><UInput v-model.number="groupId" class="w-full" type="number" min="0" step="1" /></UFormField>
+              <UFormField :label="t('channelOps.modelScope')"><USelect v-model="modelScope" class="w-full" data-testid="model-scope" :items="modelScopeItems" /></UFormField>
+              <UFormField :label="t('channelOps.model')"><UInput v-model="model" class="w-full" maxlength="200" /></UFormField>
+              <div class="flex items-end"><UButton type="submit" :label="t('channelOps.apply')" /></div>
+            </UForm>
+          </template>
+        </UCollapsible>
+        <div class="flex flex-col gap-1.5">
+          <nav class="flex flex-wrap items-center gap-1 text-sm" :aria-label="t('channelOps.drilldown')">
+            <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-layout-grid" :label="t('channelOps.overview')" @click="selectChannel(0)" />
+            <template v-if="channelId"><UIcon name="i-lucide-chevron-right" class="size-4 text-dimmed" /><UButton color="neutral" variant="ghost" size="sm" @click="selectChannel(channelId)">{{ selectedChannel?.name || `#${channelId}` }}</UButton></template>
+            <template v-if="upstreamId"><UIcon name="i-lucide-chevron-right" class="size-4 text-dimmed" /><UButton color="neutral" variant="ghost" size="sm" @click="accountId = 0; statsPage = 1; qualityBefore = 0; refresh()">{{ upstreamLabel(upstreamId) }}</UButton></template>
+            <template v-if="accountId"><UIcon name="i-lucide-chevron-right" class="size-4 text-dimmed" /><span class="px-2 text-highlighted">{{ t('channelOps.account') }} #{{ accountId }}</span></template>
+          </nav>
+          <p v-if="snapshot" class="text-xs leading-5 text-muted" data-testid="applied-scope">{{ t('channelOps.appliedScope') }}: {{ date(snapshot.from) }} → {{ date(snapshot.until) }} · {{ t('channelOps.channels') }} #{{ snapshot.scope.channel_id || '*' }} · {{ t('channelOps.upstream') }} #{{ snapshot.scope.upstream_id || '*' }} · {{ t('channelOps.account') }} #{{ snapshot.scope.account_id || '*' }} · {{ t('channelOps.groups') }} {{ snapshot.scope.group_id || '*' }} · {{ t('channelOps.modelScope') }} {{ snapshot.scope.model_scope }} · {{ snapshot.scope.model || '*' }}</p>
+        </div>
+        <section v-if="snapshot" class="flex flex-col gap-3" data-testid="usage-section">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 class="text-base font-semibold text-highlighted">{{ t('channelOps.latency') }}</h2>
+              <p class="mt-0.5 text-xs text-muted">{{ t('channelOps.latencyNote') }}</p>
+            </div>
+            <UButton v-if="channelId && !accountId && !upstreamId" color="neutral" variant="outline" size="sm" icon="i-lucide-arrow-left-right" @click="accountMode = !accountMode; statsPage = 1; refresh()">{{ t(accountMode ? 'channelOps.byUpstream' : 'channelOps.byAccount') }}</UButton>
+          </div>
+          <UAlert v-if="snapshot.usage.status !== 'ready'" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="snapshot.usage.error" />
           <template v-else-if="snapshot.usage.data">
             <ChannelOperationsMetrics :metrics="snapshot.usage.data.summary" />
-            <p class="text-xs text-gray-500">{{ t('channelOps.queried') }} {{ date(snapshot.usage.queried_at) }} · {{ t('channelOps.latest') }} {{ date(snapshot.usage.data.summary.latest_sample_at) }}</p>
-            <p v-if="!snapshot.usage.data.summary.requests" data-testid="no-usage">{{ t('channelOps.noUsage') }}</p>
-            <div class="overflow-x-auto"><table class="w-full min-w-[640px] text-left text-sm"><thead><tr><th>{{ t('channelOps.dimension') }}</th><th>{{ t('channelOps.requests') }}</th><th>{{ t('channelOps.known') }} / {{ t('channelOps.unknown') }}</th><th>P50 / P90 / P95 (ms)</th></tr></thead><tbody><tr v-for="row in snapshot.usage.data.rows" :key="row.dimension_id" class="border-t dark:border-dark-700"><td class="p-3"><button v-if="!accountId && (row.dimension_id || dimension === 'upstream')" class="text-primary-600 underline" @click="drill(row.dimension_id)">{{ row.name }}</button><span v-else>{{ row.name }}</span></td><td>{{ row.requests }}</td><td>{{ row.samples }} / {{ row.unknown_samples }}</td><td>{{ ms(row.p50_ms) }} / {{ ms(row.p90_ms) }} / {{ ms(row.p95_ms) }}</td></tr></tbody></table></div>
-            <div class="flex gap-3 items-center"><button class="btn btn-secondary" :disabled="statsPage <= 1" @click="statsPage--; refresh()">{{ t('channelOps.previous') }}</button><span>{{ statsPage }} · {{ snapshot.usage.data.total }}</span><button data-testid="usage-next" class="btn btn-secondary" :disabled="statsPage * pageSize >= snapshot.usage.data.total" @click="statsPage++; refresh()">{{ t('channelOps.next') }}</button><button v-if="channelId && !accountId && !upstreamId" class="btn btn-secondary" @click="accountMode = !accountMode; statsPage = 1; refresh()">{{ t(accountMode ? 'channelOps.byUpstream' : 'channelOps.byAccount') }}</button></div>
-            <details><summary>{{ t('channelOps.lineage') }} ({{ snapshot.usage.data.lineage.length }} / {{ snapshot.usage.data.lineage_total }})</summary><p class="my-2 text-xs text-gray-500">{{ t('channelOps.lineageNote') }}</p><div class="overflow-x-auto"><table class="w-full min-w-[720px] text-sm text-left"><thead><tr><th>{{ t('channelOps.public') }}</th><th>{{ t('channelOps.recorded') }}</th><th>{{ t('channelOps.upstreamModel') }}</th><th>{{ t('channelOps.chain') }}</th><th>{{ t('channelOps.requests') }}</th></tr></thead><tbody><tr v-for="(line, index) in snapshot.usage.data.lineage" :key="index"><td class="p-2">{{ line.public_model }}</td><td>{{ line.recorded_model }}</td><td>{{ line.upstream_model || '—' }}</td><td>{{ line.model_mapping_chain || '—' }}</td><td>{{ line.samples }}</td></tr></tbody></table></div></details>
+            <p class="text-xs text-muted">{{ t('channelOps.queried') }} {{ date(snapshot.usage.queried_at) }} · {{ t('channelOps.latest') }} {{ date(snapshot.usage.data.summary.latest_sample_at) }}</p>
+            <p v-if="!snapshot.usage.data.summary.requests" class="text-sm text-muted" data-testid="no-usage">{{ t('channelOps.noUsage') }}</p>
+            <UTable :data="snapshot.usage.data.rows" :columns="usageColumns" :ui="tableUi">
+              <template #name-cell="{ row }"><UButton v-if="!accountId && (row.original.dimension_id || dimension === 'upstream')" variant="link" class="p-0" @click="drill(row.original.dimension_id)">{{ row.original.name }}</UButton><span v-else class="text-highlighted">{{ row.original.name }}</span></template>
+              <template #samples-cell="{ row }">{{ row.original.samples }} / {{ row.original.unknown_samples }}</template>
+              <template #latency-cell="{ row }"><span class="tabular-nums">{{ ms(row.original.p50_ms) }} / {{ ms(row.original.p90_ms) }} / {{ ms(row.original.p95_ms) }}</span></template>
+            </UTable>
+            <div class="flex items-center justify-end gap-1.5 text-xs text-muted">
+              <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-chevron-left" :disabled="statsPage <= 1" :label="t('channelOps.previous')" @click="statsPage--; refresh()" />
+              <span class="px-1 tabular-nums">{{ statsPage }} · {{ snapshot.usage.data.total }}</span>
+              <UButton data-testid="usage-next" color="neutral" variant="outline" size="sm" trailing-icon="i-lucide-chevron-right" :disabled="statsPage * pageSize >= snapshot.usage.data.total" :label="t('channelOps.next')" @click="statsPage++; refresh()" />
+            </div>
+            <UCollapsible class="flex flex-col gap-2">
+              <UButton color="neutral" variant="ghost" size="sm" class="self-start" trailing-icon="i-lucide-chevron-down">{{ t('channelOps.lineage') }} ({{ snapshot.usage.data.lineage.length }} / {{ snapshot.usage.data.lineage_total }})</UButton>
+              <template #content>
+                <p class="mb-2 text-xs text-muted">{{ t('channelOps.lineageNote') }}</p>
+                <UTable :data="snapshot.usage.data.lineage" :columns="lineageColumns" :ui="tableUi" />
+              </template>
+            </UCollapsible>
           </template>
-          <p class="text-sm text-gray-500">{{ t('channelOps.errorNote') }} <RouterLink class="underline" to="/admin/ops">{{ t('channelOps.errors') }}</RouterLink></p>
+          <p class="text-xs text-muted">{{ t('channelOps.errorNote') }} <RouterLink class="text-default underline underline-offset-4" to="/admin/ops">{{ t('channelOps.errors') }}</RouterLink></p>
         </section>
-        <section v-if="snapshot" class="card space-y-3 p-4" data-testid="quality-section"><div class="flex justify-between gap-2"><h2 class="font-semibold">{{ t('channelOps.quality') }}</h2><RouterLink class="text-primary-600 underline" to="/admin/account-quality">{{ t('channelOps.qualityEditor') }}</RouterLink></div><p class="text-sm text-gray-500">{{ t('channelOps.qualityNote') }}</p><p v-if="snapshot.quality.status !== 'ready'" role="alert">{{ snapshot.quality.error }}</p><template v-else-if="snapshot.quality.data"><p>{{ t('channelOps.rounds') }} {{ snapshot.quality.data.summary.rounds }} · {{ t('channelOps.passed') }} {{ snapshot.quality.data.summary.passed }} · {{ t('channelOps.degraded') }} {{ snapshot.quality.data.summary.degraded }} · {{ t('channelOps.inconclusive') }} {{ snapshot.quality.data.summary.inconclusive }}</p><p class="text-xs text-gray-500">{{ t('channelOps.queried') }} {{ date(snapshot.quality.queried_at) }} · {{ t('channelOps.latest') }} {{ date(snapshot.quality.data.summary.latest_sample_at) }}</p><p v-if="!snapshot.quality.data.summary.rounds">{{ t('channelOps.noQuality') }}</p><div class="overflow-x-auto"><table class="w-full min-w-[640px] text-left text-sm"><thead><tr><th>{{ t('channelOps.time') }}</th><th>{{ t('channelOps.account') }}</th><th>{{ t('channelOps.model') }}</th><th>{{ t('channelOps.outcome') }}</th><th>{{ t('channelOps.probes') }}</th><th>{{ t('channelOps.actions') }}</th><th>{{ t('channelOps.plan') }}</th></tr></thead><tbody><tr v-for="round in snapshot.quality.data.rows" :key="round.id" class="border-t dark:border-dark-700"><td class="p-2">{{ date(round.observed_at) }}</td><td><button class="underline" @click="accountId = round.account_id; statsPage = 1; qualityBefore = 0; refresh()">#{{ round.account_id }}</button></td><td>{{ round.measured_model || '—' }}</td><td :class="round.outcome === 'degraded' ? 'text-red-600' : ''">{{ t(`channelOps.${round.outcome}`) }}<span v-if="!round.round_complete" class="block text-xs text-amber-600">{{ t('channelOps.incompleteRound') }} {{ round.round_probes }} / {{ round.round_expected ?? '—' }}</span></td><td>{{ round.passed_probes }} / {{ round.probes }} ({{ round.expected ?? '—' }})</td><td>{{ round.actions.filter(Boolean).join(', ') || '—' }}</td><td><RouterLink class="underline text-primary-600" :to="{ path: '/admin/account-quality', query: { plan_id: round.plan_id } }">#{{ round.plan_id }}</RouterLink></td></tr></tbody></table></div><div class="flex gap-3"><button class="btn btn-secondary" :disabled="!qualityBefore" @click="qualityBefore = 0; refresh()">{{ t('channelOps.latestPage') }}</button><button class="btn btn-secondary" :disabled="!snapshot.quality.data.has_more" @click="olderQuality">{{ t('channelOps.older') }}</button></div></template></section>
-        <section v-if="snapshot" class="card space-y-3 p-4" data-testid="errors-section"><h2 class="font-semibold">{{ t('channelOps.errors') }}</h2><p class="text-sm text-gray-500">{{ t('channelOps.errorsScope') }}</p><p v-if="snapshot.errors.status !== 'ready'" role="alert">{{ snapshot.errors.error }}</p><template v-else-if="snapshot.errors.data"><p>{{ t('channelOps.errorRecords') }} {{ snapshot.errors.data.records }} · {{ t('channelOps.upstream5xx') }} {{ snapshot.errors.data.upstream_5xx }}</p><p class="text-xs text-gray-500">{{ snapshot.errors.data.source }} · {{ t('channelOps.queried') }} {{ date(snapshot.errors.queried_at) }} · {{ t('channelOps.latest') }} {{ date(snapshot.errors.data.latest_sample_at) }}</p><p v-if="!snapshot.errors.data.records">{{ t('channelOps.noErrors') }}</p><div class="overflow-x-auto"><table class="w-full min-w-[640px] text-left text-sm"><thead><tr><th>{{ t('channelOps.errorType') }}</th><th>{{ t('channelOps.errorPhase') }}</th><th>HTTP</th><th>{{ t('channelOps.errorRecords') }}</th></tr></thead><tbody><tr v-for="(bucket,index) in snapshot.errors.data.rows" :key="index"><td>{{ bucket.error_type }}</td><td>{{ bucket.error_phase }}</td><td>{{ bucket.status_code || '—' }}</td><td>{{ bucket.records }}</td></tr></tbody></table></div><p class="text-xs text-gray-500">{{ snapshot.errors.data.rows.length }} / {{ snapshot.errors.data.bucket_total }} · {{ t('channelOps.topErrors') }}</p></template></section>
-        <section v-if="snapshot" class="card space-y-2 p-4"><h2 class="font-semibold">{{ t('channelOps.capacity') }}</h2><p class="text-sm text-gray-500">{{ t('channelOps.capacityNote') }}</p><p v-if="snapshot.capacity.status !== 'ready'" role="alert">{{ snapshot.capacity.error }}</p><p v-else-if="snapshot.capacity.data">{{ t('channelOps.accounts') }} {{ snapshot.capacity.data.accounts }} · {{ t('channelOps.schedulable') }} {{ snapshot.capacity.data.schedulable }} · {{ t('channelOps.concurrency') }} {{ snapshot.capacity.data.configured_concurrency }} · {{ t('channelOps.queried') }} {{ date(snapshot.capacity.queried_at) }}</p></section>
-        <section v-if="channelId" class="card space-y-4 p-4"><h2 class="font-semibold">{{ t('channelOps.membership') }}</h2><p class="text-sm text-gray-500">{{ t('channelOps.membershipNote') }}</p><p v-if="catalogError" role="alert" class="text-red-600">{{ catalogError }}</p><fieldset v-if="catalog" :disabled="catalogStale || catalogChannelId !== channelId" class="min-w-0 space-y-3">
-          <form class="flex flex-wrap gap-2" @submit.prevent="upstreamPage = 1; refresh()"><label>{{ t('channelOps.searchUpstream') }}<input v-model="upstreamSearch" maxlength="100" class="input" /></label><button class="btn btn-secondary">{{ t('channelOps.apply') }}</button><button type="button" class="btn btn-primary" @click="dialogError = ''; upstreamEdit = { id: 0, name: '' }">{{ t('channelOps.createUpstream') }}</button></form>
-          <div v-for="upstream in catalog.upstreams" :key="upstream.id" class="flex flex-wrap items-center gap-3"><button class="underline text-primary-600" @click="upstreamId = upstream.id; accountId = 0; statsPage = 1; qualityBefore = 0; refresh()">{{ upstream.name }} (#{{ upstream.id }}) · {{ upstream.members }}</button><button class="btn btn-secondary" @click="dialogError = ''; upstreamEdit = { id: upstream.id, name: upstream.name }">{{ t('channelOps.rename') }}</button><button class="btn btn-danger" @click="queueMutation({ action: 'delete_upstream', upstream_id: upstream.id, confirm: true })">{{ t('channelOps.deleteUpstream') }}</button></div>
-          <p v-if="!catalog.upstreams.length">{{ t('channelOps.noUpstream') }}</p><div class="flex gap-3 items-center"><button class="btn btn-secondary" :disabled="upstreamPage <= 1" @click="upstreamPage--; refresh()">{{ t('channelOps.previous') }}</button><span>{{ upstreamPage }} · {{ catalog.upstream_total }}</span><button data-testid="upstream-next" class="btn btn-secondary" :disabled="upstreamPage * pageSize >= catalog.upstream_total" @click="upstreamPage++; refresh()">{{ t('channelOps.next') }}</button></div>
-          <form class="flex flex-wrap gap-2" @submit.prevent="memberPage = 1; refresh()"><label>{{ t('channelOps.searchAccount') }}<input v-model="memberSearch" maxlength="100" class="input" /></label><label>{{ t('channelOps.members') }}<select v-model="membership" class="input"><option value="all">{{ t('channelOps.all') }}</option><option value="assigned">{{ t('channelOps.assigned') }}</option><option value="unassigned">{{ t('channelOps.unassigned') }}</option></select></label><button class="btn btn-secondary">{{ t('channelOps.apply') }}</button></form>
-          <div class="overflow-x-auto"><table class="w-full min-w-[640px] text-left text-sm"><thead><tr><th>{{ t('channelOps.account') }}</th><th>{{ t('channelOps.state') }}</th><th>{{ t('channelOps.upstream') }}</th><th>{{ t('channelOps.actions') }}</th></tr></thead><tbody><tr v-for="member in catalog.accounts" :key="member.id" class="border-t dark:border-dark-700"><td class="p-3"><button class="text-primary-600 underline" @click="accountId = member.id; upstreamId = 0; statsPage = 1; qualityBefore = 0; refresh()">{{ member.name }} #{{ member.id }}</button><p class="text-xs text-gray-500">{{ member.platform }}</p></td><td>{{ member.status }} · {{ member.concurrency }}<p v-if="!member.eligible" class="text-amber-600">{{ t('channelOps.ineligible') }}</p></td><td>{{ upstreamLabel(member.upstream_id) }}</td><td class="space-x-2"><button class="btn btn-secondary" :disabled="!member.eligible" @click="dialogError = ''; assigning = member; targetUpstream = 0">{{ t('channelOps.assign') }}</button><button v-if="member.upstream_id" class="btn btn-danger" @click="queueMutation({ action: 'detach', account_id: member.id, expected_upstream_id: member.upstream_id, confirm: true })">{{ t('channelOps.detach') }}</button></td></tr></tbody></table></div><p v-if="!catalog.accounts.length">{{ t('channelOps.empty') }}</p><div class="flex gap-3 items-center"><button class="btn btn-secondary" :disabled="memberPage <= 1" @click="memberPage--; refresh()">{{ t('channelOps.previous') }}</button><span>{{ memberPage }} · {{ catalog.total }} · revision {{ catalog.revision }}</span><button data-testid="member-next" class="btn btn-secondary" :disabled="memberPage * pageSize >= catalog.total" @click="memberPage++; refresh()">{{ t('channelOps.next') }}</button></div>
-        </fieldset></section>
+        <USeparator v-if="snapshot" />
+        <section v-if="snapshot" class="flex flex-col gap-3" data-testid="quality-section">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 class="text-base font-semibold text-highlighted">{{ t('channelOps.quality') }}</h2>
+              <p class="mt-0.5 text-xs text-muted">{{ t('channelOps.qualityNote') }}</p>
+            </div>
+            <RouterLink class="text-sm text-muted underline-offset-4 hover:text-default hover:underline" to="/admin/account-quality">{{ t('channelOps.qualityEditor') }}</RouterLink>
+          </div>
+          <UAlert v-if="snapshot.quality.status !== 'ready'" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="snapshot.quality.error" />
+          <template v-else-if="snapshot.quality.data">
+            <div class="flex flex-wrap items-center gap-1.5 text-sm">
+              <UBadge color="neutral" variant="subtle">{{ t('channelOps.rounds') }} {{ snapshot.quality.data.summary.rounds }}</UBadge>
+              <UBadge color="success" variant="subtle">{{ t('channelOps.passed') }} {{ snapshot.quality.data.summary.passed }}</UBadge>
+              <UBadge color="error" variant="subtle">{{ t('channelOps.degraded') }} {{ snapshot.quality.data.summary.degraded }}</UBadge>
+              <UBadge color="warning" variant="subtle">{{ t('channelOps.inconclusive') }} {{ snapshot.quality.data.summary.inconclusive }}</UBadge>
+              <span class="ml-1 text-xs text-muted">{{ t('channelOps.queried') }} {{ date(snapshot.quality.queried_at) }} · {{ t('channelOps.latest') }} {{ date(snapshot.quality.data.summary.latest_sample_at) }}</span>
+            </div>
+            <p v-if="!snapshot.quality.data.summary.rounds" class="text-sm text-muted">{{ t('channelOps.noQuality') }}</p>
+            <UTable :data="snapshot.quality.data.rows" :columns="qualityColumns" :ui="tableUi">
+              <template #observed-cell="{ row }">{{ date(row.original.observed_at) }}</template>
+              <template #account-cell="{ row }"><UButton variant="link" class="p-0" @click="accountId = row.original.account_id; statsPage = 1; qualityBefore = 0; refresh()">#{{ row.original.account_id }}</UButton></template>
+              <template #model-cell="{ row }">{{ row.original.measured_model || '—' }}</template>
+              <template #outcome-cell="{ row }"><UBadge :color="row.original.outcome === 'degraded' ? 'error' : row.original.outcome === 'passed' ? 'success' : 'warning'" variant="subtle" size="sm">{{ t(`channelOps.${row.original.outcome}`) }}</UBadge><span v-if="!row.original.round_complete" class="mt-1 block text-xs text-warning">{{ t('channelOps.incompleteRound') }} {{ row.original.round_probes }} / {{ row.original.round_expected ?? '—' }}</span></template>
+              <template #probes-cell="{ row }">{{ row.original.passed_probes }} / {{ row.original.probes }} ({{ row.original.expected ?? '—' }})</template>
+              <template #actions-cell="{ row }">{{ row.original.actions.filter(Boolean).join(', ') || '—' }}</template>
+              <template #plan-cell="{ row }"><RouterLink class="text-default underline underline-offset-4" :to="{ path: '/admin/account-quality', query: { plan_id: row.original.plan_id } }">#{{ row.original.plan_id }}</RouterLink></template>
+            </UTable>
+            <div class="flex justify-end gap-1.5">
+              <UButton color="neutral" variant="outline" size="sm" :disabled="!qualityBefore" :label="t('channelOps.latestPage')" @click="qualityBefore = 0; refresh()" />
+              <UButton color="neutral" variant="outline" size="sm" :disabled="!snapshot.quality.data.has_more" :label="t('channelOps.older')" @click="olderQuality" />
+            </div>
+          </template>
+        </section>
+        <USeparator v-if="snapshot" />
+        <div v-if="snapshot" class="grid gap-6 lg:grid-cols-3">
+          <section class="flex flex-col gap-3 lg:col-span-2" data-testid="errors-section">
+            <div>
+              <h2 class="text-base font-semibold text-highlighted">{{ t('channelOps.errors') }}</h2>
+              <p class="mt-0.5 text-xs text-muted">{{ t('channelOps.errorsScope') }}</p>
+            </div>
+            <UAlert v-if="snapshot.errors.status !== 'ready'" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="snapshot.errors.error" />
+            <template v-else-if="snapshot.errors.data">
+              <div class="flex flex-wrap items-center gap-1.5 text-sm">
+                <UBadge color="neutral" variant="subtle">{{ t('channelOps.errorRecords') }} {{ snapshot.errors.data.records }}</UBadge>
+                <UBadge color="error" variant="subtle">{{ t('channelOps.upstream5xx') }} {{ snapshot.errors.data.upstream_5xx }}</UBadge>
+                <span class="ml-1 text-xs text-muted">{{ snapshot.errors.data.source }} · {{ t('channelOps.queried') }} {{ date(snapshot.errors.queried_at) }} · {{ t('channelOps.latest') }} {{ date(snapshot.errors.data.latest_sample_at) }}</span>
+              </div>
+              <p v-if="!snapshot.errors.data.records" class="text-sm text-muted">{{ t('channelOps.noErrors') }}</p>
+              <UTable :data="snapshot.errors.data.rows" :columns="errorColumns" :ui="tableUi" />
+              <p class="text-xs text-muted">{{ snapshot.errors.data.rows.length }} / {{ snapshot.errors.data.bucket_total }} · {{ t('channelOps.topErrors') }}</p>
+            </template>
+          </section>
+          <section class="flex flex-col gap-3">
+            <div>
+              <h2 class="text-base font-semibold text-highlighted">{{ t('channelOps.capacity') }}</h2>
+              <p class="mt-0.5 text-xs text-muted">{{ t('channelOps.capacityNote') }}</p>
+            </div>
+            <UAlert v-if="snapshot.capacity.status !== 'ready'" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="snapshot.capacity.error" />
+            <UPageCard v-else-if="snapshot.capacity.data" variant="subtle" :ui="{ container: 'gap-y-2 sm:p-4' }">
+              <dl class="grid grid-cols-3 gap-3">
+                <div><dt class="text-xs text-muted">{{ t('channelOps.accounts') }}</dt><dd class="text-xl font-semibold tabular-nums text-highlighted">{{ snapshot.capacity.data.accounts }}</dd></div>
+                <div><dt class="text-xs text-muted">{{ t('channelOps.schedulable') }}</dt><dd class="text-xl font-semibold tabular-nums text-highlighted">{{ snapshot.capacity.data.schedulable }}</dd></div>
+                <div><dt class="text-xs text-muted">{{ t('channelOps.concurrency') }}</dt><dd class="text-xl font-semibold tabular-nums text-highlighted">{{ snapshot.capacity.data.configured_concurrency }}</dd></div>
+              </dl>
+              <p class="text-xs text-muted">{{ t('channelOps.queried') }} {{ date(snapshot.capacity.queried_at) }}</p>
+            </UPageCard>
+          </section>
+        </div>
+        <USeparator v-if="channelId" />
+        <section v-if="channelId" class="flex flex-col gap-3">
+          <div>
+            <h2 class="text-base font-semibold text-highlighted">{{ t('channelOps.membership') }}</h2>
+            <p class="mt-0.5 text-xs text-muted">{{ t('channelOps.membershipNote') }}</p>
+          </div>
+          <UAlert v-if="catalogError" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="catalogError" />
+          <fieldset v-if="catalog" :disabled="catalogStale || catalogChannelId !== channelId" class="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <div class="flex min-w-0 flex-col gap-3">
+              <form class="flex flex-wrap items-center gap-1.5" @submit.prevent="upstreamPage = 1; refresh()">
+                <UInput v-model="upstreamSearch" icon="i-lucide-search" class="min-w-0 flex-1" maxlength="100" :placeholder="t('channelOps.searchUpstream')" :aria-label="t('channelOps.searchUpstream')" />
+                <UButton type="submit" color="neutral" variant="outline" :label="t('channelOps.apply')" />
+                <UButton type="button" icon="i-lucide-plus" :label="t('channelOps.createUpstream')" @click="dialogError = ''; upstreamEdit = { id: 0, name: '' }" />
+              </form>
+              <ul class="flex flex-col divide-y divide-default">
+                <li v-for="upstream in catalog.upstreams" :key="upstream.id" class="flex items-center gap-2 py-1.5">
+                  <UButton variant="link" class="min-w-0 flex-1 justify-start p-0" @click="upstreamId = upstream.id; accountId = 0; statsPage = 1; qualityBefore = 0; refresh()">{{ upstream.name }} (#{{ upstream.id }}) · {{ upstream.members }}</UButton>
+                  <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-pencil" :aria-label="t('channelOps.rename')" @click="dialogError = ''; upstreamEdit = { id: upstream.id, name: upstream.name }" />
+                  <UButton color="error" variant="ghost" size="xs" icon="i-lucide-trash-2" :aria-label="t('channelOps.deleteUpstream')" @click="queueMutation({ action: 'delete_upstream', upstream_id: upstream.id, confirm: true })" />
+                </li>
+              </ul>
+              <p v-if="!catalog.upstreams.length" class="text-sm text-muted">{{ t('channelOps.noUpstream') }}</p>
+              <div class="flex items-center justify-end gap-1.5 text-xs text-muted">
+                <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-chevron-left" :disabled="upstreamPage <= 1" :label="t('channelOps.previous')" @click="upstreamPage--; refresh()" />
+                <span class="px-1 tabular-nums">{{ upstreamPage }} · {{ catalog.upstream_total }}</span>
+                <UButton data-testid="upstream-next" color="neutral" variant="outline" size="sm" trailing-icon="i-lucide-chevron-right" :disabled="upstreamPage * pageSize >= catalog.upstream_total" :label="t('channelOps.next')" @click="upstreamPage++; refresh()" />
+              </div>
+            </div>
+            <div class="flex min-w-0 flex-col gap-3">
+              <form class="flex flex-wrap items-center gap-1.5" @submit.prevent="memberPage = 1; refresh()">
+                <UInput v-model="memberSearch" icon="i-lucide-search" class="min-w-0 flex-1" maxlength="100" :placeholder="t('channelOps.searchAccount')" :aria-label="t('channelOps.searchAccount')" />
+                <USelect v-model="membership" class="w-36" data-testid="membership" :items="membershipItems" :aria-label="t('channelOps.members')" />
+                <UButton type="submit" color="neutral" variant="outline" :label="t('channelOps.apply')" />
+              </form>
+              <UTable :data="catalog.accounts" :columns="memberColumns" :ui="tableUi">
+                <template #account-cell="{ row }"><UButton variant="link" class="p-0" @click="accountId = row.original.id; upstreamId = 0; statsPage = 1; qualityBefore = 0; refresh()">{{ row.original.name }} #{{ row.original.id }}</UButton><p class="text-xs text-muted">{{ row.original.platform }}</p></template>
+                <template #state-cell="{ row }">{{ row.original.status }} · {{ row.original.concurrency }}<p v-if="!row.original.eligible" class="text-xs text-warning">{{ t('channelOps.ineligible') }}</p></template>
+                <template #upstream-cell="{ row }">{{ upstreamLabel(row.original.upstream_id) }}</template>
+                <template #actions-cell="{ row }">
+                  <div class="flex justify-end gap-1">
+                    <UButton color="neutral" variant="outline" size="xs" :disabled="!row.original.eligible" :label="t('channelOps.assign')" @click="dialogError = ''; assigning = row.original; targetUpstream = 0" />
+                    <UButton v-if="row.original.upstream_id" color="error" variant="ghost" size="xs" :label="t('channelOps.detach')" @click="queueMutation({ action: 'detach', account_id: row.original.id, expected_upstream_id: row.original.upstream_id, confirm: true })" />
+                  </div>
+                </template>
+              </UTable>
+              <p v-if="!catalog.accounts.length" class="text-sm text-muted">{{ t('channelOps.empty') }}</p>
+              <div class="flex items-center justify-end gap-1.5 text-xs text-muted">
+                <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-chevron-left" :disabled="memberPage <= 1" :label="t('channelOps.previous')" @click="memberPage--; refresh()" />
+                <span class="px-1 tabular-nums">{{ memberPage }} · {{ catalog.total }} · revision {{ catalog.revision }}</span>
+                <UButton data-testid="member-next" color="neutral" variant="outline" size="sm" trailing-icon="i-lucide-chevron-right" :disabled="memberPage * pageSize >= catalog.total" :label="t('channelOps.next')" @click="memberPage++; refresh()" />
+              </div>
+            </div>
+          </fieldset>
+        </section>
       </fieldset>
-      <BaseDialog :show="!!channelEdit" :title="t(channelEdit?.id ? 'channelOps.edit' : 'channelOps.createChannel')" @close="!busy && (channelEdit = null)"><form v-if="channelEdit" class="space-y-4" @submit.prevent="saveChannel"><fieldset :disabled="busy" class="space-y-4"><label class="block">{{ t('channelOps.name') }}<input v-model="channelEdit.name" class="input w-full" required maxlength="100" /></label><label class="block">{{ t('channelOps.descriptionField') }}<textarea v-model="channelEdit.description" class="input w-full" maxlength="2000" /></label><label v-if="channelEdit.id" class="block">{{ t('channelOps.channelStatus') }}<select v-model="channelEdit.status" class="input"><option value="active">{{ t('channelOps.channelActive') }}</option><option value="disabled">{{ t('channelOps.channelDisabled') }}</option></select></label><p>{{ t('channelOps.basicEdit') }}</p><p v-if="dialogError" role="alert" class="text-red-600">{{ dialogError }}</p><button class="btn btn-primary">{{ t('channelOps.save') }}</button></fieldset></form></BaseDialog>
-      <BaseDialog :show="!!upstreamEdit" :title="t('channelOps.upstream')" @close="!busy && (upstreamEdit = null)"><form v-if="upstreamEdit" class="space-y-4" @submit.prevent="saveUpstream"><label>{{ t('channelOps.name') }}<input v-model="upstreamEdit.name" class="input w-full" required maxlength="100" :disabled="busy" /></label><p v-if="dialogError" role="alert" class="text-red-600">{{ dialogError }}</p><button class="btn btn-primary" :disabled="busy">{{ t('channelOps.save') }}</button></form></BaseDialog>
-      <BaseDialog :show="!!assigning" :title="t('channelOps.assign')" @close="!busy && (assigning = null)"><div class="space-y-4"><p>{{ assigning?.name }} #{{ assigning?.id }}</p><p>{{ t('channelOps.targetHint') }}</p><form class="flex flex-wrap gap-2" @submit.prevent="upstreamPage = 1; refresh()"><label>{{ t('channelOps.searchUpstream') }}<input v-model="upstreamSearch" class="input" maxlength="100" /></label><button class="btn btn-secondary" :disabled="loading">{{ t('channelOps.apply') }}</button></form><div v-if="catalog" class="space-y-3"><label v-for="target in catalog.upstreams" :key="target.id" class="flex gap-2"><input v-model.number="targetUpstream" type="radio" name="target-upstream" :value="target.id" />{{ target.name }} #{{ target.id }}</label><div class="flex gap-2"><button class="btn btn-secondary" :disabled="loading || upstreamPage <= 1" @click="upstreamPage--; refresh()">{{ t('channelOps.previous') }}</button><span>{{ upstreamPage }} · {{ catalog.upstream_total }}</span><button class="btn btn-secondary" :disabled="loading || upstreamPage * pageSize >= catalog.upstream_total" @click="upstreamPage++; refresh()">{{ t('channelOps.next') }}</button></div></div><label>{{ t('channelOps.target') }}<input v-model.number="targetUpstream" class="input w-full" type="number" min="1" step="1" :disabled="busy" /></label><p>{{ t('channelOps.reassignNote') }}</p><p v-if="dialogError" role="alert" class="text-red-600">{{ dialogError }}</p><button class="btn btn-primary" :disabled="busy || loading || !catalog || !targetUpstream" @click="assignMember">{{ t('channelOps.save') }}</button></div></BaseDialog>
+      <BaseDialog :show="!!channelEdit" :title="t(channelEdit?.id ? 'channelOps.edit' : 'channelOps.createChannel')" @close="!busy && (channelEdit = null)">
+        <form v-if="channelEdit" id="channel-ops-channel-form" class="flex flex-col gap-4" @submit.prevent="saveChannel">
+          <fieldset :disabled="busy" class="flex flex-col gap-4">
+            <UFormField :label="t('channelOps.name')" required><UInput v-model="channelEdit.name" class="w-full" required maxlength="100" /></UFormField>
+            <UFormField :label="t('channelOps.descriptionField')"><UTextarea v-model="channelEdit.description" class="w-full" :rows="3" autoresize maxlength="2000" /></UFormField>
+            <UFormField v-if="channelEdit.id" :label="t('channelOps.channelStatus')"><USelect v-model="channelEdit.status" class="w-48" :items="channelStatusItems" /></UFormField>
+            <p class="text-xs text-muted">{{ t('channelOps.basicEdit') }}</p>
+            <UAlert v-if="dialogError" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="dialogError" />
+          </fieldset>
+        </form>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton color="neutral" variant="outline" :disabled="busy" :label="t('channelOps.cancel')" @click="channelEdit = null" />
+            <UButton type="submit" form="channel-ops-channel-form" :loading="busy" :label="t('channelOps.save')" />
+          </div>
+        </template>
+      </BaseDialog>
+      <BaseDialog :show="!!upstreamEdit" :title="t('channelOps.upstream')" @close="!busy && (upstreamEdit = null)">
+        <form v-if="upstreamEdit" id="channel-ops-upstream-form" class="flex flex-col gap-4" @submit.prevent="saveUpstream">
+          <UFormField :label="t('channelOps.name')" required><UInput v-model="upstreamEdit.name" class="w-full" required maxlength="100" :disabled="busy" /></UFormField>
+          <UAlert v-if="dialogError" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="dialogError" />
+        </form>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton color="neutral" variant="outline" :disabled="busy" :label="t('channelOps.cancel')" @click="upstreamEdit = null" />
+            <UButton type="submit" form="channel-ops-upstream-form" :disabled="busy" :loading="busy" :label="t('channelOps.save')" />
+          </div>
+        </template>
+      </BaseDialog>
+      <BaseDialog :show="!!assigning" :title="t('channelOps.assign')" @close="!busy && (assigning = null)">
+        <div class="flex flex-col gap-4">
+          <div>
+            <p class="font-medium text-highlighted">{{ assigning?.name }} #{{ assigning?.id }}</p>
+            <p class="mt-0.5 text-xs text-muted">{{ t('channelOps.targetHint') }}</p>
+          </div>
+          <form class="flex flex-wrap items-center gap-1.5" @submit.prevent="upstreamPage = 1; refresh()">
+            <UInput v-model="upstreamSearch" icon="i-lucide-search" class="min-w-0 flex-1" maxlength="100" :placeholder="t('channelOps.searchUpstream')" :aria-label="t('channelOps.searchUpstream')" />
+            <UButton type="submit" color="neutral" variant="outline" :disabled="loading" :label="t('channelOps.apply')" />
+          </form>
+          <div v-if="catalog" class="flex flex-col gap-3">
+            <URadioGroup v-model="targetUpstream" data-testid="target-upstream" name="target-upstream" :items="targetItems" />
+            <div class="flex items-center gap-1.5 text-xs text-muted">
+              <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-chevron-left" :disabled="loading || upstreamPage <= 1" :label="t('channelOps.previous')" @click="upstreamPage--; refresh()" />
+              <span class="px-1 tabular-nums">{{ upstreamPage }} · {{ catalog.upstream_total }}</span>
+              <UButton color="neutral" variant="outline" size="sm" trailing-icon="i-lucide-chevron-right" :disabled="loading || upstreamPage * pageSize >= catalog.upstream_total" :label="t('channelOps.next')" @click="upstreamPage++; refresh()" />
+            </div>
+          </div>
+          <UFormField :label="t('channelOps.target')" :help="t('channelOps.reassignNote')"><UInput v-model.number="targetUpstream" class="w-full" type="number" min="1" step="1" :disabled="busy" /></UFormField>
+          <UAlert v-if="dialogError" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="dialogError" />
+        </div>
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <UButton color="neutral" variant="outline" :disabled="busy" :label="t('channelOps.cancel')" @click="assigning = null" />
+            <UButton :disabled="busy || loading || !catalog || !targetUpstream" :loading="busy" :label="t('channelOps.save')" @click="assignMember" />
+          </div>
+        </template>
+      </BaseDialog>
       <ConfirmDialog :show="!!pending" :title="t('channelOps.confirmTitle')" :message="confirmationMessage" :confirm-text="t('channelOps.confirm')" :danger="true" @cancel="!busy && (pending = null)" @confirm="confirmPending" />
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import type { TableColumn } from '@nuxt/ui'
+import { templateTableUi } from '@/views/admin/ops/utils/templateUi'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -95,6 +332,38 @@ const confirmationMessage = computed(() => {
   return `${title} · ${t('channelOps.channels')} #${action.channelId} · ${target} · ${t('channelOps.confirmMembership')}`
 })
 const dimension = computed(() => accountId.value ? 'account' : !channelId.value ? 'channel' : upstreamId.value || accountMode.value ? 'account' : 'upstream')
+const tableUi = templateTableUi
+const filtersOpen = ref(false)
+const filterState = computed(() => ({ from: from.value, until: until.value, groupId: groupId.value, model: model.value, modelScope: modelScope.value }))
+const modelScopeItems = computed(() => [{ value: 'public', label: t('channelOps.public') }, { value: 'recorded', label: t('channelOps.recorded') }, { value: 'upstream', label: t('channelOps.upstreamModel') }])
+const membershipItems = computed(() => [{ value: 'all', label: t('channelOps.all') }, { value: 'assigned', label: t('channelOps.assigned') }, { value: 'unassigned', label: t('channelOps.unassigned') }])
+const channelStatusItems = computed(() => [{ value: 'active', label: t('channelOps.channelActive') }, { value: 'disabled', label: t('channelOps.channelDisabled') }])
+const targetItems = computed(() => (catalog.value?.upstreams ?? []).map(target => ({ value: target.id, label: `${target.name} #${target.id}` })))
+const usageColumns = computed<TableColumn<ops.UsageRow>[]>(() => [
+  { id: 'name', header: t('channelOps.dimension') },
+  { accessorKey: 'requests', header: t('channelOps.requests') },
+  { id: 'samples', header: `${t('channelOps.known')} / ${t('channelOps.unknown')}` },
+  { id: 'latency', header: 'P50 / P90 / P95 (ms)' }
+])
+const lineageColumns = computed<TableColumn<ops.Lineage>[]>(() => [
+  { accessorKey: 'public_model', header: t('channelOps.public') },
+  { accessorKey: 'recorded_model', header: t('channelOps.recorded') },
+  { id: 'upstream_model', header: t('channelOps.upstreamModel'), cell: ({ row }) => row.original.upstream_model || '—' },
+  { id: 'chain', header: t('channelOps.chain'), cell: ({ row }) => row.original.model_mapping_chain || '—' },
+  { accessorKey: 'samples', header: t('channelOps.requests') }
+])
+const qualityColumns = computed<TableColumn<ops.QualityRound>[]>(() => [
+  { id: 'observed', header: t('channelOps.time') }, { id: 'account', header: t('channelOps.account') }, { id: 'model', header: t('channelOps.model') },
+  { id: 'outcome', header: t('channelOps.outcome') }, { id: 'probes', header: t('channelOps.probes') }, { id: 'actions', header: t('channelOps.actions') }, { id: 'plan', header: t('channelOps.plan') }
+])
+const errorColumns = computed<TableColumn<ops.ErrorLogs['rows'][number]>[]>(() => [
+  { accessorKey: 'error_type', header: t('channelOps.errorType') }, { accessorKey: 'error_phase', header: t('channelOps.errorPhase') },
+  { id: 'status', header: 'HTTP', cell: ({ row }) => row.original.status_code || '—' }, { accessorKey: 'records', header: t('channelOps.errorRecords') }
+])
+const memberColumns = computed<TableColumn<ops.Member>[]>(() => [
+  { id: 'account', header: t('channelOps.account') }, { id: 'state', header: t('channelOps.state') }, { id: 'upstream', header: t('channelOps.upstream') },
+  { id: 'actions', header: () => h('span', { class: 'sr-only' }, t('channelOps.actions')) }
+])
 let request = 0, alive = true, controller: AbortController | undefined
 function positiveId(value: unknown) { const n = Number(value); return Number.isSafeInteger(n) && n > 0 ? n : 0 }
 function localDate(date: Date) { return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16) }

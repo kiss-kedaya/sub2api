@@ -1,6 +1,7 @@
 export default {
   recognizedCredential: "Recognized key; authentication rejected",
   errorDetail: 'Open structured error details', logicalError: 'Recorded logical error',
+  aboutData: 'About this data',
   title: 'Connection diagnostics',
   scope: 'Inspect edge proxy and application observations. HTTP 200 or a successful write/flush does not prove client receipt or parsing. Reconnection is a client action and cannot be confirmed from server logs alone. DNS, TCP or TLS failures that never reach the edge may have no record; correlate client logs.',
   identityScope: 'Edge records may have no user identity. Clear user, key, model, account and group filters to investigate by host, time, IP and request ID. URLs omit query parameters and sensitive path tokens.',

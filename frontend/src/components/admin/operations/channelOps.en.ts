@@ -1,4 +1,5 @@
 export default {
+  "cancel": "Cancel",
   "scopeTitle": "Scope and data notes",
   "advancedFilters": "Time, group and model filters",
   "previousData": "Refresh failed. Showing the last successful data and its original scope and timestamp. Refresh before editing membership.",

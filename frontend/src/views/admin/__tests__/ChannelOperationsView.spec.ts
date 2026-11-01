@@ -22,6 +22,12 @@ function snapshot(): ops.Snapshot {
   return { scope: { channel_id: 7, upstream_id: 0, account_id: 0, group_id: 0, model: '', model_scope: 'public', dimension: 'upstream' }, from: now, until: now, model_scope: 'public', usage: { status: 'ready', queried_at: now, data: { source: 'usage_logs', attribution: 'current', latency_measurement: 'legacy_forward', summary: { ...metrics }, total: 1, rows: [{ ...metrics, dimension_id: 0, name: 'Unassigned' }], lineage: [], lineage_total: 0, error_rate: null, error_scope: 'unsupported' } }, quality: { status: 'ready', queried_at: now, data: { source: 'scheduled_test_results', scope: 'current accounts', summary: { rounds: 1, passed: 0, degraded: 1, inconclusive: 0, latest_sample_at: now }, rows: [{ id: 99, plan_id: 8, account_id: 9, measured_model: 'provider-model', observed_at: now, probes: 2, passed_probes: 1, expected: 2, outcome: 'degraded', round_complete: true, round_probes: 2, round_expected: 2, actions: ['failure_counted:1/2'] }], has_more: true } }, errors: { status: 'ready', queried_at: now, data: { source: 'ops_error_logs', scope: 'current accounts', records: 1, upstream_5xx: 1, latest_sample_at: now, rows: [{ error_type: 'upstream', error_phase: 'forward', status_code: 502, records: 1 }], bucket_total: 1, error_rate: null } }, capacity: { status: 'ready', queried_at: now, data: { source: 'accounts', scope: 'current', accounts: 1, schedulable: 1, configured_concurrency: 5 } } }
 }
 function button(wrapper: ReturnType<typeof mount>, text: string) { const found = wrapper.findAll('button').find(b => b.text() === text); if (!found) throw new Error(`Button missing: ${text}`); return found }
+// Nuxt UI USelect / URadioGroup render no native <select> / radio input: drive them through their v-model.
+function nuxtControl(wrapper: ReturnType<typeof mount>, name: 'Select' | 'RadioGroup', testid: string) {
+  const found = wrapper.findAllComponents({ name }).find(c => c.vm.$attrs['data-testid'] === testid)
+  if (!found) throw new Error(`${name} missing: ${testid}`)
+  return found
+}
 beforeEach(() => {
   vi.resetAllMocks(); state.query = { channel_id: '7' }
   vi.mocked(channels.list).mockResolvedValue({ items: [channel], total: 1 }); vi.mocked(channels.getById).mockResolvedValue(channel)
@@ -144,7 +150,7 @@ describe('channel operations workflow', () => {
   it('uses exact selected model identity and group, paginates quality history by cursor', async () => {
     const w = mount(ChannelOperationsView); await flushPromises()
     const form = w.findAll('form')[1]
-    await form.get('select').setValue('upstream'); await form.get('input[maxlength="200"]').setValue('upstream-alias'); await form.get('input[type="number"]').setValue(11); await form.trigger('submit'); await flushPromises()
+    nuxtControl(w, 'Select', 'model-scope').vm.$emit('update:modelValue', 'upstream'); await form.get('input[maxlength="200"]').setValue('upstream-alias'); await form.get('input[type="number"]').setValue(11); await form.trigger('submit'); await flushPromises()
     expect(ops.snapshot).toHaveBeenLastCalledWith(expect.objectContaining({ model_scope: 'upstream', model: 'upstream-alias', group_id: 11 }), expect.anything())
     await button(w, 'channelOps.older').trigger('click'); await flushPromises()
     expect(ops.snapshot).toHaveBeenLastCalledWith(expect.objectContaining({ quality_before: 99 }), expect.anything()); w.unmount()
@@ -155,7 +161,8 @@ describe('channel operations workflow', () => {
     const w = mount(ChannelOperationsView); await flushPromises()
     await button(w, 'channelOps.assign').trigger('click')
     const picker = w.get('[data-testid="dialog"]')
-    await picker.get('input[type="radio"][value="4"]').setValue()
+    expect(picker.text()).toContain('Provider B #4')
+    nuxtControl(w, 'RadioGroup', 'target-upstream').vm.$emit('update:modelValue', 4)
     await picker.get('input[maxlength="100"]').setValue('Provider'); await picker.get('form').trigger('submit'); await flushPromises()
     expect(ops.catalog).toHaveBeenLastCalledWith(7, expect.objectContaining({ upstream_search: 'Provider', upstream_page: 1 }), expect.anything())
     await button(w, 'channelOps.save').trigger('click'); expect(ops.mutate).not.toHaveBeenCalled()
