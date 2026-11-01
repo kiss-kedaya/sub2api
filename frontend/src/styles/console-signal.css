@@ -1,4 +1,10 @@
-/* Colour tokens live in console-studio.css; this layer only applies them. */
+/*
+  Legacy page classes inside the console (cards, legacy buttons and inputs, tables,
+  pagination, the old Select and date picker, dialogs). Colour tokens live in
+  console-studio.css: by day they point at Nuxt UI's --ui-* tokens (so Appearance drives
+  them), at night they keep the plum palette. The frame itself (sidebar, navbar, toolbar)
+  is Nuxt UI's dashboard and needs nothing here.
+*/
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
   letter-spacing: 0;
   color: var(--signal-text);
@@ -9,326 +15,58 @@
   background: var(--signal-bg);
 }
 
-.console-signal .signal-frame {
-  min-width: 0;
-  transition: none;
-}
-
 .console-signal .signal-main {
   width: 100%;
-  max-width: 1600px;
   margin-inline: auto;
 }
 
-.console-signal .signal-header {
-  background: var(--signal-surface);
-  border-color: var(--signal-line);
-  backdrop-filter: none;
-}
-
-.console-signal .header-inner {
-  padding-inline: 16px;
-}
-
-.console-signal .header-location {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.console-signal .header-actions {
-  flex-shrink: 0;
-  gap: 4px;
-}
-
-.console-signal .signal-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--signal-muted);
-}
-
-.console-signal .signal-breadcrumb > svg {
-  flex: 0 0 12px;
-}
-
-.console-signal .signal-breadcrumb > :is(a, span) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.console-signal .signal-breadcrumb-home {
-  max-width: 160px;
-}
-
-.console-signal .signal-breadcrumb > span {
-  color: var(--signal-text);
-  font-weight: 500;
-}
-
-.console-signal .signal-breadcrumb-home:hover {
-  color: var(--signal-accent);
-}
-
-.console-signal :is(.header-shortcut, .header-user-button, .header-locale > button, .header-subscriptions > button) {
-  min-height: 36px;
-  border-radius: 6px;
-  color: var(--signal-muted);
-  background: transparent;
-  transition: color 120ms ease, background-color 120ms ease;
-}
-
-.console-signal :is(.header-shortcut, .header-user-button, .header-locale > button, .header-subscriptions > button):hover {
-  color: var(--signal-text);
-  background: var(--signal-hover);
-}
-
-.console-signal .header-subscriptions > button > svg,
-.console-signal .header-subscriptions > button > div > span {
-  color: var(--signal-muted);
-}
-
-.console-signal .header-identity {
-  max-width: 144px;
-}
-
-.console-signal .header-identity > div {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--signal-text);
-}
-
-.console-signal .header-identity > div + div {
-  color: var(--signal-muted);
-}
-
-.console-signal .header-avatar {
-  flex-shrink: 0;
-  border: 1px solid var(--signal-line);
-  border-radius: 6px;
-  background: var(--signal-accent-soft);
-  color: var(--signal-accent);
-  box-shadow: none;
-}
-
-.console-signal .header-balance {
-  min-height: 36px;
-  border: 1px solid var(--signal-line);
-  border-radius: 6px;
-  background: var(--signal-bg);
-  font-variant-numeric: tabular-nums;
-}
-
-.console-signal .header-balance > svg {
-  color: var(--signal-muted);
-}
-
-.console-signal .header-balance-value {
-  white-space: nowrap;
-  color: var(--signal-text);
-}
-
-.console-signal .header-balance-frozen {
-  border-radius: 4px;
-  background: var(--signal-surface);
-  color: var(--signal-amber);
-  white-space: nowrap;
-}
-
-.console-signal .header-balance-detail {
-  max-width: calc(100dvw - 32px);
-  border-color: var(--signal-line);
-  background: var(--signal-surface);
-  box-shadow: var(--signal-shadow);
-}
-
-.console-signal .header-balance:focus-visible .header-balance-detail {
-  display: block;
-}
-
-.console-signal .header-balance-detail span {
-  color: var(--signal-text);
-}
-
-.console-signal .header-balance-detail span:first-child {
-  color: var(--signal-muted);
-}
-
-.console-signal .header-balance-detail > div:nth-child(2) > span:last-child {
-  color: var(--signal-amber);
-}
-
-.console-signal .signal-sidebar {
-  background: var(--signal-sidebar);
-  border-color: var(--signal-nav-line);
-  /* The mobile slide uses the translate-x utilities, which animate `translate` in v4. */
-  transition-property: transform, translate;
-  transition-duration: 180ms;
-}
-
-.console-signal .signal-sidebar :is(.sidebar-header, .sidebar-footer) {
-  border-color: var(--signal-nav-line);
-}
-
-.console-signal .signal-sidebar .sidebar-logo {
-  border-radius: 6px;
-  box-shadow: none;
-}
-
-.console-signal .signal-sidebar .sidebar-brand-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--signal-nav-brand);
-}
-
-.console-signal .signal-sidebar .sidebar-brand-title:hover {
-  color: var(--signal-accent);
-}
-
-.console-signal .signal-sidebar .sidebar-nav {
-  padding-block: 20px;
-}
-
-.console-signal .signal-sidebar .sidebar-link {
-  position: relative;
-  min-height: 40px;
-  border-radius: 6px;
-  color: var(--signal-nav-text);
-  transition: color 120ms ease, background-color 120ms ease;
-}
-
-.console-signal .signal-sidebar .sidebar-link:hover {
-  background: var(--signal-nav-hover);
-  color: var(--signal-nav-strong);
-  box-shadow: none;
-}
-
-.console-signal .signal-sidebar .sidebar-link-active {
-  background: var(--signal-nav-active);
-  color: var(--signal-nav-active-text);
-  box-shadow: none;
-}
-
-.console-signal .signal-sidebar .sidebar-link-active::before {
-  content: none;
-}
-
-.console-signal .signal-sidebar .sidebar-section-title {
-  color: var(--signal-nav-muted);
-  letter-spacing: 0;
-}
-
-.console-signal .signal-sidebar .sidebar-section-title::after {
-  background: var(--signal-nav-line);
-}
-
-.console-signal .signal-sidebar :is(.sidebar-label, .sidebar-brand) {
-  transition: opacity 120ms ease;
-}
-
-/* Explicit component classes avoid recoloring business/status utility classes. */
+/* Legacy .btn / .input radius follows the Appearance radius, like UButton / UInput. */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.btn, .btn-icon, .input, .dropdown) {
-  border-radius: 6px;
+  border-radius: calc(var(--ui-radius) * 1.5);
   letter-spacing: 0;
 }
 
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn {
-  box-shadow: none;
-  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+/* Night: the plum controls as before (by day the style.css tokens already match Nuxt UI). */
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary {
+  border-color: var(--signal-line);
 }
 
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary {
-  border: 1px solid transparent;
-  color: var(--signal-on-accent);
-  background: var(--signal-accent);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--signal-accent) 88%, var(--signal-text));
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary {
-  background: var(--signal-surface);
-  border: 1px solid var(--signal-control-line);
-  color: var(--signal-text);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-ghost {
-  color: var(--signal-muted);
-  background: transparent;
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.btn-secondary, .btn-ghost):hover:not(:disabled) {
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary:hover:not(:disabled) {
+  border-color: var(--signal-control-line);
   background: var(--signal-hover);
-  color: var(--signal-text);
 }
 
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input {
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled) {
+  background: var(--signal-command-hover);
+}
+
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-ghost {
+  color: var(--signal-muted);
+}
+
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input {
   border-color: var(--signal-control-line);
   background: var(--signal-surface);
-  color: var(--signal-text);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input::placeholder {
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input::placeholder {
   color: var(--signal-muted);
 }
 
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input:focus {
-  border-color: var(--signal-accent);
-  --tw-ring-color: var(--signal-accent);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .input-error {
-  border-color: #d34040;
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.input-label, .modal-title, .empty-state-title) {
-  color: var(--signal-text);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.input-hint, .empty-state-description) {
-  color: var(--signal-muted);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(button, a, input, select, textarea, [tabindex='0']):focus-visible {
-  outline: 2px solid var(--signal-accent);
-  outline-offset: 3px;
-}
-
-/* Page-level panels let the ink painting show through; popovers and sticky cells stay opaque. */
+/* Page-level panels let the ink painting show through at night; popovers stay opaque. */
 .console-signal :is(.card, .glass-card, .card-glass, .table-container) {
-  border-radius: 8px;
+  border-radius: calc(var(--ui-radius) * 2);
   border-color: var(--signal-line);
   background: var(--signal-page-surface, var(--signal-surface));
   box-shadow: none;
   backdrop-filter: none;
 }
 
-.console-signal .card-hover:hover {
-  transform: none;
-  translate: none;
-  border-color: var(--signal-control-line);
-  box-shadow: none;
-}
-
-.console-signal :is(.page-title, .stat-value) {
-  color: var(--signal-text);
-  letter-spacing: 0;
-}
-
-.console-signal :is(.page-description, .stat-label) {
-  color: var(--signal-muted);
-}
-
 .console-signal .stat-value {
   font-variant-numeric: tabular-nums;
 }
 
+/* User pages: the table sits flush between hairlines; admin pages box it (console-studio). */
 .console-signal .signal-main .table-page-layout .table-scroll-container {
   border-inline: 0;
   border-radius: 0;
@@ -342,7 +80,7 @@
 }
 
 .console-signal :is(.table th, .table-header, .table-header th, .table-scroll-container thead) {
-  background: var(--signal-bg);
+  background: var(--signal-table-head);
   color: var(--signal-muted);
   border-color: var(--signal-line);
   backdrop-filter: none;
@@ -357,16 +95,13 @@
    specificity; with utilities now in a cascade layer this unlayered rule must not set it. */
 .console-signal .table-body {
   color: var(--signal-text);
-}
-
-.console-signal .table-body {
   background: var(--signal-page-surface, var(--signal-surface));
 }
 
 /* These cells have component-scoped backgrounds of their own. */
 .console-signal .signal-main .table-wrapper thead.table-header,
 .console-signal .signal-main .table-wrapper .table-header .sticky-header-cell {
-  background: var(--signal-bg);
+  background: var(--signal-table-head);
   color: var(--signal-muted);
   letter-spacing: 0;
 }
@@ -408,23 +143,10 @@
   background: var(--signal-hover);
 }
 
-.console-signal :is(.divider, .card-header, .card-footer) {
-  border-color: var(--signal-line);
-}
-
-.console-signal .divider {
-  background: var(--signal-line);
-}
-
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.dropdown, .modal-content, .dialog-container) {
   background: var(--signal-surface);
   border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  color: var(--signal-text);
-  box-shadow: var(--signal-shadow);
-}
-
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .dropdown-item {
+  border-radius: calc(var(--ui-radius) * 2);
   color: var(--signal-text);
 }
 
@@ -437,32 +159,30 @@
   background: var(--signal-surface);
 }
 
-:is(.console-signal .modal-overlay, body:has(.console-signal) > .modal-overlay, .console-signal .dialog-overlay, body:has(.console-signal) > .dialog-overlay) {
+.dark :is(.console-signal .modal-overlay, body:has(.console-signal) > .modal-overlay, .console-signal .dialog-overlay, body:has(.console-signal) > .dialog-overlay) {
   background: #11131580;
   backdrop-filter: none;
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay) .select-trigger {
-  border-radius: 6px;
+  border-radius: calc(var(--ui-radius) * 1.5);
+}
+
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay) .select-trigger {
   border-color: var(--signal-control-line);
   background: var(--signal-surface);
   color: var(--signal-text);
 }
 
-:is(.console-signal, body:has(.console-signal) > .modal-overlay) :is(.select-trigger:focus, .select-trigger-open) {
+.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay) :is(.select-trigger:focus, .select-trigger-open) {
   border-color: var(--signal-accent);
   --tw-ring-color: var(--signal-accent);
 }
 
-:is(.console-signal, body:has(.console-signal) > .modal-overlay) .select-trigger-error {
-  border-color: #d34040;
-}
-
 body:has(.console-signal) > .select-dropdown-portal {
-  border-radius: 6px;
+  border-radius: calc(var(--ui-radius) * 1.5);
   background: var(--signal-surface);
   border-color: var(--signal-line);
-  box-shadow: var(--signal-shadow);
 }
 
 body:has(.console-signal) > .select-dropdown-portal :is(.select-option, .select-search-input) {
@@ -485,13 +205,9 @@ body:has(.console-signal) > .select-dropdown-portal .select-option-selected {
   color: var(--signal-accent);
 }
 
-.console-signal .header-logout.dropdown-item {
-  color: #d34040;
-}
-
 html .console-signal .signal-main :is(.date-picker-trigger, .date-picker-dropdown, .date-picker-input) {
   border-color: var(--signal-control-line);
-  border-radius: 6px;
+  border-radius: calc(var(--ui-radius) * 1.5);
   background: var(--signal-surface);
   color: var(--signal-text);
 }
@@ -512,30 +228,6 @@ html .console-signal .signal-main :is(.date-picker-trigger, .date-picker-dropdow
 .console-signal .signal-main .date-picker-apply {
   background: var(--signal-command);
   color: var(--signal-command-text);
-}
-
-@media (min-width: 768px) {
-  .console-signal .header-inner {
-    padding-inline: 24px;
-  }
-}
-
-@media (min-width: 1024px) {
-  .console-signal .header-inner {
-    padding-inline: 32px;
-  }
-}
-
-@media (max-width: 1279px) {
-  .console-signal :is(.header-shortcut > span, .header-identity) {
-    display: none;
-  }
-
-  .console-signal .header-balance-frozen {
-    max-width: 100px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
 }
 
 @media (max-width: 639px) {
@@ -562,26 +254,6 @@ html .console-signal .signal-main :is(.date-picker-trigger, .date-picker-dropdow
 
   .console-signal .date-picker-separator {
     display: none;
-  }
-
-  .console-signal .signal-breadcrumb-home,
-  .console-signal .signal-breadcrumb > svg {
-    display: none;
-  }
-
-  .console-signal .signal-sidebar .sidebar-link,
-  .console-signal .header-actions button,
-  .console-signal .header-location > button {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
-  .console-signal .header-inner {
-    padding-inline: 8px;
-  }
-
-  .console-signal .header-user-button {
-    gap: 0;
   }
 }
 
