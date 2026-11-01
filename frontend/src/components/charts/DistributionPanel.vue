@@ -1,7 +1,9 @@
 <template>
-  <!-- Doughnut + compact UTable, shared by the model / group / endpoint distribution cards. -->
-  <div class="flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
-    <div class="size-48 shrink-0">
+  <!-- Doughnut + compact UTable, shared by the model / group / endpoint distribution cards.
+       Sized by the card's own width (container queries) so all columns fit in half-width cards. -->
+  <div class="@container">
+  <div class="flex flex-col items-center gap-4 @md:flex-row @md:gap-5">
+    <div class="size-40 shrink-0 @md:size-32 @xl:size-40 @3xl:size-48">
       <Doughnut :data="chartData" :options="chartOptions" />
     </div>
     <div class="max-h-56 w-full min-w-0 flex-1 overflow-auto">
@@ -28,6 +30,7 @@
         </template>
       </UTable>
     </div>
+  </div>
   </div>
 </template>
 
