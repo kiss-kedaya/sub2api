@@ -27,7 +27,12 @@ const routes: RouteRecordRaw[] = [
   {path:'/admin/excel-grants',name:'AdminExcelGrants',component:()=>import('@/views/admin/ExcelGrantsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'Excel 协议授权'}},
   {path:'/admin/ops-automation',name:'AdminOpsAutomation',component:()=>import('@/views/admin/OpsAutomationView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'账号自动化'}},
   {path:'/admin/credential-guard',name:'AdminCredentialGuard',component:()=>import('@/views/admin/CredentialGuardView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'凭证巡检'}},
-  {path:'/admin/account-ops',name:'AdminAccountOps',component:()=>import('@/views/admin/AccountOpsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'账号通知'}},
+  // Account notifications: overview plus sub-pages. The four routes share one view, so switching keeps the loaded data.
+  // Old links with ?tab=records / ?tab=settings land on the matching sub-page.
+  {path:'/admin/account-ops',name:'AdminAccountOps',component:()=>import('@/views/admin/AccountOpsView.vue'),props:{section:'overview'},meta:{requiresAuth:true,requiresAdmin:true,title:'账号通知'},beforeEnter:(to)=>to.query.tab==='records'?{path:'/admin/account-ops/records',replace:true}:to.query.tab==='settings'?{path:'/admin/account-ops/rules',replace:true}:true},
+  {path:'/admin/account-ops/channels',name:'AdminAccountOpsChannels',component:()=>import('@/views/admin/AccountOpsView.vue'),props:{section:'channels'},meta:{requiresAuth:true,requiresAdmin:true,title:'账号通知'}},
+  {path:'/admin/account-ops/rules',name:'AdminAccountOpsRules',component:()=>import('@/views/admin/AccountOpsView.vue'),props:{section:'rules'},meta:{requiresAuth:true,requiresAdmin:true,title:'账号通知'}},
+  {path:'/admin/account-ops/records',name:'AdminAccountOpsRecords',component:()=>import('@/views/admin/AccountOpsView.vue'),props:{section:'records'},meta:{requiresAuth:true,requiresAdmin:true,title:'账号通知'}},
   {path:'/admin/channel-operations',name:'AdminChannelOperations',component:()=>import('@/views/admin/ChannelOperationsView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'渠道运维'}},
   {path:'/admin/mihomo',name:'AdminMihomo',component:()=>import('@/views/admin/MihomoView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'代理出口'}},
   {path:'/admin/group-cache-tests',name:'AdminGroupCacheTests',component:()=>import('@/views/admin/GroupCacheTestView.vue'),meta:{requiresAuth:true,requiresAdmin:true,title:'分组缓存测试'}},
