@@ -79,7 +79,6 @@
             <template v-if="passwordResetEnabled && !backendModeEnabled" #hint>
               <router-link
                 to="/forgot-password"
-                tabindex="-1"
                 class="font-medium text-primary transition-colors hover:text-primary/75"
               >
                 {{ t('auth.forgotPassword') }}
