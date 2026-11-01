@@ -46,6 +46,7 @@ export default {
     noGroup: 'No Group',
     requests: 'Requests',
     tokens: 'Tokens',
+    share: 'Share',
     actual: 'Actual',
     standard: 'Standard',
     input: 'Input',

@@ -1,21 +1,18 @@
 <template>
   <AppLayout>
-    <div class="user-dashboard min-w-0">
-      <UserPageHeader :title="t('dashboard.overview')">
-        <template #actions>
-          <UButton
-            class="signal-overview-refresh"
-            color="neutral"
-            variant="outline"
-            icon="i-lucide-refresh-cw"
-            :ui="{ leadingIcon: loading || loadingCharts ? 'animate-spin' : '' }"
-            :title="t('common.refresh')"
-            :aria-label="t('common.refresh')"
-            :disabled="loading || loadingCharts"
-            @click="refreshAll"
-          />
-        </template>
-      </UserPageHeader>
+    <section class="user-dashboard flex min-w-0 flex-col gap-4 sm:gap-6" :aria-label="t('dashboard.overview')">
+      <DashboardToolbar
+        v-model:startDate="startDate"
+        v-model:endDate="endDate"
+        v-model:granularity="granularity"
+        :granularity-items="granularityItems"
+        :granularity-label="t('dashboard.granularity')"
+        :refresh-label="t('common.refresh')"
+        :refreshing="loading || loadingCharts"
+        @dateRangeChange="changeChartRange"
+        @granularityChange="loadCharts"
+        @refresh="refreshAll"
+      />
       <div v-if="loading && !stats" class="flex justify-center py-10"><LoadingSpinner /></div>
       <UAlert
         v-if="statsError"
@@ -31,18 +28,11 @@
         </template>
       </UAlert>
       <template v-if="stats">
-        <UserDashboardStats section="summary" :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode">
-          <template #actions><UserDashboardQuickActions /></template>
-          <template #models>
-            <UserDashboardModels :models="modelStats" :start-date="startDate" :end-date="endDate" :loading="loadingCharts" :error="chartsError" />
-          </template>
-        </UserDashboardStats>
-        <UserDashboardCharts
-          v-model:startDate="startDate" v-model:endDate="endDate" v-model:granularity="granularity"
-          :loading="loadingCharts" :error="chartsError" :trend="trendData"
-          @dateRangeChange="changeChartRange" @granularityChange="loadCharts" @refresh="loadCharts"
-        />
-        <div class="mt-4 divide-y divide-default overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+        <UserDashboardStats section="summary" :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode" />
+        <UserDashboardQuickActions />
+        <UserDashboardCharts :loading="loadingCharts" :error="chartsError" :trend="trendData" @refresh="loadCharts" />
+        <UserDashboardModels :models="modelStats" :start-date="startDate" :end-date="endDate" :loading="loadingCharts" :error="chartsError" />
+        <div class="divide-y divide-default overflow-hidden rounded-lg bg-default ring ring-default">
           <details v-if="!authStore.isSimpleMode" @toggle="togglePlatforms" class="dashboard-disclosure group" data-detail="platforms">
             <summary>
               <UIcon name="i-lucide-layout-grid" class="size-4 shrink-0 text-muted" />
@@ -94,7 +84,7 @@
           </details>
         </div>
       </template>
-    </div>
+    </section>
   </AppLayout>
 </template>
 
@@ -108,7 +98,7 @@ import { formatDateLocalInput } from '@/utils/format'
 import type { UsageLog, TrendDataPoint, ModelStat, PlatformQuotaItem } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import UserPageHeader from '@/components/user/UserPageHeader.vue'
+import DashboardToolbar from '@/components/dashboard/DashboardToolbar.vue'
 import UserDashboardStats from '@/components/user/dashboard/UserDashboardStats.vue'
 import UserDashboardCharts from '@/components/user/dashboard/UserDashboardCharts.vue'
 import UserDashboardModels from '@/components/user/dashboard/UserDashboardModels.vue'
@@ -142,6 +132,10 @@ let recentRequest: AbortController | undefined
 const startDate = ref(formatDateLocalInput(new Date(Date.now() - 6 * 86400000)))
 const endDate = ref(formatDateLocalInput(new Date()))
 const granularity = ref('day')
+const granularityItems = computed(() => [
+  { value: 'day', label: t('dashboard.day') },
+  { value: 'hour', label: t('dashboard.hour') },
+])
 
 async function loadStats() {
   if (loading.value) return

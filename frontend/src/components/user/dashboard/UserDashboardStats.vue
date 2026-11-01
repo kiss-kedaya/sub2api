@@ -1,78 +1,51 @@
 <template>
   <section class="signal-stats min-w-0" :aria-label="t('dashboard.title')">
-    <div v-if="section !== 'platforms'" class="grid gap-4" :class="isSimple ? 'sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]' : 'sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)]'">
-      <UCard v-if="!isSimple" class="signal-metric signal-metric--balance" :ui="tileUi">
-        <p class="signal-label">{{ t('dashboard.balance') }} <span class="signal-unit">USD</span></p>
-        <p class="signal-value signal-value--lead">$<AnimatedNumber :value="balance" :format="formatBalance" /></p>
-        <template #footer>
-          <div class="signal-metric-foot">
-            <span>{{ t('dashboard.recentTotal') }} / {{ t('dashboard.actual') }}</span>
-            <strong>${{ formatCost(stats?.total_actual_cost || 0) }}</strong>
-            <span>{{ t('dashboard.standard') }} ${{ formatCost(stats?.total_cost || 0) }}</span>
-          </div>
+    <UPageGrid v-if="section !== 'platforms'" :class="statGridClass">
+      <DashboardStat v-if="!isSimple" icon="i-lucide-wallet" class="signal-metric signal-metric--balance" :class="corner('balance')">
+        <template #title>{{ t('dashboard.balance') }} <span class="signal-unit">USD</span></template>
+        <template #value>$<AnimatedNumber :value="balance" :format="formatBalance" /></template>
+        <template #sub>
+          {{ t('dashboard.recentTotal') }} / {{ t('dashboard.actual') }} <span class="text-highlighted">${{ formatCost(stats?.total_actual_cost || 0) }}</span>
+          · {{ t('dashboard.standard') }} ${{ formatCost(stats?.total_cost || 0) }}
         </template>
-      </UCard>
-      <UCard class="signal-metric signal-metric--total" :ui="tileUi">
-        <p class="signal-label">{{ t('dashboard.recentTokens') }}</p>
-        <p class="signal-value signal-value--lead"><AnimatedNumber :value="stats?.total_tokens || 0" :format="formatTokens" /> <small>tokens</small></p>
-        <template #footer>
-          <dl class="signal-token-split">
-            <div><dt>{{ t('dashboard.input') }}</dt><dd>{{ formatTokens(stats?.total_input_tokens || 0) }}</dd></div>
-            <div><dt>{{ t('dashboard.output') }}</dt><dd>{{ formatTokens(stats?.total_output_tokens || 0) }}</dd></div>
-            <div><dt>{{ t('dashboard.cache') }}</dt><dd>{{ formatTokens((stats?.total_cache_creation_tokens || 0) + (stats?.total_cache_read_tokens || 0)) }}</dd></div>
+      </DashboardStat>
+      <DashboardStat icon="i-lucide-circle-dollar-sign" :title="t('dashboard.todayCost')" class="signal-metric signal-metric--cost" :class="corner('cost')">
+        <template #value><span :title="t('dashboard.actual')">$<AnimatedNumber :value="stats?.today_actual_cost || 0" :format="formatCost" :duration="480" /></span></template>
+        <template #sub>{{ t('dashboard.standard') }} <span class="text-highlighted">${{ formatCost(stats?.today_cost || 0) }}</span></template>
+      </DashboardStat>
+      <DashboardStat icon="i-lucide-coins" :title="t('dashboard.todayTokens')" class="signal-metric signal-metric--tokens" :class="corner('tokens')">
+        <template #value><AnimatedNumber :value="stats?.today_tokens || 0" :format="formatTokens" /></template>
+        <template #sub>
+          {{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} / {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }}
+          · {{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}
+        </template>
+      </DashboardStat>
+      <DashboardStat icon="i-lucide-chart-column" :title="t('dashboard.todayRequests')" class="signal-metric" :class="corner('requests')">
+        <template #value><AnimatedNumber :value="stats?.today_requests || 0" :decimals="0" /></template>
+        <template #sub>{{ t('dashboard.recentTotal') }} <span class="text-highlighted">{{ formatNumber(stats?.total_requests || 0) }}</span></template>
+      </DashboardStat>
+      <DashboardStat icon="i-lucide-layers" :title="t('dashboard.recentTokens')" class="signal-metric signal-metric--total" :class="corner('total')">
+        <template #value><AnimatedNumber :value="stats?.total_tokens || 0" :format="formatTokens" /></template>
+        <template #sub>
+          <dl class="signal-token-split flex flex-wrap gap-x-3 gap-y-1">
+            <div class="flex gap-1"><dt>{{ t('dashboard.input') }}</dt><dd class="text-highlighted">{{ formatTokens(stats?.total_input_tokens || 0) }}</dd></div>
+            <div class="flex gap-1"><dt>{{ t('dashboard.output') }}</dt><dd class="text-highlighted">{{ formatTokens(stats?.total_output_tokens || 0) }}</dd></div>
+            <div class="flex gap-1"><dt>{{ t('dashboard.cache') }}</dt><dd class="text-highlighted">{{ formatTokens((stats?.total_cache_creation_tokens || 0) + (stats?.total_cache_read_tokens || 0)) }}</dd></div>
           </dl>
         </template>
-      </UCard>
-      <slot name="actions" />
-    </div>
-
-    <div v-if="section !== 'platforms'" class="mt-4 grid grid-cols-2 gap-4" :class="$slots.models ? 'xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(205px,1.35fr)]' : 'xl:grid-cols-4'">
-      <UCard class="signal-metric signal-metric--tokens" :ui="tileUi">
-        <p class="signal-label"><UIcon name="i-lucide-coins" class="size-3.5" />{{ t('dashboard.todayTokens') }}</p>
-        <p class="signal-value"><AnimatedNumber :value="stats?.today_tokens || 0" :format="formatTokens" /></p>
-        <template #footer>
-          <div class="signal-metric-foot">
-            <span>{{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} / {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }}</span>
-            <span>{{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}</span>
-          </div>
+      </DashboardStat>
+      <DashboardStat icon="i-lucide-key-round" :title="t('dashboard.apiKeys')" class="signal-metric" :class="corner('keys')">
+        <template #value><AnimatedNumber :value="stats?.total_api_keys || 0" :decimals="0" /></template>
+        <template #badge>
+          <UBadge class="signal-active" color="success" variant="subtle">{{ stats?.active_api_keys || 0 }} {{ t('common.active') }}</UBadge>
         </template>
-      </UCard>
-      <UCard class="signal-metric signal-metric--cost" :ui="tileUi">
-        <p class="signal-label"><UIcon name="i-lucide-circle-dollar-sign" class="size-3.5" />{{ t('dashboard.todayCost') }}</p>
-        <p class="signal-value" :title="t('dashboard.actual')">$<AnimatedNumber :value="stats?.today_actual_cost || 0" :format="formatCost" :duration="480" /></p>
-        <template #footer>
-          <div class="signal-metric-foot"><span>{{ t('dashboard.standard') }}</span><strong>${{ formatCost(stats?.today_cost || 0) }}</strong></div>
-        </template>
-      </UCard>
-      <UCard class="signal-metric" :ui="tileUi">
-        <p class="signal-label"><UIcon name="i-lucide-chart-column" class="size-3.5" />{{ t('dashboard.todayRequests') }}</p>
-        <p class="signal-value"><AnimatedNumber :value="stats?.today_requests || 0" :decimals="0" /></p>
-        <template #footer>
-          <div class="signal-metric-foot"><span>{{ t('dashboard.recentTotal') }}</span><strong>{{ formatNumber(stats?.total_requests || 0) }}</strong></div>
-        </template>
-      </UCard>
-      <UCard class="signal-metric" :ui="tileUi">
-        <p class="signal-label"><UIcon name="i-lucide-key-round" class="size-3.5" />{{ t('dashboard.apiKeys') }}</p>
-        <p class="signal-value"><AnimatedNumber :value="stats?.total_api_keys || 0" :decimals="0" /></p>
-        <template #footer>
-          <div class="signal-metric-foot">
-            <UBadge class="signal-active self-start" color="primary" variant="subtle">{{ stats?.active_api_keys || 0 }} {{ t('common.active') }}</UBadge>
-          </div>
-        </template>
-      </UCard>
-      <slot name="models" />
-    </div>
-
-    <div v-if="section !== 'platforms'" class="mt-3 flex flex-wrap justify-start gap-x-6 gap-y-2 sm:justify-end">
-      <div class="signal-reading">
-        <p class="signal-label">{{ t('dashboard.performance') }}</p>
-        <p class="signal-reading-value">{{ formatTokens(stats?.rpm || 0) }} <span>RPM</span> / {{ formatTokens(stats?.tpm || 0) }} <span>TPM</span></p>
-      </div>
-      <div class="signal-reading">
-        <p class="signal-label">{{ t('dashboard.avgResponse') }}</p>
-        <p class="signal-reading-value">{{ formatDuration(stats?.average_duration_ms || 0) }}</p>
-      </div>
-    </div>
+      </DashboardStat>
+      <DashboardStat icon="i-lucide-zap" :title="t('dashboard.performance')" class="signal-reading" :class="corner('performance')">
+        <template #value>{{ formatTokens(stats?.rpm || 0) }} <span class="text-sm font-normal text-muted">RPM</span></template>
+        <template #sub><span class="text-highlighted">{{ formatTokens(stats?.tpm || 0) }}</span> TPM</template>
+      </DashboardStat>
+      <DashboardStat icon="i-lucide-clock" :title="t('dashboard.avgResponse')" :value="formatDuration(stats?.average_duration_ms || 0)" class="signal-reading" :class="corner('response')" />
+    </UPageGrid>
 
     <section v-if="section !== 'summary' && !isSimple && platformCards.length > 0" class="signal-platforms">
       <header class="flex flex-wrap items-baseline justify-between gap-2 pb-3 pt-4">
@@ -128,6 +101,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AnimatedNumber from '@/components/common/AnimatedNumber.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import DashboardStat from '@/components/dashboard/DashboardStat.vue'
+import { statCorners, statGridClass } from '@/components/dashboard/dashboardUi'
 import type { UserDashboardStats as UserStatsType } from '@/api/usage'
 import type { PlatformQuotaItem, GroupPlatform } from '@/types'
 
@@ -149,12 +124,9 @@ const props = defineProps<{
 }>()
 const { t } = useI18n()
 
-// Stat tile layout (UCard slots): value block grows so the footers line up across a row.
-const tileUi = {
-  root: 'flex flex-col shadow-xs dark:shadow-none',
-  body: 'flex-1 p-4 sm:p-5',
-  footer: 'px-4 py-3 sm:px-5',
-}
+// Tile order of the joined stat grid (two rows of four; simple mode has no balance tile).
+const tiles = computed(() => [...(props.isSimple ? [] : ['balance']), 'cost', 'tokens', 'requests', 'total', 'keys', 'performance', 'response'])
+const corner = (tile: string) => statCorners(tiles.value.indexOf(tile), tiles.value.length)
 
 const PLATFORM_LABELS: Record<string, string> = {
   anthropic: 'Claude',
@@ -277,29 +249,10 @@ const formatDuration = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)}s`
 </script>
 
 <style scoped>
+/* Stat tiles are DashboardStat (UPageCard); these rules only serve the platform panel. */
 .signal-label { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--ui-text-muted); }
-.signal-value { margin-top: 10px; font-size: 24px; line-height: 32px; font-weight: 600; color: var(--ui-text-highlighted); font-variant-numeric: lining-nums tabular-nums; overflow-wrap: anywhere; }
-.signal-value--lead { font-size: 28px; line-height: 36px; }
-.signal-value small { font-size: 14px; font-weight: 400; color: var(--ui-text-muted); }
-.signal-metric--cost .signal-value, .signal-spend { color: var(--signal-amber, #906727); }
-.signal-metric-foot { display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 18px; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.signal-metric-foot strong { font-weight: 500; color: var(--ui-text-highlighted); }
-.signal-token-split { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.signal-token-split dt { color: var(--ui-text-muted); }
-.signal-token-split dd { margin-top: 4px; font-weight: 500; color: var(--ui-text-highlighted); overflow-wrap: anywhere; }
-
-/* Balance tile: one step up from the page (neutral-50 in light, the raised plum in dark). */
-.signal-metric--balance { --ui-border: var(--signal-hero-line, #e5e5e5); background: var(--ui-bg-muted); }
-.signal-unit { color: var(--ui-text-muted); }
-.dark .signal-metric--balance .signal-value,
-.dark .signal-metric--balance .signal-metric-foot strong { color: var(--signal-hero-text, #f6e9ee); }
-.dark .signal-metric--balance .signal-label,
-.dark .signal-metric--balance .signal-metric-foot { color: var(--signal-hero-muted, #c3a9b3); }
-.dark .signal-unit { color: var(--signal-hero-mark, #f0aec3); }
-
-.signal-reading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; }
-.signal-reading-value { font-size: 12px; font-weight: 500; color: var(--ui-text-highlighted); font-variant-numeric: lining-nums tabular-nums; overflow-wrap: anywhere; }
-.signal-reading-value span { font-size: 11px; font-weight: 500; color: var(--ui-text-muted); }
+.signal-spend { color: var(--signal-amber, #906727); }
+.signal-unit { color: var(--ui-text-dimmed); }
 
 .signal-platform-empty { padding: 40px 0; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
 .signal-platform { min-width: 0; padding: 16px 0; border-top: 1px solid var(--ui-border); }
@@ -320,10 +273,6 @@ const formatDuration = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)}s`
 .signal-quota-fill.bg-red-500 { background: var(--signal-danger, #dc4545); }
 .signal-quota-label > .signal-disabled { color: var(--signal-danger, #dc4545); }
 .signal-reset { margin-top: 4px; font-size: 11px; color: var(--ui-text-muted); }
-@media (max-width: 640px) {
-  .signal-value { font-size: 22px; line-height: 30px; }
-  .signal-value--lead { font-size: 24px; line-height: 32px; }
-}
 @media (max-width: 420px) {
   .signal-platform-ledger { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .signal-platform-ledger > div { display: block; }
