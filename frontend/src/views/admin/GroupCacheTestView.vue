@@ -1,81 +1,163 @@
 <!-- Adapted from ranxi2001/sub2api @ 9620d315, licensed under LGPL-3.0-or-later. -->
 <template>
   <AppLayout>
-    <div class="space-y-6">
+    <div class="flex flex-col gap-6">
       <AdminPageHeader :title="t('admin.groupCacheTest.title')" :description="t('admin.groupCacheTest.description')">
-        <template #actions><button class="btn btn-secondary" :disabled="busy || loading" @click="loadGroups">{{ t('admin.groupCacheTest.reload') }}</button></template>
+        <template #actions><UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="loading" :disabled="busy || loading" :label="t('admin.groupCacheTest.reload')" @click="loadGroups" /></template>
       </AdminPageHeader>
-      <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">{{ error }}</p>
-      <p v-if="storageError" role="status" class="text-sm text-amber-600">{{ t('admin.groupCacheTest.storageError') }}</p>
-      <div class="grid items-start gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <section class="cache-panel" aria-labelledby="cache-config-title">
-          <h2 id="cache-config-title" class="cache-heading">{{ t('admin.groupCacheTest.configuration') }}</h2>
-          <form class="mt-4 space-y-4" @submit.prevent="start">
-            <fieldset :disabled="busy || loading" class="space-y-4">
-              <label class="cache-field"><span>{{ t('admin.groupCacheTest.group') }}</span><select v-model="groupId" class="input" data-testid="cache-group"><option :value="null">{{ t('admin.groupCacheTest.selectGroup') }}</option><option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }} · {{ group.platform }}</option></select></label>
-              <label class="cache-field"><span>{{ t('admin.groupCacheTest.key') }}</span><select v-model="keyId" class="input" :disabled="keysLoading || !groupId" data-testid="cache-key"><option :value="null">{{ keysLoading ? t('admin.groupCacheTest.loading') : t('admin.groupCacheTest.selectKey') }}</option><option v-for="key in keys" :key="key.id" :value="key.id">{{ key.name }} · #{{ key.id }}</option></select></label>
-              <p class="cache-hint">{{ t('admin.groupCacheTest.ownedKeyHint') }}</p>
-              <p v-if="keyError" role="alert" class="text-sm text-red-600">{{ t('admin.groupCacheTest.keysError') }} <button type="button" class="underline" @click="loadKeys">{{ t('admin.groupCacheTest.reload') }}</button></p>
-              <p v-else-if="groupId && !keysLoading && !keys.length" class="cache-hint">{{ t('admin.groupCacheTest.noKeys') }} <RouterLink to="/keys" class="text-primary-600 underline">{{ t('admin.groupCacheTest.manageKeys') }}</RouterLink></p>
-              <label class="cache-field"><span>{{ t('admin.groupCacheTest.protocol') }}</span><select v-model="settings.protocol" class="input" data-testid="cache-protocol"><option value="responses">Responses</option><option value="chat">Chat Completions</option><option value="messages">Messages</option></select></label>
-              <label class="cache-field"><span>{{ t('admin.groupCacheTest.model') }}</span><input v-model.trim="settings.model" list="cache-models" class="input" maxlength="200" required autocomplete="off" :placeholder="t('admin.groupCacheTest.modelPlaceholder')" data-testid="cache-model" /><datalist id="cache-models"><option v-for="model in models" :key="model" :value="model" /></datalist></label>
+      <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
+      <UAlert v-if="storageError" role="status" color="warning" variant="subtle" icon="i-lucide-hard-drive" :description="t('admin.groupCacheTest.storageError')" />
+      <div class="grid items-start gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <UPageCard variant="subtle" as="section" aria-labelledby="cache-config-title" :ui="{ container: 'gap-y-4 sm:p-5' }">
+          <h2 id="cache-config-title" class="text-base font-semibold text-highlighted">{{ t('admin.groupCacheTest.configuration') }}</h2>
+          <form class="flex flex-col gap-4" @submit.prevent="start">
+            <fieldset :disabled="busy || loading" class="flex flex-col gap-4">
+              <UFormField :label="t('admin.groupCacheTest.group')">
+                <USelect v-model="groupModel" class="w-full" data-testid="cache-group" :items="groupItems" :placeholder="t('admin.groupCacheTest.selectGroup')" />
+              </UFormField>
+              <UFormField :label="t('admin.groupCacheTest.key')" :help="t('admin.groupCacheTest.ownedKeyHint')">
+                <USelect v-model="keyModel" class="w-full" :disabled="keysLoading || !groupId" data-testid="cache-key" :items="keyItems" :placeholder="keyPlaceholder" />
+              </UFormField>
+              <UAlert
+                v-if="keyError"
+                role="alert"
+                color="error"
+                variant="subtle"
+                icon="i-lucide-circle-alert"
+                :description="t('admin.groupCacheTest.keysError')"
+                :actions="[{ label: t('admin.groupCacheTest.reload'), color: 'error', variant: 'outline', size: 'xs', onClick: loadKeys }]"
+              />
+              <p v-else-if="groupId && !keysLoading && !keys.length" class="-mt-2 text-xs text-muted">{{ t('admin.groupCacheTest.noKeys') }} <RouterLink to="/keys" class="text-default underline underline-offset-4">{{ t('admin.groupCacheTest.manageKeys') }}</RouterLink></p>
+              <UFormField :label="t('admin.groupCacheTest.protocol')">
+                <USelect v-model="settings.protocol" class="w-full" data-testid="cache-protocol" :items="protocolItems" />
+              </UFormField>
+              <UFormField :label="t('admin.groupCacheTest.model')" required>
+                <UInput v-model.trim="settings.model" list="cache-models" class="w-full" maxlength="200" required autocomplete="off" :placeholder="t('admin.groupCacheTest.modelPlaceholder')" data-testid="cache-model" />
+                <datalist id="cache-models"><option v-for="model in models" :key="model" :value="model" /></datalist>
+              </UFormField>
               <div class="grid grid-cols-2 gap-3">
-                <label class="cache-field"><span>{{ t('admin.groupCacheTest.rounds') }}</span><select v-model.number="settings.rounds" class="input"><option v-for="count in [2, 3, 4, 5, 6]" :key="count" :value="count">{{ count }}</option></select></label>
-                <label class="cache-field"><span>{{ t('admin.groupCacheTest.prefix') }}</span><select v-model.number="settings.prefixBlocks" class="input"><option v-for="count in [16, 48, 96, 128]" :key="count" :value="count">{{ t('admin.groupCacheTest.blocks', { count }) }}</option></select></label>
+                <UFormField :label="t('admin.groupCacheTest.rounds')">
+                  <USelect v-model="settings.rounds" class="w-full" :items="roundItems" />
+                </UFormField>
+                <UFormField :label="t('admin.groupCacheTest.prefix')">
+                  <USelect v-model="settings.prefixBlocks" class="w-full" :items="prefixItems" />
+                </UFormField>
               </div>
-              <p class="cache-hint">{{ t('admin.groupCacheTest.prefixHint', { count: prefixLength.toLocaleString() }) }}</p>
-              <details class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-                <summary class="cursor-pointer text-sm font-medium">{{ t('admin.groupCacheTest.advanced') }}</summary>
-                <div class="mt-3 space-y-3">
-                  <label class="cache-field"><span>{{ t('admin.groupCacheTest.interval') }}</span><input v-model.number="settings.intervalMs" class="input" type="number" min="0" max="10000" step="100" required /></label>
-                  <label class="cache-field"><span>{{ t('admin.groupCacheTest.timeout') }}</span><select v-model.number="settings.timeoutMs" class="input"><option :value="60000">60 s</option><option :value="120000">120 s</option><option :value="300000">300 s</option></select></label>
-                  <label class="cache-field"><span>{{ t('admin.groupCacheTest.maxOutput') }}</span><input v-model.number="settings.maxOutputTokens" class="input" type="number" min="64" max="4096" required /></label>
-                  <template v-if="settings.protocol !== 'messages'">
-                    <label class="cache-field"><span>{{ t('admin.groupCacheTest.reasoning') }}</span><select v-model="settings.reasoningEffort" class="input"><option value="">{{ t('admin.groupCacheTest.unspecified') }}</option><option v-for="effort in ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']" :key="effort" :value="effort">{{ effort }}</option></select></label>
-                    <label class="cache-field"><span>{{ t('admin.groupCacheTest.tier') }}</span><select v-model="settings.serviceTier" class="input"><option value="">{{ t('admin.groupCacheTest.unspecified') }}</option><option value="default">default</option><option value="priority">priority</option></select></label>
-                  </template>
-                  <p class="cache-hint">{{ t('admin.groupCacheTest.compatibility') }}</p>
-                </div>
-              </details>
+              <p class="-mt-2 text-xs text-muted">{{ t('admin.groupCacheTest.prefixHint', { count: prefixLength.toLocaleString() }) }}</p>
+              <UCollapsible :unmount-on-hide="false" class="flex flex-col gap-3">
+                <UButton type="button" color="neutral" variant="ghost" size="sm" class="-mx-2.5 self-start" icon="i-lucide-sliders-horizontal" trailing-icon="i-lucide-chevron-down" :label="t('admin.groupCacheTest.advanced')" />
+                <template #content>
+                  <div class="flex flex-col gap-3">
+                    <UFormField :label="t('admin.groupCacheTest.interval')"><UInput v-model.number="settings.intervalMs" class="w-full" type="number" min="0" max="10000" step="100" required /></UFormField>
+                    <UFormField :label="t('admin.groupCacheTest.timeout')"><USelect v-model="settings.timeoutMs" class="w-full" :items="timeoutItems" /></UFormField>
+                    <UFormField :label="t('admin.groupCacheTest.maxOutput')"><UInput v-model.number="settings.maxOutputTokens" class="w-full" type="number" min="64" max="4096" required /></UFormField>
+                    <template v-if="settings.protocol !== 'messages'">
+                      <UFormField :label="t('admin.groupCacheTest.reasoning')"><USelect v-model="reasoningModel" class="w-full" :items="reasoningItems" /></UFormField>
+                      <UFormField :label="t('admin.groupCacheTest.tier')"><USelect v-model="tierModel" class="w-full" :items="tierItems" /></UFormField>
+                    </template>
+                    <p class="text-xs text-muted">{{ t('admin.groupCacheTest.compatibility') }}</p>
+                  </div>
+                </template>
+              </UCollapsible>
             </fieldset>
-            <div class="rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ t('admin.groupCacheTest.chargeWarning', { count: settings.rounds }) }}</div>
-            <div class="flex gap-2"><button type="submit" class="btn btn-primary flex-1" :disabled="!canStart" data-testid="cache-start">{{ t('admin.groupCacheTest.start') }}</button><button v-if="busy" type="button" class="btn btn-secondary" :disabled="stopping" data-testid="cache-stop" @click="stop">{{ stopping ? t('admin.groupCacheTest.stopping') : t('admin.groupCacheTest.stop') }}</button></div>
+            <UAlert color="warning" variant="subtle" icon="i-lucide-badge-dollar-sign" :description="t('admin.groupCacheTest.chargeWarning', { count: settings.rounds })" />
+            <div class="flex gap-2">
+              <UButton type="submit" block class="flex-1" icon="i-lucide-play" :disabled="!canStart" data-testid="cache-start" :label="t('admin.groupCacheTest.start')" />
+              <UButton v-if="busy" type="button" color="neutral" variant="outline" icon="i-lucide-square" :disabled="stopping" data-testid="cache-stop" :label="stopping ? t('admin.groupCacheTest.stopping') : t('admin.groupCacheTest.stop')" @click="stop" />
+            </div>
           </form>
-        </section>
-        <div class="min-w-0 space-y-5">
-          <section class="cache-panel" aria-labelledby="cache-results-title">
-            <div class="flex flex-wrap items-center justify-between gap-3"><h2 id="cache-results-title" class="cache-heading">{{ t('admin.groupCacheTest.results') }}</h2><div v-if="selected" class="flex flex-wrap gap-2"><button class="btn btn-secondary btn-sm" :disabled="busy || !hasPendingBills" data-testid="cache-reconcile" @click="refreshBills">{{ t('admin.groupCacheTest.reconcile') }}</button><button class="btn btn-secondary btn-sm" :disabled="busy" @click="download">{{ t('admin.groupCacheTest.export') }}</button></div></div>
-            <div v-if="!selected" class="py-16 text-center"><p class="font-medium text-gray-700 dark:text-gray-200">{{ t('admin.groupCacheTest.emptyTitle') }}</p><p class="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500">{{ t('admin.groupCacheTest.emptyHint') }}</p></div>
+        </UPageCard>
+        <div class="flex min-w-0 flex-col gap-6">
+          <section class="flex min-w-0 flex-col gap-4" aria-labelledby="cache-results-title">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 id="cache-results-title" class="text-base font-semibold text-highlighted">{{ t('admin.groupCacheTest.results') }}</h2>
+              <div v-if="selected" class="flex flex-wrap gap-1.5">
+                <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-receipt" :disabled="busy || !hasPendingBills" data-testid="cache-reconcile" :label="t('admin.groupCacheTest.reconcile')" @click="refreshBills" />
+                <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-download" :disabled="busy" :label="t('admin.groupCacheTest.export')" @click="download" />
+              </div>
+            </div>
+            <div v-if="!selected" class="flex flex-col items-center gap-2 rounded-lg bg-elevated/50 px-6 py-16 text-center">
+              <UIcon name="i-lucide-database-zap" class="size-8 text-dimmed" />
+              <p class="font-medium text-highlighted">{{ t('admin.groupCacheTest.emptyTitle') }}</p>
+              <p class="max-w-md text-sm leading-6 text-muted">{{ t('admin.groupCacheTest.emptyHint') }}</p>
+            </div>
             <template v-else>
-              <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"><strong>{{ selected.groupName }}</strong><span>{{ selected.settings.model }}</span><code class="text-xs">{{ CACHE_ENDPOINTS[selected.settings.protocol] }}</code><span role="status" aria-live="polite" class="ml-auto">{{ busy ? t(reconciling ? 'admin.groupCacheTest.reconciling' : 'admin.groupCacheTest.testing') : t('admin.groupCacheTest.status.' + selected.status) }}</span></div>
-              <p class="mt-2 text-xs text-gray-500">{{ runConfiguration(selected) }}</p>
-              <div class="my-5 grid grid-cols-2 gap-3 2xl:grid-cols-4">
-                <div class="cache-stat"><span>{{ t('admin.groupCacheTest.baselineHit') }}</span><strong>{{ percent(cacheHitRate(selected.rounds[0]?.tokens ?? null)) }}</strong></div>
-                <div class="cache-stat"><span>{{ t('admin.groupCacheTest.repeatHit') }}</span><strong>{{ percent(cacheHitRate(repeatTokens)) }}</strong><small>{{ t('admin.groupCacheTest.reportedRounds', { count: comparableRounds }) }}</small></div>
-                <div class="cache-stat"><span>{{ t('admin.groupCacheTest.cacheRead') }}</span><strong>{{ number(repeatTokens.read) }}</strong><small>{{ t('admin.groupCacheTest.repeatOnly') }}</small></div>
-                <div class="cache-stat"><span>{{ t('admin.groupCacheTest.billed') }}</span><strong>{{ money(knownCost) }}</strong><small>{{ t('admin.groupCacheTest.billsMatched', { count: matchedBills, total: selected.rounds.length }) }}</small></div>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+                <strong class="text-highlighted">{{ selected.groupName }}</strong>
+                <span class="text-default">{{ selected.settings.model }}</span>
+                <UBadge color="neutral" variant="outline" size="sm" class="font-mono">{{ CACHE_ENDPOINTS[selected.settings.protocol] }}</UBadge>
+                <UBadge role="status" aria-live="polite" class="ml-auto" :color="busy ? 'info' : selected.status === 'completed' ? 'success' : selected.status === 'failed' ? 'error' : 'neutral'" variant="subtle">{{ busy ? t(reconciling ? 'admin.groupCacheTest.reconciling' : 'admin.groupCacheTest.testing') : t('admin.groupCacheTest.status.' + selected.status) }}</UBadge>
               </div>
-              <p class="cache-hint">{{ t('admin.groupCacheTest.resultHint') }}</p>
-              <div class="mt-4 overflow-x-auto">
-                <table class="cache-table"><thead><tr><th>{{ t('admin.groupCacheTest.round') }}</th><th>{{ t('admin.groupCacheTest.input') }}</th><th>{{ t('admin.groupCacheTest.cacheRead') }}</th><th>{{ t('admin.groupCacheTest.cacheWrite') }}</th><th>{{ t('admin.groupCacheTest.hitRate') }}</th><th>{{ t('admin.groupCacheTest.output') }}</th><th>{{ t('admin.groupCacheTest.firstText') }}</th><th>{{ t('admin.groupCacheTest.billed') }}</th></tr></thead><tbody>
-                  <tr v-for="round in selected.rounds" :key="round.index"><td><button class="text-left text-primary-600 underline underline-offset-4" :aria-expanded="detailIndex === round.index" @click="detailIndex = detailIndex === round.index ? null : round.index">{{ round.index === 1 ? t('admin.groupCacheTest.baseline') : t('admin.groupCacheTest.repeat', { index: round.index - 1 }) }}</button><small :class="round.status === 'failed' ? 'text-red-600' : ''">{{ t('admin.groupCacheTest.status.' + round.status) }}</small></td><td>{{ number(round.tokens?.input) }}</td><td>{{ number(round.tokens?.read) }}</td><td>{{ number(round.tokens?.write) }}</td><td>{{ percent(cacheHitRate(round.tokens)) }}</td><td>{{ number(round.tokens?.output) }}</td><td>{{ ms(round.firstTextMs) }}</td><td>{{ money(round.bill?.actualCost) }}<small>{{ t('admin.groupCacheTest.billing.' + round.billingState) }}</small></td></tr>
-                </tbody></table>
-              </div>
-              <div v-if="detail" class="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-900" data-testid="cache-detail">
-                <h3 class="text-sm font-semibold">{{ t('admin.groupCacheTest.roundDetails', { index: detail.index }) }}</h3>
-                <p v-if="detail.error" role="alert" class="mt-2 text-sm text-red-600">{{ t('admin.groupCacheTest.errors.' + detail.error) }}<span v-if="detail.httpStatus"> · HTTP {{ detail.httpStatus }}</span></p>
+              <p class="-mt-2 text-xs text-muted">{{ runConfiguration(selected) }}</p>
+              <UPageGrid class="gap-4 sm:gap-6 lg:grid-cols-2 2xl:grid-cols-4 2xl:gap-px">
+                <UPageCard icon="i-lucide-flag" :title="t('admin.groupCacheTest.baselineHit')" variant="subtle" :ui="statUi" :class="statClass">
+                  <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ percent(cacheHitRate(selected.rounds[0]?.tokens ?? null)) }}</span>
+                </UPageCard>
+                <UPageCard icon="i-lucide-repeat" :title="t('admin.groupCacheTest.repeatHit')" variant="subtle" :ui="statUi" :class="statClass">
+                  <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ percent(cacheHitRate(repeatTokens)) }}</span>
+                  <span class="text-xs text-muted">{{ t('admin.groupCacheTest.reportedRounds', { count: comparableRounds }) }}</span>
+                </UPageCard>
+                <UPageCard icon="i-lucide-database" :title="t('admin.groupCacheTest.cacheRead')" variant="subtle" :ui="statUi" :class="statClass">
+                  <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ number(repeatTokens.read) }}</span>
+                  <span class="text-xs text-muted">{{ t('admin.groupCacheTest.repeatOnly') }}</span>
+                </UPageCard>
+                <UPageCard icon="i-lucide-wallet" :title="t('admin.groupCacheTest.billed')" variant="subtle" :ui="statUi" :class="statClass">
+                  <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ money(knownCost) }}</span>
+                  <span class="text-xs text-muted">{{ t('admin.groupCacheTest.billsMatched', { count: matchedBills, total: selected.rounds.length }) }}</span>
+                </UPageCard>
+              </UPageGrid>
+              <p class="text-xs text-muted">{{ t('admin.groupCacheTest.resultHint') }}</p>
+              <UTable :data="selected.rounds" :columns="roundColumns" :ui="tableUi" class="whitespace-nowrap tabular-nums">
+                <template #round-cell="{ row }">
+                  <UButton variant="link" class="p-0" :aria-expanded="detailIndex === row.original.index" @click="detailIndex = detailIndex === row.original.index ? null : row.original.index">{{ row.original.index === 1 ? t('admin.groupCacheTest.baseline') : t('admin.groupCacheTest.repeat', { index: row.original.index - 1 }) }}</UButton>
+                  <span class="mt-1 block text-xs" :class="row.original.status === 'failed' ? 'text-error' : 'text-muted'">{{ t('admin.groupCacheTest.status.' + row.original.status) }}</span>
+                </template>
+                <template #billed-cell="{ row }">
+                  {{ money(row.original.bill?.actualCost) }}<span class="mt-1 block text-xs text-muted">{{ t('admin.groupCacheTest.billing.' + row.original.billingState) }}</span>
+                </template>
+              </UTable>
+              <div v-if="detail" class="rounded-lg bg-elevated/50 p-4" data-testid="cache-detail">
+                <h3 class="text-sm font-semibold text-highlighted">{{ t('admin.groupCacheTest.roundDetails', { index: detail.index }) }}</h3>
+                <p v-if="detail.error" role="alert" class="mt-2 text-sm text-error">{{ t('admin.groupCacheTest.errors.' + detail.error) }}<span v-if="detail.httpStatus"> · HTTP {{ detail.httpStatus }}</span></p>
                 <dl class="cache-details mt-3"><dt>{{ t('admin.groupCacheTest.requestId') }}</dt><dd class="break-all font-mono text-xs">{{ detail.requestId || t('admin.groupCacheTest.notReported') }}</dd><dt>{{ t('admin.groupCacheTest.modelReturned') }}</dt><dd>{{ detail.responseModel || '—' }}</dd><dt>{{ t('admin.groupCacheTest.tierReturned') }}</dt><dd>{{ detail.serviceTier || t('admin.groupCacheTest.notReported') }}</dd><dt>{{ t('admin.groupCacheTest.duration') }}</dt><dd>{{ ms(detail.durationMs) }}</dd></dl>
-                <template v-if="detail.bill"><h4 class="mt-4 text-sm font-semibold">{{ t('admin.groupCacheTest.billDetails') }}</h4><dl class="cache-details mt-3"><dt>{{ t('admin.groupCacheTest.route') }}</dt><dd>{{ t('admin.groupCacheTest.routeValue', { group: detail.bill.groupId ?? '—', account: detail.bill.accountId ?? '—' }) }} · {{ detail.bill.upstreamModel || detail.bill.model }}</dd><dt>{{ t('admin.groupCacheTest.tier') }} / {{ t('admin.groupCacheTest.reasoning') }}</dt><dd>{{ detail.bill.serviceTier || '—' }} / {{ detail.bill.reasoningEffort || '—' }}</dd><dt>{{ t('admin.groupCacheTest.billedTokens') }}</dt><dd>{{ number(detail.bill.tokens.input) }} / {{ number(detail.bill.tokens.read) }} / {{ number(detail.bill.tokens.write) }} / {{ number(detail.bill.tokens.output) }}</dd><dt>{{ t('admin.groupCacheTest.componentCosts') }}</dt><dd>{{ money(detail.bill.inputCost) }} / {{ money(detail.bill.readCost) }} / {{ money(detail.bill.writeCost) }} / {{ money(detail.bill.outputCost) }}</dd><dt>{{ t('admin.groupCacheTest.standardCost') }}</dt><dd>{{ money(detail.bill.totalCost) }} · {{ t('admin.groupCacheTest.multiplier') }} {{ number(detail.bill.multiplier) }}</dd><dt>{{ t('admin.groupCacheTest.billed') }}</dt><dd>{{ money(detail.bill.actualCost) }}</dd><dt>{{ t('admin.groupCacheTest.serverFirstToken') }}</dt><dd>{{ ms(detail.bill.firstTokenMs) }}</dd></dl></template>
-                <p class="mt-3 cache-hint">{{ t('admin.groupCacheTest.billingHint') }}</p>
+                <template v-if="detail.bill"><h4 class="mt-4 text-sm font-semibold text-highlighted">{{ t('admin.groupCacheTest.billDetails') }}</h4><dl class="cache-details mt-3"><dt>{{ t('admin.groupCacheTest.route') }}</dt><dd>{{ t('admin.groupCacheTest.routeValue', { group: detail.bill.groupId ?? '—', account: detail.bill.accountId ?? '—' }) }} · {{ detail.bill.upstreamModel || detail.bill.model }}</dd><dt>{{ t('admin.groupCacheTest.tier') }} / {{ t('admin.groupCacheTest.reasoning') }}</dt><dd>{{ detail.bill.serviceTier || '—' }} / {{ detail.bill.reasoningEffort || '—' }}</dd><dt>{{ t('admin.groupCacheTest.billedTokens') }}</dt><dd>{{ number(detail.bill.tokens.input) }} / {{ number(detail.bill.tokens.read) }} / {{ number(detail.bill.tokens.write) }} / {{ number(detail.bill.tokens.output) }}</dd><dt>{{ t('admin.groupCacheTest.componentCosts') }}</dt><dd>{{ money(detail.bill.inputCost) }} / {{ money(detail.bill.readCost) }} / {{ money(detail.bill.writeCost) }} / {{ money(detail.bill.outputCost) }}</dd><dt>{{ t('admin.groupCacheTest.standardCost') }}</dt><dd>{{ money(detail.bill.totalCost) }} · {{ t('admin.groupCacheTest.multiplier') }} {{ number(detail.bill.multiplier) }}</dd><dt>{{ t('admin.groupCacheTest.billed') }}</dt><dd>{{ money(detail.bill.actualCost) }}</dd><dt>{{ t('admin.groupCacheTest.serverFirstToken') }}</dt><dd>{{ ms(detail.bill.firstTokenMs) }}</dd></dl></template>
+                <p class="mt-3 text-xs text-muted">{{ t('admin.groupCacheTest.billingHint') }}</p>
               </div>
-              <p v-if="hasPendingBills" class="mt-4 text-sm text-amber-700 dark:text-amber-300">{{ t('admin.groupCacheTest.pendingHint') }}</p>
+              <UAlert v-if="hasPendingBills" color="warning" variant="subtle" icon="i-lucide-clock" :description="t('admin.groupCacheTest.pendingHint')" />
             </template>
           </section>
-          <section class="cache-panel" aria-labelledby="cache-history-title">
-            <div class="flex items-center justify-between gap-3"><h2 id="cache-history-title" class="cache-heading">{{ t('admin.groupCacheTest.history') }}</h2><button class="text-sm text-gray-500 underline" :disabled="busy || !history.length" @click="clearHistory">{{ t('admin.groupCacheTest.clearHistory') }}</button></div>
-            <p class="mt-2 cache-hint">{{ t('admin.groupCacheTest.historyHint') }}</p>
-            <p v-if="!history.length" class="py-6 text-sm text-gray-500">{{ t('admin.groupCacheTest.noHistory') }}</p>
-            <ul v-else class="mt-3 divide-y divide-gray-100 dark:divide-dark-700"><li v-for="run in history" :key="run.id"><button class="flex w-full flex-wrap items-center gap-x-4 gap-y-1 rounded-sm p-3 text-left text-sm hover:bg-gray-50 disabled:opacity-50 dark:hover:bg-dark-700" :class="selected?.id === run.id ? 'bg-gray-50 dark:bg-dark-700' : ''" :disabled="busy" :aria-pressed="selected?.id === run.id" @click="selected = run; detailIndex = null"><span class="min-w-32 font-medium">{{ run.groupName }}</span><span>{{ run.settings.model }}</span><span class="text-xs text-gray-500">{{ date(run.startedAt) }}</span><span class="ml-auto">{{ t('admin.groupCacheTest.status.' + run.status) }} · {{ run.rounds.length }} / {{ run.settings.rounds }}</span></button></li></ul>
+          <USeparator />
+          <section class="flex flex-col gap-2" aria-labelledby="cache-history-title">
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-1.5">
+                <h2 id="cache-history-title" class="text-base font-semibold text-highlighted">{{ t('admin.groupCacheTest.history') }}</h2>
+                <UPopover mode="hover">
+                  <UIcon name="i-lucide-info" class="size-4 text-dimmed" />
+                  <template #content><p class="max-w-xs p-2.5 text-xs text-muted">{{ t('admin.groupCacheTest.historyHint') }}</p></template>
+                </UPopover>
+              </div>
+              <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-trash-2" :disabled="busy || !history.length" :label="t('admin.groupCacheTest.clearHistory')" @click="clearHistory" />
+            </div>
+            <p v-if="!history.length" class="py-6 text-sm text-muted">{{ t('admin.groupCacheTest.noHistory') }}</p>
+            <ul v-else class="flex flex-col divide-y divide-default">
+              <li v-for="run in history" :key="run.id" class="py-0.5">
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  block
+                  class="flex-wrap justify-start gap-x-4 gap-y-1 text-left"
+                  :class="selected?.id === run.id ? 'bg-elevated' : ''"
+                  :disabled="busy"
+                  :aria-pressed="selected?.id === run.id"
+                  @click="selected = run; detailIndex = null"
+                >
+                  <span class="min-w-32 font-medium text-highlighted">{{ run.groupName }}</span>
+                  <span class="text-default">{{ run.settings.model }}</span>
+                  <span class="text-xs text-muted">{{ date(run.startedAt) }}</span>
+                  <span class="ml-auto text-muted">{{ t('admin.groupCacheTest.status.' + run.status) }} · {{ run.rounds.length }} / {{ run.settings.rounds }}</span>
+                </UButton>
+              </li>
+            </ul>
           </section>
         </div>
       </div>
@@ -90,6 +172,8 @@ import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import type { TableColumn } from '@nuxt/ui'
+import { statCardClass, statCardUi, templateTableUi } from '@/views/admin/ops/utils/templateUi'
 import { useAuthStore } from '@/stores/auth'
 import * as groupsAPI from '@/api/admin/groups'
 import * as keysAPI from '@/api/keys'
@@ -115,6 +199,34 @@ const comparableRounds = computed(() => selected.value?.rounds.slice(1).filter(r
 const matchedBills = computed(() => selected.value?.rounds.filter(r => r.bill?.actualCost != null).length ?? 0)
 const knownCost = computed(() => matchedBills.value ? selected.value!.rounds.reduce((sum, r) => sum + (r.bill?.actualCost ?? 0), 0) : null)
 const hasPendingBills = computed(() => selected.value?.rounds.some(r => !r.bill) ?? false)
+const statUi = statCardUi, statClass = statCardClass, tableUi = templateTableUi
+// Reka select items cannot carry '' as a value; "unspecified" maps to a sentinel and back.
+const UNSET = '__unset__'
+const groupItems = computed(() => groups.value.map(g => ({ value: g.id, label: `${g.name} · ${g.platform}` })))
+const keyItems = computed(() => keys.value.map(k => ({ value: k.id, label: `${k.name} · #${k.id}` })))
+const keyPlaceholder = computed(() => keysLoading.value ? t('admin.groupCacheTest.loading') : t('admin.groupCacheTest.selectKey'))
+// USelect models use undefined for "nothing selected"; the view keeps null.
+const groupModel = computed({ get: () => groupId.value ?? undefined, set: (value: number | undefined) => { groupId.value = value ?? null } })
+const keyModel = computed({ get: () => keyId.value ?? undefined, set: (value: number | undefined) => { keyId.value = value ?? null } })
+const protocolItems = [{ value: 'responses', label: 'Responses' }, { value: 'chat', label: 'Chat Completions' }, { value: 'messages', label: 'Messages' }]
+const roundItems = [2, 3, 4, 5, 6].map(count => ({ value: count, label: String(count) }))
+const prefixItems = computed(() => [16, 48, 96, 128].map(count => ({ value: count, label: t('admin.groupCacheTest.blocks', { count }) })))
+const timeoutItems = [60000, 120000, 300000].map(value => ({ value, label: `${value / 1000} s` }))
+const reasoningItems = computed(() => [{ value: UNSET, label: t('admin.groupCacheTest.unspecified') }, ...['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map(effort => ({ value: effort, label: effort }))])
+const tierItems = computed(() => [{ value: UNSET, label: t('admin.groupCacheTest.unspecified') }, { value: 'default', label: 'default' }, { value: 'priority', label: 'priority' }])
+const reasoningModel = computed({ get: () => settings.reasoningEffort || UNSET, set: (value: string) => { settings.reasoningEffort = (value === UNSET ? '' : value) as typeof settings.reasoningEffort } })
+const tierModel = computed({ get: () => settings.serviceTier || UNSET, set: (value: string) => { settings.serviceTier = (value === UNSET ? '' : value) as typeof settings.serviceTier } })
+type CacheRound = CacheTestRun['rounds'][number]
+const roundColumns = computed<TableColumn<CacheRound>[]>(() => [
+  { id: 'round', header: t('admin.groupCacheTest.round') },
+  { id: 'input', header: t('admin.groupCacheTest.input'), cell: ({ row }) => number(row.original.tokens?.input) },
+  { id: 'read', header: t('admin.groupCacheTest.cacheRead'), cell: ({ row }) => number(row.original.tokens?.read) },
+  { id: 'write', header: t('admin.groupCacheTest.cacheWrite'), cell: ({ row }) => number(row.original.tokens?.write) },
+  { id: 'hit', header: t('admin.groupCacheTest.hitRate'), cell: ({ row }) => percent(cacheHitRate(row.original.tokens)) },
+  { id: 'output', header: t('admin.groupCacheTest.output'), cell: ({ row }) => number(row.original.tokens?.output) },
+  { id: 'first', header: t('admin.groupCacheTest.firstText'), cell: ({ row }) => ms(row.original.firstTextMs) },
+  { id: 'billed', header: t('admin.groupCacheTest.billed') }
+])
 const number = (n: number | null | undefined) => n == null ? '—' : n.toLocaleString()
 const percent = (n: number | null) => n == null ? '—' : (n * 100).toFixed(1) + '%'
 const money = (n: number | null | undefined) => n == null ? '—' : '$' + n.toFixed(6)
@@ -218,18 +330,7 @@ onBeforeUnmount(() => { alive = false; generation++; keysController?.abort(); ru
 
 <style scoped>
 @reference "../../style.css";
-.cache-panel { @apply min-w-0 rounded-xl border border-gray-200 bg-white p-5 dark:border-dark-700 dark:bg-dark-800; }
-.cache-heading { @apply text-base font-semibold text-gray-900 dark:text-gray-100; }
-.cache-field { @apply flex flex-col gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300; }
-.cache-hint { @apply text-xs leading-5 text-gray-500 dark:text-gray-400; }
-.cache-stat { @apply flex flex-col gap-1 rounded-lg bg-gray-50 p-3 dark:bg-dark-900; }
-.cache-stat > span, .cache-stat > small { @apply text-xs text-gray-500 dark:text-gray-400; }
-.cache-stat > strong { @apply text-xl font-semibold tabular-nums text-gray-900 dark:text-gray-100; }
-.cache-table { @apply w-full whitespace-nowrap text-left text-sm tabular-nums; }
-.cache-table th { @apply border-b border-gray-200 px-3 py-3 text-xs font-medium text-gray-500 dark:border-dark-600; }
-.cache-table td { @apply border-b border-gray-100 px-3 py-4 dark:border-dark-700; }
-.cache-table small { @apply mt-1 block text-xs text-gray-500; }
 .cache-details { @apply grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)]; }
-.cache-details dt { @apply text-gray-500; }
-.cache-details dd { @apply wrap-break-word text-gray-800 dark:text-gray-200; }
+.cache-details dt { @apply text-muted; }
+.cache-details dd { @apply wrap-break-word text-default; }
 </style>

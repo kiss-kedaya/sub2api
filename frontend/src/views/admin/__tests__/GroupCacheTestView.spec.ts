@@ -25,9 +25,20 @@ const mountView = () => mount(GroupCacheTestView, { global: { stubs: {
   AppLayout: { template: '<main><slot /></main>' },
   RouterLink: { template: '<a><slot /></a>' }
 } } })
+// The selects are Nuxt UI USelect (no native <select>/<option>): read items/placeholder and drive v-model.
+function nuxtSelect(testid: string) {
+  const found = wrapper.findAllComponents({ name: 'Select' }).find(c => c.vm.$attrs['data-testid'] === testid)
+  if (!found) throw new Error(`Select missing: ${testid}`)
+  return found
+}
+const optionTexts = (testid: string) => {
+  const select = nuxtSelect(testid)
+  return [select.props('placeholder'), ...(select.props('items') as Array<{ label: string }>).map(item => item.label)]
+}
+async function pickGroup(id: number) { nuxtSelect('cache-group').vm.$emit('update:modelValue', id); await flushPromises() }
 async function configure() {
   await flushPromises()
-  await wrapper.get('[data-testid="cache-group"]').setValue(7)
+  await pickGroup(7)
   await flushPromises()
   await wrapper.get('[data-testid="cache-model"]').setValue('test-model')
 }
@@ -51,7 +62,7 @@ describe('GroupCacheTestView', () => {
     wrapper = mountView()
     expect(wrapper.get('[data-testid="cache-start"]').attributes('disabled')).toBeDefined()
     await configure()
-    expect(wrapper.get('[data-testid="cache-key"]').findAll('option').map(option => option.text())).toEqual(['admin.groupCacheTest.selectKey', 'My key · #10'])
+    expect(optionTexts('cache-key')).toEqual(['admin.groupCacheTest.selectKey', 'My key · #10'])
     expect(wrapper.get('[data-testid="cache-start"]').attributes('disabled')).toBeUndefined()
     await wrapper.get('form').trigger('submit')
     await flushPromises()
@@ -63,7 +74,7 @@ describe('GroupCacheTestView', () => {
   it('excludes multi-group smart-routing keys and rechecks before sending', async () => {
     mocks.keys.mockResolvedValue(result([{ ...key, group_ids: [7, 8] }]))
     wrapper = mountView(); await configure()
-    expect(wrapper.get('[data-testid="cache-key"]').findAll('option')).toHaveLength(1)
+    expect(optionTexts('cache-key')).toHaveLength(1)
     expect(wrapper.get('[data-testid="cache-start"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
     mocks.keys.mockResolvedValue(result([key]))
@@ -85,12 +96,12 @@ describe('GroupCacheTestView', () => {
     mocks.keys.mockImplementation((_page: number, _size: number, filters: { group_id: number }) =>
       filters.group_id === 7 ? new Promise(resolve => { resolveOld = resolve }) : Promise.resolve(result([{ ...key, id: 20, group_id: 8, name: 'Other key' }])))
     wrapper = mountView(); await flushPromises()
-    await wrapper.get('[data-testid="cache-group"]').setValue(7); await flushPromises()
-    await wrapper.get('[data-testid="cache-group"]').setValue(8); await flushPromises()
+    await pickGroup(7)
+    await pickGroup(8)
     resolveOld(result([key])); await flushPromises()
-    expect(wrapper.get('[data-testid="cache-key"]').text()).toContain('Other key')
-    expect(wrapper.get('[data-testid="cache-key"]').text()).not.toContain('My key')
-    expect((wrapper.get('[data-testid="cache-protocol"]').element as HTMLSelectElement).value).toBe('messages')
+    expect(optionTexts('cache-key').join(' ')).toContain('Other key')
+    expect(optionTexts('cache-key').join(' ')).not.toContain('My key')
+    expect(nuxtSelect('cache-protocol').props('modelValue')).toBe('messages')
   })
   it('keeps unavailable keys explicit and does not start tests automatically', async () => {
     mocks.keys.mockRejectedValue(new Error('offline'))

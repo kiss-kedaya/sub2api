@@ -1,26 +1,164 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-6xl space-y-5">
-      <AdminPageHeader :title="t('opsAutomation.title')" :description="t('opsAutomation.description')"><template #actions><button class="btn btn-secondary" :disabled="busy" @click="load">{{ t('opsAutomation.refresh') }}</button></template></AdminPageHeader>
-      <p v-if="error" role="alert" class="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ error }}</p>
-      <p v-if="notice" role="status" class="text-sm text-emerald-600">{{ notice }}</p>
-      <p v-if="draft?.ramp_suspended" role="alert" class="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ t('opsAutomation.rampSuspended') }}</p>
-      <form v-if="draft" class="space-y-4" @submit.prevent="save">
-        <section class="card p-5"><h2 class="font-semibold">{{ t('opsAutomation.oauth') }}</h2><p class="my-2 text-sm text-gray-500">{{ t('opsAutomation.oauthHint') }}</p><div class="overflow-x-auto"><table class="w-full min-w-[720px] text-left text-sm"><thead><tr><th>{{ t('opsAutomation.enabled') }}</th><th>{{ t('opsAutomation.platform') }}</th><th>{{ t('opsAutomation.concurrency') }}</th><th>{{ t('opsAutomation.priority') }}</th><th>{{ t('opsAutomation.loadFactor') }}</th><th>{{ t('opsAutomation.groups') }}</th></tr></thead><tbody><tr v-for="item in draft.oauth" :key="item.platform" class="border-t dark:border-dark-700"><td class="py-3"><input v-model="item.enabled" type="checkbox" :aria-label="`${item.platform} ${t('opsAutomation.enabled')}`" /></td><td>{{ item.platform }}</td><td><input v-model.number="item.concurrency" type="number" min="1" max="10000" class="input w-24" /></td><td><input v-model.number="item.priority" type="number" min="0" max="10000" class="input w-24" /></td><td><input v-model.number="item.load_factor" type="number" min="1" max="10000" class="input w-24" /></td><td><div class="min-w-72"><GroupSelector v-model="item.group_ids" :groups="groupOptions.filter(g => g.platform === item.platform)" :searchable="true" /></div></td></tr></tbody></table></div></section>
-        <section class="card space-y-4 p-5"><label class="flex items-center justify-between"><h2 class="font-semibold">{{ t('opsAutomation.ramp') }}</h2><input v-model="draft.ramp.enabled" type="checkbox" :aria-label="t('opsAutomation.ramp')" /></label><p class="text-sm text-gray-500">{{ t('opsAutomation.rampHint') }}</p><div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div class="sm:col-span-2"><GroupSelector v-model="draft.ramp.group_ids" :groups="groupOptions" :searchable="true" /></div><label class="text-sm">{{ t('opsAutomation.successes') }}<input v-model.number="draft.ramp.successes_per_step" class="input mt-1 w-full" type="number" min="1" max="100000" /></label><label class="text-sm">{{ t('opsAutomation.step') }}<input v-model.number="draft.ramp.step" class="input mt-1 w-full" type="number" min="1" max="1000" /></label><label class="text-sm">{{ t('opsAutomation.maximum') }}<input v-model.number="draft.ramp.maximum" class="input mt-1 w-full" type="number" min="1" max="10000" /></label></div><details><summary class="cursor-pointer text-sm">{{ t('opsAutomation.advanced') }}</summary><label class="mt-3 block text-sm">{{ t('opsAutomation.cooldown') }}<input v-model.number="draft.ramp.cooldown_seconds" class="input ml-3 w-28" type="number" min="1" max="86400" /></label></details></section>
-        <section class="card space-y-4 p-5"><label class="flex items-center justify-between"><h2 class="font-semibold">{{ t('opsAutomation.ranking') }}</h2><input v-model="draft.ranking.enabled" type="checkbox" :aria-label="t('opsAutomation.ranking')" /></label><p class="text-sm text-gray-500">{{ t('opsAutomation.rankingHint') }}</p><div class="grid gap-3 sm:grid-cols-3"><div class="sm:col-span-2"><GroupSelector v-model="draft.ranking.group_ids" :groups="groupOptions" :searchable="true" /></div><label class="text-sm">{{ t('opsAutomation.mode') }}<select v-model="draft.ranking.mode" class="input mt-1 w-full"><option v-for="mode in ['experience','balanced','cost','custom']" :key="mode" :value="mode">{{ t('opsAutomation.' + mode) }}</option></select></label><label class="text-sm">{{ t('opsAutomation.window') }}<input v-model.number="draft.ranking.window_minutes" class="input mt-1 w-full" type="number" min="5" max="1440" /></label></div><details><summary class="cursor-pointer text-sm">{{ t('opsAutomation.advanced') }}</summary><div class="mt-3 grid gap-3 sm:grid-cols-4"><label class="text-sm">{{ t('opsAutomation.samples') }}<input v-model.number="draft.ranking.minimum_samples" class="input mt-1 w-full" type="number" min="1" max="100000" /></label><label v-for="key in ['quality_weight','latency_weight','cost_weight'] as const" :key="key" class="text-sm">{{ t('opsAutomation.' + key) }}<input v-model.number="draft.ranking[key]" class="input mt-1 w-full" type="number" min="0" max="100" :disabled="draft.ranking.mode !== 'custom'" /></label></div></details></section>
-                <section class="card space-y-3 p-5"><label class="flex items-center gap-2 font-semibold"><input v-model="draft.oauth_fallback.enabled" type="checkbox" />{{ t('opsAutomation.fallback') }}</label><p class="text-sm text-gray-500">{{ t('opsAutomation.fallbackHint') }}</p><div class="grid gap-3 sm:grid-cols-4"><div class="sm:col-span-2"><GroupSelector v-model="draft.oauth_fallback.group_ids" :groups="groupOptions" :searchable="true" /></div><label class="text-sm">{{ t('opsAutomation.minimumQuality') }}<input v-model.number="draft.oauth_fallback.minimum_quality" class="input mt-1 w-full" type="number" min="0" max="1" step="0.01" /></label><label class="text-sm">{{ t('opsAutomation.minimumQuota') }}<input v-model.number="draft.oauth_fallback.minimum_quota_percent" class="input mt-1 w-full" type="number" min="0" max="100" /></label><label class="text-sm">{{ t('opsAutomation.maximumLoad') }}<input v-model.number="draft.oauth_fallback.maximum_load_percent" class="input mt-1 w-full" type="number" min="0" max="100" /></label></div></section>
-        <section class="card space-y-3 p-5"><label class="flex items-center gap-2 font-semibold"><input v-model="draft.admission.enabled" type="checkbox" />{{ t('opsAutomation.admission') }}</label><p class="text-sm text-gray-500">{{ t('opsAutomation.admissionHint') }}</p><div class="grid gap-3 sm:grid-cols-2"><label class="text-sm">{{ t('opsAutomation.admissionPlatforms') }}<input :value="draft.admission.platforms.join(', ')" class="input mt-1 w-full" placeholder="openai, anthropic" @input="draft.admission.platforms = ($event.target as HTMLInputElement).value.split(',').map(p => p.trim()).filter(Boolean)" /></label><label class="text-sm">{{ t('opsAutomation.admissionModel') }}<input v-model.trim="draft.admission.model" class="input mt-1 w-full" maxlength="200" /></label></div></section><div class="flex justify-end"><button class="btn btn-primary" :disabled="busy">{{ t('opsAutomation.save') }}</button></div>
-      </form>
-      <section class="card space-y-4 p-5"><div class="flex flex-wrap items-center justify-between gap-3"><h2 class="font-semibold">{{ t('opsAutomation.reasoning') }}</h2><button class="btn btn-secondary" :disabled="busy" @click="newPlan">{{ t('opsAutomation.newPlan') }}</button></div><p class="text-sm text-gray-500">{{ t('opsAutomation.reasoningHint') }}</p><div class="overflow-x-auto"><table class="w-full min-w-[760px] text-left text-sm"><thead><tr><th>ID</th><th>{{ t('opsAutomation.account') }}</th><th>{{ t('opsAutomation.model') }}</th><th>{{ t('opsAutomation.enabled') }}</th><th>{{ t('opsAutomation.outcome') }}</th><th>{{ t('opsAutomation.actions') }}</th></tr></thead><tbody><tr v-for="plan in plans" :key="plan.id" class="border-t dark:border-dark-700"><td class="py-3">#{{ plan.id }}</td><td>{{ accountNames.get(plan.account_id) || '#' + plan.account_id }}</td><td>{{ plan.model }}</td><td>{{ plan.enabled ? t('opsAutomation.yes') : t('opsAutomation.no') }}</td><td>{{ plan.last_outcome ? t('opsAutomation.' + plan.last_outcome) : '—' }}</td><td class="space-x-3"><button :disabled="busy" class="text-primary-600" @click="editPlan = { ...plan }">{{ t('opsAutomation.edit') }}</button><button :disabled="busy" class="text-primary-600" @click="run(plan)">{{ t('opsAutomation.run') }}</button><button :disabled="busy" class="text-primary-600" @click="review(plan)">{{ t('opsAutomation.ownership') }}</button></td></tr></tbody></table></div></section>
-      <BaseDialog :show="!!editPlan" :title="t('opsAutomation.reasoning')" @close="!busy && (editPlan = null)"><form v-if="editPlan" class="space-y-4" @submit.prevent="savePlan"><label class="block text-sm">{{ t('opsAutomation.account') }}<Select :model-value="editPlan.account_id" :options="accountOptions" :searchable="true" :remote="true" :loading="accountsLoading" @search="searchAccounts" @update:model-value="editPlan.account_id = Number($event) || 0" /></label><label class="block text-sm">{{ t('opsAutomation.model') }}<input v-model.trim="editPlan.model" class="input mt-1 w-full" maxlength="200" required /></label><label class="block text-sm">{{ t('opsAutomation.interval') }}<input v-model.number="editPlan.interval_minutes" class="input mt-1 w-full" type="number" min="5" max="10080" required /></label><label class="block text-sm">{{ t('opsAutomation.judge') }}<select v-model="editPlan.judge_kind" class="input mt-1 w-full" @change="editPlan.judge_group_id = 0; editPlan.judge_model = ''"><option value="local">{{ t('opsAutomation.localJudge') }}</option><option value="llm">{{ t('opsAutomation.llmJudge') }}</option><option value="jev">{{ t('opsAutomation.jevJudge') }}</option></select></label><p class="text-sm text-gray-500">{{ t('opsAutomation.judgeHint') }}</p><template v-if="editPlan.judge_kind === 'llm'"><label class="block text-sm">{{ t('opsAutomation.judgeGroup') }}<Select :model-value="editPlan.judge_group_id" :options="groupSelectOptions" :searchable="true" @update:model-value="editPlan.judge_group_id = Number($event) || 0" /></label><label class="block text-sm">{{ t('opsAutomation.judgeModel') }}<input v-model.trim="editPlan.judge_model" class="input mt-1 w-full" maxlength="200" required /></label></template><label class="flex items-center gap-2 text-sm"><input v-model="editPlan.enabled" type="checkbox" />{{ t('opsAutomation.enabled') }}</label><label class="block text-sm">{{ t('opsAutomation.action') }}<select v-model="editPlan.action" class="input mt-1 w-full"><option value="observe">{{ t('opsAutomation.observe') }}</option><option value="pause">{{ t('opsAutomation.pause') }}</option></select></label><label class="block text-sm">{{ t('opsAutomation.scope') }}<select v-model="editPlan.pause_scope" class="input mt-1 w-full" @change="editPlan.target_group_id = 0"><option value="model">{{ t('opsAutomation.scopeModel') }}</option><option value="group">{{ t('opsAutomation.scopeGroup') }}</option><option value="account">{{ t('opsAutomation.scopeAccount') }}</option></select></label><label v-if="editPlan.pause_scope === 'group'" class="block text-sm">{{ t('opsAutomation.targetGroup') }}<Select :model-value="editPlan.target_group_id" :options="groupSelectOptions" :searchable="true" @update:model-value="editPlan.target_group_id = Number($event) || 0" /></label><label class="flex items-center gap-2 text-sm"><input v-model="editPlan.auto_restore" type="checkbox" :disabled="editPlan.action !== 'pause'" />{{ t('opsAutomation.autoRestore') }}</label><button class="btn btn-primary" :disabled="busy">{{ t('opsAutomation.save') }}</button></form></BaseDialog>
-      <BaseDialog :show="!!ownership" :title="t('opsAutomation.ownership')" @close="!busy && (ownership = null)"><div v-if="ownership" class="space-y-4"><p>{{ t('opsAutomation.account') }} #{{ ownership.account_id }} · {{ ownership.owned ? t('opsAutomation.owned') : t('opsAutomation.unowned') }}</p><p class="text-sm text-gray-500">{{ t('opsAutomation.ownershipHint') }}</p><div class="flex flex-wrap gap-3"><button class="btn btn-secondary" :disabled="busy || !ownership.can_restore" @click="reconcile(false)">{{ t('opsAutomation.restore') }}</button><button class="btn btn-danger" :disabled="busy" @click="reconcile(true)">{{ t('opsAutomation.remove') }}</button></div></div></BaseDialog>
+    <div class="mx-auto flex w-full max-w-5xl flex-col gap-6">
+      <AdminPageHeader :title="t('opsAutomation.title')" :description="t('opsAutomation.description')">
+        <template #actions><UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :disabled="busy" :label="t('opsAutomation.refresh')" @click="load" /></template>
+      </AdminPageHeader>
+      <UAlert v-if="error" role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
+      <UAlert v-if="notice" role="status" color="success" variant="subtle" icon="i-lucide-circle-check" :description="notice" />
+      <UAlert v-if="draft?.ramp_suspended" role="alert" color="warning" variant="subtle" icon="i-lucide-pause-circle" :description="t('opsAutomation.rampSuspended')" />
+      <UForm v-if="draft" :state="draft" class="flex flex-col gap-6" @submit="save">
+        <UPageCard :title="t('opsAutomation.policies')" :description="t('opsAutomation.policiesHint')" variant="naked" orientation="horizontal">
+          <UButton type="submit" class="w-fit lg:ms-auto" :loading="busy" :disabled="busy" :label="t('opsAutomation.save')" />
+        </UPageCard>
+
+        <UPageCard :title="t('opsAutomation.oauth')" :description="t('opsAutomation.oauthHint')" variant="subtle" :ui="{ container: 'gap-y-3' }">
+          <UTable :data="draft.oauth" :columns="oauthColumns" :ui="compactUi">
+            <template #enabled-cell="{ row }"><USwitch v-model="row.original.enabled" :aria-label="`${row.original.platform} ${t('opsAutomation.enabled')}`" /></template>
+            <template #platform-cell="{ row }"><span class="font-medium text-highlighted">{{ row.original.platform }}</span></template>
+            <template #concurrency-cell="{ row }"><UInput v-model.number="row.original.concurrency" type="number" min="1" max="10000" class="w-24" /></template>
+            <template #priority-cell="{ row }"><UInput v-model.number="row.original.priority" type="number" min="0" max="10000" class="w-24" /></template>
+            <template #load-cell="{ row }"><UInput v-model.number="row.original.load_factor" type="number" min="1" max="10000" class="w-24" /></template>
+            <template #groups-cell="{ row }"><div class="min-w-72"><GroupSelector v-model="row.original.group_ids" :groups="groupOptions.filter(g => g.platform === row.original.platform)" :searchable="true" /></div></template>
+          </UTable>
+        </UPageCard>
+
+        <UPageCard variant="subtle" :ui="{ container: 'gap-y-4' }">
+          <UFormField :label="t('opsAutomation.ramp')" :description="t('opsAutomation.rampHint')" orientation="horizontal" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ label: 'text-base font-semibold text-highlighted' }">
+            <USwitch v-model="draft.ramp.enabled" :aria-label="t('opsAutomation.ramp')" />
+          </UFormField>
+          <USeparator />
+          <UFormField :label="t('opsAutomation.groups')" orientation="horizontal" :class="rowClass"><div class="w-full sm:w-96"><GroupSelector v-model="draft.ramp.group_ids" :groups="groupOptions" :searchable="true" /></div></UFormField>
+          <USeparator />
+          <div class="grid gap-4 sm:grid-cols-3">
+            <UFormField :label="t('opsAutomation.successes')"><UInput v-model.number="draft.ramp.successes_per_step" class="w-full" type="number" min="1" max="100000" /></UFormField>
+            <UFormField :label="t('opsAutomation.step')"><UInput v-model.number="draft.ramp.step" class="w-full" type="number" min="1" max="1000" /></UFormField>
+            <UFormField :label="t('opsAutomation.maximum')"><UInput v-model.number="draft.ramp.maximum" class="w-full" type="number" min="1" max="10000" /></UFormField>
+          </div>
+          <UCollapsible :unmount-on-hide="false" class="flex flex-col gap-3">
+            <UButton type="button" color="neutral" variant="ghost" size="sm" class="-mx-2.5 self-start" trailing-icon="i-lucide-chevron-down" :label="t('opsAutomation.advanced')" />
+            <template #content>
+              <UFormField :label="t('opsAutomation.cooldown')" orientation="horizontal" :class="rowClass"><UInput v-model.number="draft.ramp.cooldown_seconds" class="w-28" type="number" min="1" max="86400" /></UFormField>
+            </template>
+          </UCollapsible>
+        </UPageCard>
+        <UPageCard variant="subtle" :ui="{ container: 'gap-y-4' }">
+          <UFormField :label="t('opsAutomation.ranking')" :description="t('opsAutomation.rankingHint')" orientation="horizontal" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ label: 'text-base font-semibold text-highlighted' }">
+            <USwitch v-model="draft.ranking.enabled" :aria-label="t('opsAutomation.ranking')" />
+          </UFormField>
+          <USeparator />
+          <UFormField :label="t('opsAutomation.groups')" orientation="horizontal" :class="rowClass"><div class="w-full sm:w-96"><GroupSelector v-model="draft.ranking.group_ids" :groups="groupOptions" :searchable="true" /></div></UFormField>
+          <USeparator />
+          <div class="grid gap-4 sm:grid-cols-2">
+            <UFormField :label="t('opsAutomation.mode')"><USelect v-model="draft.ranking.mode" class="w-full" :items="rankingModeItems" /></UFormField>
+            <UFormField :label="t('opsAutomation.window')"><UInput v-model.number="draft.ranking.window_minutes" class="w-full" type="number" min="5" max="1440" /></UFormField>
+          </div>
+          <UCollapsible :unmount-on-hide="false" class="flex flex-col gap-3">
+            <UButton type="button" color="neutral" variant="ghost" size="sm" class="-mx-2.5 self-start" trailing-icon="i-lucide-chevron-down" :label="t('opsAutomation.advanced')" />
+            <template #content>
+              <div class="grid gap-4 sm:grid-cols-4">
+                <UFormField :label="t('opsAutomation.samples')"><UInput v-model.number="draft.ranking.minimum_samples" class="w-full" type="number" min="1" max="100000" /></UFormField>
+                <UFormField v-for="key in weightKeys" :key="key" :label="t('opsAutomation.' + key)"><UInput v-model.number="draft.ranking[key]" class="w-full" type="number" min="0" max="100" :disabled="draft.ranking.mode !== 'custom'" /></UFormField>
+              </div>
+            </template>
+          </UCollapsible>
+        </UPageCard>
+
+        <UPageCard variant="subtle" :ui="{ container: 'gap-y-4' }">
+          <UFormField :label="t('opsAutomation.fallback')" :description="t('opsAutomation.fallbackHint')" orientation="horizontal" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ label: 'text-base font-semibold text-highlighted' }">
+            <USwitch v-model="draft.oauth_fallback.enabled" :aria-label="t('opsAutomation.fallback')" />
+          </UFormField>
+          <USeparator />
+          <UFormField :label="t('opsAutomation.groups')" orientation="horizontal" :class="rowClass"><div class="w-full sm:w-96"><GroupSelector v-model="draft.oauth_fallback.group_ids" :groups="groupOptions" :searchable="true" /></div></UFormField>
+          <USeparator />
+          <div class="grid gap-4 sm:grid-cols-3">
+            <UFormField :label="t('opsAutomation.minimumQuality')"><UInput v-model.number="draft.oauth_fallback.minimum_quality" class="w-full" type="number" min="0" max="1" step="0.01" /></UFormField>
+            <UFormField :label="t('opsAutomation.minimumQuota')"><UInput v-model.number="draft.oauth_fallback.minimum_quota_percent" class="w-full" type="number" min="0" max="100" /></UFormField>
+            <UFormField :label="t('opsAutomation.maximumLoad')"><UInput v-model.number="draft.oauth_fallback.maximum_load_percent" class="w-full" type="number" min="0" max="100" /></UFormField>
+          </div>
+        </UPageCard>
+
+        <UPageCard variant="subtle" :ui="{ container: 'gap-y-4' }">
+          <UFormField :label="t('opsAutomation.admission')" :description="t('opsAutomation.admissionHint')" orientation="horizontal" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ label: 'text-base font-semibold text-highlighted' }">
+            <USwitch v-model="draft.admission.enabled" :aria-label="t('opsAutomation.admission')" />
+          </UFormField>
+          <USeparator />
+          <UFormField :label="t('opsAutomation.admissionPlatforms')" orientation="horizontal" :class="rowClass">
+            <UInput :model-value="draft.admission.platforms.join(', ')" class="w-full sm:w-72" placeholder="openai, anthropic" @update:model-value="draft.admission.platforms = String($event).split(',').map(p => p.trim()).filter(Boolean)" />
+          </UFormField>
+          <USeparator />
+          <UFormField :label="t('opsAutomation.admissionModel')" orientation="horizontal" :class="rowClass"><UInput v-model.trim="draft.admission.model" class="w-full sm:w-72" maxlength="200" /></UFormField>
+        </UPageCard>
+      </UForm>
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-base font-semibold text-highlighted">{{ t('opsAutomation.reasoning') }}</h2>
+            <p class="mt-0.5 text-xs text-muted">{{ t('opsAutomation.reasoningHint') }}</p>
+          </div>
+          <UButton icon="i-lucide-plus" :disabled="busy" :label="t('opsAutomation.newPlan')" @click="newPlan" />
+        </div>
+        <UTable :data="plans" :columns="planColumns" :ui="tableUi">
+          <template #id-cell="{ row }"><span class="tabular-nums text-muted">#{{ row.original.id }}</span></template>
+          <template #account-cell="{ row }"><span class="text-highlighted">{{ accountNames.get(row.original.account_id) || '#' + row.original.account_id }}</span></template>
+          <template #enabled-cell="{ row }"><UBadge :color="row.original.enabled ? 'success' : 'neutral'" variant="subtle" size="sm">{{ row.original.enabled ? t('opsAutomation.yes') : t('opsAutomation.no') }}</UBadge></template>
+          <template #outcome-cell="{ row }">{{ row.original.last_outcome ? t('opsAutomation.' + row.original.last_outcome) : '—' }}</template>
+          <template #actions-cell="{ row }">
+            <div class="flex justify-end gap-1">
+              <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-pencil" :disabled="busy" :label="t('opsAutomation.edit')" @click="editPlan = { ...row.original }" />
+              <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-play" :disabled="busy" :label="t('opsAutomation.run')" @click="run(row.original)" />
+              <UDropdownMenu :items="[[{ label: t('opsAutomation.ownership'), icon: 'i-lucide-key-round', disabled: busy, onSelect: () => review(row.original) }]]" :content="{ align: 'end' }">
+                <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-ellipsis-vertical" :aria-label="t('opsAutomation.actions')" />
+              </UDropdownMenu>
+            </div>
+          </template>
+        </UTable>
+      </section>
+
+      <BaseDialog :show="!!editPlan" :title="t('opsAutomation.reasoning')" @close="!busy && (editPlan = null)">
+        <form v-if="editPlan" class="flex flex-col gap-4" @submit.prevent="savePlan">
+          <UFormField :label="t('opsAutomation.account')"><Select :model-value="editPlan.account_id" :options="accountOptions" :searchable="true" :remote="true" :loading="accountsLoading" @search="searchAccounts" @update:model-value="editPlan.account_id = Number($event) || 0" /></UFormField>
+          <UFormField :label="t('opsAutomation.model')" required><UInput v-model.trim="editPlan.model" class="w-full" maxlength="200" required /></UFormField>
+          <UFormField :label="t('opsAutomation.interval')" required><UInput v-model.number="editPlan.interval_minutes" class="w-full" type="number" min="5" max="10080" required /></UFormField>
+          <UFormField :label="t('opsAutomation.judge')" :help="t('opsAutomation.judgeHint')">
+            <USelect :model-value="editPlan.judge_kind" class="w-full" data-testid="judge-kind" :items="judgeItems" @update:model-value="onJudgeKind" />
+          </UFormField>
+          <template v-if="editPlan.judge_kind === 'llm'">
+            <UFormField :label="t('opsAutomation.judgeGroup')"><Select :model-value="editPlan.judge_group_id" :options="groupSelectOptions" :searchable="true" @update:model-value="editPlan.judge_group_id = Number($event) || 0" /></UFormField>
+            <UFormField :label="t('opsAutomation.judgeModel')" required><UInput v-model.trim="editPlan.judge_model" class="w-full" maxlength="200" required /></UFormField>
+          </template>
+          <USwitch v-model="editPlan.enabled" :label="t('opsAutomation.enabled')" />
+          <UFormField :label="t('opsAutomation.action')"><USelect v-model="editPlan.action" class="w-full" :items="actionItems" /></UFormField>
+          <UFormField :label="t('opsAutomation.scope')"><USelect :model-value="editPlan.pause_scope" class="w-full" :items="scopeItems" @update:model-value="onPauseScope" /></UFormField>
+          <UFormField v-if="editPlan.pause_scope === 'group'" :label="t('opsAutomation.targetGroup')"><Select :model-value="editPlan.target_group_id" :options="groupSelectOptions" :searchable="true" @update:model-value="editPlan.target_group_id = Number($event) || 0" /></UFormField>
+          <USwitch v-model="editPlan.auto_restore" :disabled="editPlan.action !== 'pause'" :label="t('opsAutomation.autoRestore')" />
+          <div class="flex justify-end gap-2 pt-2">
+            <UButton type="button" color="neutral" variant="outline" :disabled="busy" :label="t('opsAutomation.cancel')" @click="editPlan = null" />
+            <UButton type="submit" :loading="busy" :disabled="busy" :label="t('opsAutomation.save')" />
+          </div>
+        </form>
+      </BaseDialog>
+      <BaseDialog :show="!!ownership" :title="t('opsAutomation.ownership')" @close="!busy && (ownership = null)">
+        <div v-if="ownership" class="flex flex-col gap-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-highlighted">{{ t('opsAutomation.account') }} #{{ ownership.account_id }}</span>
+            <UBadge :color="ownership.owned ? 'success' : 'neutral'" variant="subtle">{{ ownership.owned ? t('opsAutomation.owned') : t('opsAutomation.unowned') }}</UBadge>
+          </div>
+          <p class="text-sm text-muted">{{ t('opsAutomation.ownershipHint') }}</p>
+          <div class="flex flex-wrap justify-end gap-2">
+            <UButton color="neutral" variant="outline" :disabled="busy || !ownership.can_restore" :label="t('opsAutomation.restore')" @click="reconcile(false)" />
+            <UButton color="error" :disabled="busy" :label="t('opsAutomation.remove')" @click="reconcile(true)" />
+          </div>
+        </div>
+      </BaseDialog>
     </div>
   </AppLayout>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { TableColumn } from '@nuxt/ui'
+import { compactTableUi, templateTableUi } from '@/views/admin/ops/utils/templateUi'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -34,6 +172,24 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { opsAutomationMessages } from '@/components/admin/operations/opsAutomationMessages'
 const { t } = useI18n({ useScope: 'local', messages: opsAutomationMessages })
 const draft = ref<api.OpsAutomationConfig | null>(null), plans = ref<api.LocalReasoningPlan[]>([]), editPlan = ref<api.LocalReasoningPlan | null>(null), ownership = ref<api.LocalOwnership | null>(null)
+// Template settings layout: label + description left, control right.
+const rowClass = 'flex max-sm:flex-col justify-between items-start gap-4'
+const compactUi = compactTableUi, tableUi = templateTableUi
+const weightKeys = ['quality_weight', 'latency_weight', 'cost_weight'] as const
+const rankingModeItems = computed(() => ['experience', 'balanced', 'cost', 'custom'].map(mode => ({ value: mode, label: t('opsAutomation.' + mode) })))
+const judgeItems = computed(() => [{ value: 'local', label: t('opsAutomation.localJudge') }, { value: 'llm', label: t('opsAutomation.llmJudge') }, { value: 'jev', label: t('opsAutomation.jevJudge') }])
+const actionItems = computed(() => [{ value: 'observe', label: t('opsAutomation.observe') }, { value: 'pause', label: t('opsAutomation.pause') }])
+const scopeItems = computed(() => [{ value: 'model', label: t('opsAutomation.scopeModel') }, { value: 'group', label: t('opsAutomation.scopeGroup') }, { value: 'account', label: t('opsAutomation.scopeAccount') }])
+const oauthColumns = computed<TableColumn<api.OAuthDefaults>[]>(() => [
+  { id: 'enabled', header: t('opsAutomation.enabled') }, { id: 'platform', header: t('opsAutomation.platform') }, { id: 'concurrency', header: t('opsAutomation.concurrency') },
+  { id: 'priority', header: t('opsAutomation.priority') }, { id: 'load', header: t('opsAutomation.loadFactor') }, { id: 'groups', header: t('opsAutomation.groups') }
+])
+const planColumns = computed<TableColumn<api.LocalReasoningPlan>[]>(() => [
+  { id: 'id', header: 'ID' }, { id: 'account', header: t('opsAutomation.account') }, { accessorKey: 'model', header: t('opsAutomation.model') },
+  { id: 'enabled', header: t('opsAutomation.enabled') }, { id: 'outcome', header: t('opsAutomation.outcome') }, { id: 'actions', header: () => h('span', { class: 'sr-only' }, t('opsAutomation.actions')) }
+])
+function onJudgeKind(value: unknown) { if (!editPlan.value) return; editPlan.value.judge_kind = value as api.LocalReasoningPlan['judge_kind']; editPlan.value.judge_group_id = 0; editPlan.value.judge_model = '' }
+function onPauseScope(value: unknown) { if (!editPlan.value) return; editPlan.value.pause_scope = value as api.LocalReasoningPlan['pause_scope']; editPlan.value.target_group_id = 0 }
 const busy = ref(false), error = ref(''), notice = ref('')
 let alive = true, sequence = 0
 const groupOptions = ref<AdminGroup[]>([])

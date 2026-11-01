@@ -18,6 +18,10 @@ describe('account automation', () => {
   it('keeps all policies disabled initially and requires an explicit save', async () => {
     const w = mount(OpsAutomationView); await flushPromises()
     for (const box of w.findAll('input[type="checkbox"]')) expect((box.element as HTMLInputElement).checked).toBe(false)
+    // Policy toggles are Nuxt UI USwitch (role="switch" buttons): oauth row + ramp + ranking + fallback + admission.
+    const switches = w.findAll('[role="switch"]')
+    expect(switches.length).toBe(5)
+    for (const toggle of switches) expect(toggle.attributes('aria-checked')).toBe('false')
     expect(api.saveAutomation).not.toHaveBeenCalled()
     expect(w.text()).toContain('opsAutomation.oauthHint'); expect(w.text()).toContain('opsAutomation.rankingHint')
     w.unmount()
@@ -32,8 +36,11 @@ describe('account automation', () => {
   it('offers all three explicit judge methods while a new plan stays disabled', async () => {
     const w = mount(OpsAutomationView); await flushPromises()
     await w.findAll('button').find(b => b.text() === 'opsAutomation.newPlan')!.trigger('click')
-    const judge = w.findAll('select').find(s => s.find('option[value="jev"]').exists())!
-    expect(judge.findAll('option').map(o => o.attributes('value'))).toEqual(['local', 'llm', 'jev'])
+    // The judge picker is a Nuxt UI USelect: read its items instead of native <option>s.
+    const judge = w.findAllComponents({ name: 'Select' }).find(s => s.vm.$attrs['data-testid'] === 'judge-kind')!
+    expect((judge.props('items') as Array<{ value: string }>).map(o => o.value)).toEqual(['local', 'llm', 'jev'])
+    expect(judge.props('modelValue')).toBe('local')
+    expect(w.findAll('[role="switch"]').filter(s => s.attributes('aria-checked') === 'true')).toHaveLength(0)
     expect(api.saveReasoningPlan).not.toHaveBeenCalled(); w.unmount()
   })
 })
