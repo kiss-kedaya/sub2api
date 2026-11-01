@@ -12,9 +12,11 @@
       class="space-y-6"
     >
       <h4 class="text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.basic') }}</h4>
+
       <UFormField :label="t('common.name')">
         <UInput v-model="form.name" type="text" required data-tour="edit-account-form-name" class="w-full" />
       </UFormField>
+
       <UFormField :label="t('admin.accounts.notes')" :help="t('admin.accounts.notesHint')">
         <UTextarea
           :rows="3"
@@ -23,6 +25,8 @@
           class="w-full"
         ></UTextarea>
       </UFormField>
+
+      <h4 v-if="[(account.type === 'apikey' || account.type === 'cloudflare'), (account.type === 'upstream'), ((account.platform === 'gemini' || account.platform === 'anthropic') && account.type === 'service_account'), (account.type === 'bedrock'), (account.platform === 'antigravity' && account.type === 'oauth'), (account.platform === 'grok' && account.type === 'oauth')].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.credentials') }}</h4>
 
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey' || account.type === 'cloudflare'" class="space-y-4">
@@ -178,6 +182,7 @@
         </UFormField>
 
         <!-- Model Restriction Section (不适用于 Antigravity) -->
+        <h4 v-if="(account.platform !== 'antigravity')" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.models') }}</h4>
         <div v-if="account.platform !== 'antigravity'" class="pt-2">
           <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.modelRestriction') }}</label>
 
@@ -284,6 +289,7 @@
         </div>
 
         <!-- Pool Mode Section -->
+        <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.errors') }}</h4>
         <div class="pt-2">
           <UFormField :label="t('admin.accounts.poolMode')" :description="t('admin.accounts.poolModeHint')" class="flex items-center justify-between gap-4 mb-3">
             <Toggle v-model="poolModeEnabled" />
@@ -387,213 +393,6 @@
           </div>
         </div>
 
-      </div>
-
-      <!-- Grok OAuth client-tool prompt cache opt-in -->
-      <div
-        v-if="account.platform === 'grok' && account.type === 'oauth'"
-        class="pt-2"
-      >
-        <div class="flex items-center justify-between gap-4">
-          <div class="min-w-0">
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.grokClientToolCache.title') }}</label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.grokClientToolCache.hint') }}
-            </p>
-          </div>
-          <Toggle
-            v-model="grokClientToolCacheEnabled"
-            data-testid="grok-client-tool-cache-toggle"
-            :aria-label="t('admin.accounts.grokClientToolCache.title')"
-          />
-        </div>
-      </div>
-
-      <!-- Grok OAuth media generation eligibility override -->
-      <div
-        v-if="isGrokOAuthAccount"
-        class="pt-2"
-        data-testid="grok-media-eligibility-card"
-      >
-        <div class="space-y-3">
-          <div>
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.grokMediaEligibility.title') }}</label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.grokMediaEligibility.hint') }}
-            </p>
-          </div>
-          <Select
-            v-model="grokMediaEligibilityMode"
-            data-testid="grok-media-eligibility-mode"
-            :disabled="grokMediaEligibilityLoading"
-            :options="[
-              { value: 'auto', label: t('admin.accounts.grokMediaEligibility.auto') },
-              { value: 'enabled', label: t('admin.accounts.grokMediaEligibility.enabled') },
-              { value: 'disabled', label: t('admin.accounts.grokMediaEligibility.disabled') }
-            ]"
-          />
-          <p v-if="grokMediaEligibilityLoading" class="text-xs text-muted">
-            {{ t('admin.accounts.grokMediaEligibility.loading') }}
-          </p>
-          <p v-else-if="grokMediaEligibilityError" class="text-xs text-error">
-            {{ grokMediaEligibilityError }}
-          </p>
-          <div v-else-if="grokMediaEligibilityState" class="rounded-lg bg-elevated p-3 text-xs">
-            <span class="font-medium">{{ t('admin.accounts.grokMediaEligibility.current') }}</span>
-            <span class="ml-1" data-testid="grok-media-eligibility-status">
-              {{ grokMediaEligibilityState.eligible ? t('admin.accounts.grokMediaEligibility.eligible') : t('admin.accounts.grokMediaEligibility.ineligible') }}
-              · {{ t(`admin.accounts.grokMediaEligibility.reasons.${grokMediaEligibilityState.reason}`) }}
-            </span>
-          </div>
-          <UAlert v-if="grokMediaEligibilityMode === 'enabled'" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.grokMediaEligibility.forceEnableWarning')" />
-          <p v-else-if="grokMediaEligibilityMode === 'auto'" class="text-xs text-muted">
-            {{ t('admin.accounts.grokMediaEligibility.autoHint') }}
-          </p>
-        </div>
-      </div>
-
-      <!-- Grok OAuth Custom Upstream URL (仅改写转发端点，OAuth 授权/刷新不受影响) -->
-      <div
-        v-if="account.platform === 'grok' && account.type === 'oauth'"
-        class="pt-2"
-      >
-        <UFormField :label="t('admin.accounts.grokCustomBaseUrl.title')" :description="t('admin.accounts.grokCustomBaseUrl.hint')" class="flex items-center justify-between gap-4 mb-3">
-          <Toggle v-model="grokOAuthCustomBaseUrlEnabled" data-testid="grok-custom-base-url-toggle" />
-        </UFormField>
-        <div v-if="grokOAuthCustomBaseUrlEnabled" class="space-y-2">
-          <UInput
-            v-model="grokOAuthBaseUrl"
-            type="text"
-            data-testid="grok-custom-base-url-input"
-            :placeholder="t('admin.accounts.grokCustomBaseUrl.placeholder')"
-            class="w-full"
-          />
-          <GrokBaseUrlPresets @select="grokOAuthBaseUrl = $event" />
-        </div>
-      </div>
-
-      <!-- Header Override Section (eligible API-key platforms + grok OAuth) -->
-      <div v-if="headerOverrideCapable" class="pt-2">
-        <UFormField :label="t('admin.accounts.headerOverride.title')" :description="t('admin.accounts.headerOverride.hint')" class="flex items-center justify-between gap-4 mb-3">
-          <Toggle v-model="headerOverrideEnabled" />
-        </UFormField>
-
-        <div v-if="headerOverrideEnabled" class="space-y-3">
-          <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
-
-          <HeaderOverrideEditor
-            :rows="headerOverrideRows"
-            @update:rows="headerOverrideRows = $event"
-          />
-        </div>
-      </div>
-
-      <!-- OpenAI/Grok OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
-      <div
-        v-if="(account.platform === 'openai' || account.platform === 'grok') && account.type === 'oauth'"
-        class="pt-2"
-      >
-        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.modelRestriction') }}</label>
-
-        <UAlert v-if="isOpenAIModelRestrictionDisabled" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.openai.modelRestrictionDisabledByPassthrough')" class="mb-3" />
-
-        <template v-else>
-          <!-- Mode Toggle -->
-          <div class="mb-4 flex gap-1 rounded-lg bg-elevated p-1">
-            <UButton
-              :color="modelRestrictionMode === 'whitelist' ? 'primary' : 'neutral'"
-              :variant="modelRestrictionMode === 'whitelist' ? 'solid' : 'ghost'"
-              size="sm"
-              block
-              class="flex-1"
-              type="button"
-              @click="modelRestrictionMode = 'whitelist'"
-            >{{ t('admin.accounts.modelWhitelist') }}</UButton>
-            <UButton
-              :color="modelRestrictionMode === 'mapping' ? 'primary' : 'neutral'"
-              :variant="modelRestrictionMode === 'mapping' ? 'solid' : 'ghost'"
-              size="sm"
-              block
-              class="flex-1"
-              type="button"
-              @click="modelRestrictionMode = 'mapping'"
-            >{{ t('admin.accounts.modelMapping') }}</UButton>
-          </div>
-
-          <!-- Whitelist Mode -->
-          <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
-            <p class="text-xs text-muted">
-              {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
-              <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
-                t('admin.accounts.supportsAllModels')
-              }}</span>
-            </p>
-          </div>
-
-          <!-- Mapping Mode -->
-          <div v-else>
-            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.mapRequestModels')" class="mb-3" />
-            <ModelWhitelistSelector
-              sync-only
-              :model-value="modelMappingFromKeys"
-              :platform="account?.platform || 'anthropic'"
-              :account-id="account?.id"
-              @upstream-models="importUpstreamModelsToMapping"
-            />
-
-            <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
-              <div
-                v-for="(mapping, index) in modelMappings"
-                :key="'oauth-' + getModelMappingKey(mapping)"
-                class="flex items-center gap-2"
-              >
-                <UInput
-                  v-model="mapping.from"
-                  type="text"
-                  :placeholder="t('admin.accounts.requestModel')"
-                  class="flex-1"
-                />
-                <UIcon name="i-lucide-arrow-right" class="size-4 flex-shrink-0 text-muted" />
-                <UInput
-                  v-model="mapping.to"
-                  type="text"
-                  :placeholder="t('admin.accounts.actualModel')"
-                  class="flex-1"
-                />
-                <UButton
-                  color="error"
-                  variant="ghost"
-                  square
-                  size="sm"
-                  icon="i-lucide-trash-2"
-                  :aria-label="t('admin.accounts.formActions.remove')"
-                  type="button"
-                  @click="removeModelMapping(index)"
-                />
-              </div>
-            </div>
-
-            <UButton color="neutral" variant="soft" block icon="i-lucide-plus" class="mb-3" type="button" @click="addModelMapping">
-              + {{ t('admin.accounts.addMapping') }}
-            </UButton>
-
-            <!-- Quick Add Buttons -->
-            <div class="flex flex-wrap gap-2">
-              <UButton
-                color="neutral"
-                variant="soft"
-                size="xs"
-                v-for="preset in presetMappings"
-                :key="'oauth-' + preset.label"
-                type="button"
-                @click="addPresetMapping(preset.from, preset.to)"
-              >
-                + {{ preset.label }}
-              </UButton>
-            </div>
-          </div>
-        </template>
       </div>
 
       <!-- Upstream fields (only for upstream type) -->
@@ -799,6 +598,7 @@
         </div>
 
         <!-- Model Restriction for Bedrock -->
+        <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.models') }}</h4>
         <div class="pt-2">
           <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.modelRestriction') }}</label>
 
@@ -878,6 +678,7 @@
         </div>
 
         <!-- Pool Mode Section for Bedrock -->
+        <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.errors') }}</h4>
         <div class="pt-2">
           <UFormField :label="t('admin.accounts.poolMode')" :description="t('admin.accounts.poolModeHint')" class="flex items-center justify-between gap-4 mb-3">
             <Toggle v-model="poolModeEnabled" />
@@ -926,6 +727,136 @@
           class="w-full font-mono"
         />
       </UFormField>
+
+      <!-- Grok OAuth Custom Upstream URL (仅改写转发端点，OAuth 授权/刷新不受影响) -->
+      <div
+        v-if="account.platform === 'grok' && account.type === 'oauth'"
+        class="pt-2"
+      >
+        <UFormField :label="t('admin.accounts.grokCustomBaseUrl.title')" :description="t('admin.accounts.grokCustomBaseUrl.hint')" class="flex items-center justify-between gap-4 mb-3">
+          <Toggle v-model="grokOAuthCustomBaseUrlEnabled" data-testid="grok-custom-base-url-toggle" />
+        </UFormField>
+        <div v-if="grokOAuthCustomBaseUrlEnabled" class="space-y-2">
+          <UInput
+            v-model="grokOAuthBaseUrl"
+            type="text"
+            data-testid="grok-custom-base-url-input"
+            :placeholder="t('admin.accounts.grokCustomBaseUrl.placeholder')"
+            class="w-full"
+          />
+          <GrokBaseUrlPresets @select="grokOAuthBaseUrl = $event" />
+        </div>
+      </div>
+
+      <h4 v-if="[((account.platform === 'openai' || account.platform === 'grok') && account.type === 'oauth'), (account.platform === 'antigravity')].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.models') }}</h4>
+
+      <!-- OpenAI/Grok OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
+      <div
+        v-if="(account.platform === 'openai' || account.platform === 'grok') && account.type === 'oauth'"
+        class="pt-2"
+      >
+        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.modelRestriction') }}</label>
+
+        <UAlert v-if="isOpenAIModelRestrictionDisabled" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.openai.modelRestrictionDisabledByPassthrough')" class="mb-3" />
+
+        <template v-else>
+          <!-- Mode Toggle -->
+          <div class="mb-4 flex gap-1 rounded-lg bg-elevated p-1">
+            <UButton
+              :color="modelRestrictionMode === 'whitelist' ? 'primary' : 'neutral'"
+              :variant="modelRestrictionMode === 'whitelist' ? 'solid' : 'ghost'"
+              size="sm"
+              block
+              class="flex-1"
+              type="button"
+              @click="modelRestrictionMode = 'whitelist'"
+            >{{ t('admin.accounts.modelWhitelist') }}</UButton>
+            <UButton
+              :color="modelRestrictionMode === 'mapping' ? 'primary' : 'neutral'"
+              :variant="modelRestrictionMode === 'mapping' ? 'solid' : 'ghost'"
+              size="sm"
+              block
+              class="flex-1"
+              type="button"
+              @click="modelRestrictionMode = 'mapping'"
+            >{{ t('admin.accounts.modelMapping') }}</UButton>
+          </div>
+
+          <!-- Whitelist Mode -->
+          <div v-if="modelRestrictionMode === 'whitelist'">
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
+            <p class="text-xs text-muted">
+              {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
+              <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
+                t('admin.accounts.supportsAllModels')
+              }}</span>
+            </p>
+          </div>
+
+          <!-- Mapping Mode -->
+          <div v-else>
+            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.mapRequestModels')" class="mb-3" />
+            <ModelWhitelistSelector
+              sync-only
+              :model-value="modelMappingFromKeys"
+              :platform="account?.platform || 'anthropic'"
+              :account-id="account?.id"
+              @upstream-models="importUpstreamModelsToMapping"
+            />
+
+            <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
+              <div
+                v-for="(mapping, index) in modelMappings"
+                :key="'oauth-' + getModelMappingKey(mapping)"
+                class="flex items-center gap-2"
+              >
+                <UInput
+                  v-model="mapping.from"
+                  type="text"
+                  :placeholder="t('admin.accounts.requestModel')"
+                  class="flex-1"
+                />
+                <UIcon name="i-lucide-arrow-right" class="size-4 flex-shrink-0 text-muted" />
+                <UInput
+                  v-model="mapping.to"
+                  type="text"
+                  :placeholder="t('admin.accounts.actualModel')"
+                  class="flex-1"
+                />
+                <UButton
+                  color="error"
+                  variant="ghost"
+                  square
+                  size="sm"
+                  icon="i-lucide-trash-2"
+                  :aria-label="t('admin.accounts.formActions.remove')"
+                  type="button"
+                  @click="removeModelMapping(index)"
+                />
+              </div>
+            </div>
+
+            <UButton color="neutral" variant="soft" block icon="i-lucide-plus" class="mb-3" type="button" @click="addModelMapping">
+              + {{ t('admin.accounts.addMapping') }}
+            </UButton>
+
+            <!-- Quick Add Buttons -->
+            <div class="flex flex-wrap gap-2">
+              <UButton
+                color="neutral"
+                variant="soft"
+                size="xs"
+                v-for="preset in presetMappings"
+                :key="'oauth-' + preset.label"
+                type="button"
+                @click="addPresetMapping(preset.from, preset.to)"
+              >
+                + {{ preset.label }}
+              </UButton>
+            </div>
+          </div>
+        </template>
+      </div>
 
       <!-- Antigravity model restriction (applies to all antigravity types) -->
       <!-- Antigravity 只支持模型映射模式，不支持白名单模式 -->
@@ -1001,6 +932,89 @@
         </div>
       </div>
 
+      <h4 v-if="[(account.platform === 'grok' && account.type === 'oauth'), (isGrokOAuthAccount), (headerOverrideCapable)].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.forwarding') }}</h4>
+
+      <!-- Grok OAuth client-tool prompt cache opt-in -->
+      <div
+        v-if="account.platform === 'grok' && account.type === 'oauth'"
+        class="pt-2"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.grokClientToolCache.title') }}</label>
+            <p class="mt-1 text-xs text-muted">
+              {{ t('admin.accounts.grokClientToolCache.hint') }}
+            </p>
+          </div>
+          <Toggle
+            v-model="grokClientToolCacheEnabled"
+            data-testid="grok-client-tool-cache-toggle"
+            :aria-label="t('admin.accounts.grokClientToolCache.title')"
+          />
+        </div>
+      </div>
+
+      <!-- Grok OAuth media generation eligibility override -->
+      <div
+        v-if="isGrokOAuthAccount"
+        class="pt-2"
+        data-testid="grok-media-eligibility-card"
+      >
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.grokMediaEligibility.title') }}</label>
+            <p class="mt-1 text-xs text-muted">
+              {{ t('admin.accounts.grokMediaEligibility.hint') }}
+            </p>
+          </div>
+          <Select
+            v-model="grokMediaEligibilityMode"
+            data-testid="grok-media-eligibility-mode"
+            :disabled="grokMediaEligibilityLoading"
+            :options="[
+              { value: 'auto', label: t('admin.accounts.grokMediaEligibility.auto') },
+              { value: 'enabled', label: t('admin.accounts.grokMediaEligibility.enabled') },
+              { value: 'disabled', label: t('admin.accounts.grokMediaEligibility.disabled') }
+            ]"
+          />
+          <p v-if="grokMediaEligibilityLoading" class="text-xs text-muted">
+            {{ t('admin.accounts.grokMediaEligibility.loading') }}
+          </p>
+          <p v-else-if="grokMediaEligibilityError" class="text-xs text-error">
+            {{ grokMediaEligibilityError }}
+          </p>
+          <div v-else-if="grokMediaEligibilityState" class="rounded-lg bg-elevated p-3 text-xs">
+            <span class="font-medium">{{ t('admin.accounts.grokMediaEligibility.current') }}</span>
+            <span class="ml-1" data-testid="grok-media-eligibility-status">
+              {{ grokMediaEligibilityState.eligible ? t('admin.accounts.grokMediaEligibility.eligible') : t('admin.accounts.grokMediaEligibility.ineligible') }}
+              · {{ t(`admin.accounts.grokMediaEligibility.reasons.${grokMediaEligibilityState.reason}`) }}
+            </span>
+          </div>
+          <UAlert v-if="grokMediaEligibilityMode === 'enabled'" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.grokMediaEligibility.forceEnableWarning')" />
+          <p v-else-if="grokMediaEligibilityMode === 'auto'" class="text-xs text-muted">
+            {{ t('admin.accounts.grokMediaEligibility.autoHint') }}
+          </p>
+        </div>
+      </div>
+
+      <!-- Header Override Section (eligible API-key platforms + grok OAuth) -->
+      <div v-if="headerOverrideCapable" class="pt-2">
+        <UFormField :label="t('admin.accounts.headerOverride.title')" :description="t('admin.accounts.headerOverride.hint')" class="flex items-center justify-between gap-4 mb-3">
+          <Toggle v-model="headerOverrideEnabled" />
+        </UFormField>
+
+        <div v-if="headerOverrideEnabled" class="space-y-3">
+          <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
+
+          <HeaderOverrideEditor
+            :rows="headerOverrideRows"
+            @update:rows="headerOverrideRows = $event"
+          />
+        </div>
+      </div>
+
+      <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.network') }}</h4>
+
       <div v-if="!isSparkShadow">
         <div class="mb-1 flex items-center gap-2">
           <label class="block text-sm font-medium text-default">{{ t('admin.accounts.proxy') }}</label>
@@ -1014,6 +1028,8 @@
         :platform="account.platform"
         :type="account.type"
       />
+
+      <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.scheduling') }}</h4>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <UFormField :label="t('admin.accounts.concurrency')">
@@ -1086,6 +1102,7 @@
           </div>
         </div>
       </div>
+
       <div class="pt-2">
         <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.expiresAt') }}</label>
         <UInput v-model="expiresAtInput" type="datetime-local" class="w-full" />
@@ -1103,10 +1120,170 @@
         </p>
       </div>
 
+      <div class="pt-2">
+        <UFormField :label="t('common.status')">
+          <Select v-model="form.status" :options="statusOptions" />
+        </UFormField>
+
+        <!-- Mixed Scheduling (only for antigravity accounts, read-only in edit mode) -->
+        <div v-if="account?.platform === 'antigravity'" class="flex items-center gap-2">
+          <UCheckbox v-model="mixedScheduling" disabled :label="t('admin.accounts.mixedScheduling')" />
+          <div class="group relative">
+            <span
+              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-accented text-xs text-muted hover:bg-elevated"
+            >
+              ?
+            </span>
+            <!-- Tooltip（向下显示避免被弹窗裁剪） -->
+            <div
+              class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
+            >
+              {{ t('admin.accounts.mixedSchedulingTooltip') }}
+              <div
+                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900"
+              ></div>
+            </div>
+          </div>
+        </div>
+        <div v-if="account?.platform === 'antigravity'" class="mt-3 flex items-center gap-2">
+          <UCheckbox v-model="allowOverages" :label="t('admin.accounts.allowOverages')" />
+          <div class="group relative">
+            <span
+              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-accented text-xs text-muted hover:bg-elevated"
+            >
+              ?
+            </span>
+            <div
+              class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
+            >
+              {{ t('admin.accounts.allowOveragesTooltip') }}
+              <div
+                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <UCollapsible :unmount-on-hide="false">
         <UButton type="button" color="neutral" variant="ghost" :label="t('admin.accounts.advancedOptions')" trailing-icon="i-lucide-chevron-down" class="group -ms-2.5 font-semibold text-highlighted" :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }" />
         <template #content>
           <div class="space-y-6 pt-4">
+            <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.scheduling') }}</h4>
+
+            <div>
+        <UFormField :label="t('admin.accounts.autoPauseOnExpired')" :description="t('admin.accounts.autoPauseOnExpiredDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="autoPauseOnExpired" />
+        </UFormField>
+      </div>
+
+            <div
+        v-if="account?.platform === 'openai'"
+        class="pt-2 space-y-4"
+      >
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.autoPause5hDisabled') }}</label>
+            <Toggle v-model="autoPause5hDisabled" data-testid="auto-pause-5h-disabled" />
+          </div>
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.autoPauseDisabledHint') }}</p>
+        </div>
+        <UFormField :label="t('admin.accounts.autoPause5hThreshold')" :help="t('admin.accounts.autoPauseThresholdHint')">
+          <UInput
+            v-model.number="autoPause5hThreshold"
+            type="number"
+            min="0"
+            max="100"
+            step="0.1"
+            :disabled="autoPause5hDisabled"
+            data-testid="auto-pause-5h-threshold"
+            class="w-full"
+          />
+        </UFormField>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.autoPause7dDisabled') }}</label>
+            <Toggle v-model="autoPause7dDisabled" data-testid="auto-pause-7d-disabled" />
+          </div>
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.autoPauseDisabledHint') }}</p>
+        </div>
+        <UFormField :label="t('admin.accounts.autoPause7dThreshold')" :help="t('admin.accounts.autoPauseThresholdHint')">
+          <UInput
+            v-model.number="autoPause7dThreshold"
+            type="number"
+            min="0"
+            max="100"
+            step="0.1"
+            :disabled="autoPause7dDisabled"
+            data-testid="auto-pause-7d-threshold"
+            class="w-full"
+          />
+        </UFormField>
+      </div>
+
+            <div
+        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+        class="space-y-4 pt-2"
+        data-testid="auto-reset-credit-settings"
+      >
+        <UFormField :label="t('admin.accounts.autoResetCredit.title')" :description="t('admin.accounts.autoResetCredit.hint')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="autoResetCreditEnabled" data-testid="auto-reset-credit-enabled" />
+        </UFormField>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <UFormField :label="t('admin.accounts.autoResetCredit.threshold5h')">
+            <UInput
+              v-model.number="autoResetCredit5hThreshold"
+              type="number"
+              min="0.1"
+              max="100"
+              step="0.1"
+              :disabled="!autoResetCreditEnabled"
+              data-testid="auto-reset-credit-5h-threshold"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField :label="t('admin.accounts.autoResetCredit.threshold7d')">
+            <UInput
+              v-model.number="autoResetCredit7dThreshold"
+              type="number"
+              min="0.1"
+              max="100"
+              step="0.1"
+              :disabled="!autoResetCreditEnabled"
+              data-testid="auto-reset-credit-7d-threshold"
+              class="w-full"
+            />
+          </UFormField>
+        </div>
+        <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.autoResetCredit.thresholdHint') }}</p>
+      </div>
+
+            <div
+        v-if="supportsAccountSchedulingThresholdOverride"
+        class="pt-2"
+        data-testid="account-scheduling-threshold-section"
+      >
+        <div class="mb-3 flex items-center justify-between">
+          <div>
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.accountSchedulingThresholdOverride') }}</label>
+            <p class="mt-1 text-xs text-muted">
+              {{ t('admin.accounts.accountSchedulingThresholdOverrideHint') }}
+            </p>
+          </div>
+          <UCheckbox v-model="accountSchedulingThresholdOverrideEnabled" data-testid="account-scheduling-threshold-override-enabled" />
+        </div>
+        <UFormField v-if="accountSchedulingThresholdOverrideEnabled" :label="t('admin.accounts.accountSchedulingThresholdOverrideValue')" :help="t('admin.accounts.accountSchedulingThresholdOverrideDisabledHint')">
+          <UInput
+            v-model.number="accountSchedulingThresholdOverrideValue"
+            data-testid="account-scheduling-threshold-override-value"
+            type="number"
+            min="1"
+            max="100"
+            class="w-full"
+          />
+        </UFormField>
+      </div>
+
             <div class="pt-2 space-y-4">
         <UFormField :label="t('admin.accounts.tempUnschedulable.title')" :description="t('admin.accounts.tempUnschedulable.hint')" class="flex items-center justify-between gap-4 mb-3">
           <Toggle v-model="tempUnschedEnabled" />
@@ -1217,34 +1394,9 @@
         </div>
       </div>
 
+            <h4 v-if="[(account?.platform === 'anthropic' || account?.platform === 'antigravity'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'oauth'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'apikey'), (account?.platform === 'openai' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey' && webSearchGlobalEnabled), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token') && codexTurnTickets.length), (account?.platform === 'openai' && account?.type === 'oauth'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey'))].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.forwarding') }}</h4>
 
-      <div
-        v-if="supportsAccountSchedulingThresholdOverride"
-        class="pt-2"
-        data-testid="account-scheduling-threshold-section"
-      >
-        <div class="mb-3 flex items-center justify-between">
-          <div>
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.accountSchedulingThresholdOverride') }}</label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.accountSchedulingThresholdOverrideHint') }}
-            </p>
-          </div>
-          <UCheckbox v-model="accountSchedulingThresholdOverrideEnabled" data-testid="account-scheduling-threshold-override-enabled" />
-        </div>
-        <UFormField v-if="accountSchedulingThresholdOverrideEnabled" :label="t('admin.accounts.accountSchedulingThresholdOverrideValue')" :help="t('admin.accounts.accountSchedulingThresholdOverrideDisabledHint')">
-          <UInput
-            v-model.number="accountSchedulingThresholdOverrideValue"
-            data-testid="account-scheduling-threshold-override-value"
-            type="number"
-            min="1"
-            max="100"
-            class="w-full"
-          />
-        </UFormField>
-      </div>
-
-      <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
+            <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
       <div
         v-if="account?.platform === 'anthropic' || account?.platform === 'antigravity'"
         class="pt-2"
@@ -1254,8 +1406,7 @@
         </UFormField>
       </div>
 
-
-      <!-- OpenAI 自动透传开关（OAuth/API Key） -->
+            <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="pt-2"
@@ -1265,7 +1416,7 @@
         </UFormField>
       </div>
 
-      <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
+            <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'oauth'"
         class="pt-2"
@@ -1275,7 +1426,7 @@
         </UFormField>
       </div>
 
-      <!-- OpenAI Codex hosted image_generation bridge policy -->
+            <!-- OpenAI Codex hosted image_generation bridge policy -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="pt-2"
@@ -1308,7 +1459,7 @@
         </UFormField>
       </div>
 
-      <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
+            <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
         class="pt-2"
@@ -1329,7 +1480,7 @@
         </div>
       </div>
 
-      <!-- OpenAI APIKey Responses API support mode -->
+            <!-- OpenAI APIKey Responses API support mode -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'apikey'"
         class="space-y-4 pt-2"
@@ -1379,36 +1530,12 @@
         </div>
       </div>
 
-      <!-- OpenAI APIKey images: backfill b64_json from url -->
+            <!-- OpenAI APIKey images: backfill b64_json from url -->
       <UFormField v-if="account?.platform === 'openai' && account?.type === 'apikey'" :label="t('admin.accounts.openai.imagesUrlToB64Json')" :description="t('admin.accounts.openai.imagesUrlToB64JsonDesc')" class="flex items-center justify-between gap-4">
         <Toggle v-model="openAIImagesUrlToB64JsonEnabled" data-testid="openai-images-url-to-b64-json-toggle" />
       </UFormField>
 
-      <div
-        v-if="account?.type === 'apikey'"
-        class="flex items-center justify-between gap-4 pt-2"
-      >
-        <div>
-          <label class="block text-sm font-medium text-default">{{ t('admin.accounts.upstreamBilling.autoProbe') }}</label>
-          <p class="mt-1 text-xs text-muted">
-            {{ t('admin.accounts.upstreamBilling.autoProbeHint') }}
-          </p>
-        </div>
-        <Toggle
-          :model-value="upstreamBillingAutoProbeEnabled"
-          data-testid="upstream-billing-auto-probe"
-          :aria-label="t('admin.accounts.upstreamBilling.autoProbe')"
-          @update:model-value="handleUpstreamBillingAutoProbeChange"
-        />
-      </div>
-
-      <OllamaCloudUsageSettings
-        v-if="account?.ollama_cloud_usage?.eligible"
-        :account="account"
-        @updated="handleOllamaCloudUsageUpdated"
-      />
-
-      <!-- Anthropic API Key 自动透传开关 -->
+            <!-- Anthropic API Key 自动透传开关 -->
       <div
         v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
         class="pt-2"
@@ -1418,7 +1545,7 @@
         </UFormField>
       </div>
 
-      <div
+            <div
         v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
         class="pt-2"
       >
@@ -1440,7 +1567,7 @@
         </div>
       </div>
 
-      <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
+            <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
       <div
         v-if="account?.platform === 'anthropic' && account?.type === 'apikey' && webSearchGlobalEnabled"
         class="pt-2"
@@ -1464,7 +1591,181 @@
         </div>
       </div>
 
-      <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
+            <div
+        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')"
+        class="pt-2"
+      >
+        <UFormField :label="t('admin.accounts.openai.codexCLIOnly')" :description="t('admin.accounts.openai.codexCLIOnlyDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="codexCLIOnlyEnabled" />
+        </UFormField>
+        <UFormField v-if="codexCLIOnlyEnabled" :label="t('admin.accounts.openai.codexCLIOnlyAppServer')" :description="t('admin.accounts.openai.codexCLIOnlyAppServerDesc')" class="flex items-center justify-between gap-4 mt-4">
+          <Toggle v-model="codexCLIOnlyAppServerEnabled" />
+        </UFormField>
+      </div>
+
+            <!-- Codex 292 门票状态（仅 OpenAI OAuth） -->
+      <div
+        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token') && codexTurnTickets.length"
+        class="pt-2"
+      >
+        <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexTurnTicket') }}</label>
+        <p class="mt-1 text-xs text-muted">
+          {{ t('admin.accounts.openai.codexTurnTicketDesc') }}
+        </p>
+        <div class="mt-3 space-y-1.5">
+          <div v-for="ticket in codexTurnTickets" :key="ticket.model" class="flex items-center justify-between text-sm">
+            <span class="font-medium">{{ ticket.model }}</span>
+            <span v-if="ticket.ready" class="text-success">
+              {{ t('admin.accounts.openai.codexTurnTicketReady', { time: formatCodexTicketRemaining(ticket.remaining_seconds) }) }}
+            </span>
+            <span v-else-if="ticket.blocked" class="text-warning">
+              {{ t('admin.accounts.openai.codexTurnTicketPaused') }}
+            </span>
+            <span v-else class="text-muted">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
+          </div>
+        </div>
+      </div>
+
+            <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'oauth'"
+        class="pt-2"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
+            <p class="mt-1 text-xs text-muted">
+              {{ t('admin.accounts.openai.codexFingerprintModeDesc') }}
+            </p>
+          </div>
+          <div class="w-52 flex-shrink-0">
+            <Select v-model="codexFingerprintMode" data-testid="edit-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
+          </div>
+        </div>
+      </div>
+
+            <div
+        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        class="pt-2 space-y-4"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactMode') }}</label>
+            <p class="mt-1 text-xs text-muted">
+              {{ t('admin.accounts.openai.compactModeDesc') }}
+            </p>
+          </div>
+          <div class="w-44">
+            <Select v-model="openAICompactMode" :options="openAICompactModeOptions" />
+          </div>
+        </div>
+        <div class="rounded-lg bg-elevated px-3 py-2 text-xs text-toned">
+          <span class="font-medium">{{ t(openAICompactStatusKey) }}</span>
+          <span
+            v-if="account?.extra?.openai_compact_checked_at"
+            class="ml-2 text-muted"
+          >
+            {{ t('admin.accounts.openai.compactLastChecked') }}:
+            {{ formatDateTime(new Date(String(account.extra.openai_compact_checked_at))) }}
+          </span>
+        </div>
+        <div>
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactModelMapping') }}</label>
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</p>
+          <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
+            <div
+              v-for="(mapping, index) in openAICompactModelMappings"
+              :key="getOpenAICompactModelMappingKey(mapping)"
+              class="flex items-center gap-2"
+            >
+              <UInput
+                v-model="mapping.from"
+                type="text"
+                :placeholder="t('admin.accounts.fromModel')"
+                class="flex-1"
+              />
+              <span class="text-muted">→</span>
+              <UInput
+                v-model="mapping.to"
+                type="text"
+                :placeholder="t('admin.accounts.toModel')"
+                class="flex-1"
+              />
+              <UButton
+                color="error"
+                variant="ghost"
+                square
+                size="sm"
+                icon="i-lucide-trash-2"
+                :aria-label="t('admin.accounts.formActions.remove')"
+                type="button"
+                @click="removeOpenAICompactModelMapping(index)"
+              />
+            </div>
+          </div>
+          <UButton color="neutral" variant="outline" type="button" @click="addOpenAICompactModelMapping" class="text-sm">
+            + {{ t('admin.accounts.addMapping') }}
+          </UButton>
+        </div>
+      </div>
+
+            <h4 v-if="[(account?.type === 'apikey'), (account?.ollama_cloud_usage?.eligible), (account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow)].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.billing') }}</h4>
+
+            <div
+        v-if="account?.type === 'apikey'"
+        class="flex items-center justify-between gap-4 pt-2"
+      >
+        <div>
+          <label class="block text-sm font-medium text-default">{{ t('admin.accounts.upstreamBilling.autoProbe') }}</label>
+          <p class="mt-1 text-xs text-muted">
+            {{ t('admin.accounts.upstreamBilling.autoProbeHint') }}
+          </p>
+        </div>
+        <Toggle
+          :model-value="upstreamBillingAutoProbeEnabled"
+          data-testid="upstream-billing-auto-probe"
+          :aria-label="t('admin.accounts.upstreamBilling.autoProbe')"
+          @update:model-value="handleUpstreamBillingAutoProbeChange"
+        />
+      </div>
+
+            <OllamaCloudUsageSettings
+        v-if="account?.ollama_cloud_usage?.eligible"
+        :account="account"
+        @updated="handleOllamaCloudUsageUpdated"
+      />
+
+            <!-- OpenAI API 长上下文计费开关 -->
+      <div
+        v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        class="pt-2"
+      >
+        <UFormField :label="t('admin.accounts.openai.longContextBilling')" :description="t('admin.accounts.openai.longContextBillingDesc')" class="flex items-center justify-between gap-4">
+          <Toggle v-model="openAILongContextBillingEnabled" data-testid="openai-long-context-billing-toggle" />
+        </UFormField>
+      </div>
+
+            <!-- OpenAI 订阅档位手动覆盖（Plus/Pro/Free），仅 OAuth 非影子账号 -->
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+        class="pt-2"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.planType') }}</label>
+            <p class="mt-1 text-xs text-muted">
+              {{ t('admin.accounts.openai.planTypeDesc') }}
+            </p>
+          </div>
+          <div class="w-44 flex-shrink-0">
+            <Select v-model="editPlanType" :options="planTypeOptions" />
+          </div>
+        </div>
+      </div>
+
+            <h4 v-if="[(account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')), (account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'), (account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token'))].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.limits') }}</h4>
+
+            <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
       <div
         v-if="account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')"
         class="pt-2 space-y-4"
@@ -1567,240 +1868,7 @@
         />
       </div>
 
-      <!-- OpenAI API 长上下文计费开关 -->
-      <div
-        v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
-        class="pt-2"
-      >
-        <UFormField :label="t('admin.accounts.openai.longContextBilling')" :description="t('admin.accounts.openai.longContextBillingDesc')" class="flex items-center justify-between gap-4">
-          <Toggle v-model="openAILongContextBillingEnabled" data-testid="openai-long-context-billing-toggle" />
-        </UFormField>
-      </div>
-
-      <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')"
-        class="pt-2"
-      >
-        <UFormField :label="t('admin.accounts.openai.codexCLIOnly')" :description="t('admin.accounts.openai.codexCLIOnlyDesc')" class="flex items-center justify-between gap-4">
-          <Toggle v-model="codexCLIOnlyEnabled" />
-        </UFormField>
-        <UFormField v-if="codexCLIOnlyEnabled" :label="t('admin.accounts.openai.codexCLIOnlyAppServer')" :description="t('admin.accounts.openai.codexCLIOnlyAppServerDesc')" class="flex items-center justify-between gap-4 mt-4">
-          <Toggle v-model="codexCLIOnlyAppServerEnabled" />
-        </UFormField>
-      </div>
-
-      <!-- Codex 292 门票状态（仅 OpenAI OAuth） -->
-      <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token') && codexTurnTickets.length"
-        class="pt-2"
-      >
-        <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexTurnTicket') }}</label>
-        <p class="mt-1 text-xs text-muted">
-          {{ t('admin.accounts.openai.codexTurnTicketDesc') }}
-        </p>
-        <div class="mt-3 space-y-1.5">
-          <div v-for="ticket in codexTurnTickets" :key="ticket.model" class="flex items-center justify-between text-sm">
-            <span class="font-medium">{{ ticket.model }}</span>
-            <span v-if="ticket.ready" class="text-success">
-              {{ t('admin.accounts.openai.codexTurnTicketReady', { time: formatCodexTicketRemaining(ticket.remaining_seconds) }) }}
-            </span>
-            <span v-else-if="ticket.blocked" class="text-warning">
-              {{ t('admin.accounts.openai.codexTurnTicketPaused') }}
-            </span>
-            <span v-else class="text-muted">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
-      <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth'"
-        class="pt-2"
-      >
-        <div class="flex items-center justify-between gap-4">
-          <div class="min-w-0">
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.codexFingerprintModeDesc') }}
-            </p>
-          </div>
-          <div class="w-52 flex-shrink-0">
-            <Select v-model="codexFingerprintMode" data-testid="edit-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
-          </div>
-        </div>
-      </div>
-
-      <!-- OpenAI 订阅档位手动覆盖（Plus/Pro/Free），仅 OAuth 非影子账号 -->
-      <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
-        class="pt-2"
-      >
-        <div class="flex items-center justify-between gap-4">
-          <div class="min-w-0">
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.planType') }}</label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.planTypeDesc') }}
-            </p>
-          </div>
-          <div class="w-44 flex-shrink-0">
-            <Select v-model="editPlanType" :options="planTypeOptions" />
-          </div>
-        </div>
-      </div>
-
-      <div
-        v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
-        class="pt-2 space-y-4"
-      >
-        <div class="flex items-center justify-between">
-          <div>
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactMode') }}</label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.compactModeDesc') }}
-            </p>
-          </div>
-          <div class="w-44">
-            <Select v-model="openAICompactMode" :options="openAICompactModeOptions" />
-          </div>
-        </div>
-        <div class="rounded-lg bg-elevated px-3 py-2 text-xs text-toned">
-          <span class="font-medium">{{ t(openAICompactStatusKey) }}</span>
-          <span
-            v-if="account?.extra?.openai_compact_checked_at"
-            class="ml-2 text-muted"
-          >
-            {{ t('admin.accounts.openai.compactLastChecked') }}:
-            {{ formatDateTime(new Date(String(account.extra.openai_compact_checked_at))) }}
-          </span>
-        </div>
-        <div>
-          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactModelMapping') }}</label>
-          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</p>
-          <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
-            <div
-              v-for="(mapping, index) in openAICompactModelMappings"
-              :key="getOpenAICompactModelMappingKey(mapping)"
-              class="flex items-center gap-2"
-            >
-              <UInput
-                v-model="mapping.from"
-                type="text"
-                :placeholder="t('admin.accounts.fromModel')"
-                class="flex-1"
-              />
-              <span class="text-muted">→</span>
-              <UInput
-                v-model="mapping.to"
-                type="text"
-                :placeholder="t('admin.accounts.toModel')"
-                class="flex-1"
-              />
-              <UButton
-                color="error"
-                variant="ghost"
-                square
-                size="sm"
-                icon="i-lucide-trash-2"
-                :aria-label="t('admin.accounts.formActions.remove')"
-                type="button"
-                @click="removeOpenAICompactModelMapping(index)"
-              />
-            </div>
-          </div>
-          <UButton color="neutral" variant="outline" type="button" @click="addOpenAICompactModelMapping" class="text-sm">
-            + {{ t('admin.accounts.addMapping') }}
-          </UButton>
-        </div>
-      </div>
-
-      <div>
-        <UFormField :label="t('admin.accounts.autoPauseOnExpired')" :description="t('admin.accounts.autoPauseOnExpiredDesc')" class="flex items-center justify-between gap-4">
-          <Toggle v-model="autoPauseOnExpired" />
-        </UFormField>
-      </div>
-
-      <div
-        v-if="account?.platform === 'openai'"
-        class="pt-2 space-y-4"
-      >
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.autoPause5hDisabled') }}</label>
-            <Toggle v-model="autoPause5hDisabled" data-testid="auto-pause-5h-disabled" />
-          </div>
-          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.autoPauseDisabledHint') }}</p>
-        </div>
-        <UFormField :label="t('admin.accounts.autoPause5hThreshold')" :help="t('admin.accounts.autoPauseThresholdHint')">
-          <UInput
-            v-model.number="autoPause5hThreshold"
-            type="number"
-            min="0"
-            max="100"
-            step="0.1"
-            :disabled="autoPause5hDisabled"
-            data-testid="auto-pause-5h-threshold"
-            class="w-full"
-          />
-        </UFormField>
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.autoPause7dDisabled') }}</label>
-            <Toggle v-model="autoPause7dDisabled" data-testid="auto-pause-7d-disabled" />
-          </div>
-          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.autoPauseDisabledHint') }}</p>
-        </div>
-        <UFormField :label="t('admin.accounts.autoPause7dThreshold')" :help="t('admin.accounts.autoPauseThresholdHint')">
-          <UInput
-            v-model.number="autoPause7dThreshold"
-            type="number"
-            min="0"
-            max="100"
-            step="0.1"
-            :disabled="autoPause7dDisabled"
-            data-testid="auto-pause-7d-threshold"
-            class="w-full"
-          />
-        </UFormField>
-      </div>
-
-      <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
-        class="space-y-4 pt-2"
-        data-testid="auto-reset-credit-settings"
-      >
-        <UFormField :label="t('admin.accounts.autoResetCredit.title')" :description="t('admin.accounts.autoResetCredit.hint')" class="flex items-center justify-between gap-4">
-          <Toggle v-model="autoResetCreditEnabled" data-testid="auto-reset-credit-enabled" />
-        </UFormField>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField :label="t('admin.accounts.autoResetCredit.threshold5h')">
-            <UInput
-              v-model.number="autoResetCredit5hThreshold"
-              type="number"
-              min="0.1"
-              max="100"
-              step="0.1"
-              :disabled="!autoResetCreditEnabled"
-              data-testid="auto-reset-credit-5h-threshold"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField :label="t('admin.accounts.autoResetCredit.threshold7d')">
-            <UInput
-              v-model.number="autoResetCredit7dThreshold"
-              type="number"
-              min="0.1"
-              max="100"
-              step="0.1"
-              :disabled="!autoResetCreditEnabled"
-              data-testid="auto-reset-credit-7d-threshold"
-              class="w-full"
-            />
-          </UFormField>
-        </div>
-        <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.autoResetCredit.thresholdHint') }}</p>
-      </div>
-
-      <!-- 配额控制 (Anthropic OAuth/SetupToken: 亲和 + 窗口费用 + 会话 + RPM 等) -->
+            <!-- 配额控制 (Anthropic OAuth/SetupToken: 亲和 + 窗口费用 + 会话 + RPM 等) -->
       <div
         v-if="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token')"
         class="pt-2 space-y-4"
@@ -2034,51 +2102,6 @@
           </div>
         </template>
       </UCollapsible>
-
-      <div class="pt-2">
-        <UFormField :label="t('common.status')">
-          <Select v-model="form.status" :options="statusOptions" />
-        </UFormField>
-
-        <!-- Mixed Scheduling (only for antigravity accounts, read-only in edit mode) -->
-        <div v-if="account?.platform === 'antigravity'" class="flex items-center gap-2">
-          <UCheckbox v-model="mixedScheduling" disabled :label="t('admin.accounts.mixedScheduling')" />
-          <div class="group relative">
-            <span
-              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-accented text-xs text-muted hover:bg-elevated"
-            >
-              ?
-            </span>
-            <!-- Tooltip（向下显示避免被弹窗裁剪） -->
-            <div
-              class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
-            >
-              {{ t('admin.accounts.mixedSchedulingTooltip') }}
-              <div
-                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900"
-              ></div>
-            </div>
-          </div>
-        </div>
-        <div v-if="account?.platform === 'antigravity'" class="mt-3 flex items-center gap-2">
-          <UCheckbox v-model="allowOverages" :label="t('admin.accounts.allowOverages')" />
-          <div class="group relative">
-            <span
-              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-accented text-xs text-muted hover:bg-elevated"
-            >
-              ?
-            </span>
-            <div
-              class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
-            >
-              {{ t('admin.accounts.allowOveragesTooltip') }}
-              <div
-                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900"
-              ></div>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <!-- Group Selection - 仅标准模式显示 -->
       <GroupSelector
