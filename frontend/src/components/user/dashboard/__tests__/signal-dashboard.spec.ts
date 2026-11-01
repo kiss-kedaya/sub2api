@@ -247,6 +247,21 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     wrapper.unmount()
   })
 
+  it('lists the top five models with shares of all tokens and links to the full usage page', () => {
+    const models = [70, 60, 50, 40, 30, 20, 30].map((total_tokens, i) => ({ model: `m${i}`, total_tokens })) as any
+    const wrapper = mount(Models, { props: { models, startDate: '2026-09-11', endDate: '2026-09-17', loading: false } })
+    // The doughnut keeps every model; the overview table stops at five.
+    expect(wrapper.getComponent({ name: 'Doughnut' }).props('data').datasets[0].data).toHaveLength(7)
+    const rows = wrapper.findAll('.signal-model-legend tbody tr')
+    expect(rows).toHaveLength(5)
+    expect(rows.map(row => row.text().match(/^m\d/)?.[0])).toEqual(['m0', 'm1', 'm2', 'm3', 'm4'])
+    // 70 of 300 tokens: the share is of all models, not of the five shown.
+    expect(rows[0].text()).toContain('23.3%')
+    const link = wrapper.findAllComponents({ name: 'RouterLink' }).find(item => item.props('to') === '/usage')
+    expect(link?.text()).toContain('dashboard.viewAllUsage')
+    wrapper.unmount()
+  })
+
   it('renders an empty platform panel and keeps summary metrics out of platform mode', () => {
     const wrapper = mount(Stats, { props: { stats: { ...stats, total_actual_cost: 0, today_actual_cost: 0, by_platform: [] }, balance: 0, isSimple: false, section: 'platforms' } })
     expect(wrapper.findAll('.signal-metric')).toHaveLength(0)

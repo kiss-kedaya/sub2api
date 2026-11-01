@@ -8,6 +8,7 @@
   >
     <template #actions>
       <span class="signal-model-period text-xs text-muted tabular-nums break-words">{{ startDate }} / {{ endDate }}</span>
+      <UButton to="/usage" color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-arrow-right" class="signal-model-all -me-2">{{ t('dashboard.viewAllUsage') }}</UButton>
     </template>
     <div class="p-4 sm:p-6">
       <div v-if="loading" class="signal-model-state"><LoadingSpinner size="sm" /></div>
@@ -15,7 +16,7 @@
       <div v-else-if="modelData" class="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
         <div class="size-40 shrink-0"><Doughnut :data="modelData" :options="options" /></div>
         <UTable
-          class="signal-model-legend max-h-72 w-full min-w-0 flex-1"
+          class="signal-model-legend w-full min-w-0 flex-1"
           :data="rows"
           :columns="columns"
           :ui="compactTableUi"
@@ -63,8 +64,11 @@ const modelData = computed(() => totalTokens.value > 0 ? {
   datasets: [{ data: rankedModels.value.map(model => model.total_tokens), backgroundColor: rankedModels.value.map((_, index) => colors[index % colors.length]), borderWidth: 0 }],
 } : null)
 
+// The overview lists the top five; shares stay of all tokens and the doughnut keeps every
+// model. The full table is on /usage ("view all").
+const TOP_ROWS = 5
 interface ModelRow { model: string; total_tokens: number; share: string; color: string }
-const rows = computed<ModelRow[]>(() => rankedModels.value.map((model, index) => ({
+const rows = computed<ModelRow[]>(() => rankedModels.value.slice(0, TOP_ROWS).map((model, index) => ({
   model: model.model,
   total_tokens: model.total_tokens,
   share: `${(model.total_tokens / totalTokens.value * 100).toFixed(1)}%`,

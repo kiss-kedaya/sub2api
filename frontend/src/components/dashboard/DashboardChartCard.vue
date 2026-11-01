@@ -1,9 +1,10 @@
 <template>
   <UCard :ui="{ root: 'min-w-0 overflow-visible', body: 'p-0 sm:p-0 overflow-hidden rounded-b-[inherit]' }">
     <template #header>
-      <div class="flex flex-wrap items-start justify-between gap-3">
+      <!-- With a big number the actions sit at its top; a title-only header centres them. -->
+      <div class="flex flex-wrap justify-between gap-3" :class="value !== undefined ? 'items-start' : 'items-center'">
         <div class="min-w-0">
-          <p class="mb-1.5 text-xs uppercase text-muted">{{ title }}</p>
+          <p class="text-xs uppercase text-muted" :class="{ 'mb-1.5': value !== undefined }">{{ title }}</p>
           <p v-if="value !== undefined" class="text-3xl font-semibold text-highlighted">{{ value }}</p>
         </div>
         <div v-if="$slots.actions" class="flex min-w-0 flex-wrap items-center gap-2">

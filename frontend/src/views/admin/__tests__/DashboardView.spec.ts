@@ -5,10 +5,11 @@ import { createPinia, setActivePinia } from 'pinia'
 import type { DashboardStats } from '@/types'
 import DashboardView from '../DashboardView.vue'
 
-const { getSnapshotV2, getUserUsageTrend, getUserSpendingRanking } = vi.hoisted(() => ({
+const { getSnapshotV2, getUserUsageTrend, getUserSpendingRanking, push } = vi.hoisted(() => ({
   getSnapshotV2: vi.fn(),
   getUserUsageTrend: vi.fn(),
-  getUserSpendingRanking: vi.fn()
+  getUserSpendingRanking: vi.fn(),
+  push: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -30,7 +31,7 @@ vi.mock('@/stores/app', () => ({
 // UButton / UPageCard links render through Nuxt UI's router-aware ULink (useRoute, RouterLink).
 vi.mock('vue-router', () => ({
   useRouter: () => ({
-    push: vi.fn()
+    push
   }),
   useRoute: () => ({ path: '/admin/dashboard', query: {}, hash: '' }),
   RouterLink: { name: 'RouterLink', props: ['to', 'custom'], template: '<a><slot /></a>' }
@@ -102,6 +103,7 @@ describe('admin DashboardView', () => {
     getSnapshotV2.mockReset()
     getUserUsageTrend.mockReset()
     getUserSpendingRanking.mockReset()
+    push.mockReset()
 
     getSnapshotV2.mockResolvedValue({
       stats: createDashboardStats(),
@@ -191,6 +193,64 @@ describe('admin DashboardView', () => {
     ]) expect(text).toContain(value)
     const links = wrapper.findAllComponents({ name: 'RouterLink' }).map((link) => link.props('to'))
     expect(links).toContain('/admin/groups')
+    wrapper.unmount()
+  })
+
+  it('shows top-five model and spender lists that link to the full usage page', async () => {
+    const models = Array.from({ length: 7 }, (_, i) => ({
+      model: `model-${i}`, requests: 10 + i, input_tokens: 0, output_tokens: 0,
+      cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: (i + 1) * 1000,
+      cost: 1, actual_cost: i + 1, account_cost: 0
+    }))
+    getSnapshotV2.mockResolvedValue({ stats: createDashboardStats(), trend: [], models })
+    getUserSpendingRanking.mockResolvedValue({
+      ranking: Array.from({ length: 5 }, (_, i) => ({
+        user_id: 100 + i, email: `u${i}@example.com`, username: i === 0 ? 'alice' : '',
+        actual_cost: 50 - i, requests: 20 - i, tokens: 9000 - i
+      })),
+      total_actual_cost: 500, total_requests: 200, total_tokens: 90000, start_date: '', end_date: ''
+    })
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          TokenUsageTrend: true,
+          Line: true
+        }
+      }
+    })
+    await flushPromises()
+
+    // The ranking asks the server for five rows only; the full ranking is on /admin/usage.
+    expect(getUserSpendingRanking).toHaveBeenCalledWith(expect.objectContaining({ limit: 5 }))
+
+    // Models: the five with the most tokens, largest first.
+    const modelRows = wrapper.findAll('.admin-top-models tbody tr')
+    expect(modelRows).toHaveLength(5)
+    expect(modelRows[0].text()).toContain('model-6')
+    expect(modelRows[0].text()).toContain('7.00K')
+    expect(modelRows[0].text()).toContain('$7.00')
+    expect(wrapper.find('.admin-top-models').text()).not.toContain('model-1')
+
+    // Spenders: rank, name (username, else email), and a row opens that user's usage.
+    const spendRows = wrapper.findAll('.admin-top-spenders tbody tr')
+    expect(spendRows).toHaveLength(5)
+    expect(spendRows[0].text()).toContain('#1')
+    expect(spendRows[0].text()).toContain('alice')
+    expect(spendRows[1].text()).toContain('u1@example.com')
+    await spendRows[1].trigger('click')
+    expect(push).toHaveBeenCalledWith({
+      path: '/admin/usage',
+      query: expect.objectContaining({ user_id: '101' })
+    })
+
+    // Both lists end in "view all" on the usage page for the same date range.
+    const usageLinks = wrapper.findAllComponents({ name: 'RouterLink' })
+      .map((link) => link.props('to'))
+      .filter((to) => typeof to === 'object' && to.path === '/admin/usage')
+    expect(usageLinks).toHaveLength(2)
+    expect(usageLinks[0].query).toEqual(expect.objectContaining({ start_date: expect.any(String), end_date: expect.any(String) }))
     wrapper.unmount()
   })
 })

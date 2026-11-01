@@ -86,22 +86,34 @@
           </div>
         </DashboardChartCard>
 
-        <UCard class="admin-model-card" :ui="{ root: 'min-w-0', body: 'p-0 sm:p-0' }">
-          <ModelDistributionChart
-            :model-stats="modelStats"
-            :enable-ranking-view="true"
-            :ranking-items="rankingItems"
-            :ranking-total-actual-cost="rankingTotalActualCost"
-            :ranking-total-requests="rankingTotalRequests"
-            :ranking-total-tokens="rankingTotalTokens"
+        <!-- Short lists; the full distribution, breakdowns and ranking live on /admin/usage -->
+        <div class="grid gap-4 sm:gap-6 xl:grid-cols-2">
+          <DashboardTopList
+            class="admin-top-models"
+            :title="`${t('admin.dashboard.modelDistribution')} Top ${topLimit}`"
+            :rows="topModels"
+            :columns="modelColumns"
+            :to="usageLink"
+            :view-all-label="t('admin.dashboard.viewAllUsage')"
+            :empty-label="t('admin.dashboard.noDataAvailable')"
+            :error-label="t('admin.dashboard.failedToLoad')"
             :loading="chartsLoading"
-            :ranking-loading="rankingLoading"
-            :ranking-error="rankingError"
-            :start-date="startDate"
-            :end-date="endDate"
-            @ranking-click="goToUserUsage"
           />
-        </UCard>
+          <DashboardTopList
+            class="admin-top-spenders"
+            :title="`${t('admin.dashboard.spendingRankingTitle')} Top ${topLimit}`"
+            :rows="rankingItems"
+            :columns="rankingColumns"
+            :to="usageLink"
+            :view-all-label="t('admin.dashboard.viewAllUsage')"
+            :empty-label="t('admin.dashboard.noDataAvailable')"
+            :error-label="t('admin.dashboard.failedToLoad')"
+            :loading="rankingLoading"
+            :error="rankingError"
+            selectable
+            @select="goToUserUsage"
+          />
+        </div>
 
         <!-- User Usage Trend (Top 12) -->
         <DashboardChartCard
@@ -124,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, h, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
@@ -140,12 +152,13 @@ import type {
 } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import DashboardToolbar from '@/components/dashboard/DashboardToolbar.vue'
 import DashboardStat from '@/components/dashboard/DashboardStat.vue'
 import DashboardChartCard from '@/components/dashboard/DashboardChartCard.vue'
 import DashboardQuickLinks from '@/components/dashboard/DashboardQuickLinks.vue'
+import DashboardTopList from '@/components/dashboard/DashboardTopList.vue'
+import type { TableColumn } from '@nuxt/ui'
 import { statCorners, statGridClass, type DashboardQuickLink } from '@/components/dashboard/dashboardUi'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { useSiteColorMode } from '@/composables/useSiteTheme'
@@ -189,13 +202,12 @@ const trendData = ref<TrendDataPoint[]>([])
 const modelStats = ref<ModelStat[]>([])
 const userTrend = ref<UserUsageTrendPoint[]>([])
 const rankingItems = ref<UserSpendingRankingItem[]>([])
-const rankingTotalActualCost = ref(0)
-const rankingTotalRequests = ref(0)
-const rankingTotalTokens = ref(0)
 let chartLoadSeq = 0
 let usersTrendLoadSeq = 0
 let rankingLoadSeq = 0
-const rankingLimit = 12
+// The overview shows short lists; the full ones are on /admin/usage.
+const topLimit = 5
+const rankingLimit = topLimit
 
 // Helper function to format date in local timezone
 const formatLocalDate = (date: Date): string => {
@@ -427,6 +439,50 @@ const goToUserUsage = (item: UserSpendingRankingItem) => {
   })
 }
 
+// Short lists for the overview. "View all" opens /admin/usage on the same date range, where
+// the full model distribution (with per-user breakdown) and the user ranking live.
+const usageLink = computed(() => ({
+  path: '/admin/usage',
+  query: { start_date: startDate.value, end_date: endDate.value }
+}))
+
+const topModels = computed(() =>
+  [...modelStats.value]
+    .sort((a, b) => toFiniteNumber(b.total_tokens) - toFiniteNumber(a.total_tokens))
+    .slice(0, topLimit)
+)
+
+const rankingUserLabel = (item: UserSpendingRankingItem): string =>
+  item.username?.trim() || item.email?.trim() || t('admin.redeem.userPrefix', { id: item.user_id })
+
+const right = (text: string, strong = false) =>
+  h('div', { class: ['text-right tabular-nums', strong && 'font-medium text-highlighted'] }, text)
+
+const modelColumns = computed<TableColumn<ModelStat>[]>(() => [
+  {
+    accessorKey: 'model',
+    header: t('admin.dashboard.model'),
+    cell: ({ row }) => h('span', { class: 'block max-w-56 truncate font-medium text-highlighted', title: row.original.model }, row.original.model)
+  },
+  { id: 'requests', header: () => right(t('admin.dashboard.requests')), cell: ({ row }) => right(formatNumber(row.original.requests)) },
+  { id: 'tokens', header: () => right(t('admin.dashboard.tokens')), cell: ({ row }) => right(formatTokens(row.original.total_tokens)) },
+  { id: 'actual', header: () => right(t('admin.dashboard.actual')), cell: ({ row }) => right(`$${formatCost(row.original.actual_cost)}`, true) }
+])
+
+const rankingColumns = computed<TableColumn<UserSpendingRankingItem>[]>(() => [
+  {
+    id: 'user',
+    header: t('admin.dashboard.spendingRankingUser'),
+    cell: ({ row }) => h('span', { class: 'flex min-w-0 items-center gap-2' }, [
+      h('span', { class: 'shrink-0 text-xs text-dimmed tabular-nums' }, `#${row.index + 1}`),
+      h('span', { class: 'block max-w-48 truncate font-medium text-highlighted', title: rankingUserLabel(row.original) }, rankingUserLabel(row.original))
+    ])
+  },
+  { id: 'requests', header: () => right(t('admin.dashboard.spendingRankingRequests')), cell: ({ row }) => right(formatNumber(row.original.requests)) },
+  { id: 'tokens', header: () => right(t('admin.dashboard.spendingRankingTokens')), cell: ({ row }) => right(formatTokens(row.original.tokens)) },
+  { id: 'spend', header: () => right(t('admin.dashboard.spendingRankingSpend')), cell: ({ row }) => right(`$${formatCost(row.original.actual_cost)}`, true) }
+])
+
 // Date range change handler
 const onDateRangeChange = (range: {
   startDate: string
@@ -520,17 +576,11 @@ const loadUserSpendingRanking = async () => {
       limit: rankingLimit
     })
     if (currentSeq !== rankingLoadSeq) return
-    rankingItems.value = response.ranking || []
-    rankingTotalActualCost.value = response.total_actual_cost || 0
-    rankingTotalRequests.value = response.total_requests || 0
-    rankingTotalTokens.value = response.total_tokens || 0
+    rankingItems.value = (response.ranking || []).slice(0, topLimit)
   } catch (error) {
     if (currentSeq !== rankingLoadSeq) return
     console.error('Error loading user spending ranking:', error)
     rankingItems.value = []
-    rankingTotalActualCost.value = 0
-    rankingTotalRequests.value = 0
-    rankingTotalTokens.value = 0
     rankingError.value = true
   } finally {
     if (currentSeq === rankingLoadSeq) {
@@ -562,67 +612,16 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* The shared trend and model components bring their own `.card`; inside these Nuxt UI cards
-   they are only content. The doubled class outranks the admin skin's `.console-signal.signal-admin .card`. */
-.admin-trend-card.admin-trend-card :deep(.card),
-.admin-model-card.admin-model-card :deep(.card) {
+/* The shared trend component brings its own `.card`; inside this Nuxt UI card it is only the
+   chart. The doubled class outranks the admin skin's `.console-signal.signal-admin .card`. */
+.admin-trend-card.admin-trend-card :deep(.card) {
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
 }
 
-.admin-trend-card.admin-trend-card :deep(.card) { padding: 0; }
 .admin-trend-card :deep(.card > h3) { display: none; }
 .admin-trend-card :deep(.h-48) { height: 280px; }
 
-/* Model distribution: its header row reads like the other card headers. */
-.admin-model-card :deep(.card) { padding: 16px; }
-.admin-model-card :deep(.card > div:first-child) {
-  margin: -16px -16px 16px;
-  padding: 16px;
-  border-bottom: 1px solid var(--ui-border);
-}
-.admin-model-card :deep(.card > div:first-child > h3) {
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 16px;
-  text-transform: uppercase;
-}
-
-/* Its tables as the template's HomeSales: tinted header row with rounded ends, hairline rows.
-   Direct children only, so the expanded per-user sub-table keeps its own look. */
-.admin-model-card :deep(.max-h-48) { max-height: 300px; }
-.admin-model-card :deep(.max-h-48 > table) { border-collapse: separate; border-spacing: 0; }
-.admin-model-card :deep(.max-h-48 > table > thead > tr > th) {
-  padding: 8px 10px;
-  border-block: 1px solid var(--ui-border);
-  background: color-mix(in srgb, var(--ui-bg-elevated) 50%, transparent);
-  color: var(--ui-text-highlighted);
-  font-weight: 600;
-}
-.admin-model-card :deep(.max-h-48 > table > thead > tr > th:first-child) {
-  border-left: 1px solid var(--ui-border);
-  border-radius: 8px 0 0 8px;
-}
-.admin-model-card :deep(.max-h-48 > table > thead > tr > th:last-child) {
-  border-right: 1px solid var(--ui-border);
-  border-radius: 0 8px 8px 0;
-}
-.admin-model-card :deep(.max-h-48 > table > tbody > tr > td:not([colspan])) {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--ui-border);
-  color: var(--ui-text-muted);
-}
-.admin-model-card :deep(.max-h-48 > table > tbody > tr > td:first-child:not([colspan])),
-.admin-model-card :deep(.max-h-48 > table > tbody > tr > td.text-green-600) {
-  color: var(--ui-text-highlighted);
-  font-weight: 500;
-}
-.admin-model-card :deep(.max-h-48 > table > tbody > tr:last-child > td) { border-bottom: 0; }
-
-@media (min-width: 640px) {
-  .admin-model-card :deep(.card) { padding: 16px 24px; }
-  .admin-model-card :deep(.card > div:first-child) { margin: -16px -24px 16px; padding: 16px 24px; }
-}
 </style>
