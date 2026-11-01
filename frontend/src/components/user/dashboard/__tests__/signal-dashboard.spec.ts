@@ -264,13 +264,13 @@ function renderDashboard() {
   } } })
 }
 
+// The folds are UCollapsibles: the trigger is a UButton with aria-expanded, and the content
+// (with its data request) only mounts while the fold is open.
 async function toggleDetail(wrapper: ReturnType<typeof renderDashboard>, name: string, open: boolean) {
-  const element = wrapper.get(`[data-detail="${name}"]`).element as HTMLDetailsElement
-  await new Promise<void>(resolve => {
-    element.addEventListener('toggle', () => resolve(), { once: true })
-    element.open = open
-  })
+  const trigger = () => wrapper.get(`[data-detail="${name}"] button[aria-expanded]`)
+  if ((trigger().attributes('aria-expanded') === 'true') !== open) await trigger().trigger('click')
   await flushPromises()
+  expect(trigger().attributes('aria-expanded')).toBe(String(open))
 }
 
 describe('User dashboard data loading', () => {
@@ -287,11 +287,16 @@ describe('User dashboard data loading', () => {
     expect(getDashboardModels).not.toHaveBeenCalled()
     expect(queryUsage).not.toHaveBeenCalled()
     expect(getMyPlatformQuotas).not.toHaveBeenCalled()
+    // Closed folds render no panel at all, and no native details/summary is left.
+    expect(wrapper.find('details, summary').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'UserDashboardRecentUsage' }).exists()).toBe(false)
+    expect(wrapper.get('[data-detail="recent"] button[aria-expanded]').attributes('aria-expanded')).toBe('false')
     await toggleDetail(wrapper, 'recent', true)
     expect(queryUsage).toHaveBeenCalledOnce()
     expect(queryUsage.mock.calls[0][0]).toMatchObject({ page: 1, page_size: 5, sort_by: 'created_at', sort_order: 'desc' })
     expect(wrapper.getComponent({ name: 'UserDashboardRecentUsage' }).props('data')).toHaveLength(5)
     await toggleDetail(wrapper, 'recent', false)
+    expect(wrapper.findComponent({ name: 'UserDashboardRecentUsage' }).exists()).toBe(false)
     await toggleDetail(wrapper, 'recent', true)
     expect(queryUsage).toHaveBeenCalledOnce()
     await toggleDetail(wrapper, 'platforms', true)
