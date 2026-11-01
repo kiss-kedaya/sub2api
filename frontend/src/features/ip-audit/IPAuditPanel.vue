@@ -1,64 +1,129 @@
 <template>
-  <section class="space-y-4 py-5" data-testid="ip-audit-panel">
-    <p class="text-sm text-gray-500">{{ t('ipAudit.scopeHint') }}</p>
-    <p class="rounded-sm bg-amber-50 p-3 text-sm text-amber-900" data-testid="host-disconnected">{{ t('ipAudit.externalHint') }}</p>
-    <button type="button" class="inline-block text-sm text-primary-600 underline" data-testid="ip-open-settings" @click="$emit('configure')">{{ t('ipAudit.settings') }}</button>
-    <details class="rounded-sm border p-3" data-testid="ip-source-inventory">
-      <summary class="cursor-pointer">{{ t('ipAudit.inventory') }}</summary>
-      <ul class="mt-3 space-y-2 text-sm"><li v-for="item in inventory" :key="item.id">
-        <strong>{{ sourceName(item.id) }}</strong> · {{ label(item.scope) }} · {{ label(item.storage) }} · {{ label(item.enumeration) }} · {{ t(item.can_release ? 'ipAudit.sourceManaged' : 'ipAudit.readOnly') }}
-        <a v-if="item.manage_url" :href="item.manage_url" class="ml-2 underline">{{ t('ipAudit.sourceManagement') }}</a>
-      </li></ul>
-    </details>
+  <section class="flex min-w-0 flex-col gap-4" data-testid="ip-audit-panel">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <p class="max-w-3xl text-sm text-muted">{{ t('ipAudit.scopeHint') }}</p>
+      <UButton :label="t('ipAudit.settings')" icon="i-lucide-settings-2" color="neutral" variant="link" class="px-0" data-testid="ip-open-settings" @click="$emit('configure')" />
+    </div>
+    <UAlert color="warning" variant="subtle" icon="i-lucide-server-off" :description="t('ipAudit.externalHint')" data-testid="host-disconnected" />
+    <UCollapsible :unmount-on-hide="false" data-testid="ip-source-inventory">
+      <template #default="{ open }">
+        <UButton :label="t('ipAudit.inventory')" icon="i-lucide-shield-check" color="neutral" variant="ghost" class="px-0 font-medium text-default hover:bg-transparent" trailing-icon="i-lucide-chevron-down" :ui="{ trailingIcon: ['transition-transform duration-200', open ? 'rotate-180' : ''] }" />
+      </template>
+      <template #content>
+        <ul class="mt-2 flex flex-col gap-2 text-sm">
+          <li v-for="item in inventory" :key="item.id" class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span class="font-medium text-default">{{ sourceName(item.id) }}</span>
+            <UBadge color="neutral" variant="subtle" size="sm">{{ label(item.scope) }}</UBadge>
+            <UBadge color="neutral" variant="subtle" size="sm">{{ label(item.storage) }}</UBadge>
+            <UBadge color="neutral" variant="subtle" size="sm">{{ label(item.enumeration) }}</UBadge>
+            <UBadge :color="item.can_release ? 'success' : 'neutral'" variant="outline" size="sm">{{ t(item.can_release ? 'ipAudit.sourceManaged' : 'ipAudit.readOnly') }}</UBadge>
+            <UButton v-if="item.manage_url" :to="item.manage_url" :label="t('ipAudit.sourceManagement')" color="neutral" variant="link" size="sm" class="px-0" />
+          </li>
+        </ul>
+      </template>
+    </UCollapsible>
+
     <form @submit.prevent="apply">
-      <fieldset :disabled="releasing" class="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <label class="text-sm">{{ t('ipAudit.source') }}<select v-model="source" class="input mt-1 w-full" data-testid="audit-source" @change="sourceChanged"><option v-for="item in inventory" :key="item.id" :value="item.id">{{ sourceName(item.id) }}</option></select></label>
-      <label class="text-sm">IP / CIDR<input v-model="ip" class="input mt-1 w-full" maxlength="80" :disabled="source === 'admin_history' || source === 'security_penalty'" data-testid="audit-ip" /></label>
-      <label v-if="source === 'security_penalty'" class="text-sm">{{ t('ipAudit.explicitUser') }}<input v-model="userId" class="input mt-1 w-full" type="number" min="1" data-testid="audit-user" /></label>
-      <label class="text-sm">{{ t('ipAudit.state') }}<select v-model="state" class="input mt-1 w-full" data-testid="audit-state"><option value="">{{ t('ipAudit.allStates') }}</option><option v-for="s in states" :key="s" :value="s">{{ label(s) }}</option></select></label>
-      <label class="text-sm">{{ t('ipAudit.order') }}<select v-model="sort" class="input mt-1 w-full" :disabled="source === 'admin_history'"><option value="expires_desc">{{ t('ipAudit.expiryDesc') }}</option><option value="expires_asc">{{ t('ipAudit.expiryAsc') }}</option></select></label>
-      <label class="text-sm">{{ t('ipAudit.start') }}<input v-model="start" class="input mt-1 w-full" type="datetime-local" /></label>
-      <label class="text-sm">{{ t('ipAudit.end') }}<input v-model="end" class="input mt-1 w-full" type="datetime-local" /></label>
-      <div class="flex gap-2"><button type="submit" class="btn btn-secondary" :disabled="loading || releasing" data-testid="audit-filter">{{ t('common.search') }}</button><button type="button" class="btn btn-secondary" :disabled="loading || releasing" @click="refresh">{{ t('common.refresh') }}</button></div>
+      <fieldset :disabled="releasing" class="flex min-w-0 flex-col gap-2">
+        <div class="flex flex-wrap items-center gap-1.5">
+          <USelect :model-value="source" :items="sourceItems" class="min-w-48" :aria-label="t('ipAudit.source')" data-testid="audit-source" @update:model-value="onSourceSelect" />
+          <UInput v-model="ip" icon="i-lucide-search" class="w-full sm:w-56" placeholder="IP / CIDR" aria-label="IP / CIDR" maxlength="80" :disabled="source === 'admin_history' || source === 'security_penalty'" data-testid="audit-ip" />
+          <UInput v-if="source === 'security_penalty'" v-model="userId" type="number" min="1" class="w-full sm:w-56" :placeholder="t('ipAudit.explicitUser')" :aria-label="t('ipAudit.explicitUser')" data-testid="audit-user" />
+          <USelect v-model="stateFilter" :items="stateItems" class="min-w-36" :aria-label="t('ipAudit.state')" data-testid="audit-state" />
+          <USelect v-model="sort" :items="sortItems" class="min-w-36" :aria-label="t('ipAudit.order')" :disabled="source === 'admin_history'" />
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-1.5">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <UFieldGroup>
+              <UBadge color="neutral" variant="outline" size="lg" :label="t('ipAudit.start')" />
+              <UInput v-model="start" type="datetime-local" :aria-label="t('ipAudit.start')" />
+            </UFieldGroup>
+            <UFieldGroup>
+              <UBadge color="neutral" variant="outline" size="lg" :label="t('ipAudit.end')" />
+              <UInput v-model="end" type="datetime-local" :aria-label="t('ipAudit.end')" />
+            </UFieldGroup>
+            <UButton type="submit" :label="t('common.search')" icon="i-lucide-search" :disabled="loading || releasing" data-testid="audit-filter" />
+            <UButton :label="t('common.refresh')" icon="i-lucide-refresh-cw" color="neutral" variant="outline" :disabled="loading || releasing" @click="refresh" />
+          </div>
+          <UDropdownMenu :items="columnItems" :content="{ align: 'end' }">
+            <UButton :label="t('ipAudit.columns')" color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" />
+          </UDropdownMenu>
+        </div>
       </fieldset>
     </form>
-    <p v-if="exactSource && !applied.ip" class="text-sm text-amber-700">{{ t('ipAudit.exactHint') }}</p>
-    <p v-if="source === 'security_penalty'" class="text-sm text-gray-500">{{ t('ipAudit.penaltyHint') }}</p>
-    <p v-if="source === 'admin_history'" class="text-sm text-gray-500">{{ t('ipAudit.historyHint') }}</p>
-    <p v-if="selectedSource && !selectedSource.can_release" class="text-sm text-gray-500">{{ t('ipAudit.readOnlyHint') }} <a v-if="selectedSource.manage_url" :href="selectedSource.manage_url" class="underline">{{ t('ipAudit.sourceManagement') }}</a></p>
-    <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
-    <p v-if="partial" class="text-sm text-amber-700">{{ t('ipAudit.partial') }}</p>
-    <p v-if="loading" role="status">{{ t('common.loading') }}</p>
-    <div v-else class="overflow-x-auto"><table class="w-full text-left text-sm">
-      <thead><tr><th class="p-2">IP / {{ t('ipAudit.subject') }}</th><th class="p-2">{{ t('ipAudit.source') }}</th><th class="p-2">{{ t('ipAudit.reason') }}</th><th class="p-2">{{ t('ipAudit.state') }}</th><th class="p-2">{{ t('ipAudit.count') }}</th><th class="p-2">{{ t('ipAudit.start') }} / {{ t('ipAudit.expiry') }}</th><th class="p-2">{{ t('common.actions') }}</th></tr></thead>
-      <tbody><tr v-for="row in rows" :key="row.id" class="border-t align-top">
-        <td class="p-2"><code>{{ row.network || (row.user_id ? `UID ${row.user_id}` : t('ipAudit.unavailable')) }}</code><p v-if="row.actor_id">{{ t('ipAudit.operator') }} #{{ row.actor_id }}</p></td>
-        <td class="p-2">{{ sourceName(row.origin_source || row.source) }}<p>{{ label(row.scope) }}</p><p v-if="row.manual">{{ t('ipAudit.manual') }}</p><p>{{ label(row.duration || 'unknown') }}</p></td>
-        <td class="p-2">{{ label(row.reason) }}</td><td class="p-2">{{ label(row.state) }}<p>{{ label(row.effective) }}</p><p v-if="row.result">{{ label(row.result) }}</p></td>
-        <td class="p-2">{{ row.count ?? t('ipAudit.unavailable') }} / {{ row.threshold ?? t('ipAudit.unavailable') }}</td>
-        <td class="whitespace-nowrap p-2">{{ date(row.started_at) }}<p>{{ date(row.expires_at) }}</p></td>
-        <td class="p-2"><button v-if="row.can_release" type="button" class="btn btn-secondary btn-sm" :disabled="releasing" data-testid="release-source" @click="confirmEntry = row">{{ t('ipAudit.release') }}</button><span v-else>{{ t('ipAudit.readOnly') }}</span></td>
-      </tr></tbody>
-    </table><p v-if="!rows.length" class="p-4 text-sm text-gray-500">{{ t('ipAudit.empty') }}</p></div>
-    <div class="flex justify-between"><button class="btn btn-secondary btn-sm" :disabled="loading || releasing || !previous.length" @click="previousPage">{{ t('ipAudit.previous') }}</button><button class="btn btn-secondary btn-sm" :disabled="loading || releasing || !hasMore" data-testid="audit-next" @click="nextPage">{{ t('ipAudit.next') }}</button></div>
-    <div v-if="confirmEntry" role="dialog" aria-modal="true" :aria-label="t('ipAudit.confirmTitle')" class="space-y-3 rounded-sm border border-amber-300 p-4" data-testid="release-dialog">
-      <p>{{ t('ipAudit.confirmTitle') }} · {{ sourceName(confirmEntry.source) }} · <code>{{ confirmEntry.network || `UID ${confirmEntry.user_id}` }}</code></p>
-      <p class="text-sm">{{ t(confirmEntry.scope === 'all_user_states' ? 'ipAudit.confirmUserScope' : 'ipAudit.confirmHint') }}</p>
-      <label class="block text-sm">{{ t('ipAudit.reason') }}<select v-model="reason" class="input ml-2"><option v-for="r in reasons" :key="r" :value="r">{{ label(r) }}</option></select></label>
-      <button type="button" class="btn btn-primary btn-sm" :disabled="releasing" data-testid="release-confirm" @click="release">{{ t('ipAudit.confirm') }}</button>
-      <button type="button" class="btn btn-secondary btn-sm ml-2" :disabled="releasing" @click="confirmEntry = null">{{ t('common.cancel') }}</button>
+    <UAlert v-if="exactSource && !applied.ip" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('ipAudit.exactHint')" />
+    <p v-if="source === 'security_penalty'" class="text-sm text-muted">{{ t('ipAudit.penaltyHint') }}</p>
+    <p v-if="source === 'admin_history'" class="text-sm text-muted">{{ t('ipAudit.historyHint') }}</p>
+    <p v-if="selectedSource && !selectedSource.can_release" class="text-sm text-muted">
+      {{ t('ipAudit.readOnlyHint') }}
+      <UButton v-if="selectedSource.manage_url" :to="selectedSource.manage_url" :label="t('ipAudit.sourceManagement')" color="neutral" variant="link" size="sm" class="px-0 align-baseline" />
+    </p>
+    <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
+    <UAlert v-if="partial" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('ipAudit.partial')" />
+    <UAlert v-if="outcome" role="status" :color="outcome.readback === 'released' ? 'success' : 'warning'" variant="subtle" :icon="outcome.readback === 'released' ? 'i-lucide-circle-check' : 'i-lucide-triangle-alert'" :title="t(outcome.readback === 'released' ? 'ipAudit.released' : outcome.readback === 'still_present' ? 'ipAudit.stillRestricted' : 'ipAudit.unverified')" data-testid="release-outcome">
+      <template #description>
+        <p>{{ t('ipAudit.notUnrestricted') }}</p>
+        <p v-if="outcome.remaining.length">{{ t('ipAudit.remaining') }}: {{ outcome.remaining.map(r => `${sourceName(r.source)} (${r.network})`).join(', ') }}</p>
+        <p v-if="outcome.unknown_sources.length">{{ t('ipAudit.unchecked') }}: {{ outcome.unknown_sources.map(sourceName).join(', ') }}</p>
+      </template>
+    </UAlert>
+
+    <UTable v-model:column-visibility="columnVisibility" :data="rows" :columns="columns" :loading="loading" class="min-w-0" :ui="tableUi">
+      <template #loading><p role="status">{{ t('common.loading') }}</p></template>
+      <template #empty><p class="text-sm text-muted">{{ t('ipAudit.empty') }}</p></template>
+      <template #subject-cell="{ row }">
+        <code class="text-default">{{ row.original.network || (row.original.user_id ? `UID ${row.original.user_id}` : t('ipAudit.unavailable')) }}</code>
+        <p v-if="row.original.actor_id" class="text-dimmed">{{ t('ipAudit.operator') }} #{{ row.original.actor_id }}</p>
+      </template>
+      <template #source-cell="{ row }">
+        <span class="text-default">{{ sourceName(row.original.origin_source || row.original.source) }}</span>
+        <p>{{ label(row.original.scope) }}</p>
+        <p v-if="row.original.manual">{{ t('ipAudit.manual') }}</p>
+        <p class="text-dimmed">{{ label(row.original.duration || 'unknown') }}</p>
+      </template>
+      <template #reason-cell="{ row }">{{ label(row.original.reason) }}</template>
+      <template #state-cell="{ row }">
+        <UBadge :color="stateTone(row.original.state)" variant="subtle">{{ label(row.original.state) }}</UBadge>
+        <p class="mt-1">{{ label(row.original.effective) }}</p>
+        <p v-if="row.original.result" class="text-dimmed">{{ label(row.original.result) }}</p>
+      </template>
+      <template #count-cell="{ row }">{{ row.original.count ?? t('ipAudit.unavailable') }} / {{ row.original.threshold ?? t('ipAudit.unavailable') }}</template>
+      <template #time-cell="{ row }">{{ date(row.original.started_at) }}<p class="text-dimmed">{{ date(row.original.expires_at) }}</p></template>
+      <template #actions-cell="{ row }">
+        <div class="flex justify-end">
+          <UButton v-if="row.original.can_release" :label="t('ipAudit.release')" icon="i-lucide-unlock" color="neutral" variant="outline" size="sm" :disabled="releasing" data-testid="release-source" @click="confirmEntry = row.original" />
+          <UBadge v-else color="neutral" variant="outline" icon="i-lucide-lock">{{ t('ipAudit.readOnly') }}</UBadge>
+        </div>
+      </template>
+    </UTable>
+    <div class="flex items-center justify-between gap-3 border-t border-default pt-4">
+      <UButton :label="t('ipAudit.previous')" icon="i-lucide-chevron-left" color="neutral" variant="outline" :disabled="loading || releasing || !previous.length" @click="previousPage" />
+      <UButton :label="t('ipAudit.next')" trailing-icon="i-lucide-chevron-right" color="neutral" variant="outline" :disabled="loading || releasing || !hasMore" data-testid="audit-next" @click="nextPage" />
     </div>
-    <div v-if="outcome" role="status" class="space-y-2 rounded-sm border p-4" data-testid="release-outcome">
-      <p>{{ t(outcome.readback === 'released' ? 'ipAudit.released' : outcome.readback === 'still_present' ? 'ipAudit.stillRestricted' : 'ipAudit.unverified') }}</p>
-      <p>{{ t('ipAudit.notUnrestricted') }}</p>
-      <p v-if="outcome.remaining.length">{{ t('ipAudit.remaining') }}: {{ outcome.remaining.map(r => `${sourceName(r.source)} (${r.network})`).join(', ') }}</p>
-      <p v-if="outcome.unknown_sources.length">{{ t('ipAudit.unchecked') }}: {{ outcome.unknown_sources.map(sourceName).join(', ') }}</p>
-    </div>
+
+    <BaseDialog :show="!!confirmEntry" :title="t('ipAudit.confirmTitle')" width="narrow" @close="!releasing && (confirmEntry = null)">
+      <div v-if="confirmEntry" class="flex flex-col gap-4" data-testid="release-dialog">
+        <p class="flex flex-wrap items-center gap-2 text-sm">
+          <span class="font-medium text-highlighted">{{ sourceName(confirmEntry.source) }}</span>
+          <code class="text-default">{{ confirmEntry.network || `UID ${confirmEntry.user_id}` }}</code>
+        </p>
+        <p class="text-sm text-muted">{{ t(confirmEntry.scope === 'all_user_states' ? 'ipAudit.confirmUserScope' : 'ipAudit.confirmHint') }}</p>
+        <UFormField :label="t('ipAudit.reason')">
+          <USelect v-model="reason" :items="reasonItems" class="w-full" />
+        </UFormField>
+      </div>
+      <template #footer>
+        <UButton :label="t('common.cancel')" color="neutral" variant="subtle" :disabled="releasing" @click="confirmEntry = null" />
+        <UButton :label="t('ipAudit.confirm')" :disabled="releasing" data-testid="release-confirm" @click="release" />
+      </template>
+    </BaseDialog>
   </section>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { TableColumn } from '@nuxt/ui'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { listIPAudit, releaseIPAudit, type AuditEntry, type AuditQuery, type AuditSource, type ReleaseResult } from './api'
 defineEmits<{ configure: [] }>()
 import zh from './locale.zh'
@@ -74,6 +139,46 @@ const states = ['active', 'disabled', 'expired', 'observed', 'historical', 'allo
 const applied = ref<AuditQuery>({ source: 'anonymous_api', cursor: 0, limit: 20 }), previous = ref<number[]>([]), nextCursor = ref(0)
 const selectedSource = computed(() => inventory.value.find(s => s.id === source.value))
 const exactSource = computed(() => source.value === 'login_failures' || source.value === 'login_limiter')
+// USelect items cannot carry '' (reka-ui): "all states" is a sentinel mapped back to ''.
+const ALL = '__all__'
+const stateFilter = computed({ get: () => state.value || ALL, set: (value: string) => { state.value = value === ALL ? '' : value } })
+const sourceItems = computed(() => inventory.value.map(item => ({ label: sourceName(item.id), value: item.id })))
+const stateItems = computed(() => [{ label: t('ipAudit.allStates'), value: ALL }, ...states.map(value => ({ label: label(value), value }))])
+const sortItems = computed(() => [{ label: t('ipAudit.expiryDesc'), value: 'expires_desc' }, { label: t('ipAudit.expiryAsc'), value: 'expires_asc' }])
+const reasonItems = computed(() => reasons.map(value => ({ label: label(value), value })))
+const tableUi = {
+  thead: '[&>tr]:bg-elevated/50 [&>tr]:after:content-none',
+  tbody: '[&>tr]:last:[&>td]:border-b-0',
+  th: 'py-2 first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r',
+  td: 'border-b border-default align-top',
+  separator: 'h-0'
+}
+const columns = computed<TableColumn<AuditEntry>[]>(() => [
+  { id: 'subject', header: `IP / ${t('ipAudit.subject')}`, enableHiding: false },
+  { id: 'source', header: t('ipAudit.source') },
+  { id: 'reason', header: t('ipAudit.reason') },
+  { id: 'state', header: t('ipAudit.state') },
+  { id: 'count', header: t('ipAudit.count') },
+  { id: 'time', header: `${t('ipAudit.start')} / ${t('ipAudit.expiry')}` },
+  { id: 'actions', header: t('common.actions'), enableHiding: false, meta: { class: { th: 'text-right' } } }
+])
+// Column choice persists across visits; every column is shown until the admin hides one.
+const COLUMNS_KEY = 'ip-audit-columns'
+function storedVisibility(): Record<string, boolean> {
+  try { const value = JSON.parse(localStorage.getItem(COLUMNS_KEY) || '{}'); return value && typeof value === 'object' ? value : {} } catch { return {} }
+}
+const columnVisibility = ref<Record<string, boolean>>(storedVisibility())
+watch(columnVisibility, value => { try { localStorage.setItem(COLUMNS_KEY, JSON.stringify(value)) } catch { /* storage unavailable */ } }, { deep: true })
+const columnItems = computed(() => columns.value.filter(column => column.enableHiding !== false).map(column => ({
+  label: String(column.header),
+  type: 'checkbox' as const,
+  checked: columnVisibility.value[column.id!] !== false,
+  onUpdateChecked(checked: boolean) { columnVisibility.value = { ...columnVisibility.value, [column.id!]: checked } },
+  onSelect(event: Event) { event.preventDefault() }
+})))
+type Tone = 'error' | 'warning' | 'success' | 'neutral'
+const stateTones: Record<string, Tone> = { active: 'error', observed: 'warning', allowlisted: 'success' }
+const stateTone = (value: string): Tone => stateTones[value] ?? 'neutral'
 let controller: AbortController | undefined, disposed = false
 const date = (value: number | null) => value == null ? t('ipAudit.unavailable') : new Date(value * 1000).toLocaleString()
 const timestamp = (value: string) => value ? Math.floor(new Date(value).getTime() / 1000) : undefined
@@ -87,6 +192,7 @@ async function load() {
   } catch { if (!current.signal.aborted && !disposed) error.value = t('ipAudit.loadError') }
   finally { if (controller === current && !disposed) loading.value = false }
 }
+function onSourceSelect(value: string) { if (value === source.value) return; source.value = value; sourceChanged() }
 function sourceChanged() { state.value = ''; ip.value = ''; sort.value = 'expires_desc'; outcome.value = null; apply() }
 function apply() {
   previous.value = []; outcome.value = null

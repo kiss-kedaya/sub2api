@@ -1,164 +1,277 @@
 <template>
-  <details id="ip-risk-settings" class="card" :open="initiallyOpen" data-testid="ip-risk-settings" @toggle="onToggle">
-    <summary class="cursor-pointer px-6 py-4 font-semibold">{{ tr('title') }}</summary>
-    <div class="space-y-5 border-t border-gray-100 p-6 dark:border-dark-700">
-      <p class="text-sm text-gray-500">{{ tr('description') }}</p>
-      <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
-      <p v-if="notice" role="status" class="text-sm text-green-600">{{ notice }}</p>
-      <div class="flex flex-wrap items-center gap-3">
-        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="load">{{ tr('load') }}</button>
-        <span v-if="snapshot" class="text-xs text-gray-500">{{ tr('currentIP') }}: {{ snapshot.current_ip }} · Redis: {{ snapshot.health.redis_available ? tr('available') : tr('unavailable') }}</span>
-      </div>
-      <template v-if="draft && snapshot">
-        <p v-if="snapshot.health.emergency_disabled" class="rounded-sm bg-amber-50 p-3 text-sm text-amber-800">{{ tr('emergencyActive') }}</p>
-        <p v-if="!snapshot.trusted_proxies_configured" class="rounded-sm bg-amber-50 p-3 text-sm text-amber-800">{{ tr('proxyWarning') }}</p>
-        <p v-if="snapshot.health.config_error" class="text-sm text-amber-700">{{ tr('staleConfig') }}</p>
-        <form class="space-y-5" @submit.prevent="save" @invalid.capture="revealInvalidField">
-          <fieldset :disabled="busy" class="space-y-5">
-            <div class="flex flex-wrap gap-5">
-              <label class="flex items-center gap-2 text-sm"><input v-model="draft.enabled" type="checkbox" data-testid="risk-enabled" />{{ tr('enabled') }}</label>
-              <label class="flex items-center gap-2 text-sm"><input v-model="draft.observe_only" type="checkbox" data-testid="risk-observe" />{{ tr('observeOnly') }}</label>
-            </div>
-            <p class="text-xs text-gray-500">{{ tr('scopeHint') }}</p>
-            <section class="grid gap-4 md:grid-cols-2">
-              <label class="block text-sm">{{ tr('whitelist') }}
-                <textarea v-model="whitelist" rows="4" class="input mt-2 w-full font-mono" placeholder="203.0.113.10&#10;2001:db8::/64" data-testid="risk-whitelist" />
-                <span class="mt-1 block text-xs text-gray-500">{{ tr('whitelistHint') }}</span>
-              </label>
-              <div class="space-y-2 text-sm">
-                <p>{{ tr('trustedIP') }}</p>
-                <p class="text-xs text-gray-500">{{ tr('trustedIPHint') }}</p>
-                <button type="button" class="btn btn-secondary btn-sm" data-testid="risk-whitelist-current" @click="addCurrentIP">{{ tr('whitelistCurrent') }}</button>
-              </div>
-            </section>
-            <section class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 p-4 dark:border-dark-700" data-testid="risk-blacklist-summary">
-              <div class="space-y-1">
-                <h3 class="font-medium">{{ tr('blacklist') }}</h3>
-                <p class="text-xs text-gray-500">{{ draft.blacklist.length ? tr('ruleCount', { count: draft.blacklist.length }) : tr('noRules') }}</p>
-              </div>
-              <button type="button" class="btn btn-secondary btn-sm" data-testid="risk-manage-blacklist" @click="showBlacklist = true">{{ tr('manageBlacklist') }}</button>
-            </section>
-            <div class="space-y-3">
-              <RiskSettingsSection :title="tr('countryRules')" data-testid="risk-country-settings">
-                <label class="block text-sm">{{ tr('allowedCountries') }}<input v-model="allowedCountries" class="input mt-2 w-full" placeholder="CN" data-testid="risk-allowed-countries" /></label>
-                <button type="button" class="btn btn-secondary btn-sm" data-testid="risk-china-only" @click="allowChinaOnly">{{ tr('chinaOnly') }}</button>
-                <p class="text-xs text-gray-500">{{ tr('allowedCountriesHint') }}</p>
-                <label class="block text-sm">{{ tr('countries') }}<input v-model="countries" class="input mt-2 w-full" placeholder="US, JP" data-testid="risk-countries" /></label>
-                <div class="flex gap-2"><button type="button" class="btn btn-secondary btn-sm" @click="addCountry('US')">{{ tr('unitedStates') }}</button><button type="button" class="btn btn-secondary btn-sm" @click="addCountry('JP')">{{ tr('japan') }}</button></div>
-                <label class="flex items-center gap-2 text-sm"><input v-model="draft.block_unknown_country" type="checkbox" />{{ tr('unknownCountry') }}</label>
-                <p class="text-xs text-gray-500">{{ tr('geoHint') }}</p>
-              </RiskSettingsSection>
-              <RiskSettingsSection :title="tr('uaRules')" data-testid="risk-ua-settings">
-                <label class="block text-sm">{{ tr('userAgents') }}<textarea v-model="userAgents" rows="4" class="input mt-2 w-full font-mono" data-testid="risk-user-agents" /></label>
-                <label class="flex items-center gap-2 text-sm"><input v-model="draft.block_empty_ua" type="checkbox" />{{ tr('emptyUA') }}</label>
-                <p class="text-xs text-gray-500">{{ tr('uaHint') }}</p>
-              </RiskSettingsSection>
-            </div>
-            <RiskSettingsSection :title="tr('automatic')" data-testid="risk-automatic-settings">
-              <p class="text-xs text-gray-500">{{ tr('counterHint') }}</p>
-              <div v-for="key in counterKeys" :key="key" class="grid items-end gap-3 sm:grid-cols-3">
-                <span class="text-sm">{{ tr(key) }}</span>
-                <label class="text-xs text-gray-500">{{ tr('limit') }}<input v-model.number="draft[key].limit" type="number" min="0" max="100000" step="1" required class="input mt-1 w-full" :data-testid="`risk-${key}-limit`" /></label>
-                <label class="text-xs text-gray-500">{{ tr('window') }}<input v-model.number="draft[key].window_seconds" type="number" min="1" max="86400" step="1" required class="input mt-1 w-full" /></label>
-              </div>
-              <div class="grid gap-3 sm:grid-cols-3">
-                <label class="text-sm">{{ tr('banDuration') }}<input v-model.number="draft.ban_seconds" type="number" min="60" max="604800" step="1" required class="input mt-1 w-full" /></label>
-                <label class="text-sm">{{ tr('ipv6Prefix') }}<input v-model.number="draft.ipv6_prefix" type="number" min="64" max="128" step="1" required class="input mt-1 w-full" /></label>
-                <label class="text-sm">{{ tr('retention') }}<input v-model.number="draft.event_retention_hours" type="number" min="1" max="720" step="1" required class="input mt-1 w-full" /></label>
-              </div>
-            </RiskSettingsSection>
-            <RiskSettingsSection :title="tr('anonymousTitle')" :status="draft.anonymous_api.enabled ? tr('protectionEnabled') : tr('protectionDisabled')" data-testid="anonymous-settings">
-              <p class="text-xs text-gray-500">{{ tr('anonymousHint') }}</p>
-              <label class="flex items-center gap-2 text-sm"><input v-model="draft.anonymous_api.enabled" type="checkbox" data-testid="anonymous-enabled" />{{ tr('anonymousEnabled') }}</label>
-              <div class="grid gap-3 sm:grid-cols-2">
-                <label class="text-sm">{{ tr('limit') }}<input v-model.number="draft.anonymous_api.threshold" type="number" min="2" max="1000" required class="input mt-1 w-full" data-testid="anonymous-threshold" /></label>
-                <label class="text-sm">{{ tr('window') }}<input v-model.number="draft.anonymous_api.window_seconds" type="number" min="1" max="3600" required class="input mt-1 w-full" /></label>
-                <label class="text-sm">{{ tr('banDuration') }}<input v-model.number="draft.anonymous_api.ban_seconds" type="number" min="1" max="86400" required class="input mt-1 w-full" /></label>
-                <label class="text-sm">{{ tr('anonymousCapacity') }}<input v-model.number="draft.anonymous_api.max_tracked_ips" type="number" min="100" max="50000" required class="input mt-1 w-full" /></label>
-              </div>
-              <label class="flex items-center gap-2 text-sm"><input v-model="draft.anonymous_api.reset_on_success" type="checkbox" />{{ tr('anonymousReset') }}</label>
-              <p class="text-xs text-gray-500">{{ tr('anonymousFailurePolicy') }}</p>
-            </RiskSettingsSection>
-            <button type="submit" class="btn btn-primary btn-sm" data-testid="risk-save">{{ tr('save') }}</button>
-          </fieldset>
-        </form>
-        <BlacklistDialog :show="showBlacklist" :blacklist="draft.blacklist" @close="showBlacklist = false" @apply="applyBlacklist" />
-        <RiskSettingsSection :title="tr('anonymousBans')" :status="tr('banCount', { count: anonymousBans.length })" data-testid="anonymous-bans">
-          <div class="flex justify-end"><button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="refreshRecords">{{ tr('refreshRecords') }}</button></div>
-          <p class="text-xs text-gray-500">{{ tr('anonymousUnbanHint') }}</p>
-          <div class="flex flex-wrap items-center gap-2">
-            <input v-model="anonymousReleaseIP" class="input" :placeholder="tr('anonymousExactIP')" :aria-label="tr('anonymousExactIP')" data-testid="anonymous-release-ip" />
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !anonymousReleaseIP.trim()" data-testid="anonymous-release-manual" @click="unbanAnonymous(anonymousReleaseIP.trim())">{{ tr('anonymousUnban') }}</button>
-          </div>
-          <div v-for="ban in anonymousBans" :key="ban.network" class="flex flex-wrap items-center justify-between gap-2 rounded-sm border p-3 text-sm">
-            <span><code>{{ ban.network }}</code> · {{ label(ban.reason) }} · {{ tr('expiresAt') }} {{ date(ban.expires_at) }}</span>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" data-testid="anonymous-unban" @click="unbanAnonymous(ban.network)">{{ tr('anonymousUnban') }}</button>
-          </div>
-          <p v-if="!anonymousBans.length" class="text-xs text-gray-500">{{ tr('noBans') }}</p>
-        </RiskSettingsSection>
-        <RiskSettingsSection :title="tr('checkTitle')" data-testid="risk-check-settings">
-          <p class="text-xs text-gray-500">{{ tr('checkHint') }}</p>
-          <div class="flex flex-wrap items-center gap-2">
-            <input v-model="checkIP" class="input" :placeholder="tr('network')" :aria-label="tr('checkIP')" data-testid="risk-check-ip" />
-            <input v-model="checkUA" class="input" placeholder="User-Agent" aria-label="User-Agent" />
-            <label class="flex items-center gap-2 text-sm"><input v-model="checkAuth" type="checkbox" />{{ tr('authRequest') }}</label>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !checkIP.trim()" data-testid="risk-check" @click="check">{{ tr('check') }}</button>
-          </div>
-          <p v-if="checkResult" role="status" class="text-sm">{{ label(checkResult.decision) }} · {{ label(checkResult.reason) }} · {{ checkResult.country || '—' }} · {{ checkResult.network }}</p>
-        </RiskSettingsSection>
-        <RiskSettingsSection :title="tr('bans')" :status="tr('banCount', { count: bans.length })" data-testid="risk-bans">
-          <div class="flex justify-end"><button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="refreshRecords">{{ tr('refreshRecords') }}</button></div>
-          <p class="text-xs text-gray-500">{{ tr('bansHint') }}</p>
-          <div v-for="ban in bans" :key="`${ban.observe_only}-${ban.network}`" class="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-gray-200 p-3 text-sm dark:border-dark-700">
-            <span><code>{{ ban.network }}</code> · {{ label(ban.reason) }} · {{ ban.observe_only ? tr('observeOnly') : tr('enforced') }} · {{ tr('expiresAt') }} {{ date(ban.expires_at) }}</span>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="unban(ban.network)">{{ tr('unban') }}</button>
-          </div>
-          <p v-if="!bans.length" class="text-xs text-gray-500">{{ tr('noBans') }}</p>
-        </RiskSettingsSection>
-        <section class="space-y-3 border-t border-gray-100 pt-4 dark:border-dark-700">
-          <h3 class="font-medium">{{ tr('events') }}</h3>
-          <p class="text-xs text-gray-500">{{ tr('eventsHint') }}</p>
-          <div class="flex flex-wrap items-center gap-2">
-            <input v-model="filterIP" class="input" :placeholder="tr('filterIP')" :aria-label="tr('filterIP')" />
-            <select v-model="filterCategory" class="input" :aria-label="tr('category')" data-testid="risk-category"><option value="">{{ tr('allCategories') }}</option><option v-for="category in ['login', 'register', 'verification']" :key="category" :value="category">{{ label(category) }}</option></select>
-            <select v-model="filterReason" class="input" :aria-label="tr('filterReason')"><option value="">{{ tr('allReasons') }}</option><option v-for="reason in reasons" :key="reason" :value="reason">{{ label(reason) }}</option></select>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="refreshRecords">{{ tr('filter') }}</button>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !events.length" @click="confirmClear = !confirmClear">{{ tr('clearEvents') }}</button>
-          </div>
-          <div v-if="confirmClear" class="flex items-center gap-2 text-sm"><span>{{ tr('clearConfirm') }}</span><button type="button" class="btn btn-danger btn-sm" :disabled="busy" @click="clearEvents">{{ tr('confirm') }}</button><button type="button" class="btn btn-secondary btn-sm" @click="confirmClear = false">{{ tr('cancel') }}</button></div>
-          <div class="overflow-x-auto"><table class="w-full text-left text-xs">
-            <thead><tr><th class="p-2">{{ tr('time') }}</th><th class="p-2">IP / {{ tr('source') }}</th><th class="p-2">{{ tr('request') }}</th><th class="p-2">{{ tr('result') }}</th><th class="p-2">User-Agent</th></tr></thead>
-            <tbody><tr v-for="event in events" :key="event.id" class="border-t border-gray-100 align-top dark:border-dark-700">
-              <td class="whitespace-nowrap p-2">{{ date(event.at) }}</td>
-              <td class="p-2"><code>{{ event.ip }}</code><p>{{ event.country || '—' }} · {{ label(event.ip_source) }}</p><p class="text-gray-500">{{ tr('peer') }}: {{ event.peer }}</p></td>
-              <td class="p-2">{{ event.method }} {{ event.path }}<p>{{ label(event.category) }} · {{ event.status }}</p></td>
-              <td class="p-2">{{ label(event.decision) }}<p>{{ label(event.reason) }}</p><p class="text-gray-500">{{ event.error_reason }}</p></td>
-              <td class="max-w-xs break-all p-2">{{ event.user_agent || '—' }}</td>
-            </tr></tbody>
-          </table></div>
-          <p v-if="!events.length" class="text-xs text-gray-500">{{ tr('noEvents') }}</p>
-          <fieldset v-if="eventsTotal > 0" :disabled="busy" :aria-busy="busy" class="min-w-0">
-            <Pagination
-              :total="eventsTotal"
-              :page="eventsPage"
-              :page-size="eventsPageSize"
-              show-jump
-              @update:page="changeEventsPage"
-              @update:page-size="changeEventsPageSize"
-            />
-          </fieldset>
-        </section>
-        <details class="text-sm"><summary class="cursor-pointer">{{ tr('recovery') }}</summary><p class="mt-2 text-xs text-gray-500">{{ tr('recoveryHint') }}</p></details>
+  <div id="ip-risk-settings" class="mx-auto w-full max-w-4xl" data-testid="ip-risk-settings">
+    <UCollapsible v-model:open="open" :unmount-on-hide="false">
+      <!-- Embedded use keeps the collapsed card; on its own page (`expanded`) there is no trigger. -->
+      <template v-if="!expanded" #default>
+        <UButton
+          color="neutral"
+          variant="ghost"
+          block
+          trailing-icon="i-lucide-chevron-down"
+          class="px-0 py-3 text-base font-semibold text-highlighted hover:bg-transparent active:bg-transparent"
+          :ui="{ trailingIcon: ['transition-transform duration-200', open ? 'rotate-180' : ''] }"
+        >
+          <span class="flex-1 text-left">{{ tr('title') }}</span>
+        </UButton>
       </template>
-    </div>
-  </details>
+      <template #content>
+        <div class="flex flex-col gap-10 pt-1 pb-8">
+          <section class="flex flex-col gap-4">
+            <UPageCard :title="tr('title')" :description="tr('description')" variant="naked" orientation="horizontal">
+              <div class="flex flex-wrap items-center gap-2 lg:ms-auto">
+                <UButton :label="tr('load')" icon="i-lucide-refresh-cw" color="neutral" variant="outline" :disabled="busy" @click="load" />
+                <UButton v-if="draft && snapshot" :label="tr('save')" type="submit" form="ip-risk-form" :disabled="busy" data-testid="risk-save" />
+              </div>
+            </UPageCard>
+            <div v-if="snapshot" class="flex flex-wrap items-center gap-2 text-sm">
+              <UBadge color="neutral" variant="subtle" icon="i-lucide-globe">{{ tr('currentIP') }}: {{ snapshot.current_ip }}</UBadge>
+              <UBadge :color="snapshot.health.redis_available ? 'success' : 'error'" variant="subtle" icon="i-lucide-database">Redis: {{ snapshot.health.redis_available ? tr('available') : tr('unavailable') }}</UBadge>
+            </div>
+            <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
+            <UAlert v-if="notice" role="status" color="success" variant="subtle" icon="i-lucide-circle-check" :description="notice" />
+            <template v-if="draft && snapshot">
+              <UAlert v-if="snapshot.health.emergency_disabled" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="tr('emergencyActive')" />
+              <UAlert v-if="!snapshot.trusted_proxies_configured" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="tr('proxyWarning')" />
+              <UAlert v-if="snapshot.health.config_error" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="tr('staleConfig')" />
+            </template>
+          </section>
+          <template v-if="draft && snapshot">
+            <form id="ip-risk-form" @submit.prevent="save" @invalid.capture="revealInvalidField">
+              <fieldset :disabled="busy" class="flex min-w-0 flex-col gap-6">
+                <UPageCard variant="subtle">
+                  <UFormField :label="tr('enabled')" class="flex items-center justify-between gap-4">
+                    <template #hint><HelpPopover :text="tr('scopeHint')" :label="tr('moreInfo')" /></template>
+                    <USwitch v-model="draft.enabled" data-testid="risk-enabled" />
+                  </UFormField>
+                  <USeparator />
+                  <UFormField :label="tr('observeOnly')" class="flex items-center justify-between gap-4">
+                    <USwitch v-model="draft.observe_only" data-testid="risk-observe" />
+                  </UFormField>
+                  <USeparator />
+                  <UFormField :label="tr('whitelist')" :description="tr('whitelistHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                    <UTextarea v-model="whitelist" :rows="4" autoresize class="w-full sm:w-72" :ui="{ base: 'font-mono' }" placeholder="203.0.113.10&#10;2001:db8::/64" data-testid="risk-whitelist" />
+                  </UFormField>
+                  <USeparator />
+                  <UFormField :label="tr('trustedIP')" :description="tr('trustedIPHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                    <UButton :label="tr('whitelistCurrent')" icon="i-lucide-plus" color="neutral" variant="outline" class="shrink-0" data-testid="risk-whitelist-current" @click="addCurrentIP" />
+                  </UFormField>
+                  <USeparator />
+                  <UFormField :label="tr('blacklist')" :description="draft.blacklist.length ? tr('ruleCount', { count: draft.blacklist.length }) : tr('noRules')" class="flex max-sm:flex-col justify-between items-start gap-4" data-testid="risk-blacklist-summary">
+                    <UButton :label="tr('manageBlacklist')" icon="i-lucide-list" color="neutral" variant="outline" class="shrink-0" data-testid="risk-manage-blacklist" @click="showBlacklist = true" />
+                  </UFormField>
+                </UPageCard>
+
+                <UPageCard variant="subtle" :ui="{ container: 'gap-y-2 sm:py-4' }">
+                  <RiskSettingsSection :title="tr('countryRules')" data-testid="risk-country-settings">
+                    <UFormField :label="tr('allowedCountries')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                      <template #hint><HelpPopover :text="tr('allowedCountriesHint')" :label="tr('moreInfo')" /></template>
+                      <div class="flex shrink-0 flex-wrap items-center gap-2">
+                        <UInput v-model="allowedCountries" placeholder="CN" class="w-40" data-testid="risk-allowed-countries" />
+                        <UButton :label="tr('chinaOnly')" color="neutral" variant="outline" data-testid="risk-china-only" @click="allowChinaOnly" />
+                      </div>
+                    </UFormField>
+                    <UFormField :label="tr('countries')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                      <div class="flex shrink-0 flex-wrap items-center gap-2">
+                        <UInput v-model="countries" placeholder="US, JP" class="w-40" data-testid="risk-countries" />
+                        <UButton :label="tr('unitedStates')" color="neutral" variant="outline" @click="addCountry('US')" />
+                        <UButton :label="tr('japan')" color="neutral" variant="outline" @click="addCountry('JP')" />
+                      </div>
+                    </UFormField>
+                    <UFormField :label="tr('unknownCountry')" class="flex items-center justify-between gap-4">
+                      <template #hint><HelpPopover :text="tr('geoHint')" :label="tr('moreInfo')" /></template>
+                      <USwitch v-model="draft.block_unknown_country" />
+                    </UFormField>
+                  </RiskSettingsSection>
+                  <USeparator />
+                  <RiskSettingsSection :title="tr('uaRules')" data-testid="risk-ua-settings">
+                    <UFormField :label="tr('userAgents')" :description="tr('uaHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                      <UTextarea v-model="userAgents" :rows="4" autoresize class="w-full sm:w-72" :ui="{ base: 'font-mono' }" data-testid="risk-user-agents" />
+                    </UFormField>
+                    <UFormField :label="tr('emptyUA')" class="flex items-center justify-between gap-4">
+                      <USwitch v-model="draft.block_empty_ua" />
+                    </UFormField>
+                  </RiskSettingsSection>
+                  <USeparator />
+                  <RiskSettingsSection :title="tr('automatic')" data-testid="risk-automatic-settings">
+                    <p class="text-sm text-muted">{{ tr('counterHint') }}</p>
+                    <div class="grid gap-x-4 gap-y-3 sm:grid-cols-[minmax(0,1fr)_9rem_9rem] sm:items-center">
+                      <span class="hidden text-xs text-muted sm:block" aria-hidden="true" />
+                      <span class="hidden text-xs font-medium text-muted sm:block" aria-hidden="true">{{ tr('limit') }}</span>
+                      <span class="hidden text-xs font-medium text-muted sm:block" aria-hidden="true">{{ tr('window') }}</span>
+                      <template v-for="key in counterKeys" :key="key">
+                        <span class="text-sm font-medium text-default max-sm:pt-2">{{ tr(key) }}</span>
+                        <label class="flex flex-col gap-1 text-xs text-muted">
+                          <span class="sm:sr-only">{{ tr('limit') }}</span>
+                          <UInput v-model.number="draft[key].limit" type="number" min="0" max="100000" step="1" required class="w-full" :aria-label="`${tr(key)} · ${tr('limit')}`" :data-testid="`risk-${key}-limit`" />
+                        </label>
+                        <label class="flex flex-col gap-1 text-xs text-muted">
+                          <span class="sm:sr-only">{{ tr('window') }}</span>
+                          <UInput v-model.number="draft[key].window_seconds" type="number" min="1" max="86400" step="1" required class="w-full" :aria-label="`${tr(key)} · ${tr('window')}`" />
+                        </label>
+                      </template>
+                    </div>
+                    <div class="grid gap-4 sm:grid-cols-3">
+                      <UFormField :label="tr('banDuration')"><UInput v-model.number="draft.ban_seconds" type="number" min="60" max="604800" step="1" required class="w-full" /></UFormField>
+                      <UFormField :label="tr('ipv6Prefix')"><UInput v-model.number="draft.ipv6_prefix" type="number" min="64" max="128" step="1" required class="w-full" /></UFormField>
+                      <UFormField :label="tr('retention')"><UInput v-model.number="draft.event_retention_hours" type="number" min="1" max="720" step="1" required class="w-full" /></UFormField>
+                    </div>
+                  </RiskSettingsSection>
+                  <USeparator />
+                  <RiskSettingsSection :title="tr('anonymousTitle')" :status="draft.anonymous_api.enabled ? tr('protectionEnabled') : tr('protectionDisabled')" data-testid="anonymous-settings">
+                    <UFormField :label="tr('anonymousEnabled')" class="flex items-center justify-between gap-4">
+                      <template #hint><HelpPopover :text="tr('anonymousHint')" :label="tr('moreInfo')" /></template>
+                      <USwitch v-model="draft.anonymous_api.enabled" data-testid="anonymous-enabled" />
+                    </UFormField>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                      <UFormField :label="tr('limit')"><UInput v-model.number="draft.anonymous_api.threshold" type="number" min="2" max="1000" required class="w-full" data-testid="anonymous-threshold" /></UFormField>
+                      <UFormField :label="tr('window')"><UInput v-model.number="draft.anonymous_api.window_seconds" type="number" min="1" max="3600" required class="w-full" /></UFormField>
+                      <UFormField :label="tr('banDuration')"><UInput v-model.number="draft.anonymous_api.ban_seconds" type="number" min="1" max="86400" required class="w-full" /></UFormField>
+                      <UFormField :label="tr('anonymousCapacity')"><UInput v-model.number="draft.anonymous_api.max_tracked_ips" type="number" min="100" max="50000" required class="w-full" /></UFormField>
+                    </div>
+                    <UFormField :label="tr('anonymousReset')" class="flex items-center justify-between gap-4">
+                      <template #hint><HelpPopover :text="tr('anonymousFailurePolicy')" :label="tr('moreInfo')" /></template>
+                      <USwitch v-model="draft.anonymous_api.reset_on_success" />
+                    </UFormField>
+                  </RiskSettingsSection>
+                </UPageCard>
+              </fieldset>
+            </form>
+            <BlacklistDialog :show="showBlacklist" :blacklist="draft.blacklist" @close="showBlacklist = false" @apply="applyBlacklist" />
+
+            <section class="flex flex-col gap-4">
+              <UPageCard :title="tr('records')" variant="naked" orientation="horizontal">
+                <UButton :label="tr('refreshRecords')" icon="i-lucide-refresh-cw" color="neutral" variant="outline" class="w-fit lg:ms-auto" :disabled="busy" @click="refreshRecords" />
+              </UPageCard>
+              <UPageCard variant="subtle" :ui="{ container: 'gap-y-2 sm:py-4' }">
+                <RiskSettingsSection :title="tr('anonymousBans')" :status="tr('banCount', { count: anonymousBans.length })" data-testid="anonymous-bans">
+                  <p class="text-sm text-muted">{{ tr('anonymousUnbanHint') }}</p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <UInput v-model="anonymousReleaseIP" icon="i-lucide-search" class="w-full sm:w-80" :placeholder="tr('anonymousExactIP')" :aria-label="tr('anonymousExactIP')" data-testid="anonymous-release-ip" />
+                    <UButton :label="tr('anonymousUnban')" icon="i-lucide-unlock" color="neutral" variant="outline" :disabled="busy || !anonymousReleaseIP.trim()" data-testid="anonymous-release-manual" @click="unbanAnonymous(anonymousReleaseIP.trim())" />
+                  </div>
+                  <UTable :data="anonymousBans" :columns="anonymousBanColumns" :empty="tr('noBans')" :ui="tableUi">
+                    <template #network-cell="{ row }"><code class="text-default">{{ row.original.network }}</code></template>
+                    <template #reason-cell="{ row }">{{ label(row.original.reason) }}</template>
+                    <template #expires-cell="{ row }">{{ date(row.original.expires_at) }}</template>
+                    <template #actions-cell="{ row }">
+                      <div class="flex justify-end">
+                        <UButton :label="tr('anonymousUnban')" icon="i-lucide-unlock" color="neutral" variant="ghost" size="sm" :disabled="busy" data-testid="anonymous-unban" @click="unbanAnonymous(row.original.network)" />
+                      </div>
+                    </template>
+                  </UTable>
+                </RiskSettingsSection>
+                <USeparator />
+                <RiskSettingsSection :title="tr('checkTitle')" data-testid="risk-check-settings">
+                  <p class="text-sm text-muted">{{ tr('checkHint') }}</p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <UInput v-model="checkIP" class="w-full sm:w-52" :placeholder="tr('network')" :aria-label="tr('checkIP')" data-testid="risk-check-ip" />
+                    <UInput v-model="checkUA" class="w-full sm:w-64" placeholder="User-Agent" aria-label="User-Agent" />
+                    <UCheckbox v-model="checkAuth" :label="tr('authRequest')" />
+                    <UButton :label="tr('check')" icon="i-lucide-flask-conical" color="neutral" variant="outline" :disabled="busy || !checkIP.trim()" data-testid="risk-check" @click="check" />
+                  </div>
+                  <div v-if="checkResult" role="status" class="flex flex-wrap items-center gap-2 text-sm text-muted">
+                    <UBadge :color="decisionTone(checkResult.decision)" variant="subtle">{{ label(checkResult.decision) }}</UBadge>
+                    <span>{{ label(checkResult.reason) }}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{{ checkResult.country || '—' }}</span>
+                    <span aria-hidden="true">·</span>
+                    <code class="text-default">{{ checkResult.network }}</code>
+                  </div>
+                </RiskSettingsSection>
+                <USeparator />
+                <RiskSettingsSection :title="tr('bans')" :status="tr('banCount', { count: bans.length })" data-testid="risk-bans">
+                  <p class="text-sm text-muted">{{ tr('bansHint') }}</p>
+                  <UTable :data="bans" :columns="banColumns" :empty="tr('noBans')" :ui="tableUi">
+                    <template #network-cell="{ row }"><code class="text-default">{{ row.original.network }}</code></template>
+                    <template #reason-cell="{ row }">{{ label(row.original.reason) }}</template>
+                    <template #mode-cell="{ row }">
+                      <UBadge :color="row.original.observe_only ? 'warning' : 'error'" variant="subtle">{{ row.original.observe_only ? tr('observeOnly') : tr('enforced') }}</UBadge>
+                    </template>
+                    <template #expires-cell="{ row }">{{ date(row.original.expires_at) }}</template>
+                    <template #actions-cell="{ row }">
+                      <div class="flex justify-end">
+                        <UButton :label="tr('unban')" icon="i-lucide-unlock" color="neutral" variant="ghost" size="sm" :disabled="busy" @click="unban(row.original.network)" />
+                      </div>
+                    </template>
+                  </UTable>
+                </RiskSettingsSection>
+              </UPageCard>
+            </section>
+
+            <section class="flex flex-col gap-4">
+              <UPageCard variant="naked">
+                <template #title>
+                  <span class="inline-flex items-center gap-1">{{ tr('events') }}<HelpPopover :text="tr('eventsHint')" :label="tr('moreInfo')" /></span>
+                </template>
+              </UPageCard>
+              <div class="flex flex-wrap items-center justify-between gap-1.5">
+                <UInput v-model="filterIP" icon="i-lucide-search" class="w-full sm:max-w-xs" :placeholder="tr('filterIP')" :aria-label="tr('filterIP')" />
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <USelect v-model="categoryFilter" :items="categoryItems" class="min-w-36" :aria-label="tr('category')" data-testid="risk-category" />
+                  <USelect v-model="reasonFilter" :items="reasonItems" class="min-w-40" :aria-label="tr('filterReason')" />
+                  <UButton :label="tr('filter')" icon="i-lucide-list-filter" color="neutral" variant="outline" :disabled="busy" data-testid="risk-filter" @click="refreshRecords" />
+                  <UButton :label="tr('clearEvents')" icon="i-lucide-trash-2" color="error" variant="soft" :disabled="busy || !events.length" @click="confirmClear = !confirmClear" />
+                </div>
+              </div>
+              <UAlert
+                v-if="confirmClear"
+                color="warning"
+                variant="subtle"
+                icon="i-lucide-triangle-alert"
+                orientation="horizontal"
+                :description="tr('clearConfirm')"
+                :actions="[
+                  { label: tr('confirm'), color: 'error', disabled: busy, onClick: clearEvents },
+                  { label: tr('cancel'), color: 'neutral', variant: 'subtle', onClick: () => { confirmClear = false } }
+                ]"
+              />
+              <UTable :data="events" :columns="eventColumns" :empty="tr('noEvents')" :ui="eventTableUi">
+                <template #at-cell="{ row }">{{ date(row.original.at) }}</template>
+                <template #ip-cell="{ row }">
+                  <code class="text-default">{{ row.original.ip }}</code>
+                  <p>{{ row.original.country || '—' }} · {{ label(row.original.ip_source) }}</p>
+                  <p class="text-dimmed">{{ tr('peer') }}: {{ row.original.peer }}</p>
+                </template>
+                <template #request-cell="{ row }">
+                  <span class="block max-w-48 whitespace-normal break-all text-default">{{ row.original.method }} {{ row.original.path }}</span>
+                  <p>{{ label(row.original.category) }} · {{ row.original.status }}</p>
+                </template>
+                <template #result-cell="{ row }">
+                  <UBadge :color="decisionTone(row.original.decision)" variant="subtle">{{ label(row.original.decision) }}</UBadge>
+                  <p class="mt-1">{{ label(row.original.reason) }}</p>
+                  <p v-if="row.original.error_reason" class="text-dimmed">{{ row.original.error_reason }}</p>
+                </template>
+                <template #user_agent-cell="{ row }"><span class="block min-w-40 max-w-xs whitespace-normal wrap-break-word">{{ row.original.user_agent || '—' }}</span></template>
+              </UTable>
+              <fieldset v-if="eventsTotal > 0" :disabled="busy" :aria-busy="busy" class="min-w-0 border-t border-default pt-4">
+                <Pagination
+                  :total="eventsTotal"
+                  :page="eventsPage"
+                  :page-size="eventsPageSize"
+                  show-jump
+                  @update:page="changeEventsPage"
+                  @update:page-size="changeEventsPageSize"
+                />
+              </fieldset>
+              <UPopover :content="{ align: 'start' }">
+                <UButton :label="tr('recovery')" icon="i-lucide-life-buoy" color="neutral" variant="link" class="w-fit px-0" />
+                <template #content><p class="max-w-md p-3 text-sm text-pretty text-muted">{{ tr('recoveryHint') }}</p></template>
+              </UPopover>
+            </section>
+          </template>
+        </div>
+      </template>
+    </UCollapsible>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, onDeactivated, ref, toRaw } from 'vue'
+import { computed, onMounted, onBeforeUnmount, onDeactivated, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { TableColumn } from '@nuxt/ui'
 import Pagination from '@/components/common/Pagination.vue'
 import BlacklistDialog from './BlacklistDialog.vue'
+import HelpPopover from './HelpPopover.vue'
 import RiskSettingsSection from './RiskSettingsSection.vue'
 import { ipRiskAPI, type IPBan, type IPBlockRule, type IPRiskConfig, type IPRiskEvent, type IPRiskSnapshot } from './api'
 
@@ -182,17 +295,63 @@ const showBlacklist = ref(false)
 onDeactivated(() => { showBlacklist.value = false })
 const counterKeys = ['login_attempts', 'login_failures', 'register_attempts', 'register_failures', 'verification_attempts'] as const
 const reasons = [...counterKeys, 'ip_blacklist', 'country_blocked', 'country_not_allowed', 'country_unknown', 'user_agent_blocked', 'empty_user_agent', 'invalid_client_ip', 'risk_store_unavailable']
+// USelect items cannot carry '' (reka-ui), so "all" is a sentinel mapped back to '' for the API.
+const ALL = '__all__'
+const categoryFilter = computed({ get: () => filterCategory.value || ALL, set: (value: string) => { filterCategory.value = value === ALL ? '' : value } })
+const reasonFilter = computed({ get: () => filterReason.value || ALL, set: (value: string) => { filterReason.value = value === ALL ? '' : value } })
+const categoryItems = computed(() => [{ label: tr('allCategories'), value: ALL }, ...['login', 'register', 'verification'].map(value => ({ label: label(value), value }))])
+const reasonItems = computed(() => [{ label: tr('allReasons'), value: ALL }, ...reasons.map(value => ({ label: label(value), value }))])
+const tableUi = {
+  thead: '[&>tr]:bg-elevated/50 [&>tr]:after:content-none',
+  tbody: '[&>tr]:last:[&>td]:border-b-0',
+  th: 'py-2 first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r',
+  td: 'border-b border-default',
+  separator: 'h-0'
+}
+const eventTableUi = { ...tableUi, td: 'border-b border-default align-top' }
+const anonymousBanColumns = computed<TableColumn<IPBan>[]>(() => [
+  { id: 'network', header: tr('network') },
+  { id: 'reason', header: tr('filterReason') },
+  { id: 'expires', header: tr('expiresAt') },
+  { id: 'actions', header: '' }
+])
+const banColumns = computed<TableColumn<IPBan>[]>(() => [
+  { id: 'network', header: tr('network') },
+  { id: 'reason', header: tr('filterReason') },
+  { id: 'mode', header: tr('ruleStatus') },
+  { id: 'expires', header: tr('expiresAt') },
+  { id: 'actions', header: '' }
+])
+const eventColumns = computed<TableColumn<IPRiskEvent>[]>(() => [
+  { id: 'at', header: tr('time') },
+  { id: 'ip', header: `IP / ${tr('source')}` },
+  { id: 'request', header: tr('request') },
+  { id: 'result', header: tr('result') },
+  { id: 'user_agent', header: 'User-Agent' }
+])
+type Tone = 'success' | 'error' | 'warning' | 'neutral'
+const decisionTones: Record<string, Tone> = { allowed: 'success', whitelisted: 'success', blocked: 'error', auto_banned: 'error', would_block: 'warning', would_ban: 'warning', unavailable: 'warning', disabled: 'neutral' }
+const decisionTone = (decision: string): Tone => decisionTones[decision] ?? 'neutral'
+const open = ref(initiallyOpen)
+watch(open, value => { if (value && !snapshot.value) void load() })
 let disposed = false
 onBeforeUnmount(() => { disposed = true })
 onMounted(() => { if (initiallyOpen) void load() })
 const lines = (value: string) => [...new Set(value.split(/[\n,]+/).map(v => v.trim()).filter(Boolean))]
 const date = (seconds: number) => new Date(seconds * 1000).toLocaleString()
+// A section opens itself on `invalid` (capture). The browser drops its validation bubble for a field that was
+// hidden when it fired, so once the section has rendered open, focus the field and report it again.
+let revealing = false
 function revealInvalidField(event: Event) {
-  let details = (event.target as HTMLElement).closest('details')
-  while (details) {
-    details.open = true
-    details = details.parentElement?.closest('details') ?? null
-  }
+  const field = event.target as HTMLInputElement
+  if (revealing || field.getClientRects().length) return
+  revealing = true
+  setTimeout(() => {
+    revealing = false
+    if (disposed || !field.getClientRects().length) return
+    field.focus({ preventScroll: false })
+    field.reportValidity()
+  }, 0)
 }
 function applyBlacklist(rules: IPBlockRule[]) {
   if (!draft.value) return
@@ -243,7 +402,6 @@ async function load() {
     await records()
   })
 }
-function onToggle(event: Event) { if ((event.target as HTMLDetailsElement).open && !snapshot.value) void load() }
 function addCurrentIP() { if (snapshot.value) whitelist.value = [...new Set([...lines(whitelist.value), snapshot.value.current_ip])].join('\n') }
 function addCountry(code: string) { countries.value = [...new Set([...lines(countries.value).map(v => v.toUpperCase()), code])].join(', ') }
 function allowChinaOnly() { allowedCountries.value = 'CN'; countries.value = lines(countries.value).map(v => v.toUpperCase()).filter(v => v !== 'CN').join(', ') }
