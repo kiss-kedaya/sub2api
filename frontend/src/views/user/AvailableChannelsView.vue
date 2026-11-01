@@ -1,72 +1,59 @@
 <template>
   <AppLayout>
-    <div class="signal-channel-page signal-available-page">
-      <TablePageLayout>
-        <template #actions>
-          <UserPageHeader flush :title="t('availableChannels.title')" :description="t('availableChannels.description')">
-            <template #badge>
-              <UBadge color="neutral" variant="subtle" class="tabular-nums" aria-live="polite">{{ filteredChannels.length }}</UBadge>
-            </template>
-          </UserPageHeader>
-        </template>
+    <TablePageLayout>
+      <template #actions>
+        <UserPageHeader flush :title="t('availableChannels.title')" :description="t('availableChannels.description')">
+          <template #badge>
+            <UBadge color="neutral" variant="subtle" class="tabular-nums" aria-live="polite">{{ filteredChannels.length }}</UBadge>
+          </template>
+        </UserPageHeader>
+      </template>
 
-        <template #filters>
-          <div class="signal-channel-filterbar flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-            <div class="flex flex-1 flex-wrap items-center gap-3">
-              <div class="relative w-full sm:w-80">
-                <Icon
-                  name="search"
-                  size="md"
-                  class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
-                />
-                <input
-                  v-model="searchQuery"
-                  type="text"
-                  :placeholder="t('availableChannels.searchPlaceholder')"
-                  class="input pl-10"
-                />
-              </div>
-            </div>
-
-            <div class="flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-3 lg:w-auto">
-              <button
-                @click="loadChannels"
-                :disabled="loading"
-                class="btn btn-secondary"
-                :title="t('common.refresh', 'Refresh')"
-              >
-                <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-              </button>
-            </div>
-          </div>
-        </template>
-
-        <template #table>
-          <AvailableChannelsTable
-            class="signal-channel-table"
-            :columns="columnLabels"
-            :rows="filteredChannels"
-            :loading="loading"
-            :user-group-rates="userGroupRates"
-            pricing-key-prefix="availableChannels.pricing"
-            :no-pricing-label="t('availableChannels.noPricing')"
-            :no-models-label="t('availableChannels.noModels')"
-            :empty-label="t('availableChannels.empty')"
+      <template #filters>
+        <div class="flex flex-wrap items-center justify-between gap-1.5">
+          <UInput
+            v-model="searchQuery"
+            type="text"
+            icon="i-lucide-search"
+            class="w-full sm:max-w-sm"
+            :placeholder="t('availableChannels.searchPlaceholder')"
+            :aria-label="t('availableChannels.searchPlaceholder')"
           />
-        </template>
-      </TablePageLayout>
-    </div>
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+            :disabled="loading"
+            :title="t('common.refresh', 'Refresh')"
+            :aria-label="t('common.refresh', 'Refresh')"
+            @click="loadChannels"
+          />
+        </div>
+      </template>
+
+      <template #table>
+        <AvailableChannelsTable
+          :columns="columnLabels"
+          :rows="filteredChannels"
+          :loading="loading"
+          :user-group-rates="userGroupRates"
+          pricing-key-prefix="availableChannels.pricing"
+          :no-pricing-label="t('availableChannels.noPricing')"
+          :no-models-label="t('availableChannels.noModels')"
+          :empty-label="t('availableChannels.empty')"
+        />
+      </template>
+    </TablePageLayout>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import './channel-signal.css'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-import Icon from '@/components/icons/Icon.vue'
 import AvailableChannelsTable from '@/components/channels/AvailableChannelsTable.vue'
 import userChannelsAPI, { type UserAvailableChannel } from '@/api/channels'
 import userGroupsAPI from '@/api/groups'

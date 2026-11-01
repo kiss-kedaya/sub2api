@@ -1,15 +1,33 @@
 <template>
   <AppLayout>
-    <div class="signal-channel-page signal-channel-v3 space-y-5 pb-12">
+    <div class="flex flex-col gap-4 pb-12 sm:gap-6">
       <UserPageHeader flush :title="t('channelMonitorV3.title')">
         <template #description>
           <span class="inline-flex flex-wrap items-center gap-2">
-            <span class="size-2 rounded-full" :class="refreshing ? 'bg-gray-400' : 'bg-emerald-500'" />
+            <span class="size-2 rounded-full" :class="refreshing ? 'bg-accented' : 'bg-success'" />
             <span>{{ snapshot ? t('channelMonitorV3.updatedTo', { time: formatTime(snapshot.coverage.data_through) }) : t('common.loading') }}</span>
             <UBadge v-if="snapshot && !snapshot.coverage.coverage_complete" color="warning" variant="subtle">{{ t('channelMonitorV3.partialCoverage') }}</UBadge>
           </span>
         </template>
-        <template #actions>
+      </UserPageHeader>
+
+      <div class="flex flex-wrap items-center justify-between gap-1.5">
+        <div class="flex flex-wrap items-center gap-3">
+          <UFieldGroup class="channel-range-switch">
+            <UButton
+              v-for="option in ranges"
+              :key="option.value"
+              color="neutral"
+              :variant="filter.range === option.value ? 'subtle' : 'outline'"
+              :class="filter.range === option.value ? 'font-semibold text-highlighted' : 'text-muted'"
+              :aria-pressed="filter.range === option.value"
+              @click="setRange(option.value)"
+            >{{ option.label }}</UButton>
+          </UFieldGroup>
+          <span class="text-xs text-muted">{{ t('channelMonitorV3.description') }}</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span v-if="snapshot" class="text-xs font-medium tabular-nums text-muted">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - (latestSnapshotMetrics?.error_rate ?? 0)), cache: formatPercent(latestSnapshotMetrics?.cache_rate ?? 0) }) }}</span>
           <UButton
             color="neutral"
             variant="outline"
@@ -20,21 +38,14 @@
             :aria-label="t('common.refresh')"
             @click="reload(false)"
           />
-        </template>
-      </UserPageHeader>
-      <section class="signal-channel-toolbar flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-default px-3 py-2.5 shadow-xs ring ring-default sm:px-4 dark:shadow-none">
-        <div class="channel-range-switch">
-          <button v-for="option in ranges" :key="option.value" type="button" :aria-pressed="filter.range === option.value" @click="setRange(option.value)">{{ option.label }}</button>
         </div>
-        <span class="text-xs text-muted">{{ t('channelMonitorV3.description') }}</span>
-        <span v-if="snapshot" class="ml-auto text-xs font-medium tabular-nums text-muted">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - (latestSnapshotMetrics?.error_rate ?? 0)), cache: formatPercent(latestSnapshotMetrics?.cache_rate ?? 0) }) }}</span>
-      </section>
+      </div>
 
-      <div v-if="loading && rows.length === 0" class="signal-channel-loading-grid grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        <div v-for="i in 8" :key="i" class="h-72 animate-pulse rounded-lg bg-elevated" />
+      <div v-if="loading && rows.length === 0" class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <USkeleton v-for="i in 8" :key="i" class="h-72 rounded-lg" />
       </div>
       <EmptyState v-else-if="rows.length === 0" :title="t('channelMonitorV3.emptyTitle')" :description="t('channelMonitorV3.emptyDescription')" />
-      <div v-else class="channel-status-board space-y-8" data-testid="channel-status-board">
+      <div v-else class="channel-status-board flex flex-col gap-8" data-testid="channel-status-board">
         <section
           v-for="(block, index) in layoutBlocks"
           :key="channelStatusLayoutBlockKey(block, index)"
@@ -42,11 +53,11 @@
           :data-testid="block.kind === 'cluster' ? `channel-status-platform-${block.platform}` : 'channel-status-compact-platforms'"
         >
           <template v-if="block.kind === 'cluster'">
-            <h2 class="signal-platform-heading">
+            <h2 class="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted">
               {{ providerLabel(block.platform) }}
               <UBadge color="neutral" variant="subtle" size="sm" class="tabular-nums">{{ block.rows.length }}</UBadge>
             </h2>
-            <div class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               <ChannelMonitorV3Card
                 v-for="row in block.rows"
                 :key="row.group_id ?? `${row.platform}:${row.group_name ?? ''}`"
@@ -57,16 +68,13 @@
               />
             </div>
           </template>
-          <div
-            v-else
-            class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
-          >
+          <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             <div
               v-for="item in block.items"
               :key="item.row.group_id ?? `${item.platform}:${item.row.group_name ?? ''}`"
               :data-testid="`channel-status-platform-${item.platform}`"
             >
-              <h2 class="signal-platform-heading">{{ providerLabel(item.platform) }}</h2>
+              <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-muted">{{ providerLabel(item.platform) }}</h2>
               <ChannelMonitorV3Card
                 :row="item.row"
                 :user-rate-multiplier="getUserRateMultiplier(item.row.group_id)"
@@ -83,7 +91,6 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import './channel-signal.css'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'

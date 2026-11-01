@@ -78,15 +78,18 @@
             role="group"
             :aria-label="t('channelMonitorV2.timeRange')"
           >
-            <button
+            <UButton
               v-for="option in ranges"
               :key="option.value"
-              type="button"
+              color="neutral"
+              size="sm"
+              :variant="filter.range === option.value ? 'subtle' : 'ghost'"
+              :class="filter.range === option.value ? 'text-highlighted' : 'text-muted'"
               :aria-pressed="filter.range === option.value"
               @click="setRange(option.value)"
             >
               {{ option.label }}
-            </button>
+            </UButton>
           </div>
 
           <span class="mx-0.5 hidden h-5 w-px shrink-0 bg-border sm:block" aria-hidden="true"></span>
@@ -130,20 +133,26 @@
             role="group"
             :aria-label="t('channelMonitorV2.trendView.label')"
           >
-            <button
-              type="button"
+            <UButton
+              color="neutral"
+              size="sm"
+              :variant="trendView === 'pulse' ? 'subtle' : 'ghost'"
+              :class="trendView === 'pulse' ? 'text-highlighted' : 'text-muted'"
               :aria-pressed="trendView === 'pulse'"
               @click="trendView = 'pulse'"
             >
               {{ t('channelMonitorV2.trendView.pulse') }}
-            </button>
-            <button
-              type="button"
+            </UButton>
+            <UButton
+              color="neutral"
+              size="sm"
+              :variant="trendView === 'line' ? 'subtle' : 'ghost'"
+              :class="trendView === 'line' ? 'text-highlighted' : 'text-muted'"
               :aria-pressed="trendView === 'line'"
               @click="trendView = 'line'"
             >
               {{ t('channelMonitorV2.trendView.line') }}
-            </button>
+            </UButton>
           </div>
 
           <div
@@ -152,15 +161,18 @@
             role="group"
             :aria-label="t('channelMonitorV2.healthMode.label')"
           >
-            <button
+            <UButton
               v-for="option in healthModeOptions"
               :key="option.value"
-              type="button"
+              color="neutral"
+              size="sm"
+              :variant="healthMode === option.value ? 'subtle' : 'ghost'"
+              :class="healthMode === option.value ? 'text-highlighted' : 'text-muted'"
               :aria-pressed="healthMode === option.value"
               @click="healthMode = option.value"
             >
               {{ option.label }}
-            </button>
+            </UButton>
           </div>
         </div>
       </section>
@@ -251,16 +263,19 @@
       <section class="card signal-channel-ledger flex min-h-0 flex-col overflow-hidden">
         <div class="border-b border-default px-4 py-3 sm:px-5">
           <nav class="channel-range-switch" role="tablist" :aria-label="t('channelMonitorV2.tabs.aria')">
-            <button
+            <UButton
               v-for="item in tabs"
               :key="item.value"
-              type="button"
+              color="neutral"
+              size="sm"
+              :variant="activeTab === item.value ? 'subtle' : 'ghost'"
+              :class="activeTab === item.value ? 'text-highlighted' : 'text-muted'"
               role="tab"
               :aria-selected="activeTab === item.value"
               @click="activeTab = item.value"
             >
               {{ item.label }}
-            </button>
+            </UButton>
           </nav>
         </div>
         <div class="min-h-0 max-h-[min(52vh,520px)] overflow-auto p-4 sm:p-5">
@@ -317,9 +332,10 @@
               class="rounded-lg bg-muted p-4 text-sm ring ring-default dark:bg-dark-900/30 dark:ring-0"
               :class="row.ignored ? 'opacity-60' : ''"
             >
-              <button
-                type="button"
-                class="grid w-full grid-cols-[minmax(100px,200px)_1fr_auto_auto] items-center gap-3 text-left"
+              <UButton
+                color="neutral"
+                variant="ghost"
+                class="-m-2 grid w-[calc(100%+1rem)] grid-cols-[minmax(100px,200px)_1fr_auto_auto] items-center gap-3 p-2 text-left font-normal"
                 @click="toggleError(row.category)"
               >
                 <span class="flex min-w-0 items-center gap-1.5 truncate text-gray-700 dark:text-gray-200">
@@ -338,7 +354,7 @@
                   :class="row.ignored ? 'text-gray-400' : 'text-gray-500'"
                 >{{ formatPercent(row.rate) }}</small>
                 <Icon name="chevronDown" size="sm" :class="['text-gray-400 transition-transform', expandedErrors.has(row.category) ? 'rotate-180' : '']" />
-              </button>
+              </UButton>
               <div v-if="expandedErrors.has(row.category)" class="mt-3 space-y-2 border-t border-gray-100 pt-3 dark:border-dark-700">
                 <template v-if="isAdmin && (row.details || []).length">
                   <div

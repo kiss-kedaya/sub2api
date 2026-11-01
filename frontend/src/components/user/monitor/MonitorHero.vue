@@ -1,46 +1,37 @@
 <template>
   <section class="py-3 md:py-4">
     <div class="flex items-center justify-end gap-3 flex-wrap">
-      <div
-        role="tablist"
-        class="inline-flex p-0.5 rounded-xl bg-gray-100 dark:bg-dark-800 border border-gray-200/60 dark:border-dark-700/60 text-xs"
-      >
-        <button
+      <UFieldGroup role="tablist">
+        <UButton
           v-for="opt in windowOptions"
           :key="opt.value"
-          type="button"
+          color="neutral"
+          size="sm"
           role="tab"
+          :variant="window === opt.value ? 'subtle' : 'outline'"
+          :class="window === opt.value ? 'font-semibold text-highlighted' : 'text-muted'"
           :aria-selected="window === opt.value"
-          class="px-3 py-1 rounded-lg transition-colors"
-          :class="window === opt.value
-            ? 'bg-white dark:bg-dark-700 shadow-xs text-gray-900 dark:text-white font-semibold'
-            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
           @click="emit('update:window', opt.value)"
         >
           {{ opt.label }}
-        </button>
-      </div>
+        </UButton>
+      </UFieldGroup>
 
-      <span
-        class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold tracking-wider uppercase"
-        :class="overallChipClass"
-      >
-        <span
-          class="w-1.5 h-1.5 rounded-full mr-1.5"
-          :class="overallDotClass"
-        ></span>
+      <UBadge :color="overallStatus === 'operational' ? 'success' : 'warning'" variant="subtle" class="uppercase">
+        <span class="mr-1 size-1.5 animate-pulse rounded-full bg-current" />
         {{ overallLabel }}
-      </span>
+      </UBadge>
 
-      <button
-        type="button"
-        class="h-8 w-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-dark-700 transition-colors disabled:opacity-50"
+      <UButton
+        color="neutral"
+        variant="ghost"
+        icon="i-lucide-refresh-cw"
+        :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
         :disabled="loading"
         :title="t('common.refresh')"
+        :aria-label="t('common.refresh')"
         @click="emit('refresh')"
-      >
-        <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-      </button>
+      />
 
       <AutoRefreshButton
         v-if="autoRefresh"
@@ -58,7 +49,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import AutoRefreshButton from '@/components/common/AutoRefreshButton.vue'
 export type MonitorWindow = '7d' | '15d' | '30d'
 export type OverallStatus = 'operational' | 'degraded'
@@ -92,25 +82,5 @@ const windowOptions = computed<{ value: MonitorWindow; label: string }[]>(() => 
 ])
 
 const overallLabel = computed(() => t(`channelStatus.overall.${props.overallStatus}`))
-
-const overallChipClass = computed(() => {
-  switch (props.overallStatus) {
-    case 'operational':
-      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-    case 'degraded':
-    default:
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
-  }
-})
-
-const overallDotClass = computed(() => {
-  switch (props.overallStatus) {
-    case 'operational':
-      return 'bg-emerald-500 animate-pulse'
-    case 'degraded':
-    default:
-      return 'bg-amber-500 animate-pulse'
-  }
-})
 
 </script>
