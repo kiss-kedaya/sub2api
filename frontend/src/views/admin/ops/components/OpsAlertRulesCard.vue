@@ -564,7 +564,7 @@ function cancelDelete() {
 </script>
 
 <template>
-  <div class="rounded-3xl bg-white p-6 shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
+  <div class="rounded-lg bg-white p-6 shadow-xs ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
     <div class="mb-4 flex flex-wrap items-start justify-between gap-3 sm:gap-4">
       <div>
         <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('admin.ops.alertRules.title') }}</h3>
@@ -592,7 +592,7 @@ function cancelDelete() {
       <div
         v-for="item in quickRules"
         :key="item.rule.id"
-        class="rounded-2xl border border-gray-200 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-800/40"
+        class="rounded-md border border-gray-200 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-800/40"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">

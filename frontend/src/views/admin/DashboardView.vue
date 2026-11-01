@@ -244,7 +244,7 @@
               class="admin-shortcut group flex items-center gap-3 rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-sky-50 dark:bg-dark-800/50 dark:hover:bg-sky-900/20"
               @click="router.push('/batch-image')"
             >
-              <span class="admin-shortcut-icon flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400">
+              <span class="admin-stat-icon flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400">
                 <Icon name="sparkles" size="md" :stroke-width="2" />
               </span>
               <span class="min-w-0 flex-1">
@@ -262,7 +262,7 @@
               class="admin-shortcut group flex items-center gap-3 rounded-lg bg-gray-50 p-3 text-left transition-colors hover:bg-emerald-50 dark:bg-dark-800/50 dark:hover:bg-emerald-900/20"
               @click="router.push('/admin/groups')"
             >
-              <span class="admin-shortcut-icon flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+              <span class="admin-stat-icon flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
                 <Icon name="grid" size="md" :stroke-width="2" />
               </span>
               <span class="min-w-0 flex-1">
@@ -774,19 +774,8 @@ onMounted(() => {
 
 <style scoped>
 /* Light mode in the Nuxt UI dashboard manner (the night theme keeps today's look):
-   neutral icon chips, plain section spacing instead of rule lines, chart cards back on. */
-html:not(.dark) .admin-stat-icon,
-html:not(.dark) .admin-shortcut-icon {
-  border-radius: 9999px;
-  background: #f4f4f4;
-  box-shadow: inset 0 0 0 1px #e5e5e5;
-  color: #171717;
-}
-
-html:not(.dark) .admin-stat-icon > svg {
-  color: #171717;
-}
-
+   plain section spacing instead of rule lines, chart cards back on. Icon chips use the
+   shared .admin-stat-icon rule. */
 html:not(.dark) .signal-admin-dashboard .admin-dashboard-shortcuts {
   padding-block: 0;
   border-block: 0;

@@ -63,3 +63,16 @@ html:not(.dark) .admin-menu .admin-menu-item:hover:not(:disabled) {
 html:not(.dark) .admin-menu .admin-menu-item:disabled {
   color: #a3a3a3;
 }
+
+/* Stat and shortcut icon chips: neutral with a hairline ring in light mode (Nuxt UI
+   dashboard stats). The night theme keeps each chip's tinted classes. */
+html:not(.dark) .admin-stat-icon {
+  border-radius: 9999px;
+  background: #f4f4f4;
+  box-shadow: inset 0 0 0 1px #e5e5e5;
+  color: #171717;
+}
+
+html:not(.dark) .admin-stat-icon > svg {
+  color: #171717;
+}
