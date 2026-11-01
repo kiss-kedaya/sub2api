@@ -25,6 +25,11 @@
       </div>
     </div>
 
+    <!-- Search button (UDashboardSearchButton); the palette opens with it or Ctrl/⌘ K. -->
+    <div v-if="isConsoleSignal" class="sidebar-search">
+      <ConsoleNavigationSearch :collapsed="sidebarCollapsed" />
+    </div>
+
     <!-- Body: navigation (UNavigationMenu, vertical pills) -->
     <nav ref="sidebarNavRef" class="sidebar-nav scrollbar-hide">
       <!-- Admin View: Admin menu first, then personal menu -->
@@ -186,6 +191,7 @@ import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { useConsoleSignal } from '@/composables/useConsoleSignal'
 import type { DropdownMenuItem } from '@nuxt/ui'
+import ConsoleNavigationSearch from './ConsoleNavigationSearch.vue'
 import UserMenu from './UserMenu.vue'
 
 interface NavItem {
@@ -1140,6 +1146,11 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   font-size: 11px;
   line-height: 18px;
+}
+
+.console-signal aside.sidebar.signal-sidebar .sidebar-search {
+  flex-shrink: 0;
+  padding: 4px 12px 0;
 }
 
 .console-signal aside.sidebar.signal-sidebar .sidebar-nav {

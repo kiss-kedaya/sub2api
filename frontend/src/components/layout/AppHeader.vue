@@ -42,9 +42,9 @@
         </div>
       </div>
 
-      <!-- Right: search, announcements, support, docs, model plaza, language, theme, subscriptions, balance -->
+      <!-- Right: announcements, support, docs, model plaza, language, theme, subscriptions, balance.
+           Search is the sidebar's command palette button (and Ctrl/⌘ K). -->
       <div class="header-actions flex min-w-0 items-center gap-1 sm:gap-3">
-        <ConsoleNavigationSearch v-if="isConsoleSignal" />
         <AnnouncementBell v-if="user" class="header-bell" />
         <router-link
           v-if="user"
@@ -169,7 +169,6 @@ import { resolveDocsUrl } from '@/utils/docsUrl'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { useConsoleSignal } from '@/composables/useConsoleSignal'
 import { useSiteColorMode } from '@/composables/useSiteTheme'
-import ConsoleNavigationSearch from './ConsoleNavigationSearch.vue'
 import UserMenu from './UserMenu.vue'
 
 const route = useRoute()
