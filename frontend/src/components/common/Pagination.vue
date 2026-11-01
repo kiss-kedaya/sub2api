@@ -54,13 +54,14 @@
         <div v-if="showJump" class="flex items-center space-x-2">
           <span class="text-sm text-muted dark:text-gray-300">{{ t('pagination.jumpTo') }}</span>
           <UInput
-            v-model="jumpPage"
+            :model-value="jumpPage"
             type="number"
             min="1"
             :max="totalPages"
             color="neutral"
             class="w-20"
             :placeholder="t('pagination.jumpPlaceholder')"
+            @update:model-value="jumpPage = String($event ?? '')"
             @keyup.enter="submitJump"
           />
           <UButton
@@ -96,10 +97,10 @@
         </template>
         <template #item="{ item }">
           <UButton
-            :color="item.value === page ? 'primary' : 'neutral'"
-            :variant="item.value === page ? 'solid' : 'outline'"
-            :label="String(item.value)"
-            :aria-label="t('pagination.goToPage', { page: item.value })"
+            :color="pageOf(item) === page ? 'primary' : 'neutral'"
+            :variant="pageOf(item) === page ? 'solid' : 'outline'"
+            :label="String(pageOf(item))"
+            :aria-label="t('pagination.goToPage', { page: pageOf(item) })"
             class="min-w-8 justify-center tabular-nums"
           />
         </template>
@@ -177,7 +178,10 @@ const pageSizeSelectOptions = computed(() => {
   }))
 })
 
-const jumpPage = ref<string | number>('')
+const jumpPage = ref('')
+
+// UPagination only renders the item slot for page entries; the slot type also covers ellipses.
+const pageOf = (item: { type: string; value?: number }) => (item.type === 'page' ? item.value ?? 0 : 0)
 
 const goToPage = (newPage: number) => {
   if (newPage >= 1 && newPage <= totalPages.value && newPage !== props.page) {
