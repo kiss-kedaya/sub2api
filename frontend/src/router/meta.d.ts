@@ -64,5 +64,13 @@ declare module 'vue-router' {
      * i18n key for the page description
      */
     descriptionKey?: string
+
+    /**
+     * The page this one belongs to (detail / sub-page), for the navbar breadcrumb and the
+     * back link: a route name (its params are taken from the current route) or a path.
+     * The parent's own meta.parent continues the trail. Example:
+     * `{ path: '/admin/accounts/:id', name: 'AdminAccountDetail', meta: { parent: 'AdminAccounts' } }`
+     */
+    parent?: string | { name: string } | { path: string }
   }
 }

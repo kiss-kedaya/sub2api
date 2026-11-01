@@ -208,6 +208,7 @@ export default {
     buySubscription: 'Recharge Center',
     docs: 'Docs',
     language: 'Language / 语言',
+    breadcrumb: 'Breadcrumb',
     myOrders: 'My Orders',
     orderManagement: 'Orders',
     paymentDashboard: 'Payment Dashboard',

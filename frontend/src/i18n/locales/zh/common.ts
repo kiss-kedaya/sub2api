@@ -208,6 +208,7 @@ export default {
     buySubscription: '充值中心',
     docs: '文档',
     language: '语言 / Language',
+    breadcrumb: '页面路径',
     myOrders: '我的订单',
     orderManagement: '订单管理',
     paymentDashboard: '支付概览',

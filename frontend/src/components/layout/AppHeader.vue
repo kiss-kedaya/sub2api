@@ -14,6 +14,25 @@
 
     <template #leading>
       <UDashboardSidebarCollapse data-test="sidebar-collapse" class="-ms-1.5" />
+      <!-- Detail / sub-pages: breadcrumb from route meta.parent (phones: a back button). -->
+      <template v-if="crumbs.length">
+        <UButton
+          :to="crumbs[crumbs.length - 1].to"
+          color="neutral"
+          variant="ghost"
+          square
+          icon="i-lucide-arrow-left"
+          class="console-back sm:hidden"
+          :aria-label="t('common.back')"
+          :title="crumbs[crumbs.length - 1].label"
+        />
+        <nav class="console-crumbs hidden sm:flex" :aria-label="t('nav.breadcrumb')">
+          <template v-for="crumb in crumbs" :key="crumb.path">
+            <RouterLink :to="crumb.to" class="console-crumb">{{ crumb.label }}</RouterLink>
+            <UIcon name="i-lucide-chevron-right" class="console-crumb-separator" aria-hidden="true" />
+          </template>
+        </nav>
+      </template>
     </template>
 
     <template #title>
@@ -86,7 +105,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationRaw, type RouteLocationResolved, type RouteMeta } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useLocale } from '@nuxt/ui/composables/useLocale'
 import { useAuthStore, useAppStore } from '@/stores'
@@ -97,6 +116,7 @@ import UserMenu from './UserMenu.vue'
 import { FRAME_TARGETS, useDashboardFrame } from './dashboardFrame'
 
 const route = useRoute()
+const router = useRouter()
 const { t } = useI18n()
 const { t: uiT } = useLocale()
 const appStore = useAppStore()
@@ -138,6 +158,49 @@ const routeTitle = computed(() => {
 
 const pageTitle = computed(() => titleClaim.value?.text() || routeTitle.value)
 
+interface Crumb {
+  label: string
+  path: string
+  to: RouteLocationRaw
+}
+
+function metaTitle(meta: RouteMeta): string {
+  if (meta.titleKey) return t(meta.titleKey)
+  return meta.title || ''
+}
+
+// meta.parent: a route name (params are taken from the current route) or a path.
+function resolveParent(parent: NonNullable<RouteMeta['parent']>): RouteLocationResolved | null {
+  const target = typeof parent === 'string' ? (parent.startsWith('/') ? { path: parent } : { name: parent }) : parent
+  try {
+    if ('name' in target) {
+      if (!router.hasRoute(target.name)) return null
+      const record = router.getRoutes().find((entry) => entry.name === target.name)
+      const keys = [...(record?.path.matchAll(/:(\w+)/g) ?? [])].map((match) => match[1])
+      const params = Object.fromEntries(keys.filter((key) => key in route.params).map((key) => [key, route.params[key]]))
+      return router.resolve({ name: target.name, params })
+    }
+    return router.resolve(target.path)
+  } catch {
+    return null
+  }
+}
+
+// The trail of parents, outermost first (the current page is the title after it).
+const crumbs = computed<Crumb[]>(() => {
+  const trail: Crumb[] = []
+  const seen = new Set<string>([route.path])
+  let parent = route.meta.parent
+  while (parent && trail.length < 4) {
+    const target = resolveParent(parent)
+    if (!target || seen.has(target.path)) break
+    seen.add(target.path)
+    trail.unshift({ label: metaTitle(target.meta) || target.path, path: target.path, to: target.fullPath })
+    parent = target.meta.parent
+  }
+  return trail
+})
+
 function formatHeaderMoney(value: number) {
   if (!Number.isFinite(value)) return '$0.00'
   return `$${value.toFixed(2)}`
@@ -145,6 +208,43 @@ function formatHeaderMoney(value: number) {
 </script>
 
 <style>
+/* Breadcrumb before the title: muted links, the title stays the strong last item. */
+.console-crumbs {
+  min-width: 0;
+  flex: 0 1000 auto;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.console-crumb {
+  overflow: hidden;
+  max-width: 14rem;
+  border-radius: var(--ui-radius);
+  color: var(--ui-text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 150ms ease;
+}
+
+.console-crumb:hover {
+  color: var(--ui-text-highlighted);
+}
+
+.console-crumb:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+}
+
+.console-crumb-separator {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--ui-text-dimmed);
+}
+
 /* The toolbar row exists only while a page teleports something into it. */
 .console-toolbar:not(:has(> .console-toolbar-start:not(:empty), > .console-toolbar-end:not(:empty))) {
   display: none;

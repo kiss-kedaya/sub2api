@@ -53,13 +53,20 @@ async function renderShell(path: string, role: 'user' | 'admin' = 'user') {
   useAdminSettingsStore().fetch = vi.fn().mockResolvedValue(undefined)
   useSubscriptionStore().activeSubscriptions = [{ id: 7, group_id: 1 }] as never
 
+  // Detail pages name their list page in meta.parent (route name or path) for the breadcrumb.
+  const detailRoutes = [
+    { path: '/admin/groups/:id', name: 'AdminGroupDetail', component: { template: '<div />' }, meta: { title: 'Group detail', parent: 'AdminGroupsList' } },
+    { path: '/admin/groups/:id/pricing', name: 'AdminGroupPricing', component: { template: '<div />' }, meta: { title: 'Pricing', parent: 'AdminGroupDetail' } },
+    { path: '/admin/groups-list', name: 'AdminGroupsList', component: { template: '<div />' }, meta: { title: 'Groups' } },
+    { path: '/usage/detail', component: { template: '<div />' }, meta: { title: 'Usage detail', parent: '/usage' } }
+  ]
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [...new Set([...userPaths, ...adminPaths, ...leftoverPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
+    routes: [...detailRoutes, ...[...new Set([...userPaths, ...adminPaths, ...leftoverPaths, '/:pathMatch(.*)*'])].map((routePath) => ({
       path: routePath,
       component: { template: '<div />' },
       meta: { title: routePath === '/keys' ? 'API Keys' : routePath }
-    }))
+    }))]
   })
   await router.push(path)
   await router.isReady()
@@ -223,6 +230,28 @@ describe('console frame (Nuxt UI dashboard)', () => {
     const headers = wrapper!.findAll('.sidebar-nav .sidebar-child-section').map((node) => node.text())
     expect(headers).toEqual(['Account operations', 'Channel operations', 'Monitoring and diagnostics', 'Platform tools'])
     expect(wrapper!.find('.sidebar-nav a[href="/admin/account-ops"][aria-current="page"]').exists()).toBe(true)
+  })
+
+  it('shows a breadcrumb back to the parent page on detail pages (meta.parent)', async () => {
+    const { router } = await renderShell('/usage/detail')
+    const crumbs = navbar().findAll('.console-crumbs a')
+    expect(crumbs.map((crumb) => [crumb.text(), crumb.attributes('href')])).toEqual([['/usage', '/usage']])
+    // Phones get a back button to the same page.
+    expect(navbar().get('.console-back').attributes('href')).toBe('/usage')
+    await crumbs[0].trigger('click')
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/usage'))
+  })
+
+  it('follows meta.parent by route name, keeping the route params, through two levels', async () => {
+    await renderShell('/admin/groups/42/pricing', 'admin')
+    const crumbs = navbar().findAll('.console-crumbs a').map((crumb) => [crumb.text(), crumb.attributes('href')])
+    expect(crumbs).toEqual([['Groups', '/admin/groups-list'], ['Group detail', '/admin/groups/42']])
+  })
+
+  it('shows no breadcrumb on top-level pages', async () => {
+    await renderShell('/keys')
+    expect(navbar().find('.console-crumbs').exists()).toBe(false)
+    expect(navbar().find('.console-back').exists()).toBe(false)
   })
 
   it('anchors the onboarding tour on the sidebar links', async () => {
