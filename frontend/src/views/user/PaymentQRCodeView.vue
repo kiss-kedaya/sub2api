@@ -1,10 +1,7 @@
 <template>
   <AppLayout>
     <div class="signal-payment-qr">
-      <header class="signal-payment-qr__heading">
-        <p aria-hidden="true">PAYMENT / LIVE</p>
-        <h1>{{ qrUrl ? scanTitle : t('payment.qr.payInNewWindow') }}</h1>
-      </header>
+      <UserPageHeader flush :title="qrUrl ? scanTitle : t('payment.qr.payInNewWindow')" />
       <section class="signal-payment-qr__panel">
         <div v-if="qrUrl" class="signal-payment-qr__code">
           <canvas ref="qrCanvas"></canvas>
@@ -14,9 +11,9 @@
           {{ scanHint }}
         </p>
         <div v-if="expired" class="signal-payment-qr__status signal-payment-qr__status--expired">
-          <Icon name="exclamationCircle" size="lg" />
+          <UIcon name="i-lucide-circle-alert" class="size-6" />
           <p>{{ t('payment.qr.expired') }}</p>
-          <button class="btn btn-primary" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
+          <UButton class="mt-2" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</UButton>
         </div>
         <div v-else class="signal-payment-qr__status">
           <span>{{ qrUrl ? t('payment.qr.expiresIn') : t('payment.qr.payInNewWindowHint') }}</span>
@@ -24,15 +21,13 @@
           <p>{{ t('payment.qr.waitingPayment') }}</p>
         </div>
         <div v-if="!expired" class="signal-payment-qr__actions">
-          <a v-if="payUrl && !qrUrl" :href="payUrl" target="_blank" rel="noopener noreferrer"
-            class="btn btn-primary">
-            <Icon name="externalLink" size="sm" />
+          <UButton v-if="payUrl && !qrUrl" :href="payUrl" target="_blank" rel="noopener noreferrer" size="xl" block icon="i-lucide-external-link">
             {{ t('payment.qr.openPayWindow') }}
-          </a>
+          </UButton>
           <!-- Cancel button -->
-          <button v-if="orderId" class="btn btn-secondary" :disabled="cancelling" @click="handleCancel">
+          <UButton v-if="orderId" color="neutral" variant="outline" size="xl" block :disabled="cancelling" @click="handleCancel">
             {{ cancelling ? t('common.processing') : t('payment.qr.cancelOrder') }}
-          </button>
+          </UButton>
         </div>
       </section>
     </div>
@@ -44,6 +39,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import { usePaymentStore } from '@/stores/payment'
 import { paymentAPI } from '@/api/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
@@ -52,7 +48,6 @@ import { isBuiltInAlipayMethod, isBuiltInWxpayMethod } from '@/components/paymen
 import QRCode from 'qrcode'
 import alipayIcon from '@/assets/icons/alipay.svg'
 import wxpayIcon from '@/assets/icons/wxpay.svg'
-import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -222,141 +217,22 @@ onUnmounted(() => cleanup())
 </script>
 
 <style scoped>
-.signal-payment-qr {
-  --qr-bg: var(--signal-bg, #f5f6f5);
-  --qr-surface: var(--signal-surface, #ffffff);
-  --qr-line: var(--signal-line, #dce2df);
-  --qr-text: var(--signal-text, #202423);
-  --qr-muted: var(--signal-muted, #65716a);
-  --qr-accent: var(--signal-accent, #087f68);
-  --qr-amber: var(--signal-amber, #a86610);
-  display: grid;
-  width: min(100%, 480px);
-  gap: 14px;
-  margin-inline: auto;
-  padding-block: 24px;
-  color: var(--qr-text);
-  letter-spacing: 0;
-}
-
-.signal-payment-qr__heading {
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--qr-line);
-  text-align: left;
-}
-
-.signal-payment-qr__heading p {
-  margin: 0 0 3px;
-  color: var(--qr-muted);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.signal-payment-qr__heading h1 {
-  margin: 0;
-  color: var(--qr-text);
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-.signal-payment-qr__panel {
-  display: grid;
-  gap: 16px;
-  padding: 20px;
-  border: 1px solid var(--qr-line);
-  border-radius: 8px;
-  background: var(--qr-surface);
-}
-
-.signal-payment-qr__code {
-  display: grid;
-  place-items: center;
-  width: fit-content;
-  max-width: 100%;
-  margin-inline: auto;
-  padding: 12px;
-  border: 1px solid var(--qr-line);
-  border-radius: 6px;
-  background: #ffffff;
-}
-
-.signal-payment-qr__code canvas {
-  display: block;
-  max-width: 100%;
-  height: auto !important;
-}
-
-.signal-payment-qr__hint {
-  margin: 0;
-  color: var(--qr-muted);
-  font-size: 13px;
-  line-height: 1.55;
-  text-align: center;
-}
-
-.signal-payment-qr__status {
-  display: grid;
-  gap: 4px;
-  padding: 14px 0;
-  border-block: 1px solid var(--qr-line);
-  text-align: center;
-}
-
-.signal-payment-qr__status span,
-.signal-payment-qr__status p {
-  margin: 0;
-  color: var(--qr-muted);
-  font-size: 12px;
-}
-
-.signal-payment-qr__status strong {
-  color: var(--qr-text);
-  font-size: 30px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-
-.signal-payment-qr__status--expired {
-  place-items: center;
-  color: var(--qr-amber);
-}
-
-.signal-payment-qr__status--expired p {
-  color: var(--qr-amber);
-  font-size: 16px;
-  font-weight: 650;
-}
-
-.signal-payment-qr__status--expired .btn {
-  margin-top: 8px;
-}
-
-.signal-payment-qr__actions {
-  display: grid;
-  gap: 8px;
-}
-
-.signal-payment-qr__actions .btn {
-  display: inline-flex;
-  width: 100%;
-  min-height: 42px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-
+.signal-payment-qr { display: grid; width: min(100%, 480px); gap: 16px; margin-inline: auto; padding-block: 8px 24px; color: var(--ui-text-highlighted); letter-spacing: 0; }
+.signal-payment-qr__panel { display: grid; gap: 16px; padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
+.dark .signal-payment-qr__panel { box-shadow: 0 0 0 1px var(--ui-border); }
+.signal-payment-qr__code { display: grid; place-items: center; width: fit-content; max-width: 100%; margin-inline: auto; padding: 12px; border: 1px solid var(--ui-border); border-radius: 8px; background: #ffffff; }
+.signal-payment-qr__code canvas { display: block; max-width: 100%; height: auto !important; }
+.signal-payment-qr__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.55; text-align: center; }
+.signal-payment-qr__status { display: grid; gap: 4px; padding: 14px 0; border-block: 1px solid var(--ui-border); text-align: center; }
+.signal-payment-qr__status span, .signal-payment-qr__status p { margin: 0; color: var(--ui-text-muted); font-size: 12px; }
+.signal-payment-qr__status strong { color: var(--ui-text-highlighted); font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.signal-payment-qr__status--expired { place-items: center; color: #b45309; }
+.dark .signal-payment-qr__status--expired { color: var(--ui-warning); }
+.signal-payment-qr__status--expired p { color: inherit; font-size: 15px; font-weight: 600; }
+.signal-payment-qr__actions { display: grid; gap: 8px; }
 @media (max-width: 374px) {
-  .signal-payment-qr {
-    padding-block: 10px;
-  }
-
-  .signal-payment-qr__panel {
-    padding: 14px;
-  }
-
-  .signal-payment-qr__code {
-    padding: 8px;
-  }
+  .signal-payment-qr { padding-block: 4px 10px; }
+  .signal-payment-qr__panel { padding: 14px; }
+  .signal-payment-qr__code { padding: 8px; }
 }
 </style>
