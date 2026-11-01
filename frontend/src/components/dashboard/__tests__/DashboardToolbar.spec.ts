@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick } from 'vue'
 
 vi.mock('vue-i18n', async (original) => ({ ...await original<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh' } }) }))
 vi.mock('vue-router', () => ({
@@ -9,8 +9,10 @@ vi.mock('vue-router', () => ({
   RouterLink: { name: 'RouterLink', props: ['to', 'custom'], template: '<a><slot /></a>' },
 }))
 
+import { h } from 'vue'
 import DashboardToolbar from '../DashboardToolbar.vue'
 import { statCorners } from '../dashboardUi'
+import { FRAME_TARGETS, provideDashboardFrame } from '@/components/layout/dashboardFrame'
 
 const RangeStub = defineComponent({
   name: 'DateRangePicker',
@@ -51,6 +53,28 @@ describe('DashboardToolbar', () => {
 
     await wrapper.get('button[aria-label="refresh"]').trigger('click')
     expect(wrapper.emitted('refresh')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('puts the filters on the left of the frame toolbar row and refresh on the right', async () => {
+    // A minimal frame: the provider plus the two toolbar targets AppHeader renders.
+    const Frame = defineComponent({
+      setup() {
+        provideDashboardFrame()
+        return () => h('div', [
+          h('div', { id: FRAME_TARGETS.toolbarStart }),
+          h('div', { id: FRAME_TARGETS.toolbarEnd }),
+          h(DashboardToolbar, props),
+        ])
+      },
+    })
+    const wrapper = mount(Frame, { attachTo: document.body, global: { stubs: { DateRangePicker: RangeStub } } })
+    await nextTick()
+    const start = wrapper.get(`#${FRAME_TARGETS.toolbarStart}`)
+    const end = wrapper.get(`#${FRAME_TARGETS.toolbarEnd}`)
+    expect(start.find('.range-stub').exists()).toBe(true)
+    expect(start.find('button[aria-label="refresh"]').exists()).toBe(false)
+    expect(end.find('button[aria-label="refresh"]').exists()).toBe(true)
     wrapper.unmount()
   })
 

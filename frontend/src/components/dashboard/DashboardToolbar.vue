@@ -1,8 +1,6 @@
 <template>
-  <UDashboardToolbar
-    class="dash-toolbar"
-    :ui="{ root: 'border-b-0 px-0 sm:px-0 min-h-0 flex-wrap gap-y-2 overflow-visible', left: 'flex-wrap', right: 'ms-auto' }"
-  >
+  <!-- The frame's toolbar row under the navbar (in place when there is no frame). -->
+  <PageToolbar>
     <template #left>
       <DateRangePicker
         class="dash-range -ms-1"
@@ -34,13 +32,14 @@
         @click="emit('refresh')"
       />
     </template>
-  </UDashboardToolbar>
+  </PageToolbar>
 </template>
 
 <script setup lang="ts">
-// Filter row at the top of a dashboard body, as the template's UDashboardToolbar:
-// date range and granularity as quiet ghost controls, refresh on the right.
+// Dashboard filters in the frame's toolbar row (the template's UDashboardToolbar):
+// date range and granularity as quiet ghost controls on the left, refresh on the right.
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 
 defineProps<{
   startDate: string
@@ -69,8 +68,8 @@ function onGranularity(value: unknown) {
 
 <style scoped>
 /* The shared picker keeps its own dropdown; only its trigger becomes a ghost button here.
-   Two classes on the root outrank the console's `html .console-signal .signal-main` rule. */
-.dash-toolbar .dash-range.dash-range :deep(.date-picker-trigger) {
+   The doubled class outranks the frame's 32px rule for legacy controls in the toolbar. */
+.dash-range.dash-range :deep(.date-picker-trigger) {
   min-height: 32px;
   padding: 6px 10px;
   gap: 6px;
@@ -81,23 +80,23 @@ function onGranularity(value: unknown) {
   font-weight: 500;
 }
 
-.dash-toolbar .dash-range.dash-range :deep(.date-picker-trigger:hover),
-.dash-toolbar .dash-range.dash-range :deep(.date-picker-trigger-open) {
+.dash-range.dash-range :deep(.date-picker-trigger:hover),
+.dash-range.dash-range :deep(.date-picker-trigger-open) {
   border-color: transparent;
   background: var(--ui-bg-elevated);
   box-shadow: none;
 }
 
-.dash-toolbar .dash-range.dash-range :deep(.date-picker-trigger:focus-visible) {
+.dash-range.dash-range :deep(.date-picker-trigger:focus-visible) {
   outline: 2px solid var(--ui-border-inverted);
   outline-offset: 2px;
 }
 
-.dash-toolbar .dash-range.dash-range :deep(:is(.date-picker-icon, .date-picker-chevron)) {
+.dash-range.dash-range :deep(:is(.date-picker-icon, .date-picker-chevron)) {
   color: var(--ui-text-dimmed);
 }
 
-.dash-toolbar .dash-range.dash-range :deep(.date-picker-icon) {
+.dash-range.dash-range :deep(.date-picker-icon) {
   color: var(--ui-text);
 }
 </style>
