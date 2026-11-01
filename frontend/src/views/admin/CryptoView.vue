@@ -1,752 +1,529 @@
 <template>
   <AppLayout>
-    <div class="crypto-view">
+    <div class="crypto-view flex w-full min-w-0 flex-col gap-4 sm:gap-6">
       <AdminPageHeader class="crypto-view__header" :title="t('admin.crypto.title')" :description="t('admin.crypto.description')">
         <template v-if="loadedSnapshot" #actions>
-        <div class="crypto-view__header-status">
-          <span class="crypto-view__badge" :class="loadedSnapshot.enabled && !walletSecurityLocked ? 'crypto-view__badge--active' : 'crypto-view__badge--disabled'">{{ t(loadedSnapshot.enabled && !walletSecurityLocked ? 'admin.crypto.channelActive' : 'admin.crypto.channelPaused') }}</span>
-          <span class="crypto-view__badge" :class="walletReady ? 'crypto-view__badge--active' : 'crypto-view__badge--pending'">{{ t(walletStateLabel) }}</span>
-          <CryptoGrantStatus />
-        </div>
+          <div class="crypto-view__header-status flex flex-wrap items-center gap-2">
+            <UBadge :color="loadedSnapshot.enabled && !walletSecurityLocked ? 'success' : 'neutral'" variant="subtle">{{ t(loadedSnapshot.enabled && !walletSecurityLocked ? 'admin.crypto.channelActive' : 'admin.crypto.channelPaused') }}</UBadge>
+            <UBadge :color="walletReady ? 'success' : 'warning'" variant="subtle">{{ t(walletStateLabel) }}</UBadge>
+            <CryptoGrantStatus />
+          </div>
         </template>
       </AdminPageHeader>
+
       <CryptoWalletSecurityPanel class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
-      <details class="crypto-view__notifications">
-        <summary>{{ t('admin.crypto.walletNotificationSettings') }}<span>{{ t('admin.crypto.walletNotificationOptional') }}</span></summary>
-        <ProfileBarkCard class="crypto-view__bark" :title="t('admin.crypto.walletBarkTitle')" :description="t('admin.crypto.walletBarkDescription')" />
-      </details>
-      <p v-if="operationIntentError" role="alert" class="crypto-view__approval-notice crypto-view__intent-error">{{ operationIntentError }}</p>
-      <div class="card crypto-view__card">
-        <div class="crypto-view__tabs" role="tablist" :aria-label="t('admin.crypto.title')">
-          <button
-            v-for="tab in tabs"
-            :key="tab.id"
-            type="button"
-            role="tab"
-            class="crypto-view__tab"
-            :class="{ 'crypto-view__tab--active': activeTab === tab.id }"
-            :id="'crypto-tab-' + tab.id"
-            :aria-controls="'crypto-panel-' + tab.id"
-            :aria-selected="activeTab === tab.id"
-            :tabindex="activeTab === tab.id ? 0 : -1"
-            @keydown="onTabKeydown"
-            @click="switchTab(tab.id)"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
 
+      <UCollapsible class="crypto-view__notifications" :unmount-on-hide="false">
+        <UButton color="neutral" variant="ghost" trailing-icon="i-lucide-chevron-down" class="-mx-2.5 group" :ui="{ trailingIcon: 'transition-transform group-data-[state=open]:rotate-180' }">
+          <span class="font-medium text-highlighted">{{ t('admin.crypto.walletNotificationSettings') }}</span>
+          <span class="text-muted">{{ t('admin.crypto.walletNotificationOptional') }}</span>
+        </UButton>
+        <template #content>
+          <ProfileBarkCard class="crypto-view__bark mt-3" :title="t('admin.crypto.walletBarkTitle')" :description="t('admin.crypto.walletBarkDescription')" />
+        </template>
+      </UCollapsible>
+
+      <UAlert v-if="operationIntentError" role="alert" class="crypto-view__intent-error" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="operationIntentError" />
+
+      <UTabs
+        :model-value="activeTab"
+        :items="tabs"
+        variant="link"
+        class="crypto-view__tabs w-full gap-4 sm:gap-6"
+        :ui="{ list: 'border-b border-default', trigger: 'grow-0' }"
+        :aria-label="t('admin.crypto.title')"
+        @update:model-value="value => switchTab(String(value))"
+      >
         <!-- Configuration -->
-        <div v-if="activeTab === 'config'" id="crypto-panel-config" role="tabpanel" aria-labelledby="crypto-tab-config" class="crypto-view__panel crypto-view__panel--config">
-          <div v-if="loadingConfig" class="crypto-view__empty">
-            <LoadingSpinner />
-          </div>
-          <div v-else-if="!config" class="crypto-view__empty" role="status">
-            <div class="space-y-3 text-center">
-              <p>{{ configError || t('admin.crypto.configLoadFailed') }}</p>
-              <button type="button" class="btn btn-primary" @click="loadConfig">{{ t('common.refresh') }}</button>
-            </div>
-          </div>
-          <template v-else>
-            <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
-            <details class="crypto-view__group" open>
-              <summary class="crypto-view__group-summary">
-                <span class="crypto-view__group-title">{{ t('admin.crypto.groupChannel') }}</span>
-                <span class="crypto-view__group-desc">{{ t('admin.crypto.groupChannelDesc') }}</span>
-                <span class="crypto-view__group-chevron">›</span>
-              </summary>
-              <div class="crypto-view__switch-row">
-                <div class="space-y-0.5">
-                  <label class="crypto-view__label">{{ t('admin.crypto.enabled') }}</label>
-                  <p class="crypto-view__hint">{{ t('admin.crypto.enabledHint') }}</p>
+        <template #config>
+          <div id="crypto-panel-config" class="crypto-view__panel flex w-full flex-col gap-4 sm:gap-6 lg:max-w-3xl mx-auto">
+            <div v-if="loadingConfig" class="flex justify-center py-16"><LoadingSpinner /></div>
+            <UAlert
+              v-else-if="!config"
+              role="status"
+              color="neutral"
+              variant="subtle"
+              icon="i-lucide-circle-alert"
+              :title="configError || t('admin.crypto.configLoadFailed')"
+              :actions="[{ label: t('common.refresh'), color: 'neutral', variant: 'outline', onClick: () => { void loadConfig() } }]"
+            />
+            <template v-else>
+              <UPageCard
+                class="crypto-view__save-bar"
+                :title="t('admin.crypto.saveTitle')"
+                :description="t('admin.crypto.saveHint')"
+                variant="naked"
+                orientation="horizontal"
+              >
+                <div class="flex items-center gap-3 lg:ms-auto">
+                  <span v-if="configSaved" class="text-sm text-success" role="status">{{ t('common.saved') }}</span>
+                  <UButton :loading="savingConfig" :disabled="savingConfig" class="w-fit" @click="requestSaveConfig">{{ savingConfig ? t('common.saving') : t('common.save') }}</UButton>
                 </div>
-                <Toggle :model-value="config.enabled" @update:model-value="confirmChannelToggle" />
-              </div>
-              <div class="crypto-view__field">
-                <fieldset>
-                  <legend class="crypto-view__label mb-2">{{ t('admin.crypto.chains') }}</legend>
-                  <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                    <label v-for="network in depositNetworks" :key="network.id" class="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-dark-600">
-                      <input v-model="config.chains" type="checkbox" :value="network.id" :data-testid="`crypto-chain-${network.id}`" class="mt-1 h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500" @change="syncRPCRows" />
-                      <span class="min-w-0">
-                        <span class="block text-sm font-medium">{{ network.label }}</span>
-                        <span class="block text-xs text-gray-500 dark:text-gray-400">{{ network.tokens }}</span>
-                      </span>
-                    </label>
+              </UPageCard>
+
+              <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
+
+              <section class="crypto-view__group">
+                <UPageCard :title="t('admin.crypto.groupChannel')" :description="t('admin.crypto.groupChannelDesc')" variant="naked" class="mb-4" />
+                <UPageCard variant="subtle">
+                  <UFormField :label="t('admin.crypto.enabled')" :description="t('admin.crypto.enabledHint')" class="flex items-center justify-between gap-4">
+                    <Toggle :model-value="config.enabled" @update:model-value="confirmChannelToggle" />
+                  </UFormField>
+                  <USeparator />
+                  <UFormField :label="t('admin.crypto.chains')" :description="t('admin.crypto.chainsHint')">
+                    <UCheckboxGroup
+                      :model-value="config.chains"
+                      :items="chainItems"
+                      class="mt-3"
+                      :ui="{ fieldset: 'grid grid-cols-1 gap-3 sm:grid-cols-2' }"
+                      @update:model-value="setChains"
+                    />
+                  </UFormField>
+                </UPageCard>
+              </section>
+
+              <!-- Seeds are managed and encrypted by the main service, with fresh 2FA for changes. -->
+              <section class="crypto-view__group">
+                <UPageCard :title="t('admin.crypto.walletLockTitle')" :description="t('admin.crypto.walletLockDesc')" variant="naked" class="mb-4" />
+                <UPageCard variant="subtle">
+                  <UFormField :label="t('admin.crypto.walletStatusLabel')" :description="t('admin.crypto.walletManagedHint')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'shrink-0' }">
+                    <div class="crypto-view__lockstate flex items-center gap-2">
+                      <UBadge :color="walletReady ? 'success' : walletCanDerive ? 'warning' : 'error'" variant="subtle">{{ t(walletStateLabel) }}</UBadge>
+                      <UButton color="neutral" variant="outline" size="sm" :disabled="loadingWallet" @click="loadWalletStatus">{{ t('common.refresh') }}</UButton>
+                    </div>
+                  </UFormField>
+                  <UAlert v-if="walletCanDerive && !walletReady" role="status" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.crypto.walletNotReady')" />
+                  <template v-if="!walletConfigured">
+                    <USeparator />
+                    <UAlert color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.crypto.walletInitWarning')" />
+                    <UFormField :label="t('admin.crypto.depositMnemonic')" :description="t('admin.crypto.depositMnemonicImpact')">
+                      <UInput id="crypto-deposit-mnemonic" v-model="depositMnemonic" type="password" autocomplete="off" spellcheck="false" class="mt-2 w-full" />
+                    </UFormField>
+                    <UFormField :label="t('admin.crypto.hotMnemonic')" :description="t('admin.crypto.hotMnemonicScope')">
+                      <UInput id="crypto-initial-hot-mnemonic" v-model="initialHotMnemonic" type="password" autocomplete="off" spellcheck="false" class="mt-2 w-full" />
+                    </UFormField>
+                    <div class="flex justify-end">
+                      <UButton :loading="initializing" :disabled="initializing || !depositMnemonic.trim() || !initialHotMnemonic.trim()" @click="submitInitialize">
+                        {{ initializing ? t('common.saving') : t('admin.crypto.walletInitializeAction') }}
+                      </UButton>
+                    </div>
+                  </template>
+                  <USeparator />
+                  <UFormField :label="t('admin.crypto.walletToolsLabel')" :description="t('admin.crypto.walletToolsHint')" class="crypto-view__wallet-actions flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'shrink-0' }">
+                    <div class="flex flex-wrap gap-2 sm:justify-end">
+                      <UButton color="neutral" variant="outline" size="sm" data-testid="crypto-mnemonics-open" :disabled="!walletCanDerive" @click="mnemonicsDialogOpen = true">{{ t('admin.crypto.mnemonicsExportAction') }}</UButton>
+                      <UButton color="neutral" variant="outline" size="sm" data-testid="crypto-hot-import-open" :disabled="!walletCanDerive" @click="openWalletDialog()">{{ t('admin.crypto.hotImportAction') }}</UButton>
+                    </div>
+                  </UFormField>
+                </UPageCard>
+              </section>
+
+              <section id="crypto-rpc-settings" class="crypto-view__group">
+                <UPageCard :title="t('admin.crypto.groupRpc')" :description="t('admin.crypto.groupRpcDesc')" variant="naked" class="mb-4" />
+                <UPageCard variant="subtle">
+                  <div v-if="!rpcUnlocked" class="crypto-view__rpc-overview flex max-sm:flex-col justify-between items-start gap-4">
+                    <div class="min-w-0 space-y-2">
+                      <p class="text-sm text-muted">{{ t('admin.crypto.rpcHiddenHint') }}</p>
+                      <div class="flex flex-wrap gap-1.5">
+                        <UBadge
+                          v-for="chain in config.chains"
+                          :key="`rpc-status-${chain}`"
+                          :color="configuredRPCChains.includes(chain) ? 'success' : 'neutral'"
+                          variant="subtle"
+                          :data-testid="`rpc-configured-${chain}`"
+                        >{{ chain }} · {{ t(configuredRPCChains.includes(chain) ? 'admin.crypto.rpcConfigured' : 'admin.crypto.rpcNotConfigured') }}</UBadge>
+                      </div>
+                    </div>
+                    <UButton color="neutral" variant="outline" size="sm" class="shrink-0" :disabled="loadingPrivateRPC || savingConfig" @click="manageRPC">
+                      {{ loadingPrivateRPC ? t('common.loading') : t('admin.crypto.rpcManage') }}
+                    </UButton>
                   </div>
-                </fieldset>
-                <p class="crypto-view__hint">{{ t('admin.crypto.chainsHint') }}</p>
-              </div>
-            </details>
+                  <UAlert v-if="rpcError" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="rpcError" />
 
-            <!-- Seeds are managed and encrypted by the main service, with fresh 2FA for changes. -->
-            <details class="crypto-view__group" :open="!walletConfigured">
-              <summary class="crypto-view__group-summary">
-                <span class="crypto-view__group-title">{{ t('admin.crypto.walletLockTitle') }}</span>
-                <span class="crypto-view__group-desc">{{ t('admin.crypto.walletLockDesc') }}</span>
-                <span class="crypto-view__group-chevron">›</span>
-              </summary>
-
-              <div class="crypto-view__lockstate">
-                <span
-                  class="crypto-view__badge"
-                  :class="walletReady ? 'crypto-view__badge--active' : walletCanDerive ? 'crypto-view__badge--pending' : 'crypto-view__badge--failed'"
-                >
-                  {{ t(walletStateLabel) }}
-                </span>
-                <button class="btn btn-secondary btn-sm" :disabled="loadingWallet" @click="loadWalletStatus">
-                  {{ t('common.refresh') }}
-                </button>
-              </div>
-
-              <p v-if="walletCanDerive && !walletReady" class="crypto-view__approval-notice" role="status">
-                {{ t('admin.crypto.walletNotReady') }}
-              </p>
-
-              <p class="crypto-view__hint">{{ t('admin.crypto.walletManagedHint') }}</p>
-              <div v-if="!walletConfigured" class="crypto-view__field">
-                <p class="crypto-view__approval-notice">{{ t('admin.crypto.walletInitWarning') }}</p>
-                <label for="crypto-deposit-mnemonic" class="crypto-view__label">{{ t('admin.crypto.depositMnemonic') }}</label>
-                <input id="crypto-deposit-mnemonic" v-model="depositMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" />
-                <p class="crypto-view__hint">{{ t('admin.crypto.depositMnemonicImpact') }}</p>
-                <label for="crypto-initial-hot-mnemonic" class="crypto-view__label">{{ t('admin.crypto.hotMnemonic') }}</label>
-                <input id="crypto-initial-hot-mnemonic" v-model="initialHotMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" />
-                <p class="crypto-view__hint">{{ t('admin.crypto.hotMnemonicScope') }}</p>
-                <div class="crypto-view__actions">
-                  <button class="btn btn-primary" :disabled="initializing || !depositMnemonic.trim() || !initialHotMnemonic.trim()" @click="submitInitialize">
-                    {{ initializing ? t('common.saving') : t('admin.crypto.walletInitializeAction') }}
-                  </button>
-                </div>
-              </div>
-              <div class="crypto-view__wallet-actions">
-                <p class="crypto-view__hint">{{ t('admin.crypto.walletToolsHint') }}</p>
-                <button type="button" class="btn btn-secondary" :disabled="!walletCanDerive" @click="mnemonicsDialogOpen = true">{{ t('admin.crypto.mnemonicsExportAction') }}</button>
-                <button type="button" class="btn btn-secondary" :disabled="!walletCanDerive" @click="openWalletDialog()">{{ t('admin.crypto.hotImportAction') }}</button>
-              </div>
-            </details>
-
-
-            <details id="crypto-rpc-settings" class="crypto-view__group crypto-view__group--wide">
-              <summary class="crypto-view__group-summary">
-                <span class="crypto-view__group-title">{{ t('admin.crypto.groupRpc') }}</span>
-                <span class="crypto-view__group-desc">{{ t('admin.crypto.groupRpcDesc') }}</span>
-                <span class="crypto-view__group-chevron">›</span>
-              </summary>
-
-              <div v-if="!rpcUnlocked" class="crypto-view__rpc-overview">
-                <p class="crypto-view__hint">{{ t('admin.crypto.rpcHiddenHint') }}</p>
-                <div class="crypto-view__rpc-statuses">
-                  <span v-for="chain in config.chains" :key="`rpc-status-${chain}`" class="crypto-view__badge" :data-testid="`rpc-configured-${chain}`">
-                    {{ chain }} · {{ t(configuredRPCChains.includes(chain) ? 'admin.crypto.rpcConfigured' : 'admin.crypto.rpcNotConfigured') }}
-                  </span>
-                </div>
-                <button type="button" class="btn btn-secondary btn-sm" :disabled="loadingPrivateRPC || savingConfig" @click="manageRPC">
-                  {{ loadingPrivateRPC ? t('common.loading') : t('admin.crypto.rpcManage') }}
-                </button>
-              </div>
-              <p v-if="rpcError" role="alert" class="crypto-view__warn">{{ rpcError }}</p>
-
-              <!-- Per-chain endpoint table: add / test / remove, and pull
-                   candidates from the public chainlist registry. -->
-              <template v-if="rpcUnlocked">
-              <div class="crypto-view__rpc-chain" v-for="chain in config.chains" :key="`rpc-${chain}`">
-                <div class="crypto-view__rpc-head">
-                  <span class="crypto-view__rpc-chain-name">{{ chain }}</span>
-                  <div class="crypto-view__rpc-head-actions">
-                    <button
-                      class="btn btn-secondary btn-sm"
-                      :disabled="fetchingCandidates === chain"
-                      @click="autoFillRPC(chain)"
-                    >
-                      {{ fetchingCandidates === chain ? t('admin.crypto.rpcFetching') : t('admin.crypto.rpcFetch') }}
-                    </button>
-                    <button class="btn btn-secondary btn-sm" @click="addRPCRow(chain)">
-                      {{ t('admin.crypto.rpcAdd') }}
-                    </button>
-                    <button
-                      class="btn btn-secondary btn-sm"
-                      :disabled="testingChain === chain"
-                      @click="testAllEndpoints(chain)"
-                    >
-                      {{ testingChain === chain ? t('common.loading') : t('admin.crypto.rpcTestAll') }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="crypto-view__table-wrap">
-                  <table class="crypto-view__table">
-                    <thead>
-                      <tr>
-                        <th>{{ t('admin.crypto.rpcEndpoint') }}</th>
-                        <th>{{ t('common.status') }}</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(row, idx) in rpcRows[chain] ?? []" :key="`${chain}-${idx}`">
-                        <td>
-                          <input
+                  <!-- Per-chain endpoint list: add / test / remove, and pull candidates from the public chainlist registry. -->
+                  <template v-if="rpcUnlocked">
+                    <template v-for="(chain, chainIndex) in config.chains" :key="`rpc-${chain}`">
+                      <USeparator v-if="chainIndex > 0" />
+                      <div class="crypto-view__rpc-chain space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <span class="font-mono text-sm font-medium text-highlighted">{{ chain }}</span>
+                          <div class="flex flex-wrap gap-1.5">
+                            <UButton color="neutral" variant="outline" size="xs" icon="i-lucide-radio-tower" :disabled="fetchingCandidates === chain" @click="autoFillRPC(chain)">
+                              {{ fetchingCandidates === chain ? t('admin.crypto.rpcFetching') : t('admin.crypto.rpcFetch') }}
+                            </UButton>
+                            <UButton color="neutral" variant="outline" size="xs" icon="i-lucide-plus" @click="addRPCRow(chain)">{{ t('admin.crypto.rpcAdd') }}</UButton>
+                            <UButton color="neutral" variant="outline" size="xs" icon="i-lucide-play" :disabled="testingChain === chain" @click="testAllEndpoints(chain)">
+                              {{ testingChain === chain ? t('common.loading') : t('admin.crypto.rpcTestAll') }}
+                            </UButton>
+                          </div>
+                        </div>
+                        <div v-for="(row, idx) in rpcRows[chain] ?? []" :key="`${chain}-${idx}`" class="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+                          <UInput
                             v-model="row.url"
-                            class="input crypto-view__rpc-input"
+                            class="crypto-view__rpc-input min-w-0 flex-1 basis-full sm:basis-auto"
+                            :ui="{ base: 'font-mono text-xs' }"
                             :placeholder="t('admin.crypto.rpcPlaceholder')"
+                            :aria-label="`${chain} ${t('admin.crypto.rpcEndpoint')} ${idx + 1}`"
                             @change="persistRPC(chain)"
                           />
-                        </td>
-                        <td>
-                          <span
-                            v-if="row.status"
-                            class="crypto-view__badge"
-                            :class="row.ok ? 'crypto-view__badge--active' : 'crypto-view__badge--failed'"
-                            :title="row.error || ''"
-                          >
+                          <UBadge v-if="row.status" :color="row.ok ? 'success' : 'error'" variant="subtle" class="shrink-0" :title="row.error || ''">
                             {{ row.ok ? `${row.latency_ms}ms · #${row.block}` : t('admin.crypto.rpcFail') }}
-                          </span>
-                          <span v-else class="crypto-view__hint">—</span>
-                        </td>
-                        <td>
-                          <button class="btn btn-secondary btn-sm" :disabled="row.testing" @click="testEndpoint(chain, idx)">
-                            {{ t('admin.crypto.rpcTest') }}
-                          </button>
-                          <button class="btn btn-secondary btn-sm" @click="removeRPCRow(chain, idx)">
-                            {{ t('admin.crypto.rpcRemove') }}
-                          </button>
-                        </td>
-                      </tr>
-                      <tr v-if="!(rpcRows[chain] ?? []).length">
-                        <td colspan="3" class="crypto-view__empty-text">{{ t('common.noData') }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                          </UBadge>
+                          <span v-else class="w-6 shrink-0 text-center text-sm text-dimmed">—</span>
+                          <UButton color="neutral" variant="ghost" size="xs" :disabled="row.testing" @click="testEndpoint(chain, idx)">{{ t('admin.crypto.rpcTest') }}</UButton>
+                          <UButton color="error" variant="ghost" size="xs" @click="removeRPCRow(chain, idx)">{{ t('admin.crypto.rpcRemove') }}</UButton>
+                        </div>
+                        <p v-if="!(rpcRows[chain] ?? []).length" class="text-sm text-muted">{{ t('common.noData') }}</p>
+                        <p v-if="rpcFetchNotes[chain]" class="crypto-view__fetch-note text-xs text-muted">{{ rpcFetchNotes[chain] }}</p>
+                      </div>
+                    </template>
+                  </template>
+                </UPageCard>
+              </section>
 
-                <p v-if="rpcFetchNotes[chain]" class="crypto-view__hint crypto-view__fetch-note">{{ rpcFetchNotes[chain] }}</p>
-              </div>
-              </template>
-            </details>
+              <section class="crypto-view__group">
+                <UPageCard :title="t('admin.crypto.groupSweep')" :description="t('admin.crypto.groupSweepDesc')" variant="naked" class="mb-4" />
+                <UPageCard variant="subtle">
+                  <UFormField :label="t('admin.crypto.globalThreshold')" :description="t('admin.crypto.globalThresholdHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                    <UInput v-model.number="config.sweep_global_threshold" data-testid="crypto-sweep-threshold" type="number" step="1" class="w-40" />
+                  </UFormField>
+                  <USeparator />
+                  <UFormField :label="t('admin.crypto.creditMin')" :description="t('admin.crypto.creditMinHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                    <UInput v-model.number="config.credit_min_amount" data-testid="crypto-credit-min" type="number" step="0.001" min="0" class="w-40" />
+                  </UFormField>
+                  <USeparator />
+                  <UFormField :label="t('admin.crypto.creditMax')" :description="t('admin.crypto.creditMaxHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                    <UInput v-model.number="config.credit_max_amount" data-testid="crypto-credit-max" type="number" step="1" min="0" class="w-40" />
+                  </UFormField>
+                  <template v-for="chain in config.chains" :key="`scan-limits-${chain}`">
+                    <USeparator />
+                    <div class="crypto-view__network-limits grid gap-4 sm:grid-cols-2">
+                      <UFormField :label="`${chain} · ${t('admin.crypto.sweepMinPerAddress')}`">
+                        <UInput v-model.number="config.sweep_min_per_address[chain]" :data-testid="`crypto-sweep-min-${chain}`" type="number" min="0" step="0.001" class="mt-1 w-full" />
+                      </UFormField>
+                      <UFormField :label="`${chain} · ${t('admin.crypto.scanRange')}`">
+                        <UInput v-model.number="config.scan_range[chain]" :data-testid="`crypto-scan-range-${chain}`" type="number" min="1" step="1" class="mt-1 w-full" />
+                      </UFormField>
+                    </div>
+                  </template>
+                  <USeparator />
+                  <UFormField
+                    :label="t('admin.crypto.hotWalletEvm')"
+                    :description="t('admin.crypto.sweepDestinationHint')"
+                    :error="config.hot_wallet_evm.trim() ? false : t('admin.crypto.hotWalletMissing')"
+                    class="flex max-sm:flex-col justify-between items-start gap-4"
+                    :ui="{ container: 'w-full sm:max-w-sm' }"
+                  >
+                    <UInput v-model="config.hot_wallet_evm" placeholder="0x…" class="w-full" :ui="{ base: 'font-mono text-xs' }" />
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                      <UButton
+                        color="neutral"
+                        variant="outline"
+                        size="xs"
+                        :disabled="loadingHotAddress || !walletCanDerive"
+                        :title="!walletOk ? t('admin.crypto.walletUnavailable') : !walletLoaded ? t('admin.crypto.hotAddressLocked') : ''"
+                        @click="fillHotWalletAddresses"
+                      >
+                        {{ loadingHotAddress ? t('common.loading') : t('admin.crypto.hotAddressFill') }}
+                      </UButton>
+                      <span v-if="hotAddressNote" class="text-xs text-muted">{{ hotAddressNote }}</span>
+                    </div>
+                    <p class="mt-2 text-xs text-muted">{{ t('admin.crypto.hotIndexHint') }}</p>
+                  </UFormField>
+                  <USeparator />
+                  <UFormField :label="t('admin.crypto.sweepAuto')" :description="t('admin.crypto.sweepAutoHint')" class="flex items-center justify-between gap-4">
+                    <Toggle :model-value="config.sweep_auto" @update:model-value="confirmSweepAutoToggle" />
+                  </UFormField>
+                </UPageCard>
+              </section>
 
-
-            <details class="crypto-view__group crypto-view__group--wide" open>
-              <summary class="crypto-view__group-summary">
-                <span class="crypto-view__group-title">{{ t('admin.crypto.groupSweep') }}</span>
-                <span class="crypto-view__group-desc">{{ t('admin.crypto.groupSweepDesc') }}</span>
-                <span class="crypto-view__group-chevron">›</span>
-              </summary>
-              <div class="crypto-view__amount-fields">
-              <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.globalThreshold') }}</label>
-                <input
-                  data-testid="crypto-sweep-threshold"
-                  v-model.number="config.sweep_global_threshold"
-                  type="number"
-                  step="1"
-                  class="input"
-                />
-                <p class="crypto-view__hint">{{ t('admin.crypto.globalThresholdHint') }}</p>
-              </div>
-              <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.creditMin') }}</label>
-                <input
-                  data-testid="crypto-credit-min"
-                  v-model.number="config.credit_min_amount"
-                  type="number"
-                  step="0.001"
-                  min="0"
-                  class="input"
-                />
-                <p class="crypto-view__hint">{{ t('admin.crypto.creditMinHint') }}</p>
-              </div>
-              <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.creditMax') }}</label>
-                <input
-                  data-testid="crypto-credit-max"
-                  v-model.number="config.credit_max_amount"
-                  type="number"
-                  step="1"
-                  min="0"
-                  class="input"
-                />
-                <p class="crypto-view__hint">{{ t('admin.crypto.creditMaxHint') }}</p>
-              </div>
-              </div>
-              <div v-for="chain in config.chains" :key="`scan-limits-${chain}`" class="crypto-view__network-limits">
-                <label>
-                  <span class="crypto-view__label">{{ chain }} · {{ t('admin.crypto.sweepMinPerAddress') }}</span>
-                  <input v-model.number="config.sweep_min_per_address[chain]" :data-testid="`crypto-sweep-min-${chain}`" type="number" min="0" step="0.001" class="input" />
-                </label>
-                <label>
-                  <span class="crypto-view__label">{{ chain }} · {{ t('admin.crypto.scanRange') }}</span>
-                  <input v-model.number="config.scan_range[chain]" :data-testid="`crypto-scan-range-${chain}`" type="number" min="1" step="1" class="input" />
-                </label>
-              </div>
-              <div class="crypto-view__field">
-                <label class="crypto-view__label">{{ t('admin.crypto.hotWalletEvm') }}</label>
-                <input
-                  v-model="config.hot_wallet_evm"
-                  class="input"
-                  :class="{ 'input--warn': !config.hot_wallet_evm.trim() }"
-                  placeholder="0x…"
-                />
-                <p v-if="!config.hot_wallet_evm.trim()" class="crypto-view__warn">
-                  {{ t('admin.crypto.hotWalletMissing') }}
-                </p>
-                <p class="crypto-view__hint">{{ t('admin.crypto.sweepDestinationHint') }}</p>
-              </div>
-              <div class="crypto-view__actions">
-                <button
-                  class="btn btn-secondary btn-sm"
-                  :disabled="loadingHotAddress || !walletCanDerive"
-                  :title="!walletOk ? t('admin.crypto.walletUnavailable') : !walletLoaded ? t('admin.crypto.hotAddressLocked') : ''"
-                  @click="fillHotWalletAddresses"
-                >
-                  {{ loadingHotAddress ? t('common.loading') : t('admin.crypto.hotAddressFill') }}
-                </button>
-                <span v-if="hotAddressNote" class="crypto-view__hint">{{ hotAddressNote }}</span>
-              </div>
-              <div class="crypto-view__field">
-                <p class="crypto-view__hint">{{ t('admin.crypto.hotIndexHint') }}</p>
-              </div>
-              <div class="crypto-view__switch-row">
-                <div class="space-y-0.5">
-                  <label class="crypto-view__label">{{ t('admin.crypto.sweepAuto') }}</label>
-                  <p class="crypto-view__hint">{{ t('admin.crypto.sweepAutoHint') }}</p>
-                </div>
-                <Toggle :model-value="config.sweep_auto" @update:model-value="confirmSweepAutoToggle" />
-              </div>
-            </details>
-
-
-
-
-
-
-
-
-            <!-- Health: an empty pool blocks new deposits; a dry hot wallet
-                 blocks sweeps. Both are silent failures without this. -->
-            <details class="crypto-view__group crypto-view__group--wide">
-              <summary class="crypto-view__group-summary">
-                <span class="crypto-view__group-title">{{ t('admin.crypto.healthTitle') }}</span>
-                <span class="crypto-view__group-desc">{{ t('admin.crypto.healthDesc') }}</span>
-                <span class="crypto-view__group-chevron">›</span>
-              </summary>
-
-              <div class="crypto-view__stats">
-                <div
-                  v-for="(count, family) in poolStatus?.free ?? {}"
-                  :key="`pool-${family}`"
-                  class="crypto-view__stat"
-                  :class="{ 'crypto-view__stat--warn': count <= (poolStatus?.low_watermark ?? 0) }"
-                >
-                  <span class="crypto-view__stat-label">{{ t('admin.crypto.poolFree') }} · {{ family }}</span>
-                  <span class="crypto-view__stat-value">{{ count }}</span>
-                </div>
-                <div
-                  v-for="hw in hotWallets"
-                  :key="`hw-${hw.chain}`"
-                  class="crypto-view__stat"
-                  :class="{ 'crypto-view__stat--warn': !hw.enough || hw.error }"
-                >
-                  <span class="crypto-view__stat-label">
-                    {{ hw.symbol }} · {{ hw.chain }}
-                  </span>
-                  <span class="crypto-view__stat-sub">
-                    {{ t('admin.crypto.hotGasWallet') }} · {{ short(hw.address) }}
-                  </span>
-                  <span class="crypto-view__stat-value">
-                    {{ hw.error ? t(hw.error_code === 'RPC_DISCOVERY_PENDING' ? 'admin.crypto.rpcDiscovering' : 'admin.crypto.hotWalletUnreachable') : hw.balance }}
-                  </span>
-                  <span v-if="hw.rpc_source === 'chainlist'" class="crypto-view__stat-sub">{{ t('admin.crypto.rpcAutoSource') }}</span>
-                </div>
-              </div>
-              <div class="crypto-view__actions">
-                <button class="btn btn-secondary btn-sm" :disabled="loadingHealth || !walletCanDerive" @click="loadHealth">
-                  {{ t('common.refresh') }}
-                </button>
-                <span v-if="healthError" class="crypto-view__warn">{{ healthError }}</span>
-              </div>
-            </details>
-            <div class="crypto-view__save-bar">
-              <p>{{ t('admin.crypto.saveHint') }}</p>
-              <span v-if="configSaved" class="crypto-view__saved" role="status">{{ t('common.saved') }}</span>
-              <button class="btn btn-primary" :disabled="savingConfig" @click="requestSaveConfig">{{ savingConfig ? t('common.saving') : t('common.save') }}</button>
-            </div>
-          </template>
-        </div>
+              <!-- Health: an empty pool blocks new deposits; a dry hot wallet blocks sweeps. Both are silent failures without this. -->
+              <section class="crypto-view__group" data-testid="crypto-health">
+                <UPageCard :title="t('admin.crypto.healthTitle')" :description="t('admin.crypto.healthDesc')" variant="naked" orientation="horizontal" class="mb-4">
+                  <div class="flex items-center gap-3 lg:ms-auto">
+                    <span v-if="healthError" class="text-sm text-error">{{ healthError }}</span>
+                    <UButton color="neutral" variant="outline" size="sm" class="w-fit" :disabled="loadingHealth || !walletCanDerive" @click="loadHealth">{{ t('common.refresh') }}</UButton>
+                  </div>
+                </UPageCard>
+                <UPageGrid v-if="Object.keys(poolStatus?.free ?? {}).length || hotWallets.length" class="gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <UPageCard
+                    v-for="(count, family) in poolStatus?.free ?? {}"
+                    :key="`pool-${family}`"
+                    variant="subtle"
+                    :title="`${t('admin.crypto.poolFree')} · ${family}`"
+                    :ui="statCardUi"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span class="text-2xl font-semibold text-highlighted">{{ count }}</span>
+                      <UBadge v-if="count <= (poolStatus?.low_watermark ?? 0)" color="warning" variant="subtle">{{ t('admin.crypto.poolLow') }}</UBadge>
+                    </div>
+                  </UPageCard>
+                  <UPageCard v-for="hw in hotWallets" :key="`hw-${hw.chain}`" variant="subtle" :title="`${hw.symbol} · ${hw.chain}`" :ui="statCardUi">
+                    <p class="text-xs text-muted">{{ t('admin.crypto.hotGasWallet') }} · <span class="font-mono">{{ short(hw.address) }}</span></p>
+                    <div class="flex items-center gap-2">
+                      <span class="text-2xl font-semibold" :class="hw.error ? 'text-warning text-base' : 'text-highlighted'">
+                        {{ hw.error ? t(hw.error_code === 'RPC_DISCOVERY_PENDING' ? 'admin.crypto.rpcDiscovering' : 'admin.crypto.hotWalletUnreachable') : hw.balance }}
+                      </span>
+                      <UBadge v-if="!hw.error && !hw.enough" color="warning" variant="subtle">{{ t('admin.crypto.gasInsufficient') }}</UBadge>
+                    </div>
+                    <p v-if="hw.rpc_source === 'chainlist'" class="text-xs text-muted">{{ t('admin.crypto.rpcAutoSource') }}</p>
+                  </UPageCard>
+                </UPageGrid>
+              </section>
+            </template>
+          </div>
+        </template>
 
         <!-- Addresses -->
-        <div v-if="activeTab === 'addresses'" id="crypto-panel-addresses" role="tabpanel" aria-labelledby="crypto-tab-addresses" class="crypto-view__panel">
-          <!-- Whole-set totals: they must not change when paging. -->
-          <div class="crypto-view__stats">
-            <div class="crypto-view__stat">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.statAddresses') }}</span>
-              <span class="crypto-view__stat-value">{{ addressSummary.address_count }}</span>
-            </div>
-            <div class="crypto-view__stat">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.statDeposits') }}</span>
-              <span class="crypto-view__stat-value">{{ addressSummary.deposit_count }}</span>
-            </div>
-            <div class="crypto-view__stat crypto-view__stat--accent">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.statCredited') }}</span>
-              <span class="crypto-view__stat-value">{{ fmtAmount(addressSummary.credited_total) }}</span>
-            </div>
-            <div class="crypto-view__stat">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.statSwept') }}</span>
-              <span class="crypto-view__stat-value">{{ fmtAmount(addressSummary.swept_total) }}</span>
-            </div>
-            <div class="crypto-view__stat">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.statUnswept') }}</span>
-              <span class="crypto-view__stat-value">
-                {{ fmtAmount(addressSummary.credited_total - addressSummary.swept_total) }}
-              </span>
-            </div>
-          </div>
+        <template #addresses>
+          <div id="crypto-panel-addresses" class="crypto-view__panel flex flex-col gap-4">
+            <!-- Whole-set totals: they must not change when paging. -->
+            <UPageGrid class="lg:grid-cols-5 gap-4 sm:gap-6 lg:gap-px">
+              <UPageCard
+                v-for="stat in addressStats"
+                :key="stat.label"
+                :icon="stat.icon"
+                :title="t(stat.label)"
+                variant="subtle"
+                :ui="statCardUi"
+                class="lg:rounded-none first:rounded-l-lg last:rounded-r-lg"
+              >
+                <span class="text-2xl font-semibold text-highlighted">{{ stat.value }}</span>
+              </UPageCard>
+            </UPageGrid>
 
-          <div class="crypto-view__filters">
-            <input
-              v-model.number="addressUserId"
-              type="number"
-              class="input"
-              :placeholder="t('admin.crypto.userId')"
-              @keyup.enter="applyAddressFilter"
-            />
-            <select v-model="addressFamily" class="input" @change="applyAddressFilter">
-              <option value="">{{ t('admin.crypto.allFamilies') }}</option>
-              <option value="evm">EVM</option>
-              <option value="solana">Solana</option>
-            </select>
-            <button class="btn btn-secondary" @click="applyAddressFilter">
-              {{ t('common.search') }}
-            </button>
-            <button class="btn btn-secondary" :disabled="loadingAddresses" @click="loadAddresses">
-              {{ t('common.refresh') }}
-            </button>
-          </div>
+            <div class="crypto-view__filters flex flex-wrap items-center justify-between gap-1.5">
+              <UInput
+                v-model.number="addressUserId"
+                type="number"
+                icon="i-lucide-search"
+                class="max-w-sm"
+                :placeholder="t('admin.crypto.userId')"
+                @keyup.enter="applyAddressFilter"
+              />
+              <div class="flex flex-wrap items-center gap-1.5">
+                <USelect :model-value="addressFamily || ALL" :items="familyItems" class="min-w-32" :aria-label="t('admin.crypto.family')" @update:model-value="setAddressFamily" />
+                <UButton color="neutral" variant="outline" icon="i-lucide-search" @click="applyAddressFilter">{{ t('common.search') }}</UButton>
+                <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :disabled="loadingAddresses" @click="loadAddresses">{{ t('common.refresh') }}</UButton>
+                <UDropdownMenu :items="columnMenu('address')" :content="{ align: 'end' }">
+                  <UButton color="neutral" variant="outline" trailing-icon="i-lucide-settings-2">{{ t('admin.crypto.columns') }}</UButton>
+                </UDropdownMenu>
+              </div>
+            </div>
 
-          <div v-if="loadingAddresses" class="crypto-view__empty">
-            <LoadingSpinner />
-          </div>
-          <div v-else-if="addresses.length" class="crypto-view__table-wrap">
-          <table class="crypto-view__table">
-            <thead>
-              <tr>
-                <th
-                  v-for="col in addressColumns"
-                  :key="col.key ?? col.label"
-                  :class="{
-                    'crypto-view__th--sortable': !!col.key,
-                    'crypto-view__th--active': col.key && addressSortBy === col.key
-                  }"
-                  @click="col.key && sortAddresses(col.key)"
-                >
-                  {{ t(col.label) }}
-                  <span v-if="col.key" class="crypto-view__sort">{{ sortIcon(col.key) }}</span>
-                </th>
-                <th>{{ t('common.status') }}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in addresses" :key="row.id">
-                <td>{{ row.id }}</td>
-                <td>{{ row.user_id }}</td>
-                <td>{{ row.family }}</td>
-                <td class="crypto-view__mono" :title="row.address">
-                  <span class="crypto-view__copy" @click="copyAddress(row.address)">{{ short(row.address) }}</span>
-                </td>
-                <td>{{ fmtAmount(row.credited_total) }}</td>
-                <td>{{ fmtAmount(row.swept_total) }}</td>
-                <td>{{ row.deposit_count }}</td>
-                <td>
-                  <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
-                    {{ statusLabel(row.status) }}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    v-if="row.family === 'evm' || row.family === 'solana'"
-                    type="button"
-                    class="btn btn-secondary btn-sm"
-                    :data-export-address="row.id"
-                    @click="privateKeyAddress = { ...row }"
-                  >
-                    {{ t('admin.crypto.privateKeyExportAction') }}
-                  </button>
-                  <button class="btn btn-secondary btn-sm" @click="toggleAddress(row)">
-                    {{ row.status === 'active' ? t('admin.crypto.disable') : t('admin.crypto.enable') }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          </div>
-          <div v-else class="crypto-view__empty-text">{{ t('common.noData') }}</div>
-
-          <div v-if="addressTotalPages > 1" class="crypto-view__pager">
-            <button class="btn btn-secondary btn-sm" :disabled="addressPage <= 1" @click="gotoAddressPage(addressPage - 1)">
-              ‹
-            </button>
-            <span class="crypto-view__pager-info">
-              {{ addressPage }} / {{ addressTotalPages }} · {{ addressTotal }}
-            </span>
-            <button
-              class="btn btn-secondary btn-sm"
-              :disabled="addressPage >= addressTotalPages"
-              @click="gotoAddressPage(addressPage + 1)"
+            <UTable
+              v-model:column-visibility="addressVisibility"
+              :data="addresses"
+              :columns="addressTableColumns"
+              :loading="loadingAddresses"
+              :empty="t('common.noData')"
+              :ui="tableUi"
             >
-              ›
-            </button>
+              <template v-for="col in sortableAddressKeys" :key="col" #[`${col}-header`]>
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  size="sm"
+                  class="-mx-2.5"
+                  :class="addressSortBy === col ? 'text-highlighted' : ''"
+                  :trailing-icon="addressSortBy !== col ? 'i-lucide-arrow-up-down' : addressSortDir === 'asc' ? 'i-lucide-arrow-up-narrow-wide' : 'i-lucide-arrow-down-wide-narrow'"
+                  @click="sortAddresses(col)"
+                >{{ addressColumnLabel(col) }}</UButton>
+              </template>
+              <template #address-cell="{ row }">
+                <UButton color="neutral" variant="link" size="sm" class="px-0 font-mono" :title="row.original.address" @click="copyAddress(row.original.address)">
+                  {{ short(row.original.address) }}
+                  <UIcon :name="copiedAddress === row.original.address ? 'i-lucide-check' : 'i-lucide-copy'" class="size-3.5 text-dimmed" />
+                </UButton>
+              </template>
+              <template #credited_total-cell="{ row }">{{ fmtAmount(row.original.credited_total) }}</template>
+              <template #swept_total-cell="{ row }">{{ fmtAmount(row.original.swept_total) }}</template>
+              <template #status-cell="{ row }">
+                <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
+              </template>
+              <template #actions-cell="{ row }">
+                <div class="flex justify-end gap-1">
+                  <UButton
+                    v-if="row.original.family === 'evm' || row.original.family === 'solana'"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    icon="i-lucide-key-round"
+                    :data-export-address="row.original.id"
+                    @click="privateKeyAddress = { ...row.original }"
+                  >{{ t('admin.crypto.privateKeyExportAction') }}</UButton>
+                  <UButton :color="row.original.status === 'active' ? 'error' : 'neutral'" variant="ghost" size="xs" @click="toggleAddress(row.original)">
+                    {{ row.original.status === 'active' ? t('admin.crypto.disable') : t('admin.crypto.enable') }}
+                  </UButton>
+                </div>
+              </template>
+            </UTable>
+
+            <div class="crypto-view__pager flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4">
+              <span class="text-sm text-muted">{{ t('admin.crypto.pageSummary', { page: addressPage, pages: addressTotalPages, total: addressTotal }) }}</span>
+              <UPagination
+                v-if="addressTotalPages > 1"
+                :page="addressPage"
+                :total="addressTotal"
+                :items-per-page="addressPageSize"
+                @update:page="gotoAddressPage"
+              />
+            </div>
           </div>
-        </div>
+        </template>
 
         <!-- Sweep -->
-        <div v-if="activeTab === 'sweep'" id="crypto-panel-sweep" role="tabpanel" aria-labelledby="crypto-tab-sweep" class="crypto-view__panel">
-          <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
-          <div class="crypto-view__filters">
-            <button class="btn btn-secondary" @click="loadSweepPlan">
-              {{ t('admin.crypto.loadPlan') }}
-            </button>
-            <button class="btn btn-secondary" :disabled="sweeping" @click="doSweep(true)">
-              {{ t('admin.crypto.sweepDryRun') }}
-            </button>
-            <button
-              class="btn btn-primary"
-              :disabled="sweeping || !sweepReady"
-              :title="sweepReady ? '' : !walletOk ? t('admin.crypto.walletUnavailable') : !walletLoaded ? t('admin.crypto.hotAddressLocked') : t('admin.crypto.walletNotReady')"
-              @click="requestSweep"
-            >
-              {{ t('admin.crypto.sweepRun') }}
-            </button>
-            <button class="btn btn-secondary" @click="loadSweepRecords">
-              {{ t('common.refresh') }}
-            </button>
-          </div>
-
-          <div v-if="blockedSweeps.length" class="crypto-view__blocked" role="alert">
-            <div class="crypto-view__blocked-head">
-              <strong>{{ t('admin.crypto.blockedTitle') }}</strong>
-              <span class="crypto-view__hint">{{ t('admin.crypto.blockedHint') }}</span>
+        <template #sweep>
+          <div id="crypto-panel-sweep" class="crypto-view__panel flex flex-col gap-4 sm:gap-6">
+            <div class="crypto-view__filters flex flex-wrap items-center justify-end gap-1.5">
+              <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" @click="loadSweepRecords">{{ t('common.refresh') }}</UButton>
+              <UButton color="neutral" variant="outline" icon="i-lucide-list-checks" @click="loadSweepPlan">{{ t('admin.crypto.loadPlan') }}</UButton>
+              <UButton color="neutral" variant="outline" icon="i-lucide-flask-conical" :disabled="sweeping" @click="doSweep(true)">{{ t('admin.crypto.sweepDryRun') }}</UButton>
+              <UButton
+                icon="i-lucide-arrow-up-from-line"
+                :disabled="sweeping || !sweepReady"
+                :title="sweepReady ? '' : !walletOk ? t('admin.crypto.walletUnavailable') : !walletLoaded ? t('admin.crypto.hotAddressLocked') : t('admin.crypto.walletNotReady')"
+                @click="requestSweep"
+              >{{ t('admin.crypto.sweepRun') }}</UButton>
             </div>
-            <table class="crypto-view__table">
-              <thead>
-                <tr>
-                  <th>{{ t('admin.crypto.chain') }}</th>
-                  <th>{{ t('admin.crypto.address') }}</th>
-                  <th>{{ t('common.status') }}</th>
-                  <th>{{ t('admin.crypto.blockedAge') }}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="b in blockedSweeps" :key="b.job_id">
-                  <td>{{ b.chain }}</td>
-                  <td class="crypto-view__mono">#{{ b.job_id }} · {{ short(b.address) }}</td>
-                  <td>
-                    <span class="crypto-view__badge" :class="`crypto-view__badge--${b.status}`">{{ statusLabel(b.status) }}</span>
-                    <span v-if="b.error" class="crypto-view__hint">{{ b.error }}</span>
-                  </td>
-                  <td>{{ b.age_minutes }}m</td>
-                  <td>
-                    <button class="btn btn-secondary" :disabled="reconciling === b.job_id" @click="reconcileJob(b.job_id)">
-                      {{ reconciling === b.job_id ? t('common.loading') : t('admin.crypto.reconcile') }}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+            <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
 
-          <div v-if="sweepSummary" class="crypto-view__plan">
-            <p class="crypto-view__plan-total">
-              {{ t('admin.crypto.planned') }}: <strong>{{ sweepSummary.planned }}</strong> ·
-              {{ t('admin.crypto.swept') }}: <strong>{{ sweepSummary.swept }}</strong> ·
-              {{ t('admin.crypto.failed') }}: <strong>{{ sweepSummary.failed }}</strong> ·
-              {{ t('admin.crypto.pending') }}: <strong>{{ sweepSummary.pending ?? 0 }}</strong> ·
-              gas: <strong>{{ sweepSummary.gas_topups }}</strong>
-              <span v-if="sweepSummary.dry_run" class="crypto-view__badge">dry-run</span>
-            </p>
-          <div class="crypto-view__table-wrap">
-            <table v-if="sweepSummary.entries?.length" class="crypto-view__table">
-              <thead>
-                <tr>
-                  <th>{{ t('admin.crypto.chain') }}</th>
-                  <th>{{ t('admin.crypto.address') }}</th>
-                  <th>{{ t('common.status') }}</th>
-                  <th>TX</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(e, i) in sweepSummary.entries" :key="i">
-                  <td>{{ e.chain }}</td>
-                  <td class="crypto-view__mono">{{ short(e.address) }}</td>
-                  <td>
-                    <span class="crypto-view__badge" :class="`crypto-view__badge--${e.status}`">
-                      {{ statusLabel(e.status) }}
-                    </span>
-                    <span v-if="e.error" class="crypto-view__hint">{{ e.error }}</span>
-                  </td>
-                  <td class="crypto-view__mono">{{ short(e.sweep_tx_hash || e.gas_tx_hash) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          </div>
+            <section v-if="blockedSweeps.length" class="crypto-view__blocked space-y-3">
+              <UAlert role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="t('admin.crypto.blockedTitle')" :description="t('admin.crypto.blockedHint')" />
+              <UTable :data="blockedSweeps" :columns="blockedColumns" :ui="tableUi">
+                <template #address-cell="{ row }"><span class="font-mono">#{{ row.original.job_id }} · {{ short(row.original.address) }}</span></template>
+                <template #status-cell="{ row }">
+                  <div class="flex flex-col items-start gap-1">
+                    <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
+                    <span v-if="row.original.error" class="text-xs text-muted">{{ row.original.error }}</span>
+                  </div>
+                </template>
+                <template #age_minutes-cell="{ row }">{{ row.original.age_minutes }}m</template>
+                <template #actions-cell="{ row }">
+                  <div class="flex justify-end">
+                    <UButton color="neutral" variant="outline" size="xs" :disabled="reconciling === row.original.job_id" @click="reconcileJob(row.original.job_id)">
+                      {{ reconciling === row.original.job_id ? t('common.loading') : t('admin.crypto.reconcile') }}
+                    </UButton>
+                  </div>
+                </template>
+              </UTable>
+            </section>
 
-          <div v-if="sweepPlan" class="crypto-view__plan">
-            <p class="crypto-view__plan-total">
-              {{ t('admin.crypto.totalToSweep') }}:
-              <strong>{{ sweepPlan.TotalUSD.toFixed(2) }} USDT</strong>
-              <span v-if="sweepPlan.DryRun" class="crypto-view__badge">dry-run</span>
-            </p>
-          <div class="crypto-view__table-wrap">
-            <table v-if="sweepPlan.Entries?.length" class="crypto-view__table">
-              <thead>
-                <tr>
-                  <th>{{ t('admin.crypto.chain') }}</th>
-                  <th>{{ t('admin.crypto.address') }}</th>
-                  <th>{{ t('admin.crypto.amount') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(e, i) in sweepPlan.Entries" :key="i">
-                  <td>{{ e.Chain }}</td>
-                  <td class="crypto-view__mono">{{ e.Address }}</td>
-                  <td>{{ e.AmountDecimal.toFixed(2) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          </div>
+            <section v-if="sweepSummary" class="crypto-view__plan space-y-3">
+              <p class="crypto-view__plan-total text-sm text-toned">
+                {{ t('admin.crypto.planned') }}: <strong class="text-highlighted">{{ sweepSummary.planned }}</strong> ·
+                {{ t('admin.crypto.swept') }}: <strong class="text-highlighted">{{ sweepSummary.swept }}</strong> ·
+                {{ t('admin.crypto.failed') }}: <strong class="text-highlighted">{{ sweepSummary.failed }}</strong> ·
+                {{ t('admin.crypto.pending') }}: <strong class="text-highlighted">{{ sweepSummary.pending ?? 0 }}</strong> ·
+                gas: <strong class="text-highlighted">{{ sweepSummary.gas_topups }}</strong>
+                <UBadge v-if="sweepSummary.dry_run" color="neutral" variant="subtle" class="ms-1">dry-run</UBadge>
+              </p>
+              <UTable v-if="sweepSummary.entries?.length" :data="sweepSummary.entries" :columns="summaryColumns" :ui="tableUi">
+                <template #address-cell="{ row }"><span class="font-mono">{{ short(row.original.address) }}</span></template>
+                <template #status-cell="{ row }">
+                  <div class="flex flex-col items-start gap-1">
+                    <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
+                    <span v-if="row.original.error" class="text-xs text-muted">{{ row.original.error }}</span>
+                  </div>
+                </template>
+                <template #tx-cell="{ row }"><span class="font-mono">{{ short(row.original.sweep_tx_hash || row.original.gas_tx_hash) }}</span></template>
+              </UTable>
+            </section>
 
-          <div v-if="sweepRecords.length" class="crypto-view__table-wrap">
-          <table class="crypto-view__table">
-            <thead>
-              <tr>
-                <th>{{ t('admin.crypto.chain') }}</th>
-                <th>{{ t('admin.crypto.from') }}</th>
-                <th>{{ t('admin.crypto.amount') }}</th>
-                <th>{{ t('common.status') }}</th>
-                <th>TX</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in sweepRecords" :key="row.id">
-                <td>{{ row.chain }}</td>
-                <td class="crypto-view__mono">{{ short(row.from_address) }}</td>
-                <td>{{ row.amount }}</td>
-                <td>
-                  <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
-                    {{ statusLabel(row.status) }}
-                  </span>
-                </td>
-                <td class="crypto-view__mono">{{ short(row.sweep_tx_hash) }}</td>
-              </tr>
-            </tbody>
-          </table>
+            <section v-if="sweepPlan" class="crypto-view__plan space-y-3">
+              <p class="crypto-view__plan-total text-sm text-toned">
+                {{ t('admin.crypto.totalToSweep') }}:
+                <strong class="text-highlighted">{{ sweepPlan.TotalUSD.toFixed(2) }} USDT</strong>
+                <UBadge v-if="sweepPlan.DryRun" color="neutral" variant="subtle" class="ms-1">dry-run</UBadge>
+              </p>
+              <UTable v-if="sweepPlan.Entries?.length" :data="sweepPlan.Entries" :columns="planColumns" :ui="tableUi">
+                <template #Address-cell="{ row }"><span class="font-mono">{{ row.original.Address }}</span></template>
+                <template #AmountDecimal-cell="{ row }">{{ row.original.AmountDecimal.toFixed(2) }}</template>
+              </UTable>
+            </section>
+
+            <UTable v-if="sweepRecords.length" :data="sweepRecords" :columns="recordColumns" :ui="tableUi">
+              <template #from_address-cell="{ row }"><span class="font-mono">{{ short(row.original.from_address) }}</span></template>
+              <template #status-cell="{ row }">
+                <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
+              </template>
+              <template #sweep_tx_hash-cell="{ row }"><span class="font-mono">{{ short(row.original.sweep_tx_hash) }}</span></template>
+            </UTable>
+            <p v-else-if="!sweepPlan" class="py-10 text-center text-sm text-muted">{{ t('common.noData') }}</p>
           </div>
-          <div v-else-if="!sweepPlan" class="crypto-view__empty-text">{{ t('common.noData') }}</div>
-        </div>
+        </template>
 
         <!-- Deposits: the reconciliation view -->
-        <div v-if="activeTab === 'deposits'" id="crypto-panel-deposits" role="tabpanel" aria-labelledby="crypto-tab-deposits" class="crypto-view__panel">
-          <div class="crypto-view__stats">
-            <div class="crypto-view__stat">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.depTotal') }}</span>
-              <span class="crypto-view__stat-value">{{ depositSummary.total }}</span>
-            </div>
-            <div class="crypto-view__stat crypto-view__stat--accent">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.depCredited') }}</span>
-              <span class="crypto-view__stat-value">{{ depositSummary.credited }}</span>
-            </div>
-            <div class="crypto-view__stat">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.depPending') }}</span>
-              <span class="crypto-view__stat-value">{{ depositSummary.pending }}</span>
-            </div>
-            <div class="crypto-view__stat">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.depIgnored') }}</span>
-              <span class="crypto-view__stat-value">{{ depositSummary.ignored }}</span>
-            </div>
-            <div class="crypto-view__stat">
-              <span class="crypto-view__stat-label">{{ t('admin.crypto.depAmount') }}</span>
-              <span class="crypto-view__stat-value">{{ fmtAmount(depositSummary.amount) }}</span>
-            </div>
-          </div>
+        <template #deposits>
+          <div id="crypto-panel-deposits" class="crypto-view__panel flex flex-col gap-4">
+            <UPageGrid class="lg:grid-cols-5 gap-4 sm:gap-6 lg:gap-px">
+              <UPageCard
+                v-for="stat in depositStats"
+                :key="stat.label"
+                :icon="stat.icon"
+                :title="t(stat.label)"
+                variant="subtle"
+                :ui="statCardUi"
+                class="lg:rounded-none first:rounded-l-lg last:rounded-r-lg"
+              >
+                <span class="text-2xl font-semibold text-highlighted">{{ stat.value }}</span>
+              </UPageCard>
+            </UPageGrid>
 
-          <div class="crypto-view__filters">
-            <select v-model="depositChain" class="input" @change="applyDepositFilter">
-              <option value="">{{ t('admin.crypto.allChains') }}</option>
-              <option v-for="c in config?.chains ?? []" :key="c" :value="c">{{ c }}</option>
-            </select>
-            <select v-model="depositStatus" class="input" @change="applyDepositFilter">
-              <option value="">{{ t('common.status') }}</option>
-              <option value="credited">{{ t('deposit.statusCredited') }}</option>
-              <option value="pending">{{ t('deposit.statusPending') }}</option>
-              <option value="ignored">{{ t('deposit.statusIgnored') }}</option>
-            </select>
-            <button class="btn btn-secondary" :disabled="loadingDeposits" @click="loadDeposits">
-              {{ t('common.refresh') }}
-            </button>
-            <button class="btn btn-secondary" :disabled="exporting" @click="downloadCSV">
-              {{ t('admin.crypto.exportCsv') }}
-            </button>
-          </div>
+            <div class="crypto-view__filters flex flex-wrap items-center justify-between gap-1.5">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <USelect :model-value="depositChain || ALL" :items="depositChainItems" class="min-w-36" :aria-label="t('admin.crypto.chain')" @update:model-value="setDepositChain" />
+                <USelect :model-value="depositStatus || ALL" :items="depositStatusItems" class="min-w-32" :aria-label="t('common.status')" @update:model-value="setDepositStatus" />
+              </div>
+              <div class="flex flex-wrap items-center gap-1.5">
+                <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :disabled="loadingDeposits" @click="loadDeposits">{{ t('common.refresh') }}</UButton>
+                <UButton color="neutral" variant="outline" icon="i-lucide-download" :disabled="exporting" @click="downloadCSV">{{ t('admin.crypto.exportCsv') }}</UButton>
+                <UDropdownMenu :items="columnMenu('deposit')" :content="{ align: 'end' }">
+                  <UButton color="neutral" variant="outline" trailing-icon="i-lucide-settings-2">{{ t('admin.crypto.columns') }}</UButton>
+                </UDropdownMenu>
+              </div>
+            </div>
 
-          <div v-if="loadingDeposits" class="crypto-view__empty"><LoadingSpinner /></div>
-          <div v-else-if="deposits.length" class="crypto-view__table-wrap">
-          <table class="crypto-view__table">
-            <thead>
-              <tr>
-                <th>{{ t('admin.crypto.chain') }}</th>
-                <th>{{ t('admin.crypto.from') }}</th>
-                <th>{{ t('admin.crypto.address') }}</th>
-                <th>{{ t('admin.crypto.token') }}</th>
-                <th>{{ t('admin.crypto.amount') }}</th>
-                <th>{{ t('common.status') }}</th>
-                <th>TX</th>
-                <th>{{ t('admin.crypto.colTime') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in deposits" :key="`${row.tx_hash}-${row.log_index}`">
-                <td>{{ row.chain }}</td>
-                <td class="crypto-view__mono" :title="row.from_address">{{ short(row.from_address) }}</td>
-                <td class="crypto-view__mono" :title="row.to_address">{{ short(row.to_address) }}</td>
-                <td>
-                  <span class="crypto-view__badge">{{ row.token_symbol || 'USDT' }}</span>
-                </td>
-                <td>{{ row.amount }}</td>
-                <td>
-                  <span class="crypto-view__badge" :class="`crypto-view__badge--${row.status}`">
-                    {{ statusLabel(row.status) }}
-                  </span>
-                </td>
-                <td>
-                  <a
-                    v-if="explorerTxURL(row.chain, row.tx_hash)"
-                    class="crypto-view__link crypto-view__mono"
-                    :href="explorerTxURL(row.chain, row.tx_hash)"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >{{ short(row.tx_hash) }}</a>
-                  <span v-else class="crypto-view__mono">{{ short(row.tx_hash) }}</span>
-                </td>
-                <td class="crypto-view__time">{{ fmtTime(row.created_at) }}</td>
-              </tr>
-            </tbody>
-          </table>
-          </div>
-          <div v-else class="crypto-view__empty-text">{{ t('common.noData') }}</div>
+            <UTable
+              v-model:column-visibility="depositVisibility"
+              :data="deposits"
+              :columns="depositTableColumns"
+              :loading="loadingDeposits"
+              :empty="t('common.noData')"
+              :ui="tableUi"
+            >
+              <template #from_address-cell="{ row }"><span class="font-mono" :title="row.original.from_address">{{ short(row.original.from_address) }}</span></template>
+              <template #to_address-cell="{ row }"><span class="font-mono" :title="row.original.to_address">{{ short(row.original.to_address) }}</span></template>
+              <template #token_symbol-cell="{ row }"><UBadge color="neutral" variant="outline">{{ row.original.token_symbol || 'USDT' }}</UBadge></template>
+              <template #status-cell="{ row }">
+                <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
+              </template>
+              <template #tx_hash-cell="{ row }">
+                <ULink
+                  v-if="explorerTxURL(row.original.chain, row.original.tx_hash)"
+                  class="font-mono text-primary hover:underline"
+                  :to="explorerTxURL(row.original.chain, row.original.tx_hash)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >{{ short(row.original.tx_hash) }}</ULink>
+                <span v-else class="font-mono">{{ short(row.original.tx_hash) }}</span>
+              </template>
+              <template #created_at-cell="{ row }"><span class="whitespace-nowrap text-muted">{{ fmtTime(row.original.created_at) }}</span></template>
+            </UTable>
 
-          <div v-if="depositTotalPages > 1" class="crypto-view__pager">
-            <button class="btn btn-secondary btn-sm" :disabled="depositPage <= 1" @click="gotoDepositPage(depositPage - 1)">‹</button>
-            <span class="crypto-view__pager-info">{{ depositPage }} / {{ depositTotalPages }}</span>
-            <button
-              class="btn btn-secondary btn-sm"
-              :disabled="depositPage >= depositTotalPages"
-              @click="gotoDepositPage(depositPage + 1)"
-            >›</button>
+            <div class="crypto-view__pager flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4">
+              <span class="text-sm text-muted">{{ t('admin.crypto.pageSummary', { page: depositPage, pages: depositTotalPages, total: depositSummary.total }) }}</span>
+              <UPagination
+                v-if="depositTotalPages > 1"
+                :page="depositPage"
+                :total="depositSummary.total"
+                :items-per-page="depositPageSize"
+                @update:page="gotoDepositPage"
+              />
+            </div>
           </div>
-        </div>
-      </div>
+        </template>
+      </UTabs>
     </div>
 
     <ConfirmDialog
@@ -774,22 +551,22 @@
     <CryptoMnemonicsDialog :show="mnemonicsDialogOpen" @close="mnemonicsDialogOpen = false" />
     <CryptoPrivateKeyDialog :address="privateKeyAddress" @close="privateKeyAddress = null" />
     <BaseDialog :show="walletDialog !== null" :title="t('admin.crypto.hotImportAction')" @close="closeWalletDialog">
-      <form id="crypto-wallet-form" class="crypto-view__wallet-form" autocomplete="off" @submit.prevent="submitWallet">
-        <p class="crypto-view__approval-notice">{{ t('admin.crypto.hotImportWarning') }}</p>
-          <label for="crypto-hot-mnemonic">{{ t('admin.crypto.hotMnemonic') }}</label>
-          <input id="crypto-hot-mnemonic" v-model="hotMnemonic" type="password" class="input" autocomplete="off" spellcheck="false" required />
+      <form id="crypto-wallet-form" class="space-y-4" autocomplete="off" @submit.prevent="submitWallet">
+        <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.crypto.hotImportWarning')" />
+        <UFormField :label="t('admin.crypto.hotMnemonic')" required>
+          <UInput id="crypto-hot-mnemonic" v-model="hotMnemonic" type="password" autocomplete="off" spellcheck="false" required class="w-full" />
+        </UFormField>
       </form>
       <template #footer>
-        <div class="crypto-view__actions">
-          <button type="button" class="btn btn-secondary" @click="closeWalletDialog">{{ t('common.cancel') }}</button>
-          <button type="submit" form="crypto-wallet-form" class="btn btn-danger" :disabled="!hotMnemonic.trim()">{{ t('admin.crypto.walletContinue') }}</button>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" data-testid="crypto-wallet-cancel" @click="closeWalletDialog">{{ t('common.cancel') }}</UButton>
+          <UButton type="submit" form="crypto-wallet-form" color="error" :disabled="!hotMnemonic.trim()">{{ t('admin.crypto.walletContinue') }}</UButton>
         </div>
       </template>
     </BaseDialog>
     <CryptoSecurityDialog ref="securityDialog" />
   </AppLayout>
 </template>
-
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -806,6 +583,7 @@ import CryptoGasWalletPanel from '@/components/crypto/CryptoGasWalletPanel.vue'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 import { useAppStore } from '@/stores/app'
 import { useClipboard } from '@/composables/useClipboard'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -877,11 +655,12 @@ async function withCryptoVerification(label: string, callback: (verification: Cr
   }) ?? false
 }
 
+// UTabs (reka) owns roving focus and arrow/Home/End keys; each panel is a named slot.
 const tabs = computed(() => [
-  { id: 'config', label: t('admin.crypto.tabConfig') },
-  { id: 'addresses', label: t('admin.crypto.tabAddresses') },
-  { id: 'sweep', label: t('admin.crypto.tabSweep') },
-  { id: 'deposits', label: t('admin.crypto.tabDeposits') }
+  { value: 'config', slot: 'config' as const, label: t('admin.crypto.tabConfig') },
+  { value: 'addresses', slot: 'addresses' as const, label: t('admin.crypto.tabAddresses') },
+  { value: 'sweep', slot: 'sweep' as const, label: t('admin.crypto.tabSweep') },
+  { value: 'deposits', slot: 'deposits' as const, label: t('admin.crypto.tabDeposits') }
 ])
 // Open on the address list: it is the operator's main view (the config tab
 // is a one-time setup step).
@@ -917,16 +696,135 @@ const addressSummary = ref<AdminAddressSummary>({
   swept_total: 0
 })
 
-// Columns mirror the body cell order exactly; key-less entries are static.
-const addressColumns: Array<{ key: AddressSortKey | null; label: string }> = [
-  { key: 'id', label: 'admin.crypto.colId' },
-  { key: 'user_id', label: 'admin.crypto.userId' },
-  { key: null, label: 'admin.crypto.family' },
-  { key: null, label: 'admin.crypto.address' },
-  { key: 'credited_total', label: 'admin.crypto.credited' },
-  { key: 'swept_total', label: 'admin.crypto.swept' },
-  { key: 'deposit_count', label: 'admin.crypto.statDeposits' }
+// Table columns in body order; keyed entries sort server-side over the whole set.
+const addressColumns: Array<{ id: keyof DepositAddress; key: AddressSortKey | null; label: string }> = [
+  { id: 'id', key: 'id', label: 'admin.crypto.colId' },
+  { id: 'user_id', key: 'user_id', label: 'admin.crypto.userId' },
+  { id: 'family', key: null, label: 'admin.crypto.family' },
+  { id: 'address', key: null, label: 'admin.crypto.address' },
+  { id: 'credited_total', key: 'credited_total', label: 'admin.crypto.credited' },
+  { id: 'swept_total', key: 'swept_total', label: 'admin.crypto.swept' },
+  { id: 'deposit_count', key: 'deposit_count', label: 'admin.crypto.statDeposits' }
 ]
+const sortableAddressKeys = addressColumns.flatMap(col => col.key ? [col.key] : [])
+const addressColumnLabel = (key: AddressSortKey) => t(addressColumns.find(col => col.key === key)?.label ?? key)
+const addressTableColumns = computed<TableColumn<DepositAddress>[]>(() => [
+  ...addressColumns.map(col => ({ accessorKey: col.id, header: t(col.label) })),
+  { accessorKey: 'status', header: t('common.status') },
+  { id: 'actions', header: '', enableHiding: false }
+])
+
+// Nuxt UI's Select cannot hold an empty-string item; this sentinel stands for "all" and maps back to ''.
+const ALL = '__all__'
+const familyItems = computed(() => [
+  { label: t('admin.crypto.allFamilies'), value: ALL },
+  { label: 'EVM', value: 'evm' },
+  { label: 'Solana', value: 'solana' }
+])
+function setAddressFamily(value: string) {
+  addressFamily.value = value === ALL ? '' : value
+  applyAddressFilter()
+}
+const depositChainItems = computed(() => [
+  { label: t('admin.crypto.allChains'), value: ALL },
+  ...(config.value?.chains ?? []).map(chain => ({ label: chain, value: chain }))
+])
+const depositStatusItems = computed(() => [
+  { label: t('admin.crypto.allStatuses'), value: ALL },
+  { label: t('deposit.statusCredited'), value: 'credited' },
+  { label: t('deposit.statusPending'), value: 'pending' },
+  { label: t('deposit.statusIgnored'), value: 'ignored' }
+])
+function setDepositChain(value: string) {
+  depositChain.value = value === ALL ? '' : value
+  applyDepositFilter()
+}
+function setDepositStatus(value: string) {
+  depositStatus.value = value === ALL ? '' : value
+  applyDepositFilter()
+}
+
+// Template look shared by every table on the page (dashboard template customers.vue).
+const tableUi = {
+  base: 'border-separate border-spacing-0',
+  thead: '[&>tr]:bg-elevated/50 [&>tr]:after:content-none',
+  tbody: '[&>tr]:last:[&>td]:border-b-0',
+  th: 'py-2 first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r',
+  td: 'border-b border-default',
+  separator: 'h-0'
+}
+// Stat cards as in the template's HomeStats.
+const statCardUi = {
+  container: 'gap-y-1.5',
+  wrapper: 'items-start',
+  leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25',
+  title: 'font-normal text-muted text-xs uppercase'
+}
+
+// Rarely used columns stay behind the "Columns" menu; the choice persists per table.
+function persistedVisibility(key: string, defaults: Record<string, boolean>) {
+  let stored: Record<string, boolean> = {}
+  try { stored = JSON.parse(localStorage.getItem(key) || '{}') ?? {} } catch { stored = {} }
+  const state = ref<Record<string, boolean>>({ ...defaults, ...stored })
+  watch(state, value => {
+    try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* storage unavailable */ }
+  }, { deep: true })
+  return state
+}
+const addressVisibility = persistedVisibility('admin.crypto.addressColumns', { family: false, deposit_count: false })
+const depositVisibility = persistedVisibility('admin.crypto.depositColumns', { from_address: false, token_symbol: false })
+// Templates unwrap refs, so the table is named here and its visibility ref looked up.
+function columnMenu(table: 'address' | 'deposit'): DropdownMenuItem[] {
+  const visibility = table === 'address' ? addressVisibility : depositVisibility
+  const columns: TableColumn<any>[] = table === 'address' ? addressTableColumns.value : depositTableColumns.value
+  return columns.flatMap((col) => {
+    const id = (col as { accessorKey?: string }).accessorKey ?? col.id
+    if (!id || col.enableHiding === false) return []
+    return [{
+      label: typeof col.header === 'string' ? col.header : id,
+      type: 'checkbox' as const,
+      checked: visibility.value[id] !== false,
+      onUpdateChecked(checked: boolean) { visibility.value = { ...visibility.value, [id]: !!checked } },
+      onSelect(event: Event) { event.preventDefault() }
+    }]
+  })
+}
+
+const blockedColumns = computed<TableColumn<BlockedSweep>[]>(() => [
+  { accessorKey: 'chain', header: t('admin.crypto.chain') },
+  { accessorKey: 'address', header: t('admin.crypto.address') },
+  { accessorKey: 'status', header: t('common.status') },
+  { accessorKey: 'age_minutes', header: t('admin.crypto.blockedAge') },
+  { id: 'actions', header: '' }
+])
+const summaryColumns = computed<TableColumn<SweepSummary['entries'][number]>[]>(() => [
+  { accessorKey: 'chain', header: t('admin.crypto.chain') },
+  { accessorKey: 'address', header: t('admin.crypto.address') },
+  { accessorKey: 'status', header: t('common.status') },
+  { id: 'tx', header: 'TX' }
+])
+const planColumns = computed<TableColumn<NonNullable<SweepPlan['Entries']>[number]>[]>(() => [
+  { accessorKey: 'Chain', header: t('admin.crypto.chain') },
+  { accessorKey: 'Address', header: t('admin.crypto.address') },
+  { accessorKey: 'AmountDecimal', header: t('admin.crypto.amount') }
+])
+const recordColumns = computed<TableColumn<SweepRecord>[]>(() => [
+  { accessorKey: 'chain', header: t('admin.crypto.chain') },
+  { accessorKey: 'from_address', header: t('admin.crypto.from') },
+  { accessorKey: 'amount', header: t('admin.crypto.amount') },
+  { accessorKey: 'status', header: t('common.status') },
+  { accessorKey: 'sweep_tx_hash', header: 'TX' }
+])
+const depositTableColumns = computed<TableColumn<DepositRecord>[]>(() => [
+  { accessorKey: 'chain', header: t('admin.crypto.chain') },
+  { accessorKey: 'from_address', header: t('admin.crypto.from') },
+  { accessorKey: 'to_address', header: t('admin.crypto.address') },
+  { accessorKey: 'token_symbol', header: t('admin.crypto.token') },
+  { accessorKey: 'amount', header: t('admin.crypto.amount') },
+  { accessorKey: 'status', header: t('common.status') },
+  { accessorKey: 'tx_hash', header: 'TX' },
+  { accessorKey: 'created_at', header: t('admin.crypto.colTime') }
+])
 
 const addressTotalPages = computed(() =>
   Math.max(1, Math.ceil(addressTotal.value / addressPageSize))
@@ -1035,6 +933,41 @@ const depositNetworks = [
   { id: 'base', label: 'Base', tokens: 'USDC' },
   { id: 'xlayer', label: 'X Layer', tokens: 'USDT / USDC / USDC.e' },
 ]
+// Checkbox group items; the test id lands on each checkbox button.
+const chainItems = depositNetworks.map(network => ({
+  value: network.id,
+  label: network.label,
+  description: network.tokens,
+  'data-testid': `crypto-chain-${network.id}`
+}))
+function setChains(value: unknown[]) {
+  if (!config.value) return
+  config.value.chains = value.map(String)
+  syncRPCRows()
+}
+
+// Badge colors keep the old meaning: green = done/active, amber = in flight, red = stopped/rejected.
+function statusColor(status: string): 'success' | 'warning' | 'error' | 'neutral' {
+  if (['active', 'swept', 'credited'].includes(status)) return 'success'
+  if (['pending', 'gas_pending', 'gas_confirmed', 'token_pending', 'sweep_pending', 'manual_review', 'planned'].includes(status)) return 'warning'
+  if (['disabled', 'failed', 'ignored', 'reverted'].includes(status)) return 'error'
+  return 'neutral'
+}
+
+const addressStats = computed(() => [
+  { label: 'admin.crypto.statAddresses', icon: 'i-lucide-wallet-cards', value: addressSummary.value.address_count },
+  { label: 'admin.crypto.statDeposits', icon: 'i-lucide-inbox', value: addressSummary.value.deposit_count },
+  { label: 'admin.crypto.statCredited', icon: 'i-lucide-arrow-down-to-line', value: fmtAmount(addressSummary.value.credited_total) },
+  { label: 'admin.crypto.statSwept', icon: 'i-lucide-arrow-up-from-line', value: fmtAmount(addressSummary.value.swept_total) },
+  { label: 'admin.crypto.statUnswept', icon: 'i-lucide-hourglass', value: fmtAmount(addressSummary.value.credited_total - addressSummary.value.swept_total) }
+])
+const depositStats = computed(() => [
+  { label: 'admin.crypto.depTotal', icon: 'i-lucide-list-checks', value: depositSummary.value.total },
+  { label: 'admin.crypto.depCredited', icon: 'i-lucide-circle-check', value: depositSummary.value.credited },
+  { label: 'admin.crypto.depPending', icon: 'i-lucide-hourglass', value: depositSummary.value.pending },
+  { label: 'admin.crypto.depIgnored', icon: 'i-lucide-circle-alert', value: depositSummary.value.ignored },
+  { label: 'admin.crypto.depAmount', icon: 'i-lucide-coins', value: fmtAmount(depositSummary.value.amount) }
+])
 
 // --- RPC endpoint table -------------------------------------------------
 // config.rpc stores a comma-separated string per chain; the table edits it
@@ -1165,20 +1098,6 @@ async function autoFillRPC(chain: string) {
 function short(value: string): string {
   if (!value) return '—'
   return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value
-}
-
-function onTabKeydown(event: KeyboardEvent) {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-  const currentIndex = tabs.value.findIndex(tab => tab.id === activeTab.value)
-  const offset = event.key === 'ArrowLeft' ? -1 : 1
-  const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.value.length - 1
-    : (currentIndex + offset + tabs.value.length) % tabs.value.length
-  const nextTab = tabs.value[index]
-  if (!nextTab) return
-  event.preventDefault()
-  switchTab(nextTab.id)
-  const list = (event.currentTarget as HTMLElement).parentElement
-  list?.querySelector<HTMLButtonElement>('#crypto-tab-' + nextTab.id)?.focus()
 }
 
 function switchTab(id: string) {
@@ -1371,10 +1290,6 @@ function fmtAmount(value: number | null | undefined): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })
 }
 
-function sortIcon(key: AddressSortKey): string {
-  if (addressSortBy.value !== key) return '↕'
-  return addressSortDir.value === 'asc' ? '↑' : '↓'
-}
 
 function sortAddresses(key: AddressSortKey) {
   if (addressSortBy.value === key) {
@@ -1718,516 +1633,3 @@ onMounted(() => {
   void loadWalletStatus()
 })
 </script>
-
-<style scoped>
-.crypto-view__gas-funding { grid-column: 1 / -1; margin-bottom: 1rem; }
-.crypto-view__wallet-form { display: grid; gap: .75rem; font-size: .875rem; line-height: 1.7; }
-.crypto-view__wallet-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1rem; }
-.crypto-view__wallet-actions p { flex-basis: 100%; }
-.crypto-view__security { margin-bottom: .625rem; padding: .875rem 1rem; }
-.crypto-view__security :deep(.wallet-security__hint) { margin-top: .25rem; font-size: .75rem; }
-.crypto-view__security :deep(.wallet-security__badges) { margin-top: .5rem; }
-.crypto-view__notifications { margin-bottom: 1rem; border: 1px solid var(--signal-line, #64748b30); border-radius: .75rem; }
-.crypto-view__notifications > summary { padding: .75rem 1rem; cursor: pointer; font-size: .8125rem; font-weight: 600; }
-.crypto-view__notifications > summary > span { margin-inline-start: .75rem; font-size: .75rem; font-weight: 400; color: var(--signal-muted, #64748b); }
-.crypto-view__bark { margin: 0; border: 0; box-shadow: none; }
-.crypto-view__bark :deep(.px-6) { padding: .875rem 1rem; }
-.crypto-view__bark :deep(.space-y-6 > :not([hidden]) ~ :not([hidden])) { margin-top: .875rem; }
-.crypto-view__rpc-overview { padding: 0 1rem 1rem; }
-.crypto-view__rpc-statuses { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
-.crypto-view__network-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 0 1.25rem 1rem; }
-.crypto-view__network-limits label { display: grid; gap: .5rem; min-width: 0; }
-.crypto-view__intent-error { margin-bottom: 1.25rem; color: #dc2626; }
-.crypto-view {
-  width: 100%;
-  max-width: 90rem;
-  margin: 0 auto;
-  padding: clamp(1rem, 2.4vw, 2rem);
-}
-.crypto-view__card {
-  overflow: hidden;
-  min-width: 0;
-  padding: 0;
-  border-radius: 0.5rem;
-}
-.crypto-view__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-.crypto-view__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 0.5rem;
-  background: var(--signal-accent-soft, rgba(99, 102, 241, 0.12));
-  color: var(--signal-accent, #6366f1);
-  font-size: 1.125rem;
-}
-.crypto-view__tabs {
-  display: flex;
-  gap: 1.5rem;
-  overflow-x: auto;
-  padding: 0 1.5rem;
-  border-bottom: 1px solid var(--signal-line, #64748b30);
-}
-.crypto-view__tab {
-  position: relative;
-  flex-shrink: 0;
-  min-height: 3.5rem;
-  padding: 1rem 0.25rem;
-  border-bottom: 2px solid transparent;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--signal-muted, #8c99a6);
-  transition: color 0.15s, border-color 0.15s;
-}
-.crypto-view__tab--active {
-  border-color: var(--signal-accent, #0891b2);
-  color: var(--signal-text, inherit);
-  font-weight: 650;
-}
-.crypto-view__panel {
-  min-width: 0;
-  padding: 1.5rem;
-}
-.crypto-view__group {
-  display: block;
-  min-width: 0;
-}
-.crypto-view__panel--config {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  align-items: start;
-}
-.crypto-view__panel--config .crypto-view__group {
-  padding: 0;
-  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
-  border-radius: 0.75rem;
-  background: var(--signal-surface, rgba(127, 127, 127, 0.03));
-}
-/* Collapsible group header: title + one-line description + chevron. */
-.crypto-view__group-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.375rem 0.75rem;
-  padding: 1rem 1.25rem;
-  cursor: pointer;
-  user-select: none;
-  list-style: none;
-}
-.crypto-view__group-summary::-webkit-details-marker {
-  display: none;
-}
-.crypto-view__group-summary:hover {
-  background: rgba(127, 127, 127, 0.05);
-}
-.crypto-view__group-chevron {
-  grid-column: 2;
-  grid-row: 1 / 3;
-  align-self: center;
-  font-size: 1.25rem;
-  color: var(--signal-muted, #8c99a6);
-  transition: transform 0.15s ease;
-}
-details[open] > .crypto-view__group-summary .crypto-view__group-chevron {
-  transform: rotate(90deg);
-}
-/* Body content keeps its own padding; the summary owns the header area. */
-.crypto-view__group > :not(summary) {
-  margin-left: 1rem;
-  margin-right: 1rem;
-}
-.crypto-view__group > :last-child {
-  margin-bottom: 1rem;
-}
-/* The save row spans the full width under the cards. */
-.crypto-view__panel--config > .crypto-view__actions {
-  grid-column: 1 / -1;
-  margin-top: 0.25rem;
-}
-/* The RPC card holds wide tables; it spans the full grid width so endpoint
-   rows, status badges and action buttons never get clipped. */
-.crypto-view__panel--config > .crypto-view__group--wide {
-  grid-column: 1 / -1;
-}
-
-.crypto-view__group-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-.crypto-view__group-desc {
-  grid-column: 1;
-  font-size: 0.75rem;
-  line-height: 1.6;
-  color: var(--signal-muted, #8c99a6);
-}
-.crypto-view__field {
-  display: grid;
-  min-width: 0;
-  gap: 0.5rem;
-  margin-top: 1rem;
-}
-.crypto-view__label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-}
-.crypto-view__hint {
-  font-size: 0.75rem;
-  line-height: 1.7;
-  color: var(--signal-muted, #8c99a6);
-}
-.crypto-view__switch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
-  border-radius: 0.5rem;
-}
-.crypto-view__divider {
-  height: 1px;
-  margin: 1.25rem 0;
-  background: var(--signal-line, rgba(127, 127, 127, 0.18));
-}
-.crypto-view__filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-/* Buttons keep their label on one line; without this the flex row squeezes
-   them until "搜索" stacks vertically. */
-.crypto-view__filters .btn {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-/* Inputs take the leftover space instead of stretching edge to edge. */
-.crypto-view__filters .input {
-  flex: 1 1 10rem;
-  min-width: 8rem;
-  max-width: 22rem;
-}
-.crypto-view__stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-.crypto-view__stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.75rem 0.875rem;
-  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
-  border-radius: 0.625rem;
-  background: var(--signal-surface, rgba(127, 127, 127, 0.04));
-}
-.crypto-view__stat--accent {
-  border-color: color-mix(in srgb, var(--signal-accent, #6366f1) 45%, transparent);
-  background: var(--signal-accent-soft, rgba(99, 102, 241, 0.08));
-}
-.crypto-view__stat--warn {
-  border-color: color-mix(in srgb, #d97706 55%, transparent);
-  background: rgba(217, 119, 6, 0.08);
-}
-.crypto-view__stat-label {
-  font-size: 0.75rem;
-  color: var(--signal-muted, #8c99a6);
-}
-.crypto-view__stat-sub {
-  display: block;
-  font-size: 0.6875rem;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: var(--signal-muted, #6b7280);
-  max-width: 12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.crypto-view__stat-value {
-  font-size: 1.375rem;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.025em;
-}
-.crypto-view__th--sortable {
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-}
-.crypto-view__th--sortable:hover {
-  color: var(--signal-accent, #6366f1);
-}
-.crypto-view__th--active {
-  color: var(--signal-accent, #6366f1);
-}
-.crypto-view__sort {
-  margin-left: 0.25rem;
-  font-size: 0.6875rem;
-  opacity: 0.7;
-}
-.crypto-view__copy {
-  cursor: pointer;
-  border-bottom: 1px dashed transparent;
-}
-.crypto-view__copy:hover {
-  border-bottom-color: currentColor;
-}
-.crypto-view__pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  margin-top: 0.875rem;
-}
-.crypto-view__pager-info {
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--signal-muted, #6b7280);
-}
-.crypto-view__warn {
-  margin-top: 0.25rem;
-  font-size: 0.75rem;
-  color: #d97706;
-}
-/* Diff list inside the save confirmation: each line names one risky field. */
-.crypto-view__risk-list {
-  margin: 0.5rem 0 0;
-  padding-left: 1.1rem;
-  display: grid;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: #d97706;
-  list-style: disc;
-}
-.input--warn {
-  border-color: #d97706;
-}
-.crypto-view__link {
-  color: var(--signal-accent, #6366f1);
-  text-decoration: none;
-  border-bottom: 1px dashed currentColor;
-}
-.crypto-view__link:hover {
-  opacity: 0.8;
-}
-/* --- RPC endpoint table --- */
-.crypto-view__rpc-chain {
-  margin-bottom: 1rem;
-  padding: 0.75rem;
-  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.18));
-  border-radius: 0.5rem;
-}
-.crypto-view__rpc-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-  flex-wrap: wrap;
-}
-.crypto-view__rpc-chain-name {
-  font-size: 0.875rem;
-  font-weight: 600;
-  text-transform: none;
-}
-.crypto-view__rpc-head-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.crypto-view__rpc-input {
-  width: 100%;
-  min-width: 16rem;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 0.75rem;
-}
-.crypto-view__candidates {
-  margin-top: 0.625rem;
-}
-.crypto-view__candidate-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  margin-top: 0.375rem;
-  max-height: 10rem;
-  overflow-y: auto;
-}
-.crypto-view__candidate {
-  padding: 0.25rem 0.5rem;
-  border: 1px solid var(--signal-line, rgba(127, 127, 127, 0.25));
-  border-radius: 0.375rem;
-  font-size: 0.6875rem;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  cursor: pointer;
-  background: transparent;
-  color: inherit;
-}
-.crypto-view__candidate:hover:not(:disabled) {
-  border-color: #6366f1;
-  background: rgba(99, 102, 241, 0.08);
-}
-.crypto-view__candidate--used {
-  opacity: 0.45;
-  cursor: default;
-}
-.crypto-view__time {
-  white-space: nowrap;
-  font-size: 0.75rem;
-  color: var(--signal-muted, #6b7280);
-}
-.crypto-view__lockstate {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-.crypto-view__table {
-  width: 100%;
-  border-collapse: collapse;
-}
-.crypto-view__panel--config .crypto-view__stats {
-  /* Inside a card the row sits flush with the group's own gap. */
-  margin-bottom: 0.25rem;
-}
-/* Tables carry many columns (address, tx hash, amounts); on a narrow screen
-   they must scroll rather than stretch the page. */
-.crypto-view__table-wrap {
-  overflow-x: auto;
-  max-width: 100%;
-  border: 1px solid var(--signal-line, #64748b25);
-  border-radius: 0.75rem;
-}
-.crypto-view__table th,
-.crypto-view__table td {
-  padding: 0.875rem 1rem;
-  border-bottom: 1px solid var(--signal-line, #64748b25);
-  text-align: left;
-  font-size: 0.8125rem;
-}
-.crypto-view__table th {
-  font-weight: 500;
-  color: var(--signal-muted, #6b7280);
-  white-space: nowrap;
-}
-.crypto-view__table td {
-  white-space: nowrap;
-}
-/* The address column is the one that may need to truncate, not wrap the row. */
-.crypto-view__table td.crypto-view__mono {
-  max-width: 18rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.crypto-view__mono {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-}
-.crypto-view__badge {
-  display: inline-block;
-  padding: 0.125rem 0.5rem;
-  border-radius: 0.375rem;
-  font-size: 0.75rem;
-  background: rgba(127, 127, 127, 0.12);
-}
-.crypto-view__badge--active,
-.crypto-view__badge--swept {
-  background: rgba(34, 197, 94, 0.15);
-  color: #16a34a;
-}
-.crypto-view__badge--disabled,
-.crypto-view__badge--failed {
-  background: rgba(239, 68, 68, 0.15);
-  color: #dc2626;
-}
-.crypto-view__empty {
-  display: flex;
-  justify-content: center;
-  padding: 2rem;
-}
-.crypto-view__empty-text {
-  padding: 2rem;
-  text-align: center;
-  font-size: 0.8125rem;
-  color: var(--signal-muted, #6b7280);
-}
-.crypto-view__actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 1.25rem;
-}
-.crypto-view__saved {
-  font-size: 0.8125rem;
-  color: #16a34a;
-}
-.crypto-view__blocked {
-  margin: 0 0 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--danger-500, #dc2626);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--danger-500, #dc2626) 8%, transparent);
-}
-
-.crypto-view__blocked-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.crypto-view__blocked .crypto-view__table {
-  margin: 0;
-}
-
-.crypto-view__plan {
-  margin-bottom: 1rem;
-}
-.crypto-view__plan-total {
-  margin-bottom: 0.5rem;
-  font-size: 0.875rem;
-}
-.crypto-view__header-status { display: flex; flex-wrap: wrap; gap: .5rem; }
-.crypto-view__header-status .crypto-view__badge { padding: .375rem .625rem; border-radius: 99px; }
-.crypto-view__group[open] > .crypto-view__group-summary { margin-bottom: 1rem; border-bottom: 1px solid var(--signal-line, #64748b25); }
-.crypto-view__amount-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem; }
-.crypto-view__amount-fields .crypto-view__field { margin-top: 0; }
-.crypto-view__save-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: .75rem; padding: 1rem 0 0; border-top: 1px solid var(--signal-line, #64748b30); }
-.crypto-view__save-bar p { margin-right: auto; font-size: .75rem; line-height: 1.6; color: var(--signal-muted, #8c99a6); }
-.crypto-view__save-bar button { flex-shrink: 0; min-width: 6rem; min-height: 2.75rem; }
-.crypto-view__approval-notice { padding: .75rem 1rem; margin-top: .75rem; border: 1px solid #d9770635; border-radius: .5rem; background: #d977060a; font-size: .75rem; line-height: 1.7; }
-.crypto-view__badge--pending, .crypto-view__badge--gas_pending, .crypto-view__badge--token_pending, .crypto-view__badge--manual_review { background: #d9770615; color: #d97706; }
-.crypto-view__badge--credited { background: #10b98115; color: #10b981; }
-.crypto-view__badge--ignored, .crypto-view__badge--reverted { background: #ef444415; color: #ef4444; }
-.crypto-view__table th { background: #64748b08; }
-.crypto-view__table tbody tr:last-child td { border-bottom: 0; }
-.crypto-view button:focus-visible, .crypto-view summary:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 3px; }
-@media (max-width: 900px) {
-  .crypto-view__panel--config { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 640px) {
-  .crypto-view { padding: 1rem .75rem; }
-  .crypto-view__panel { padding: 1rem; }
-  .crypto-view__tabs { gap: 1.25rem; padding: 0 1rem; }
-  .crypto-view__tab { min-height: 3rem; font-size: .8125rem; }
-  .crypto-view__amount-fields { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
-  .crypto-view__group-summary { padding: 1rem; }
-  .crypto-view__rpc-head { align-items: flex-start; flex-direction: column; }
-  .crypto-view__rpc-head-actions { flex-wrap: wrap; }
-  .crypto-view__filters .input { max-width: none; min-width: 0; }
-  .crypto-view__save-bar { flex-wrap: wrap; }
-  .crypto-view__save-bar p { flex-basis: 100%; }
-}
-@media (prefers-reduced-motion: reduce) { .crypto-view__tab, .crypto-view__group-chevron { transition: none; } }
-</style>

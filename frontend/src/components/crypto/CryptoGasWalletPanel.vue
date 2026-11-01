@@ -1,44 +1,45 @@
 <template>
   <section class="gas-wallet" aria-labelledby="gas-wallet-title" data-testid="crypto-gas-wallet">
-    <div class="gas-wallet__heading">
-      <div>
-        <h2 id="gas-wallet-title">{{ t('admin.crypto.gasFundingTitle') }}</h2>
-        <p class="gas-wallet__hint">{{ t('admin.crypto.gasFundingHint') }}</p>
-      </div>
-      <button type="button" class="btn btn-secondary btn-sm" :disabled="loading || !available" @click="refresh">
+    <UPageCard :description="t('admin.crypto.gasFundingHint')" variant="naked" orientation="horizontal" class="mb-4">
+      <template #title><h2 id="gas-wallet-title">{{ t('admin.crypto.gasFundingTitle') }}</h2></template>
+      <UButton color="neutral" variant="outline" size="sm" class="w-fit lg:ms-auto" :disabled="loading || !available" @click="refresh">
         {{ loading ? t('common.loading') : t('common.refresh') }}
-      </button>
-    </div>
-    <p v-if="!available" class="gas-wallet__hint" role="status">{{ t('admin.crypto.gasFundingUnavailable') }}</p>
-    <p v-else-if="!networks.length" class="gas-wallet__hint" role="status">{{ t('admin.crypto.gasFundingNoNetworks') }}</p>
-    <template v-else>
-      <label class="gas-wallet__network">
-        <span>{{ t('admin.crypto.gasFundingNetwork') }}</span>
-        <select v-model="selectedChain" class="input" data-testid="crypto-gas-network">
-          <option v-for="network in networks" :key="network.chain" :value="network.chain">{{ network.label }} · {{ network.symbol }}</option>
-        </select>
-      </label>
-      <p v-if="addressError" class="gas-wallet__error" role="alert">{{ addressError }}</p>
-      <div v-if="address" class="gas-wallet__content">
-        <div class="gas-wallet__details">
-          <p class="gas-wallet__hint">{{ t('admin.crypto.gasFundingAddress') }}</p>
-          <code class="gas-wallet__address" data-testid="crypto-gas-address">{{ address }}</code>
-          <button type="button" class="btn btn-secondary btn-sm" data-testid="crypto-gas-copy" @click="copyToClipboard(address)">{{ t('admin.crypto.gasFundingCopy') }}</button>
-          <p class="gas-wallet__warning">{{ t('admin.crypto.gasFundingWarning', { network: selectedNetwork?.label, symbol: selectedNetwork?.symbol }) }}</p>
-          <p class="gas-wallet__balance" role="status">
-            {{ t('admin.crypto.gasFundingBalance') }}:
-            <strong v-if="selectedBalance && !selectedBalance.error">{{ selectedBalance.balance }} {{ selectedNetwork?.symbol }}</strong>
-            <span v-else>{{ t(balanceLoading ? 'common.loading' : selectedBalance?.error_code === 'RPC_DISCOVERY_PENDING' ? 'admin.crypto.rpcDiscovering' : 'admin.crypto.hotWalletUnreachable') }}</span>
-          </p>
-          <p v-if="selectedBalance && !selectedBalance.error && !selectedBalance.enough" class="gas-wallet__warning">{{ t('admin.crypto.gasFundingLowBalance') }}</p>
-        </div>
-        <div class="gas-wallet__qr">
-          <img v-if="qrImage" :src="qrImage" :alt="t('admin.crypto.gasFundingQrAlt', { network: selectedNetwork?.label })" width="184" height="184" data-testid="crypto-gas-qr" />
-          <p v-else-if="qrFailed" class="gas-wallet__error" role="status">{{ t('admin.crypto.gasFundingQrFailed') }}</p>
-          <p v-else class="gas-wallet__hint" role="status">{{ t('common.loading') }}</p>
-        </div>
-      </div>
-    </template>
+      </UButton>
+    </UPageCard>
+    <UPageCard variant="subtle">
+      <p v-if="!available" class="text-sm text-muted" role="status">{{ t('admin.crypto.gasFundingUnavailable') }}</p>
+      <p v-else-if="!networks.length" class="text-sm text-muted" role="status">{{ t('admin.crypto.gasFundingNoNetworks') }}</p>
+      <template v-else>
+        <UFormField :label="t('admin.crypto.gasFundingNetwork')" class="flex max-sm:flex-col justify-between sm:items-center gap-4">
+          <USelect v-model="selectedChain" :items="networkItems" class="w-56" data-testid="crypto-gas-network" />
+        </UFormField>
+        <UAlert v-if="addressError" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="addressError" />
+        <template v-if="address">
+          <USeparator />
+          <div class="flex items-center justify-between gap-5 max-sm:flex-col max-sm:items-stretch">
+            <div class="min-w-0 space-y-3">
+              <div>
+                <p class="text-sm font-medium text-highlighted">{{ t('admin.crypto.gasFundingAddress') }}</p>
+                <code class="mt-1 block select-all font-mono text-sm leading-relaxed break-all text-default" data-testid="crypto-gas-address">{{ address }}</code>
+              </div>
+              <UButton color="neutral" variant="outline" size="xs" icon="i-lucide-copy" data-testid="crypto-gas-copy" @click="copyToClipboard(address)">{{ t('admin.crypto.gasFundingCopy') }}</UButton>
+              <p class="gas-wallet__warning text-xs leading-relaxed text-muted">{{ t('admin.crypto.gasFundingWarning', { network: selectedNetwork?.label, symbol: selectedNetwork?.symbol }) }}</p>
+              <p class="text-sm" role="status">
+                <span class="text-muted">{{ t('admin.crypto.gasFundingBalance') }}:</span>
+                <strong v-if="selectedBalance && !selectedBalance.error" class="ms-1 text-highlighted">{{ selectedBalance.balance }} {{ selectedNetwork?.symbol }}</strong>
+                <span v-else class="ms-1 text-muted">{{ t(balanceLoading ? 'common.loading' : selectedBalance?.error_code === 'RPC_DISCOVERY_PENDING' ? 'admin.crypto.rpcDiscovering' : 'admin.crypto.hotWalletUnreachable') }}</span>
+              </p>
+              <p v-if="selectedBalance && !selectedBalance.error && !selectedBalance.enough" class="gas-wallet__warning text-xs text-warning">{{ t('admin.crypto.gasFundingLowBalance') }}</p>
+            </div>
+            <div class="grid size-46 shrink-0 place-items-center self-center">
+              <img v-if="qrImage" :src="qrImage" :alt="t('admin.crypto.gasFundingQrAlt', { network: selectedNetwork?.label })" width="184" height="184" class="rounded-md bg-white" data-testid="crypto-gas-qr" />
+              <p v-else-if="qrFailed" class="text-sm text-error" role="status">{{ t('admin.crypto.gasFundingQrFailed') }}</p>
+              <p v-else class="text-sm text-muted" role="status">{{ t('common.loading') }}</p>
+            </div>
+          </div>
+        </template>
+      </template>
+    </UPageCard>
   </section>
 </template>
 
@@ -62,6 +63,7 @@ const supportedNetworks = [
   { chain: 'xlayer', label: 'X Layer', symbol: 'OKB' }
 ]
 const networks = computed(() => supportedNetworks.filter(network => props.chains.includes(network.chain)))
+const networkItems = computed(() => networks.value.map(network => ({ label: `${network.label} · ${network.symbol}`, value: network.chain })))
 const selectedChain = ref('')
 const selectedNetwork = computed(() => networks.value.find(network => network.chain === selectedChain.value))
 const address = ref('')
@@ -133,21 +135,3 @@ watch(() => [props.available, props.revision, props.chains.join(',')], () => {
 }, { immediate: true })
 onUnmounted(() => { generation++ })
 </script>
-
-<style scoped>
-.gas-wallet { padding: 1.25rem; border: 1px solid var(--signal-line, #64748b40); border-radius: .875rem; }
-.gas-wallet__heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
-.gas-wallet__heading h2 { font-size: .9375rem; font-weight: 650; }
-.gas-wallet__heading button { flex-shrink: 0; }
-.gas-wallet__hint { margin-top: .4rem; font-size: .8125rem; line-height: 1.7; color: var(--signal-muted, #64748b); }
-.gas-wallet__network { display: grid; gap: .5rem; max-width: 20rem; margin-top: 1rem; font-size: .8125rem; }
-.gas-wallet__content { display: flex; align-items: center; justify-content: space-between; gap: 1.25rem; margin-top: .75rem; }
-.gas-wallet__details { min-width: 0; }
-.gas-wallet__address { display: block; margin: .5rem 0 .75rem; font-size: .875rem; line-height: 1.7; overflow-wrap: anywhere; user-select: all; }
-.gas-wallet__warning { margin-top: .75rem; color: var(--signal-muted, #64748b); font-size: .8125rem; line-height: 1.7; }
-.gas-wallet__balance { margin-top: .75rem; font-size: .8125rem; line-height: 1.7; }
-.gas-wallet__qr { flex: 0 0 184px; min-height: 184px; display: grid; place-items: center; }
-.gas-wallet__qr img { border-radius: .5rem; background: #fff; }
-.gas-wallet__error { margin-top: .75rem; font-size: .8125rem; color: #dc2626; }
-@media(max-width: 640px) { .gas-wallet__content { align-items: stretch; flex-direction: column; } .gas-wallet__qr { align-self: center; } }
-</style>
