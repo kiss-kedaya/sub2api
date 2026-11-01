@@ -36,8 +36,20 @@ async function render(role: 'user' | 'admin', simpleMode = false, userId = role 
       stubs: { Modal: ModalStub }
     }
   })
-  await wrapper.get('.console-search-trigger').trigger('click')
+  // The trigger is the sidebar's UDashboardSearchButton; the palette also opens with Ctrl/⌘ K.
+  await pressCtrlK()
   return { wrapper, push }
+}
+
+async function pressCtrlK() {
+  const wasOpen = !!wrapper?.find('[data-test="palette"]').exists()
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+  // UDashboardSearch loads its modal and command palette lazily.
+  await vi.waitFor(() => {
+    expect(wrapper!.find('[data-test="palette"]').exists()).toBe(!wasOpen)
+    if (!wasOpen) expect(wrapper!.find('input').exists()).toBe(true)
+  })
+  await flushPromises()
 }
 
 async function search(term: string) {
@@ -102,11 +114,9 @@ describe('console navigation search', () => {
   it('opens and closes with Ctrl+K (⌘K on macOS), also while typing', async () => {
     const { wrapper } = await render('user')
     expect(wrapper.find('[data-test="palette"]').exists()).toBe(true)
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
-    await flushPromises()
+    await pressCtrlK()
     expect(wrapper.find('[data-test="palette"]').exists()).toBe(false)
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
-    await flushPromises()
+    await pressCtrlK()
     expect(wrapper.find('[data-test="palette"]').exists()).toBe(true)
     expect(wrapper.find('input').exists()).toBe(true)
   })
