@@ -2,6 +2,7 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
+        <AdminPageHeader class="mb-4" :title="t(pageHeaderKeys.title)" :description="t(pageHeaderKeys.description)" />
         <div class="flex flex-wrap items-center gap-3">
           <div class="relative w-full md:w-80">
             <Icon name="search" size="md" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -145,6 +146,7 @@
 import { computed, defineComponent, h, onMounted, reactive, ref, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
@@ -211,6 +213,12 @@ const columns = computed<Column[]>(() => {
 })
 
 const sortStorageKey = computed(() => `admin-affiliate-${props.type}-table-sort`)
+// Same title and description keys as the route meta of each records page.
+const pageHeaderKeys = computed(() => ({
+  invites: { title: 'nav.affiliateInviteRecords', description: 'admin.affiliates.invitesDescription' },
+  rebates: { title: 'nav.affiliateRebateRecords', description: 'admin.affiliates.rebatesDescription' },
+  transfers: { title: 'nav.affiliateTransferRecords', description: 'admin.affiliates.transfersDescription' },
+}[props.type]))
 
 function loadInitialSortState(): { sort_by: string; sort_order: 'asc' | 'desc' } {
   const fallback = { sort_by: 'created_at', sort_order: 'desc' as 'asc' | 'desc' }

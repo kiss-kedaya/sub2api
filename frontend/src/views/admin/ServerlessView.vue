@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="mx-auto max-w-5xl space-y-5">
-      <header class="flex flex-wrap items-start justify-between gap-3"><div><h1 class="text-2xl font-semibold">{{ t('serverless.title') }}</h1><p class="mt-2 text-sm text-gray-500">{{ t('serverless.description') }}</p></div><button class="btn btn-secondary" :disabled="busy" @click="load">{{ t('serverless.refresh') }}</button></header>
+      <AdminPageHeader :title="t('serverless.title')" :description="t('serverless.description')"><template #actions><button class="btn btn-secondary" :disabled="busy" @click="load">{{ t('serverless.refresh') }}</button></template></AdminPageHeader>
       <p v-if="error" role="alert" class="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ error }}</p><p v-if="notice" role="status" class="text-sm text-emerald-600">{{ notice }}</p>
       <template v-if="status && draft">
         <section class="card space-y-3 p-5"><p class="text-sm text-gray-500">{{ t('serverless.setup') }}</p><div class="flex flex-wrap gap-4 text-sm"><span v-for="field in runtimeFields" :key="field.key">{{ t(field.label) }}: {{ status.runtime[field.key] ? t('serverless.yes') : t('serverless.no') }}</span></div></section>
@@ -21,6 +21,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import { getRegionalRouting, saveRegionalRouting, type RegionalConfig, type RegionalStatus } from '@/api/admin/serverless'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { serverlessMessages } from '@/components/admin/operations/serverlessMessages'

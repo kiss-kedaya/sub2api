@@ -6,12 +6,8 @@
       </div>
 
       <template v-else>
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">{{ t('admin.riskControl.title') }}</h1>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.description') }}</p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
+        <AdminPageHeader :title="t('admin.riskControl.title')" :description="t('admin.riskControl.description')">
+          <template #actions>
             <button type="button" class="btn btn-secondary inline-flex items-center gap-2" :disabled="statusLoading" @click="loadStatus(false)">
               <Icon name="refresh" size="sm" :class="statusLoading ? 'animate-spin' : ''" />
               {{ t('admin.riskControl.refreshStatus') }}
@@ -20,8 +16,8 @@
               <Icon name="cog" size="sm" />
               {{ t('admin.riskControl.openSettings') }}
             </button>
-          </div>
-        </div>
+          </template>
+        </AdminPageHeader>
 
         <p class="text-sm text-gray-600 dark:text-gray-300" data-test="active-audit-engine">
           {{ t('admin.riskControl.activeEngine', { engine: engineLabel(status?.engine ?? savedEngine) }) }}
@@ -37,7 +33,7 @@
             class="rounded-lg border border-gray-100 bg-white px-4 py-3 shadow-xs dark:border-dark-700 dark:bg-dark-800"
           >
             <div class="flex min-w-0 items-center gap-3">
-              <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg" :class="item.iconClass">
+              <div class="admin-stat-icon flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg" :class="item.iconClass">
                 <Icon :name="item.icon" size="sm" />
               </div>
               <div class="min-w-0 flex-1">
@@ -1163,6 +1159,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Pagination from '@/components/common/Pagination.vue'

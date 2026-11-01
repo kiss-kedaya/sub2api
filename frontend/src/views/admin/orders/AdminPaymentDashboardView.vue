@@ -1,9 +1,8 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <!-- Header with Day Switcher -->
-      <div class="flex items-center justify-end">
-        <div class="flex items-center gap-2">
+      <AdminPageHeader :title="t('nav.paymentDashboard')">
+        <template #actions>
           <div class="flex rounded-lg border border-gray-200 dark:border-dark-600">
             <button
               v-for="d in DAYS_OPTIONS"
@@ -21,8 +20,8 @@
           <button @click="loadDashboard" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')">
             <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
           </button>
-        </div>
-      </div>
+        </template>
+      </AdminPageHeader>
 
       <!-- Dashboard Content -->
       <div v-if="loading" class="flex items-center justify-center py-12">
@@ -78,6 +77,7 @@ import { adminPaymentAPI } from '@/api/admin/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import type { CurrencyAmounts, DashboardStats, TopUserPaymentStats } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OrderStatsCards from '@/components/admin/payment/OrderStatsCards.vue'

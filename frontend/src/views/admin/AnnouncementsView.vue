@@ -2,6 +2,18 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
+        <AdminPageHeader
+          class="mb-4"
+          :title="t('admin.announcements.title')"
+          :description="t('admin.announcements.description')"
+        >
+          <template #actions>
+            <button @click="openCreateDialog" class="btn btn-primary">
+              <Icon name="plus" size="md" class="mr-1" />
+              {{ t('admin.announcements.createAnnouncement') }}
+            </button>
+          </template>
+        </AdminPageHeader>
         <div class="flex flex-wrap items-center gap-3">
           <!-- Left: Search + Filters -->
           <div class="flex-1 sm:max-w-64">
@@ -29,10 +41,6 @@
               :title="t('common.refresh')"
             >
               <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-            </button>
-            <button @click="openCreateDialog" class="btn btn-primary">
-              <Icon name="plus" size="md" class="mr-1" />
-              {{ t('admin.announcements.createAnnouncement') }}
             </button>
           </div>
         </div>
@@ -114,34 +122,10 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center space-x-1">
-              <button
-                @click="openPreview(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-                :title="t('admin.announcements.preview')"
-              >
-                <Icon name="eye" size="sm" />
-              </button>
-              <button
-                @click="openReadStatus(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
-                :title="t('admin.announcements.readStatus')"
-              >
-                <Icon name="chartBar" size="sm" />
-              </button>
-              <button
-                @click="openEditDialog(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-dark-600 dark:hover:text-gray-300"
-                :title="t('common.edit')"
-              >
-                <Icon name="edit" size="sm" />
-              </button>
-              <button
-                @click="handleDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                :title="t('common.delete')"
-              >
-                <Icon name="trash" size="sm" />
-              </button>
+              <AdminRowAction @click="openPreview(row)" :label="t('admin.announcements.preview')" icon="eye" />
+              <AdminRowAction @click="openReadStatus(row)" :label="t('admin.announcements.readStatus')" icon="chartBar" />
+              <AdminRowAction @click="openEditDialog(row)" :label="t('common.edit')" icon="edit" />
+              <AdminRowAction @click="handleDelete(row)" :label="t('common.delete')" icon="trash" tone="danger" />
             </div>
           </template>
 
@@ -275,7 +259,9 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import AnnouncementTargetingEditor from '@/components/admin/announcements/AnnouncementTargetingEditor.vue'
 import AnnouncementReadStatusDialog from '@/components/admin/announcements/AnnouncementReadStatusDialog.vue'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'

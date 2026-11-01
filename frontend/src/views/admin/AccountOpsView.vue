@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="account-ops mx-auto max-w-6xl space-y-8">
-      <header class="flex flex-wrap items-end justify-between gap-3"><div><h1 class="text-2xl font-semibold tracking-tight">{{ t('accountOps.title') }}</h1><p class="mt-1 text-sm text-gray-500">{{ t('accountOps.description') }}</p></div><span v-if="remote" class="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300">{{ enabledDraft ? t('accountOps.observing') : t('accountOps.disabled') }}</span></header>
+      <AdminPageHeader :title="t('accountOps.title')" :description="t('accountOps.description')"><template v-if="remote" #actions><span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300">{{ enabledDraft ? t('accountOps.observing') : t('accountOps.disabled') }}</span></template></AdminPageHeader>
       <dl v-if="remote" class="grid gap-2 sm:grid-cols-3" data-testid="account-ops-summary">
         <div class="py-1"><dt class="text-[11px] text-gray-500">{{ t('accountOps.enabledChannels') }}</dt><dd class="mt-1 text-xl font-semibold tabular-nums">{{ enabledChannelCount }}</dd></div>
         <div class="py-1"><dt class="text-[11px] text-gray-500">{{ t('accountOps.enabledRules') }}</dt><dd class="mt-1 text-xl font-semibold tabular-nums">{{ enabledRuleCount }}</dd></div>
@@ -184,6 +184,7 @@ import { useAccountOpsStore } from '@/stores/accountOps'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import { accountOpsMessages } from '@/components/admin/operations/accountOpsMessages'
 import Icon from '@/components/icons/Icon.vue'
 import Toggle from '@/components/common/Toggle.vue'

@@ -2,6 +2,17 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
+        <AdminPageHeader
+          class="mb-4"
+          :title="t('admin.redeem.title')"
+          :description="t('admin.redeem.description')"
+        >
+          <template #actions>
+            <button data-test="generate-open" @click="showGenerateDialog = true" class="btn btn-primary">
+              {{ t('admin.redeem.generateCodes') }}
+            </button>
+          </template>
+        </AdminPageHeader>
         <div class="flex flex-wrap items-center gap-3">
           <!-- Left: Search + Filters -->
           <div class="flex-1 sm:max-w-64">
@@ -47,9 +58,6 @@
             >
               <Icon name="edit" size="md" class="mr-2" />
               {{ t('admin.redeem.batchUpdate') }}
-            </button>
-            <button data-test="generate-open" @click="showGenerateDialog = true" class="btn btn-primary">
-              {{ t('admin.redeem.generateCodes') }}
             </button>
           </div>
         </div>
@@ -183,21 +191,16 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center space-x-2">
-              <button
-                v-if="row.status === 'unused'"
-                @click="handleDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-              >
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <AdminRowAction v-if="row.status === 'unused'" @click="handleDelete(row)" :label="t('common.delete')" tone="danger">
+                <template #icon><svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     stroke-linecap="round"
                     stroke-linejoin="round"
                     stroke-width="2"
                     d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                   />
-                </svg>
-                <span class="text-xs">{{ t('common.delete') }}</span>
-              </button>
+                </svg></template>
+              </AdminRowAction>
               <span v-else class="text-gray-400 dark:text-dark-500">-</span>
             </div>
           </template>
@@ -643,7 +646,9 @@ import Select from '@/components/common/Select.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()

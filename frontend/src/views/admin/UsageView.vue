@@ -1,12 +1,8 @@
 <template>
   <AppLayout>
     <div class="admin-usage-workbench">
-      <section class="usage-summary-strip">
-        <UsageStatsCards :stats="usageStats" />
-      </section>
-      <!-- Charts Section -->
-      <section class="usage-analysis-workspace">
-        <div class="usage-range-toolbar">
+      <AdminPageHeader :title="t('admin.usage.title')" :description="t('admin.usage.description')">
+        <template #actions>
           <div class="usage-range-controls">
             <div class="usage-control-cluster">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
@@ -18,14 +14,20 @@
                 @change="onDateRangeChange"
               />
             </div>
-            <div class="usage-control-cluster usage-granularity-control">
+            <div class="usage-control-cluster">
               <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.granularity') }}:</span>
               <div class="w-28">
                 <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
               </div>
             </div>
           </div>
-        </div>
+        </template>
+      </AdminPageHeader>
+      <section class="usage-summary-strip">
+        <UsageStatsCards :stats="usageStats" />
+      </section>
+      <!-- Charts Section -->
+      <section class="usage-analysis-workspace">
         <div class="usage-chart-grid">
           <ModelDistributionChart
             v-model:source="modelDistributionSource"
@@ -108,14 +110,14 @@
               </button>
               <div
                 v-if="showColumnDropdown"
-                class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+                class="admin-menu absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
               >
                 <button
                   v-for="col in currentToggleableColumns"
                   :key="col.key"
                   :data-testid="`usage-column-toggle-${col.key}`"
                   @click="toggleCurrentColumn(col.key)"
-                  class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+                  class="admin-menu-item flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
                 >
                   <span>{{ col.label }}</span>
                   <Icon
@@ -245,6 +247,7 @@ import type { OpsErrorLog } from '@/api/admin/ops'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'; import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'; import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
 
 const { t } = useI18n()
@@ -1061,17 +1064,6 @@ defineExpose({ requestedModelStats, refreshData })
   display: grid;
   min-width: 0;
   gap: 14px;
-  padding: 14px 0 18px;
-  border-top: 1px solid var(--signal-line);
-  border-bottom: 1px solid var(--signal-line);
-}
-
-.usage-range-toolbar {
-  padding: 12px 14px;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 6%, transparent);
 }
 
 .usage-range-controls,
@@ -1083,18 +1075,13 @@ defineExpose({ requestedModelStats, refreshData })
 .usage-range-controls {
   min-width: 0;
   flex-wrap: wrap;
-  gap: 12px 20px;
+  justify-content: flex-end;
+  gap: 8px 16px;
 }
 
 .usage-control-cluster {
   min-width: 0;
   gap: 8px;
-}
-
-.usage-granularity-control {
-  margin-left: auto;
-  padding-left: 20px;
-  border-left: 1px solid var(--signal-line);
 }
 
 .usage-chart-grid {
@@ -1179,14 +1166,6 @@ defineExpose({ requestedModelStats, refreshData })
   padding-bottom: 10px;
 }
 
-.usage-detail-content :deep(tbody tr) {
-  transition: background-color 140ms ease, box-shadow 140ms ease;
-}
-
-.usage-detail-content :deep(tbody tr:hover) {
-  box-shadow: inset 2px 0 var(--signal-accent);
-}
-
 @media (max-width: 1023px) {
   .usage-chart-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -1198,17 +1177,13 @@ defineExpose({ requestedModelStats, refreshData })
     gap: 14px;
   }
 
-  .usage-analysis-workspace {
-    padding-block: 12px;
-  }
-
-  .usage-range-toolbar {
-    padding: 12px;
-  }
-
   .usage-range-controls,
   .usage-control-cluster {
     align-items: stretch;
+  }
+
+  .usage-range-controls {
+    width: 100%;
   }
 
   .usage-control-cluster {
@@ -1216,15 +1191,7 @@ defineExpose({ requestedModelStats, refreshData })
     flex-direction: column;
   }
 
-  .usage-granularity-control {
-    margin-left: 0;
-    padding-top: 12px;
-    padding-left: 0;
-    border-top: 1px solid var(--signal-line);
-    border-left: 0;
-  }
-
-  .usage-granularity-control > div {
+  .usage-control-cluster > div {
     width: 100%;
   }
 

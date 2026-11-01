@@ -1,0 +1,142 @@
+/* Admin pages, light mode only, in the Nuxt UI dashboard manner: status buttons are flat
+   fills with a hairline shadow (no gradients, no coloured glow). Scoped to the admin
+   console, so user pages and the night theme keep their current look. Loaded by
+   AdminPageHeader, which every migrated admin page renders. */
+html:not(.dark) .console-signal.signal-admin :is(.btn-danger, .btn-success, .btn-warning) {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
+  background-image: none;
+  color: #ffffff;
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-danger {
+  background-color: #dc2626;
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-danger:hover:not(:disabled) {
+  background-color: #b91c1c;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08);
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-success {
+  background-color: #16a34a;
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-success:hover:not(:disabled) {
+  background-color: #15803d;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08);
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-warning {
+  background-color: #d97706;
+}
+
+html:not(.dark) .console-signal.signal-admin .btn-warning:hover:not(:disabled) {
+  background-color: #b45309;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08);
+}
+
+/* Hand-rolled toolbar menus (column/filter pickers): the Nuxt UI menu look in light mode.
+   The night theme keeps each menu's own classes. */
+html:not(.dark) .admin-menu {
+  padding: 4px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 15px -3px rgba(10, 10, 10, 0.08), 0 4px 6px -4px rgba(10, 10, 10, 0.06);
+}
+
+html:not(.dark) .admin-menu .admin-menu-item {
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: #404040;
+  font-size: 14px;
+}
+
+html:not(.dark) .admin-menu .admin-menu-item:hover:not(:disabled) {
+  background: #f4f4f4;
+  color: #171717;
+}
+
+html:not(.dark) .admin-menu .admin-menu-item:disabled {
+  color: #a3a3a3;
+}
+
+/* Stat and shortcut icon chips: neutral with a hairline ring in light mode (Nuxt UI
+   dashboard stats). The night theme keeps each chip's tinted classes. */
+html:not(.dark) .admin-stat-icon {
+  border-radius: 9999px;
+  background: #f4f4f4;
+  box-shadow: inset 0 0 0 1px #e5e5e5;
+  color: #171717;
+}
+
+html:not(.dark) .admin-stat-icon > svg {
+  color: #171717;
+}
+
+/* Account modals: advanced options folded into a native <details> (the fields stay in the
+   DOM, closed by default). Summary in the Nuxt UI collapsible manner. */
+.account-advanced {
+  border-top: 1px solid #e5e5e5;
+  padding-top: 16px;
+}
+
+.dark .account-advanced {
+  border-top-color: #5e4651;
+}
+
+.account-advanced-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ui-text-highlighted);
+  font-size: 14px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.account-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-advanced-summary::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M7.21 14.77a.75.75 0 0 1 .02-1.06L11.17 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M7.21 14.77a.75.75 0 0 1 .02-1.06L11.17 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 150ms ease;
+}
+
+.account-advanced[open] > .account-advanced-summary::before {
+  transform: rotate(90deg);
+}
+
+.account-advanced-summary:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.account-advanced-body {
+  margin-top: 16px;
+}
+
+/* The first section inside already sits under the summary rule. */
+.account-advanced-body > :first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-advanced-summary::before {
+    transition: none;
+  }
+}

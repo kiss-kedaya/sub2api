@@ -2,6 +2,23 @@
   <AppLayout>
     <TablePageLayout class="groups-workspace">
       <template #filters>
+        <AdminPageHeader
+          class="groups-page-header"
+          :title="t('admin.groups.title')"
+          :description="t('admin.groups.description')"
+        >
+          <template #actions>
+            <button
+              type="button"
+              @click="openCreateModal"
+              class="btn btn-primary groups-create-action"
+              data-tour="groups-create-btn"
+            >
+              <Icon name="plus" size="sm" />
+              <span>{{ t("admin.groups.createGroup") }}</span>
+            </button>
+          </template>
+        </AdminPageHeader>
         <div class="groups-command-bar">
           <div class="groups-search-row">
             <div class="groups-search-field">
@@ -91,7 +108,7 @@
               </button>
               <div
                 v-if="showColumnDropdown"
-                class="groups-column-menu absolute right-0 top-full z-50 mt-2 max-h-80 w-52 overflow-y-auto"
+                class="groups-column-menu admin-menu absolute right-0 top-full z-50 mt-2 max-h-80 w-52 overflow-y-auto"
                 role="menu"
               >
                 <button
@@ -99,7 +116,7 @@
                   :key="col.key"
                   type="button"
                   @click="toggleColumn(col.key)"
-                  class="groups-column-menu-item"
+                  class="groups-column-menu-item admin-menu-item"
                   role="menuitemcheckbox"
                   :aria-checked="isColumnVisible(col.key)"
                 >
@@ -124,15 +141,6 @@
             >
               <Icon name="arrowsUpDown" size="md" />
               <span class="groups-action-label">{{ t("admin.groups.sortOrder") }}</span>
-            </button>
-            <button
-              type="button"
-              @click="openCreateModal"
-              class="btn btn-primary groups-create-action"
-              data-tour="groups-create-btn"
-            >
-              <Icon name="plus" size="sm" />
-              <span>{{ t("admin.groups.createGroup") }}</span>
             </button>
           </div>
         </div>
@@ -402,75 +410,54 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
-              <button
+            <div class="flex items-center gap-0.5">
+              <AdminRowAction
+                :label="t('common.edit')"
+                icon="edit"
+                tone="primary"
                 @click="handleEdit(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
-              >
-                <Icon name="edit" size="sm" />
-                <span class="text-xs">{{ t("common.edit") }}</span>
-              </button>
-              <button
+              />
+              <AdminRowAction
                 v-if="!authStore.isSimpleMode"
                 data-testid="group-duplicate"
-                :title="
+                :label="
                   duplicatingGroupIds.has(row.id)
                     ? t('admin.groups.duplicating')
                     : t('admin.groups.duplicate')
                 "
+                icon="copy"
+                tone="primary"
                 :disabled="duplicatingGroupIds.has(row.id)"
                 @click="handleDuplicate(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-dark-700 dark:hover:text-primary-400"
-              >
-                <Icon name="copy" size="sm" />
-                <span class="text-xs">
-                  {{
-                    duplicatingGroupIds.has(row.id)
-                      ? t("admin.groups.duplicating")
-                      : t("admin.groups.duplicate")
-                  }}
-                </span>
-              </button>
-              <button
+              />
+              <AdminRowAction
                 v-if="!authStore.isSimpleMode && row.platform === 'composite'"
                 data-testid="group-composite-routes"
+                :label="t('admin.groups.compositeRoutes.action')"
+                icon="swap"
                 @click="handleCompositeRoutes(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-cyan-600 dark:hover:bg-dark-700 dark:hover:text-cyan-400"
-              >
-                <Icon name="swap" size="sm" />
-                <span class="text-xs">{{
-                  t("admin.groups.compositeRoutes.action")
-                }}</span>
-              </button>
-              <button
+              />
+              <AdminRowAction
                 v-if="!authStore.isSimpleMode"
                 data-testid="group-rate-multipliers"
+                :label="t('admin.groups.rateMultipliers')"
+                icon="dollar"
                 @click="handleRateMultipliers(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-purple-600 dark:hover:bg-dark-700 dark:hover:text-purple-400"
-              >
-                <Icon name="dollar" size="sm" />
-                <span class="text-xs">{{
-                  t("admin.groups.rateMultipliers")
-                }}</span>
-              </button>
-              <button
+              />
+              <AdminRowAction
                 v-if="!authStore.isSimpleMode"
                 data-testid="group-rpm-overrides"
+                :label="t('admin.groups.rpmOverrides')"
+                icon="bolt"
+                tone="warning"
                 @click="handleRPMOverrides(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-orange-600 dark:hover:bg-dark-700 dark:hover:text-orange-400"
-              >
-                <Icon name="bolt" size="sm" />
-                <span class="text-xs">{{
-                  t("admin.groups.rpmOverrides")
-                }}</span>
-              </button>
-              <button
+              />
+              <AdminRowAction
+                :label="t('common.delete')"
+                icon="trash"
+                tone="danger"
                 @click="handleDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-              >
-                <Icon name="trash" size="sm" />
-                <span class="text-xs">{{ t("common.delete") }}</span>
-              </button>
+              />
             </div>
           </template>
 
@@ -4498,6 +4485,8 @@ import EmptyState from "@/components/common/EmptyState.vue";
 import Select from "@/components/common/Select.vue";
 import PlatformIcon from "@/components/common/PlatformIcon.vue";
 import Icon from "@/components/icons/Icon.vue";
+import AdminPageHeader from "@/components/admin/page/AdminPageHeader.vue";
+import AdminRowAction from "@/components/admin/page/AdminRowAction.vue";
 import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipliersModal.vue";
 import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesModal.vue";
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
@@ -7142,6 +7131,10 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.groups-page-header {
+  margin-bottom: 16px;
+}
+
 .groups-command-bar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(300px, 1.3fr) auto;
@@ -7324,8 +7317,8 @@ onUnmounted(() => {
     display: none;
   }
 
-  .groups-create-action {
-    margin-left: auto;
+  .groups-page-header {
+    margin-bottom: 12px;
   }
 
   .groups-column-menu {

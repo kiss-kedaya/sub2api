@@ -31,168 +31,6 @@
         </p>
       </div>
 
-      <!-- OpenAI passthrough -->
-      <div
-        v-if="allOpenAIPassthroughCapable"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
-      >
-        <div class="mb-3 flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-openai-passthrough-label"
-              class="input-label mb-0"
-              for="bulk-edit-openai-passthrough-enabled"
-            >
-              {{ t('admin.accounts.openai.oauthPassthrough') }}
-            </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.oauthPassthroughDesc') }}
-            </p>
-          </div>
-          <input
-            v-model="enableOpenAIPassthrough"
-            id="bulk-edit-openai-passthrough-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-passthrough-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <div
-          id="bulk-edit-openai-passthrough-body"
-          :class="!enableOpenAIPassthrough && 'pointer-events-none opacity-50'"
-          role="group"
-          aria-labelledby="bulk-edit-openai-passthrough-label"
-        >
-          <button
-            id="bulk-edit-openai-passthrough-toggle"
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiPassthroughEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="openaiPassthroughEnabled = !openaiPassthroughEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
-      </div>
-
-      <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
-      <div
-        v-if="allOpenAIOAuthOnly"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
-      >
-        <div class="mb-3 flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-openai-flatten-namespaces-label"
-              class="input-label mb-0"
-              for="bulk-edit-openai-flatten-namespaces-enabled"
-            >
-              {{ t('admin.accounts.openai.flattenNamespaces') }}
-            </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
-            </p>
-          </div>
-          <input
-            v-model="enableOpenAIFlattenNamespaces"
-            id="bulk-edit-openai-flatten-namespaces-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-flatten-namespaces-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <div
-          id="bulk-edit-openai-flatten-namespaces-body"
-          :class="!enableOpenAIFlattenNamespaces && 'pointer-events-none opacity-50'"
-          role="group"
-          aria-labelledby="bulk-edit-openai-flatten-namespaces-label"
-        >
-          <button
-            id="bulk-edit-openai-flatten-namespaces-toggle"
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiFlattenNamespacesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openaiFlattenNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
-      </div>
-
-      <!-- OpenAI API long-context billing -->
-      <div
-        v-if="allOpenAIPassthroughCapable"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
-      >
-        <div class="mb-3 flex items-center justify-between gap-4">
-          <div class="flex-1">
-            <label
-              id="bulk-edit-openai-long-context-billing-label"
-              class="input-label mb-0"
-              for="bulk-edit-openai-long-context-billing-enabled"
-            >
-              {{ t('admin.accounts.openai.longContextBilling') }}
-            </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.openai.longContextBillingDesc') }}
-            </p>
-          </div>
-          <input
-            v-model="enableOpenAILongContextBilling"
-            id="bulk-edit-openai-long-context-billing-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-long-context-billing-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <div
-          id="bulk-edit-openai-long-context-billing-body"
-          :class="!enableOpenAILongContextBilling && 'pointer-events-none opacity-50'"
-          role="group"
-          aria-labelledby="bulk-edit-openai-long-context-billing-label"
-        >
-          <button
-            type="button"
-            data-testid="bulk-edit-openai-long-context-billing-toggle"
-            role="switch"
-            :disabled="!enableOpenAILongContextBilling"
-            :aria-checked="openAILongContextBillingEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openAILongContextBillingEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="openAILongContextBillingEnabled = !openAILongContextBillingEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openAILongContextBillingEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
-        </div>
-        <p
-          class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
-          data-testid="bulk-edit-openai-long-context-shadow-hint"
-        >
-          {{ t('admin.accounts.bulkEdit.longContextShadowHint') }}
-        </p>
-      </div>
-
       <!-- Base URL (API Key only) -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -462,6 +300,355 @@
         </div>
       </div>
 
+      <!-- Proxy -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <label
+            id="bulk-edit-proxy-label"
+            class="input-label mb-0"
+            for="bulk-edit-proxy-enabled"
+          >
+            {{ t('admin.accounts.proxy') }}
+          </label>
+          <input
+            v-model="enableProxy"
+            id="bulk-edit-proxy-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-proxy-body"
+            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div id="bulk-edit-proxy-body" :class="!enableProxy && 'pointer-events-none opacity-50'">
+          <ProxySelector
+            v-model="proxyId"
+            :proxies="proxies"
+            aria-labelledby="bulk-edit-proxy-label"
+          />
+        </div>
+      </div>
+
+      <!-- Concurrency & Priority -->
+      <div class="grid grid-cols-2 gap-4 border-t border-gray-200 pt-4 dark:border-dark-600 lg:grid-cols-4">
+        <div>
+          <div class="mb-3 flex items-center justify-between">
+            <label
+              id="bulk-edit-concurrency-label"
+              class="input-label mb-0"
+              for="bulk-edit-concurrency-enabled"
+            >
+              {{ t('admin.accounts.concurrency') }}
+            </label>
+            <input
+              v-model="enableConcurrency"
+              id="bulk-edit-concurrency-enabled"
+              type="checkbox"
+              aria-controls="bulk-edit-concurrency"
+              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+          </div>
+          <input
+            v-model.number="concurrency"
+            id="bulk-edit-concurrency"
+            type="number"
+            min="1"
+            :disabled="!enableConcurrency"
+            class="input"
+            :class="!enableConcurrency && 'cursor-not-allowed opacity-50'"
+            aria-labelledby="bulk-edit-concurrency-label"
+            @input="concurrency = Math.max(1, concurrency || 1)"
+          />
+        </div>
+        <div>
+          <div class="mb-3 flex items-center justify-between">
+            <label
+              id="bulk-edit-load-factor-label"
+              class="input-label mb-0"
+              for="bulk-edit-load-factor-enabled"
+            >
+              {{ t('admin.accounts.loadFactor') }}
+            </label>
+            <input
+              v-model="enableLoadFactor"
+              id="bulk-edit-load-factor-enabled"
+              type="checkbox"
+              aria-controls="bulk-edit-load-factor"
+              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+          </div>
+          <input
+            v-model.number="loadFactor"
+            id="bulk-edit-load-factor"
+            type="number"
+            min="1"
+            :disabled="!enableLoadFactor"
+            class="input"
+            :class="!enableLoadFactor && 'cursor-not-allowed opacity-50'"
+            aria-labelledby="bulk-edit-load-factor-label"
+            @input="loadFactor = (loadFactor &amp;&amp; loadFactor >= 1) ? loadFactor : null"
+          />
+          <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
+        </div>
+        <div>
+          <div class="mb-3 flex items-center justify-between">
+            <label
+              id="bulk-edit-priority-label"
+              class="input-label mb-0"
+              for="bulk-edit-priority-enabled"
+            >
+              {{ t('admin.accounts.priority') }}
+            </label>
+            <input
+              v-model="enablePriority"
+              id="bulk-edit-priority-enabled"
+              type="checkbox"
+              aria-controls="bulk-edit-priority"
+              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+          </div>
+          <input
+            v-model.number="priority"
+            id="bulk-edit-priority"
+            type="number"
+            min="0"
+            step="1"
+            :disabled="!enablePriority"
+            class="input"
+            :class="!enablePriority && 'cursor-not-allowed opacity-50'"
+            aria-labelledby="bulk-edit-priority-label"
+          />
+        </div>
+        <div>
+          <div class="mb-3 flex items-center justify-between">
+            <label
+              id="bulk-edit-rate-multiplier-label"
+              class="input-label mb-0"
+              for="bulk-edit-rate-multiplier-enabled"
+            >
+              {{ t('admin.accounts.billingRateMultiplier') }}
+            </label>
+            <input
+              v-model="enableRateMultiplier"
+              id="bulk-edit-rate-multiplier-enabled"
+              type="checkbox"
+              aria-controls="bulk-edit-rate-multiplier"
+              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+          </div>
+          <input
+            v-model.number="rateMultiplier"
+            id="bulk-edit-rate-multiplier"
+            type="number"
+            min="0"
+            step="0.01"
+            :disabled="!enableRateMultiplier"
+            class="input"
+            :class="!enableRateMultiplier && 'cursor-not-allowed opacity-50'"
+            aria-labelledby="bulk-edit-rate-multiplier-label"
+          />
+          <p class="input-hint">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
+          <p
+            v-if="enableRateMultiplier"
+            class="mt-2 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300"
+            data-testid="bulk-rate-sync-warning"
+          >
+            <Icon name="exclamationTriangle" size="xs" class="mt-0.5 flex-shrink-0" />
+            <span>{{ t('admin.accounts.bulkEdit.rateSyncWarning') }}</span>
+          </p>
+        </div>
+      </div>
+
+      <!-- Status -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="mb-3 flex items-center justify-between">
+          <label
+            id="bulk-edit-status-label"
+            class="input-label mb-0"
+            for="bulk-edit-status-enabled"
+          >
+            {{ t('common.status') }}
+          </label>
+          <input
+            v-model="enableStatus"
+            id="bulk-edit-status-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-status"
+            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div id="bulk-edit-status" :class="!enableStatus && 'pointer-events-none opacity-50'">
+          <Select
+            v-model="status"
+            :options="statusOptions"
+            aria-labelledby="bulk-edit-status-label"
+          />
+        </div>
+      </div>
+
+      <details class="account-advanced">
+        <summary class="account-advanced-summary">{{ t('admin.accounts.advancedOptions') }}</summary>
+        <div class="account-advanced-body space-y-5">
+      <!-- OpenAI passthrough -->
+      <div
+        v-if="allOpenAIPassthroughCapable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-openai-passthrough-label"
+              class="input-label mb-0"
+              for="bulk-edit-openai-passthrough-enabled"
+            >
+              {{ t('admin.accounts.openai.oauthPassthrough') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.oauthPassthroughDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableOpenAIPassthrough"
+            id="bulk-edit-openai-passthrough-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-passthrough-body"
+            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-passthrough-body"
+          :class="!enableOpenAIPassthrough && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-passthrough-label"
+        >
+          <button
+            id="bulk-edit-openai-passthrough-toggle"
+            type="button"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiPassthroughEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="openaiPassthroughEnabled = !openaiPassthroughEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
+                openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
+      <div
+        v-if="allOpenAIOAuthOnly"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-openai-flatten-namespaces-label"
+              class="input-label mb-0"
+              for="bulk-edit-openai-flatten-namespaces-enabled"
+            >
+              {{ t('admin.accounts.openai.flattenNamespaces') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableOpenAIFlattenNamespaces"
+            id="bulk-edit-openai-flatten-namespaces-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-flatten-namespaces-body"
+            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-flatten-namespaces-body"
+          :class="!enableOpenAIFlattenNamespaces && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-flatten-namespaces-label"
+        >
+          <button
+            id="bulk-edit-openai-flatten-namespaces-toggle"
+            type="button"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiFlattenNamespacesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
+                openaiFlattenNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <!-- OpenAI API long-context billing -->
+      <div
+        v-if="allOpenAIPassthroughCapable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between gap-4">
+          <div class="flex-1">
+            <label
+              id="bulk-edit-openai-long-context-billing-label"
+              class="input-label mb-0"
+              for="bulk-edit-openai-long-context-billing-enabled"
+            >
+              {{ t('admin.accounts.openai.longContextBilling') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.longContextBillingDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableOpenAILongContextBilling"
+            id="bulk-edit-openai-long-context-billing-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-long-context-billing-body"
+            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-long-context-billing-body"
+          :class="!enableOpenAILongContextBilling && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-long-context-billing-label"
+        >
+          <button
+            type="button"
+            data-testid="bulk-edit-openai-long-context-billing-toggle"
+            role="switch"
+            :disabled="!enableOpenAILongContextBilling"
+            :aria-checked="openAILongContextBillingEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openAILongContextBillingEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="openAILongContextBillingEnabled = !openAILongContextBillingEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
+                openAILongContextBillingEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <p
+          class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          data-testid="bulk-edit-openai-long-context-shadow-hint"
+        >
+          {{ t('admin.accounts.bulkEdit.longContextShadowHint') }}
+        </p>
+      </div>
+
       <!-- Custom error codes -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -662,190 +849,6 @@
           <p v-else class="text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.headerOverride.bulkDisableHint') }}
           </p>
-        </div>
-      </div>
-
-      <!-- Proxy -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-proxy-label"
-            class="input-label mb-0"
-            for="bulk-edit-proxy-enabled"
-          >
-            {{ t('admin.accounts.proxy') }}
-          </label>
-          <input
-            v-model="enableProxy"
-            id="bulk-edit-proxy-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-proxy-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <div id="bulk-edit-proxy-body" :class="!enableProxy && 'pointer-events-none opacity-50'">
-          <ProxySelector
-            v-model="proxyId"
-            :proxies="proxies"
-            aria-labelledby="bulk-edit-proxy-label"
-          />
-        </div>
-      </div>
-
-      <!-- Concurrency & Priority -->
-      <div class="grid grid-cols-2 gap-4 border-t border-gray-200 pt-4 dark:border-dark-600 lg:grid-cols-4">
-        <div>
-          <div class="mb-3 flex items-center justify-between">
-            <label
-              id="bulk-edit-concurrency-label"
-              class="input-label mb-0"
-              for="bulk-edit-concurrency-enabled"
-            >
-              {{ t('admin.accounts.concurrency') }}
-            </label>
-            <input
-              v-model="enableConcurrency"
-              id="bulk-edit-concurrency-enabled"
-              type="checkbox"
-              aria-controls="bulk-edit-concurrency"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-          </div>
-          <input
-            v-model.number="concurrency"
-            id="bulk-edit-concurrency"
-            type="number"
-            min="1"
-            :disabled="!enableConcurrency"
-            class="input"
-            :class="!enableConcurrency && 'cursor-not-allowed opacity-50'"
-            aria-labelledby="bulk-edit-concurrency-label"
-            @input="concurrency = Math.max(1, concurrency || 1)"
-          />
-        </div>
-        <div>
-          <div class="mb-3 flex items-center justify-between">
-            <label
-              id="bulk-edit-load-factor-label"
-              class="input-label mb-0"
-              for="bulk-edit-load-factor-enabled"
-            >
-              {{ t('admin.accounts.loadFactor') }}
-            </label>
-            <input
-              v-model="enableLoadFactor"
-              id="bulk-edit-load-factor-enabled"
-              type="checkbox"
-              aria-controls="bulk-edit-load-factor"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-          </div>
-          <input
-            v-model.number="loadFactor"
-            id="bulk-edit-load-factor"
-            type="number"
-            min="1"
-            :disabled="!enableLoadFactor"
-            class="input"
-            :class="!enableLoadFactor && 'cursor-not-allowed opacity-50'"
-            aria-labelledby="bulk-edit-load-factor-label"
-            @input="loadFactor = (loadFactor &amp;&amp; loadFactor >= 1) ? loadFactor : null"
-          />
-          <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
-        </div>
-        <div>
-          <div class="mb-3 flex items-center justify-between">
-            <label
-              id="bulk-edit-priority-label"
-              class="input-label mb-0"
-              for="bulk-edit-priority-enabled"
-            >
-              {{ t('admin.accounts.priority') }}
-            </label>
-            <input
-              v-model="enablePriority"
-              id="bulk-edit-priority-enabled"
-              type="checkbox"
-              aria-controls="bulk-edit-priority"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-          </div>
-          <input
-            v-model.number="priority"
-            id="bulk-edit-priority"
-            type="number"
-            min="0"
-            step="1"
-            :disabled="!enablePriority"
-            class="input"
-            :class="!enablePriority && 'cursor-not-allowed opacity-50'"
-            aria-labelledby="bulk-edit-priority-label"
-          />
-        </div>
-        <div>
-          <div class="mb-3 flex items-center justify-between">
-            <label
-              id="bulk-edit-rate-multiplier-label"
-              class="input-label mb-0"
-              for="bulk-edit-rate-multiplier-enabled"
-            >
-              {{ t('admin.accounts.billingRateMultiplier') }}
-            </label>
-            <input
-              v-model="enableRateMultiplier"
-              id="bulk-edit-rate-multiplier-enabled"
-              type="checkbox"
-              aria-controls="bulk-edit-rate-multiplier"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-          </div>
-          <input
-            v-model.number="rateMultiplier"
-            id="bulk-edit-rate-multiplier"
-            type="number"
-            min="0"
-            step="0.01"
-            :disabled="!enableRateMultiplier"
-            class="input"
-            :class="!enableRateMultiplier && 'cursor-not-allowed opacity-50'"
-            aria-labelledby="bulk-edit-rate-multiplier-label"
-          />
-          <p class="input-hint">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
-          <p
-            v-if="enableRateMultiplier"
-            class="mt-2 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300"
-            data-testid="bulk-rate-sync-warning"
-          >
-            <Icon name="exclamationTriangle" size="xs" class="mt-0.5 flex-shrink-0" />
-            <span>{{ t('admin.accounts.bulkEdit.rateSyncWarning') }}</span>
-          </p>
-        </div>
-      </div>
-
-      <!-- Status -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-status-label"
-            class="input-label mb-0"
-            for="bulk-edit-status-enabled"
-          >
-            {{ t('common.status') }}
-          </label>
-          <input
-            v-model="enableStatus"
-            id="bulk-edit-status-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-status"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <div id="bulk-edit-status" :class="!enableStatus && 'pointer-events-none opacity-50'">
-          <Select
-            v-model="status"
-            :options="statusOptions"
-            aria-labelledby="bulk-edit-status-label"
-          />
         </div>
       </div>
 
@@ -1393,6 +1396,8 @@
           </div>
         </div>
       </div>
+        </div>
+      </details>
 
       <!-- Groups -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -1474,6 +1479,7 @@
 </template>
 
 <script setup lang="ts">
+import '@/components/admin/page/admin-page.css'
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'

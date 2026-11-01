@@ -237,7 +237,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="rounded-3xl bg-white p-6 shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700">
+  <div class="rounded-lg bg-white p-6 shadow-xs ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
     <div class="mb-4 flex items-start justify-between gap-4">
       <div>
         <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('admin.ops.runtime.title') }}</h3>
@@ -261,7 +261,7 @@ onMounted(() => {
     </div>
 
     <div v-else class="space-y-6">
-      <div class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-700/50">
+      <div class="rounded-md bg-gray-50 p-4 dark:bg-dark-700/50">
         <div class="mb-3 flex items-center justify-between">
           <h4 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.runtime.alertTitle') }}</h4>
           <button class="btn btn-sm btn-secondary" @click="openAlertEditor">{{ t('common.edit') }}</button>
@@ -328,7 +328,7 @@ onMounted(() => {
         <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.runtime.evalIntervalHint') }}</p>
       </div>
 
-      <div class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-700/50">
+      <div class="rounded-md bg-gray-50 p-4 dark:bg-dark-700/50">
         <div class="mb-2 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.runtime.metricThresholds') }}</div>
         <p class="mb-4 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.ops.runtime.metricThresholdsHint') }}</p>
 
@@ -392,7 +392,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-700/50">
+      <div class="rounded-md bg-gray-50 p-4 dark:bg-dark-700/50">
         <div class="mb-2 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.runtime.silencing.title') }}</div>
 
         <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">

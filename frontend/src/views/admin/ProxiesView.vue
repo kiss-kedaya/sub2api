@@ -2,6 +2,18 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
+        <AdminPageHeader
+          class="mb-4"
+          :title="t('admin.proxies.title')"
+          :description="t('admin.proxies.description')"
+        >
+          <template #actions>
+            <button @click="showCreateModal = true" class="btn btn-primary">
+              <Icon name="plus" size="md" class="mr-2" />
+              {{ t('admin.proxies.createProxy') }}
+            </button>
+          </template>
+        </AdminPageHeader>
         <div class="flex flex-wrap items-center gap-3">
           <!-- Left: Search + Filters -->
           <div class="relative w-full sm:w-64">
@@ -78,10 +90,6 @@
             </button>
             <button @click="showExportDataDialog = true" class="btn btn-secondary">
               {{ selectedCount > 0 ? t('admin.proxies.dataExportSelected') : t('admin.proxies.dataExport') }}
-            </button>
-            <button @click="showCreateModal = true" class="btn btn-primary">
-              <Icon name="plus" size="md" class="mr-2" />
-              {{ t('admin.proxies.createProxy') }}
             </button>
           </div>
         </div>
@@ -269,76 +277,30 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <button
+              <AdminRowAction
                 @click="handleTestConnection(row)"
                 :disabled="testingProxyIds.has(row.id)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-emerald-50 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-400"
+                :label="t('admin.proxies.testConnection')"
+                tone="success"
               >
-                <svg
-                  v-if="testingProxyIds.has(row.id)"
-                  class="h-4 w-4 animate-spin"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    class="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    stroke-width="4"
-                  ></circle>
-                  <path
-                    class="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-                <Icon v-else name="checkCircle" size="sm" />
-                <span class="text-xs">{{ t('admin.proxies.testConnection') }}</span>
-              </button>
-              <button
+                <template #icon>
+                  <svg v-if="testingProxyIds.has(row.id)" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  <Icon v-else name="checkCircle" size="sm" aria-hidden="true" />
+                </template>
+              </AdminRowAction>
+              <AdminRowAction
                 @click="handleQualityCheck(row)"
                 :disabled="qualityCheckingProxyIds.has(row.id)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+                :label="t('admin.proxies.qualityCheck')"
+                tone="primary"
               >
-                <svg
-                  v-if="qualityCheckingProxyIds.has(row.id)"
-                  class="h-4 w-4 animate-spin"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    class="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    stroke-width="4"
-                  ></circle>
-                  <path
-                    class="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-                <Icon v-else name="shield" size="sm" />
-                <span class="text-xs">{{ t('admin.proxies.qualityCheck') }}</span>
-              </button>
-              <button
-                @click="handleEdit(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
-              >
-                <Icon name="edit" size="sm" />
-                <span class="text-xs">{{ t('common.edit') }}</span>
-              </button>
-              <button
-                @click="handleDelete(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-              >
-                <Icon name="trash" size="sm" />
-                <span class="text-xs">{{ t('common.delete') }}</span>
-              </button>
+                <template #icon>
+                  <svg v-if="qualityCheckingProxyIds.has(row.id)" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  <Icon v-else name="shield" size="sm" aria-hidden="true" />
+                </template>
+              </AdminRowAction>
+              <AdminRowAction @click="handleEdit(row)" :label="t('common.edit')" icon="edit" tone="primary" />
+              <AdminRowAction @click="handleDelete(row)" :label="t('common.delete')" icon="trash" tone="danger" />
             </div>
           </template>
 
@@ -981,6 +943,8 @@ import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { useSwipeSelect } from '@/composables/useSwipeSelect'
