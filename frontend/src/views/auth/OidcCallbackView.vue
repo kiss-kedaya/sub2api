@@ -82,17 +82,17 @@
               {{ t('auth.oidc.invitationRequired', { providerName }) }}
             </p>
             <div>
-              <input
+              <UInput
                 v-model="invitationCode"
                 type="text"
-                class="input w-full"
+                class="w-full"
                 :placeholder="t('auth.invitationCodePlaceholder')"
                 :disabled="isSubmitting"
                 @keyup.enter="handleSubmitInvitation"
               />
             </div>
-            <button
-              class="btn btn-primary w-full"
+            <UButton
+              block
               :disabled="isSubmitting || !invitationCode.trim()"
               @click="handleSubmitInvitation"
             >
@@ -101,16 +101,16 @@
                   ? t('auth.oidc.completing')
                   : t('auth.oidc.completeRegistration')
               }}
-            </button>
+            </UButton>
           </template>
 
           <template v-else-if="needsAdoptionConfirmation">
             <p class="text-sm text-default">
               {{ t('auth.oauthFlow.reviewProfileBeforeContinue', { providerName }) }}
             </p>
-            <button class="btn btn-primary w-full" :disabled="isSubmitting" @click="handleContinueLogin">
+            <UButton block :disabled="isSubmitting" @click="handleContinueLogin">
               {{ isSubmitting ? t('common.processing') : t('auth.continue') }}
-            </button>
+            </UButton>
           </template>
 
           <template v-else-if="needsChooser">
@@ -130,20 +130,22 @@
                 </div>
 
                 <div class="grid gap-3 sm:grid-cols-2">
-                  <button
-                    class="btn btn-secondary w-full"
+                  <UButton
+                    block
+                    color="neutral"
+                    variant="subtle"
                     :disabled="isSubmitting"
                     @click="switchToBindLoginMode()"
                   >
                     {{ t('auth.oauthFlow.bindExistingAccount') }}
-                  </button>
-                  <button
-                    class="btn btn-primary w-full"
+                  </UButton>
+                  <UButton
+                    block
                     :disabled="isSubmitting"
                     @click="switchToCreateAccountMode"
                   >
                     {{ t('auth.oauthFlow.createNewAccount') }}
-                  </button>
+                  </UButton>
                 </div>
               </div>
             </div>
@@ -168,40 +170,44 @@
               {{ t('auth.oauthFlow.bindLoginHint', { providerName }) }}
             </p>
             <div class="space-y-3">
-              <input
+              <UInput
                 v-model="bindLoginEmail"
                 data-testid="oidc-bind-login-email"
                 type="email"
-                class="input w-full"
+                class="w-full"
                 :placeholder="t('auth.emailPlaceholder')"
                 :disabled="isSubmitting"
                 @keyup.enter="handleBindLogin"
+                autocomplete="email"
               />
-              <input
+              <UInput
                 v-model="bindLoginPassword"
                 data-testid="oidc-bind-login-password"
                 type="password"
-                class="input w-full"
+                class="w-full"
                 :placeholder="t('auth.passwordPlaceholder')"
                 :disabled="isSubmitting"
                 @keyup.enter="handleBindLogin"
+                autocomplete="current-password"
               />
-              <button
+              <UButton
                 data-testid="oidc-bind-login-submit"
-                class="btn btn-primary w-full"
+                block
                 :disabled="isSubmitting || !bindLoginEmail.trim() || !bindLoginPassword"
                 @click="handleBindLogin"
               >
                 {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.logInAndBind') }}
-              </button>
-              <button
+              </UButton>
+              <UButton
                 v-if="canReturnToCreateAccount"
-                class="btn btn-secondary w-full"
+                block
+                color="neutral"
+                variant="subtle"
                 :disabled="isSubmitting"
                 @click="switchToCreateAccountMode"
               >
                 {{ t('auth.oauthFlow.useDifferentEmail') }}
-              </button>
+              </UButton>
             </div>
           </template>
 
@@ -215,25 +221,25 @@
               }}
             </p>
             <div class="space-y-3">
-              <input
+              <UInput
                 v-model="totpCode"
                 data-testid="oidc-bind-login-totp"
                 type="text"
                 inputmode="numeric"
                 maxlength="6"
-                class="input w-full"
+                class="w-full"
                 placeholder="123456"
                 :disabled="isSubmitting"
                 @keyup.enter="handleSubmitTotpChallenge"
               />
-              <button
+              <UButton
                 data-testid="oidc-bind-login-totp-submit"
-                class="btn btn-primary w-full"
+                block
                 :disabled="isSubmitting || totpCode.trim().length !== 6"
                 @click="handleSubmitTotpChallenge"
               >
                 {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.verifyAndContinue') }}
-              </button>
+              </UButton>
             </div>
           </template>
         </div>

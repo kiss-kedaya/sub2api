@@ -1,20 +1,22 @@
 <template>
   <form class="space-y-3" @submit.prevent="handleSubmit">
-    <input
+    <UInput
       v-model="email"
       :data-testid="`${testIdPrefix}-create-account-email`"
       type="email"
-      class="input w-full"
+      class="w-full"
       :placeholder="t('auth.emailPlaceholder')"
       :disabled="isSubmitting || isSendingCode"
+      autocomplete="email"
     />
-    <input
+    <UInput
       v-model="password"
       :data-testid="`${testIdPrefix}-create-account-password`"
       type="password"
-      class="input w-full"
+      class="w-full"
       :placeholder="t('auth.passwordPlaceholder')"
       :disabled="isSubmitting"
+      autocomplete="new-password"
     />
     <div v-if="captchaEnabled" class="space-y-2">
       <TurnstileWidget
@@ -35,20 +37,20 @@
       />
     </div>
     <div v-if="emailVerifyEnabled" class="flex gap-3">
-      <input
+      <UInput
         v-model="verifyCode"
         :data-testid="`${testIdPrefix}-create-account-verify-code`"
         type="text"
         inputmode="numeric"
         maxlength="6"
-        class="input min-w-0 flex-1"
+        class="min-w-0 flex-1"
         placeholder="123456"
         :disabled="isSubmitting"
       />
-      <button
+      <UButton
         :data-testid="`${testIdPrefix}-create-account-send-code`"
         type="button"
-        class="btn btn-secondary shrink-0"
+        color="neutral" variant="subtle" class="shrink-0"
         :disabled="isSubmitting || isSendingCode || countdown > 0 || !email.trim() || (turnstileEnabled && !turnstileToken)"
         @click="handleSendCode"
       >
@@ -59,7 +61,7 @@
               ? t('auth.resendCountdown', { countdown })
               : t('auth.sendCode')
         }}
-      </button>
+      </UButton>
     </div>
     <p v-if="emailVerifyEnabled && sendCodeSuccess" class="text-sm text-success">
       {{ t('auth.codeSentSuccess') }}
@@ -67,32 +69,34 @@
     <p v-else-if="emailVerifyEnabled" class="text-xs text-muted">
       {{ t('auth.verificationCodeHint') }}
     </p>
-    <input
+    <UInput
       v-if="invitationCodeEnabled"
       v-model="invitationCode"
       :data-testid="`${testIdPrefix}-create-account-invitation-code`"
       type="text"
-      class="input w-full"
+      class="w-full"
       :placeholder="t('auth.invitationCodePlaceholder')"
       :disabled="isSubmitting"
     />
-    <button
+    <UButton
       :data-testid="`${testIdPrefix}-create-account-submit`"
       type="button"
-      class="btn btn-primary w-full"
+      block
       :disabled="isSubmitting || !email.trim() || password.length < 6 || (invitationCodeEnabled && !invitationCode.trim()) || (turnstileEnabled && !turnstileToken)"
       @click="handleSubmit"
     >
       {{ isSubmitting ? t('common.processing') : t('auth.createAccount') }}
-    </button>
-    <button
+    </UButton>
+    <UButton
       type="button"
-      class="btn btn-secondary w-full"
+      block
+      color="neutral"
+      variant="subtle"
       :disabled="isSubmitting"
       @click="emitSwitchToBind"
     >
       {{ t('auth.alreadyHaveAccount') }}
-    </button>
+    </UButton>
   </form>
 </template>
 

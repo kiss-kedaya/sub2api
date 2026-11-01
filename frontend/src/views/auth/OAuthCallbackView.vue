@@ -1,41 +1,42 @@
 <template>
-  <div class="min-h-screen bg-gray-50 px-4 py-10 dark:bg-dark-900">
+  <div class="min-h-screen bg-default px-4 py-10">
     <div class="mx-auto max-w-2xl">
-      <div v-if="isProcessing" class="card p-6 text-center">
-        <div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
-        <h1 class="mt-4 text-lg font-semibold text-gray-900 dark:text-white">
+      <div v-if="isProcessing" class="rounded-lg bg-muted p-6 text-center ring ring-default">
+        <div class="mx-auto size-8 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+        <h1 class="mt-4 text-lg font-semibold text-highlighted">
           {{ t('auth.oauth.callbackTitle') }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-1 text-sm text-muted">
           {{ t('auth.oauth.callbackHint') }}
         </p>
       </div>
 
-      <div v-else-if="needsRegistrationCompletion" class="card p-6">
-        <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
+      <div v-else-if="needsRegistrationCompletion" class="rounded-lg bg-muted p-6 ring ring-default">
+        <h1 class="text-lg font-semibold text-highlighted">
           {{ t('auth.oidc.callbackTitle', { providerName }) }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-1 text-sm text-muted">
           {{ registrationHint }}
         </p>
 
         <div class="mt-6 space-y-4">
           <div>
-            <label class="input-label">{{ t('auth.emailLabel') }}</label>
-            <input
-              class="input w-full"
+            <label class="mb-1 block text-sm font-medium text-default">{{ t('auth.emailLabel') }}</label>
+            <UInput
+              class="w-full"
               type="email"
-              :value="registrationEmail"
+              :model-value="registrationEmail"
               readonly
               disabled
+              autocomplete="email"
             />
           </div>
           <div>
-            <label class="input-label">{{ t('auth.passwordLabel') }}</label>
-            <input
+            <label class="mb-1 block text-sm font-medium text-default">{{ t('auth.passwordLabel') }}</label>
+            <UInput
               v-model="password"
               type="password"
-              class="input w-full"
+              class="w-full"
               :placeholder="t('auth.createPasswordPlaceholder')"
               :disabled="isSubmitting"
               autocomplete="new-password"
@@ -43,11 +44,11 @@
             />
           </div>
           <div>
-            <label class="input-label">{{ t('auth.confirmPassword') }}</label>
-            <input
+            <label class="mb-1 block text-sm font-medium text-default">{{ t('auth.confirmPassword') }}</label>
+            <UInput
               v-model="confirmPassword"
               type="password"
-              class="input w-full"
+              class="w-full"
               :placeholder="t('auth.confirmPasswordPlaceholder')"
               :disabled="isSubmitting"
               autocomplete="new-password"
@@ -55,88 +56,90 @@
             />
           </div>
           <div v-if="invitationRequired">
-            <label class="input-label">{{ t('auth.invitationCodeLabel') }}</label>
-            <input
+            <label class="mb-1 block text-sm font-medium text-default">{{ t('auth.invitationCodeLabel') }}</label>
+            <UInput
               v-model="invitationCode"
               type="text"
-              class="input w-full"
+              class="w-full"
               :placeholder="t('auth.invitationCodePlaceholder')"
               :disabled="isSubmitting"
               @keyup.enter="handleSubmitRegistration"
             />
           </div>
-          <p v-if="registrationError" class="text-sm text-red-600 dark:text-red-400">
+          <p v-if="registrationError" class="text-sm text-error">
             {{ registrationError }}
           </p>
-          <button
-            class="btn btn-primary w-full"
+          <UButton
+            block
             type="button"
             :disabled="isSubmitting || !canSubmitRegistration"
             @click="handleSubmitRegistration"
           >
             {{ isSubmitting ? t('common.processing') : t('auth.oidc.completeRegistration') }}
-          </button>
+          </UButton>
         </div>
       </div>
 
-      <div v-else-if="invalidCallback" class="card p-6 text-center">
-        <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
+      <div v-else-if="invalidCallback" class="rounded-lg bg-muted p-6 text-center ring ring-default">
+        <h1 class="text-lg font-semibold text-highlighted">
           {{ t('auth.oauth.invalidCallbackTitle') }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-1 text-sm text-muted">
           {{ t('auth.oauth.invalidCallbackHint') }}
         </p>
-        <button class="btn btn-primary mt-6" type="button" @click="router.replace('/login')">
+        <UButton class="mt-6" type="button" @click="router.replace('/login')">
           {{ t('auth.backToLogin') }}
-        </button>
+        </UButton>
       </div>
 
-      <div v-else class="card p-6">
-        <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
+      <div v-else class="rounded-lg bg-muted p-6 ring ring-default">
+        <h1 class="text-lg font-semibold text-highlighted">
           {{ t('auth.oauth.callbackTitle') }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-1 text-sm text-muted">
           {{ t('auth.oauth.callbackHint') }}
         </p>
 
         <div class="mt-6 space-y-4">
           <div>
-            <label class="input-label">{{ t('auth.oauth.code') }}</label>
+            <label class="mb-1 block text-sm font-medium text-default">{{ t('auth.oauth.code') }}</label>
             <div class="flex gap-2">
-              <input class="input flex-1 font-mono text-sm" :value="code" readonly />
-              <button class="btn btn-secondary" type="button" :disabled="!code" @click="copy(code)">
+              <UInput class="flex-1 font-mono text-sm" :model-value="code" readonly />
+              <UButton color="neutral" variant="subtle" type="button" :disabled="!code" @click="copy(code)">
                 {{ t('common.copy') }}
-              </button>
+              </UButton>
             </div>
           </div>
 
           <div>
-            <label class="input-label">{{ t('auth.oauth.state') }}</label>
+            <label class="mb-1 block text-sm font-medium text-default">{{ t('auth.oauth.state') }}</label>
             <div class="flex gap-2">
-              <input class="input flex-1 font-mono text-sm" :value="state" readonly />
-              <button
-                class="btn btn-secondary"
+              <UInput class="flex-1 font-mono text-sm" :model-value="state" readonly />
+              <UButton
+                color="neutral"
+                variant="subtle"
                 type="button"
                 :disabled="!state"
                 @click="copy(state)"
               >
                 {{ t('common.copy') }}
-              </button>
+              </UButton>
             </div>
           </div>
 
           <div>
-            <label class="input-label">{{ t('auth.oauth.fullUrl') }}</label>
+            <label class="mb-1 block text-sm font-medium text-default">{{ t('auth.oauth.fullUrl') }}</label>
             <div class="flex gap-2">
-              <input class="input flex-1 font-mono text-xs" :value="fullUrl" readonly />
-              <button
-                class="btn btn-secondary"
+              <UInput class="flex-1 font-mono text-xs" :model-value="fullUrl" readonly />
+              <UButton
+                color="neutral"
+                variant="subtle"
                 type="button"
                 :disabled="!fullUrl"
                 @click="copy(fullUrl)"
               >
                 {{ t('common.copy') }}
-              </button>
+              </UButton>
             </div>
           </div>
         </div>
