@@ -25,7 +25,7 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 // provider-specific replay gates. The default path keeps legacy behavior.
 func ResponsesToAnthropicRequestWithOptions(req *ResponsesRequest, opts *ResponsesToAnthropicOptions) (*AnthropicRequest, error) {
 	preserveReasoningText := opts != nil && opts.PreserveReasoningText
-	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, preserveReasoningText)
+	system, messages, err := convertResponsesInputToAnthropicWithThinking(req.Instructions, req.Input, preserveReasoningText)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,11 @@ func mapResponsesEffortToAnthropic(effort string) string {
 // convertResponsesInputToAnthropic extracts system prompt and messages from
 // a Responses API instructions + input array. Returns the system as raw JSON
 // (for Anthropic's polymorphic system field) and a list of Anthropic messages.
-func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage, preserveReasoningText bool) (json.RawMessage, []AnthropicMessage, error) {
+func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage) (json.RawMessage, []AnthropicMessage, error) {
+	return convertResponsesInputToAnthropicWithThinking(instructions, inputRaw, false)
+}
+
+func convertResponsesInputToAnthropicWithThinking(instructions string, inputRaw json.RawMessage, preserveReasoningText bool) (json.RawMessage, []AnthropicMessage, error) {
 	var systemParts []AnthropicContentBlock
 	preserveSystemBlocks := false
 	if strings.TrimSpace(instructions) != "" {
