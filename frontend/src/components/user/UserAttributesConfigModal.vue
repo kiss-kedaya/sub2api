@@ -50,7 +50,7 @@
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="font-medium text-gray-900 dark:text-white">{{ attr.name }}</span>
-              <span class="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500 dark:bg-dark-700 dark:text-dark-400">
+              <span class="rounded-sm bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500 dark:bg-dark-700 dark:text-dark-400">
                 {{ attr.key }}
               </span>
               <span v-if="attr.required" class="badge badge-danger text-xs">
@@ -197,11 +197,11 @@
       <!-- Required & Enabled -->
       <div class="flex items-center gap-6">
         <label class="flex items-center gap-2">
-          <input v-model="form.required" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
+          <input v-model="form.required" type="checkbox" class="h-4 w-4 rounded-sm border-gray-300 text-primary-600" />
           <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.users.attributes.required') }}</span>
         </label>
         <label class="flex items-center gap-2">
-          <input v-model="form.enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
+          <input v-model="form.enabled" type="checkbox" class="h-4 w-4 rounded-sm border-gray-300 text-primary-600" />
           <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.users.attributes.enabled') }}</span>
         </label>
       </div>

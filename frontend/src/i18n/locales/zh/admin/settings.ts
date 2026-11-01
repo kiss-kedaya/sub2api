@@ -1,5 +1,8 @@
 export default {
     settings: {
+      search: {
+        emailOAuth: '邮箱快捷登录',
+      },
       gatewayIPNotice: {
         title: '指定 IP 提示与限流',
         description: '仅对列表中的来源 IP 添加对话提示，并按 IP 独立限制请求频率。',
@@ -19,6 +22,7 @@ export default {
       description: '管理注册、邮箱验证、默认值和 SMTP 设置',
       tabs: {
         general: '通用设置',
+        appearance: '外观',
         agreement: '登录条款',
         features: '功能开关',
         security: '安全与认证',
@@ -28,6 +32,7 @@ export default {
         backup: '数据备份',
         payment: '支付设置',
       },
+      advancedOptions: '高级选项',
       features: {
         channelMonitor: {
           title: '渠道监控',
@@ -867,6 +872,8 @@ export default {
         field_cid: '支付渠道 ID',
         field_cidAlipay: '支付宝渠道 ID',
         field_cidWxpay: '微信渠道 ID',
+        field_token: '币种',
+        field_network: '网络',
         easypayCustomMethods: '易支付自定义支付方式',
         easypayCustomMethodsHint: '添加当前易支付服务商额外支持的支付方式。支付方式会记录到 Sub2API 订单中，上游 type 会作为易支付 type 参数提交。',
         addCustomMethod: '添加方式',

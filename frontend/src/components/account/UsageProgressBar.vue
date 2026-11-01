@@ -1,60 +1,43 @@
 <template>
   <div>
-    <!-- Window stats row (above progress bar) -->
+    <!-- Window stats (above the bar): plain muted figures -->
     <div
       v-if="windowStats && (windowStats.requests > 0 || windowStats.tokens > 0)"
-      class="mb-0.5 flex items-center"
+      class="mb-0.5 flex flex-wrap items-center gap-x-2 text-xs tabular-nums text-muted"
     >
-      <div class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400">
-        <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
-          {{ formatRequests }} req
-        </span>
-        <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
-          {{ formatTokens }}
-        </span>
-        <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800" :title="t('usage.accountBilled')">
-          A ${{ formatAccountCost }}
-        </span>
-        <span
-          v-if="windowStats?.user_cost != null"
-          class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
-          :title="t('usage.userBilled')"
-        >
-          U ${{ formatUserCost }}
-        </span>
-        <span
-          v-if="estimatedTotalCost != null"
-          data-test="estimated-total-cost"
-          class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
-          :title="t('admin.accounts.usageWindow.estimatedTotalCostTooltip')"
-        >
-          {{ t('admin.accounts.usageWindow.estimatedTotalCost', { cost: estimatedTotalCost.toFixed(2) }) }}
-        </span>
-      </div>
+      <span>{{ formatRequests }} req</span>
+      <span>{{ formatTokens }}</span>
+      <span :title="t('usage.accountBilled')">A ${{ formatAccountCost }}</span>
+      <span v-if="windowStats?.user_cost != null" :title="t('usage.userBilled')">U ${{ formatUserCost }}</span>
+      <span
+        v-if="estimatedTotalCost != null"
+        data-test="estimated-total-cost"
+        :title="t('admin.accounts.usageWindow.estimatedTotalCostTooltip')"
+      >
+        {{ t('admin.accounts.usageWindow.estimatedTotalCost', { cost: estimatedTotalCost.toFixed(2) }) }}
+      </span>
     </div>
 
-    <!-- Progress bar row -->
+    <!-- Bar row: label, thin bar, percent, reset time -->
     <div class="flex items-center gap-1">
-      <!-- Label badge (label-width: fixed = 定宽居中, auto = 限宽截断左对齐) -->
-      <span :class="[labelSizeClass, labelClass]">
+      <!-- label-width: fixed = 定宽居中（账号页纵向对齐）; auto = 限宽截断左对齐 -->
+      <span :class="[labelSizeClass, 'text-muted']">
         {{ label }}
       </span>
 
-      <!-- Progress bar container -->
-      <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-        <div
-          :class="['h-full transition-all duration-300', barClass]"
-          :style="{ width: barWidth }"
-        ></div>
-      </div>
+      <UProgress
+        :model-value="utilization"
+        :max="100"
+        :color="barColor"
+        size="sm"
+        class="usage-bar-track w-10 shrink-0"
+      />
 
-      <!-- Percentage -->
-      <span :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
+      <span :class="['w-[32px] shrink-0 text-right text-xs tabular-nums', textClass]">
         {{ displayPercent }}
       </span>
 
-      <!-- Reset time -->
-      <span v-if="shouldShowResetTime" class="shrink-0 text-[10px] text-gray-400">
+      <span v-if="shouldShowResetTime" class="shrink-0 text-xs tabular-nums text-dimmed">
         {{ formatResetTime }}
       </span>
     </div>
@@ -109,66 +92,35 @@ watch(
   },
 )
 
-// Label background colors
-const labelClass = computed(() => {
-  const colors = {
-    indigo: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
-    emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-    purple: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
-    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-  }
-  return colors[props.color]
-})
-
-// Label badge width mode: fixed 定宽保证账号页纵向对齐；auto 限宽截断适配
+// Label width mode: fixed 定宽保证账号页纵向对齐；auto 限宽截断适配
 // 监控页「Pro/7 天」类组合标签。百分比列在两种模式下保持不变。
+// The label is plain muted text; `color` stays accepted for callers but no longer paints a chip.
 const labelSizeClass = computed(() =>
   props.labelWidth === 'auto'
-    ? 'max-w-[72px] shrink-0 truncate rounded px-1 text-left text-[10px] font-medium'
-    : 'w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium'
+    ? 'max-w-[72px] shrink-0 truncate text-left text-xs font-medium'
+    : 'w-[32px] shrink-0 text-center text-xs font-medium'
 )
 
-// Progress bar color based on utilization
-const barClass = computed(() => {
+// Usage level from the thresholds: high = error, elevated = warning, otherwise normal.
+// Remaining-capacity bars count down, so their thresholds are reversed.
+const level = computed<'error' | 'warning' | 'normal'>(() => {
   if (props.remainingCapacity) {
-    if (props.utilization <= 20) {
-      return 'bg-red-500'
-    } else if (props.utilization <= 50) {
-      return 'bg-amber-500'
-    }
-    return 'bg-green-500'
+    if (props.utilization <= 20) return 'error'
+    if (props.utilization <= 50) return 'warning'
+    return 'normal'
   }
-  if (props.utilization >= 90) {
-    return 'bg-red-500'
-  } else if (props.utilization >= 75) {
-    return 'bg-amber-500'
-  } else {
-    return 'bg-green-500'
-  }
+  if (props.utilization >= 90) return 'error'
+  if (props.utilization >= 75) return 'warning'
+  return 'normal'
 })
 
-// Text color based on utilization
+// UProgress clamps the value to 0..100, so an over-limit window still shows a full bar.
+const barColor = computed(() => (level.value === 'normal' ? 'primary' : level.value))
+
 const textClass = computed(() => {
-  if (props.remainingCapacity) {
-    if (props.utilization <= 20) {
-      return 'text-red-600 dark:text-red-400'
-    } else if (props.utilization <= 50) {
-      return 'text-amber-600 dark:text-amber-400'
-    }
-    return 'text-gray-600 dark:text-gray-400'
-  }
-  if (props.utilization >= 90) {
-    return 'text-red-600 dark:text-red-400'
-  } else if (props.utilization >= 75) {
-    return 'text-amber-600 dark:text-amber-400'
-  } else {
-    return 'text-gray-600 dark:text-gray-400'
-  }
-})
-
-// Bar width (capped at 100%)
-const barWidth = computed(() => {
-  return `${Math.min(Math.max(props.utilization, 0), 100)}%`
+  if (level.value === 'error') return 'text-error'
+  if (level.value === 'warning') return 'text-warning'
+  return 'text-muted'
 })
 
 // Display percentage (cap at 999% for readability)

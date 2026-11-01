@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-4">
-    <div>
-      <label :for="`${idPrefix}-max-effort`" class="input-label">
-        {{ t("admin.groups.form.maxReasoningEffort") }}
-      </label>
+    <UFormField
+      :label="t('admin.groups.form.maxReasoningEffort')"
+      :help="t('admin.groups.form.maxReasoningEffortHint')"
+    >
       <Select
         :id="`${idPrefix}-max-effort`"
         :model-value="maxEffort"
@@ -14,13 +14,12 @@
         clearable
         @update:model-value="updateMaxEffort"
       />
-      <p class="input-hint">{{ t("admin.groups.form.maxReasoningEffortHint") }}</p>
-    </div>
+    </UFormField>
 
-    <div>
-      <label :for="`${idPrefix}-over-limit`" class="input-label">
-        {{ t("admin.groups.form.maxReasoningEffortOverLimit") }}
-      </label>
+    <UFormField
+      :label="t('admin.groups.form.maxReasoningEffortOverLimit')"
+      :help="t('admin.groups.form.maxReasoningEffortOverLimitHint')"
+    >
       <Select
         :id="`${idPrefix}-over-limit`"
         :model-value="overLimit"
@@ -30,42 +29,41 @@
         :disabled="!maxEffort"
         @update:model-value="updateOverLimit"
       />
-      <p class="input-hint">{{ t("admin.groups.form.maxReasoningEffortOverLimitHint") }}</p>
-    </div>
+    </UFormField>
 
-    <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-      <div class="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <label class="input-label mb-0">
+    <div class="space-y-3">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-default">
             {{ t("admin.groups.form.reasoningEffortMappings") }}
-          </label>
-          <p class="input-hint mb-0">
+          </p>
+          <p class="text-sm text-muted">
             {{ t("admin.groups.form.reasoningEffortMappingsHint") }}
           </p>
         </div>
-        <button
-          type="button"
-          class="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-primary-600 transition-colors hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:text-primary-400 dark:hover:bg-primary-900/20 dark:hover:text-primary-300"
+        <UButton
+          icon="i-lucide-plus"
+          color="neutral"
+          variant="outline"
+          class="shrink-0"
+          :label="t('admin.groups.form.addReasoningEffortMapping')"
           @click="addGroup"
-        >
-          <Icon name="plus" size="sm" />
-          {{ t("admin.groups.form.addReasoningEffortMapping") }}
-        </button>
+        />
       </div>
 
       <div v-if="mappings.length > 0" class="space-y-2">
         <div
           v-for="group in mappings"
           :key="group.id"
-          class="space-y-3 rounded-lg border border-gray-200 bg-gray-50/40 p-3 dark:border-dark-600 dark:bg-dark-800/40"
+          class="space-y-3 rounded-lg bg-elevated/50 p-3"
         >
           <div
-            class="grid grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_1.25rem_minmax(0,1fr)_2.75rem]"
+            class="grid grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_1.25rem_minmax(0,1fr)_2.25rem]"
           >
-            <div>
-              <label :for="`${idPrefix}-${group.id}-match-type`" class="input-label">
-                {{ t("admin.groups.form.reasoningEffortMatchType") }}
-              </label>
+            <UFormField
+              :label="t('admin.groups.form.reasoningEffortMatchType')"
+              :error="showValidation && !!groupErrors(group.id).match_type"
+            >
               <Select
                 :id="`${idPrefix}-${group.id}-match-type`"
                 :model-value="group.match_type"
@@ -79,46 +77,42 @@
               />
               <p
                 v-if="showValidation && groupErrors(group.id).match_type"
-                class="mt-1 text-xs text-red-600 dark:text-red-400"
+                class="mt-1 text-xs text-error"
                 role="alert"
               >
                 {{ mappingErrorText(groupErrors(group.id).match_type) }}
               </p>
-            </div>
+            </UFormField>
 
             <div class="hidden md:block" aria-hidden="true" />
 
-            <div>
-              <label :for="`${idPrefix}-${group.id}-model`" class="input-label">
-                {{ t("admin.groups.form.reasoningEffortModel") }}
-              </label>
-              <input
+            <UFormField :label="t('admin.groups.form.reasoningEffortModel')">
+              <UInput
                 :id="`${idPrefix}-${group.id}-model`"
-                :value="group.model"
-                type="text"
+                :model-value="group.model"
                 maxlength="200"
                 autocomplete="off"
-                class="input"
+                class="w-full"
                 :placeholder="t('admin.groups.form.reasoningEffortModelPlaceholder')"
                 :aria-label="t('admin.groups.form.reasoningEffortModel')"
-                @input="onModelInput(group.id, $event)"
+                @update:model-value="updateGroup(group.id, 'model', $event)"
               />
-            </div>
+            </UFormField>
 
-            <button
-              type="button"
-              class="flex h-11 w-11 items-center justify-center self-end rounded-lg text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+            <UButton
+              icon="i-lucide-trash-2"
+              color="neutral"
+              variant="ghost"
+              class="self-end justify-self-end text-muted hover:text-error md:mb-0.5"
               :title="t('admin.groups.form.removeReasoningEffortMapping')"
               :aria-label="t('admin.groups.form.removeReasoningEffortMapping')"
               @click="removeGroup(group.id)"
-            >
-              <Icon name="trash" size="sm" />
-            </button>
+            />
           </div>
 
           <p
             v-if="showValidation && groupErrors(group.id).duplicateScope"
-            class="text-xs text-red-600 dark:text-red-400"
+            class="text-xs text-error"
             role="alert"
           >
             {{ mappingErrorText(groupErrors(group.id).duplicateScope) }}
@@ -127,12 +121,12 @@
           <div
             v-for="pair in group.pairs"
             :key="pair.id"
-            class="grid grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_1.25rem_minmax(0,1fr)_2.75rem]"
+            class="grid grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_1.25rem_minmax(0,1fr)_2.25rem]"
           >
-            <div>
-              <label :for="`${idPrefix}-${pair.id}-from`" class="input-label">
-                {{ t("admin.groups.form.reasoningEffortFrom") }}
-              </label>
+            <UFormField
+              :label="t('admin.groups.form.reasoningEffortFrom')"
+              :error="showValidation && !!pairErrors(pair.id).from"
+            >
               <Select
                 :id="`${idPrefix}-${pair.id}-from`"
                 :model-value="pair.from"
@@ -146,21 +140,21 @@
               />
               <p
                 v-if="showValidation && pairErrors(pair.id).from"
-                class="mt-1 text-xs text-red-600 dark:text-red-400"
+                class="mt-1 text-xs text-error"
                 role="alert"
               >
                 {{ mappingErrorText(pairErrors(pair.id).from) }}
               </p>
+            </UFormField>
+
+            <div class="hidden h-9 items-center justify-center self-end text-dimmed md:flex" aria-hidden="true">
+              <UIcon name="i-lucide-arrow-right" class="size-4" />
             </div>
 
-            <div class="hidden h-11 items-center justify-center self-end text-gray-400 md:flex dark:text-dark-400">
-              <Icon name="arrowRight" size="sm" />
-            </div>
-
-            <div>
-              <label :for="`${idPrefix}-${pair.id}-to`" class="input-label">
-                {{ t("admin.groups.form.reasoningEffortTo") }}
-              </label>
+            <UFormField
+              :label="t('admin.groups.form.reasoningEffortTo')"
+              :error="showValidation && !!pairErrors(pair.id).to"
+            >
               <Select
                 :id="`${idPrefix}-${pair.id}-to`"
                 :model-value="pair.to"
@@ -174,32 +168,31 @@
               />
               <p
                 v-if="showValidation && pairErrors(pair.id).to"
-                class="mt-1 text-xs text-red-600 dark:text-red-400"
+                class="mt-1 text-xs text-error"
                 role="alert"
               >
                 {{ mappingErrorText(pairErrors(pair.id).to) }}
               </p>
-            </div>
+            </UFormField>
 
-            <button
-              type="button"
-              class="flex h-11 w-11 items-center justify-center self-end rounded-lg text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/30 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+            <UButton
+              icon="i-lucide-trash-2"
+              color="neutral"
+              variant="ghost"
+              class="self-end justify-self-end text-muted hover:text-error md:mb-0.5"
               :title="t('admin.groups.form.removeReasoningEffortPair')"
               :aria-label="t('admin.groups.form.removeReasoningEffortPair')"
               @click="removePair(group.id, pair.id)"
-            >
-              <Icon name="trash" size="sm" />
-            </button>
+            />
           </div>
 
-          <button
-            type="button"
-            class="inline-flex min-h-9 items-center gap-1.5 text-sm font-medium text-primary-600 transition-colors hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:text-primary-400 dark:hover:text-primary-300"
+          <UButton
+            icon="i-lucide-plus"
+            variant="link"
+            class="px-0"
+            :label="t('admin.groups.form.addReasoningEffortPair')"
             @click="addPair(group.id)"
-          >
-            <Icon name="plus" size="sm" />
-            {{ t("admin.groups.form.addReasoningEffortPair") }}
-          </button>
+          />
         </div>
       </div>
     </div>
@@ -210,7 +203,6 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { GroupPlatform } from "@/types";
-import Icon from "@/components/icons/Icon.vue";
 import Select from "@/components/common/Select.vue";
 import {
   createReasoningEffortMappingPair,
@@ -319,11 +311,6 @@ const updateGroup = (
       group.id === id ? { ...group, [field]: nextValue } : group,
     ),
   );
-};
-
-const onModelInput = (id: string, event: Event) => {
-  const target = event.target as HTMLInputElement | null;
-  updateGroup(id, "model", target?.value ?? "");
 };
 
 const updatePair = (

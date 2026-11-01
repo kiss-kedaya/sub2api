@@ -1,584 +1,336 @@
 <template>
-  <div
-    class="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-700 dark:bg-blue-900/30"
-  >
-      <div class="flex items-start gap-4">
-      <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-blue-500">
-        <Icon name="link" size="md" class="text-white" />
+  <div>
+      <div class="flex items-start gap-3">
+      <div class="flex size-8 shrink-0 items-center justify-center rounded-md bg-elevated">
+        <UIcon name="i-lucide-link" class="size-4 text-muted" />
       </div>
       <div class="flex-1">
-        <h4 class="mb-3 font-semibold text-blue-900 dark:text-blue-200">{{ oauthTitle }}</h4>
+        <h4 class="mb-3 font-semibold text-highlighted">{{ oauthTitle }}</h4>
 
         <!-- Auth Method Selection -->
         <div v-if="showMethodSelection" class="mb-4">
-          <label class="mb-2 block text-sm font-medium text-blue-800 dark:text-blue-300">
+          <label class="mb-2 block text-sm font-medium text-highlighted">
             {{ methodLabel }}
           </label>
-          <div class="flex flex-wrap gap-4">
-            <label v-if="showManualOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="manual"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t('admin.accounts.oauth.manualAuth')
-              }}</span>
-            </label>
-            <label v-if="showCookieOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="cookie"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t('admin.accounts.oauth.cookieAutoAuth')
-              }}</span>
-            </label>
-            <label v-if="showRefreshTokenOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="refresh_token"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t(getOAuthKey('refreshTokenAuth'))
-              }}</span>
-            </label>
-            <label v-if="showSsoOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="sso_cookie"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t(getOAuthKey('ssoCookieAuth'))
-              }}</span>
-            </label>
-            <label v-if="emailPasswordOptionEnabled" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="email_password"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t(getOAuthKey('emailPasswordAuth'))
-              }}</span>
-            </label>
-            <label v-if="showMobileRefreshTokenOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="mobile_refresh_token"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t('admin.accounts.oauth.openai.mobileRefreshTokenAuth')
-              }}</span>
-            </label>
-            <label v-if="showSessionTokenOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="session_token"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t(getOAuthKey('sessionTokenAuth'))
-              }}</span>
-            </label>
-            <label v-if="showAccessTokenOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="access_token"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t('admin.accounts.oauth.openai.accessTokenAuth')
-              }}</span>
-            </label>
-            <label v-if="showCodexSessionImportOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="codex_session"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t('admin.accounts.oauth.openai.codexSessionAuth')
-              }}</span>
-            </label>
-            <label v-if="showAgentIdentityOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="agent_identity"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t('admin.accounts.oauth.openai.agentIdentityAuth')
-              }}</span>
-            </label>
-            <label v-if="showCodexPatOption" class="flex cursor-pointer items-center gap-2">
-              <input
-                v-model="inputMethod"
-                type="radio"
-                value="codex_pat"
-                class="text-blue-600 focus:ring-blue-500"
-              />
-              <span class="text-sm text-blue-900 dark:text-blue-200">{{
-                t('admin.accounts.oauth.openai.codexPatAuth')
-              }}</span>
-            </label>
-          </div>
+          <URadioGroup
+            v-model="inputMethod"
+            :items="[
+              ...(showManualOption ? [{ label: t('admin.accounts.oauth.manualAuth'), value: 'manual' }] : []),
+              ...(showCookieOption ? [{ label: t('admin.accounts.oauth.cookieAutoAuth'), value: 'cookie' }] : []),
+              ...(showRefreshTokenOption ? [{ label: t(getOAuthKey('refreshTokenAuth')), value: 'refresh_token' }] : []),
+              ...(showSsoOption ? [{ label: t(getOAuthKey('ssoCookieAuth')), value: 'sso_cookie' }] : []),
+              ...(emailPasswordOptionEnabled ? [{ label: t(getOAuthKey('emailPasswordAuth')), value: 'email_password' }] : []),
+              ...(showMobileRefreshTokenOption ? [{ label: t('admin.accounts.oauth.openai.mobileRefreshTokenAuth'), value: 'mobile_refresh_token' }] : []),
+              ...(showSessionTokenOption ? [{ label: t(getOAuthKey('sessionTokenAuth')), value: 'session_token' }] : []),
+              ...(showAccessTokenOption ? [{ label: t('admin.accounts.oauth.openai.accessTokenAuth'), value: 'access_token' }] : []),
+              ...(showCodexSessionImportOption ? [{ label: t('admin.accounts.oauth.openai.codexSessionAuth'), value: 'codex_session' }] : []),
+              ...(showAgentIdentityOption ? [{ label: t('admin.accounts.oauth.openai.agentIdentityAuth'), value: 'agent_identity' }] : []),
+              ...(showCodexPatOption ? [{ label: t('admin.accounts.oauth.openai.codexPatAuth'), value: 'codex_pat' }] : [])
+            ]"
+            orientation="horizontal"
+            :ui="{ fieldset: 'flex-wrap gap-x-4 gap-y-2' }"
+          />
         </div>
 
         <!-- Refresh Token Input (OpenAI / Antigravity / Mobile RT) -->
         <div v-if="inputMethod === 'refresh_token' || inputMethod === 'mobile_refresh_token'" class="space-y-4">
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
-            <p class="mb-3 text-sm text-blue-700 dark:text-blue-300">
+            <p class="mb-3 text-sm text-highlighted">
               {{ t(getOAuthKey('refreshTokenDesc')) }}
             </p>
 
             <!-- Refresh Token Input -->
             <div class="mb-4">
               <label
-                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300"
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-toned"
               >
-                <Icon name="key" size="sm" class="text-blue-500" />
+                <Icon name="key" size="sm" class="text-primary" />
                 Refresh Token
                 <span
                   v-if="parsedRefreshTokenCount > 1"
-                  class="rounded-full bg-blue-500 px-2 py-0.5 text-xs text-white"
+                  class="rounded-full bg-primary px-2 py-0.5 text-xs text-inverted"
                 >
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedRefreshTokenCount }) }}
                 </span>
               </label>
-              <textarea
+              <UTextarea
+                :rows="3"
                 v-model="refreshTokenInput"
-                rows="3"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t(getOAuthKey('refreshTokenPlaceholder'))"
-              ></textarea>
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
               <p
                 v-if="parsedRefreshTokenCount > 1"
-                class="mt-1 text-xs text-blue-600 dark:text-blue-400"
+                class="mt-1 text-xs text-primary"
               >
                 {{ t('admin.accounts.oauth.batchCreateAccounts', { count: parsedRefreshTokenCount }) }}
               </p>
             </div>
 
             <!-- Error Message -->
-            <div
-              v-if="error"
-              class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-            >
-              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-                {{ error }}
-              </p>
-            </div>
+            <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-circle-x" :description="error" class="mb-4" />
 
             <!-- Validate Button -->
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !refreshTokenInput.trim()"
               @click="handleValidateRefreshToken"
+              class="w-full" :loading="loading" icon="i-lucide-sparkles"
             >
-              <svg
-                v-if="loading"
-                class="-ml-1 mr-2 h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <Icon v-else name="sparkles" size="sm" class="mr-2" />
               {{
                 loading
                   ? t(getOAuthKey('validating'))
                   : t(getOAuthKey('validateAndCreate'))
               }}
-            </button>
+            </UButton>
           </div>
         </div>
 
         <!-- SSO Cookie Input (Grok Web -> Grok Build) -->
         <div v-if="inputMethod === 'sso_cookie'" class="space-y-4">
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
-            <p class="mb-3 text-sm text-blue-700 dark:text-blue-300">
+            <p class="mb-3 text-sm text-highlighted">
               {{ t(getOAuthKey('ssoCookieDesc')) }}
             </p>
 
             <div class="mb-4">
               <label
-                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300"
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-toned"
               >
-                <Icon name="key" size="sm" class="text-blue-500" />
+                <Icon name="key" size="sm" class="text-primary" />
                 {{ t(getOAuthKey('ssoCookieLabel')) }}
                 <span
                   v-if="parsedSSOCount > 1"
-                  class="rounded-full bg-blue-500 px-2 py-0.5 text-xs text-white"
+                  class="rounded-full bg-primary px-2 py-0.5 text-xs text-inverted"
                 >
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedSSOCount }) }}
                 </span>
               </label>
-              <textarea
+              <UTextarea
+                :rows="5"
                 v-model="ssoCookieInput"
-                rows="5"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t(getOAuthKey('ssoCookiePlaceholder'))"
                 spellcheck="false"
-              ></textarea>
-              <p class="mt-1 text-xs text-blue-600 dark:text-blue-400">
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
+              <p class="mt-1 text-xs text-primary">
                 {{ t(getOAuthKey('ssoCookieHint')) }}
               </p>
             </div>
 
-            <div
-              v-if="error"
-              class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-            >
-              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-                {{ error }}
-              </p>
-            </div>
+            <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-circle-x" :description="error" class="mb-4" />
 
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !ssoCookieInput.trim()"
               @click="handleImportSSO"
+              class="w-full" :loading="loading" icon="i-lucide-sparkles"
             >
-              <svg
-                v-if="loading"
-                class="-ml-1 mr-2 h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <Icon v-else name="sparkles" size="sm" class="mr-2" />
               {{ loading ? t(getOAuthKey('convertingSSO')) : t(getOAuthKey('convertSSOAndCreate')) }}
-            </button>
+            </UButton>
           </div>
         </div>
 
         <!-- Grok email + password → ephemeral SSO → Build OAuth (password never stored) -->
         <div v-if="inputMethod === 'email_password'" class="space-y-4">
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
-            <p class="mb-3 text-sm text-blue-700 dark:text-blue-300">
+            <p class="mb-3 text-sm text-highlighted">
               {{ t(getOAuthKey('emailPasswordDesc')) }}
             </p>
             <div class="mb-4">
               <label
-                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300"
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-toned"
               >
-                <Icon name="user" size="sm" class="text-blue-500" />
+                <Icon name="user" size="sm" class="text-primary" />
                 {{ t(getOAuthKey('emailPasswordInputLabel')) }}
                 <span
                   v-if="parsedEmailPasswordCount > 1"
-                  class="rounded-full bg-blue-500 px-2 py-0.5 text-xs text-white"
+                  class="rounded-full bg-primary px-2 py-0.5 text-xs text-inverted"
                 >
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedEmailPasswordCount }) }}
                 </span>
               </label>
-              <textarea
+              <UTextarea
+                :rows="4"
                 v-model="emailPasswordInput"
-                rows="4"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t(getOAuthKey('emailPasswordPlaceholder'))"
                 spellcheck="false"
                 autocomplete="off"
-              ></textarea>
-              <p class="mt-1 text-xs text-blue-600 dark:text-blue-400">
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
+              <p class="mt-1 text-xs text-primary">
                 {{ t(getOAuthKey('emailPasswordHint')) }}
               </p>
             </div>
-            <div
-              v-if="error"
-              class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-            >
-              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-                {{ error }}
-              </p>
-            </div>
-            <button
+            <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-circle-x" :description="error" class="mb-4" />
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !emailPasswordInput.trim()"
               @click="handleAuthorizePassword"
+              class="w-full" :loading="loading" icon="i-lucide-sparkles"
             >
-              <svg
-                v-if="loading"
-                class="-ml-1 mr-2 h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <Icon v-else name="sparkles" size="sm" class="mr-2" />
               {{ loading ? t(getOAuthKey('validating')) : t(getOAuthKey('validateAndCreate')) }}
-            </button>
+            </UButton>
           </div>
         </div>
 
         <!-- Codex auth.json / session credential batch import -->
         <div v-if="inputMethod === 'codex_session' || inputMethod === 'agent_identity'" class="space-y-4">
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
-            <p class="mb-3 text-sm text-blue-700 dark:text-blue-300">
+            <p class="mb-3 text-sm text-highlighted">
               {{ t(isAgentIdentityInput ? 'admin.accounts.oauth.openai.agentIdentityDesc' : 'admin.accounts.oauth.openai.codexSessionDesc') }}
             </p>
 
             <div class="mb-4">
               <label
-                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300"
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-toned"
               >
-                <Icon name="key" size="sm" class="text-blue-500" />
+                <Icon name="key" size="sm" class="text-primary" />
                 {{ t(isAgentIdentityInput ? 'admin.accounts.oauth.openai.agentIdentityInputLabel' : 'admin.accounts.oauth.openai.codexSessionInputLabel') }}
                 <span
                   v-if="parsedCodexSessionCount > 1"
-                  class="rounded-full bg-blue-500 px-2 py-0.5 text-xs text-white"
+                  class="rounded-full bg-primary px-2 py-0.5 text-xs text-inverted"
                 >
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedCodexSessionCount }) }}
                 </span>
               </label>
-              <textarea
+              <UTextarea
+                :rows="8"
                 v-model="codexSessionInput"
-                rows="8"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t(isAgentIdentityInput ? 'admin.accounts.oauth.openai.agentIdentityPlaceholder' : 'admin.accounts.oauth.openai.codexSessionPlaceholder')"
                 spellcheck="false"
-              ></textarea>
-              <p class="mt-1 text-xs text-blue-600 dark:text-blue-400">
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
+              <p class="mt-1 text-xs text-primary">
                 {{ t(isAgentIdentityInput ? 'admin.accounts.oauth.openai.agentIdentityHint' : 'admin.accounts.oauth.openai.codexSessionHint') }}
               </p>
             </div>
 
-            <div
-              v-if="error"
-              class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-            >
-              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-                {{ error }}
-              </p>
-            </div>
+            <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-circle-x" :description="error" class="mb-4" />
 
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !codexSessionInput.trim()"
               @click="handleImportCodexSession"
+              class="w-full" :loading="loading" icon="i-lucide-sparkles"
             >
-              <svg
-                v-if="loading"
-                class="-ml-1 mr-2 h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <Icon v-else name="sparkles" size="sm" class="mr-2" />
               {{
                 loading
                   ? t('admin.accounts.oauth.openai.validating')
                   : t('admin.accounts.oauth.openai.codexSessionImportAndCreate')
               }}
-            </button>
+            </UButton>
           </div>
         </div>
 
         <!-- Codex Personal Access Token -->
         <div v-if="inputMethod === 'codex_pat'" class="space-y-4">
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
-            <p class="mb-3 text-sm text-blue-700 dark:text-blue-300">
+            <p class="mb-3 text-sm text-highlighted">
               {{ t('admin.accounts.oauth.openai.codexPatDesc') }}
             </p>
 
             <div class="mb-4">
               <label
-                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300"
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-toned"
               >
-                <Icon name="key" size="sm" class="text-blue-500" />
+                <Icon name="key" size="sm" class="text-primary" />
                 {{ t('admin.accounts.oauth.openai.codexPatInputLabel') }}
               </label>
-              <textarea
+              <UTextarea
+                :rows="3"
                 v-model="codexPATInput"
-                rows="3"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="t('admin.accounts.oauth.openai.codexPatPlaceholder')"
                 spellcheck="false"
-              ></textarea>
-              <p class="mt-1 text-xs text-blue-600 dark:text-blue-400">
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
+              <p class="mt-1 text-xs text-primary">
                 {{ t('admin.accounts.oauth.openai.codexPatHint') }}
               </p>
             </div>
 
-            <div
-              v-if="error"
-              class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-            >
-              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-                {{ error }}
-              </p>
-            </div>
+            <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-circle-x" :description="error" class="mb-4" />
 
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !codexPATInput.trim()"
               @click="handleImportCodexPAT"
+              class="w-full" :loading="loading" icon="i-lucide-sparkles"
             >
-              <svg
-                v-if="loading"
-                class="-ml-1 mr-2 h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <Icon v-else name="sparkles" size="sm" class="mr-2" />
               {{
                 loading
                   ? t('admin.accounts.oauth.openai.validating')
                   : t('admin.accounts.oauth.openai.codexPatImportAndCreate')
               }}
-            </button>
+            </UButton>
           </div>
         </div>
 
         <!-- Cookie Auto-Auth Form -->
         <div v-if="inputMethod === 'cookie'" class="space-y-4">
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
-            <p class="mb-3 text-sm text-blue-700 dark:text-blue-300">
+            <p class="mb-3 text-sm text-highlighted">
               {{ t('admin.accounts.oauth.cookieAutoAuthDesc') }}
             </p>
 
             <!-- sessionKey Input -->
             <div class="mb-4">
               <label
-                class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300"
+                class="mb-2 flex items-center gap-2 text-sm font-semibold text-toned"
               >
-                <Icon name="key" size="sm" class="text-blue-500" />
+                <Icon name="key" size="sm" class="text-primary" />
                 {{ t('admin.accounts.oauth.sessionKey') }}
                 <span
                   v-if="parsedKeyCount > 1 && allowMultiple"
-                  class="rounded-full bg-blue-500 px-2 py-0.5 text-xs text-white"
+                  class="rounded-full bg-primary px-2 py-0.5 text-xs text-inverted"
                 >
                   {{ t('admin.accounts.oauth.keysCount', { count: parsedKeyCount }) }}
                 </span>
-                <button
+                <UButton
+                  color="primary"
+                  variant="link"
+                  size="xs"
+                  icon="i-lucide-circle-help"
                   v-if="showHelp"
                   type="button"
-                  class="text-blue-500 hover:text-blue-600"
                   @click="showHelpDialog = !showHelpDialog"
-                >
-                  <svg
-                    class="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
-                    />
-                  </svg>
-                </button>
+                />
               </label>
-              <textarea
+              <UTextarea
+                :rows="3"
                 v-model="sessionKeyInput"
-                rows="3"
-                class="input w-full resize-y font-mono text-sm"
                 :placeholder="
                   allowMultiple
                     ? t('admin.accounts.oauth.sessionKeyPlaceholder')
                     : t('admin.accounts.oauth.sessionKeyPlaceholderSingle')
                 "
-              ></textarea>
+                class="w-full resize-y font-mono text-sm"
+              ></UTextarea>
               <p
                 v-if="parsedKeyCount > 1 && allowMultiple"
-                class="mt-1 text-xs text-blue-600 dark:text-blue-400"
+                class="mt-1 text-xs text-primary"
               >
                 {{ t('admin.accounts.oauth.batchCreateAccounts', { count: parsedKeyCount }) }}
               </p>
@@ -587,13 +339,13 @@
             <!-- Help Section -->
             <div
               v-if="showHelpDialog && showHelp"
-              class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-900/30"
+              class="mb-4 rounded-md bg-warning/10 p-3"
             >
-              <h5 class="mb-2 font-semibold text-amber-800 dark:text-amber-200">
+              <h5 class="mb-2 font-semibold text-warning">
                 {{ t('admin.accounts.oauth.howToGetSessionKey') }}
               </h5>
               <ol
-                class="list-inside list-decimal space-y-1 text-xs text-amber-700 dark:text-amber-300"
+                class="list-inside list-decimal space-y-1 text-xs text-warning"
               >
                 <li>{{ t('admin.accounts.oauth.step1') }}</li>
                 <li>{{ t('admin.accounts.oauth.step2') }}</li>
@@ -603,178 +355,113 @@
                 <li>{{ t('admin.accounts.oauth.step6') }}</li>
               </ol>
               <p
-                class="mt-2 text-xs text-amber-600 dark:text-amber-400"
+                class="mt-2 text-xs text-warning"
                 v-text="t('admin.accounts.oauth.sessionKeyFormat')"
               ></p>
             </div>
 
             <!-- Error Message -->
-            <div
-              v-if="error"
-              class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-            >
-              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-                {{ error }}
-              </p>
-            </div>
+            <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-circle-x" :description="error" class="mb-4" />
 
             <!-- Auth Button -->
-            <button
+            <UButton
+              color="primary"
+              variant="solid"
               type="button"
-              class="btn btn-primary w-full"
               :disabled="loading || !sessionKeyInput.trim()"
               @click="handleCookieAuth"
+              class="w-full" :loading="loading" icon="i-lucide-sparkles"
             >
-              <svg
-                v-if="loading"
-                class="-ml-1 mr-2 h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <Icon v-else name="sparkles" size="sm" class="mr-2" />
               {{
                 loading
                   ? t('admin.accounts.oauth.authorizing')
                   : t('admin.accounts.oauth.startAutoAuth')
               }}
-            </button>
+            </UButton>
           </div>
         </div>
 
         <!-- Manual Authorization Flow -->
         <div v-if="inputMethod === 'manual'" class="space-y-4">
-          <p class="mb-4 text-sm text-blue-800 dark:text-blue-300">
+          <p class="mb-4 text-sm text-highlighted">
             {{ oauthFollowSteps }}
           </p>
 
           <!-- Step 1: Generate Auth URL -->
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
             <div class="flex items-start gap-3">
               <div
-                class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white"
+                class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-inverted"
               >
                 1
               </div>
               <div class="flex-1">
-                <p class="mb-2 font-medium text-blue-900 dark:text-blue-200">
+                <p class="mb-2 font-medium text-highlighted">
                   {{ oauthStep1GenerateUrl }}
                 </p>
                 <div v-if="showProjectId && platform === 'gemini'" class="mb-3">
-                  <label class="input-label flex items-center gap-2">
+                  <label class="mb-1.5 block text-sm font-medium text-default flex items-center gap-2">
                     {{ t('admin.accounts.oauth.gemini.projectIdLabel') }}
                     <a
                       href="https://console.cloud.google.com/"
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="inline-flex items-center gap-1 text-xs font-normal text-blue-500 hover:text-blue-600 dark:text-blue-400"
+                      class="inline-flex items-center gap-1 text-xs font-normal text-primary"
                     >
-                      <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
-                      </svg>
+                      <UIcon name="i-lucide-circle-help" class="size-3" />
                       {{ t('admin.accounts.oauth.gemini.howToGetProjectId') }}
                     </a>
                   </label>
-                  <input
+                  <UInput
                     v-model="projectId"
                     type="text"
-                    class="input w-full font-mono text-sm"
                     :placeholder="t('admin.accounts.oauth.gemini.projectIdPlaceholder')"
+                    class="w-full font-mono text-sm"
                   />
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  <p class="mt-1 text-xs text-muted">
                     {{ t('admin.accounts.oauth.gemini.projectIdHint') }}
                   </p>
                 </div>
-                <button
+                <UButton
+                  color="primary"
+                  variant="solid"
                   v-if="!authUrl"
                   type="button"
                   :disabled="loading"
-                  class="btn btn-primary text-sm"
                   @click="handleGenerateUrl"
+                  class="text-sm" :loading="loading" icon="i-lucide-link"
                 >
-                  <svg
-                    v-if="loading"
-                    class="-ml-1 mr-2 h-4 w-4 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      class="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      stroke-width="4"
-                    ></circle>
-                    <path
-                      class="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  <Icon v-else name="link" size="sm" class="mr-2" />
                   {{ loading ? t('admin.accounts.oauth.generating') : oauthGenerateAuthUrl }}
-                </button>
+                </UButton>
                 <div v-else class="space-y-3">
                   <div class="flex items-center gap-2">
-                    <input
+                    <UInput
                       :value="authUrl"
                       readonly
                       type="text"
-                      class="input flex-1 bg-gray-50 font-mono text-xs dark:bg-gray-700"
+                      class="flex-1 bg-elevated font-mono text-xs"
                     />
-                    <button
+                    <UButton
+                      color="neutral"
+                      variant="outline"
                       type="button"
-                      class="btn btn-secondary p-2"
                       title="Copy URL"
                       @click="handleCopyUrl"
+                      class="p-2"
                     >
-                      <svg
-                        v-if="!copied"
-                        class="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
-                        />
-                      </svg>
+                      <UIcon name="i-lucide-copy" v-if="!copied" class="size-4" />
                       <Icon
                         v-else
                         name="check"
                         size="sm"
-                        class="text-green-500"
+                        class="text-success"
                         :stroke-width="2"
                       />
-                    </button>
+                    </UButton>
                   </div>
-                  <button
-                    type="button"
-                    class="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                    @click="handleRegenerate"
-                  >
-                    <Icon name="refresh" size="xs" class="mr-1 inline" />
-                    {{ t('admin.accounts.oauth.regenerate') }}
-                  </button>
+                  <UButton color="primary" variant="link" size="xs" icon="i-lucide-refresh-cw" type="button" @click="handleRegenerate">{{ t('admin.accounts.oauth.regenerate') }}</UButton>
                 </div>
               </div>
             </div>
@@ -782,75 +469,59 @@
 
           <!-- Step 2: Open URL and authorize -->
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
             <div class="flex items-start gap-3">
               <div
-                class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white"
+                class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-inverted"
               >
                 2
               </div>
               <div class="flex-1">
-                <p class="mb-2 font-medium text-blue-900 dark:text-blue-200">
+                <p class="mb-2 font-medium text-highlighted">
                   {{ oauthStep2OpenUrl }}
                 </p>
-                <p class="text-sm text-blue-700 dark:text-blue-300">
+                <p class="text-sm text-highlighted">
                   {{ oauthOpenUrlDesc }}
                 </p>
                 <!-- Local callback notice -->
-                <div
-                  v-if="showLocalCallbackNotice"
-                  class="mt-2 rounded border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-900/30"
-                >
-                  <p
-                    class="text-xs text-amber-800 dark:text-amber-300"
-                    v-text="oauthImportantNotice"
-                  ></p>
-                </div>
+                <UAlert v-if="showLocalCallbackNotice" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="oauthImportantNotice" class="mt-2" />
                 <!-- Proxy Warning (for non-OpenAI) -->
-                <div
-                  v-else-if="showProxyWarning"
-                  class="mt-2 rounded border border-yellow-300 bg-yellow-50 p-3 dark:border-yellow-700 dark:bg-yellow-900/30"
-                >
-                  <p
-                    class="text-xs text-yellow-800 dark:text-yellow-300"
-                    v-text="t('admin.accounts.oauth.proxyWarning')"
-                  ></p>
-                </div>
+                <UAlert v-else-if="showProxyWarning" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.oauth.proxyWarning')" class="mt-2" />
               </div>
             </div>
           </div>
 
           <!-- Step 3: Enter authorization code -->
           <div
-            class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80"
+            class="py-1"
           >
             <div class="flex items-start gap-3">
               <div
-                class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white"
+                class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-inverted"
               >
                 3
               </div>
               <div class="flex-1">
-                <p class="mb-2 font-medium text-blue-900 dark:text-blue-200">
+                <p class="mb-2 font-medium text-highlighted">
                   {{ oauthStep3EnterCode }}
                 </p>
                 <p
-                  class="mb-3 text-sm text-blue-700 dark:text-blue-300"
+                  class="mb-3 text-sm text-highlighted"
                   v-text="oauthAuthCodeDesc"
                 ></p>
                 <div>
-                  <label class="input-label">
-                    <Icon name="key" size="sm" class="mr-1 inline text-blue-500" />
+                  <label class="mb-1.5 block text-sm font-medium text-default">
+                    <Icon name="key" size="sm" class="mr-1 inline text-primary" />
                     {{ oauthAuthCode }}
                   </label>
-                  <textarea
+                  <UTextarea
+                    :rows="3"
                     v-model="authCodeInput"
-                    rows="3"
-                    class="input w-full resize-none font-mono text-sm"
                     :placeholder="oauthAuthCodePlaceholder"
-                  ></textarea>
-                  <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    class="w-full resize-none font-mono text-sm"
+                  ></UTextarea>
+                  <p class="mt-2 text-xs text-muted">
                     <Icon name="infoCircle" size="xs" class="mr-1 inline" />
                     {{ oauthAuthCodeHint }}
                   </p>
@@ -858,16 +529,16 @@
                   <!-- Gemini-specific state parameter warning -->
                   <div
                     v-if="platform === 'gemini'"
-                    class="mt-3 rounded-lg border-2 border-amber-400 bg-amber-50 p-3 dark:border-amber-600 dark:bg-amber-900/30"
+                    class="mt-3 rounded-md bg-warning/10 p-3"
                   >
                     <div class="flex items-start gap-2">
                       <Icon
                         name="exclamationTriangle"
                         size="md"
-                        class="flex-shrink-0 text-amber-600 dark:text-amber-400"
+                        class="flex-shrink-0 text-warning"
                         :stroke-width="2"
                       />
-                      <div class="text-sm text-amber-800 dark:text-amber-300">
+                      <div class="text-sm text-warning">
                         <p class="font-semibold">{{ $t('admin.accounts.oauth.gemini.stateWarningTitle') }}</p>
                         <p class="mt-1">{{ $t('admin.accounts.oauth.gemini.stateWarningDesc') }}</p>
                       </div>
@@ -876,14 +547,7 @@
                 </div>
 
                 <!-- Error Message -->
-                <div
-                  v-if="error"
-                  class="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-                >
-                  <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-                    {{ error }}
-                  </p>
-                </div>
+                <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-circle-x" :description="error" class="mt-3" />
               </div>
             </div>
           </div>

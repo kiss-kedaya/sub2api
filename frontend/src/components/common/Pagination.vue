@@ -1,46 +1,45 @@
 <template>
-  <div
-    class="table-pagination flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 dark:border-dark-700 dark:bg-dark-800 sm:px-6"
-  >
+  <!-- No `table-pagination` hook class: old console skins restyle it and would hide Nuxt UI's look. -->
+  <div class="flex items-center justify-between gap-3 border-t border-default px-4 py-3 sm:px-6" data-test="pagination">
     <div class="flex flex-1 items-center justify-between sm:hidden">
       <!-- Mobile pagination -->
-      <button
-        @click="goToPage(page - 1)"
+      <UButton
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-chevron-left"
+        :label="t('pagination.previous')"
         :disabled="page === 1"
-        class="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200 dark:hover:bg-dark-600"
-      >
-        {{ t('pagination.previous') }}
-      </button>
-      <span class="text-sm text-gray-700 dark:text-gray-300">
+        @click="goToPage(page - 1)"
+      />
+      <span class="text-sm text-muted tabular-nums">
         {{ t('pagination.pageOf', { page, total: totalPages }) }}
       </span>
-      <button
-        @click="goToPage(page + 1)"
+      <UButton
+        color="neutral"
+        variant="outline"
+        trailing-icon="i-lucide-chevron-right"
+        :label="t('pagination.next')"
         :disabled="page === totalPages"
-        class="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200 dark:hover:bg-dark-600"
-      >
-        {{ t('pagination.next') }}
-      </button>
+        @click="goToPage(page + 1)"
+      />
     </div>
 
-    <div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+    <div class="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between sm:gap-3">
       <!-- Desktop pagination info -->
-      <div class="flex items-center space-x-4">
-        <p class="text-sm text-gray-700 dark:text-gray-300">
+      <div class="flex items-center gap-4">
+        <p class="text-sm text-muted tabular-nums">
           {{ t('pagination.showing') }}
-          <span class="font-medium">{{ fromItem }}</span>
+          <span class="font-medium text-highlighted">{{ fromItem }}</span>
           {{ t('pagination.to') }}
-          <span class="font-medium">{{ toItem }}</span>
+          <span class="font-medium text-highlighted">{{ toItem }}</span>
           {{ t('pagination.of') }}
-          <span class="font-medium">{{ total }}</span>
+          <span class="font-medium text-highlighted">{{ total }}</span>
           {{ t('pagination.results') }}
         </p>
 
         <!-- Page size selector -->
-        <div v-if="showPageSizeSelector" class="flex items-center space-x-2">
-          <span class="text-sm text-gray-700 dark:text-gray-300"
-            >{{ t('pagination.perPage') }}:</span
-          >
+        <div v-if="showPageSizeSelector" class="flex items-center gap-2">
+          <span class="text-sm text-muted">{{ t('pagination.perPage') }}:</span>
           <div class="page-size-select w-20">
             <Select
               :model-value="pageSize"
@@ -50,69 +49,72 @@
           </div>
         </div>
 
-        <div v-if="showJump" class="flex items-center space-x-2">
-          <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('pagination.jumpTo') }}</span>
-          <input
-            v-model="jumpPage"
+        <div v-if="showJump" class="flex items-center gap-2">
+          <span class="text-sm text-muted">{{ t('pagination.jumpTo') }}</span>
+          <UInput
+            :model-value="jumpPage"
             type="number"
             min="1"
             :max="totalPages"
-            class="input w-20 text-sm"
+            color="neutral"
+            class="w-20"
             :placeholder="t('pagination.jumpPlaceholder')"
+            @update:model-value="jumpPage = String($event ?? '')"
             @keyup.enter="submitJump"
           />
-          <button type="button" class="btn btn-ghost btn-sm" @click="submitJump">
-            {{ t('pagination.jumpAction') }}
-          </button>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            :label="t('pagination.jumpAction')"
+            data-test="pagination-jump"
+            @click="submitJump"
+          />
         </div>
       </div>
 
       <!-- Desktop pagination buttons -->
-      <nav
-        class="relative z-0 inline-flex -space-x-px rounded-md shadow-sm"
+      <UPagination
+        :page="page"
+        :total="total"
+        :items-per-page="pageSize"
+        :sibling-count="1"
+        show-edges
+        :show-controls="false"
         aria-label="Pagination"
+        @update:page="goToPage"
       >
-        <!-- Previous button -->
-        <button
-          @click="goToPage(page - 1)"
-          :disabled="page === 1"
-          class="relative inline-flex items-center rounded-l-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600"
-          :aria-label="t('pagination.previous')"
-        >
-          <Icon name="chevronLeft" size="md" />
-        </button>
-
-        <!-- Page numbers -->
-        <button
-          v-for="(pageNum, index) in visiblePages"
-          :key="`${pageNum}-${index}`"
-          @click="typeof pageNum === 'number' && goToPage(pageNum)"
-          :disabled="typeof pageNum !== 'number'"
-          :class="[
-            'relative inline-flex items-center border px-4 py-2 text-sm font-medium',
-            pageNum === page
-              ? 'z-10 border-primary-500 bg-primary-50 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400'
-              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600',
-            typeof pageNum !== 'number' && 'cursor-default'
-          ]"
-          :aria-label="
-            typeof pageNum === 'number' ? t('pagination.goToPage', { page: pageNum }) : undefined
-          "
-          :aria-current="pageNum === page ? 'page' : undefined"
-        >
-          {{ pageNum }}
-        </button>
-
-        <!-- Next button -->
-        <button
-          @click="goToPage(page + 1)"
-          :disabled="page === totalPages"
-          class="relative inline-flex items-center rounded-r-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600"
-          :aria-label="t('pagination.next')"
-        >
-          <Icon name="chevronRight" size="md" />
-        </button>
-      </nav>
+        <template #prev>
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-chevron-left"
+            square
+            :aria-label="t('pagination.previous')"
+          />
+        </template>
+        <template #item="{ item }">
+          <UButton
+            :color="pageOf(item) === page ? 'primary' : 'neutral'"
+            :variant="pageOf(item) === page ? 'solid' : 'outline'"
+            :label="String(pageOf(item))"
+            :aria-label="t('pagination.goToPage', { page: pageOf(item) })"
+            class="min-w-8 justify-center tabular-nums"
+          />
+        </template>
+        <template #ellipsis>
+          <span class="inline-flex min-w-8 items-center justify-center text-sm text-muted" aria-hidden="true">...</span>
+        </template>
+        <template #next>
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-chevron-right"
+            square
+            :aria-label="t('pagination.next')"
+          />
+        </template>
+      </UPagination>
     </div>
   </div>
 </template>
@@ -120,7 +122,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import Select from './Select.vue'
 import { getConfiguredTablePageSizeOptions, normalizeTablePageSize } from '@/utils/tablePreferences'
 import { setPersistedPageSize } from '@/composables/usePersistedPageSize'
@@ -177,44 +178,8 @@ const pageSizeSelectOptions = computed(() => {
 
 const jumpPage = ref('')
 
-const visiblePages = computed(() => {
-  const pages: (number | string)[] = []
-  const maxVisible = 7
-  const total = totalPages.value
-
-  if (total <= maxVisible) {
-    // Show all pages if total is small
-    for (let i = 1; i <= total; i++) {
-      pages.push(i)
-    }
-  } else {
-    // Always show first page
-    pages.push(1)
-
-    const start = Math.max(2, props.page - 2)
-    const end = Math.min(total - 1, props.page + 2)
-
-    // Add ellipsis before if needed
-    if (start > 2) {
-      pages.push('...')
-    }
-
-    // Add middle pages
-    for (let i = start; i <= end; i++) {
-      pages.push(i)
-    }
-
-    // Add ellipsis after if needed
-    if (end < total - 1) {
-      pages.push('...')
-    }
-
-    // Always show last page
-    pages.push(total)
-  }
-
-  return pages
-})
+// UPagination only renders the item slot for page entries; the slot type also covers ellipses.
+const pageOf = (item: { type: string; value?: number }) => (item.type === 'page' ? item.value ?? 0 : 0)
 
 const goToPage = (newPage: number) => {
   if (newPage >= 1 && newPage <= totalPages.value && newPage !== props.page) {
@@ -241,6 +206,7 @@ const submitJump = () => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .page-size-select :deep(.select-trigger) {
   @apply px-3 py-1.5 text-sm;
 }

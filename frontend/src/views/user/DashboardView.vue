@@ -1,58 +1,95 @@
 <template>
   <AppLayout>
-    <div class="signal-dashboard">
-      <header class="signal-masthead signal-editorial-heading">
-        <div class="signal-editorial-copy">
-          <span class="signal-editorial-index" aria-hidden="true">01 / OVERVIEW</span>
-          <h1>{{ t('dashboard.overview') }}</h1>
-        </div>
-        <button class="btn btn-secondary btn-icon signal-overview-refresh" :title="t('common.refresh')" :aria-label="t('common.refresh')" :disabled="loading || loadingCharts" @click="refreshAll">
-          <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading || loadingCharts }" />
-        </button>
-      </header>
-      <div v-if="loading && !stats" class="signal-loading"><LoadingSpinner /></div>
-      <div v-if="statsError" class="signal-error" role="alert">
-        <Icon name="exclamationCircle" size="md" />
-        <span>{{ t('dashboard.loadFailed') }}</span>
-        <button class="btn btn-secondary" @click="refreshAll">{{ t('common.refresh') }}</button>
-      </div>
+    <section class="user-dashboard flex min-w-0 flex-col gap-4 sm:gap-6" :aria-label="t('dashboard.overview')">
+      <DashboardToolbar
+        v-model:startDate="startDate"
+        v-model:endDate="endDate"
+        v-model:granularity="granularity"
+        :granularity-items="granularityItems"
+        :granularity-label="t('dashboard.granularity')"
+        :refresh-label="t('common.refresh')"
+        :refreshing="loading || loadingCharts"
+        @dateRangeChange="changeChartRange"
+        @granularityChange="loadCharts"
+        @refresh="refreshAll"
+      />
+      <div v-if="loading && !stats" class="flex justify-center py-10"><LoadingSpinner /></div>
+      <UAlert
+        v-if="statsError"
+        role="alert"
+        color="error"
+        variant="subtle"
+        orientation="horizontal"
+        icon="i-lucide-circle-alert"
+        :title="t('dashboard.loadFailed')"
+      >
+        <template #actions>
+          <UButton color="neutral" variant="outline" size="sm" @click="refreshAll">{{ t('common.refresh') }}</UButton>
+        </template>
+      </UAlert>
       <template v-if="stats">
-        <UserDashboardStats section="summary" :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode">
-          <template #actions><UserDashboardQuickActions /></template>
-          <template #models>
-            <UserDashboardModels :models="modelStats" :start-date="startDate" :end-date="endDate" :loading="loadingCharts" :error="chartsError" />
-          </template>
-        </UserDashboardStats>
-        <UserDashboardCharts
-          v-model:startDate="startDate" v-model:endDate="endDate" v-model:granularity="granularity"
-          :loading="loadingCharts" :error="chartsError" :trend="trendData"
-          @dateRangeChange="changeChartRange" @granularityChange="loadCharts" @refresh="loadCharts"
-        />
-        <div class="signal-dashboard-details">
-          <details v-if="!authStore.isSimpleMode" @toggle="togglePlatforms" class="signal-disclosure" data-detail="platforms">
-            <summary><Icon name="grid" size="sm" /><span>{{ t('dashboard.platformBreakdown') }}</span><Icon name="chevronDown" size="sm" /></summary>
-            <template v-if="platformsOpen">
-              <div v-if="loadingQuotas" class="signal-loading"><LoadingSpinner /></div>
-              <div v-else-if="quotasError" class="signal-error" role="alert">
-                <span>{{ t('dashboard.chartsFailed') }}</span>
-                <button class="btn btn-secondary" @click="loadQuotas(true)">{{ t('common.refresh') }}</button>
-              </div>
+        <UserDashboardStats section="summary" :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode" />
+        <UserDashboardQuickActions />
+        <UserDashboardCharts :loading="loadingCharts" :error="chartsError" :trend="trendData" @refresh="loadCharts" />
+        <UserDashboardModels :models="modelStats" :start-date="startDate" :end-date="endDate" :loading="loadingCharts" :error="chartsError" />
+        <!-- Two folds; each loads its data only when opened (UCollapsible unmounts closed content). -->
+        <div class="divide-y divide-default overflow-hidden rounded-lg bg-default ring ring-default">
+          <UCollapsible v-if="!authStore.isSimpleMode" :open="platformsOpen" data-detail="platforms" @update:open="setPlatformsOpen">
+            <UButton v-bind="foldTrigger">
+              <UIcon name="i-lucide-layout-grid" class="size-4 shrink-0 text-muted" />
+              <span class="min-w-0 flex-1 truncate text-start">{{ t('dashboard.platformBreakdown') }}</span>
+              <UIcon name="i-lucide-chevron-down" :class="foldChevron" />
+            </UButton>
+            <template #content>
+            <div class="border-t border-default px-4 pb-4 sm:px-5">
+              <div v-if="loadingQuotas" class="flex justify-center py-10"><LoadingSpinner /></div>
+              <UAlert
+                v-else-if="quotasError"
+                role="alert"
+                class="mt-4"
+                color="error"
+                variant="subtle"
+                orientation="horizontal"
+                icon="i-lucide-circle-alert"
+                :title="t('dashboard.chartsFailed')"
+              >
+                <template #actions>
+                  <UButton color="neutral" variant="outline" size="sm" @click="loadQuotas(true)">{{ t('common.refresh') }}</UButton>
+                </template>
+              </UAlert>
               <UserDashboardStats v-else section="platforms" :stats="stats" :balance="user?.balance || 0" :is-simple="false" :platform-quotas="platformQuotas" />
+            </div>
             </template>
-          </details>
-          <details @toggle="toggleRecent" class="signal-disclosure" data-detail="recent">
-            <summary><Icon name="clock" size="sm" /><span>{{ t('dashboard.recentUsage') }}</span><Icon name="chevronDown" size="sm" /></summary>
-            <template v-if="recentOpen">
-              <div v-if="recentError" class="signal-error" role="alert">
-                <span>{{ t('dashboard.chartsFailed') }}</span>
-                <button class="btn btn-secondary" @click="loadRecent()">{{ t('common.refresh') }}</button>
-              </div>
+          </UCollapsible>
+          <UCollapsible :open="recentOpen" data-detail="recent" @update:open="setRecentOpen">
+            <UButton v-bind="foldTrigger">
+              <UIcon name="i-lucide-clock" class="size-4 shrink-0 text-muted" />
+              <span class="min-w-0 flex-1 truncate text-start">{{ t('dashboard.recentUsage') }}</span>
+              <UIcon name="i-lucide-chevron-down" :class="foldChevron" />
+            </UButton>
+            <template #content>
+            <div class="border-t border-default px-4 pb-4 sm:px-5">
+              <UAlert
+                v-if="recentError"
+                role="alert"
+                class="mt-4"
+                color="error"
+                variant="subtle"
+                orientation="horizontal"
+                icon="i-lucide-circle-alert"
+                :title="t('dashboard.chartsFailed')"
+              >
+                <template #actions>
+                  <UButton color="neutral" variant="outline" size="sm" @click="loadRecent()">{{ t('common.refresh') }}</UButton>
+                </template>
+              </UAlert>
               <UserDashboardRecentUsage v-else :data="recentUsage" :loading="loadingUsage" :start-date="startDate" :end-date="endDate" />
+            </div>
             </template>
-          </details>
+          </UCollapsible>
         </div>
       </template>
-    </div>
+    </section>
   </AppLayout>
 </template>
 
@@ -66,7 +103,7 @@ import { formatDateLocalInput } from '@/utils/format'
 import type { UsageLog, TrendDataPoint, ModelStat, PlatformQuotaItem } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import Icon from '@/components/icons/Icon.vue'
+import DashboardToolbar from '@/components/dashboard/DashboardToolbar.vue'
 import UserDashboardStats from '@/components/user/dashboard/UserDashboardStats.vue'
 import UserDashboardCharts from '@/components/user/dashboard/UserDashboardCharts.vue'
 import UserDashboardModels from '@/components/user/dashboard/UserDashboardModels.vue'
@@ -100,6 +137,10 @@ let recentRequest: AbortController | undefined
 const startDate = ref(formatDateLocalInput(new Date(Date.now() - 6 * 86400000)))
 const endDate = ref(formatDateLocalInput(new Date()))
 const granularity = ref('day')
+const granularityItems = computed(() => [
+  { value: 'day', label: t('dashboard.day') },
+  { value: 'hour', label: t('dashboard.hour') },
+])
 
 async function loadStats() {
   if (loading.value) return
@@ -176,14 +217,24 @@ async function loadQuotas(force = false) {
   }
 }
 
-function togglePlatforms(event: Event) {
-  platformsOpen.value = (event.currentTarget as HTMLDetailsElement).open
-  if (platformsOpen.value) void loadQuotas()
+// Fold rows: full-width ghost UButton as the UCollapsible trigger. `group` lets the chevron
+// follow the trigger's data-state.
+const foldTrigger = {
+  color: 'neutral',
+  variant: 'ghost',
+  block: true,
+  class: 'group justify-start gap-2.5 rounded-none px-4 py-0 min-h-13 text-sm font-medium text-highlighted sm:px-5',
+} as const
+const foldChevron = 'size-4 shrink-0 text-muted transition-transform duration-200 group-data-[state=open]:rotate-180 motion-reduce:transition-none'
+
+function setPlatformsOpen(open: boolean) {
+  platformsOpen.value = open
+  if (open) void loadQuotas()
 }
 
-function toggleRecent(event: Event) {
-  recentOpen.value = (event.currentTarget as HTMLDetailsElement).open
-  if (recentOpen.value && !recentLoaded) void loadRecent()
+function setRecentOpen(open: boolean) {
+  recentOpen.value = open
+  if (open && !recentLoaded) void loadRecent()
 }
 
 function invalidateRecent() {
@@ -217,18 +268,5 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.signal-dashboard { min-width: 0; color: var(--signal-text); }
-.signal-masthead { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 20px; }
-.signal-masthead h1 { font-size: 20px; line-height: 28px; font-weight: 600; }
-.signal-overview-refresh { gap: 8px; min-height: 34px; font-size: 12px; }
-.signal-loading { display: flex; justify-content: center; padding: 40px 0; }
-.signal-error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 24px 0; color: var(--signal-muted); font-size: 13px; }
-.signal-dashboard-details { margin-top: 24px; border-top: 1px solid var(--signal-line); }
-.signal-disclosure { border-bottom: 1px solid var(--signal-line); }
-.signal-disclosure > summary { display: flex; align-items: center; gap: 10px; min-height: 52px; list-style: none; cursor: pointer; font-size: 13px; font-weight: 500; }
-.signal-disclosure > summary::-webkit-details-marker { display: none; }
-.signal-disclosure > summary > span { flex: 1; min-width: 0; }
-.signal-disclosure > summary > svg { color: var(--signal-muted); flex-shrink: 0; }
-.signal-disclosure[open] > summary > svg:last-child { transform: rotate(180deg); }
-.signal-disclosure > summary:focus-visible { outline: 2px solid var(--signal-accent); outline-offset: -2px; }
+.user-dashboard { color: var(--ui-text); }
 </style>

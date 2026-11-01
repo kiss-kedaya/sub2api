@@ -130,6 +130,12 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		RiskControlEnabled: settings.RiskControlEnabled,
 
 		AllowUserViewErrorRequests: settings.AllowUserViewErrorRequests,
+
+		ThemePrimary:     settings.SiteTheme.Primary,
+		ThemeNeutral:     settings.SiteTheme.Neutral,
+		ThemeRadius:      settings.SiteTheme.Radius,
+		ThemeFont:        settings.SiteTheme.Font,
+		ThemeDefaultMode: settings.SiteTheme.DefaultMode,
 	})
 }
 

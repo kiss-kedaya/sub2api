@@ -38,7 +38,7 @@
     <template v-else>
       <!-- Amount -->
       <div class="card overflow-hidden">
-        <div class="bg-gradient-to-br from-[#635bff] to-[#4f46e5] px-6 py-5 text-center">
+        <div class="bg-linear-to-br/srgb from-[#635bff] to-[#4f46e5] px-6 py-5 text-center">
           <p class="text-sm font-medium text-indigo-200">{{ t('payment.actualPay') }}</p>
           <p class="mt-1 text-3xl font-bold text-white">{{ paymentAmountSymbol }}{{ payAmount.toFixed(2) }}</p>
         </div>

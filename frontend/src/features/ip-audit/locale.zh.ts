@@ -32,6 +32,7 @@ export default {
   "manual": "手工规则",
   "unavailable": "未提供",
   "empty": "本页无匹配的已保留状态；未接入或无索引来源仍未经核实。",
+  "columns": "显示列",
   "previous": "上一页",
   "next": "下一页",
   "release": "解除此来源",

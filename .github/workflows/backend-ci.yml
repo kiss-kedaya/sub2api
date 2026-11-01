@@ -235,7 +235,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24.22'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install frontend dependencies
@@ -249,6 +249,11 @@ jobs:
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build
+      - name: Verify Nuxt SSR build and server-side contract tests
+        working-directory: frontend
+        run: |
+          pnpm exec vitest run --config server/vitest.config.ts
+          pnpm run build:ssr
       - name: Upload frontend for embedded build
         uses: actions/upload-artifact@v7
         with:

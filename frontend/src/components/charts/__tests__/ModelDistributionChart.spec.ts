@@ -173,7 +173,8 @@ describe('ModelDistributionChart', () => {
 
     const rankingButton = wrapper.findAll('button').find((button) => button.text() === 'User Spending Ranking')
     expect(rankingButton).toBeTruthy()
-    await rankingButton!.trigger('click')
+    // The view switch is a UTabs trigger, which activates on mousedown (left button).
+    await rankingButton!.trigger('mousedown', { button: 0, ctrlKey: false })
 
     const chartData = JSON.parse(wrapper.find('.chart-data').text())
     expect(chartData.labels).toEqual([

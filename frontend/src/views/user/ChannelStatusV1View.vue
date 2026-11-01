@@ -1,18 +1,11 @@
 <template>
   <AppLayout>
     <div class="signal-channel-page signal-channel-v1">
-      <header class="signal-channel-masthead">
-        <div class="signal-channel-identity">
-          <span class="signal-channel-mark" aria-hidden="true">
-            <Icon name="chart" size="lg" />
-          </span>
-          <div class="signal-channel-heading">
-            <h1>{{ t('channelStatus.title') }}</h1>
-            <p>{{ t('channelStatus.description') }}</p>
-          </div>
-        </div>
-        <span class="signal-channel-count" aria-live="polite">{{ items.length }}</span>
-      </header>
+      <UserPageHeader flush :title="t('channelStatus.title')" :description="t('channelStatus.description')">
+        <template #badge>
+          <UBadge color="neutral" variant="subtle" class="tabular-nums" aria-live="polite">{{ items.length }}</UBadge>
+        </template>
+      </UserPageHeader>
 
       <MonitorHero
         class="signal-channel-controls"
@@ -57,13 +50,13 @@ import {
   type UserMonitorDetail,
 } from '@/api/channelMonitor'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import MonitorHero, {
   type MonitorWindow,
   type OverallStatus,
 } from '@/components/user/monitor/MonitorHero.vue'
 import MonitorCardGrid from '@/components/user/monitor/MonitorCardGrid.vue'
 import MonitorDetailDialog from '@/components/user/MonitorDetailDialog.vue'
-import Icon from '@/components/icons/Icon.vue'
 import { DEFAULT_INTERVAL_SECONDS, STATUS_OPERATIONAL } from '@/constants/channelMonitor'
 import { useAutoRefresh } from '@/composables/useAutoRefresh'
 import './channel-signal.css'

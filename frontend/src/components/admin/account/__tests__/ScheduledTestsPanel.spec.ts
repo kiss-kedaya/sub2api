@@ -150,7 +150,7 @@ describe('ScheduledTestsPanel quality results', () => {
     await wrapper.setProps({ show: true }); await flushPromises()
     await wrapper.get('button[title="admin.scheduledTests.editPlan"]').trigger('click')
     expect((wrapper.get('[data-testid="chanshui-service-url"]').element as HTMLInputElement).value).toBe('https://audit.example')
-    expect((wrapper.get('input[data-section="tools"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.get('[role="checkbox"][data-section="tools"]').attributes('aria-checked')).toBe('true')
     await wrapper.findAll('button').find(button => button.text() === 'common.save')!.trigger('click')
     await flushPromises()
     expect(update).toHaveBeenCalledWith(1, expect.objectContaining({ quality_provider: 'chanshui', quality_config: expect.objectContaining(plan.quality_config) }))

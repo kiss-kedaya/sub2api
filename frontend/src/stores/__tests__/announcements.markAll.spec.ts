@@ -23,6 +23,7 @@ describe('mark all announcements read', () => {
   it('keeps successful results and retries only failed announcements', async () => {
     const store = useAnnouncementStore()
     store.announcements = [announcement(1), announcement(2)]
+    store.unreadCount = 2
     const error = new Error('offline')
     markRead.mockImplementation((id: number) => id === 1 ? Promise.resolve() : Promise.reject(error))
     await expect(store.markAllAsRead()).rejects.toBe(error)

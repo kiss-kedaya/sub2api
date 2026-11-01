@@ -1,31 +1,48 @@
 <template>
-  <section class="rounded-xl border border-gray-200 p-4 dark:border-dark-600">
-    <label class="flex cursor-pointer items-start gap-3">
-      <input type="checkbox" class="mt-1 h-4 w-4 rounded text-primary-600" :checked="settings.enabled" data-testid="h3-enable" @change="update({ enabled: ($event.target as HTMLInputElement).checked })" />
-      <span>
-        <span class="block text-sm font-medium text-gray-900 dark:text-white">MiniMax-H3</span>
-        <span class="mt-1 block text-xs leading-5 text-gray-500">{{ copy.hint }}</span>
-      </span>
-    </label>
-    <div v-if="settings.enabled" class="mt-4 grid gap-4 sm:grid-cols-2">
-      <label class="block text-sm">
-        <span class="input-label">{{ copy.mode }}</span>
-        <select class="input" :value="settings.mode" data-testid="h3-mode" @change="update({ mode: ($event.target as HTMLSelectElement).value })">
-          <option value="per_second">{{ copy.perSecond }}</option>
-          <option value="per_request">{{ copy.perRequest }}</option>
-        </select>
-      </label>
-      <label class="block text-sm">
-        <span class="input-label">{{ settings.mode === 'per_second' ? copy.pricePerSecond : copy.pricePerRequest }}</span>
-        <input type="number" min="0" step="any" required class="input" :value="settings.price ?? ''" data-testid="h3-price" @input="update({ price: ($event.target as HTMLInputElement).value })" />
-      </label>
-      <label v-if="settings.mode === 'per_request'" class="block text-sm">
-        <span class="input-label">{{ copy.seconds }}</span>
-        <select class="input" :value="settings.seconds" data-testid="h3-seconds" @change="update({ seconds: Number(($event.target as HTMLSelectElement).value) })">
-          <option v-for="seconds in 15" :key="seconds" :value="seconds">{{ seconds }}</option>
-        </select>
-      </label>
-      <p class="text-xs leading-5 text-gray-500 sm:col-span-2">{{ copy.billing }}</p>
+  <section class="space-y-4 border-t border-default pt-4">
+    <UCheckbox
+      :model-value="settings.enabled"
+      label="MiniMax-H3"
+      :description="copy.hint"
+      data-testid="h3-enable"
+      @update:model-value="update({ enabled: $event === true })"
+    />
+    <div v-if="settings.enabled" class="grid gap-4 sm:grid-cols-2">
+      <UFormField :label="copy.mode">
+        <USelect
+          :model-value="settings.mode"
+          :items="modeItems"
+          class="w-full"
+          data-testid="h3-mode"
+          @update:model-value="update({ mode: String($event) })"
+        />
+      </UFormField>
+      <UFormField v-if="settings.mode === 'per_request'" :label="copy.seconds">
+        <USelect
+          :model-value="settings.seconds"
+          :items="secondsItems"
+          class="w-full"
+          data-testid="h3-seconds"
+          @update:model-value="update({ seconds: Number($event) })"
+        />
+      </UFormField>
+      <UFormField
+        :label="settings.mode === 'per_second' ? copy.pricePerSecond : copy.pricePerRequest"
+        :help="copy.billing"
+        required
+        class="sm:col-span-2"
+      >
+        <UInput
+          type="number"
+          min="0"
+          step="any"
+          required
+          class="w-full sm:w-1/2"
+          :model-value="String(settings.price ?? '')"
+          data-testid="h3-price"
+          @update:model-value="update({ price: $event })"
+        />
+      </UFormField>
     </div>
   </section>
 </template>
@@ -50,6 +67,11 @@ const copy = computed(() => locale.value.startsWith('zh') ? {
   pricePerSecond: 'Base price (balance / second)', pricePerRequest: 'Base price (balance / request)', seconds: 'Fixed request duration (seconds)',
   billing: 'Uses the video multiplier and freezes the selected group price. Failed tasks do not charge; successful tasks settle once. Per-request pricing accepts only the selected duration.'
 })
+const modeItems = computed(() => [
+  { label: copy.value.perSecond, value: 'per_second' },
+  { label: copy.value.perRequest, value: 'per_request' }
+])
+const secondsItems = Array.from({ length: 15 }, (_, i) => ({ label: String(i + 1), value: i + 1 }))
 function update(change: Partial<ReturnType<typeof readMiniMaxH3Price>>) {
   emit('update:modelValue', writeMiniMaxH3Price(props.modelValue, { ...settings.value, ...change }))
 }

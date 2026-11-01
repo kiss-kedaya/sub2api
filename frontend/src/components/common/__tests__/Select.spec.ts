@@ -12,31 +12,9 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
-const originalInnerWidth = window.innerWidth
 let unmountWrapper: (() => void) | undefined
 
-const setViewportWidth = (width: number) => {
-  Object.defineProperty(window, 'innerWidth', {
-    configurable: true,
-    value: width,
-  })
-}
-
-const mockTriggerRect = (left: number, width: number) => {
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-    x: left,
-    y: 20,
-    top: 20,
-    right: left + width,
-    bottom: 60,
-    left,
-    width,
-    height: 40,
-    toJSON: () => ({}),
-  })
-}
-
-const openSelect = async () => {
+const openSelect = async (props: Record<string, unknown> = {}, slots: Record<string, string> = {}) => {
   const wrapper = mount(Select, {
     props: {
       modelValue: null,
@@ -46,72 +24,156 @@ const openSelect = async () => {
           label: 'very-long-unbroken-option-value-that-must-not-overflow',
         },
       ],
+      ...props,
     },
+    slots,
   })
   unmountWrapper = () => wrapper.unmount()
 
   await wrapper.get('button').trigger('click')
   await nextTick()
 
-  return document.body.querySelector<HTMLElement>('.select-dropdown-portal')
+  return { wrapper, dropdown: document.body.querySelector<HTMLElement>('.select-dropdown-portal') }
 }
+
+const optionLabels = (dropdown: HTMLElement | null) =>
+  [...(dropdown?.querySelectorAll('[role="option"]') ?? [])].map((el) => el.textContent?.trim())
 
 afterEach(() => {
   unmountWrapper?.()
   unmountWrapper = undefined
   document.body.innerHTML = ''
-  setViewportWidth(originalInnerWidth)
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
+// The menu is a Nuxt UI SelectMenu positioned by floating-ui (jsdom has no layout), so these check
+// the constraints it is given rather than computed pixel positions.
 describe('Select dropdown viewport constraints', () => {
-  it('preserves the existing 200px minimum width when space is available', async () => {
-    setViewportWidth(1024)
-    mockTriggerRect(20, 80)
-
-    const dropdown = await openSelect()
+  it('keeps the 200px (or trigger-width) minimum width and grows to fit long options', async () => {
+    const { dropdown } = await openSelect()
 
     expect(dropdown).not.toBeNull()
-    expect(dropdown?.style.left).toBe('20px')
-    expect(dropdown?.style.minWidth).toBe('200px')
-    expect(dropdown?.style.maxWidth).toBe('996px')
+    expect(dropdown!.classList).toContain('w-max')
+    expect(dropdown!.classList).toContain('min-w-[min(max(200px,var(--reka-combobox-trigger-width)),calc(100vw-16px))]')
   })
 
-  it('shrinks the minimum width to fit near the right viewport edge', async () => {
-    setViewportWidth(320)
-    mockTriggerRect(220, 80)
+  it('never grows wider than the viewport minus the 8px safe padding on each side', async () => {
+    const { dropdown } = await openSelect()
 
-    const dropdown = await openSelect()
-
-    expect(dropdown).not.toBeNull()
-    expect(dropdown?.style.left).toBe('220px')
-    expect(dropdown?.style.minWidth).toBe('92px')
-    expect(dropdown?.style.maxWidth).toBe('92px')
+    expect(dropdown!.classList).toContain('max-w-[calc(100vw-16px)]')
   })
 
-  it('clamps a trigger left of the viewport to the safe padding', async () => {
-    setViewportWidth(320)
-    mockTriggerRect(-20, 80)
+  it('keeps 8px from the viewport edges when the trigger sits near or past them', async () => {
+    const { wrapper } = await openSelect()
 
-    const dropdown = await openSelect()
-
-    expect(dropdown).not.toBeNull()
-    expect(dropdown?.style.left).toBe('8px')
-    expect(dropdown?.style.minWidth).toBe('200px')
-    expect(dropdown?.style.maxWidth).toBe('304px')
+    expect(wrapper.findComponent({ name: 'ComboboxContent' }).props('collisionPadding')).toBe(8)
   })
 
-  it('clamps an offscreen-right trigger position to the viewport boundary', async () => {
-    setViewportWidth(320)
-    mockTriggerRect(400, 80)
+  it('opens below the trigger and stacks above page chrome', async () => {
+    const { wrapper, dropdown } = await openSelect()
 
-    const dropdown = await openSelect()
+    expect(wrapper.findComponent({ name: 'ComboboxContent' }).props('side')).toBe('bottom')
+    expect(dropdown!.classList).toContain('z-[60]')
+  })
+})
 
-    expect(dropdown).not.toBeNull()
-    expect(dropdown?.style.left).toBe('312px')
-    expect(dropdown?.style.minWidth).toBe('0px')
-    expect(dropdown?.style.maxWidth).toBe('0px')
+describe('Select values and options', () => {
+  it('keeps empty-string, null, zero and false values distinct', async () => {
+    const options = [
+      { value: '', label: 'All' },
+      { value: null, label: 'None' },
+      { value: 0, label: 'Zero' },
+      { value: false, label: 'Off' },
+    ]
+    const { wrapper, dropdown } = await openSelect({ modelValue: '', options })
+
+    expect(optionLabels(dropdown)).toEqual(['All', 'None', 'Zero', 'Off'])
+    const all = dropdown!.querySelectorAll<HTMLElement>('[role="option"]')
+    expect([...all].map((el) => el.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false', 'false'])
+
+    all[2].click()
+    await nextTick()
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([0])
+    expect(wrapper.emitted('change')?.at(-1)).toEqual([0, { value: 0, label: 'Zero' }])
+  })
+
+  it('shows group headers as labels and does not select disabled options', async () => {
+    const options = [
+      { kind: 'group', value: 'g', label: 'Anthropic' },
+      { value: 'a', label: 'Claude', disabled: true },
+      { value: 'b', label: 'Opus' },
+    ]
+    const { wrapper, dropdown } = await openSelect({ options })
+
+    expect(dropdown!.textContent).toContain('Anthropic')
+    expect(optionLabels(dropdown)).toEqual(['Claude', 'Opus'])
+    dropdown!.querySelector<HTMLElement>('[role="option"]')!.click()
+    await nextTick()
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('shows the placeholder until a matching option is selected', () => {
+    const wrapper = mount(Select, { props: { modelValue: 'missing', options: [{ value: 'a', label: 'Alpha' }], placeholder: 'Pick one' } })
+    unmountWrapper = () => wrapper.unmount()
+
+    expect(wrapper.get('button').text()).toContain('Pick one')
+  })
+
+  it('clears to null from the trigger without opening the menu', async () => {
+    const wrapper = mount(Select, { props: { modelValue: 'a', clearable: true, options: [{ value: 'a', label: 'Alpha' }] } })
+    unmountWrapper = () => wrapper.unmount()
+
+    await wrapper.get('[aria-label="Clear selection"]').trigger('click')
+    expect(wrapper.emitted('update:modelValue')).toEqual([[null]])
+    expect(wrapper.emitted('change')).toEqual([[null, null]])
+    expect(document.body.querySelector('.select-dropdown-portal')).toBeNull()
+  })
+
+  it('offers the typed query first in creatable mode', async () => {
+    const options = [{ value: 'claude-opus', label: 'claude-opus' }]
+    const { wrapper, dropdown } = await openSelect({ options, searchable: true, creatable: true, creatablePrefix: 'Use' })
+
+    const input = dropdown!.querySelector<HTMLInputElement>('.select-search-input')!
+    input.value = '  gpt-6 '
+    input.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(optionLabels(dropdown)[0]).toBe('Use "gpt-6"')
+    dropdown!.querySelector<HTMLElement>('[role="option"]')!.click()
+    await nextTick()
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['gpt-6'])
+  })
+
+  it('renders custom option and selected slots', async () => {
+    const { wrapper, dropdown } = await openSelect(
+      { modelValue: 'example' },
+      {
+        option: '<template #option="{ option, selected }"><span class="custom-row">{{ option.label }}{{ selected ? " *" : "" }}</span></template>',
+        selected: '<template #selected="{ option }"><b class="custom-value">{{ option?.label }}</b></template>',
+      }
+    )
+
+    expect(wrapper.get('.custom-value').text()).toBe('very-long-unbroken-option-value-that-must-not-overflow')
+    expect(dropdown!.querySelector('.custom-row')?.textContent).toBe('very-long-unbroken-option-value-that-must-not-overflow *')
+  })
+
+  it('shows a search box only for more than five options in auto mode', async () => {
+    const few = await openSelect({ options: Array.from({ length: 5 }, (_, i) => ({ value: i, label: `Option ${i}` })) })
+    expect(few.dropdown!.querySelector('.select-search-input')).toBeNull()
+    unmountWrapper?.()
+    document.body.innerHTML = ''
+
+    const many = await openSelect({ options: Array.from({ length: 6 }, (_, i) => ({ value: i, label: `Option ${i}` })) })
+    expect(many.dropdown!.querySelector('.select-search-input')).not.toBeNull()
+  })
+
+  it('opens without any network request', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    await openSelect({ clearable: true, modelValue: 'example', searchable: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
 

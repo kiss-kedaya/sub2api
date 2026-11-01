@@ -264,20 +264,15 @@ const userNavItems = [
 ]
 ```
 
-### Header Customization
+### User Menu Customization
 
-Modify user dropdown in `AppHeader.vue`:
+The user menu is a `UDropdownMenu` in `UserMenu.vue` (sidebar footer, and the header on phones). Add an item to the `links` group of its `items`:
 
-```vue
-<!-- Add new dropdown items -->
-<router-link
-  to="/settings"
-  @click="closeDropdown"
-  class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
->
-  <span class="mr-2">&#9881;</span>
-  Settings
-</router-link>
+```ts
+const links: DropdownMenuItem[] = [
+  { label: t('nav.profile'), icon: 'i-lucide-user', to: '/profile' },
+  { label: t('nav.settings'), icon: 'i-lucide-settings', to: '/settings' } // new item
+]
 ```
 
 ---

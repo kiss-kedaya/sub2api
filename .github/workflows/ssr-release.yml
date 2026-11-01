@@ -1,0 +1,146 @@
+name: SSR release artifact
+
+# Runs after GoReleaser publishes the release: builds the Nuxt/Nitro bundle from
+# the same tag, binds it to the released Go binary through release.json, and
+# uploads one co-packaged artifact to that release.
+on:
+  release:
+    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag (vX.Y.Z)'
+        required: true
+        type: string
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (vX.Y.Z)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ssr-release-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # Nuxt 4.6.3 requires Node ^22.22.3 or ^24.15. 24.22 also builds the legacy Vite SPA.
+  NODE_VERSION: '24.22'
+
+jobs:
+  ssr-artifact:
+    runs-on: [self-hosted, release-builder]
+    steps:
+      - name: Resolve tag
+        id: ref
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${EVENT_TAG:-${INPUT_TAG:-}}"
+          if [ -z "$TAG" ]; then
+            echo "::error::no release tag (event has none and inputs.tag is empty)"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.ref.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Build the Nuxt SSR bundle
+        run: |
+          pnpm run build
+          pnpm run build:ssr
+        working-directory: frontend
+
+      - name: Resolve checked out commit
+        id: commit
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the SSR manifest
+        run: >-
+          node scripts/build-manifest.mjs verify
+          --dir .output
+          --mode ssr
+          --expect-commit ${{ steps.commit.outputs.commit }}
+        working-directory: frontend
+
+      - name: Download the released Go binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ref.outputs.tag }}
+          VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/backend
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "sub2api_${VERSION}_linux_amd64.tar.gz" --dir dist/backend
+          tar -xzf "dist/backend/sub2api_${VERSION}_linux_amd64.tar.gz" -C dist/backend sub2api
+          test -x dist/backend/sub2api
+
+      - name: Seal the release contract
+        run: >-
+          node deploy/nuxt/release.mjs seal
+          --ssr frontend/.output
+          --binary dist/backend/sub2api
+          --spa-dist backend/internal/web/dist
+          --out dist/release.json
+
+      - name: Verify the release contract
+        run: >-
+          node deploy/nuxt/release.mjs verify
+          --release dist/release.json
+          --ssr frontend/.output
+          --binary dist/backend/sub2api
+          --spa-dist backend/internal/web/dist
+
+      - name: Stage and package
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ref.outputs.version }}"
+          node deploy/nuxt/release.mjs stage \
+            --release dist/release.json \
+            --ssr frontend/.output \
+            --binary dist/backend/sub2api \
+            --out dist/ssr
+          tar -C dist -czf "dist/sub2api_${VERSION}_ssr_linux_amd64.tar.gz" ssr
+          ( cd dist && sha256sum "sub2api_${VERSION}_ssr_linux_amd64.tar.gz" > "sub2api_${VERSION}_ssr_linux_amd64.checksums.txt" )
+
+      - name: Upload to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ref.outputs.tag }}
+          VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          gh release upload "$TAG" \
+            "dist/sub2api_${VERSION}_ssr_linux_amd64.tar.gz" \
+            "dist/sub2api_${VERSION}_ssr_linux_amd64.checksums.txt" \
+            --clobber

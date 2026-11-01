@@ -31,7 +31,7 @@
           <div class="tickets-list-tools">
             <label class="tickets-search"><Icon name="search" size="sm" /><input v-model="filters.search" type="search" maxlength="160" :aria-label="t('tickets.search')" :placeholder="t(admin ? 'tickets.adminSearch' : 'tickets.search')" /></label>
             <div class="tickets-list-filters">
-              <Select v-model="filters.category" :options="categoryOptions" :aria-label="t('tickets.category')" size="sm" class="min-w-[6.5rem]" />
+              <Select v-model="filters.category" :options="categoryOptions" :aria-label="t('tickets.category')" size="sm" class="min-w-26" />
             </div>
           </div>
 
@@ -116,7 +116,7 @@
         <div class="ticket-create-note"><Icon name="infoCircle" size="sm" />{{ t('tickets.proactiveHint') }}</div>
         <label for="proactive-user">{{ t('tickets.proactiveUser') }}<input id="proactive-user" v-model="proactiveUserSearch" class="input" maxlength="120" :placeholder="t('tickets.proactiveUserPlaceholder')" :disabled="proactiveSending" autocomplete="off" @input="onProactiveSearchInput" /></label>
         <div v-if="proactiveSearching" class="px-3 py-2 text-sm text-gray-500">{{ t('tickets.proactiveSearching') }}</div>
-        <div v-else-if="proactiveUsers.length" class="max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div v-else-if="proactiveUsers.length" class="max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xs dark:border-gray-700 dark:bg-gray-900">
           <button v-for="candidate in proactiveUsers" :key="candidate.id" type="button" class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800" @click="pickProactiveUser(candidate)">
             <span class="min-w-0"><strong class="block truncate">{{ candidate.username || '#' + candidate.id }}</strong><span class="block truncate text-xs text-gray-500">{{ candidate.email }}</span></span>
             <span class="shrink-0 text-xs text-gray-400">#{{ candidate.id }}</span>

@@ -32,6 +32,10 @@ const mountView = () => shallowMount(ProxiesView, {
         emits: ['update:page'],
         template: '<button data-test="page" @click="$emit(\'update:page\', 2)">{{ page }}</button>'
       },
+      // Toolbar buttons are Nuxt UI buttons; render them as real buttons so title/click reach the DOM.
+      Button: { inheritAttrs: false, template: '<button v-bind="$attrs"><slot /></button>' },
+      // The filter row lives in PageToolbar (renders in place outside the frame); keep it unstubbed.
+      PageToolbar: false,
       Select: {
         props: ['modelValue', 'options', 'placeholder'],
         emits: ['update:modelValue', 'change'],

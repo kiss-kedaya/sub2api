@@ -94,28 +94,45 @@ describe('admin subscription users', () => {
     ])
   })
 
+  const baseStubs = {
+    AppLayout: { template: '<div><slot /></div>' },
+    TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
+    DataTable: DataTableStub,
+    RouterLink: RouterLinkStub,
+    Pagination: true,
+    BaseDialog: {
+      props: ['show'],
+      template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+    },
+    ConfirmDialog: true,
+    EmptyState: true,
+    Select: true,
+    GroupBadge: true,
+    GroupOptionItem: true,
+    Icon: true
+  }
+
   const mountView = () => mount(SubscriptionsView, {
-    global: {
-      stubs: {
-        AppLayout: { template: '<div><slot /></div>' },
-        TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
-        DataTable: DataTableStub,
-        RouterLink: RouterLinkStub,
-        Pagination: true,
-        BaseDialog: {
-          props: ['show'],
-          template: '<div v-if="show"><slot /><slot name="footer" /></div>'
-        },
-        ConfirmDialog: true,
-        EmptyState: true,
-        Select: true,
-        GroupBadge: true,
-        GroupOptionItem: true,
-        Icon: true,
-        Teleport: true
-      }
-    }
+    global: { stubs: { ...baseStubs, Teleport: true } }
   })
+
+  // The "显示列" UDropdownMenu teleports through reka's Teleport (same component name),
+  // so this mount keeps teleports real and reads the menu from document.body.
+  const mountWithMenus = () => mount(SubscriptionsView, {
+    attachTo: document.body,
+    global: { stubs: baseStubs }
+  })
+
+  const openDisplayColumns = async (wrapper: ReturnType<typeof mountWithMenus>) => {
+    const trigger = wrapper.findAll('button')
+      .find((button) => button.attributes('aria-label') === 'admin.subscriptions.displayColumns')!
+    await trigger.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+  }
+
+  const menuCheckbox = (label: string) =>
+    Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'))
+      .find((item) => item.textContent?.trim() === label)
 
   it('searches current users when assigning a subscription', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
@@ -255,5 +272,30 @@ describe('admin subscription users', () => {
     const link = wrapper.getComponent(RouterLinkStub)
     expect(link.text()).toBe('User #42')
     expect(link.props('to')).toEqual({ path: '/admin/usage', query: { user_id: 42 } })
+  })
+
+  it('toggles and persists columns and the user column mode from the display menu', async () => {
+    const wrapper = mountWithMenus()
+    try {
+      await flushPromises()
+      await openDisplayColumns(wrapper)
+
+      const status = menuCheckbox('admin.subscriptions.columns.status')
+      expect(status?.getAttribute('aria-checked')).toBe('true')
+      status!.click()
+      await flushPromises()
+      expect(JSON.parse(localStorage.getItem('subscription-hidden-columns') || '[]')).toEqual(['status'])
+      expect(menuCheckbox('admin.subscriptions.columns.status')?.getAttribute('aria-checked')).toBe('false')
+
+      menuCheckbox('admin.users.columns.username')!.click()
+      await flushPromises()
+      expect(localStorage.getItem('subscription-user-column-mode')).toBe('username')
+      expect(menuCheckbox('admin.users.columns.username')?.getAttribute('aria-checked')).toBe('true')
+      expect(menuCheckbox('admin.users.columns.email')?.getAttribute('aria-checked')).toBe('false')
+      expect(wrapper.getComponent(RouterLinkStub).text()).toBe('Reader')
+    } finally {
+      wrapper.unmount()
+      document.body.innerHTML = ''
+    }
   })
 })

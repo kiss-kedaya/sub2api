@@ -1,8 +1,9 @@
-<template><AppLayout><div class="space-y-5"><h1 class="text-2xl font-semibold">{{ title }}</h1><div class="flex flex-wrap gap-3"><input v-model="start" class="input w-auto" type="datetime-local" /><input v-model="end" class="input w-auto" type="datetime-local" /><button class="btn btn-primary" @click="apply">{{ refreshText }}</button></div><UsageConnections :filters="filters" :refresh-key="refreshKey" /></div></AppLayout></template>
+<template><AppLayout><div class="space-y-5"><AdminPageHeader :title="title" /><div class="flex flex-wrap gap-3"><input v-model="start" class="input w-auto" type="datetime-local" /><input v-model="end" class="input w-auto" type="datetime-local" /><button class="btn btn-primary" @click="apply">{{ refreshText }}</button></div><UsageConnections :filters="filters" :refresh-key="refreshKey" /></div></AppLayout></template>
 <script setup lang="ts">
 import {computed,ref} from 'vue'
 import {useI18n} from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import UsageConnections from '@/components/admin/usage/UsageConnections.vue'
 const {locale}=useI18n()
 const title=computed(()=>locale.value==='zh'?'连接诊断':'Connection diagnostics')

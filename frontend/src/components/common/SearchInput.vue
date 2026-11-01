@@ -1,21 +1,18 @@
 <template>
   <div class="relative w-full">
-    <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-      <Icon name="search" size="md" class="text-gray-400" />
-    </div>
-    <input
-      :value="modelValue"
+    <UInput
+      :model-value="modelValue"
       type="text"
-      class="input pl-10"
+      icon="i-lucide-search"
+      class="w-full"
       :placeholder="placeholder"
-      @input="handleInput"
+      @update:model-value="handleInput"
     />
   </div>
 </template>
 
 <script setup lang="ts">
 import { useDebounceFn } from '@vueuse/core'
-import Icon from '@/components/icons/Icon.vue'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -35,8 +32,8 @@ const debouncedEmitSearch = useDebounceFn((value: string) => {
   emit('search', value)
 }, props.debounceMs)
 
-const handleInput = (event: Event) => {
-  const value = (event.target as HTMLInputElement).value
+const handleInput = (raw: string | number | null | undefined) => {
+  const value = raw == null ? '' : String(raw)
   emit('update:modelValue', value)
   debouncedEmitSearch(value)
 }

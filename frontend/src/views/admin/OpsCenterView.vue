@@ -1,24 +1,23 @@
 <template>
   <AppLayout>
     <div class="ops-center space-y-5">
-      <header class="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div class="flex flex-wrap items-center gap-2">
-            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ text('运营中心', 'Operations center') }}</h1>
+      <AdminPageHeader
+        :description="text('账号资产、渠道健康与告警集中在一个入口，按账号 / 渠道 / 诊断三层分组。', 'Account assets, channel health and alerts in one place, grouped into account, channel and diagnostics tiers.')"
+      >
+        <template #title>
+          <span class="inline-flex flex-wrap items-center gap-2">
+            {{ text('运营中心', 'Operations center') }}
             <span class="badge badge-primary">{{ text('L0 总览', 'L0 overview') }}</span>
-          </div>
-          <p class="mt-1 text-sm text-gray-500">
-            {{ text('账号资产、渠道健康与告警集中在一个入口，按账号 / 渠道 / 诊断三层分组。', 'Account assets, channel health and alerts in one place, grouped into account, channel and diagnostics tiers.') }}
-          </p>
-        </div>
-        <div class="flex flex-wrap gap-2">
+          </span>
+        </template>
+        <template #actions>
           <RouterLink to="/admin/account-ops" class="btn btn-secondary">{{ text('账号通知设置', 'Notification settings') }}</RouterLink>
           <button type="button" class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="refresh">
             <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />
             {{ text('刷新', 'Refresh') }}
           </button>
-        </div>
-      </header>
+        </template>
+      </AdminPageHeader>
 
       <p v-if="error" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ error }}</p>
       <p v-if="observer" class="rounded-lg bg-primary-50 p-3 text-sm text-primary-800 dark:bg-dark-800 dark:text-primary-300">
@@ -29,7 +28,7 @@
         <article class="card p-5">
           <div class="flex items-start justify-between gap-2">
             <p class="text-xs font-medium text-gray-500">{{ text('上游总余额', 'Total upstream balance') }}</p>
-            <span class="rounded-lg bg-primary-50 p-2 text-primary-600 dark:bg-primary-950/40"><Icon name="wallet" size="sm" /></span>
+            <span class="admin-stat-icon rounded-lg bg-primary-50 p-2 text-primary-600 dark:bg-primary-950/40"><Icon name="wallet" size="sm" /></span>
           </div>
           <div class="mt-3 space-y-0.5">
             <p v-for="total in balanceTotals.slice(0, 2)" :key="total.unit" class="text-2xl font-semibold tabular-nums">
@@ -44,7 +43,7 @@
         <article class="card p-5">
           <div class="flex items-start justify-between gap-2">
             <p class="text-xs font-medium text-gray-500">{{ text('今日消耗', 'Spend today') }}</p>
-            <span class="rounded-lg bg-emerald-50 p-2 text-emerald-600 dark:bg-emerald-950/40"><Icon name="chart" size="sm" /></span>
+            <span class="admin-stat-icon rounded-lg bg-emerald-50 p-2 text-emerald-600 dark:bg-emerald-950/40"><Icon name="chart" size="sm" /></span>
           </div>
           <p class="mt-3 text-2xl font-semibold tabular-nums">${{ formatCost(stats?.today_actual_cost) }}</p>
           <p class="mt-2 text-xs text-gray-500">{{ text('今日请求', 'Requests today') }} {{ stats?.today_requests ?? 0 }}</p>
@@ -53,7 +52,7 @@
         <article class="card p-5">
           <div class="flex items-start justify-between gap-2">
             <p class="text-xs font-medium text-gray-500">{{ text('账号健康', 'Account health') }}</p>
-            <span class="rounded-lg bg-sky-50 p-2 text-sky-600 dark:bg-sky-950/40"><Icon name="users" size="sm" /></span>
+            <span class="admin-stat-icon rounded-lg bg-sky-50 p-2 text-sky-600 dark:bg-sky-950/40"><Icon name="users" size="sm" /></span>
           </div>
           <p class="mt-3 text-2xl font-semibold tabular-nums">
             {{ stats?.normal_accounts ?? 0 }}
@@ -67,7 +66,7 @@
         <article class="card p-5">
           <div class="flex items-start justify-between gap-2">
             <p class="text-xs font-medium text-gray-500">{{ text('待处理', 'Needs attention') }}</p>
-            <span class="rounded-lg bg-amber-50 p-2 text-amber-600 dark:bg-amber-950/40"><Icon name="bell" size="sm" /></span>
+            <span class="admin-stat-icon rounded-lg bg-amber-50 p-2 text-amber-600 dark:bg-amber-950/40"><Icon name="bell" size="sm" /></span>
           </div>
           <p class="mt-3 text-2xl font-semibold tabular-nums" :class="attentionAll.length ? 'text-amber-600 dark:text-amber-400' : ''">{{ attentionAll.length }}</p>
           <p class="mt-2 text-xs text-gray-500">
@@ -107,17 +106,29 @@
             <p class="mt-1 text-xs text-gray-500">{{ text('余额、5 小时与 7 天额度，按风险优先排序。', 'Balances, 5-hour and 7-day quotas, ordered by risk.') }}</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <input v-model="search" class="input w-44 text-sm" :placeholder="text('搜索账号 / 分组', 'Search account or group')" :aria-label="text('搜索账号', 'Search accounts')" />
-            <select v-model="riskFilter" class="input w-auto text-sm" :aria-label="text('筛选状态', 'Filter status')">
-              <option value="all">{{ text('全部', 'All') }}</option>
-              <option value="risk">{{ text('需关注', 'Needs attention') }}</option>
-              <option value="ok">{{ text('正常', 'Healthy') }}</option>
-            </select>
-            <select v-model="sortMode" class="input w-auto text-sm" :aria-label="text('排序方式', 'Sort order')">
-              <option value="risk">{{ text('按风险', 'By risk') }}</option>
-              <option value="balance">{{ text('按余额', 'By balance') }}</option>
-              <option value="name">{{ text('按名称', 'By name') }}</option>
-            </select>
+            <UInput v-model="search" size="lg" class="w-44" :placeholder="text('搜索账号 / 分组', 'Search account or group')" :aria-label="text('搜索账号', 'Search accounts')" />
+            <USelect
+              v-model="riskFilter"
+              size="lg"
+              class="w-32"
+              :items="[
+                { value: 'all', label: text('全部', 'All') },
+                { value: 'risk', label: text('需关注', 'Needs attention') },
+                { value: 'ok', label: text('正常', 'Healthy') }
+              ]"
+              :aria-label="text('筛选状态', 'Filter status')"
+            />
+            <USelect
+              v-model="sortMode"
+              size="lg"
+              class="w-32"
+              :items="[
+                { value: 'risk', label: text('按风险', 'By risk') },
+                { value: 'balance', label: text('按余额', 'By balance') },
+                { value: 'name', label: text('按名称', 'By name') }
+              ]"
+              :aria-label="text('排序方式', 'Sort order')"
+            />
           </div>
         </div>
 
@@ -220,6 +231,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import {
   getAccountOpsEvents,
   getAccountOpsSettings,

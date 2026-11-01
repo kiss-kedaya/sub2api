@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
+import UDropdownMenu from '@nuxt/ui/components/DropdownMenu.vue'
 import AccountsView from '../AccountsView.vue'
 
 const {
@@ -88,6 +89,17 @@ const HelpTooltipStub = {
   template: '<span data-test="usage-windows-hint">{{ content }}</span>'
 }
 
+// Columns hidden in a fresh layout are offered in the "列显示" menu; enable one through it.
+async function enableColumn(wrapper: { findAllComponents: (c: any) => any[] }, label: string) {
+  const menus = wrapper.findAllComponents(UDropdownMenu)
+  const menu = menus.find((m: any) => (m.props('items') as any[]).flat().some((item: any) => item?.type === 'checkbox' && item?.label === label))
+  expect(menu).toBeDefined()
+  const item = (menu.props('items') as any[]).flat().find((entry: any) => entry?.label === label)
+  expect(item.checked).toBe(false)
+  item.onUpdateChecked(true)
+  await flushPromises()
+}
+
 function mountView() {
   return mount(AccountsView, {
     global: {
@@ -103,7 +115,7 @@ function mountView() {
         AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
         AccountTableFilters: {
           props: ['groups'],
-          template: '<div data-test="account-filters" :data-group-count="groups.length"></div>'
+          template: '<div data-test="account-filters" :data-group-count="groups.length"><slot name="actions" /></div>'
         },
         AccountBulkActionsBar: true,
         AccountActionMenu: true,
@@ -169,9 +181,10 @@ describe('admin AccountsView usage windows hint', () => {
     expect(wrapper.get('[data-test="account-filters"]').attributes('data-group-count')).toBe('1')
   })
 
-  it('places upstream balance immediately to the right of usage windows', async () => {
+  it('places upstream balance immediately to the right of usage windows once shown', async () => {
     const wrapper = mountView()
     await flushPromises()
+    await enableColumn(wrapper, 'admin.accounts.customUsage.column')
     const columns = wrapper.findComponent(DataTableStub).props('columns') as Array<{ key: string }>
     const usage = columns.findIndex(column => column.key === 'usage')
     expect(columns[usage + 1].key).toBe('custom_usage')
@@ -202,9 +215,11 @@ describe('admin AccountsView usage windows hint', () => {
     expect(columns.some(column => column.key === 'ollama_cloud_usage')).toBe(false)
   })
 
-  it('renders the upstream billing trust warning next to the declared-rate column', async () => {
+  it('renders the upstream billing trust warning next to the declared-rate column once shown', async () => {
     const wrapper = mountView()
     await flushPromises()
+    expect(wrapper.find('[data-test="upstream-billing-header"]').exists()).toBe(false)
+    await enableColumn(wrapper, 'admin.accounts.columns.upstreamBillingRate')
 
     const header = wrapper.find('[data-test="upstream-billing-header"]')
     expect(header.exists()).toBe(true)

@@ -33,3 +33,18 @@ exceptions:
     severity: high
     mitigation: Transitive dependency of axios. The panel only issues outbound HTTP to our own API origin, so there is no user-controlled redirect target and no cross-realm sensitiveHeaders reuse. Upgrade lands with the next axios bump.
     expires_on: 2026-12-31
+  - package: rollup
+    advisory: GHSA-mw96-cpmx-2vgc
+    severity: high
+    mitigation: Build-time dependency only. Release builds run from trusted repository inputs; untrusted archives are never passed to the Rollup bundle or plugin pipeline. Track the Nuxt/Vite-compatible upgrade separately.
+    expires_on: 2026-12-31
+  - package: picomatch
+    advisory: GHSA-c2c7-rcm5-vvqj
+    severity: high
+    mitigation: Dev/build transitive dependency. The application does not expose user-controlled glob patterns to picomatch; CI and Nitro builds use repository-owned patterns only.
+    expires_on: 2026-12-31
+  - package: vite
+    advisory: GHSA-587h-7wmj-h5pm
+    severity: high
+    mitigation: Dev/build dependency. Production serves the prebuilt Nuxt Nitro output and does not run the Vite dev server or launch-editor integration. Upgrade with the next Nuxt-compatible Vite major.
+    expires_on: 2026-12-31

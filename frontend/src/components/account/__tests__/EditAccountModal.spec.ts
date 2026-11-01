@@ -48,13 +48,22 @@ vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
+    // CopilotSDKFields / GeminiCacheAccountFields read locale.value for their copy.
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string) => key,
+      locale: { value: 'en' }
     })
   }
 })
 
 import EditAccountModal from '../EditAccountModal.vue'
+
+// UCheckbox renders a role="checkbox" button: click only when the state has to change.
+async function setChecked(el: { attributes: (name: string) => string | undefined; trigger: (event: string) => Promise<unknown> }, value: boolean) {
+  if ((el.attributes('aria-checked') === 'true') !== value) await el.trigger('click')
+}
+const isChecked = (el: { attributes: (name: string) => string | undefined }) => el.attributes('aria-checked') === 'true'
+
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -198,7 +207,8 @@ function buildVertexAccount() {
     platform: 'gemini',
     type: 'service_account',
     credentials: {
-      service_account_json: '{"type":"service_account","client_email":"sa@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n"}',
+      // EditAccountModal only checks that legacy plaintext JSON is present; it never parses the key.
+      service_account_json: '{"type":"service_account","client_email":"sa@example.iam.gserviceaccount.com","private_key":"placeholder-not-a-real-key"}',
       project_id: 'demo-project',
       client_email: 'sa@example.iam.gserviceaccount.com',
       location: 'us-central1',
@@ -418,19 +428,27 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account, true)
     await wrapper.setProps({ groups: [activeGroup] as any })
+    // GroupSelector is a Nuxt UI select menu; its options are teleported to <body>.
     const selector = wrapper.get('[data-tour="account-form-groups"]')
-    expect(selector.findAll('input[type="checkbox"]').map(input => input.attributes('value')))
-      .toEqual(['1', '2'])
     expect(selector.text()).toContain('Active group')
     expect(selector.text()).not.toContain('Outdated name')
-    const pausedCheckbox = selector.get<HTMLInputElement>('input[value="2"]')
-    expect(pausedCheckbox.element.checked).toBe(true)
+    await selector.get('[data-test="group-selector"]').trigger('click')
+    await flushPromises()
+    const options = () => Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'))
+    const pausedSelected = () => options().find(option => option.textContent?.includes('Paused group'))?.getAttribute('aria-selected')
+    const togglePaused = async () => {
+      options().find(option => option.textContent?.includes('Paused group'))!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushPromises()
+    }
+    expect(options().map(option => option.textContent?.includes('Active group') ? 1 : option.textContent?.includes('Paused group') ? 2 : 0))
+      .toEqual([1, 2])
+    expect(pausedSelected()).toBe('true')
 
-    await pausedCheckbox.setValue(false)
-    expect(selector.get<HTMLInputElement>('input[value="2"]').element.checked).toBe(false)
-    await pausedCheckbox.setValue(true)
-    expect(pausedCheckbox.element.checked).toBe(true)
-    await pausedCheckbox.setValue(false)
+    await togglePaused()
+    expect(pausedSelected()).toBe('false')
+    await togglePaused()
+    expect(pausedSelected()).toBe('true')
+    await togglePaused()
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
@@ -1204,7 +1222,7 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account)
 
-    expect(wrapper.findAll('input[type="checkbox"]').some((input) => (input.element as HTMLInputElement).checked)).toBe(true)
+    expect(wrapper.findAll('[role="checkbox"]').some((box) => isChecked(box))).toBe(true)
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -1266,25 +1284,25 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account)
 
-    const chatCheckbox = wrapper.get<HTMLInputElement>(
+    const chatCheckbox = wrapper.get(
       '[data-testid="openai-endpoint-capability-chat_completions"]'
     )
-    const embeddingsCheckbox = wrapper.get<HTMLInputElement>(
+    const embeddingsCheckbox = wrapper.get(
       '[data-testid="openai-endpoint-capability-embeddings"]'
     )
 
-    expect(chatCheckbox.element.checked).toBe(true)
-    expect(embeddingsCheckbox.element.checked).toBe(true)
+    expect(isChecked(chatCheckbox)).toBe(true)
+    expect(isChecked(embeddingsCheckbox)).toBe(true)
 
-    await embeddingsCheckbox.setValue(false)
+    await setChecked(embeddingsCheckbox, false)
 
-    expect(chatCheckbox.element.checked).toBe(true)
-    expect(embeddingsCheckbox.element.checked).toBe(false)
+    expect(isChecked(chatCheckbox)).toBe(true)
+    expect(isChecked(embeddingsCheckbox)).toBe(false)
 
-    await chatCheckbox.setValue(false)
+    await setChecked(chatCheckbox, false)
 
-    expect(chatCheckbox.element.checked).toBe(true)
-    expect(embeddingsCheckbox.element.checked).toBe(false)
+    expect(isChecked(chatCheckbox)).toBe(true)
+    expect(isChecked(embeddingsCheckbox)).toBe(false)
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -1659,7 +1677,7 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
 
     const wrapper = mountModal(account)
     expect(wrapper.find('[data-testid="gemini-custom-protocol"]').exists()).toBe(true)
-    await wrapper.get('[data-testid="gemini-custom-protocol"]').setValue(true)
+    await setChecked(wrapper.get('[data-testid="gemini-custom-protocol"]'), true)
     await flushPromises()
 
     const responsesButton = wrapper.findAll('button').find((button) =>
@@ -1675,5 +1693,23 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
       api_protocol: 'responses'
     })
     wrapper.unmount()
+  })
+})
+
+describe('EditAccountModal section nav', () => {
+  it('shows one section at a time and switches from the nav', async () => {
+    const wrapper = mountModal(buildAccount())
+    await flushPromises()
+    const visible = () => wrapper.findAll('[data-edit-section]').filter((el) => (el.element as HTMLElement).style.display !== 'none').map((el) => el.attributes('data-edit-section'))
+    expect(visible()).toEqual(['basic'])
+
+    const tab = wrapper.get('[data-testid="edit-section-nav"]').findAll('button').find((b) => b.text() === 'admin.accounts.formSections.models')
+    expect(tab).toBeDefined()
+    await tab!.trigger('mousedown')
+    await tab!.trigger('click')
+    await flushPromises()
+    expect(visible()).toEqual(['models'])
+    // fields in hidden sections stay mounted, so the payload does not depend on the visible section
+    expect(wrapper.find('[data-edit-section="basic"] [data-tour="edit-account-form-name"]').exists()).toBe(true)
   })
 })

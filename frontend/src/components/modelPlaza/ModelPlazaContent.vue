@@ -1,12 +1,6 @@
 <template>
   <div class="model-plaza-content space-y-5">
-    <div class="plaza-heading signal-editorial-heading" :class="{ 'plaza-heading-embedded': embedded }">
-      <div class="signal-editorial-copy">
-        <span class="signal-editorial-index" aria-hidden="true">02 / MODELS</span>
-        <h1>{{ t('modelPlaza.title') }}</h1>
-        <p>{{ t('modelPlaza.description') }}</p>
-      </div>
-    </div>
+    <UserPageHeader flush :title="t('modelPlaza.title')" :description="t('modelPlaza.description')" />
 
     <!-- 全局价格说明(管理员配置,Markdown) -->
     <div
@@ -70,6 +64,7 @@ import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import Icon from '@/components/icons/Icon.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import PlazaFilterBar from './PlazaFilterBar.vue'
 import PlazaGroupSection from './PlazaGroupSection.vue'
 import type { ModelPlazaGroup, ModelPlazaResponse } from '@/api/modelPlaza'
@@ -156,19 +151,12 @@ const filteredGroups = computed(() => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .model-plaza-content {
   min-width: 0;
   color: var(--signal-text, #1c1c1e);
 }
 
-.plaza-heading h1 {
-  font-size: 28px;
-  line-height: 34px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-.plaza-heading p,
 .plaza-hint {
   margin-top: 6px;
   color: var(--signal-muted, #63636c);

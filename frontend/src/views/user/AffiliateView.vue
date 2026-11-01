@@ -1,11 +1,7 @@
 <template>
   <AppLayout>
     <div class="signal-account-page signal-affiliate space-y-6">
-      <header class="signal-account-heading">
-        <span class="signal-account-index">PARTNERS</span>
-        <h1>{{ t('affiliate.title') }}</h1>
-        <p>{{ t('affiliate.description') }}</p>
-      </header>
+      <UserPageHeader flush :title="t('affiliate.title')" :description="t('affiliate.description')" />
       <div v-if="loading" class="flex justify-center py-12">
         <div
           class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
@@ -13,7 +9,7 @@
       </div>
 
       <template v-else-if="detail">
-        <div class="signal-affiliate-metrics grid sm:grid-cols-2 lg:grid-cols-4">
+        <div class="signal-affiliate-metrics affiliate-metrics grid sm:grid-cols-2 lg:grid-cols-4">
           <div class="card p-5">
             <p class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-dark-400">
               <Icon name="dollar" size="sm" class="text-primary-500" />
@@ -49,9 +45,9 @@
           </div>
         </div>
 
-        <section class="signal-account-section">
+        <section class="affiliate-section">
 
-          <div class="mt-5 grid gap-4 md:grid-cols-2">
+          <div class="grid gap-4 md:grid-cols-2">
             <div class="space-y-2">
               <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.yourCode') }}</p>
               <div class="flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
@@ -78,21 +74,22 @@
             </div>
           </div>
 
-          <div class="mt-5 rounded-xl border border-primary-200 bg-primary-50 p-4 dark:border-primary-900/40 dark:bg-primary-900/20">
-            <p class="text-sm font-medium text-primary-800 dark:text-primary-200">{{ t('affiliate.tips.title') }}</p>
-            <ul class="mt-2 space-y-1 text-sm text-primary-700 dark:text-primary-300">
-              <li>1. {{ t('affiliate.tips.line1') }}</li>
-              <li>2. {{ t('affiliate.tips.line2', { rate: `${formattedRebateRate}%` }) }}</li>
-              <li>3. {{ t('affiliate.tips.line3') }}</li>
-              <li v-if="detail.aff_frozen_quota > 0">4. {{ t('affiliate.tips.line4') }}</li>
-            </ul>
-          </div>
+          <UAlert class="mt-5 dark:bg-primary/10 dark:text-primary dark:ring-primary/25" color="neutral" variant="subtle" icon="i-lucide-info" :title="t('affiliate.tips.title')">
+            <template #description>
+              <ul class="mt-1 space-y-1">
+                <li>1. {{ t('affiliate.tips.line1') }}</li>
+                <li>2. {{ t('affiliate.tips.line2', { rate: `${formattedRebateRate}%` }) }}</li>
+                <li>3. {{ t('affiliate.tips.line3') }}</li>
+                <li v-if="detail.aff_frozen_quota > 0">4. {{ t('affiliate.tips.line4') }}</li>
+              </ul>
+            </template>
+          </UAlert>
         </section>
 
-        <section class="signal-account-section">
+        <section class="affiliate-section">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('affiliate.customCodes.title') }}</h2>
+              <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.customCodes.title') }}</h2>
               <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
                 {{ t('affiliate.customCodes.description', { max: customCodeQuota.max }) }}
               </p>
@@ -162,10 +159,10 @@
           </div>
         </section>
 
-        <section class="signal-account-section">
+        <section class="affiliate-section">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('affiliate.transfer.title') }}</h2>
+              <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.transfer.title') }}</h2>
               <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.transfer.description') }}</p>
             </div>
             <button
@@ -183,8 +180,8 @@
           </p>
         </section>
 
-        <section class="signal-account-section">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('affiliate.invitees.title') }}</h2>
+        <section class="affiliate-section">
+          <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.invitees.title') }}</h2>
           <div v-if="detail.invitees.length === 0" class="mt-4 rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
             {{ t('affiliate.invitees.empty') }}
           </div>
@@ -230,6 +227,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import userAPI from '@/api/user'
@@ -370,3 +368,14 @@ onMounted(() => {
   void loadAffiliateDetail()
 })
 </script>
+
+<style scoped>
+/* Sections as cards; the four figures as one joined strip. */
+.affiliate-section { padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
+.dark .affiliate-section { box-shadow: 0 0 0 1px var(--ui-border); }
+.affiliate-metrics { overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
+.dark .affiliate-metrics { box-shadow: 0 0 0 1px var(--ui-border); }
+.console-signal .affiliate-metrics.signal-affiliate-metrics { border-block: 0; }
+.console-signal .affiliate-metrics > .card { box-shadow: none; }
+@media (min-width: 640px) { .affiliate-section { padding: 24px; } }
+</style>

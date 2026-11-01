@@ -224,15 +224,18 @@ func (s *AnnouncementService) List(ctx context.Context, params pagination.Pagina
 	return s.announcementRepo.List(ctx, params, filters)
 }
 
-func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unreadOnly bool) ([]UserAnnouncement, error) {
+// visibleForUser resolves the announcements a user may see plus their read map.
+// The list, the popup bootstrap, the unread summary and the detail view all go
+// through it so the targeting rules live in exactly one place.
+func (s *AnnouncementService) visibleForUser(ctx context.Context, userID int64) ([]Announcement, map[int64]time.Time, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("get user: %w", err)
+		return nil, nil, fmt.Errorf("get user: %w", err)
 	}
 
 	activeSubs, err := s.userSubRepo.ListActiveByUserID(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("list active subscriptions: %w", err)
+		return nil, nil, fmt.Errorf("list active subscriptions: %w", err)
 	}
 	activeGroupIDs := make(map[int64]struct{}, len(activeSubs))
 	for i := range activeSubs {
@@ -242,7 +245,7 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 	now := time.Now()
 	anns, err := s.announcementRepo.ListActive(ctx, now)
 	if err != nil {
-		return nil, fmt.Errorf("list active announcements: %w", err)
+		return nil, nil, fmt.Errorf("list active announcements: %w", err)
 	}
 
 	visible := make([]Announcement, 0, len(anns))
@@ -260,12 +263,89 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 	}
 
 	if len(visible) == 0 {
-		return []UserAnnouncement{}, nil
+		return visible, map[int64]time.Time{}, nil
 	}
 
 	readMap, err := s.readRepo.GetReadMapByUser(ctx, userID, ids)
 	if err != nil {
-		return nil, fmt.Errorf("get read map: %w", err)
+		return nil, nil, fmt.Errorf("get read map: %w", err)
+	}
+	return visible, readMap, nil
+}
+
+// SummaryForUser returns the badge counts only, so the first paint never has to
+// download announcement bodies or the full timeline.
+func (s *AnnouncementService) SummaryForUser(ctx context.Context, userID int64) (total int, unread int, err error) {
+	visible, readMap, err := s.visibleForUser(ctx, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	for i := range visible {
+		if _, read := readMap[visible[i].ID]; !read {
+			unread++
+		}
+	}
+	return len(visible), unread, nil
+}
+
+// UserAnnouncementPopupLimit caps the popup bootstrap payload. Unread popups are
+// rare, and the client acknowledges them one at a time.
+const UserAnnouncementPopupLimit = 5
+
+// PopupsForUser returns the unread popup announcements with their bodies, newest
+// first. It is the only first-paint call that carries content, and it is bounded.
+func (s *AnnouncementService) PopupsForUser(ctx context.Context, userID int64) ([]UserAnnouncement, error) {
+	visible, readMap, err := s.visibleForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UserAnnouncement, 0, UserAnnouncementPopupLimit)
+	for i := range visible {
+		a := visible[i]
+		if a.NotifyMode != AnnouncementNotifyModePopup {
+			continue
+		}
+		if _, read := readMap[a.ID]; read {
+			continue
+		}
+		out = append(out, UserAnnouncement{Announcement: a})
+		if len(out) >= UserAnnouncementPopupLimit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// GetForUser returns one visible announcement with its body.
+func (s *AnnouncementService) GetForUser(ctx context.Context, userID, announcementID int64) (*UserAnnouncement, error) {
+	if announcementID <= 0 {
+		return nil, ErrAnnouncementNotFound
+	}
+	visible, readMap, err := s.visibleForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range visible {
+		if visible[i].ID != announcementID {
+			continue
+		}
+		out := &UserAnnouncement{Announcement: visible[i]}
+		if readAt, ok := readMap[announcementID]; ok {
+			t := readAt
+			out.ReadAt = &t
+		}
+		return out, nil
+	}
+	return nil, ErrAnnouncementNotFound
+}
+
+func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unreadOnly bool) ([]UserAnnouncement, error) {
+	visible, readMap, err := s.visibleForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(visible) == 0 {
+		return []UserAnnouncement{}, nil
 	}
 
 	out := make([]UserAnnouncement, 0, len(visible))

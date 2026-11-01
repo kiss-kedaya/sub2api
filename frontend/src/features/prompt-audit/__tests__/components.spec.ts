@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
+import USelect from '@nuxt/ui/components/Select.vue'
 import EndpointPool from '../components/EndpointPool.vue'
 import PolicyPanel from '../components/PolicyPanel.vue'
 import EventWorkspace from '../components/EventWorkspace.vue'
@@ -15,6 +16,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 const DialogStub = defineComponent({ props: ['show', 'title'], emits: ['close'], template: '<div v-if="show" data-test="dialog"><slot /><slot name="footer" /></div>' })
+const preset = (id: string) => `[role="radio"][value="${id}"]`
 const PaginationStub = defineComponent({ props: ['total', 'page', 'pageSize'], emits: ['update:page', 'update:pageSize'], template: '<div data-test="pagination" />' })
 
 const endpoint = (): PromptAuditEndpointDraft => ({
@@ -39,7 +41,9 @@ describe('Prompt Audit components', () => {
     expect(token.element.value).toBe('')
     expect(token.attributes('placeholder')).toContain('admin.promptAudit.pool.keepSecret')
 
-    await wrapper.get<HTMLInputElement>('[aria-label="admin.promptAudit.pool.clearSecret"]').setValue(true)
+    // UCheckbox renders a role=checkbox button: toggled by click, state in aria-checked.
+    await wrapper.get('[aria-label="admin.promptAudit.pool.clearSecret"]').trigger('click')
+    expect(wrapper.get('[aria-label="admin.promptAudit.pool.clearSecret"]').attributes('aria-checked')).toBe('true')
     await token.setValue('replacement-canary')
     await wrapper.get('[data-test="save-endpoint"]').trigger('click')
     const updated = wrapper.emitted('update:endpoints')?.at(-1)?.[0] as PromptAuditEndpointDraft[]
@@ -75,7 +79,7 @@ describe('Prompt Audit components', () => {
       props: { draft, groups: [{ id: 1, name: 'Alpha', platform: 'openai', status: 'active' }, { id: 2, name: 'Beta', platform: 'claude', status: 'inactive' }] },
     })
     expect(wrapper.text()).toContain('99')
-    expect(wrapper.findAll('input[type="checkbox"]').filter((input) => SCANNER_CATALOG.some((scanner) => input.attributes('aria-label') === `admin.promptAudit.scanners.${scanner.id}`))).toHaveLength(9)
+    expect(wrapper.findAll('[role="checkbox"]').filter((input) => SCANNER_CATALOG.some((scanner) => input.attributes('aria-label') === `admin.promptAudit.scanners.${scanner.id}`))).toHaveLength(9)
     await wrapper.get('[aria-label="admin.promptAudit.policy.searchGroups"]').setValue('Beta')
     expect(wrapper.text()).toContain('Beta')
     expect(wrapper.text()).not.toContain('Alpha')
@@ -101,7 +105,7 @@ describe('Prompt Audit components', () => {
     expect(wrapper.get('[data-test="filter-delete"]').attributes()).not.toHaveProperty('disabled')
     await wrapper.get('[data-test="filter-delete"]').trigger('click')
     expect(wrapper.emitted('preview-delete')).toHaveLength(1)
-    await wrapper.get('[aria-label="admin.promptAudit.events.selectEvent"]').setValue(true)
+    await wrapper.get('[aria-label="admin.promptAudit.events.selectEvent"]').trigger('click')
     expect(wrapper.emitted('selection')?.at(-1)?.[0]).toEqual([1])
   })
 
@@ -122,7 +126,8 @@ describe('Prompt Audit components', () => {
       props: { show: true, initialFilters: emptyEventFilters(), preview: null, previewing: false, deleting: false },
       global: { stubs: { BaseDialog: DialogStub } },
     })
-    expect(wrapper.get<HTMLInputElement>('[data-test="range-preset-7d"]').element.checked).toBe(true)
+    // URadioGroup items are role=radio buttons keyed by value; selection lives in aria-checked.
+    expect(wrapper.get(preset('7d')).attributes('aria-checked')).toBe('true')
     expect(wrapper.find('[data-test="custom-range"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="delete-preview-empty"]').exists()).toBeTruthy()
     // A valid preset is enough: confirm is armed immediately (one-click flow)
@@ -134,16 +139,18 @@ describe('Prompt Audit components', () => {
     expect(directConfirm.start_at).toBe('1970-01-01T00:00:00.000Z')
     expect(Date.now() - new Date(directConfirm.end_at).getTime()).toBeGreaterThanOrEqual(7 * 24 * 60 * 60 * 1000)
 
-    await wrapper.get('[data-test="range-preset-30d"]').setValue()
+    await wrapper.get(preset('30d')).trigger('click')
     expect(wrapper.emitted('criteria-change')?.length).toBeGreaterThan(0)
-    await wrapper.get('[data-test="delete-risk"]').setValue('high')
+    // The risk USelect (second in the dialog) is driven through its model, like a user picking an option.
+    wrapper.findAllComponents(USelect)[1].vm.$emit('update:modelValue', 'high')
+    await flushPromises()
     await wrapper.get('[data-test="run-delete-preview"]').trigger('click')
     const presetPreview = wrapper.emitted('preview')?.at(-1)?.[0] as PromptEventFilters
     expect(presetPreview.risk_level).toBe('high')
     expect(presetPreview.start_at).toBe('1970-01-01T00:00:00.000Z')
     expect(Date.now() - new Date(presetPreview.end_at).getTime()).toBeGreaterThanOrEqual(30 * 24 * 60 * 60 * 1000)
 
-    await wrapper.get('[data-test="range-preset-custom"]').setValue()
+    await wrapper.get(preset('custom')).trigger('click')
     expect(wrapper.find('[data-test="custom-range"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="run-delete-preview"]').attributes()).toHaveProperty('disabled')
     expect(wrapper.get('[data-test="confirm-filter-delete"]').attributes()).toHaveProperty('disabled')
@@ -195,9 +202,9 @@ describe('Prompt Audit components', () => {
       props: { show: true, initialFilters, preview: null, previewing: false, deleting: false },
       global: { stubs: { BaseDialog: DialogStub } },
     })
-    expect(wrapper.get<HTMLInputElement>('[data-test="range-preset-custom"]').element.checked).toBe(true)
+    expect(wrapper.get(preset('custom')).attributes('aria-checked')).toBe('true')
     expect(wrapper.get<HTMLInputElement>('[data-test="custom-range"] [aria-label="admin.promptAudit.events.startAt"]').element.value).toBe('2026-07-01T00:00')
-    expect(wrapper.get<HTMLSelectElement>('[data-test="delete-decision"]').element.value).toBe('critical')
+    expect(wrapper.findAllComponents(USelect)[0].props('modelValue')).toBe('critical')
     expect(wrapper.get('[data-test="run-delete-preview"]').attributes()).not.toHaveProperty('disabled')
   })
 
@@ -235,7 +242,8 @@ describe('Prompt Audit components', () => {
 
     const riskTab = wrapper.findAll('[role="tab"]').find((tab) => tab.text().includes('admin.promptAudit.events.tabs.risks'))
     expect(riskTab).toBeTruthy()
-    await riskTab!.trigger('click')
+    // UTabs triggers activate on mousedown (reka-ui).
+    await riskTab!.trigger('mousedown', { button: 0 })
     expect(wrapper.get('[data-test="event-detail-tab-panel"]').classes()).toContain('h-[min(62vh,36rem)]')
     expect(wrapper.get('[data-test="risk-prompt-preview"]').text()).toContain('complete unmasked prompt body')
     expect(wrapper.get('[data-test="risk-prompt-preview"]').text()).not.toContain('redacted prompt body')
@@ -265,7 +273,7 @@ describe('Prompt Audit components', () => {
       global: { stubs: { BaseDialog: DialogStub } },
     })
     const riskTab = wrapper.findAll('[role="tab"]').find((tab) => tab.text().includes('admin.promptAudit.events.tabs.risks'))
-    await riskTab!.trigger('click')
+    await riskTab!.trigger('mousedown', { button: 0 })
     expect(wrapper.get('[data-test="risk-prompt-full"]').text()).toContain('legacy redacted preview')
   })
 })

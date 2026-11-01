@@ -20,11 +20,11 @@
       </div>
 
       <div class="account-test-settings">
-        <button type="button" class="account-test-settings-toggle" :aria-expanded="settingsOpen" @click="settingsOpen = !settingsOpen">
+        <UButton color="neutral" variant="ghost" class="account-test-settings-toggle" :aria-expanded="settingsOpen" @click="settingsOpen = !settingsOpen">
           <Icon name="cog" size="sm" aria-hidden="true" />
           {{ t('admin.accounts.batchTest.settings') }}
           <Icon name="chevronDown" size="sm" class="account-test-settings-chevron" aria-hidden="true" />
-        </button>
+        </UButton>
         <div class="account-test-settings-content" :class="{ 'is-open': settingsOpen }" :inert="settingsOpen ? undefined : true">
           <div class="account-test-settings-inner">
             <div class="account-test-advanced">
@@ -59,9 +59,7 @@
               <div v-if="supportsImageUpload" class="account-test-field">
                 <label>{{ imageUploadLabel }}</label>
                 <div class="account-test-file">
-                  <button type="button" class="btn btn-secondary btn-sm" :disabled="standaloneBusy" @click="imageFileInput?.click()">
-                    {{ t('admin.accounts.grok.chooseImageFile') }}
-                  </button>
+                  <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-image-up" :disabled="standaloneBusy" :label="t('admin.accounts.grok.chooseImageFile')" @click="imageFileInput?.click()" />
                   <span>{{ uploadImageName || t('common.noFileSelected') }}</span>
                   <input
                     ref="imageFileInput"
@@ -77,9 +75,7 @@
               <div v-if="supportsAudioUpload" class="account-test-field">
                 <label>{{ t('admin.accounts.grok.audioUploadLabel') }}</label>
                 <div class="account-test-file">
-                  <button type="button" class="btn btn-secondary btn-sm" :disabled="standaloneBusy" @click="audioFileInput?.click()">
-                    {{ t('admin.accounts.grok.chooseAudioFile') }}
-                  </button>
+                  <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-file-audio" :disabled="standaloneBusy" :label="t('admin.accounts.grok.chooseAudioFile')" @click="audioFileInput?.click()" />
                   <span>{{ uploadAudioName || t('common.noFileSelected') }}</span>
                   <input
                     ref="audioFileInput"
@@ -91,16 +87,7 @@
                 </div>
               </div>
 
-              <button
-                v-if="isGrokStandaloneMode"
-                type="button"
-                class="btn btn-secondary"
-                data-test="standalone-start"
-                :disabled="standaloneBusy"
-                @click="startStandalone"
-              >
-                {{ standaloneBusy ? t('admin.accounts.testing') : t('admin.accounts.startTest') }}
-              </button>
+              <UButton v-if="isGrokStandaloneMode" color="neutral" variant="outline" icon="i-lucide-play" data-test="standalone-start" :disabled="standaloneBusy" @click="startStandalone">{{ standaloneBusy ? t('admin.accounts.testing') : t('admin.accounts.startTest') }}</UButton>
               <pre v-if="standaloneOutput" class="account-test-standalone">{{ standaloneOutput }}</pre>
               <p v-if="standaloneDuration !== undefined" data-test="standalone-duration">
                 {{ t('admin.accounts.batchTest.duration') }}: {{ formatAccountModelTestDuration(standaloneDuration) }}
@@ -123,9 +110,7 @@
     </div>
 
     <template #footer>
-      <button type="button" class="btn btn-secondary" @click="handleClose">
-        {{ t('common.close') }}
-      </button>
+      <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="handleClose" />
     </template>
   </BaseDialog>
 </template>

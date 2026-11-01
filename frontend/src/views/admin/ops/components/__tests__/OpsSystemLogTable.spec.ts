@@ -4,6 +4,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 import OpsSystemLogTable from '../OpsSystemLogTable.vue'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
+const confirmMock = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useConfirmation', () => ({ confirm: confirmMock }))
+
 
 const mockListSystemLogs = vi.fn()
 const mockCleanupSystemLogs = vi.fn()
@@ -74,7 +77,8 @@ const sinkHealth = {
 describe('OpsSystemLogTable host support', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    confirmMock.mockReset()
+    confirmMock.mockResolvedValue(true)
     mockListSystemLogs.mockResolvedValue({
       items: [
         {

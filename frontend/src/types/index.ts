@@ -2,6 +2,9 @@
  * Core Type Definitions for Sub2API Frontend
  */
 
+// 类型专用导入（编译后被擦除，不产生运行时循环依赖）。
+import type { PlatformQuotaItem } from '@/api/admin/users'
+
 // ==================== Common Types ====================
 
 export interface SelectOption {
@@ -110,6 +113,9 @@ export interface AdminUser extends User {
   // 为 true 时该用户仅可使用 allowed_groups 中列出的公开分组。
   // 管理侧权限开关，普通用户接口不返回。
   restrict_public_groups?: boolean
+  // 列表接口按需内联返回的平台配额（include_platform_quotas=true）。
+  // 没有配额记录的用户不会带这个字段（omitempty）。
+  platform_quotas?: PlatformQuotaItem[]
   // 当前并发数（仅管理员列表接口返回）
   current_concurrency?: number
 }
@@ -316,6 +322,11 @@ export interface PublicSettings {
   service_quota_enabled?: boolean
   affiliate_enabled: boolean
   allow_user_view_error_requests?: boolean
+  theme_primary?: string
+  theme_neutral?: string
+  theme_radius?: number
+  theme_font?: string
+  theme_default_mode?: 'system' | 'light' | 'dark' | string
 }
 
 export interface AuthResponse {
@@ -1842,7 +1853,22 @@ export interface UsageLogAccountSummary {
   name: string
 }
 
+export interface UsageUserSummary {
+  id: number
+  email: string
+  username?: string
+  deleted_at?: string | null
+}
+
+export interface UsageAPIKeySummary { id: number; name: string }
+export interface UsageGroupSummary { id: number; name: string }
+export interface UsageSubscriptionSummary { id: number; user_id: number; group_id: number; status: string }
+
 export interface AdminUsageLog extends UsageLog {
+  user_summary?: UsageUserSummary
+  api_key_summary?: UsageAPIKeySummary
+  group_summary?: UsageGroupSummary
+  subscription_summary?: UsageSubscriptionSummary
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
   upstream_response_model?: string | null
@@ -1861,6 +1887,7 @@ export interface AdminUsageLog extends UsageLog {
 
   // 最小账号信息（仅管理员接口返回）
   account?: UsageLogAccountSummary
+  account_summary?: UsageLogAccountSummary
 }
 
 export interface UsageCleanupFilters {

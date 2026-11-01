@@ -9,6 +9,8 @@ const {
   listKeys,
   createKey,
   updateKey,
+  deleteKey,
+  deleteMany,
   getPublicSettings,
   getDashboardApiKeysUsage,
   getAvailableGroups,
@@ -22,6 +24,8 @@ const {
   listKeys: vi.fn(),
   createKey: vi.fn(),
   updateKey: vi.fn(),
+  deleteKey: vi.fn(),
+  deleteMany: vi.fn(),
   getPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
   getAvailableGroups: vi.fn(),
@@ -62,6 +66,8 @@ const messages: Record<string, string> = {
   'keys.status.inactive': 'Inactive',
   'keys.status.quota_exhausted': 'Quota exhausted',
   'keys.usage': 'Usage',
+  'keys.deleteKey': 'Delete key',
+  'common.selectedCount': '({count} selected)',
 }
 
 vi.mock('@/api', () => ({
@@ -69,7 +75,8 @@ vi.mock('@/api', () => ({
     list: listKeys,
     create: createKey,
     update: updateKey,
-    delete: vi.fn(),
+    delete: deleteKey,
+    deleteMany,
     toggleStatus: vi.fn(),
   },
   authAPI: {
@@ -112,7 +119,14 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => messages[key] ?? key,
+      t: (key: string, params?: Record<string, unknown>) => {
+        const template = messages[key] ?? key
+        if (!params) return template
+        return Object.entries(params).reduce(
+          (text, [name, value]) => text.replace(`{${name}}`, String(value)),
+          template
+        )
+      },
     }),
   }
 })
@@ -165,11 +179,18 @@ const TablePageLayoutStub = {
 
 const DataTableStub = {
   name: 'DataTable',
-  props: ['columns', 'data'],
-  emits: ['sort'],
+  props: ['columns', 'data', 'selectable', 'selectedKeys', 'rowKey'],
+  emits: ['sort', 'update:selectedKeys', 'selectionChange'],
   template: `
     <div>
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
+      <button
+        v-if="selectable"
+        data-test="select-all"
+        @click="$emit('update:selectedKeys', data.map((row) => row.id))"
+      >
+        select all
+      </button>
       <div data-test="columns-meta">{{ JSON.stringify(columns.map((col) => ({ key: col.key, sortable: !!col.sortable }))) }}</div>
       <button data-test="sort-current-concurrency" @click="$emit('sort', 'current_concurrency', 'asc')">
         Sort Current Concurrency
@@ -228,6 +249,19 @@ const IconStub = {
   template: '<span data-test="icon">{{ name }}</span>',
 }
 
+const ConfirmDialogStub = {
+  name: 'ConfirmDialog',
+  props: ['show', 'title', 'message', 'confirmText', 'cancelText', 'danger'],
+  emits: ['confirm', 'cancel'],
+  template: `
+    <div v-if="show" data-test="confirm-dialog">
+      <p data-test="confirm-message">{{ message }}</p>
+      <button data-test="confirm-ok" @click="$emit('confirm')">ok</button>
+      <button data-test="confirm-cancel" @click="$emit('cancel')">cancel</button>
+    </div>
+  `,
+}
+
 const mountView = async () => {
   const wrapper = mount(KeysView, {
     global: {
@@ -240,7 +274,7 @@ const mountView = async () => {
           props: ['show'],
           template: '<div v-if="show"><slot /><slot name="footer" /></div>',
         },
-        ConfirmDialog: true,
+        ConfirmDialog: ConfirmDialogStub,
         EmptyState: true,
         Select: SelectStub,
         SearchInput: SearchInputStub,
@@ -279,6 +313,8 @@ describe('user KeysView column settings', () => {
     listKeys.mockReset()
     createKey.mockReset()
     updateKey.mockReset()
+    deleteKey.mockReset()
+    deleteMany.mockReset()
     getPublicSettings.mockReset()
     getDashboardApiKeysUsage.mockReset()
     getAvailableGroups.mockReset()
@@ -306,7 +342,7 @@ describe('user KeysView column settings', () => {
   it('keeps named icon tools and the key count in the workspace heading', async () => {
     const wrapper = await mountView()
     expect(wrapper.get('h1').text()).toContain('API Keys')
-    expect(wrapper.get('.signal-count').text()).toBe('1')
+    expect(wrapper.get('[data-test="key-count"]').text()).toBe('1')
     const columns = wrapper.get('button[aria-label="Column Settings"]')
     expect(columns.attributes('title')).toBe('Column Settings')
     expect(columns.attributes('aria-expanded')).toBe('false')
@@ -684,5 +720,168 @@ describe('user KeysView column settings', () => {
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+  })
+})
+describe('user KeysView mutations', () => {
+  beforeEach(() => {
+    localStorage.clear()
+
+    listKeys.mockReset()
+    createKey.mockReset()
+    updateKey.mockReset()
+    deleteKey.mockReset()
+    deleteMany.mockReset()
+    getPublicSettings.mockReset()
+    getDashboardApiKeysUsage.mockReset()
+    getAvailableGroups.mockReset()
+    getUserGroupRates.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+    copyToClipboard.mockReset()
+    isCurrentStep.mockReset()
+    nextStep.mockReset()
+
+    listKeys.mockResolvedValue({
+      items: [createApiKey()],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+  })
+
+  const twoKeys = () => ({
+    items: [createApiKey(), { ...createApiKey(), id: 2, name: 'second-key' }],
+    total: 2,
+    page: 1,
+    page_size: 20,
+    pages: 1,
+  })
+
+  const clickRowAction = async (wrapper: VueWrapper, text: string, index = 0) => {
+    const buttons = wrapper.findAll('button').filter((button) => button.text().includes(text))
+    if (!buttons[index]) throw new Error(`Row action not found: ${text}`)
+    await buttons[index].trigger('click')
+    await nextTick()
+  }
+
+  it('removes a deleted key immediately and never refetches the list', async () => {
+    listKeys.mockResolvedValue(twoKeys())
+    deleteKey.mockResolvedValue({ message: 'deleted' })
+    const wrapper = await mountView()
+    expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(2)
+
+    listKeys.mockClear()
+    await clickRowAction(wrapper, 'common.delete')
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    expect(deleteKey).toHaveBeenCalledWith(1)
+    expect(listKeys).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(1)
+    expect(showSuccess).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('restores the row and reports the failure when a delete request fails', async () => {
+    listKeys.mockResolvedValue(twoKeys())
+    deleteKey.mockRejectedValueOnce({ response: { data: { detail: 'permission denied' } } })
+    const wrapper = await mountView()
+
+    await clickRowAction(wrapper, 'common.delete')
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(2)
+    expect(showError).toHaveBeenCalledWith('permission denied')
+    wrapper.unmount()
+  })
+
+  it('bulk deletes the selected keys with one batch call and no refetch', async () => {
+    listKeys.mockResolvedValue(twoKeys())
+    deleteMany.mockResolvedValue({ succeeded: [1, 2], failed: [] })
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-test="keys-bulk-delete"]').exists()).toBe(false)
+
+    listKeys.mockClear()
+    await wrapper.get('[data-test="select-all"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="keys-bulk-delete"]').trigger('click')
+    await nextTick()
+    expect(wrapper.get('[data-test="confirm-message"]').text()).toContain('(2 selected)')
+
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    expect(deleteMany).toHaveBeenCalledWith([1, 2])
+    expect(listKeys).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('puts only the failed rows back after a partial bulk delete', async () => {
+    listKeys.mockResolvedValue(twoKeys())
+    deleteMany.mockResolvedValue({ succeeded: [1], failed: [2] })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="select-all"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="keys-bulk-delete"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(1)
+    expect(showError).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('inserts a created key locally without refetching the list', async () => {
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    createKey.mockResolvedValue({ ...createApiKey(), id: 99, name: 'new key' })
+    const wrapper = await mountView()
+
+    listKeys.mockClear()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('new key')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(createKey).toHaveBeenCalled()
+    expect(listKeys).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('patches the edited row in place without refetching the list', async () => {
+    getAvailableGroups.mockResolvedValue([{ id: 1, name: 'Claude', platform: 'anthropic' }])
+    listKeys.mockResolvedValue({
+      items: [{ ...createApiKey(), group_id: 1 }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    updateKey.mockResolvedValue({ ...createApiKey(), group_id: 1, name: 'renamed' })
+    const wrapper = await mountView()
+
+    listKeys.mockClear()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('renamed')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalled()
+    expect(listKeys).not.toHaveBeenCalled()
+    expect(wrapper.getComponent({ name: 'DataTable' }).props('data')[0].name).toBe('renamed')
+    wrapper.unmount()
   })
 })

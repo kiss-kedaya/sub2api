@@ -13,7 +13,7 @@
         <div class="flex items-center gap-3">
           <div
             :class="[
-              'flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br',
+              'flex h-10 w-10 items-center justify-center rounded-lg bg-linear-to-br/srgb',
               isOpenAILike
                 ? 'from-green-500 to-green-600'
                 : isGemini
@@ -47,30 +47,12 @@
       <!-- Add Method Selection (Claude only) -->
       <fieldset v-if="isAnthropic" class="border-0 p-0">
         <legend class="input-label">{{ t('admin.accounts.oauth.authMethod') }}</legend>
-        <div class="mt-2 flex gap-4">
-          <label class="flex cursor-pointer items-center">
-            <input
-              v-model="addMethod"
-              type="radio"
-              value="oauth"
-              class="mr-2 text-primary-600 focus:ring-primary-500"
-            />
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{
-              t('admin.accounts.types.oauth')
-            }}</span>
-          </label>
-          <label class="flex cursor-pointer items-center">
-            <input
-              v-model="addMethod"
-              type="radio"
-              value="setup-token"
-              class="mr-2 text-primary-600 focus:ring-primary-500"
-            />
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{
-              t('admin.accounts.setupTokenLongLived')
-            }}</span>
-          </label>
-        </div>
+        <URadioGroup
+          v-model="addMethod"
+          orientation="horizontal"
+          class="mt-2"
+          :items="[{ value: 'oauth', label: t('admin.accounts.types.oauth') }, { value: 'setup-token', label: t('admin.accounts.setupTokenLongLived') }]"
+        />
       </fieldset>
 
       <!-- Gemini OAuth Type Display (read-only) -->
@@ -138,42 +120,15 @@
 
     <template #footer>
       <div v-if="account" class="flex justify-between gap-3">
-        <button type="button" class="btn btn-secondary" @click="handleClose">
-          {{ t('common.cancel') }}
-        </button>
-        <button
-          v-if="isManualInputMethod"
-          type="button"
-          :disabled="!canExchangeCode"
-          class="btn btn-primary"
-          @click="handleExchangeCode"
-        >
-          <svg
-            v-if="currentLoading"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
+        <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="handleClose" />
+        <UButton v-if="isManualInputMethod" :disabled="!canExchangeCode" @click="handleExchangeCode">
+          <UIcon v-if="currentLoading" name="i-lucide-loader-circle" class="size-4 animate-spin" />
           {{
             currentLoading
               ? t('admin.accounts.oauth.verifying')
               : t('admin.accounts.oauth.completeAuth')
           }}
-        </button>
+        </UButton>
       </div>
     </template>
   </BaseDialog>

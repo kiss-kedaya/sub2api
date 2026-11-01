@@ -407,15 +407,26 @@ describe('PaymentView recharge center visibility', () => {
     wrapper.unmount()
   })
 
-  it('shows the configured entry only after enabling it and selecting its tab', async () => {
+  it('opens on the Alipay / WeChat entry by default once it is enabled', async () => {
     const wrapper = await mountEntry({ recharge_center_enabled: true })
-    expect(wrapper.find('iframe').exists()).toBe(false)
-    wrapper.getComponent(ConsoleTabs).vm.$emit('update:modelValue', 'rechargeCenter')
-    await flushPromises()
+    const tabs = wrapper.getComponent(ConsoleTabs)
+    expect(tabs.props('items').map((item: { key: string }) => item.key)).toEqual(['rechargeCenter', 'recharge'])
+    expect(tabs.props('modelValue')).toBe('rechargeCenter')
     expect(wrapper.get('iframe').attributes('src')).toContain('https://payment.example.test/recharge')
     expect(zh.payment.tabRechargeCenter).toBe('支付宝 / 微信')
     expect(zh.payment.rechargeCenterTitle).toBe('支付宝 / 微信')
     expect(createOrder).not.toHaveBeenCalled()
+    tabs.vm.$emit('update:modelValue', 'recharge')
+    await flushPromises()
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('stays on balance top-up when a link asks for it', async () => {
+    routeState.query = { tab: 'recharge' }
+    const wrapper = await mountEntry({ recharge_center_enabled: true })
+    expect(wrapper.getComponent(ConsoleTabs).props('modelValue')).toBe('recharge')
+    expect(wrapper.find('iframe').exists()).toBe(false)
     wrapper.unmount()
   })
 

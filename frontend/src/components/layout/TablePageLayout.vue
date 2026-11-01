@@ -1,6 +1,6 @@
 <template>
   <div class="table-page-layout" :class="{ 'mobile-mode': isMobile }">
-    <!-- 固定区域：操作按钮 -->
+    <!-- 固定区域：操作按钮（页头在控制台里会移到顶栏，空了就不占位） -->
     <div v-if="$slots.actions" class="layout-section-fixed">
       <slot name="actions" />
     </div>
@@ -44,23 +44,33 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 桌面端：Flexbox 布局 */
+@reference "../../style.css";
+/* 桌面端：填满控制台面板的剩余高度，表格在里面滚动 */
 .table-page-layout {
-  @apply flex flex-col gap-6;
-  height: calc(100vh - 64px - 4rem); /* 减去 header + lg:p-8 的上下padding */
+  @apply flex flex-col gap-4;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .layout-section-fixed {
   @apply flex-shrink-0;
 }
 
+/* The page header teleports into the navbar; an emptied slot must not leave a gap. */
+.layout-section-fixed:empty {
+  display: none;
+}
+
 .layout-section-scrollable {
   @apply flex-1 min-h-0 flex flex-col;
 }
 
-/* 表格滚动容器 - 增强版表体滚动方案 */
+/* 表格滚动容器：发丝边框，无阴影 */
 .table-scroll-container {
-  @apply flex flex-col overflow-hidden h-full bg-white dark:bg-dark-800 rounded-2xl border border-gray-200 dark:border-dark-700 shadow-sm;
+  @apply flex flex-col overflow-hidden h-full border border-default;
+  border-radius: calc(var(--ui-radius) * 2);
+  background: var(--signal-page-surface, var(--ui-bg));
+  box-shadow: none;
 }
 
 .table-scroll-container :deep(.table-wrapper) {
@@ -76,22 +86,23 @@ onUnmounted(() => {
 }
 
 .table-scroll-container :deep(thead) {
-  @apply bg-gray-50/80 dark:bg-dark-800/80 backdrop-blur-sm;
-}
-
-.table-scroll-container :deep(tbody) {
-  /* 保持默认 table-row-group 显示，不使用 block */
+  @apply bg-muted;
 }
 
 .table-scroll-container :deep(th) {
-  @apply px-5 py-4 text-left text-sm font-medium text-gray-600 dark:text-dark-300 border-b border-gray-200 dark:border-dark-700;
+  @apply px-4 py-3 text-left text-sm font-medium text-highlighted border-b border-default;
 }
 
 .table-scroll-container :deep(td) {
-  @apply px-5 py-4 text-sm text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-dark-800;
+  @apply px-4 py-3 text-sm text-default border-b border-default;
 }
 
-/* 移动端：恢复正常滚动 */
+/* 移动端：恢复正常滚动，由面板整体滚动 */
+.table-page-layout.mobile-mode {
+  flex: none;
+  height: auto;
+}
+
 .table-page-layout.mobile-mode .table-scroll-container {
   @apply h-auto overflow-visible border-none shadow-none bg-transparent;
 }

@@ -287,6 +287,11 @@ type UsageLogFilters struct {
 	EndTime               *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
+	// CompactAssociations loads only display summaries for user/api key/account/group
+	// and skips subscriptions. Admin list endpoints should set this; user-facing
+	// endpoints keep the full association objects.
+	CompactAssociations bool
+	AccountNameOnly     bool
 }
 
 // UsageStats represents usage statistics

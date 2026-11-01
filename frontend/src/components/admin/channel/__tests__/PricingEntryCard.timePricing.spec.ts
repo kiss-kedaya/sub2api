@@ -1,4 +1,5 @@
-import { shallowMount } from '@vue/test-utils'
+// Full mount: PricingEntryCard renders its body in UCollapsible's #content slot, which a shallow stub drops.
+import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import PricingEntryCard from '../PricingEntryCard.vue'
 import type { PricingFormEntry } from '../types'
@@ -32,7 +33,7 @@ function createEntry(billingMode: PricingFormEntry['billing_mode'] = 'token'): P
 
 describe('PricingEntryCard time pricing visibility', () => {
   it('is hidden by default', () => {
-    const wrapper = shallowMount(PricingEntryCard, {
+    const wrapper = mount(PricingEntryCard, {
       props: { entry: createEntry() },
     })
 
@@ -40,7 +41,7 @@ describe('PricingEntryCard time pricing visibility', () => {
   })
 
   it('is shown for token pricing when explicitly enabled', () => {
-    const wrapper = shallowMount(PricingEntryCard, {
+    const wrapper = mount(PricingEntryCard, {
       props: { entry: createEntry(), enableTimePricing: true },
     })
 
@@ -48,7 +49,7 @@ describe('PricingEntryCard time pricing visibility', () => {
   })
 
   it('is hidden for non-token pricing even when explicitly enabled', () => {
-    const wrapper = shallowMount(PricingEntryCard, {
+    const wrapper = mount(PricingEntryCard, {
       props: { entry: createEntry('per_request'), enableTimePricing: true },
     })
 
@@ -57,7 +58,7 @@ describe('PricingEntryCard time pricing visibility', () => {
 
   it('clears time periods when changing billing mode', () => {
     const entry = createEntry()
-    const wrapper = shallowMount(PricingEntryCard, {
+    const wrapper = mount(PricingEntryCard, {
       props: { entry, enableTimePricing: true },
     })
 
@@ -75,10 +76,10 @@ describe('PricingEntryCard time pricing visibility', () => {
 
 describe('PricingEntryCard request multipliers', () => {
   it('shows Fast, Flex, and Max effort controls only when explicitly enabled', () => {
-    const hidden = shallowMount(PricingEntryCard, { props: { entry: createEntry() } })
+    const hidden = mount(PricingEntryCard, { props: { entry: createEntry() } })
     expect(hidden.text()).not.toContain('admin.channels.form.fastMultiplier')
 
-    const shown = shallowMount(PricingEntryCard, {
+    const shown = mount(PricingEntryCard, {
       props: { entry: createEntry(), enableTierMultipliers: true },
     })
     expect(shown.text()).toContain('admin.channels.form.fastMultiplier')

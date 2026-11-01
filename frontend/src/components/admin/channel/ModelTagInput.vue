@@ -1,27 +1,33 @@
 <template>
   <div>
-    <!-- Tags display -->
-    <div class="flex flex-wrap gap-1.5 rounded-lg border border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-800 min-h-[2.5rem]">
-      <span
+    <!-- Tags + inline input, drawn like a Nuxt UI outline input -->
+    <div class="flex min-h-9 flex-wrap items-center gap-1.5 rounded-md bg-default px-2 py-1.5 ring ring-inset ring-accented focus-within:ring-2 focus-within:ring-primary">
+      <UBadge
         v-for="(model, idx) in models"
         :key="idx"
-        class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-sm"
-        :class="getPlatformTagClass(props.platform || '')"
+        color="neutral"
+        variant="subtle"
+        class="gap-0.5 pe-0.5"
       >
         {{ model }}
-        <button
-          type="button"
+        <UButton
+          icon="i-lucide-x"
+          color="neutral"
+          variant="link"
+          size="xs"
+          class="p-0.5"
+          :ui="{ leadingIcon: 'size-3' }"
+          :aria-label="t('common.remove')"
           @click="removeModel(idx)"
-          class="ml-0.5 rounded-full p-0.5 hover:bg-primary-200 dark:hover:bg-primary-800"
-        >
-          <Icon name="x" size="xs" />
-        </button>
-      </span>
-      <input
+        />
+      </UBadge>
+      <UInput
         ref="inputRef"
         v-model="inputValue"
         type="text"
-        class="flex-1 min-w-[120px] border-none bg-transparent text-sm outline-none placeholder:text-gray-400 dark:text-white"
+        variant="none"
+        class="min-w-[120px] flex-1"
+        :ui="{ base: 'px-1 py-0.5' }"
         :placeholder="models.length === 0 ? placeholder : ''"
         @keydown.enter.prevent="addModel"
         @keydown.tab="handleTab"
@@ -30,7 +36,7 @@
         @blur="addModel"
       />
     </div>
-    <p class="mt-1 text-xs text-gray-400">
+    <p class="mt-1 text-xs text-muted">
       {{ t('admin.channels.form.modelInputHint', 'Press Enter to add, supports paste for batch import.') }}
     </p>
   </div>
@@ -39,8 +45,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
-import { getPlatformTagClass } from './types'
 
 const { t } = useI18n()
 
@@ -55,7 +59,7 @@ const emit = defineEmits<{
 }>()
 
 const inputValue = ref('')
-const inputRef = ref<HTMLInputElement>()
+const inputRef = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
 
 function addModel() {
   const val = inputValue.value.trim()

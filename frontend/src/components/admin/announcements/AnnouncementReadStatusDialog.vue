@@ -6,19 +6,26 @@
     @close="handleClose"
   >
     <div class="space-y-4">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div class="flex-1">
-          <input
-            v-model="search"
-            type="text"
-            class="input"
-            :placeholder="t('admin.announcements.searchUsers')"
-            @input="handleSearch"
-          />
-        </div>
-        <button @click="load" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')">
-          <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-        </button>
+      <div class="flex items-center gap-1.5">
+        <UInput
+          v-model="search"
+          icon="i-lucide-search"
+          class="w-full sm:max-w-sm"
+          :placeholder="t('admin.announcements.searchUsers')"
+          @update:model-value="handleSearch"
+        />
+        <UButton
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-refresh-cw"
+          square
+          class="ms-auto"
+          :disabled="loading"
+          :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+          :title="t('common.refresh')"
+          :aria-label="t('common.refresh')"
+          @click="load"
+        />
       </div>
 
       <DataTable
@@ -31,23 +38,16 @@
         @sort="handleSort"
       >
         <template #cell-email="{ value }">
-          <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+          <span class="font-medium text-highlighted">{{ value }}</span>
         </template>
-
         <template #cell-balance="{ value }">
-          <span class="font-medium text-gray-900 dark:text-white">${{ Number(value ?? 0).toFixed(2) }}</span>
+          <span class="font-medium tabular-nums text-highlighted">${{ Number(value ?? 0).toFixed(2) }}</span>
         </template>
-
         <template #cell-eligible="{ value }">
-          <span :class="['badge', value ? 'badge-success' : 'badge-gray']">
-            {{ value ? t('admin.announcements.eligible') : t('common.no') }}
-          </span>
+          <UBadge :color="value ? 'success' : 'neutral'" variant="subtle" :label="value ? t('admin.announcements.eligible') : t('common.no')" />
         </template>
-
         <template #cell-read_at="{ value }">
-          <span class="text-sm text-gray-500 dark:text-dark-400">
-            {{ value ? formatDateTime(value) : t('admin.announcements.unread') }}
-          </span>
+          <span class="text-muted">{{ value ? formatDateTime(value) : t('admin.announcements.unread') }}</span>
         </template>
       </DataTable>
 
@@ -63,7 +63,7 @@
 
     <template #footer>
       <div class="flex justify-end">
-        <button type="button" class="btn btn-secondary" @click="handleClose">{{ t('common.close') }}</button>
+        <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="handleClose" />
       </div>
     </template>
   </BaseDialog>
@@ -82,7 +82,6 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
-import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()

@@ -76,7 +76,7 @@
               <td class="whitespace-nowrap px-4 py-2 font-mono text-xs">{{ point.bucket }}</td>
               <td v-for="direction in directions" :key="direction" class="px-4 py-2 tabular-nums" :title="`${point[direction]} B`">
                 {{ bytes(point[direction]) }}
-                <div class="mt-1 h-1.5 rounded bg-gray-100 dark:bg-dark-700"><div class="h-full rounded" :class="direction === 'upload_bytes' ? 'bg-sky-500' : 'bg-emerald-500'" :style="{ width: `${point[direction] / maxBytes * 100}%` }" /></div>
+                <div class="mt-1 h-1.5 rounded-sm bg-gray-100 dark:bg-dark-700"><div class="h-full rounded-sm" :class="direction === 'upload_bytes' ? 'bg-sky-500' : 'bg-emerald-500'" :style="{ width: `${point[direction] / maxBytes * 100}%` }" /></div>
               </td>
               <td class="px-4 py-2 tabular-nums">{{ bytes(point.total_bytes) }}</td>
             </tr>

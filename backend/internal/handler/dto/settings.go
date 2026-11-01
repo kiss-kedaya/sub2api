@@ -449,6 +449,13 @@ type PublicSettings struct {
 	RiskControlEnabled bool `json:"risk_control_enabled"`
 
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
+
+	// Site theme (read-only here; the primary admin edits it via /admin/settings/theme).
+	ThemePrimary     string  `json:"theme_primary"`
+	ThemeNeutral     string  `json:"theme_neutral"`
+	ThemeRadius      float64 `json:"theme_radius"`
+	ThemeFont        string  `json:"theme_font"`
+	ThemeDefaultMode string  `json:"theme_default_mode"`
 }
 
 type LoginAgreementDocument struct {

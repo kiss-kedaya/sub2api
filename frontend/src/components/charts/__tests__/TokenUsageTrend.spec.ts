@@ -64,6 +64,19 @@ describe('TokenUsageTrend', () => {
     }
   })
 
+  it('paints the total series with an explicit color and keeps the default otherwise', async () => {
+    const wrapper = mount(TokenUsageTrend, { props: { trendData: sampleTrend, mode: 'total' } })
+    const series = () => wrapper.getComponent(Line).props('data').datasets[0]
+    const textColor = wrapper.getComponent(Line).props('options').scales.x.ticks.color
+    expect(series().borderColor).toBe(textColor)
+    await wrapper.setProps({ color: '#e89ab3' })
+    expect(series().borderColor).toBe('#e89ab3')
+    expect(series().pointBackgroundColor).toBe('#e89ab3')
+    await wrapper.setProps({ mode: 'breakdown' })
+    expect(wrapper.getComponent(Line).props('data').datasets.map((d: { borderColor: string }) => d.borderColor)).not.toContain('#e89ab3')
+    wrapper.unmount()
+  })
+
   it('keeps the default animation unless the user console explicitly opts in', async () => {
     const wrapper = mount(TokenUsageTrend, { props: { trendData: sampleTrend } })
     expect(wrapper.getComponent(Line).props('options')).not.toHaveProperty('animation')

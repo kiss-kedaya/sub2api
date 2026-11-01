@@ -56,6 +56,8 @@ type UserPlatformQuotaRepository interface {
 	GetByUserPlatform(ctx context.Context, userID int64, platform string) (*UserPlatformQuotaRecord, error)
 	// ListByUser 查询用户的所有平台配额记录（排除软删除）。
 	ListByUser(ctx context.Context, userID int64) ([]UserPlatformQuotaRecord, error)
+	// ListByUsers 批量查询多个用户的配额记录（排除软删除），返回 userID -> records。
+	ListByUsers(ctx context.Context, userIDs []int64) (map[int64][]UserPlatformQuotaRecord, error)
 	// IncrementUsageWithReset 原子地累加用量，若窗口已过期则先重置再累加。
 	IncrementUsageWithReset(ctx context.Context, userID int64, platform string, cost float64, now time.Time) error
 	// ResetExpiredWindow 重置指定窗口（daily/weekly/monthly）的用量与起始时间。
@@ -163,6 +165,39 @@ func (r *userPlatformQuotaRepository) ListByUser(ctx context.Context, userID int
 	out := make([]UserPlatformQuotaRecord, 0, len(rows))
 	for _, e := range rows {
 		out = append(out, *entQuotaToRecord(e))
+	}
+	return out, nil
+}
+
+// ListByUsers 批量查询多个用户的配额记录（排除软删除）。
+// 单条 SQL（IN 过滤 + 500 一组分块），供后台用户列表页一次性取整页配额，
+// 避免原先「每行一个 HTTP + 一次用户存在性校验 + 一次查询」的 N+1。
+func (r *userPlatformQuotaRepository) ListByUsers(ctx context.Context, userIDs []int64) (map[int64][]UserPlatformQuotaRecord, error) {
+	out := make(map[int64][]UserPlatformQuotaRecord, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	client := clientFromContext(ctx, r.client)
+	// 分块：防止 IN 列表过长（列表页最多 1000 行，正常远低于 500）。
+	const chunkSize = 500
+	for start := 0; start < len(userIDs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(userIDs) {
+			end = len(userIDs)
+		}
+		rows, err := client.UserPlatformQuota.Query().
+			Where(
+				userplatformquota.UserIDIn(userIDs[start:end]...),
+				userplatformquota.DeletedAtIsNil(),
+			).
+			All(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range rows {
+			rec := entQuotaToRecord(e)
+			out[rec.UserID] = append(out[rec.UserID], *rec)
+		}
 	}
 	return out, nil
 }

@@ -21,7 +21,7 @@
       />
       <span
         v-if="showPlatform && model.platform"
-        class="rounded bg-gray-200/60 px-1 text-[10px] uppercase text-gray-600 dark:bg-dark-700 dark:text-gray-400"
+        class="rounded-sm bg-gray-200/60 px-1 text-[10px] uppercase text-gray-600 dark:bg-dark-700 dark:text-gray-400"
       >
         {{ model.platform }}
       </span>
@@ -36,7 +36,7 @@
         v-show="show"
         ref="popoverEl"
         role="tooltip"
-        class="pointer-events-none fixed z-[99999] w-80 max-w-[min(22rem,calc(100vw-1rem))] rounded-lg border bg-white text-xs shadow-xl dark:bg-dark-800"
+        class="pointer-events-none fixed z-99999 w-80 max-w-[min(22rem,calc(100vw-1rem))] rounded-lg border bg-white text-xs shadow-xl dark:bg-dark-800"
         :class="[popoverBorderClass]"
         :style="popoverStyle"
       >
@@ -48,7 +48,7 @@
           <span class="truncate font-semibold">{{ model.name }}</span>
           <span
             v-if="model.platform"
-            class="flex-shrink-0 rounded bg-white/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide dark:bg-dark-900/60"
+            class="flex-shrink-0 rounded-sm bg-white/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide dark:bg-dark-900/60"
           >
             {{ model.platform }}
           </span>

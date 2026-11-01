@@ -35,7 +35,7 @@ describe('account notification credentials', () => {
     const wrapper = mount(ChannelFields, { props: { modelValue: [webhook()], encryptionConfigured: true } })
     await wrapper.get('[data-testid="account-ops-webhook-test-saved"]').trigger('click')
     expect(wrapper.emitted('test')).toEqual([['saved']])
-    await wrapper.get('[data-testid="account-ops-webhook-clear-secret-saved"]').setValue(true)
+    await wrapper.get('[data-testid="account-ops-webhook-clear-secret-saved"]').trigger('click')
     expect((wrapper.vm as any).prepare()[0].clear_secret).toBe(true)
     expect(wrapper.get('[data-testid="account-ops-webhook-test-saved"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()

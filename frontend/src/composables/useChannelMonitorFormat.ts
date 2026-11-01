@@ -250,24 +250,24 @@ export function hslForPct(pct: number | null | undefined): string | undefined {
 export function providerGradient(provider: string): string {
   switch (provider) {
     case PROVIDER_OPENAI:
-      return 'bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-500/10 dark:to-emerald-500/20'
+      return 'bg-linear-to-br/srgb from-emerald-50 to-emerald-100 dark:from-emerald-500/10 dark:to-emerald-500/20'
     case PROVIDER_ANTHROPIC:
-      return 'bg-gradient-to-br from-orange-50 to-amber-100 dark:from-orange-500/10 dark:to-amber-500/20'
+      return 'bg-linear-to-br/srgb from-orange-50 to-amber-100 dark:from-orange-500/10 dark:to-amber-500/20'
     case PROVIDER_GEMINI:
-      return 'bg-gradient-to-br from-sky-50 to-indigo-100 dark:from-sky-500/10 dark:to-indigo-500/20'
+      return 'bg-linear-to-br/srgb from-sky-50 to-indigo-100 dark:from-sky-500/10 dark:to-indigo-500/20'
     case PROVIDER_GROK:
-      return 'bg-gradient-to-br from-zinc-50 to-neutral-200 dark:from-zinc-500/10 dark:to-neutral-500/20'
+      return 'bg-linear-to-br/srgb from-zinc-50 to-neutral-200 dark:from-zinc-500/10 dark:to-neutral-500/20'
     case PROVIDER_ANTIGRAVITY:
-      return 'bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-500/10 dark:to-purple-500/20'
+      return 'bg-linear-to-br/srgb from-purple-50 to-purple-100 dark:from-purple-500/10 dark:to-purple-500/20'
     case PROVIDER_KIMI:
-      return 'bg-gradient-to-br from-pink-50 to-pink-100 dark:from-pink-500/10 dark:to-pink-500/20'
+      return 'bg-linear-to-br/srgb from-pink-50 to-pink-100 dark:from-pink-500/10 dark:to-pink-500/20'
     case PROVIDER_ZHIPU:
-      return 'bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-indigo-500/10 dark:to-indigo-500/20'
+      return 'bg-linear-to-br/srgb from-indigo-50 to-indigo-100 dark:from-indigo-500/10 dark:to-indigo-500/20'
     case PROVIDER_DEEPSEEK:
-      return 'bg-gradient-to-br from-teal-50 to-teal-100 dark:from-teal-500/10 dark:to-teal-500/20'
+      return 'bg-linear-to-br/srgb from-teal-50 to-teal-100 dark:from-teal-500/10 dark:to-teal-500/20'
     case PROVIDER_MINIMAX:
-      return 'bg-gradient-to-br from-rose-50 to-rose-100 dark:from-rose-500/10 dark:to-rose-500/20'
+      return 'bg-linear-to-br/srgb from-rose-50 to-rose-100 dark:from-rose-500/10 dark:to-rose-500/20'
     default:
-      return 'bg-gradient-to-br from-gray-100 to-gray-200 dark:from-dark-700 dark:to-dark-600'
+      return 'bg-linear-to-br/srgb from-gray-100 to-gray-200 dark:from-dark-700 dark:to-dark-600'
   }
 }

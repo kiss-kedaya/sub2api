@@ -29,17 +29,15 @@
           @drop.prevent="handleDrop"
         >
           <div class="min-w-0">
-            <div class="truncate text-sm text-gray-700 dark:text-dark-200" :title="fileListTitle">
+            <div class="truncate text-sm text-default" :title="fileListTitle">
               {{ selectedFilesLabel || t('admin.accounts.dataImportSelectFile') }}
             </div>
-            <div class="text-xs text-gray-500 dark:text-dark-400">
+            <div class="text-xs text-muted">
               JSON (.json)
               <span v-if="files.length > 1"> · {{ fileListTitle }}</span>
             </div>
           </div>
-          <button type="button" class="btn btn-secondary shrink-0" @click="openFilePicker">
-            {{ t('common.chooseFile') }}
-          </button>
+          <UButton color="neutral" variant="outline" icon="i-lucide-upload" class="shrink-0" :label="t('common.chooseFile')" @click="openFilePicker" />
         </div>
         <input
           ref="fileInput"
@@ -79,17 +77,8 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button class="btn btn-secondary" type="button" :disabled="importing" @click="handleClose">
-          {{ t('common.cancel') }}
-        </button>
-        <button
-          class="btn btn-primary"
-          type="submit"
-          form="import-data-form"
-          :disabled="importing"
-        >
-          {{ importing ? t('admin.accounts.dataImporting') : t('admin.accounts.dataImportButton') }}
-        </button>
+        <UButton color="neutral" variant="subtle" :disabled="importing" :label="t('common.cancel')" @click="handleClose" />
+        <UButton type="submit" form="import-data-form" :disabled="importing" :label="importing ? t('admin.accounts.dataImporting') : t('admin.accounts.dataImportButton')" />
       </div>
     </template>
   </BaseDialog>

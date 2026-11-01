@@ -69,19 +69,23 @@ describe('DataTable', () => {
 
     await wrapper.vm.$nextTick()
 
-    const nameHeader = wrapper.findAll('th')[0]
+    const [nameHeader, createdHeader] = wrapper.findAll('th')
     expect(nameHeader.find('[data-test="custom-name-header"]').exists()).toBe(true)
     expect(nameHeader.attributes('aria-sort')).toBe('ascending')
-    expect(nameHeader.findAll('svg')).toHaveLength(2)
-    expect(nameHeader.findAll('svg')[0].classes()).toContain('text-primary-600')
-    expect(nameHeader.findAll('svg')[1].classes()).toContain('text-gray-300')
+    // Sortable headers are ghost buttons with one arrow icon showing the active direction.
+    const nameSort = nameHeader.get('button.data-table-sort')
+    expect(nameSort.attributes('data-sort')).toBe('ascending')
+    expect(nameHeader.findComponent({ name: 'Button' }).props('icon')).toBe('i-lucide-arrow-up-narrow-wide')
+    expect(createdHeader.attributes('aria-sort')).toBe('none')
+    expect(createdHeader.findComponent({ name: 'Button' }).props('icon')).toBe('i-lucide-arrow-up-down')
 
-    await nameHeader.trigger('click')
+    await nameSort.trigger('click')
     await wrapper.vm.$nextTick()
 
     expect(nameHeader.attributes('aria-sort')).toBe('descending')
-    expect(nameHeader.findAll('svg')[0].classes()).toContain('text-gray-300')
-    expect(nameHeader.findAll('svg')[1].classes()).toContain('text-primary-600')
+    expect(nameSort.attributes('data-sort')).toBe('descending')
+    expect(nameHeader.findComponent({ name: 'Button' }).props('icon')).toBe('i-lucide-arrow-down-wide-narrow')
+    expect(createdHeader.findComponent({ name: 'Button' }).props('icon')).toBe('i-lucide-arrow-up-down')
   })
 
   it('renders every row with no virtual padding spacer for small datasets (virtualization off)', async () => {
@@ -295,16 +299,19 @@ describe('DataTable', () => {
       }
     })
 
-    await wrapper.get('[data-test="select-all"]').setValue(true)
+    // Nuxt UI checkboxes are buttons with role="checkbox"; they toggle on click.
+    await wrapper.get('[data-test="select-all"]').trigger('click')
 
     const selectedAll = wrapper.emitted('update:selectedKeys')?.at(-1)?.[0]
     expect(selectedAll).toEqual([99, 1, 2])
 
     await wrapper.setProps({ selectedKeys: selectedAll as number[] })
-    const rowCheckboxes = wrapper.findAll<HTMLInputElement>('[data-test="select-row"]')
-    expect(rowCheckboxes.every((checkbox) => checkbox.element.checked)).toBe(true)
+    const rowCheckboxes = wrapper.findAll('[data-test="select-row"]')
+    expect(rowCheckboxes.every((checkbox) => checkbox.attributes('aria-checked') === 'true')).toBe(true)
+    // Selected rows carry the table's selected state (tinted row).
+    expect(wrapper.findAll('tbody tr[data-selected="true"]')).toHaveLength(2)
 
-    await rowCheckboxes[0].setValue(false)
+    await rowCheckboxes[0].trigger('click')
 
     expect(wrapper.emitted('update:selectedKeys')?.at(-1)?.[0]).toEqual([99, 2])
     expect(wrapper.emitted('selectionChange')?.at(-1)?.[0]).toEqual([99, 2])
@@ -354,7 +361,7 @@ describe('DataTable', () => {
       }
     })
 
-    await wrapper.get('[data-test="select-all-mobile"]').setValue(true)
+    await wrapper.get('[data-test="select-all-mobile"]').trigger('click')
 
     expect(wrapper.emitted('update:selectedKeys')?.at(-1)?.[0]).toEqual([99, 1, 2])
   })
@@ -421,6 +428,87 @@ describe('DataTable', () => {
     const namesDesc = wrapper.findAll('[data-field="name"]').map((cell) => cell.text())
     expect(namesDesc[0]).toContain('Two')
     expect(namesDesc[1]).toContain('One')
+  })
+
+  it('stamps each rendered row with its key and sorted index', async () => {
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [{ key: 'name', label: 'Name', sortable: true }],
+        data: [
+          { id: 7, name: 'Gamma' },
+          { id: 3, name: 'Alpha' }
+        ],
+        defaultSortKey: 'name'
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const rows = wrapper.findAll('tbody tr[data-row-id]')
+    expect(rows.map((row) => row.attributes('data-row-id'))).toEqual(['3', '7'])
+    expect(rows.map((row) => row.attributes('data-index'))).toEqual(['0', '1'])
+  })
+
+  it('emits rowClick with the source row, but not from the selection checkbox', async () => {
+    const data = [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }]
+    const wrapper = mount(DataTable, {
+      props: { columns: [{ key: 'name', label: 'Name' }], data, clickableRows: true, selectable: true }
+    })
+    await wrapper.vm.$nextTick()
+
+    await wrapper.findAll('tbody tr[data-row-id]')[1].find('td:last-child').trigger('click')
+    expect(wrapper.emitted('rowClick')).toEqual([[data[1]]])
+
+    await wrapper.findAll('[data-test="select-row"]')[0].trigger('click')
+    expect(wrapper.emitted('rowClick')).toHaveLength(1)
+    expect(wrapper.emitted('update:selectedKeys')?.at(-1)?.[0]).toEqual([1])
+  })
+
+  it('shows skeleton rows while loading and the empty slot when there is no data', async () => {
+    const wrapper = mount(DataTable, {
+      props: { columns: [{ key: 'name', label: 'Name' }], data: [{ id: 1, name: 'One' }], loading: true },
+      slots: { empty: '<p data-test="custom-empty">Nothing yet</p>' }
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.findAll('tbody tr')).toHaveLength(5)
+    expect(wrapper.findAll('tbody tr[data-row-id]')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('One')
+
+    await wrapper.setProps({ loading: false, data: [] })
+    expect(wrapper.find('[data-test="custom-empty"]').exists()).toBe(true)
+  })
+
+  it('pins the first column and the actions column, and the checkbox column with the first', async () => {
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [{ key: 'name', label: 'Name' }, { key: 'notes', label: 'Notes' }, { key: 'actions', label: 'Actions' }],
+        data: [{ id: 1, name: 'One', notes: 'n' }]
+      }
+    })
+    await wrapper.vm.$nextTick()
+    const cells = wrapper.find('tbody tr').findAll('td')
+    expect(cells[0].classes()).toEqual(expect.arrayContaining(['data-table-pin', 'sticky', 'left-0']))
+    expect(cells[1].classes()).not.toContain('sticky')
+    expect(cells[2].classes()).toEqual(expect.arrayContaining(['data-table-pin', 'sticky', 'right-0']))
+
+    await wrapper.setProps({ selectable: true })
+    const selectableCells = wrapper.find('tbody tr').findAll('td')
+    expect(selectableCells[0].classes()).toEqual(expect.arrayContaining(['sticky', 'left-0']))
+    expect(selectableCells[1].classes()).toEqual(expect.arrayContaining(['sticky', 'left-(--data-table-pin-offset)']))
+  })
+
+  it('sorts from a click anywhere in a sortable header cell, once', async () => {
+    const wrapper = mount(DataTable, {
+      props: { columns: [{ key: 'name', label: 'Name', sortable: true }, { key: 'notes', label: 'Notes' }], data: [], serverSideSort: true }
+    })
+    const [nameHeader, notesHeader] = wrapper.findAll('th')
+
+    await nameHeader.trigger('click')
+    expect(wrapper.emitted('sort')).toEqual([['name', 'asc']])
+    await nameHeader.get('button.data-table-sort').trigger('click')
+    expect(wrapper.emitted('sort')).toEqual([['name', 'asc'], ['name', 'desc']])
+    await notesHeader.trigger('click')
+    expect(wrapper.emitted('sort')).toHaveLength(2)
   })
 
   it('hides the mobile sort bar when no column is sortable', () => {

@@ -140,7 +140,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          # Nuxt 4.6.3 requires ^22.22.3 or ^24.15. 24.22 also builds the legacy Vite SPA.
+          node-version: '24.22'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -150,6 +151,14 @@ jobs:
 
       - name: Build frontend
         run: pnpm run build
+        working-directory: frontend
+
+      - name: Verify frontend manifest
+        run: >-
+          node scripts/build-manifest.mjs verify
+          --dir ../backend/internal/web/dist
+          --mode spa
+          --expect-commit ${{ needs.resolve_release_ref.outputs.commit_sha }}
         working-directory: frontend
 
       - name: Upload frontend artifact
@@ -186,6 +195,21 @@ jobs:
         with:
           name: frontend-dist
           path: backend/internal/web/dist/
+
+      - name: Setup Node.js for manifest check
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.22'
+
+      # Anti-stale gate: the Go binary embeds exactly this directory. If the
+      # artifact was built from another commit (cached/partial upload), fail
+      # before GoReleaser produces a release whose UI does not match the API.
+      - name: Verify embedded frontend matches the release commit
+        run: >-
+          node frontend/scripts/build-manifest.mjs verify
+          --dir backend/internal/web/dist
+          --mode spa
+          --expect-commit ${{ needs.resolve_release_ref.outputs.commit_sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -389,6 +413,14 @@ jobs:
                 parse_mode: "Markdown",
                 disable_web_page_preview: true
               }')"
+
+  ssr-artifact:
+    needs: [resolve_release_ref, release]
+    if: ${{ needs.release.result == 'success' && needs.resolve_release_ref.result == 'success' }}
+    uses: ./.github/workflows/ssr-release.yml
+    with:
+      tag: ${{ needs.resolve_release_ref.outputs.release_tag }}
+    secrets: inherit
 
   sync-version-file:
     needs: [resolve_release_ref, release]

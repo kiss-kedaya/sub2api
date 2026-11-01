@@ -26,4 +26,5 @@ import groupCacheTest from './groupCacheTest'
 import requestCapture from './requestCapture'
 import timer from '@/components/account/schedulableTimer.en'
 import ipRisk from '@/features/ip-risk/locale.en'
-export default {...messages,...groupCacheTest,...requestCapture,accounts:{...messages.accounts,timer},settings:{...messages.settings,ipRisk}}
+import siteTheme from '@/components/admin/theme/siteTheme.en'
+export default {...messages,...groupCacheTest,...requestCapture,accounts:{...messages.accounts,timer},settings:{...messages.settings,ipRisk,siteTheme}}

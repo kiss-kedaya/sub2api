@@ -259,6 +259,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyAllowUserViewErrorRequests,
 		SettingKeyCryptoConfig,
 	}
+	keys = append(keys, siteThemeSettingKeys()...)
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
 	if err != nil {
@@ -395,6 +396,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
 
 		AllowUserViewErrorRequests: settings[SettingKeyAllowUserViewErrorRequests] == "true",
+
+		SiteTheme: parseSiteThemeSettings(settings),
 	}, nil
 }
 
@@ -661,6 +664,13 @@ type PublicSettingsInjectionPayload struct {
 	AffiliateEnabled              bool `json:"affiliate_enabled"`
 	RiskControlEnabled            bool `json:"risk_control_enabled"`
 	AllowUserViewErrorRequests    bool `json:"allow_user_view_error_requests"`
+
+	// Site theme: allowlisted names only; the frontend maps them to built-in palettes.
+	ThemePrimary     string  `json:"theme_primary"`
+	ThemeNeutral     string  `json:"theme_neutral"`
+	ThemeRadius      float64 `json:"theme_radius"`
+	ThemeFont        string  `json:"theme_font"`
+	ThemeDefaultMode string  `json:"theme_default_mode"`
 }
 
 // GetPublicSettingsForInjection returns public settings in a format suitable for HTML injection.
@@ -745,6 +755,12 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AffiliateEnabled:                     settings.AffiliateEnabled,
 		RiskControlEnabled:                   settings.RiskControlEnabled,
 		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
+
+		ThemePrimary:     settings.SiteTheme.Primary,
+		ThemeNeutral:     settings.SiteTheme.Neutral,
+		ThemeRadius:      settings.SiteTheme.Radius,
+		ThemeFont:        settings.SiteTheme.Font,
+		ThemeDefaultMode: settings.SiteTheme.DefaultMode,
 	}, nil
 }
 

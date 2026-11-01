@@ -34,6 +34,7 @@ type groupCapacityConcurrencyCacheStub struct {
 	ConcurrencyCache
 	counts    map[int64]int
 	requested []int64
+	err       error
 }
 
 func (s *groupCapacityConcurrencyCacheStub) GetAccountConcurrencyBatch(_ context.Context, accountIDs []int64) (map[int64]int, error) {
@@ -42,7 +43,7 @@ func (s *groupCapacityConcurrencyCacheStub) GetAccountConcurrencyBatch(_ context
 	for _, id := range accountIDs {
 		out[id] = s.counts[id]
 	}
-	return out, nil
+	return out, s.err
 }
 
 type groupCapacitySessionCacheStub struct {
@@ -50,6 +51,7 @@ type groupCapacitySessionCacheStub struct {
 	counts       map[int64]int
 	requested    []int64
 	idleTimeouts map[int64]time.Duration
+	err          error
 }
 
 func (s *groupCapacitySessionCacheStub) GetActiveSessionCountBatch(_ context.Context, accountIDs []int64, idleTimeouts map[int64]time.Duration) (map[int64]int, error) {
@@ -62,13 +64,14 @@ func (s *groupCapacitySessionCacheStub) GetActiveSessionCountBatch(_ context.Con
 	for _, id := range accountIDs {
 		out[id] = s.counts[id]
 	}
-	return out, nil
+	return out, s.err
 }
 
 type groupCapacityRPMCacheStub struct {
 	RPMCache
 	counts    map[int64]int
 	requested []int64
+	err       error
 }
 
 func (s *groupCapacityRPMCacheStub) GetRPMBatch(_ context.Context, accountIDs []int64) (map[int64]int, error) {
@@ -77,7 +80,7 @@ func (s *groupCapacityRPMCacheStub) GetRPMBatch(_ context.Context, accountIDs []
 	for _, id := range accountIDs {
 		out[id] = s.counts[id]
 	}
-	return out, nil
+	return out, s.err
 }
 
 func TestGetAllGroupCapacityBatchAggregatesRuntimeAndLimits(t *testing.T) {
@@ -147,6 +150,7 @@ func TestGetAllGroupCapacityBatchAggregatesRuntimeAndLimits(t *testing.T) {
 			SessionsMax:     3,
 			RPMUsed:         5,
 			RPMMax:          11,
+			RuntimeKnown:    true,
 		},
 		{
 			GroupID:         20,
@@ -156,6 +160,7 @@ func TestGetAllGroupCapacityBatchAggregatesRuntimeAndLimits(t *testing.T) {
 			SessionsMax:     4,
 			RPMUsed:         12,
 			RPMMax:          24,
+			RuntimeKnown:    true,
 		},
 	}, results)
 }
@@ -173,7 +178,34 @@ func TestGetAllGroupCapacityBatchKeepsEmptyGroupRows(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, []GroupCapacitySummary{
-		{GroupID: 10},
+		{GroupID: 10, RuntimeKnown: true},
 		{GroupID: 20, ConcurrencyMax: 4},
 	}, results)
+}
+
+func TestGetAllGroupCapacityBatchMarksAllEmptyGroupsKnown(t *testing.T) {
+	accountRepo := &groupCapacityAccountRepoStub{}
+	groupRepo := &groupCapacityGroupRepoStub{groupIDs: []int64{10, 20}}
+	svc := NewGroupCapacityService(accountRepo, groupRepo, nil, nil, nil)
+
+	results, err := svc.GetAllGroupCapacity(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []GroupCapacitySummary{
+		{GroupID: 10, RuntimeKnown: true},
+		{GroupID: 20, RuntimeKnown: true},
+	}, results)
+}
+
+func TestGetAllGroupCapacityMarksRuntimeUnknownWhenRedisReadFails(t *testing.T) {
+	accountRepo := &groupCapacityAccountRepoStub{rows: []GroupAccountCapacityRow{{GroupID: 10, AccountID: 1, Concurrency: 2}}}
+	groupRepo := &groupCapacityGroupRepoStub{groupIDs: []int64{10}}
+	concurrencyCache := &groupCapacityConcurrencyCacheStub{err: context.DeadlineExceeded}
+	svc := NewGroupCapacityService(accountRepo, groupRepo, NewConcurrencyService(concurrencyCache), nil, nil)
+
+	results, err := svc.GetAllGroupCapacity(context.Background())
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, 2, results[0].ConcurrencyMax)
+	require.Zero(t, results[0].ConcurrencyUsed)
+	require.False(t, results[0].RuntimeKnown)
 }

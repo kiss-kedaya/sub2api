@@ -16,11 +16,12 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
+      "@runtime/context": ["./src/runtime/context.ts"],
       "@/*": ["./src/*"]
     },
     "types": ["vite/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue", "auto-imports.d.ts", "components.d.ts"],
   "exclude": ["src/**/__tests__/**", "src/**/*.spec.ts", "src/**/*.test.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

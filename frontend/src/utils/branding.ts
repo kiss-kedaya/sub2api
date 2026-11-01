@@ -1,6 +1,7 @@
 import { sanitizeUrl } from '@/utils/url'
 
 export function updateFavicon(logoUrl: string): void {
+  if (typeof document === 'undefined') return
   const sanitizedLogoUrl = sanitizeUrl(logoUrl, {
     allowRelative: true,
     allowDataUrl: true,

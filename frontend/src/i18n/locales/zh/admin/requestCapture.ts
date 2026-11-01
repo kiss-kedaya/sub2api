@@ -79,5 +79,10 @@ export default { requestCapture: {
   "client_request": "客户端请求",
   "upstream_request": "上游请求",
   "upstream_response": "上游响应",
-  "client_response": "客户端响应"
+  "client_response": "客户端响应",
+  tabs: { tasks: '采集任务', settings: '采集设置' },
+  targetedSettings: '定向错误采集',
+  diagnosticSettings: 'ID1 全请求诊断',
+  columns: '显示列',
+  captureDisabled: '定向错误采集未启用，请先在「采集设置」中开启。'
 } }

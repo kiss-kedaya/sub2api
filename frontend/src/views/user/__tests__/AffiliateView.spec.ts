@@ -73,44 +73,46 @@ describe('AffiliateView', () => {
 
     await flushPromises()
 
-    const values = wrapper.findAll('code')
-    expect(values).toHaveLength(2)
-    for (const value of values) {
-      expect(value.classes()).toEqual(expect.arrayContaining([
-        'min-w-0',
-        'break-all',
-        'sm:flex-1',
-        'sm:truncate',
-      ]))
-      expect(Array.from(value.element.parentElement?.classList ?? [])).toEqual(expect.arrayContaining([
-        'flex-col',
-        'items-stretch',
-        'sm:flex-row',
-        'sm:items-center',
-      ]))
-    }
-
+    // The custom-codes section (added 2026-10-14) repeats the default code in a
+    // compact read-only row, so a page-wide <code> count no longer identifies
+    // the two primary copy rows. Locate each row through its labelled copy button.
+    const inviteLink = `${window.location.origin}/register?aff=${encodeURIComponent(affiliateCode)}`
     const copyButtons = wrapper.findAll('button').filter((button) =>
       ['affiliate.copyCode', 'affiliate.copyLink'].includes(button.text()),
     )
     expect(copyButtons).toHaveLength(2)
-    for (const button of copyButtons) {
+
+    const expectedValues = [affiliateCode, inviteLink]
+    copyButtons.forEach((button, index) => {
       expect(button.classes()).toEqual(expect.arrayContaining([
         'w-full',
         'sm:w-auto',
         'sm:shrink-0',
       ]))
-    }
+
+      const row = button.element.parentElement
+      expect(Array.from(row?.classList ?? [])).toEqual(expect.arrayContaining([
+        'flex-col',
+        'items-stretch',
+        'sm:flex-row',
+        'sm:items-center',
+      ]))
+
+      const value = row?.querySelector('code')
+      expect(value?.textContent?.trim()).toBe(expectedValues[index])
+      expect(Array.from(value?.classList ?? [])).toEqual(expect.arrayContaining([
+        'min-w-0',
+        'break-all',
+        'sm:flex-1',
+        'sm:truncate',
+      ]))
+    })
 
     await copyButtons[0].trigger('click')
     await copyButtons[1].trigger('click')
     await flushPromises()
 
     expect(copyToClipboard).toHaveBeenNthCalledWith(1, affiliateCode, 'affiliate.codeCopied')
-    expect(copyToClipboard).toHaveBeenNthCalledWith(
-      2,
-      `${window.location.origin}/register?aff=${encodeURIComponent(affiliateCode)}`,
-      'affiliate.linkCopied',
-    )
+    expect(copyToClipboard).toHaveBeenNthCalledWith(2, inviteLink, 'affiliate.linkCopied')
   })
 })

@@ -27,11 +27,20 @@ vi.mock('@/stores/app', () => ({
   })
 }))
 
+// UButton / UPageCard links render through Nuxt UI's router-aware ULink (useRoute, RouterLink).
 vi.mock('vue-router', () => ({
   useRouter: () => ({
     push: vi.fn()
-  })
+  }),
+  useRoute: () => ({ path: '/admin/dashboard', query: {}, hash: '' }),
+  RouterLink: { name: 'RouterLink', props: ['to', 'custom'], template: '<a><slot /></a>' }
 }))
+
+vi.mock('@/composables/useBatchImageAccess', async () => {
+  const { ref } = await vi.importActual<typeof import('vue')>('vue')
+  const canUseBatchImage = ref(false)
+  return { useBatchImageAccess: () => ({ canUseBatchImage, refreshBatchImageAccess: vi.fn() }) }
+})
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -142,5 +151,46 @@ describe('admin DashboardView', () => {
       end_date: formatLocalDate(now),
       granularity: 'hour'
     }))
+  })
+
+  it('keeps every stat number in the eight tiles and the group pricing link', async () => {
+    getSnapshotV2.mockResolvedValue({
+      stats: {
+        ...createDashboardStats(),
+        total_api_keys: 26, active_api_keys: 23,
+        total_accounts: 24, normal_accounts: 19, error_accounts: 2,
+        today_requests: 49, total_requests: 1233,
+        total_users: 34, today_new_users: 4, active_users: 26,
+        today_tokens: 564180, today_actual_cost: 2.35, today_account_cost: 2.25, today_cost: 2.4,
+        total_tokens: 2450000, total_actual_cost: 10.02, total_account_cost: 9.58, total_cost: 10.5,
+        rpm: 7, tpm: 2620, average_duration_ms: 1340
+      },
+      trend: [],
+      models: []
+    })
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          Line: true
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.findAllComponents({ name: 'DashboardStat' })).toHaveLength(8)
+    const text = wrapper.text()
+    for (const value of [
+      '26', '23 common.active', '24', '19 common.active', '2 common.error',
+      '49', '1,233', '34', '+4', '26 admin.dashboard.activeUsers',
+      '564.18K', '$2.35', '$2.25', '$2.40', '2.45M', '$10.02', '$9.58', '$10.50',
+      '7', 'RPM', '2.62K', 'TPM', '1.34s'
+    ]) expect(text).toContain(value)
+    const links = wrapper.findAllComponents({ name: 'RouterLink' }).map((link) => link.props('to'))
+    expect(links).toContain('/admin/groups')
+    wrapper.unmount()
   })
 })
