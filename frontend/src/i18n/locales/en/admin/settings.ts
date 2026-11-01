@@ -29,6 +29,7 @@ export default {
         backup: 'Backup',
         payment: 'Payment',
       },
+      advancedOptions: 'Advanced options',
       features: {
         channelMonitor: {
           title: 'Channel Monitor',
@@ -873,6 +874,8 @@ export default {
         field_cid: 'Channel ID',
         field_cidAlipay: 'Alipay Channel ID',
         field_cidWxpay: 'WeChat Channel ID',
+        field_token: 'Token',
+        field_network: 'Network',
         easypayCustomMethods: 'Custom EasyPay methods',
         easypayCustomMethodsHint: 'Add provider-specific methods supported by this EasyPay endpoint. The payment type is stored on Sub2API orders; the upstream type is sent as EasyPay type.',
         addCustomMethod: 'Add method',
