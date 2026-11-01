@@ -4,7 +4,7 @@
       <!-- User header: identity left, current balance right -->
       <div class="space-y-2">
         <div class="flex items-center gap-3">
-          <UAvatar :alt="user.email" size="md" />
+          <UAvatar :alt="user.email" :text="(user.email).charAt(0).toUpperCase()" size="md" />
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <p class="truncate font-medium text-highlighted">{{ user.email }}</p>

@@ -2,7 +2,7 @@
   <BaseDialog :show="show" :title="t('admin.users.userApiKeys')" width="wide" @close="handleClose">
     <div v-if="user" class="space-y-4">
       <div class="flex items-center gap-3">
-        <UAvatar :alt="user.email" size="md" />
+        <UAvatar :alt="user.email" :text="(user.email).charAt(0).toUpperCase()" size="md" />
         <div class="min-w-0">
           <p class="truncate font-medium text-highlighted">{{ user.email }}</p>
           <p class="text-sm text-muted">{{ user.username }}</p>

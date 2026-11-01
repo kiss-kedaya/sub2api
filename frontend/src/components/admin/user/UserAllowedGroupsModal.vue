@@ -2,7 +2,7 @@
   <BaseDialog :show="show" :title="t('admin.users.groupConfig')" width="wide" @close="$emit('close')">
     <div v-if="user" class="space-y-6">
       <div class="flex items-center gap-3">
-        <UAvatar :alt="user.email" size="lg" />
+        <UAvatar :alt="user.email" :text="(user.email).charAt(0).toUpperCase()" size="lg" />
         <div class="min-w-0 flex-1">
           <p class="truncate font-semibold text-highlighted">{{ user.email }}</p>
           <p class="mt-0.5 text-sm text-muted">{{ t('admin.users.groupConfigHint', { email: user.email }) }}</p>

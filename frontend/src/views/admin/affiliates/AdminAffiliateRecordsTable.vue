@@ -130,7 +130,7 @@
       </div>
       <div v-else-if="selectedOverview" class="space-y-4">
         <div class="flex items-center gap-3">
-          <UAvatar :alt="selectedOverview.email || String(selectedOverview.user_id)" size="md" />
+          <UAvatar :alt="selectedOverview.email || String(selectedOverview.user_id)" :text="(selectedOverview.email || String(selectedOverview.user_id)).charAt(0).toUpperCase()" size="md" />
           <div class="min-w-0">
             <p class="truncate text-sm font-medium text-highlighted">{{ selectedOverview.email || '-' }}</p>
             <p class="text-xs text-muted">#{{ selectedOverview.user_id }} · {{ selectedOverview.username || '-' }}</p>

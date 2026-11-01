@@ -18,7 +18,7 @@
               v-model="searchQuery"
               icon="i-lucide-search"
               :placeholder="t('admin.users.searchUsers')"
-              class="w-56 sm:w-64"
+              class="w-64 sm:w-80"
               @update:model-value="handleSearch"
             />
 
@@ -186,7 +186,7 @@
         >
           <template #cell-email="{ value }">
             <div class="flex items-center gap-3">
-              <UAvatar :alt="value" size="sm" />
+              <UAvatar :alt="value" :text="(value || '').charAt(0).toUpperCase()" size="sm" />
               <span class="font-medium text-highlighted">{{ value }}</span>
             </div>
           </template>

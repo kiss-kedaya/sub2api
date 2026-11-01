@@ -181,7 +181,7 @@
         <ul class="divide-y divide-default">
           <li v-for="usage in usages" :key="usage.id" class="flex items-center justify-between gap-3 py-3">
             <div class="flex min-w-0 items-center gap-3">
-              <UAvatar :alt="usage.user?.email || String(usage.user_id)" size="sm" />
+              <UAvatar :alt="usage.user?.email || String(usage.user_id)" :text="(usage.user?.email || String(usage.user_id)).charAt(0).toUpperCase()" size="sm" />
               <div class="min-w-0">
                 <p class="truncate text-sm font-medium text-highlighted">
                   {{ usage.user?.email || t('admin.promo.userPrefix', { id: usage.user_id }) }}

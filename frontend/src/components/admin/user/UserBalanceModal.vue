@@ -2,7 +2,7 @@
   <BaseDialog :show="show" :title="operation === 'add' ? t('admin.users.deposit') : t('admin.users.withdraw')" width="narrow" @close="$emit('close')">
     <UForm v-if="user" id="balance-form" :state="form" class="space-y-4" @submit="handleBalanceSubmit">
       <div class="flex items-center gap-3">
-        <UAvatar :alt="user.email" size="md" />
+        <UAvatar :alt="user.email" :text="(user.email).charAt(0).toUpperCase()" size="md" />
         <div class="min-w-0 flex-1">
           <p class="truncate font-medium text-highlighted">{{ user.email }}</p>
           <p class="text-sm text-muted">{{ t('admin.users.currentBalance') }}: ${{ formatBalance(user.balance) }}</p>

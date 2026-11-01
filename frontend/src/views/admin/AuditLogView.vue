@@ -306,7 +306,7 @@ const TIME_RANGE_MINUTES: Record<string, number> = {
 }
 
 const timeRangeOptions = computed(() => [
-  { value: '', label: t('admin.audit.filters.all') },
+  { value: '', label: `${t('admin.dashboard.timeRange')}: ${t('admin.audit.filters.all')}` },
   { value: '30m', label: t('admin.ops.timeRange.30m') },
   { value: '1h', label: t('admin.ops.timeRange.1h') },
   { value: '6h', label: t('admin.ops.timeRange.6h') },
@@ -403,7 +403,7 @@ const authMethodOptions = computed(() => [
 ])
 
 const resultOptions = computed(() => [
-  { value: '', label: t('admin.audit.filters.all') },
+  { value: '', label: `${t('admin.audit.filters.result')}: ${t('admin.audit.filters.all')}` },
   { value: 'true', label: t('admin.audit.filters.resultSuccess') },
   { value: 'false', label: t('admin.audit.filters.resultFailure') }
 ])
