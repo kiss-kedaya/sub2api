@@ -8,10 +8,16 @@
     :value="totalLabel"
   >
     <template #actions>
-      <div class="signal-chart-mode" role="group" :aria-label="t('dashboard.tokenUsageTrend')">
-        <button type="button" :aria-pressed="mode === 'total'" @click="mode = 'total'">{{ t('dashboard.totalUsage') }}</button>
-        <button type="button" :aria-pressed="mode === 'breakdown'" @click="mode = 'breakdown'">{{ t('dashboard.tokenDetails') }}</button>
-      </div>
+      <!-- Total / breakdown switch as the template's pill tabs (role=tab, aria-selected). -->
+      <UTabs
+        class="signal-chart-mode"
+        :model-value="mode"
+        :items="modeItems"
+        :content="false"
+        variant="pill"
+        size="xs"
+        @update:model-value="setMode"
+      />
     </template>
     <div v-if="error" class="flex min-h-[290px] items-center p-4 sm:p-6">
       <UAlert
@@ -54,6 +60,13 @@ const { t } = useI18n()
 const preferredMotion = usePreferredReducedMotion()
 const reducedMotion = computed(() => preferredMotion.value === 'reduce')
 const mode = ref<'total' | 'breakdown'>('total')
+const modeItems = computed(() => [
+  { label: t('dashboard.totalUsage'), value: 'total' },
+  { label: t('dashboard.tokenDetails'), value: 'breakdown' },
+])
+const setMode = (value: string | number) => {
+  mode.value = value === 'breakdown' ? 'breakdown' : 'total'
+}
 // Main series follows the theme primary (Appearance settings); #171717 is the default black.
 const primary = useThemeColor('--ui-primary', '#171717')
 
@@ -71,12 +84,6 @@ const totalLabel = computed(() => {
 </script>
 
 <style scoped>
-/* Segmented control: neutral track, raised pill for the active mode. */
-.signal-chart-mode { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--ui-bg-elevated); }
-.signal-chart-mode button { min-height: 30px; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--ui-text-muted); transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease; }
-.signal-chart-mode button:hover { color: var(--ui-text-highlighted); }
-.signal-chart-mode button:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
-.signal-chart-mode [aria-pressed='true'] { background: var(--ui-bg); color: var(--ui-text-highlighted); box-shadow: 0 0 0 1px var(--ui-border); }
 .signal-trend { min-width: 0; max-width: 100%; overflow: hidden; }
 .signal-trend :deep(canvas) { max-width: 100%; }
 /* The trend component brings its own card and title; inside this card it is just the chart. */
@@ -84,8 +91,6 @@ const totalLabel = computed(() => {
 .signal-trend :deep(.card > h3) { display: none; }
 .signal-trend :deep(.h-48) { height: 280px; }
 @media (max-width: 639px) {
-  .signal-chart-mode button { min-height: 36px; }
   .signal-trend :deep(.h-48) { height: 220px; }
 }
-@media (prefers-reduced-motion: reduce) { .signal-chart-mode button { transition: none; } }
 </style>

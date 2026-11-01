@@ -195,8 +195,15 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     // The single series takes the theme primary; the header shows the range total.
     expect(trend.props('color')).toMatch(/^#[0-9a-f]{6}$/)
     expect(wrapper.text()).toContain('2.0K')
-    await wrapper.findAll('.signal-chart-mode button')[1].trigger('click')
+    // The switch is a UTabs pill pair: role=tab with aria-selected (it replaces aria-pressed).
+    const tabs = wrapper.findAll('.signal-chart-mode [role="tab"]')
+    expect(tabs.map(tab => tab.text())).toEqual(['dashboard.totalUsage', 'dashboard.tokenDetails'])
+    expect(tabs.map(tab => tab.attributes('aria-selected'))).toEqual(['true', 'false'])
+    expect(wrapper.find('.signal-chart-mode button:not([role="tab"])').exists()).toBe(false)
+    // reka-ui activates a tab on left mousedown (and Enter / Space), not on click.
+    await tabs[1].trigger('mousedown', { button: 0 })
     expect(trend.props('mode')).toBe('breakdown')
+    expect(tabs.map(tab => tab.attributes('aria-selected'))).toEqual(['false', 'true'])
     expect(trend.props('color')).toBeUndefined()
     expect(wrapper.emitted('dateRangeChange')).toBeUndefined()
     await wrapper.setProps({ loading: true })
