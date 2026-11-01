@@ -60,7 +60,7 @@ const mode = ref<'total' | 'breakdown'>('total')
 <style scoped>
 /* Segmented control: neutral track, raised pill for the active mode. */
 .signal-chart-mode { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--ui-bg-elevated); }
-.signal-chart-mode button { min-height: 30px; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--ui-text-muted); transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease; }
+.signal-chart-mode button { min-height: 36px; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--ui-text-muted); transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease; }
 .signal-chart-mode button:hover { color: var(--ui-text-highlighted); }
 .signal-chart-mode button:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
 .signal-chart-mode [aria-pressed='true'] { background: var(--ui-bg); color: var(--ui-text-highlighted); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08), 0 0 0 1px var(--ui-border); }

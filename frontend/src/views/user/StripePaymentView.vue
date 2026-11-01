@@ -1,35 +1,32 @@
 <template>
-  <component :is="isPopup ? 'div' : AppLayout" :class="isPopup ? 'min-h-screen bg-gray-50 dark:bg-dark-900' : ''">
-    <div class="mx-auto max-w-lg space-y-6 py-8" :class="isPopup ? 'px-4' : 'signal-provider-payment'">
-      <header v-if="!isPopup" class="signal-account-heading">
-        <span class="signal-account-index">STRIPE</span>
-        <h1>{{ t('nav.buySubscription') }}</h1>
-      </header>
+  <component :is="isPopup ? 'div' : AppLayout" :class="isPopup ? 'min-h-screen bg-muted dark:bg-dark-900' : ''">
+    <div class="mx-auto max-w-lg space-y-6 py-8" :class="isPopup ? 'px-4' : ''">
+      <UserPageHeader v-if="!isPopup" flush :title="t('nav.buySubscription')" />
       <div v-if="loading" class="flex items-center justify-center py-20">
-        <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
       </div>
-      <div v-else-if="initError" class="card p-8 text-center">
-        <div class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
-          <Icon name="exclamationCircle" size="xl" class="text-red-500" />
+      <div v-else-if="initError" class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-8 text-center">
+        <div class="mx-auto mb-4 flex size-14 items-center justify-center rounded-lg bg-error/10">
+          <UIcon name="i-lucide-circle-alert" class="size-7 text-error" />
         </div>
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('payment.stripeLoadFailed') }}</h2>
-        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ initError }}</p>
+        <h2 class="text-base font-semibold text-highlighted">{{ t('payment.stripeLoadFailed') }}</h2>
+        <p class="mt-2 text-sm text-muted">{{ initError }}</p>
         <button class="btn btn-primary mt-6" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
       </div>
       <template v-else>
         <!-- 金额头部 -->
-        <div v-if="order" class="card overflow-hidden">
-          <div class="signal-provider-amount bg-linear-to-br/srgb from-[#635bff] to-[#4f46e5] px-6 py-6 text-center">
-            <p class="text-sm font-medium text-indigo-200">{{ t('payment.actualPay') }}</p>
-            <p class="mt-1 text-3xl font-bold text-white">{{ formatGatewayAmount(order.pay_amount) }}</p>
+        <div v-if="order" class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+          <div class="px-6 py-6 text-center">
+            <p class="text-sm font-medium text-muted">{{ t('payment.actualPay') }}</p>
+            <p class="mt-1 text-3xl font-semibold tabular-nums text-highlighted">{{ formatGatewayAmount(order.pay_amount) }}</p>
           </div>
         </div>
 
         <!-- 微信二维码展示 -->
         <template v-if="wechatQrUrl">
-          <div class="card p-6">
+          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6">
             <div class="flex flex-col items-center space-y-4">
-              <p class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('payment.qr.scanWxpay') }}</p>
+              <p class="text-base font-semibold text-highlighted">{{ t('payment.qr.scanWxpay') }}</p>
               <div class="relative rounded-lg border-2 border-[#2BB741] bg-green-50 p-4 dark:border-[#2BB741]/70 dark:bg-green-950/20">
                 <img :src="wechatQrUrl" alt="WeChat Pay QR" class="h-56 w-56 rounded-sm" />
                 <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -38,40 +35,40 @@
                   </span>
                 </div>
               </div>
-              <p class="text-center text-sm text-gray-500 dark:text-gray-400">{{ t('payment.qr.scanWxpayHint') }}</p>
+              <p class="text-center text-sm text-muted">{{ t('payment.qr.scanWxpayHint') }}</p>
             </div>
           </div>
-          <div class="card p-4 text-center">
-            <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('payment.qr.waitingPayment') }}</p>
+          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-4 text-center">
+            <p class="text-sm text-muted">{{ t('payment.qr.waitingPayment') }}</p>
           </div>
         </template>
 
         <!-- 支付宝跳转状态 -->
         <template v-else-if="redirecting">
-          <div class="card p-6">
+          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6">
             <div class="flex flex-col items-center space-y-4 py-4">
               <div class="h-10 w-10 animate-spin rounded-full border-4 border-[#00AEEF] border-t-transparent"></div>
-              <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('payment.qr.payInNewWindowHint') }}</p>
+              <p class="text-sm text-muted">{{ t('payment.qr.payInNewWindowHint') }}</p>
             </div>
           </div>
         </template>
 
         <!-- 成功状态 -->
         <template v-else-if="stripeSuccess">
-          <div class="card p-6 text-center">
+          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6 text-center">
             <div class="flex flex-col items-center gap-3 py-4">
-              <div class="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
-                <Icon name="check" size="lg" class="text-green-500" />
+              <div class="flex size-14 items-center justify-center rounded-lg bg-success/10">
+                <UIcon name="i-lucide-check" class="size-7 text-success" />
               </div>
-              <p class="text-lg font-bold text-gray-900 dark:text-white">{{ t('payment.result.success') }}</p>
-              <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('payment.stripeSuccessProcessing') }}</p>
+              <p class="text-base font-semibold text-highlighted">{{ t('payment.result.success') }}</p>
+              <p class="text-sm text-muted">{{ t('payment.stripeSuccessProcessing') }}</p>
             </div>
           </div>
         </template>
 
         <!-- 无指定方式或未知方式时展示完整 Payment Element -->
         <template v-else-if="showPaymentElement">
-          <div class="card p-6">
+          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6">
             <div id="stripe-payment-element" class="min-h-[200px]"></div>
             <p v-if="stripeError" class="mt-4 text-sm text-red-600 dark:text-red-400">{{ stripeError }}</p>
             <button class="btn btn-stripe mt-6 w-full py-3 text-base" :disabled="stripeSubmitting || !stripeReady" @click="handleGenericPay">
@@ -88,7 +85,7 @@
         </template>
 
         <!-- 错误状态 -->
-        <div v-if="stripeError && !showPaymentElement" class="card p-4">
+        <div v-if="stripeError && !showPaymentElement" class="rounded-lg bg-default p-4 shadow-xs ring ring-default dark:shadow-none">
           <p class="text-sm text-red-600 dark:text-red-400">{{ stripeError }}</p>
           <button class="btn btn-secondary mt-3 w-full" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
         </div>
@@ -110,7 +107,7 @@ import { PAYMENT_RECOVERY_STORAGE_KEY, readPaymentRecoverySnapshot } from '@/com
 import type { PaymentOrder } from '@/types/payment'
 import type { Stripe, StripeElements } from '@stripe/stripe-js'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import Icon from '@/components/icons/Icon.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 
 const i18n = useI18n()
 const { t } = i18n

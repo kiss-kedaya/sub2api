@@ -265,24 +265,29 @@
   gap: 28px;
 }
 
+/* Platform group label above its cards: small muted caps with a count badge. */
 .console-signal .signal-channel-page .signal-platform-heading {
-  min-height: 30px;
-  margin-bottom: 0 !important;
-  padding: 0 10px !important;
-  color: var(--channel-text) !important;
-  border: 1px solid var(--channel-line);
-  border-bottom: 0;
-  background: var(--channel-bg);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 10px !important;
+  padding: 0 2px !important;
+  color: var(--ui-text-muted) !important;
+  border: 0;
+  background: transparent;
   font-size: 12px !important;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
 }
 
-.console-signal .signal-channel-page .signal-platform-heading > span {
-  margin-left: auto;
-  border-radius: 3px !important;
-  color: var(--channel-muted) !important;
-  background: var(--channel-surface) !important;
-}
+/* Range switch (90m / 24h / 7d / 30d): neutral track with a raised pill. */
+.console-signal .channel-range-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--ui-bg-elevated); }
+.console-signal .channel-range-switch button { min-height: 28px; padding: 3px 12px; border-radius: 6px; color: var(--ui-text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; transition: background-color 150ms ease, color 150ms ease; }
+.console-signal .channel-range-switch button:hover { color: var(--ui-text-highlighted); }
+.console-signal .channel-range-switch button:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
+.console-signal .channel-range-switch button:is([aria-pressed='true'], [aria-selected='true']) { background: var(--ui-bg); color: var(--ui-text-highlighted); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08), 0 0 0 1px var(--ui-border); }
 
 .console-signal .signal-channel-v3 section[data-layout='cluster'] > .grid,
 .console-signal .signal-channel-v3 [data-testid='channel-status-compact-platforms'] > .grid {
@@ -314,6 +319,14 @@
   background: linear-gradient(165deg, var(--signal-raised), var(--channel-surface) 60%) !important;
   box-shadow: inset 0 1px 0 var(--signal-highlight), var(--signal-shadow) !important;
   backdrop-filter: none !important;
+}
+
+/* Light theme: flat white cards and panels with a hairline shadow (dark keeps its surface). */
+html:not(.dark) .console-signal :is(.signal-monitor-surface, .signal-channel-ledger) { box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05) !important; }
+
+html:not(.dark) .console-signal .channel-signal-card {
+  background: var(--ui-bg) !important;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05) !important;
 }
 
 .console-signal .channel-signal-card__header {
