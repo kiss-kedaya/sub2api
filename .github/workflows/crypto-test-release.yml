@@ -92,7 +92,7 @@ defaults:
 
 jobs:
   validate:
-    runs-on: [self-hosted, Linux, X64, release-builder]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       commit_sha: ${{ steps.metadata.outputs.commit_sha }}
@@ -141,7 +141,7 @@ jobs:
 
   build:
     needs: validate
-    runs-on: [self-hosted, Linux, X64, release-builder]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       CGO_ENABLED: '0'
@@ -325,7 +325,7 @@ jobs:
   publish:
     if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/feat/crypto-deposit' }}
     needs: [validate, build]
-    runs-on: [self-hosted, Linux, X64, release-builder]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
