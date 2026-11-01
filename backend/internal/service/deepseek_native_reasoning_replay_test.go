@@ -79,8 +79,8 @@ func TestDeepSeekNativeReasoningReplayAcrossInstances(t *testing.T) {
 			require.False(t, gjson.GetBytes(nextUpstream.lastBody, "messages").Exists())
 
 			// Reasoning items are keyed by API key + opaque item id (digest
-			// bound), so a new conversation id or a model alias must still
-			// restore the exact text instead of dropping it.
+			// bound). A bound item is restored; an unbound item is left
+			// byte-for-byte untouched rather than deleted.
 			for _, tc := range []struct {
 				name, session, model string
 				keyID                int64
@@ -96,9 +96,11 @@ func TestDeepSeekNativeReasoningReplayAcrossInstances(t *testing.T) {
 					require.NoError(t, err)
 					out := next.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), request)
 					if !tc.restore {
-						require.False(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists(),
-							"another key's reasoning must be dropped, never forwarded empty")
-						require.Equal(t, "read the tool result", gjson.GetBytes(out, "input.0.content").String())
+						reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
+						require.True(t, reasoning.Exists(), "another key's reasoning must be preserved, not deleted")
+						require.False(t, reasoning.Get("content").Exists(), "another key's reasoning must not be fabricated")
+						require.Equal(t, "opaque-real", reasoning.Get("encrypted_content").String())
+						require.Len(t, gjson.GetBytes(out, "input").Array(), 4)
 						return
 					}
 					require.Equal(t, "Only the genuine upstream reasoning.", gjson.GetBytes(out, "input.1.content.0.text").String())
@@ -107,28 +109,6 @@ func TestDeepSeekNativeReasoningReplayAcrossInstances(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSanitizeDeepSeekNativeResponsesInputRewritesPreviousAssistantMessages(t *testing.T) {
-	body := []byte(`{"model":"deepseek-flash","input":[
-		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"[Previous web search]\nStatus: completed"}]},
-		{"type":"message","role":"assistant","content":"[Previous fetch]\nStatus: completed"},
-		{"type":"message","role":"assistant","content":"normal answer"},
-		{"type":"message","role":"user","content":"hi"}
-	]}`)
-	out := sanitizeDeepSeekNativeResponsesInput(body)
-	require.Equal(t, "user", gjson.GetBytes(out, "input.0.role").String())
-	require.Equal(t, "user", gjson.GetBytes(out, "input.1.role").String())
-	require.Equal(t, "assistant", gjson.GetBytes(out, "input.2.role").String())
-	require.Equal(t, "user", gjson.GetBytes(out, "input.3.role").String())
-	require.Contains(t, gjson.GetBytes(out, "input.0.content.0.text").String(), "[Previous web search]")
-	require.Equal(t, "input_text", gjson.GetBytes(out, "input.0.content.0.type").String(),
-		"DeepSeek rejects output_text on user-role messages")
-}
-
-func TestSanitizeDeepSeekNativeResponsesInputLeavesNormalRequestsUntouched(t *testing.T) {
-	body := []byte(`{"model":"deepseek-flash","input":[{"type":"message","role":"user","content":"hi"}]}`)
-	require.Equal(t, body, sanitizeDeepSeekNativeResponsesInput(body))
 }
 
 func TestDeepSeekNativeReasoningReplayCollectsDeltaAndSnapshotAlias(t *testing.T) {
@@ -168,14 +148,26 @@ func TestDeepSeekNativeReasoningReplayPreservesExplicitContentAndOpaqueBinding(t
 	explicit := `{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1","content":[{"type":"reasoning_text","text":"client-provided"}]}]}`
 	c, _ = deepSeekNativeReplayContext(21, "binding-thread")
 	require.Equal(t, explicit, string(svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(explicit))))
-	for _, request := range []string{
-		`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1","encrypted_content":"different"}]}`,
-		`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1"}]}`,
-		`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_unknown","summary":[{"type":"summary_text","text":"never fabricate full reasoning from this"}]}]}`,
+
+	// A cache miss, a missing opaque binding, or an unknown item id must never
+	// delete the client's reasoning item nor replace it with unrelated text.
+	for _, tc := range []struct {
+		name    string
+		request string
+	}{
+		{"opaque-mismatch", `{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1","encrypted_content":"different"}]}`},
+		{"opaque-missing", `{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1"}]}`},
+		{"unknown-id", `{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_unknown","summary":[{"type":"summary_text","text":"never fabricate full reasoning from this"}]}]}`},
 	} {
-		c, _ := deepSeekNativeReplayContext(21, "binding-thread")
-		out := svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(request))
-		require.False(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists(), request)
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := deepSeekNativeReplayContext(21, "binding-thread")
+			out := svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(tc.request))
+			reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
+			require.True(t, reasoning.Exists(), "the reasoning item must survive a cache miss")
+			require.False(t, reasoning.Get("content").Exists(), "a cache miss must not fabricate reasoning_text")
+			require.Equal(t, gjson.Get(tc.request, `input.0.encrypted_content`).String(), reasoning.Get("encrypted_content").String())
+			require.Equal(t, gjson.Get(tc.request, `input.0.summary.0.text`).String(), reasoning.Get("summary.0.text").String())
+		})
 	}
 	request := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_1"}]}`)
 	for _, other := range []*Account{{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, {Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_protocol": APIProtocolChatCompletions}}} {
@@ -216,8 +208,9 @@ func TestDeepSeekNativeReasoningReplayReusedContextRechecksIdentity(t *testing.T
 			require.NoError(t, err)
 			out := svc.prepareDeepSeekNativeReasoningReplay(c, account, body)
 			if !tc.restore {
-				require.False(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists(),
-					"a denied key must not receive another key's reasoning; drop it instead")
+				reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
+				require.True(t, reasoning.Exists(), "a denied key must keep the client item, not delete it")
+				require.False(t, reasoning.Get("content").Exists(), "a denied key must not receive another key's reasoning")
 				return
 			}
 			require.Equal(t, "this conversation only", gjson.GetBytes(out, "input.0.content.0.text").String())
@@ -253,13 +246,19 @@ func TestDeepSeekNativeReasoningReplayHasTotalRestoreBudget(t *testing.T) {
 	require.NoError(t, err)
 	svc.cache = &reasoningRecordingCache{getResp: getResp}
 	out := svc.prepareDeepSeekNativeReasoningReplay(c, account, request)
-	restored, restoredBytes := 0, 0
+	restored, restoredBytes, reasoningItems := 0, 0, 0
 	for _, item := range gjson.GetBytes(out, "input").Array() {
+		if item.Get("type").String() == "reasoning" {
+			reasoningItems++
+		}
 		if content := item.Get("content"); item.Get("type").String() == "reasoning" && content.IsArray() {
 			restored++
 			restoredBytes += len(content.Raw)
 		}
 	}
+	require.Len(t, gjson.GetBytes(out, "input").Array(), deepSeekNativeReasoningMaxItems+1,
+		"over-budget reasoning items must remain in the request")
+	require.Equal(t, deepSeekNativeReasoningMaxItems, reasoningItems)
 	require.Positive(t, restored)
 	require.Less(t, restored, deepSeekNativeReasoningMaxItems)
 	require.LessOrEqual(t, restoredBytes, deepSeekNativeReasoningMaxBytes)
@@ -286,7 +285,7 @@ func TestDeepSeekNativeReasoningReplayRequiresConversationAnchor(t *testing.T) {
 	}
 }
 
-func TestDeepSeekNativeReasoningReplayOpaqueCannotBeAddedToPlainItem(t *testing.T) {
+func TestDeepSeekNativeReasoningReplayDoesNotBackfillMismatchedOpaqueItem(t *testing.T) {
 	cache := &reasoningRecordingCache{}
 	svc := &OpenAIGatewayService{cache: cache}
 	account := deepSeekNativeReplayAccount()
@@ -296,8 +295,12 @@ func TestDeepSeekNativeReasoningReplayOpaqueCannotBeAddedToPlainItem(t *testing.
 	svc.cache = &reasoningRecordingCache{getResp: cache.snapshotSets()}
 	request := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"reasoning","id":"rs_plain","encrypted_content":"invented"}]}`)
 	out := svc.prepareDeepSeekNativeReasoningReplay(c, account, request)
-	require.False(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists(),
-		"foreign opaque reasoning must be dropped, never filled with another item's content")
+	reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
+	require.True(t, reasoning.Exists(), "foreign opaque reasoning must be preserved, never deleted")
+	require.Equal(t, "invented", reasoning.Get("encrypted_content").String())
+	require.False(t, reasoning.Get("content").Exists(),
+		"foreign opaque reasoning must not be filled with another item's content")
+	require.Equal(t, request, out, "a cache miss must leave the request byte-for-byte intact")
 }
 
 func TestDeepSeekNativeReasoningReplayHostedContinuationKeepsAnchoredScope(t *testing.T) {
@@ -414,40 +417,44 @@ func TestDeepSeekNativeReasoningReplayKeepsEveryTurnByteForByte(t *testing.T) {
 	require.Equal(t, "keep-me", gjson.GetBytes(out, "metadata.trace").String())
 }
 
-func TestDeepSeekNativeReasoningReplayDropsUnrecoverableHistory(t *testing.T) {
+func TestDeepSeekNativeReasoningReplayPreservesUnrecoverableHistory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{cache: &reasoningRecordingCache{}}
 	c, _ := deepSeekNativeReplayContext(21, "thread-drop")
 	body := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"none"},"input":[
-		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
-		{"type":"reasoning","id":"rs_missing","summary":[]},
-		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"old answer"}]},
-		{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}
-	]}`)
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+        {"type":"reasoning","id":"rs_missing","summary":[]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"old answer"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}
+    ]}`)
 
 	out := svc.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), body)
 
-	require.False(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists(), "unrecoverable reasoning must be dropped")
-	require.Equal(t, "user", gjson.GetBytes(out, "input.1.role").String(), "assistant without reasoning becomes user context")
-	require.Equal(t, "old answer", gjson.GetBytes(out, "input.1.content.0.text").String())
-	require.Len(t, gjson.GetBytes(out, "input").Array(), 3)
+	require.Equal(t, body, out, "a cache miss must leave the request byte-for-byte intact")
+	require.True(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists(),
+		"unrecoverable reasoning must not be dropped")
+	require.Equal(t, "assistant", gjson.GetBytes(out, "input.2.role").String(),
+		"assistant history must keep its role")
+	require.Equal(t, "old answer", gjson.GetBytes(out, "input.2.content.0.text").String())
+	require.Len(t, gjson.GetBytes(out, "input").Array(), 4)
 }
 
-func TestDeepSeekNativeReasoningReplayDropsReasoningWithoutID(t *testing.T) {
+func TestDeepSeekNativeReasoningReplayPreservesReasoningWithoutID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{cache: &reasoningRecordingCache{}}
 	c, _ := deepSeekNativeReplayContext(21, "thread-drop-no-id")
 	body := []byte(`{"model":"deepseek-v4.1-flash","input":[
-		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
-		{"type":"reasoning","summary":[]},
-		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"old answer"}]},
-		{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}
-	]}`)
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+        {"type":"reasoning","summary":[]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"old answer"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}
+    ]}`)
 
 	out := svc.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), body)
 
-	require.False(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists())
-	require.Equal(t, "user", gjson.GetBytes(out, "input.1.role").String())
+	require.Equal(t, body, out, "a reasoning item without id must be forwarded unchanged")
+	require.True(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists())
+	require.Equal(t, "assistant", gjson.GetBytes(out, "input.2.role").String())
 }
 
 func TestDeepSeekNativeReasoningReplayLeavesPlainConversationAlone(t *testing.T) {
@@ -465,21 +472,35 @@ func TestDeepSeekNativeReasoningReplayLeavesPlainConversationAlone(t *testing.T)
 	require.Equal(t, string(body), string(out), "requests without reasoning items keep their original roles")
 }
 
-func TestDeepSeekNativeReasoningReplayDemotesAssistantHistoryInThinkingMode(t *testing.T) {
+func TestDeepSeekNativeReasoningReplayKeepsAssistantRoleInThinkingMode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	svc := &OpenAIGatewayService{cache: &reasoningRecordingCache{}}
-	c, _ := deepSeekNativeReplayContext(21, "thread-thinking")
-	body := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"max"},"input":[
-		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
-		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer without reasoning"}]},
-		{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}
-	]}`)
+	for _, effort := range []string{"max", "high", "", "minimal", "none"} {
+		name := effort
+		if name == "" {
+			name = "default"
+		}
+		t.Run("effort="+name, func(t *testing.T) {
+			svc := &OpenAIGatewayService{cache: &reasoningRecordingCache{}}
+			c, _ := deepSeekNativeReplayContext(21, "thread-thinking")
+			request := map[string]any{
+				"model": "deepseek-v4.1-flash",
+				"input": []any{
+					map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "hi"}}},
+					map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "answer without reasoning"}}},
+					map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "next"}}},
+				},
+			}
+			if effort != "" {
+				request["reasoning"] = map[string]any{"effort": effort}
+			}
+			body, err := json.Marshal(request)
+			require.NoError(t, err)
 
-	out := svc.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), body)
+			out := svc.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), body)
 
-	require.Equal(t, "user", gjson.GetBytes(out, "input.1.role").String(),
-		"thinking mode requires reasoning_text on assistant history; demote instead of 400")
-	require.Equal(t, "answer without reasoning", gjson.GetBytes(out, "input.1.content.0.text").String())
-	require.Equal(t, "input_text", gjson.GetBytes(out, "input.1.content.0.type").String(),
-		"DeepSeek rejects output_text on user-role messages")
+			require.Equal(t, body, out, "missing reasoning must not rewrite roles or content types")
+			require.Equal(t, "assistant", gjson.GetBytes(out, "input.1.role").String())
+			require.Equal(t, "output_text", gjson.GetBytes(out, "input.1.content.0.type").String())
+		})
+	}
 }
