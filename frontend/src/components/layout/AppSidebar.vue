@@ -570,15 +570,21 @@ onMounted(() => {
     })
   } else {
     // First visit: bring the current page's link into view (long admin lists).
-    void nextTick(() => {
-      const nav = sidebarNavRef.value
-      const link = nav?.querySelector<HTMLElement>('[aria-current="page"]')
-      if (!nav || !link) return
-      const top = link.getBoundingClientRect().top - nav.getBoundingClientRect().top
-      if (top + link.offsetHeight > nav.clientHeight) nav.scrollTop += top - nav.clientHeight / 2
-    })
+    void nextTick(() => revealActiveLink(sidebarNavRef.value))
   }
 })
+
+// The phone drawer mounts its own copy of the list each time it opens.
+watch(sidebarNavRef, (nav) => {
+  if (nav?.closest('[role="dialog"]')) void nextTick(() => revealActiveLink(nav))
+})
+
+function revealActiveLink(nav: HTMLElement | null) {
+  const link = nav?.querySelector<HTMLElement>('[aria-current="page"]')
+  if (!nav || !link) return
+  const top = link.getBoundingClientRect().top - nav.getBoundingClientRect().top
+  if (top + link.offsetHeight > nav.clientHeight) nav.scrollTop += top - nav.clientHeight / 2
+}
 
 onBeforeUnmount(() => {
   if (sidebarNavRef.value) {

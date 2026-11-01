@@ -93,13 +93,10 @@ defineExpose({ replayTour })
 }
 
 /* Sticky offsets that pages wrote for the old window scroll (under a 64px header). The panel
-   body scrolls below the navbar now, so they count from the top of the body. */
-.console-frame .signal-main .settings-tabs-shell {
-  top: 0.75rem;
-}
-
-.console-frame .signal-main .pay-summary {
-  top: 18px;
+   body scrolls below the navbar now and sticky counts from inside its padding, so 0 keeps
+   them where they rest and sticks them at the body's content edge. */
+.console-frame .signal-main :is(.settings-tabs-shell, .pay-summary) {
+  top: 0;
 }
 
 /* Table pages fill the panel height; their table scrolls inside (TablePageLayout). */
