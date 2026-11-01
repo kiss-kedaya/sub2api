@@ -225,7 +225,7 @@ jobs:
         run: go test -tags=integration ./internal/cryptopay ./internal/cryptopay/sweeper -run '^TestPostgres' -count=1
 
   frontend:
-    runs-on: [self-hosted, Linux, X64, release-builder]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Setup pnpm
@@ -271,7 +271,7 @@ jobs:
 
   build:
     needs: frontend
-    runs-on: [self-hosted, Linux, X64, release-builder]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
