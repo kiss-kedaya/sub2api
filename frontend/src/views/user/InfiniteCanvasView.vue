@@ -10,10 +10,10 @@
         <div v-else-if="errorCode === 'not-configured'" class="flex h-full items-center justify-center p-6 text-center">
           <div class="max-w-md">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('infiniteCanvas.notConfigured') }}</h3>
-            <button type="button" class="btn btn-primary mt-6" @click="prepareSession(true)">
+            <UButton class="mt-6" @click="prepareSession(true)">
               <Icon name="plus" size="sm" class="mr-2" />
               {{ t('infiniteCanvas.createAndEnter') }}
-            </button>
+            </UButton>
           </div>
         </div>
 
@@ -27,9 +27,9 @@
             <RouterLink v-if="errorCode === 'key-unavailable'" to="/keys" class="btn btn-primary mt-6">
               {{ t('infiniteCanvas.manageKeys') }}
             </RouterLink>
-            <button v-else type="button" class="btn btn-primary mt-6" @click="prepareSession()">
+            <UButton class="mt-6" v-else @click="prepareSession()">
               {{ t('infiniteCanvas.retry') }}
-            </button>
+            </UButton>
           </div>
         </div>
 

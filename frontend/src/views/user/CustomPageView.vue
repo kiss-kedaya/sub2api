@@ -36,9 +36,7 @@
           >
             <div class="toc-header">
               <span class="toc-title">{{ t('customPage.tableOfContents') }}</span>
-              <button class="toc-close-btn" @click="tocVisible = false">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-              </button>
+              <UButton class="toc-close-btn" color="neutral" variant="ghost" size="xs" icon="i-lucide-chevron-left" :aria-label="t('common.close')" @click="tocVisible = false" />
             </div>
             <nav class="toc-nav">
               <a
@@ -58,14 +56,15 @@
           </aside>
 
           <!-- TOC Toggle Button (when collapsed) -->
-          <button
-            v-show="!tocVisible && tocItems.length > 0"
-            class="toc-toggle-btn"
-            @click="tocVisible = true"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-            <span class="ml-1 text-xs">{{ t('customPage.tableOfContents') }}</span>
-          </button>
+          <UButton
+      v-show="!tocVisible && tocItems.length > 0"
+      class="toc-toggle-btn"
+      color="neutral"
+      variant="outline"
+      size="sm"
+      icon="i-lucide-list"
+      @click="tocVisible = true"
+    >{{ t('customPage.tableOfContents') }}</UButton>
 
           <!-- Content -->
           <div
@@ -452,8 +451,6 @@ onUnmounted(() => {
 }
 .toc-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .toc-title { font-size: 13px; font-weight: 600; color: var(--ui-text-highlighted); }
-.toc-close-btn { padding: 4px; border-radius: 6px; color: var(--ui-text-dimmed); transition: background-color 150ms ease, color 150ms ease; }
-.toc-close-btn:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
 .toc-nav { flex: 1; overflow-y: auto; padding: 8px; }
 .toc-item { display: block; overflow: hidden; padding: 6px 8px; border-radius: 6px; color: var(--ui-text-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
 .toc-item:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
@@ -463,8 +460,7 @@ onUnmounted(() => {
 .toc-level-2 { padding-left: 20px; }
 .toc-level-3 { padding-left: 32px; }
 .toc-level-4 { padding-left: 44px; }
-.toc-toggle-btn { position: absolute; left: 8px; top: 8px; z-index: 10; display: flex; align-items: center; padding: 6px 8px; border-radius: 6px; background: var(--ui-bg); color: var(--ui-text-muted); font-size: 13px; box-shadow: 0 0 0 1px var(--ui-border-accented), 0 1px 2px rgba(10, 10, 10, 0.05); cursor: pointer; transition: background-color 150ms ease, color 150ms ease; }
-.toc-toggle-btn:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+.toc-toggle-btn { position: absolute; left: 8px; top: 8px; z-index: 10; }
 
 /* Embedded page: flat surface, no gradient. */
 .custom-embed-shell { position: relative; width: 100%; height: 100%; overflow: hidden; padding: 0; background: var(--ui-bg-muted); }

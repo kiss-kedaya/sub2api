@@ -50,6 +50,7 @@ export default {
       submitJob: '提交任务',
     },
     list: {
+      selectAll: '全选',
       selectedJobs: '已选择 {count} 个任务',
       expandChildren: '展开 {n} 个子任务',
       collapseChildren: '收起子任务',

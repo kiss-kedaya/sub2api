@@ -31,23 +31,22 @@
         <!-- Client Tabs -->
         <div v-if="clientTabs.length" class="overflow-x-auto border-b border-default dark:border-dark-700">
           <nav class="-mb-px flex min-w-max gap-4 sm:gap-6" aria-label="Client">
-            <button
+            <UButton
               v-for="tab in clientTabs"
               :key="tab.id"
-              type="button"
-              @click="activeClientTab = tab.id"
+              color="neutral"
+              variant="link"
               :class="[
-                'whitespace-nowrap py-2.5 px-1 border-b-2 font-medium text-sm transition-colors',
-                activeClientTab === tab.id
-                  ? 'border-inverted text-highlighted dark:border-primary-500 dark:text-primary-400'
-                  : 'border-transparent text-muted hover:text-highlighted hover:border-accented dark:text-gray-400 dark:hover:text-gray-300'
+                'rounded-none border-b-2 px-1 py-2.5 font-medium whitespace-nowrap',
+                activeClientTab === tab.id ? 'border-primary text-highlighted' : 'border-transparent text-muted hover:border-accented hover:text-highlighted'
               ]"
+              @click="activeClientTab = tab.id"
             >
               <span class="flex items-center gap-2">
-                <component :is="tab.icon" class="w-4 h-4" />
+                <component :is="tab.icon" class="size-4" />
                 {{ tab.label }}
               </span>
-            </button>
+            </UButton>
           </nav>
         </div>
 
@@ -69,36 +68,28 @@
             role="radiogroup"
             :aria-label="t('keys.useKeyModal.openai.authModeTitle')"
           >
-            <button
-              type="button"
+            <UButton
+              color="neutral"
+              :variant="codexAuthMode === 'legacy' ? 'outline' : 'ghost'"
               role="radio"
               data-testid="codex-auth-mode-legacy"
               :aria-checked="codexAuthMode === 'legacy'"
-              :class="[
-                'rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                codexAuthMode === 'legacy'
-                  ? 'bg-default text-highlighted shadow-xs ring ring-default dark:bg-dark-800 dark:text-primary-300 dark:ring-0'
-                  : 'text-muted hover:text-highlighted dark:text-dark-300 dark:hover:text-white'
-              ]"
+              :class="codexAuthMode === 'legacy' ? 'bg-default text-highlighted' : 'text-muted'"
               @click="codexAuthMode = 'legacy'"
             >
               {{ t('keys.useKeyModal.openai.authModeLegacy') }}
-            </button>
-            <button
-              type="button"
+            </UButton>
+            <UButton
+              color="neutral"
+              :variant="codexAuthMode === 'api-key' ? 'outline' : 'ghost'"
               role="radio"
               data-testid="codex-auth-mode-api-key"
               :aria-checked="codexAuthMode === 'api-key'"
-              :class="[
-                'rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                codexAuthMode === 'api-key'
-                  ? 'bg-default text-highlighted shadow-xs ring ring-default dark:bg-dark-800 dark:text-primary-300 dark:ring-0'
-                  : 'text-muted hover:text-highlighted dark:text-dark-300 dark:hover:text-white'
-              ]"
+              :class="codexAuthMode === 'api-key' ? 'bg-default text-highlighted' : 'text-muted'"
               @click="codexAuthMode = 'api-key'"
             >
               {{ t('keys.useKeyModal.openai.authModeApiKey') }}
-            </button>
+            </UButton>
           </div>
           <div
             v-if="codexAuthMode === 'api-key'"
@@ -113,23 +104,22 @@
         <!-- OS/Shell Tabs -->
         <div v-if="showShellTabs" class="overflow-x-auto border-b border-default dark:border-dark-700">
           <nav class="-mb-px flex min-w-max gap-4" aria-label="Tabs">
-            <button
+            <UButton
               v-for="tab in currentTabs"
               :key="tab.id"
-              type="button"
-              @click="activeTab = tab.id"
+              color="neutral"
+              variant="link"
               :class="[
-                'whitespace-nowrap py-2.5 px-1 border-b-2 font-medium text-sm transition-colors',
-                activeTab === tab.id
-                  ? 'border-inverted text-highlighted dark:border-primary-500 dark:text-primary-400'
-                  : 'border-transparent text-muted hover:text-highlighted hover:border-accented dark:text-gray-400 dark:hover:text-gray-300'
+                'rounded-none border-b-2 px-1 py-2.5 font-medium whitespace-nowrap',
+                activeTab === tab.id ? 'border-primary text-highlighted' : 'border-transparent text-muted hover:border-accented hover:text-highlighted'
               ]"
+              @click="activeTab = tab.id"
             >
               <span class="flex items-center gap-2">
-                <component :is="tab.icon" class="w-4 h-4" />
+                <component :is="tab.icon" class="size-4" />
                 {{ tab.label }}
               </span>
-            </button>
+            </UButton>
           </nav>
         </div>
 
@@ -141,30 +131,25 @@
             class="relative"
           >
             <!-- File Hint (if exists) -->
-            <p v-if="file.hint" class="text-xs text-amber-600 dark:text-amber-400 mb-1.5 flex items-center gap-1">
+            <p v-if="file.hint" class="mb-1.5 flex items-center gap-1 text-xs text-warning">
               <Icon name="exclamationCircle" size="sm" class="flex-shrink-0" />
               {{ file.hint }}
             </p>
-            <div class="overflow-hidden rounded-lg bg-neutral-900 dark:bg-dark-900">
+            <div class="overflow-hidden rounded-lg bg-neutral-900">
               <!-- Code Header -->
-              <div class="flex items-center justify-between px-4 py-2 bg-neutral-800 dark:bg-dark-800 border-b border-neutral-700 dark:border-dark-700">
+              <div class="flex items-center justify-between border-b border-neutral-700 bg-neutral-800 px-4 py-1.5">
                 <span class="min-w-0 truncate text-xs text-neutral-400 font-mono">{{ file.path }}</span>
-                <button
-                  type="button"
+                <UButton
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  :icon="copiedIndex === index ? 'i-lucide-check' : 'i-lucide-copy'"
+                  class="shrink-0 text-neutral-300 hover:bg-white/10 hover:text-white"
+                  :class="copiedIndex === index ? 'text-green-400' : ''"
                   @click="copyContent(file.content, index)"
-                  class="flex flex-shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg transition-colors"
-                  :class="copiedIndex === index
-                    ? 'bg-green-500/20 text-green-400'
-                    : 'bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white'"
                 >
-                  <svg v-if="copiedIndex === index" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                  <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
-                  </svg>
                   {{ copiedIndex === index ? t('keys.useKeyModal.copied') : t('keys.useKeyModal.copy') }}
-                </button>
+                </UButton>
               </div>
               <!-- Code Content -->
               <pre class="p-4 text-sm font-mono text-neutral-100 overflow-x-auto"><code v-if="file.highlighted" v-html="file.highlighted"></code><code v-else v-text="file.content"></code></pre>
@@ -188,46 +173,40 @@
               <p class="mt-1 truncate font-mono text-xs text-default">
                 {{ codexModelCatalogMode === 'remote' ? codexModelCatalogUrl : codexModelCatalogPath }}
               </p>
-              <select
+              <USelect
                 v-model="codexModelCatalogMode"
                 data-testid="codex-model-catalog-mode"
+                :items="codexModelCatalogModeItems"
                 :aria-label="t('keys.useKeyModal.codexModelCatalog.mode')"
-                class="input mt-2 text-sm"
-              >
-                <option value="remote" :disabled="codexModelCatalogOversized">{{ t('keys.useKeyModal.codexModelCatalog.remote') }}</option>
-                <option value="file">{{ t('keys.useKeyModal.codexModelCatalog.local') }}</option>
-              </select>
+                class="mt-2 w-full"
+              />
               <p v-if="codexModelCatalogOversized" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
                 {{ t('keys.useKeyModal.codexModelCatalog.oversized') }}
               </p>
             </div>
-            <button
+            <UButton
               v-if="codexModelManifestState === 'ready'"
-              type="button"
-              class="btn btn-primary min-h-9 flex-shrink-0 px-3 text-xs"
+              size="sm"
+              icon="i-lucide-download"
+              class="shrink-0"
               @click="downloadCodexModelManifest"
             >
-              <Icon name="download" size="sm" class="mr-1.5" />
               {{ t('keys.useKeyModal.codexModelCatalog.download') }}
-            </button>
-            <button
+            </UButton>
+            <UButton
               v-else
-              type="button"
+              size="sm"
               data-testid="codex-model-catalog-fetch"
-              class="btn btn-primary min-h-9 flex-shrink-0 px-3 text-xs"
+              icon="i-lucide-refresh-cw"
+              class="shrink-0"
+              :ui="{ leadingIcon: codexModelManifestState === 'loading' ? 'animate-spin' : '' }"
               :disabled="codexModelManifestState === 'loading' || !apiKey"
               @click="loadCodexModelManifest"
             >
-              <Icon
-                name="refresh"
-                size="sm"
-                class="mr-1.5"
-                :class="codexModelManifestState === 'loading' ? 'animate-spin' : ''"
-              />
               {{ codexModelManifestState === 'error'
                 ? t('keys.useKeyModal.codexModelCatalog.retry')
                 : t('keys.useKeyModal.codexModelCatalog.fetch') }}
-            </button>
+            </UButton>
           </div>
           <p
             v-if="codexModelManifestState === 'ready'"
@@ -255,12 +234,7 @@
 
     <template #footer>
       <div class="flex justify-end">
-        <button
-          @click="emit('close')"
-          class="btn btn-secondary"
-        >
-          {{ t('common.close') }}
-        </button>
+        <UButton color="neutral" variant="subtle" @click="emit('close')">{{ t('common.close') }}</UButton>
       </div>
     </template>
   </BaseDialog>
@@ -325,6 +299,10 @@ const codexModelManifestModelCount = ref(0)
 const codexModelCatalogMode = ref<'remote' | 'file'>('remote')
 const codexModelManifestResponseBytes = ref(0)
 const codexModelCatalogOversized = computed(() => codexModelManifestResponseBytes.value > 1024 * 1024)
+const codexModelCatalogModeItems = computed(() => [
+  { value: 'remote', label: t('keys.useKeyModal.codexModelCatalog.remote'), disabled: codexModelCatalogOversized.value },
+  { value: 'file', label: t('keys.useKeyModal.codexModelCatalog.local') }
+])
 const codexModelCatalogUrl = computed(() => buildCodexModelCatalogUrl(props.baseUrl))
 const codexLocalCatalogToml = computed(() => codexModelCatalogMode.value === 'file'
   ? `model_catalog_json = "${CODEX_MODEL_CATALOG_CONFIG_PATH}"\n`

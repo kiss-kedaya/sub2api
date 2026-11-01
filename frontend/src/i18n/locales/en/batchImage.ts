@@ -50,6 +50,7 @@ export default {
       submitJob: 'Submit job',
     },
     list: {
+      selectAll: 'Select all',
       selectedJobs: 'Selected {count} job | Selected {count} jobs',
       expandChildren: 'Expand {n} subtask | Expand {n} subtasks',
       collapseChildren: 'Collapse subtasks',
