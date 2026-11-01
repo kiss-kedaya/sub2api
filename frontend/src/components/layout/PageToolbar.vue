@@ -49,4 +49,17 @@ const frame = useDashboardFrame()
 .page-toolbar-inline__end {
   margin-left: auto;
 }
+
+/* Phones (frame absent): stack the controls and right-align the actions. */
+@media (max-width: 639px) {
+  .page-toolbar-inline {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-toolbar-inline__end {
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
 </style>

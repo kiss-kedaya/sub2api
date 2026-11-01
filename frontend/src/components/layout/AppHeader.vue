@@ -280,4 +280,44 @@ function formatHeaderMoney(value: number) {
 .console-navbar .header-balance:focus-visible .header-balance-detail {
   display: block;
 }
+
+/* Phones (<=639px): the navbar keeps one row and the toolbar splits into two lines,
+   filters first and page actions under them, instead of squeezing both into one. */
+@media (max-width: 639px) {
+  /* Notch inset: stays 0 until the document opts into viewport-fit=cover. */
+  .console-navbar {
+    height: auto;
+    min-height: calc(var(--ui-header-height) + env(safe-area-inset-top, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* A long page title truncates instead of pushing the bell and the avatar aside. */
+  .console-navbar [data-slot='title'] {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .console-toolbar > .console-toolbar-start,
+  .console-toolbar > .console-toolbar-end {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+
+  .console-toolbar > .console-toolbar-end {
+    margin-inline-start: 0;
+    justify-content: flex-end;
+  }
+
+  .console-navbar-actions {
+    margin-inline-end: 0;
+  }
+}
+
+/* Touch screens: Nuxt UI's 32px icon button is a pointer size. A finger needs 40px. */
+@media (pointer: coarse) {
+  .console-navbar :is(button, [role='button']) {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
 </style>

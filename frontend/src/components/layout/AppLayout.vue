@@ -106,4 +106,12 @@ defineExpose({ replayTour })
   min-height: 0;
   flex-direction: column;
 }
+
+/* Phones: keep the last content row clear of the home indicator. A no-op while the
+   document has no viewport-fit=cover. */
+@media (max-width: 639px) {
+  .console-frame .console-panel-body {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+}
 </style>

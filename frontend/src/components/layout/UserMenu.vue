@@ -3,7 +3,7 @@
     v-if="user"
     :items="items"
     :content="menuContent"
-    :ui="{ content: variant === 'header' || collapsed ? 'w-60' : 'w-(--reka-dropdown-menu-trigger-width) min-w-60' }"
+    :ui="{ content: variant === 'header' || collapsed ? 'w-60 max-w-[calc(100dvw-1rem)]' : 'w-(--reka-dropdown-menu-trigger-width) min-w-60 max-w-[calc(100dvw-1rem)]' }"
   >
     <!-- Sidebar footer: avatar and name, like the template's UserMenu. -->
     <UButton
@@ -189,3 +189,14 @@ function formatMoney(value: number) {
   return `$${value.toFixed(2)}`
 }
 </script>
+
+<style>
+/* Phones: the avatar is the only account entry in the navbar, so it gets a finger-sized
+   hit area instead of the desktop 32px. */
+@media (pointer: coarse) {
+  .header-user-button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
+</style>
