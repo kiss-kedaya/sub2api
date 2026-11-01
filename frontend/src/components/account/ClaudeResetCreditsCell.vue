@@ -11,64 +11,40 @@
     <div class="flex flex-wrap items-center gap-1.5">
       <slot name="pre-actions" />
 
-      <button
+      <UButton
         v-if="visible"
-        type="button"
         data-testid="claude-reset-count"
-        class="inline-flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-[10px] font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        icon="i-lucide-refresh-cw"
+        class="px-1.5"
+        :loading="loading"
         :disabled="loading || redeeming"
         :title="countButtonTitle"
         @click="refresh"
-      >
-        <svg
-          class="h-2.5 w-2.5"
-          :class="{ 'animate-spin': loading }"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-          />
-        </svg>
-        {{ t('admin.accounts.claudeResetCredits.count') }}<span v-if="status" class="ml-0.5 tabular-nums">{{ totalResets }}</span>
-      </button>
+      >{{ t('admin.accounts.claudeResetCredits.count') }}<span v-if="status" class="ml-0.5 tabular-nums">{{ totalResets }}</span></UButton>
 
-      <button
+      <UButton
         v-if="visible"
-        type="button"
         data-testid="claude-reset-redeem"
-        class="inline-flex items-center gap-0.5 rounded-sm px-1.5 py-0.5 text-[10px] font-medium text-orange-600 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-orange-400 dark:hover:bg-orange-900/30"
+        color="warning"
+        variant="ghost"
+        size="xs"
+        icon="i-lucide-rotate-ccw"
+        class="px-1.5"
+        :loading="redeeming"
         :disabled="redeeming || loading || !canRedeem"
         :title="redeemButtonTitle"
         @click="openRedeemConfirm"
-      >
-        <svg
-          class="h-2.5 w-2.5"
-          :class="{ 'animate-spin': redeeming }"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M20 12a8 8 0 11-2.343-5.657L20 8m0 0V4m0 4h-4"
-          />
-        </svg>
-        {{ t('admin.accounts.claudeResetCredits.reset') }}
-      </button>
+      >{{ t('admin.accounts.claudeResetCredits.reset') }}</UButton>
     </div>
 
     <div v-if="visible && status && (primaryCredit || !status.eligible || cooldownActive)" class="flex flex-wrap items-center gap-1">
       <span
         v-if="primaryCredit?.expires_at"
         data-testid="claude-reset-expiry"
-        class="inline-flex max-w-full items-center rounded-sm bg-gray-100 px-1.5 py-0.5 text-[10px] leading-4 text-gray-600 tabular-nums dark:bg-dark-800 dark:text-gray-300"
+        class="inline-flex max-w-full items-center text-xs leading-4 tabular-nums text-muted"
         :title="creditTitle"
       >
         {{ t('admin.accounts.claudeResetCredits.expiresAt', { time: formatTime(primaryCredit.expires_at, 'short') }) }}
@@ -76,26 +52,26 @@
       <span
         v-if="status.eligible && totalResets > 0 && status.available_count === 0"
         data-testid="claude-reset-not-usable"
-        class="text-[10px] text-gray-500 dark:text-gray-400"
+        class="text-xs text-muted"
       >
         {{ t('admin.accounts.claudeResetCredits.notUsableNow') }}
       </span>
-      <span v-if="!status.eligible" class="text-[10px] text-amber-600 dark:text-amber-400">
+      <span v-if="!status.eligible" class="text-xs text-warning">
         {{ t('admin.accounts.claudeResetCredits.ineligible') }}
       </span>
-      <span v-if="cooldownActive" data-testid="claude-reset-cooldown" class="text-[10px] text-amber-600 dark:text-amber-400">
+      <span v-if="cooldownActive" data-testid="claude-reset-cooldown" class="text-xs text-warning">
         {{ t('admin.accounts.claudeResetCredits.cooldown', { time: formatTime(status.cooldown_until!, 'short') }) }}
       </span>
     </div>
 
-    <div v-if="visible && error" role="alert" class="text-[10px] text-red-600 dark:text-red-400">
+    <div v-if="visible && error" role="alert" class="text-xs text-error">
       {{ t('admin.accounts.claudeResetCredits.error') }}
     </div>
     <div
       v-if="visible && redeemFeedback"
       data-testid="claude-reset-feedback"
       :role="redeemFeedback.kind === 'success' ? 'status' : 'alert'"
-      class="text-[10px]"
+      class="text-xs"
       :class="feedbackClass"
       :title="redeemFeedback.text"
     >
@@ -232,9 +208,9 @@ const confirmMessage = computed(() => {
 
 const feedbackClass = computed(() => {
   switch (redeemFeedback.value?.kind) {
-    case 'success': return 'text-emerald-600 dark:text-emerald-400'
-    case 'warning': return 'text-amber-600 dark:text-amber-400'
-    default: return 'text-red-600 dark:text-red-400'
+    case 'success': return 'text-success'
+    case 'warning': return 'text-warning'
+    default: return 'text-error'
   }
 })
 

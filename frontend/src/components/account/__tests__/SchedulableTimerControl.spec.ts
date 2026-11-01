@@ -1,25 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import USelect from '@nuxt/ui/components/Select.vue'
 import SchedulableTimerControl from '../SchedulableTimerControl.vue'
 
-const { api, toast } = vi.hoisted(() => ({
+const { api, toast, SelectStub } = vi.hoisted(() => ({
   api: { list: vi.fn(), preview: vi.fn(), save: vi.fn(), cancel: vi.fn() },
-  toast: { showSuccess: vi.fn(), showError: vi.fn() }
+  toast: { showSuccess: vi.fn(), showError: vi.fn() },
+  // The app's shared Select (zone / day pickers); Nuxt UI's USelect (action) renders for real.
+  SelectStub: {
+    // Not "Select": findComponent would also match Nuxt UI's Select by that name.
+    name: 'AppSelectStub',
+    props: ['modelValue', 'options'],
+    emits: ['update:modelValue'],
+    template: '<button type="button" v-bind="$attrs" />'
+  }
 }))
 vi.mock('@/api/admin/schedulableTimers', () => ({ schedulableTimersAPI: api }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => toast }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/components/common/BaseDialog.vue', () => ({ default: { props: ['show'], template: '<div v-if="show"><slot /></div>' } }))
-const SelectStub = {
-  name: 'Select',
-  props: ['modelValue', 'options'],
-  emits: ['update:modelValue'],
-  template: '<button type="button" v-bind="$attrs" />'
+vi.mock('@/components/common/Select.vue', () => ({ default: SelectStub }))
+const mountTimer = (props: { accountId: number; refreshKey?: number }) => mount(SchedulableTimerControl, { props })
+// The one-shot action is a USelect (options teleport only when open): pick through its model.
+async function selectAction(wrapper: VueWrapper, value: 'open' | 'close') {
+  wrapper.getComponent(USelect).vm.$emit('update:modelValue', value)
+  await flushPromises()
 }
-const mountTimer = (props: { accountId: number; refreshKey?: number }) => mount(SchedulableTimerControl, {
-  props,
-  global: { stubs: { Select: SelectStub } }
-})
 function selectValue(wrapper: VueWrapper, testId: string, value: string | boolean) {
   const select = wrapper.findAllComponents(SelectStub).find(component => component.attributes('data-test') === testId)
   if (!select) throw new Error(`Select ${testId} not found`)
@@ -56,7 +62,7 @@ describe('one-shot schedulable timer', () => {
     await flushPromises()
     await wrapper.get('[data-test="timer-entry"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="timer-action"]').setValue('close')
+    await selectAction(wrapper, 'close')
     await wrapper.get('[data-test="timer-mode-absolute"]').trigger('click')
     await wrapper.get('[data-test="timer-preview"]').trigger('click')
     await flushPromises()
@@ -64,7 +70,7 @@ describe('one-shot schedulable timer', () => {
     expect(wrapper.text()).toContain('+08:00')
     expect(wrapper.text()).toContain('Asia/Shanghai')
     expect(wrapper.get('[data-test="timer-save"]').attributes('disabled')).toBeDefined()
-    await wrapper.get('[data-test="timer-confirm"]').setValue(true)
+    await wrapper.get('[data-test="timer-confirm"]').trigger('click')
     await wrapper.get('[data-test="timer-save"]').trigger('click')
     await flushPromises()
     expect(api.save).toHaveBeenCalledWith(7, expect.objectContaining({ action: 'close', date: '2026-10-23', confirmed_at: task.execute_at, hours: 0 }))
@@ -79,7 +85,7 @@ describe('one-shot schedulable timer', () => {
     expect(wrapper.get('[data-test="timer-mode-absolute"]').attributes('aria-selected')).toBe('true')
     await wrapper.get('[data-test="timer-preview"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="timer-confirm"]').setValue(true)
+    await wrapper.get('[data-test="timer-confirm"]').trigger('click')
     await wrapper.get('[data-test="timer-save"]').trigger('click')
     await flushPromises()
     expect(api.save).toHaveBeenCalledWith(7, expect.objectContaining({ expected_version: 3 }))
@@ -203,7 +209,7 @@ describe('one-shot schedulable timer', () => {
   it('restores the selected one-shot action when switching out of recurring mode and cancels unsaved edits', async () => {
     wrapper = mountTimer({ accountId: 7 })
     await flushPromises()
-    await wrapper.get('[data-test="timer-entry"]').trigger('click'); await wrapper.get('[data-test="timer-action"]').setValue('close')
+    await wrapper.get('[data-test="timer-entry"]').trigger('click'); await selectAction(wrapper, 'close')
     await flushPromises()
     await wrapper.get('[data-test="timer-mode-recurring"]').trigger('click')
     expect(wrapper.get('[data-test="timer-mode-recurring"]').attributes('aria-selected')).toBe('true')

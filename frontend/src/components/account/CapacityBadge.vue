@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// One capacity line in the accounts table: a muted icon and "current / max" in tabular
+// figures. colorClass is a text token (text-muted normally, text-warning / text-error near
+// or at the limit), so only the state is coloured, never the background.
 defineProps<{
   colorClass: string
   tooltip?: string
@@ -10,16 +13,13 @@ defineProps<{
 
 <template>
   <span
-    :class="[
-      'inline-flex items-center gap-1 rounded-md px-1.5 py-px text-[10px] font-medium leading-tight',
-      colorClass
-    ]"
+    :class="['inline-flex items-center gap-1 text-xs leading-5 tabular-nums', colorClass]"
     :title="tooltip"
   >
-    <slot />
-    <span class="font-mono">{{ current }}</span>
-    <span class="text-gray-400 dark:text-gray-500">/</span>
-    <span class="font-mono">{{ max }}</span>
-    <span v-if="suffix" class="text-[9px] opacity-60">{{ suffix }}</span>
+    <span class="inline-flex text-dimmed"><slot /></span>
+    <span>{{ current }}</span>
+    <span class="text-dimmed">/</span>
+    <span>{{ max }}</span>
+    <span v-if="suffix" class="text-dimmed">{{ suffix }}</span>
   </span>
 </template>

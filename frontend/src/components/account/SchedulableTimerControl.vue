@@ -1,121 +1,141 @@
 <template>
-  <div class="mb-1 min-w-0 text-left text-xs" @click.stop>
-    <div class="flex flex-wrap gap-x-2 gap-y-1">
-      <button type="button" data-test="timer-entry"
-        class="text-primary-600 hover:underline disabled:opacity-50 dark:text-primary-400"
-        :disabled="busy || loading" :aria-expanded="expanded" @click="begin(lastOneShotAction)">
-        {{ t('admin.accounts.timer.title') }}
-      </button>
-    </div>
-    <div v-if="snapshot?.recurring?.enabled" class="mt-2 max-w-80 whitespace-normal wrap-break-word text-gray-600 dark:text-dark-300" aria-live="polite">
+  <!-- display: contents, so in the table cell the clock button sits next to the schedulable
+       switch and the timer summaries wrap onto their own lines below (basis-full). -->
+  <div class="contents text-left text-xs" @click.stop>
+    <UButton
+      data-test="timer-entry"
+      :color="hasSchedule ? 'primary' : 'neutral'"
+      :variant="hasSchedule ? 'soft' : 'ghost'"
+      icon="i-lucide-alarm-clock"
+      size="xs"
+      square
+      :disabled="busy || loading"
+      :aria-expanded="expanded"
+      :aria-label="t('admin.accounts.timer.title')"
+      :title="t('admin.accounts.timer.title')"
+      @click="begin(lastOneShotAction)"
+    />
+    <div v-if="snapshot?.recurring?.enabled" class="max-w-80 basis-full whitespace-normal wrap-break-word text-muted" aria-live="polite">
       <span>{{ recurringSummary }}</span>
-      <div class="flex flex-wrap gap-2">
-        <button type="button" class="text-primary-600 hover:underline" :disabled="busy || loading" @click="begin('recurring')">{{ t('admin.accounts.timer.edit') }}</button>
-        <button type="button" data-test="timer-cancel-recurring" class="text-red-600 hover:underline" :disabled="busy || loading" @click="cancelRecurring">{{ t('admin.accounts.timer.cancel') }}</button>
-      </div>
+      <span class="ms-1.5 inline-flex gap-2">
+        <UButton variant="link" size="xs" class="p-0" :disabled="busy || loading" :label="t('admin.accounts.timer.edit')" @click="begin('recurring')" />
+        <UButton data-test="timer-cancel-recurring" color="error" variant="link" size="xs" class="p-0" :disabled="busy || loading" :label="t('admin.accounts.timer.cancel')" @click="cancelRecurring" />
+      </span>
     </div>
-    <div v-for="task in pending" :key="task.action" class="mt-1 max-w-80 whitespace-normal wrap-break-word text-gray-600 dark:text-dark-300" aria-live="polite">
+    <div v-for="task in pending" :key="task.action" class="max-w-80 basis-full whitespace-normal wrap-break-word text-muted" aria-live="polite">
       <span>{{ t(`admin.accounts.timer.${task.action}`) }} · {{ taskLocalTime(task) }} · {{ countdown(task) }}</span>
-      <div class="flex flex-wrap gap-2">
-        <button type="button" class="text-primary-600 hover:underline" :disabled="busy" @click="begin(task.action)">{{ t('admin.accounts.timer.edit') }}</button>
-        <button type="button" :data-test="`timer-cancel-${task.action}`" class="text-red-600 hover:underline" :disabled="busy" @click="cancel(task)">{{ t('admin.accounts.timer.cancel') }}</button>
-      </div>
-      <span v-if="task.reason" class="text-amber-600">{{ reasonText(task.reason) }}</span>
+      <span class="ms-1.5 inline-flex gap-2">
+        <UButton variant="link" size="xs" class="p-0" :disabled="busy" :label="t('admin.accounts.timer.edit')" @click="begin(task.action)" />
+        <UButton :data-test="`timer-cancel-${task.action}`" color="error" variant="link" size="xs" class="p-0" :disabled="busy" :label="t('admin.accounts.timer.cancel')" @click="cancel(task)" />
+      </span>
+      <span v-if="task.reason" class="block text-warning">{{ reasonText(task.reason) }}</span>
     </div>
-    <p v-if="error && !expanded" class="mt-1 max-w-80 whitespace-normal text-red-600" role="alert">{{ error }}</p>
-    <button v-if="loadFailed" type="button" class="text-primary-600 underline" @click="load">{{ t('admin.accounts.timer.reload') }}</button>
+    <p v-if="error && !expanded" class="max-w-80 basis-full whitespace-normal text-error" role="alert">{{ error }}</p>
+    <UButton v-if="loadFailed" variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.reload')" @click="load" />
     <BaseDialog :show="expanded" :title="t('admin.accounts.timer.title')" width="narrow"
       :close-on-escape="!busy" :close-on-click-outside="!busy" :show-close-button="!busy" @close="expanded = false">
     <div v-if="expanded" data-test="timer-form" class="max-w-full space-y-4 whitespace-normal">
-      <fieldset :disabled="busy" class="min-w-0 space-y-2">
-        <div class="space-y-1">
-          <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.timer.mode') }}</span>
-          <div class="grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-800" role="tablist" :aria-label="t('admin.accounts.timer.mode')">
-            <button
+      <fieldset :disabled="busy" class="min-w-0 space-y-4">
+        <UFormField :label="t('admin.accounts.timer.mode')">
+          <UFieldGroup class="flex w-full" role="tablist" :aria-label="t('admin.accounts.timer.mode')">
+            <UButton
               v-for="option in modeOptions"
               :key="option.value"
-              type="button"
               role="tab"
+              color="neutral"
+              :variant="form.mode === option.value ? 'solid' : 'outline'"
+              class="flex-1 justify-center"
               :aria-selected="form.mode === option.value"
               :data-test="`timer-mode-${option.value}`"
-              class="rounded-md px-2 py-1.5 text-xs font-medium transition-colors"
-              :class="form.mode === option.value
-                ? 'bg-white text-primary-700 shadow-xs dark:bg-dark-700 dark:text-primary-300'
-                : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+              :label="option.label"
               @click="setMode(option.value)"
-            >
-              {{ option.label }}
-            </button>
-          </div>
-        </div>
-        <label v-if="form.mode !== 'recurring'" class="block">{{ t('admin.accounts.timer.action') }}
-          <select v-model="action" data-test="timer-action" class="input mt-1 w-full text-xs" @change="onActionChanged">
-            <option value="open">{{ t('admin.accounts.timer.open') }}</option>
-            <option value="close">{{ t('admin.accounts.timer.close') }}</option>
-          </select>
-        </label>
-        <div v-if="form.mode === 'relative'" class="space-y-1">
+            />
+          </UFieldGroup>
+        </UFormField>
+        <UFormField v-if="form.mode !== 'recurring'" :label="t('admin.accounts.timer.action')">
+          <USelect :model-value="action" :items="actionItems" data-test="timer-action" class="w-full" @update:model-value="selectAction" />
+        </UFormField>
+        <div v-if="form.mode === 'relative'" class="space-y-2">
           <div class="grid grid-cols-2 gap-2">
-            <label>{{ t('admin.accounts.timer.hours') }}<input v-model.number="form.hours" type="number" min="0" step="1" :max="Math.floor(maxMinutes / 60)" class="input mt-1 w-full text-xs" /></label>
-            <label>{{ t('admin.accounts.timer.minutes') }}<input v-model.number="form.minutes" type="number" min="0" step="1" :max="maxMinutes" class="input mt-1 w-full text-xs" /></label>
+            <UFormField :label="t('admin.accounts.timer.hours')">
+              <UInput v-model.number="form.hours" type="number" min="0" step="1" :max="Math.floor(maxMinutes / 60)" class="w-full" />
+            </UFormField>
+            <UFormField :label="t('admin.accounts.timer.minutes')">
+              <UInput v-model.number="form.minutes" type="number" min="0" step="1" :max="maxMinutes" class="w-full" />
+            </UFormField>
           </div>
-          <button type="button" class="text-primary-600 underline" @click="form.hours = 8; form.minutes = 0">{{ t('admin.accounts.timer.preset') }}</button>
-          <p class="text-gray-500 dark:text-dark-400">{{ t('admin.accounts.timer.relativeHint') }}</p>
+          <UButton variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.preset')" @click="form.hours = 8; form.minutes = 0" />
+          <p class="text-xs text-muted">{{ t('admin.accounts.timer.relativeHint') }}</p>
         </div>
         <div v-else-if="form.mode === 'recurring'" class="space-y-4">
-          <div>
-            <label class="block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.timer.activeDays') }}</label>
-            <Select :model-value="weekdaysOnly" :options="dayScopeOptions" :aria-label="t('admin.accounts.timer.activeDays')" data-test="timer-day-mode" class="mt-1 w-full" @update:model-value="updateWeekdaysOnly" />
-          </div>
+          <UFormField :label="t('admin.accounts.timer.activeDays')">
+            <Select :model-value="weekdaysOnly" :options="dayScopeOptions" :aria-label="t('admin.accounts.timer.activeDays')" data-test="timer-day-mode" class="w-full" @update:model-value="updateWeekdaysOnly" />
+          </UFormField>
           <div class="space-y-3">
-            <div v-for="(period, index) in recurringPeriods" :key="index" class="grid min-w-0 grid-cols-2 items-end gap-2">
-              <label class="min-w-0">{{ t('admin.accounts.timer.start') }}<input v-model="period.start" data-test="timer-period-start" type="time" step="60" class="input mt-1 w-full text-xs" /></label>
-              <label class="min-w-0">{{ t('admin.accounts.timer.end') }}<input v-model="period.end" data-test="timer-period-end" type="time" step="60" class="input mt-1 w-full text-xs" /></label>
-              <button v-if="recurringPeriods.length > 1" type="button" data-test="timer-period-remove" class="col-span-2 justify-self-end text-xs text-gray-500 hover:text-red-600 sm:col-span-1 sm:col-start-3" @click="removePeriod(index)">{{ t('admin.accounts.timer.removePeriod') }}</button>
+            <div v-for="(period, index) in recurringPeriods" :key="index" class="grid min-w-0 grid-cols-[1fr_1fr_auto] items-end gap-2">
+              <UFormField :label="t('admin.accounts.timer.start')" class="min-w-0">
+                <UInput v-model="period.start" data-test="timer-period-start" type="time" step="60" class="w-full" />
+              </UFormField>
+              <UFormField :label="t('admin.accounts.timer.end')" class="min-w-0">
+                <UInput v-model="period.end" data-test="timer-period-end" type="time" step="60" class="w-full" />
+              </UFormField>
+              <UButton
+                v-if="recurringPeriods.length > 1"
+                data-test="timer-period-remove"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-x"
+                square
+                :aria-label="t('admin.accounts.timer.removePeriod')"
+                :title="t('admin.accounts.timer.removePeriod')"
+                @click="removePeriod(index)"
+              />
             </div>
           </div>
-          <button type="button" data-test="timer-add-period" class="text-primary-600 hover:underline" :disabled="recurringPeriods.length >= 24" @click="addPeriod">+ {{ t('admin.accounts.timer.addPeriod') }}</button>
-          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.accounts.timer.recurringHint') }}</p>
-          <p v-if="pending.length" class="text-xs text-amber-700 dark:text-amber-400">{{ t('admin.accounts.timer.replacesOneShotHint') }}</p>
+          <UButton data-test="timer-add-period" variant="link" size="xs" icon="i-lucide-plus" class="p-0" :disabled="recurringPeriods.length >= 24" :label="t('admin.accounts.timer.addPeriod')" @click="addPeriod" />
+          <p class="text-xs text-muted">{{ t('admin.accounts.timer.recurringHint') }}</p>
+          <p v-if="pending.length" class="text-xs text-warning">{{ t('admin.accounts.timer.replacesOneShotHint') }}</p>
         </div>
-        <div v-else class="space-y-1">
-          <label class="block">{{ t('admin.accounts.timer.date') }}<input v-model="form.date" type="date" class="input mt-1 w-full text-xs" /></label>
-          <label class="block">{{ t('admin.accounts.timer.time') }}<input v-model="form.time" type="time" step="60" class="input mt-1 w-full text-xs" /></label>
-          <p class="text-gray-500 dark:text-dark-400">{{ t('admin.accounts.timer.absoluteHint') }}</p>
+        <div v-else class="space-y-3">
+          <UFormField :label="t('admin.accounts.timer.date')">
+            <UInput v-model="form.date" type="date" class="w-full" />
+          </UFormField>
+          <UFormField :label="t('admin.accounts.timer.time')">
+            <UInput v-model="form.time" type="time" step="60" class="w-full" />
+          </UFormField>
+          <p class="text-xs text-muted">{{ t('admin.accounts.timer.absoluteHint') }}</p>
         </div>
-        <div>
-          <label class="block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.timer.timezone') }}</label>
-          <Select :model-value="form.timezone" :options="timezoneOptions" :aria-label="t('admin.accounts.timer.timezone')" data-test="timer-zone" searchable creatable class="mt-1 w-full" @update:model-value="updateTimezone" />
-        </div>
-        <div v-if="form.mode !== 'recurring'" class="flex flex-wrap gap-2">
-          <button type="button" class="text-primary-600 underline" @click="form.timezone = 'Asia/Shanghai'">{{ t('admin.accounts.timer.beijing') }}</button>
-          <button type="button" class="text-primary-600 underline" @click="form.timezone = 'UTC'">UTC</button>
-        </div>
-        <button type="button" data-test="timer-preview" class="btn btn-secondary w-full text-xs" :disabled="busy" @click="previewTime">{{ t(form.mode === 'recurring' ? 'admin.accounts.timer.previewNext' : 'admin.accounts.timer.preview') }}</button>
-        <div v-if="preview" class="space-y-3 py-1 text-sm" aria-live="polite">
-          <p data-test="timer-preview-value">{{ preview.local_date }} {{ preview.local_time }} · {{ preview.timezone }} · UTC{{ preview.offset }}<span v-if="preview.action"> · {{ t(`admin.accounts.timer.${preview.action}`) }}</span></p>
-          <label v-if="form.mode === 'absolute'" class="flex items-start gap-2">
-            <input v-model="confirmed" data-test="timer-confirm" type="checkbox" class="mt-0.5" />
-            {{ t('admin.accounts.timer.confirm') }}
-          </label>
-          <button type="button" data-test="timer-save" class="btn btn-primary w-full text-xs" :disabled="form.mode === 'absolute' && !confirmed" @click="save">{{ form.mode === 'recurring' ? t('admin.accounts.timer.saveRecurring') : t('admin.accounts.timer.save') }}</button>
+        <UFormField :label="t('admin.accounts.timer.timezone')">
+          <Select :model-value="form.timezone" :options="timezoneOptions" :aria-label="t('admin.accounts.timer.timezone')" data-test="timer-zone" searchable creatable class="w-full" @update:model-value="updateTimezone" />
+          <div v-if="form.mode !== 'recurring'" class="mt-1.5 flex flex-wrap gap-3">
+            <UButton variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.beijing')" @click="form.timezone = 'Asia/Shanghai'" />
+            <UButton variant="link" size="xs" class="p-0" label="UTC" @click="form.timezone = 'UTC'" />
+          </div>
+        </UFormField>
+        <UButton data-test="timer-preview" color="neutral" variant="outline" block :disabled="busy" :label="t(form.mode === 'recurring' ? 'admin.accounts.timer.previewNext' : 'admin.accounts.timer.preview')" @click="previewTime" />
+        <div v-if="preview" class="space-y-3 text-sm" aria-live="polite">
+          <p data-test="timer-preview-value" class="text-highlighted">{{ preview.local_date }} {{ preview.local_time }} · {{ preview.timezone }} · UTC{{ preview.offset }}<span v-if="preview.action"> · {{ t(`admin.accounts.timer.${preview.action}`) }}</span></p>
+          <UCheckbox v-if="form.mode === 'absolute'" v-model="confirmed" data-test="timer-confirm" :label="t('admin.accounts.timer.confirm')" />
+          <UButton data-test="timer-save" block :disabled="form.mode === 'absolute' && !confirmed" :label="form.mode === 'recurring' ? t('admin.accounts.timer.saveRecurring') : t('admin.accounts.timer.save')" @click="save" />
         </div>
       </fieldset>
-      <p v-if="error" class="text-xs text-red-600" role="alert">{{ error }}</p>
-      <p v-if="form.mode !== 'recurring'" class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.accounts.timer.policy', { seconds: snapshot?.poll_seconds ?? 30, grace: (snapshot?.open_grace_seconds ?? 900) / 60, days: maxMinutes / 1440 }) }}</p>
+      <p v-if="error" class="text-xs text-error" role="alert">{{ error }}</p>
+      <p v-if="form.mode !== 'recurring'" class="text-xs text-muted">{{ t('admin.accounts.timer.policy', { seconds: snapshot?.poll_seconds ?? 30, grace: (snapshot?.open_grace_seconds ?? 900) / 60, days: maxMinutes / 1440 }) }}</p>
       <div class="flex justify-end">
-        <button type="button" data-test="timer-form-cancel" class="text-sm text-gray-500 hover:text-gray-800 dark:hover:text-gray-200" :disabled="busy" @click="closeForm">{{ t('common.cancel') }}</button>
+        <UButton data-test="timer-form-cancel" color="neutral" variant="subtle" :disabled="busy" :label="t('common.cancel')" @click="closeForm" />
       </div>
     </div>
     </BaseDialog>
-    <details v-if="snapshot?.history.length" class="mt-1 max-w-80 whitespace-normal text-gray-500 dark:text-dark-400">
-      <summary class="cursor-pointer">{{ t('admin.accounts.timer.history') }} · {{ t(`admin.accounts.timer.results.${snapshot.history[0]?.result}`) }}<span v-if="snapshot.history[0]?.reason"> · {{ reasonText(snapshot.history[0].reason) }}</span></summary>
-      <p v-for="(item, index) in snapshot.history" :key="index" class="mt-1 wrap-break-word">
-        {{ t(`admin.accounts.timer.${item.action}`) }} · {{ localTime(item.execute_at, item.timezone) }}<br />
-        {{ t('admin.accounts.timer.actual') }} {{ localTime(item.actual_at, item.timezone) }} · {{ t(`admin.accounts.timer.results.${item.result}`) }}
-        <span v-if="item.reason"> · {{ reasonText(item.reason) }}</span>
-      </p>
-    </details>
+    <UCollapsible v-if="snapshot?.history.length" class="max-w-80 basis-full whitespace-normal">
+      <UButton color="neutral" variant="link" size="xs" class="p-0 text-dimmed" trailing-icon="i-lucide-chevron-down" :label="historySummary" />
+      <template #content>
+        <p v-for="(item, index) in snapshot.history" :key="index" class="mt-1 wrap-break-word text-muted">
+          {{ t(`admin.accounts.timer.${item.action}`) }} · {{ localTime(item.execute_at, item.timezone) }}<br />
+          {{ t('admin.accounts.timer.actual') }} {{ localTime(item.actual_at, item.timezone) }} · {{ t(`admin.accounts.timer.results.${item.result}`) }}
+          <span v-if="item.reason"> · {{ reasonText(item.reason) }}</span>
+        </p>
+      </template>
+    </UCollapsible>
   </div>
 </template>
 
@@ -158,6 +178,18 @@ const dayScopeOptions = computed(() => [
   { value: false, label: t('admin.accounts.timer.everyDay') },
   { value: true, label: t('admin.accounts.timer.weekdaysOnly') },
 ])
+const actionItems = computed(() => [
+  { value: 'open', label: t('admin.accounts.timer.open') },
+  { value: 'close', label: t('admin.accounts.timer.close') },
+])
+// The clock button is highlighted while a one-shot or recurring timer is active.
+const hasSchedule = computed(() => pending.value.length > 0 || !!snapshot.value?.recurring?.enabled)
+const historySummary = computed(() => {
+  const latest = snapshot.value?.history[0]
+  if (!latest) return ''
+  const reason = latest.reason ? ` · ${reasonText(latest.reason)}` : ''
+  return `${t('admin.accounts.timer.history')} · ${t(`admin.accounts.timer.results.${latest.result}`)}${reason}`
+})
 const modeOptions = computed<Array<{ value: TimerInput['mode']; label: string }>>(() => [
   { value: 'relative', label: t('admin.accounts.timer.relative') },
   { value: 'absolute', label: t('admin.accounts.timer.absolute') },
@@ -270,6 +302,11 @@ function input(): TimerInput {
 }
 function addPeriod() { if (recurringPeriods.value.length < 24) recurringPeriods.value.push({ start: '08:00', end: '18:00' }) }
 function removePeriod(index: number) { if (recurringPeriods.value.length > 1) recurringPeriods.value.splice(index, 1) }
+function selectAction(value: unknown) {
+  if (value !== 'open' && value !== 'close') return
+  action.value = value
+  onActionChanged()
+}
 function onActionChanged() {
   if (action.value !== 'open' && action.value !== 'close') return
   lastOneShotAction.value = action.value
