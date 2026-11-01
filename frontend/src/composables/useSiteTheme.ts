@@ -44,10 +44,11 @@ export const DEFAULT_SITE_THEME: Readonly<SiteThemeSettings> = Object.freeze({
 const SYSTEM_FONT_STACK = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
 
 /**
- * Font-family stacks only; nothing is downloaded (Google Fonts is blocked for
- * mainland China visitors). Self-hosted @font-face files for Public Sans, Inter
- * and Noto Sans SC are added at integration; until then a visitor without the
- * font installed gets the system fallbacks. `system` writes nothing, so the
+ * Font-family stacks only; this module writes no @font-face and fetches nothing
+ * (Google Fonts is blocked for mainland China visitors). Public Sans and Inter
+ * are self-hosted, latin only, by src/styles/fonts.css; Chinese text falls
+ * through to PingFang SC / Microsoft YaHei. Noto Sans SC is too large to bundle,
+ * so it is used only where it is installed. `system` writes nothing, so the
  * stylesheet's own font stack stays in charge.
  */
 export const THEME_FONT_STACKS: Readonly<Record<ThemeFont, string | null>> = {

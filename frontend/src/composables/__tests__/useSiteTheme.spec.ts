@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_SITE_THEME,
   SITE_THEME_STYLE_ID,
+  THEME_FONT_STACKS,
   applySiteTheme,
   buildSiteThemeCss,
   normalizeSiteTheme,
@@ -92,6 +95,24 @@ describe('useSiteTheme', () => {
 
     applySiteTheme(DEFAULT_SITE_THEME)
     expect(css()).not.toContain('--font-sans')
+  })
+
+  it('self-hosts the latin Public Sans and Inter faces the font stacks name, from bundled packages only', () => {
+    const fonts = readFileSync(resolve(process.cwd(), 'src/styles/fonts.css'), 'utf8')
+    const references = [...fonts.matchAll(/(?:@import\s+|url\()\s*['"]?([^'")\s]+)/g)].map((match) => match[1])
+    expect(references.length).toBeGreaterThan(0)
+    for (const reference of references) {
+      expect(reference).toMatch(/^@fontsource(-variable)?\/[\w-]+\/(files\/)?[\w-]*latin-[\w-]+\.(css|woff2)$/)
+    }
+    expect(fonts).not.toMatch(/https?:|\/\//)
+    expect(fonts).toContain("font-family: 'Inter';")
+    expect(fonts).toContain('@fontsource/public-sans/latin-400.css')
+    expect(THEME_FONT_STACKS.inter?.startsWith("'Inter', ")).toBe(true)
+    expect(THEME_FONT_STACKS['public-sans']?.startsWith("'Public Sans', ")).toBe(true)
+    for (const stack of [THEME_FONT_STACKS.inter, THEME_FONT_STACKS['public-sans']]) {
+      expect(stack).toContain("'PingFang SC'")
+      expect(stack).toContain("'Microsoft YaHei'")
+    }
   })
 
   it('never writes a value outside the allowlist', () => {

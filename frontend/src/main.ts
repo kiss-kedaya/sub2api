@@ -7,6 +7,7 @@ import nuxtUi from './plugins/nuxtUi'
 import { useAppStore } from '@/stores/app'
 import { updateFavicon } from '@/utils/branding'
 import { isIOSDevice } from '@/utils/device'
+import './styles/fonts.css'
 import './style.css'
 
 function initIOSViewportZoomFix() {
