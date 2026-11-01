@@ -7,6 +7,22 @@ export default {
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',
       advancedOptions: 'Advanced options',
+      // Section titles shared by the create / edit / bulk-edit account dialogs.
+      formSections: {
+        platform: 'Platform and type',
+        basic: 'Basics',
+        credentials: 'Connection and credentials',
+        models: 'Models',
+        scheduling: 'Scheduling',
+        limits: 'Quotas and rate limits',
+        errors: 'Error handling',
+        forwarding: 'Forwarding and compatibility',
+        network: 'Network',
+        billing: 'Billing',
+      },
+      formActions: {
+        remove: 'Remove',
+      },
       autoRefresh: 'Auto Refresh',
       enableAutoRefresh: 'Enable auto refresh',
       refreshInterval5s: '5 seconds',

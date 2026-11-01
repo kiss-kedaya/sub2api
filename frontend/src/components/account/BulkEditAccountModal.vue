@@ -2,90 +2,48 @@
   <BaseDialog
     :show="show"
     :title="t('admin.accounts.bulkEdit.title')"
+    :description="t('admin.accounts.bulkEdit.selectionInfo', { count: targetMode === 'filtered' ? targetPreviewCount : accountIds.length })"
     width="wide"
     @close="handleClose"
   >
     <form id="bulk-edit-account-form" class="space-y-5" @submit.prevent="() => handleSubmit()">
-      <!-- Info -->
-      <div class="rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
-        <p class="text-sm text-blue-700 dark:text-blue-400">
-          <svg class="mr-1.5 inline h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-          {{ t('admin.accounts.bulkEdit.selectionInfo', { count: targetMode === 'filtered' ? targetPreviewCount : accountIds.length }) }}
-        </p>
-      </div>
-
       <!-- Mixed platform warning -->
-      <div v-if="isMixedPlatform" class="rounded-lg bg-amber-50 p-4 dark:bg-amber-900/20">
-        <p class="text-sm text-amber-700 dark:text-amber-400">
-          <svg class="mr-1.5 inline h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          {{ t('admin.accounts.bulkEdit.mixedPlatformWarning', { platforms: targetSelectedPlatforms.join(', ') }) }}
-        </p>
-      </div>
+      <UAlert v-if="isMixedPlatform" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.bulkEdit.mixedPlatformWarning', { platforms: targetSelectedPlatforms.join(', ') })" />
 
       <!-- Base URL (API Key only) -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-base-url-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-base-url-enabled"
           >
             {{ t('admin.accounts.baseUrl') }}
           </label>
-          <input
-            v-model="enableBaseUrl"
-            id="bulk-edit-base-url-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-base-url"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableBaseUrl" id="bulk-edit-base-url-enabled" aria-controls="bulk-edit-base-url" />
         </div>
-        <input
-          v-model="baseUrl"
-          id="bulk-edit-base-url"
-          type="text"
-          :disabled="!enableBaseUrl"
-          class="input"
-          :class="!enableBaseUrl && 'cursor-not-allowed opacity-50'"
-          :placeholder="t('admin.accounts.bulkEdit.baseUrlPlaceholder')"
-          aria-labelledby="bulk-edit-base-url-label"
-        />
+        <UInput v-model="baseUrl" id="bulk-edit-base-url" type="text" :disabled="!enableBaseUrl" :placeholder="t('admin.accounts.bulkEdit.baseUrlPlaceholder')" aria-labelledby="bulk-edit-base-url-label" class="w-full" />
         <GrokBaseUrlPresets
           v-if="allTargetsGrok"
           class="mt-2"
           @select="baseUrl = $event; enableBaseUrl = true"
         />
-        <p class="input-hint">
+        <p class="mt-1.5 text-xs text-muted">
           {{ t('admin.accounts.bulkEdit.baseUrlNotice') }}
         </p>
       </div>
 
       <!-- Model restriction -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-model-restriction-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-model-restriction-enabled"
           >
             {{ t('admin.accounts.modelRestriction') }}
           </label>
-          <input
-            v-model="enableModelRestriction"
-            id="bulk-edit-model-restriction-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-model-restriction-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableModelRestriction" id="bulk-edit-model-restriction-enabled" aria-controls="bulk-edit-model-restriction-body" />
         </div>
 
         <div
@@ -94,97 +52,43 @@
           role="group"
           aria-labelledby="bulk-edit-model-restriction-label"
         >
-          <div
-            v-if="isOpenAIModelRestrictionDisabled"
-            class="rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20"
-          >
-            <p class="text-xs text-amber-700 dark:text-amber-400">
-              {{ t('admin.accounts.openai.modelRestrictionDisabledByPassthrough') }}
-            </p>
-          </div>
+          <UAlert v-if="isOpenAIModelRestrictionDisabled" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.openai.modelRestrictionDisabledByPassthrough')" />
 
           <template v-else>
             <!-- Mode Toggle -->
-            <div class="mb-4 flex gap-2">
-              <button
+            <div class="mb-4 flex gap-1 rounded-lg bg-elevated p-1">
+              <UButton
+                :color="modelRestrictionMode === 'whitelist' ? 'primary' : 'neutral'"
+                :variant="modelRestrictionMode === 'whitelist' ? 'solid' : 'ghost'"
+                size="sm"
+                icon="i-lucide-circle-check"
+                block
+                class="flex-1"
                 type="button"
-                :class="[
-                  'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                  modelRestrictionMode === 'whitelist'
-                    ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                ]"
                 @click="modelRestrictionMode = 'whitelist'"
-              >
-                <svg
-                  class="mr-1.5 inline h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-                {{ t('admin.accounts.modelWhitelist') }}
-              </button>
-              <button
+              >{{ t('admin.accounts.modelWhitelist') }}</UButton>
+              <UButton
+                :color="modelRestrictionMode === 'mapping' ? 'primary' : 'neutral'"
+                :variant="modelRestrictionMode === 'mapping' ? 'solid' : 'ghost'"
+                size="sm"
+                icon="i-lucide-arrow-left-right"
+                block
+                class="flex-1"
                 type="button"
-                :class="[
-                  'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-                  modelRestrictionMode === 'mapping'
-                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                ]"
                 @click="modelRestrictionMode = 'mapping'"
-              >
-                <svg
-                  class="mr-1.5 inline h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-                  />
-                </svg>
-                {{ t('admin.accounts.modelMapping') }}
-              </button>
+              >{{ t('admin.accounts.modelMapping') }}</UButton>
             </div>
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <div class="mb-3 rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-                <p class="text-xs text-blue-700 dark:text-blue-400">
-                  <svg
-                    class="mr-1 inline h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  {{ t('admin.accounts.selectAllowedModels') }}
-                </p>
-              </div>
+              <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.selectAllowedModels')" class="mb-3" />
 
               <ModelWhitelistSelector
                 v-model="allowedModels"
                 :platforms="targetSelectedPlatforms"
               />
 
-              <p class="text-xs text-gray-500 dark:text-gray-400">
+              <p class="text-xs text-muted">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0">{{
                   t('admin.accounts.supportsAllModels')
@@ -194,24 +98,7 @@
 
             <!-- Mapping Mode -->
             <div v-else>
-              <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
-                <p class="text-xs text-purple-700 dark:text-purple-400">
-                  <svg
-                    class="mr-1 inline h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  {{ t('admin.accounts.mapRequestModels') }}
-                </p>
-              </div>
+              <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.mapRequestModels')" class="mb-3" />
 
               <!-- Model Mapping List -->
               <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
@@ -220,80 +107,47 @@
                   :key="index"
                   class="flex items-center gap-2"
                 >
-                  <input
+                  <UInput
                     v-model="mapping.from"
                     type="text"
-                    class="input flex-1"
                     :placeholder="t('admin.accounts.requestModel')"
+                    class="flex-1"
                   />
-                  <svg
-                    class="h-4 w-4 flex-shrink-0 text-gray-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M14 5l7 7m0 0l-7 7m7-7H3"
-                    />
-                  </svg>
-                  <input
+                  <UIcon name="i-lucide-arrow-right" class="size-4 flex-shrink-0 text-muted" />
+                  <UInput
                     v-model="mapping.to"
                     type="text"
-                    class="input flex-1"
                     :placeholder="t('admin.accounts.actualModel')"
+                    class="flex-1"
                   />
-                  <button
+                  <UButton
+                    color="error"
+                    variant="ghost"
+                    square
+                    size="sm"
+                    icon="i-lucide-trash-2"
+                    :aria-label="t('admin.accounts.formActions.remove')"
                     type="button"
-                    class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                     @click="removeModelMapping(index)"
-                  >
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                  </button>
+                  />
                 </div>
               </div>
 
-              <button
-                type="button"
-                class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
-                @click="addModelMapping"
-              >
-                <svg
-                  class="mr-1 inline h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
-                {{ t('admin.accounts.addMapping') }}
-              </button>
+              <UButton color="neutral" variant="soft" block icon="i-lucide-plus" class="mb-3" type="button" @click="addModelMapping">{{ t('admin.accounts.addMapping') }}</UButton>
 
               <!-- Quick Add Buttons -->
               <div class="flex flex-wrap gap-2">
-                <button
+                <UButton
+                  color="neutral"
+                  variant="soft"
+                  size="xs"
                   v-for="preset in filteredPresets"
                   :key="preset.label"
                   type="button"
-                  :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
                   @click="addPresetMapping(preset.from, preset.to)"
                 >
                   + {{ preset.label }}
-                </button>
+                </UButton>
               </div>
             </div>
           </template>
@@ -301,22 +155,16 @@
       </div>
 
       <!-- Proxy -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-proxy-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-proxy-enabled"
           >
             {{ t('admin.accounts.proxy') }}
           </label>
-          <input
-            v-model="enableProxy"
-            id="bulk-edit-proxy-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-proxy-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableProxy" id="bulk-edit-proxy-enabled" aria-controls="bulk-edit-proxy-body" />
         </div>
         <div id="bulk-edit-proxy-body" :class="!enableProxy && 'pointer-events-none opacity-50'">
           <ProxySelector
@@ -328,127 +176,63 @@
       </div>
 
       <!-- Concurrency & Priority -->
-      <div class="grid grid-cols-2 gap-4 border-t border-gray-200 pt-4 dark:border-dark-600 lg:grid-cols-4">
+      <div class="grid grid-cols-2 gap-4 pt-2 lg:grid-cols-4">
         <div>
           <div class="mb-3 flex items-center justify-between">
             <label
               id="bulk-edit-concurrency-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-concurrency-enabled"
             >
               {{ t('admin.accounts.concurrency') }}
             </label>
-            <input
-              v-model="enableConcurrency"
-              id="bulk-edit-concurrency-enabled"
-              type="checkbox"
-              aria-controls="bulk-edit-concurrency"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
+            <UCheckbox v-model="enableConcurrency" id="bulk-edit-concurrency-enabled" aria-controls="bulk-edit-concurrency" />
           </div>
-          <input
-            v-model.number="concurrency"
-            id="bulk-edit-concurrency"
-            type="number"
-            min="1"
-            :disabled="!enableConcurrency"
-            class="input"
-            :class="!enableConcurrency && 'cursor-not-allowed opacity-50'"
-            aria-labelledby="bulk-edit-concurrency-label"
-            @input="concurrency = Math.max(1, concurrency || 1)"
-          />
+          <UInput v-model.number="concurrency" id="bulk-edit-concurrency" type="number" min="1" :disabled="!enableConcurrency" aria-labelledby="bulk-edit-concurrency-label" @input="concurrency = Math.max(1, concurrency || 1)" class="w-full" />
         </div>
         <div>
           <div class="mb-3 flex items-center justify-between">
             <label
               id="bulk-edit-load-factor-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-load-factor-enabled"
             >
               {{ t('admin.accounts.loadFactor') }}
             </label>
-            <input
-              v-model="enableLoadFactor"
-              id="bulk-edit-load-factor-enabled"
-              type="checkbox"
-              aria-controls="bulk-edit-load-factor"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
+            <UCheckbox v-model="enableLoadFactor" id="bulk-edit-load-factor-enabled" aria-controls="bulk-edit-load-factor" />
           </div>
-          <input
-            v-model.number="loadFactor"
-            id="bulk-edit-load-factor"
-            type="number"
-            min="1"
-            :disabled="!enableLoadFactor"
-            class="input"
-            :class="!enableLoadFactor && 'cursor-not-allowed opacity-50'"
-            aria-labelledby="bulk-edit-load-factor-label"
-            @input="loadFactor = (loadFactor &amp;&amp; loadFactor >= 1) ? loadFactor : null"
-          />
-          <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
+          <UInput v-model.number="loadFactor" id="bulk-edit-load-factor" type="number" min="1" :disabled="!enableLoadFactor" aria-labelledby="bulk-edit-load-factor-label" @input="loadFactor = (loadFactor &amp;&amp; loadFactor >= 1) ? loadFactor : null" class="w-full" />
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.loadFactorHint') }}</p>
         </div>
         <div>
           <div class="mb-3 flex items-center justify-between">
             <label
               id="bulk-edit-priority-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-priority-enabled"
             >
               {{ t('admin.accounts.priority') }}
             </label>
-            <input
-              v-model="enablePriority"
-              id="bulk-edit-priority-enabled"
-              type="checkbox"
-              aria-controls="bulk-edit-priority"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
+            <UCheckbox v-model="enablePriority" id="bulk-edit-priority-enabled" aria-controls="bulk-edit-priority" />
           </div>
-          <input
-            v-model.number="priority"
-            id="bulk-edit-priority"
-            type="number"
-            min="0"
-            step="1"
-            :disabled="!enablePriority"
-            class="input"
-            :class="!enablePriority && 'cursor-not-allowed opacity-50'"
-            aria-labelledby="bulk-edit-priority-label"
-          />
+          <UInput v-model.number="priority" id="bulk-edit-priority" type="number" min="0" step="1" :disabled="!enablePriority" aria-labelledby="bulk-edit-priority-label" class="w-full" />
         </div>
         <div>
           <div class="mb-3 flex items-center justify-between">
             <label
               id="bulk-edit-rate-multiplier-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-rate-multiplier-enabled"
             >
               {{ t('admin.accounts.billingRateMultiplier') }}
             </label>
-            <input
-              v-model="enableRateMultiplier"
-              id="bulk-edit-rate-multiplier-enabled"
-              type="checkbox"
-              aria-controls="bulk-edit-rate-multiplier"
-              class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
+            <UCheckbox v-model="enableRateMultiplier" id="bulk-edit-rate-multiplier-enabled" aria-controls="bulk-edit-rate-multiplier" />
           </div>
-          <input
-            v-model.number="rateMultiplier"
-            id="bulk-edit-rate-multiplier"
-            type="number"
-            min="0"
-            step="0.01"
-            :disabled="!enableRateMultiplier"
-            class="input"
-            :class="!enableRateMultiplier && 'cursor-not-allowed opacity-50'"
-            aria-labelledby="bulk-edit-rate-multiplier-label"
-          />
-          <p class="input-hint">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
+          <UInput v-model.number="rateMultiplier" id="bulk-edit-rate-multiplier" type="number" min="0" step="0.01" :disabled="!enableRateMultiplier" aria-labelledby="bulk-edit-rate-multiplier-label" class="w-full" />
+          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
           <p
             v-if="enableRateMultiplier"
-            class="mt-2 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300"
+            class="mt-2 flex items-start gap-1 text-xs text-warning"
             data-testid="bulk-rate-sync-warning"
           >
             <Icon name="exclamationTriangle" size="xs" class="mt-0.5 flex-shrink-0" />
@@ -458,22 +242,16 @@
       </div>
 
       <!-- Status -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-status-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-status-enabled"
           >
             {{ t('common.status') }}
           </label>
-          <input
-            v-model="enableStatus"
-            id="bulk-edit-status-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-status"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableStatus" id="bulk-edit-status-enabled" aria-controls="bulk-edit-status" />
         </div>
         <div id="bulk-edit-status" :class="!enableStatus && 'pointer-events-none opacity-50'">
           <Select
@@ -484,34 +262,28 @@
         </div>
       </div>
 
-      <details class="account-advanced">
-        <summary class="account-advanced-summary">{{ t('admin.accounts.advancedOptions') }}</summary>
-        <div class="account-advanced-body space-y-5">
-      <!-- OpenAI passthrough -->
-      <div
+      <UCollapsible :unmount-on-hide="false">
+        <UButton type="button" color="neutral" variant="ghost" :label="t('admin.accounts.advancedOptions')" trailing-icon="i-lucide-chevron-down" class="group -ms-2.5 font-semibold text-highlighted" :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }" />
+        <template #content>
+          <div class="space-y-6 pt-4">
+            <div
         v-if="allOpenAIPassthroughCapable"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
               id="bulk-edit-openai-passthrough-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-openai-passthrough-enabled"
             >
               {{ t('admin.accounts.openai.oauthPassthrough') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.oauthPassthroughDesc') }}
             </p>
           </div>
-          <input
-            v-model="enableOpenAIPassthrough"
-            id="bulk-edit-openai-passthrough-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-passthrough-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAIPassthrough" id="bulk-edit-openai-passthrough-enabled" aria-controls="bulk-edit-openai-passthrough-body" />
         </div>
         <div
           id="bulk-edit-openai-passthrough-body"
@@ -519,50 +291,29 @@
           role="group"
           aria-labelledby="bulk-edit-openai-passthrough-label"
         >
-          <button
-            id="bulk-edit-openai-passthrough-toggle"
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiPassthroughEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="openaiPassthroughEnabled = !openaiPassthroughEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openaiPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
+          <Toggle v-model="openaiPassthroughEnabled" id="bulk-edit-openai-passthrough-toggle" />
         </div>
       </div>
 
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
       <div
         v-if="allOpenAIOAuthOnly"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
               id="bulk-edit-openai-flatten-namespaces-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-openai-flatten-namespaces-enabled"
             >
               {{ t('admin.accounts.openai.flattenNamespaces') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
             </p>
           </div>
-          <input
-            v-model="enableOpenAIFlattenNamespaces"
-            id="bulk-edit-openai-flatten-namespaces-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-flatten-namespaces-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAIFlattenNamespaces" id="bulk-edit-openai-flatten-namespaces-enabled" aria-controls="bulk-edit-openai-flatten-namespaces-body" />
         </div>
         <div
           id="bulk-edit-openai-flatten-namespaces-body"
@@ -570,50 +321,29 @@
           role="group"
           aria-labelledby="bulk-edit-openai-flatten-namespaces-label"
         >
-          <button
-            id="bulk-edit-openai-flatten-namespaces-toggle"
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openaiFlattenNamespacesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="openaiFlattenNamespacesEnabled = !openaiFlattenNamespacesEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openaiFlattenNamespacesEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
+          <Toggle v-model="openaiFlattenNamespacesEnabled" id="bulk-edit-openai-flatten-namespaces-toggle" />
         </div>
       </div>
 
       <!-- OpenAI API long-context billing -->
       <div
         v-if="allOpenAIPassthroughCapable"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        class="pt-2"
       >
         <div class="mb-3 flex items-center justify-between gap-4">
           <div class="flex-1">
             <label
               id="bulk-edit-openai-long-context-billing-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-openai-long-context-billing-enabled"
             >
               {{ t('admin.accounts.openai.longContextBilling') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.longContextBillingDesc') }}
             </p>
           </div>
-          <input
-            v-model="enableOpenAILongContextBilling"
-            id="bulk-edit-openai-long-context-billing-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-long-context-billing-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAILongContextBilling" id="bulk-edit-openai-long-context-billing-enabled" aria-controls="bulk-edit-openai-long-context-billing-body" />
         </div>
         <div
           id="bulk-edit-openai-long-context-billing-body"
@@ -621,28 +351,10 @@
           role="group"
           aria-labelledby="bulk-edit-openai-long-context-billing-label"
         >
-          <button
-            type="button"
-            data-testid="bulk-edit-openai-long-context-billing-toggle"
-            role="switch"
-            :disabled="!enableOpenAILongContextBilling"
-            :aria-checked="openAILongContextBillingEnabled"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              openAILongContextBillingEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="openAILongContextBillingEnabled = !openAILongContextBillingEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                openAILongContextBillingEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
+          <Toggle v-model="openAILongContextBillingEnabled" data-testid="bulk-edit-openai-long-context-billing-toggle" :disabled="!enableOpenAILongContextBilling" />
         </div>
         <p
-          class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          class="mt-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
           data-testid="bulk-edit-openai-long-context-shadow-hint"
         >
           {{ t('admin.accounts.bulkEdit.longContextShadowHint') }}
@@ -650,78 +362,55 @@
       </div>
 
       <!-- Custom error codes -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <div>
             <label
               id="bulk-edit-custom-error-codes-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-custom-error-codes-enabled"
             >
               {{ t('admin.accounts.customErrorCodes') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.customErrorCodesHint') }}
             </p>
           </div>
-          <input
-            v-model="enableCustomErrorCodes"
-            id="bulk-edit-custom-error-codes-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-custom-error-codes-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableCustomErrorCodes" id="bulk-edit-custom-error-codes-enabled" aria-controls="bulk-edit-custom-error-codes-body" />
         </div>
 
         <div v-if="enableCustomErrorCodes" id="bulk-edit-custom-error-codes-body" class="space-y-3">
-          <div class="rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20">
-            <p class="text-xs text-amber-700 dark:text-amber-400">
-              <Icon name="exclamationTriangle" size="sm" class="mr-1 inline" :stroke-width="2" />
-              {{ t('admin.accounts.customErrorCodesWarning') }}
-            </p>
-          </div>
+          <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.customErrorCodesWarning')" />
 
           <!-- Error Code Buttons -->
           <div class="flex flex-wrap gap-2">
-            <button
+            <UButton
+              :color="selectedErrorCodes.includes(code.value) ? 'error' : 'neutral'"
+              :variant="selectedErrorCodes.includes(code.value) ? 'soft' : 'outline'"
+              size="sm"
               v-for="code in commonErrorCodes"
               :key="code.value"
               type="button"
-              :class="[
-                'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
-                selectedErrorCodes.includes(code.value)
-                  ? 'bg-red-100 text-red-700 ring-1 ring-red-500 dark:bg-red-900/30 dark:text-red-400'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
               @click="toggleErrorCode(code.value)"
-            >
-              {{ code.value }} {{ code.label }}
-            </button>
+            >{{ code.value }} {{ code.label }}</UButton>
           </div>
 
           <!-- Manual input -->
           <div class="flex items-center gap-2">
-            <input
+            <UInput
               v-model="customErrorCodeInput"
               id="bulk-edit-custom-error-code-input"
               type="number"
               min="100"
               max="599"
-              class="input flex-1"
               :placeholder="t('admin.accounts.enterErrorCode')"
               aria-labelledby="bulk-edit-custom-error-codes-label"
               @keyup.enter="addCustomErrorCode"
+              class="flex-1"
             />
-            <button type="button" class="btn btn-secondary px-3" @click="addCustomErrorCode">
-              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-            </button>
+            <UButton color="neutral" variant="outline" type="button" @click="addCustomErrorCode" class="px-3">
+              <UIcon name="i-lucide-plus" class="size-4" />
+            </UButton>
           </div>
 
           <!-- Selected codes summary -->
@@ -729,18 +418,22 @@
             <span
               v-for="code in selectedErrorCodes.sort((a, b) => a - b)"
               :key="code"
-              class="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-sm font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400"
+              class="inline-flex items-center gap-1 rounded-full bg-error/10 px-2.5 py-0.5 text-sm font-medium text-error"
             >
               {{ code }}
-              <button
+              <UButton
+                color="neutral"
+                variant="link"
+                square
+                size="xs"
+                icon="i-lucide-x"
+                :aria-label="t('admin.accounts.formActions.remove')"
+                class="-me-1 p-0"
                 type="button"
-                class="hover:text-red-900 dark:hover:text-red-300"
                 @click="removeErrorCode(code)"
-              >
-                <Icon name="x" size="xs" class="h-3.5 w-3.5" :stroke-width="2" />
-              </button>
+              />
             </span>
-            <span v-if="selectedErrorCodes.length === 0" class="text-xs text-gray-400">
+            <span v-if="selectedErrorCodes.length === 0" class="text-xs text-muted">
               {{ t('admin.accounts.noneSelectedUsesDefault') }}
             </span>
           </div>
@@ -748,96 +441,51 @@
       </div>
 
       <!-- Intercept warmup requests (Anthropic only) -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div class="pt-2">
         <div class="flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
               id="bulk-edit-intercept-warmup-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-intercept-warmup-enabled"
             >
               {{ t('admin.accounts.interceptWarmupRequests') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.interceptWarmupRequestsDesc') }}
             </p>
           </div>
-          <input
-            v-model="enableInterceptWarmup"
-            id="bulk-edit-intercept-warmup-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-intercept-warmup-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableInterceptWarmup" id="bulk-edit-intercept-warmup-enabled" aria-controls="bulk-edit-intercept-warmup-body" />
         </div>
         <div v-if="enableInterceptWarmup" id="bulk-edit-intercept-warmup-body" class="mt-3">
-          <button
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              interceptWarmupRequests ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="interceptWarmupRequests = !interceptWarmupRequests"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                interceptWarmupRequests ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
+          <Toggle v-model="interceptWarmupRequests" />
         </div>
       </div>
 
       <!-- Header Override (eligible API-key platforms + grok OAuth) -->
-      <div v-if="allHeaderOverrideCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allHeaderOverrideCapable" class="pt-2">
         <div class="flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
               id="bulk-edit-header-override-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-header-override-enabled"
             >
               {{ t('admin.accounts.headerOverride.title') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.headerOverride.hint') }}
             </p>
           </div>
-          <input
-            v-model="enableHeaderOverride"
-            id="bulk-edit-header-override-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-header-override-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableHeaderOverride" id="bulk-edit-header-override-enabled" aria-controls="bulk-edit-header-override-body" />
         </div>
         <div v-if="enableHeaderOverride" id="bulk-edit-header-override-body" class="mt-3 space-y-3">
-          <button
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              headerOverrideEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="headerOverrideEnabled = !headerOverrideEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                headerOverrideEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
+          <Toggle v-model="headerOverrideEnabled" />
 
           <div v-if="headerOverrideEnabled" class="space-y-3">
-            <div class="rounded-lg bg-blue-50 p-3 dark:bg-blue-900/20">
-              <p class="text-xs text-blue-700 dark:text-blue-400">
-                <Icon name="exclamationCircle" size="sm" class="mr-1 inline" :stroke-width="2" />
-                {{ t('admin.accounts.headerOverride.info') }}
-              </p>
-            </div>
+            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
 
-            <p class="text-xs text-amber-600 dark:text-amber-400">
+            <p class="text-xs text-warning">
               {{ t('admin.accounts.headerOverride.bulkReplaceHint') }}
             </p>
 
@@ -846,38 +494,32 @@
               @update:rows="headerOverrideRows = $event"
             />
           </div>
-          <p v-else class="text-xs text-gray-500 dark:text-gray-400">
+          <p v-else class="text-xs text-muted">
             {{ t('admin.accounts.headerOverride.bulkDisableHint') }}
           </p>
         </div>
       </div>
 
       <!-- OpenAI OAuth WS mode -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIOAuth" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-ws-mode-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-openai-ws-mode-enabled"
           >
             {{ t('admin.accounts.openai.wsMode') }}
           </label>
-          <input
-            v-model="enableOpenAIWSMode"
-            id="bulk-edit-openai-ws-mode-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-ws-mode"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAIWSMode" id="bulk-edit-openai-ws-mode-enabled" aria-controls="bulk-edit-openai-ws-mode" />
         </div>
         <div
           id="bulk-edit-openai-ws-mode"
           :class="!enableOpenAIWSMode && 'pointer-events-none opacity-50'"
         >
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          <p class="mb-3 text-xs text-muted">
             {{ t('admin.accounts.openai.wsModeDesc') }}
           </p>
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          <p class="mb-3 text-xs text-muted">
             {{ t(openAIWSModeConcurrencyHintKey) }}
           </p>
           <Select
@@ -890,106 +532,59 @@
       </div>
 
       <!-- OpenAI OAuth Codex CLI only -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIOAuth" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-codex-cli-only-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-openai-codex-cli-only-enabled"
           >
             {{ t('admin.accounts.openai.codexCLIOnly') }}
           </label>
-          <input
-            v-model="enableCodexCLIOnly"
-            id="bulk-edit-openai-codex-cli-only-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-codex-cli-only"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableCodexCLIOnly" id="bulk-edit-openai-codex-cli-only-enabled" aria-controls="bulk-edit-openai-codex-cli-only" />
         </div>
         <div
           id="bulk-edit-openai-codex-cli-only"
           :class="!enableCodexCLIOnly && 'pointer-events-none opacity-50'"
         >
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          <p class="mb-3 text-xs text-muted">
             {{ t('admin.accounts.openai.codexCLIOnlyDesc') }}
           </p>
-          <button
-            id="bulk-edit-openai-codex-cli-only-toggle"
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              codexCLIOnlyEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="codexCLIOnlyEnabled = !codexCLIOnlyEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                codexCLIOnlyEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
+          <Toggle v-model="codexCLIOnlyEnabled" id="bulk-edit-openai-codex-cli-only-toggle" />
         </div>
       </div>
 
       <!-- OpenAI OAuth: Codex app-server -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIOAuth" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-codex-app-server-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-openai-codex-app-server-enabled"
           >
             {{ t('admin.accounts.openai.codexCLIOnlyAppServer') }}
           </label>
-          <input
-            v-model="enableCodexCLIOnlyAppServer"
-            id="bulk-edit-openai-codex-app-server-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-codex-app-server"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableCodexCLIOnlyAppServer" id="bulk-edit-openai-codex-app-server-enabled" aria-controls="bulk-edit-openai-codex-app-server" />
         </div>
         <div
           id="bulk-edit-openai-codex-app-server"
           :class="!enableCodexCLIOnlyAppServer && 'pointer-events-none opacity-50'"
         >
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          <p class="mb-3 text-xs text-muted">
             {{ t('admin.accounts.openai.codexCLIOnlyAppServerDesc') }}
           </p>
-          <button
-            id="bulk-edit-openai-codex-app-server-toggle"
-            type="button"
-            :class="[
-              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-              codexCLIOnlyAppServerEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-            ]"
-            @click="codexCLIOnlyAppServerEnabled = !codexCLIOnlyAppServerEnabled"
-          >
-            <span
-              :class="[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                codexCLIOnlyAppServerEnabled ? 'translate-x-5' : 'translate-x-0'
-              ]"
-            />
-          </button>
+          <Toggle v-model="codexCLIOnlyAppServerEnabled" id="bulk-edit-openai-codex-app-server-toggle" />
         </div>
       </div>
 
       <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
-      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIOAuth" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
-          <label class="input-label mb-0">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
-          <input
-            id="bulk-edit-openai-codex-fingerprint-mode-enabled"
-            v-model="enableCodexFingerprintMode"
-            type="checkbox"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
+          <UCheckbox id="bulk-edit-openai-codex-fingerprint-mode-enabled" v-model="enableCodexFingerprintMode" />
         </div>
         <div :class="!enableCodexFingerprintMode && 'pointer-events-none opacity-50'">
-          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+          <p class="mb-2 text-xs text-muted">
             {{ t('admin.accounts.openai.codexFingerprintModeDesc') }}
           </p>
           <Select v-model="codexFingerprintMode" data-testid="bulk-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
@@ -997,27 +592,21 @@
       </div>
 
       <!-- Upstream billing auto probe (any API-key platform) -->
-      <div v-if="allBillingProbeCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allBillingProbeCapable" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
               id="bulk-edit-upstream-billing-auto-probe-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-upstream-billing-auto-probe-enabled"
             >
               {{ t('admin.accounts.upstreamBilling.autoProbe') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.upstreamBilling.autoProbeHint') }}
             </p>
           </div>
-          <input
-            v-model="enableUpstreamBillingAutoProbe"
-            id="bulk-edit-upstream-billing-auto-probe-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-upstream-billing-auto-probe"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableUpstreamBillingAutoProbe" id="bulk-edit-upstream-billing-auto-probe-enabled" aria-controls="bulk-edit-upstream-billing-auto-probe" />
         </div>
         <div
           id="bulk-edit-upstream-billing-auto-probe"
@@ -1036,27 +625,21 @@
       </div>
 
       <!-- OpenAI API Key endpoint capabilities -->
-      <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIAPIKey" class="pt-2">
         <div class="mb-3 flex items-center justify-between gap-4">
           <div class="flex-1">
             <label
               id="bulk-edit-openai-endpoint-capabilities-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-openai-endpoint-capabilities-enabled"
             >
               {{ t('admin.accounts.openai.endpointCapabilities') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}
             </p>
           </div>
-          <input
-            v-model="enableOpenAIEndpointCapabilities"
-            id="bulk-edit-openai-endpoint-capabilities-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-endpoint-capabilities-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAIEndpointCapabilities" id="bulk-edit-openai-endpoint-capabilities-enabled" aria-controls="bulk-edit-openai-endpoint-capabilities-body" />
         </div>
         <div
           id="bulk-edit-openai-endpoint-capabilities-body"
@@ -1065,47 +648,35 @@
           aria-labelledby="bulk-edit-openai-endpoint-capabilities-label"
         >
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <label
+            <UCheckbox
               v-for="option in openAIEndpointCapabilityOptions"
               :key="option.value"
-              class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600"
-            >
-              <input
-                type="checkbox"
-                :disabled="!enableOpenAIEndpointCapabilities"
-                class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500"
-                :data-testid="`bulk-edit-openai-endpoint-capability-${option.value}`"
-                :checked="openAIEndpointCapabilities.includes(option.value)"
-                @change="toggleOpenAIEndpointCapability(option.value, $event)"
-              />
-              <span class="text-gray-700 dark:text-gray-200">{{ option.label }}</span>
-            </label>
+              :disabled="!enableOpenAIEndpointCapabilities"
+              :data-testid="`bulk-edit-openai-endpoint-capability-${option.value}`"
+              :model-value="openAIEndpointCapabilities.includes(option.value)"
+              @update:model-value="toggleOpenAIEndpointCapability(option.value)"
+              :label="option.label"
+            />
           </div>
         </div>
       </div>
 
       <!-- OpenAI API Key Responses route -->
-      <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIAPIKey" class="pt-2">
         <div class="mb-3 flex items-center justify-between gap-4">
           <div class="flex-1">
             <label
               id="bulk-edit-openai-responses-mode-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-openai-responses-mode-enabled"
             >
               {{ t('admin.accounts.openai.responsesMode') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.responsesModeDesc') }}
             </p>
           </div>
-          <input
-            v-model="enableOpenAIResponsesMode"
-            id="bulk-edit-openai-responses-mode-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-responses-mode-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAIResponsesMode" id="bulk-edit-openai-responses-mode-enabled" aria-controls="bulk-edit-openai-responses-mode-body" />
         </div>
         <div
           id="bulk-edit-openai-responses-mode-body"
@@ -1122,7 +693,7 @@
           />
           <p
             v-if="enableOpenAIEndpointCapabilities && !openAITextGenerationCapabilityEnabled"
-            class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+            class="mt-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
             data-testid="bulk-edit-openai-responses-mode-not-applicable"
           >
             {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
@@ -1131,31 +702,25 @@
       </div>
 
       <!-- OpenAI API Key WS mode -->
-      <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIAPIKey" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-openai-apikey-ws-mode-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-openai-apikey-ws-mode-enabled"
           >
             {{ t('admin.accounts.openai.wsMode') }}
           </label>
-          <input
-            v-model="enableOpenAIAPIKeyWSMode"
-            id="bulk-edit-openai-apikey-ws-mode-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-apikey-ws-mode"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAIAPIKeyWSMode" id="bulk-edit-openai-apikey-ws-mode-enabled" aria-controls="bulk-edit-openai-apikey-ws-mode" />
         </div>
         <div
           id="bulk-edit-openai-apikey-ws-mode"
           :class="!enableOpenAIAPIKeyWSMode && 'pointer-events-none opacity-50'"
         >
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          <p class="mb-3 text-xs text-muted">
             {{ t('admin.accounts.openai.wsModeDesc') }}
           </p>
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          <p class="mb-3 text-xs text-muted">
             {{ t(openAIAPIKeyWSModeConcurrencyHintKey) }}
           </p>
           <Select
@@ -1168,27 +733,21 @@
       </div>
 
       <!-- OpenAI Compact mode -->
-      <div v-if="allOpenAIPassthroughCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIPassthroughCapable" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
               id="bulk-edit-openai-compact-mode-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-openai-compact-mode-enabled"
             >
               {{ t('admin.accounts.openai.compactMode') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.compactModeDesc') }}
             </p>
           </div>
-          <input
-            v-model="enableOpenAICompactMode"
-            id="bulk-edit-openai-compact-mode-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-compact-mode"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAICompactMode" id="bulk-edit-openai-compact-mode-enabled" aria-controls="bulk-edit-openai-compact-mode" />
         </div>
         <div
           id="bulk-edit-openai-compact-mode"
@@ -1204,27 +763,21 @@
       </div>
 
       <!-- OpenAI Compact model mapping -->
-      <div v-if="allOpenAIPassthroughCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allOpenAIPassthroughCapable" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
             <label
               id="bulk-edit-openai-compact-model-mapping-label"
-              class="input-label mb-0"
+              class="block text-sm font-medium text-default"
               for="bulk-edit-openai-compact-model-mapping-enabled"
             >
               {{ t('admin.accounts.openai.compactModelMapping') }}
             </label>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ t('admin.accounts.openai.compactModelMappingDesc') }}
             </p>
           </div>
-          <input
-            v-model="enableOpenAICompactModelMapping"
-            id="bulk-edit-openai-compact-model-mapping-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-openai-compact-model-mapping"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableOpenAICompactModelMapping" id="bulk-edit-openai-compact-model-mapping-enabled" aria-controls="bulk-edit-openai-compact-model-mapping" />
         </div>
         <div
           id="bulk-edit-openai-compact-model-mapping"
@@ -1236,58 +789,59 @@
               :key="index"
               class="flex items-center gap-2"
             >
-              <input
+              <UInput
                 v-model="mapping.from"
                 type="text"
-                class="input flex-1"
                 :placeholder="t('admin.accounts.fromModel')"
                 data-testid="bulk-edit-openai-compact-model-mapping-input"
+                class="flex-1"
               />
-              <span class="text-gray-400">→</span>
-              <input
+              <span class="text-muted">→</span>
+              <UInput
                 v-model="mapping.to"
                 type="text"
-                class="input flex-1"
                 :placeholder="t('admin.accounts.toModel')"
                 data-testid="bulk-edit-openai-compact-model-mapping-input"
+                class="flex-1"
               />
-              <button
+              <UButton
+                color="error"
+                variant="ghost"
+                square
+                size="sm"
+                icon="i-lucide-trash-2"
+                :aria-label="t('admin.accounts.formActions.remove')"
                 type="button"
-                class="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                 @click="removeOpenAICompactModelMapping(index)"
-              >
-                <Icon name="trash" size="sm" />
-              </button>
+              />
             </div>
           </div>
-          <button
+          <UButton
+            color="neutral"
+            variant="soft"
+            block
+            icon="i-lucide-plus"
+            class="mb-3"
             type="button"
-            class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-700 dark:border-dark-500 dark:text-gray-400 dark:hover:border-dark-400 dark:hover:text-gray-300"
             data-testid="bulk-edit-openai-compact-model-mapping-add"
             @click="addOpenAICompactModelMapping"
           >
             + {{ t('admin.accounts.addMapping') }}
-          </button>
+          </UButton>
         </div>
       </div>
 
       <!-- RPM Limit (仅全部为 Anthropic OAuth/SetupToken 时显示) -->
-      <div v-if="allAnthropicOAuthOrSetupToken" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div v-if="allAnthropicOAuthOrSetupToken" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-rpm-limit-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-rpm-limit-enabled"
           >
             {{ t('admin.accounts.quotaControl.rpmLimit.label') }}
           </label>
-          <input
-            v-model="enableRpmLimit"
-            id="bulk-edit-rpm-limit-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-rpm-limit-body"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableRpmLimit" id="bulk-edit-rpm-limit-enabled" aria-controls="bulk-edit-rpm-limit-body" />
         </div>
 
         <div
@@ -1297,125 +851,95 @@
           aria-labelledby="bulk-edit-rpm-limit-label"
         >
           <div class="mb-3 flex items-center justify-between">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.quotaControl.rpmLimit.hint') }}</span>
-            <button
-              type="button"
-              @click="rpmLimitEnabled = !rpmLimitEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                rpmLimitEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-                  rpmLimitEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
+            <span class="text-sm text-toned">{{ t('admin.accounts.quotaControl.rpmLimit.hint') }}</span>
+            <Toggle v-model="rpmLimitEnabled" />
           </div>
 
           <div v-if="rpmLimitEnabled" class="space-y-3">
-            <div>
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpm') }}</label>
-              <input
+            <UFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :help="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
+              <UInput
                 v-model.number="bulkBaseRpm"
                 type="number"
                 min="1"
                 max="1000"
                 step="1"
-                class="input"
                 :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
+                class="w-full"
               />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpmHint') }}</p>
-            </div>
+            </UFormField>
 
             <div>
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
-              <div class="flex gap-2">
-                <button
+              <label class="mb-1.5 block text-sm font-medium text-default text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
+              <div class="flex gap-1 rounded-lg bg-elevated p-1">
+                <UButton
+                  :color="bulkRpmStrategy === 'tiered' ? 'primary' : 'neutral'"
+                  :variant="bulkRpmStrategy === 'tiered' ? 'solid' : 'ghost'"
+                  size="sm"
+                  block
+                  class="flex-1"
                   type="button"
                   @click="bulkRpmStrategy = 'tiered'"
-                  :class="[
-                    'flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-                    bulkRpmStrategy === 'tiered'
-                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                  ]"
-                >
-                  {{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}
-                </button>
-                <button
+                >{{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}</UButton>
+                <UButton
+                  :color="bulkRpmStrategy === 'sticky_exempt' ? 'primary' : 'neutral'"
+                  :variant="bulkRpmStrategy === 'sticky_exempt' ? 'solid' : 'ghost'"
+                  size="sm"
+                  block
+                  class="flex-1"
                   type="button"
                   @click="bulkRpmStrategy = 'sticky_exempt'"
-                  :class="[
-                    'flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-                    bulkRpmStrategy === 'sticky_exempt'
-                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                  ]"
-                >
-                  {{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}
-                </button>
+                >{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}</UButton>
               </div>
             </div>
 
-            <div v-if="bulkRpmStrategy === 'tiered'">
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBuffer') }}</label>
-              <input
+            <UFormField v-if="bulkRpmStrategy === 'tiered'" :label="t('admin.accounts.quotaControl.rpmLimit.stickyBuffer')" :help="t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint')">
+              <UInput
                 v-model.number="bulkRpmStickyBuffer"
                 type="number"
                 min="1"
                 step="1"
-                class="input"
                 :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
+                class="w-full"
               />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint') }}</p>
-            </div>
+            </UFormField>
 
             </div>
           </div>
 
         <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
         <div class="mt-4">
-          <label class="input-label">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}</label>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 mb-2">
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}</label>
+          <p class="mt-1 text-xs text-muted mb-2">
             {{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}
           </p>
           <div class="flex space-x-2">
-            <button type="button" v-for="opt in umqModeOptions" :key="opt.value"
+            <UButton
+              :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
+              :variant="userMsgQueueMode === opt.value ? 'solid' : 'outline'"
+              size="sm"
+              type="button"
+              v-for="opt in umqModeOptions"
+              :key="opt.value"
               @click="userMsgQueueMode = userMsgQueueMode === opt.value ? null : opt.value"
-              :class="[
-                'px-3 py-1.5 text-sm rounded-md border transition-colors',
-                userMsgQueueMode === opt.value
-                  ? 'bg-primary-600 text-white border-primary-600'
-                  : 'bg-white dark:bg-dark-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-dark-500 hover:bg-gray-50 dark:hover:bg-dark-600'
-              ]">
-              {{ opt.label }}
-            </button>
+            >{{ opt.label }}</UButton>
           </div>
         </div>
       </div>
-        </div>
-      </details>
+          </div>
+        </template>
+      </UCollapsible>
 
       <!-- Groups -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <div class="pt-2">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-groups-label"
-            class="input-label mb-0"
+            class="block text-sm font-medium text-default"
             for="bulk-edit-groups-enabled"
           >
             {{ t('nav.groups') }}
           </label>
-          <input
-            v-model="enableGroups"
-            id="bulk-edit-groups-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-groups"
-            class="rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
+          <UCheckbox v-model="enableGroups" id="bulk-edit-groups-enabled" aria-controls="bulk-edit-groups" />
         </div>
         <div id="bulk-edit-groups" :class="!enableGroups && 'pointer-events-none opacity-50'">
           <GroupSelector
@@ -1429,39 +953,20 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button type="button" class="btn btn-secondary" @click="handleClose">
+        <UButton color="neutral" variant="outline" type="button" @click="handleClose">
           {{ t('common.cancel') }}
-        </button>
-        <button
+        </UButton>
+        <UButton
+          color="primary"
+          variant="solid"
           type="submit"
           form="bulk-edit-account-form"
-          :disabled="submitting"
-          class="btn btn-primary"
+          :disabled="submitting" :loading="submitting"
         >
-          <svg
-            v-if="submitting"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            />
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            />
-          </svg>
           {{
             submitting ? t('admin.accounts.bulkEdit.updating') : t('admin.accounts.bulkEdit.submit')
           }}
-        </button>
+        </UButton>
       </div>
     </template>
   </BaseDialog>
@@ -1523,6 +1028,7 @@ import {
   resolveOpenAIWSModeConcurrencyHintKey
 } from '@/utils/openaiWsMode'
 import type { OpenAIWSMode } from '@/utils/openaiWsMode'
+import Toggle from '@/components/common/Toggle.vue'
 interface Props {
   show: boolean
   accountIds: number[]

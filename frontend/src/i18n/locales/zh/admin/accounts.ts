@@ -7,6 +7,22 @@ export default {
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',
       advancedOptions: '高级选项',
+      // Section titles shared by the create / edit / bulk-edit account dialogs.
+      formSections: {
+        platform: '平台与类型',
+        basic: '基本信息',
+        credentials: '连接与凭据',
+        models: '模型',
+        scheduling: '调度',
+        limits: '配额与限速',
+        errors: '错误处理',
+        forwarding: '转发与兼容',
+        network: '网络',
+        billing: '计费',
+      },
+      formActions: {
+        remove: '移除',
+      },
       autoRefresh: '自动刷新',
       enableAutoRefresh: '启用自动刷新',
       refreshInterval5s: '5 秒',

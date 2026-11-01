@@ -58,6 +58,13 @@ vi.mock('vue-i18n', async () => {
 
 import EditAccountModal from '../EditAccountModal.vue'
 
+// UCheckbox renders a role="checkbox" button: click only when the state has to change.
+async function setChecked(el: { attributes: (name: string) => string | undefined; trigger: (event: string) => Promise<unknown> }, value: boolean) {
+  if ((el.attributes('aria-checked') === 'true') !== value) await el.trigger('click')
+}
+const isChecked = (el: { attributes: (name: string) => string | undefined }) => el.attributes('aria-checked') === 'true'
+
+
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
   props: {
@@ -1207,7 +1214,7 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account)
 
-    expect(wrapper.findAll('input[type="checkbox"]').some((input) => (input.element as HTMLInputElement).checked)).toBe(true)
+    expect(wrapper.findAll('[role="checkbox"]').some((box) => isChecked(box))).toBe(true)
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -1269,25 +1276,25 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account)
 
-    const chatCheckbox = wrapper.get<HTMLInputElement>(
+    const chatCheckbox = wrapper.get(
       '[data-testid="openai-endpoint-capability-chat_completions"]'
     )
-    const embeddingsCheckbox = wrapper.get<HTMLInputElement>(
+    const embeddingsCheckbox = wrapper.get(
       '[data-testid="openai-endpoint-capability-embeddings"]'
     )
 
-    expect(chatCheckbox.element.checked).toBe(true)
-    expect(embeddingsCheckbox.element.checked).toBe(true)
+    expect(isChecked(chatCheckbox)).toBe(true)
+    expect(isChecked(embeddingsCheckbox)).toBe(true)
 
-    await embeddingsCheckbox.setValue(false)
+    await setChecked(embeddingsCheckbox, false)
 
-    expect(chatCheckbox.element.checked).toBe(true)
-    expect(embeddingsCheckbox.element.checked).toBe(false)
+    expect(isChecked(chatCheckbox)).toBe(true)
+    expect(isChecked(embeddingsCheckbox)).toBe(false)
 
-    await chatCheckbox.setValue(false)
+    await setChecked(chatCheckbox, false)
 
-    expect(chatCheckbox.element.checked).toBe(true)
-    expect(embeddingsCheckbox.element.checked).toBe(false)
+    expect(isChecked(chatCheckbox)).toBe(true)
+    expect(isChecked(embeddingsCheckbox)).toBe(false)
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -1662,7 +1669,7 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
 
     const wrapper = mountModal(account)
     expect(wrapper.find('[data-testid="gemini-custom-protocol"]').exists()).toBe(true)
-    await wrapper.get('[data-testid="gemini-custom-protocol"]').setValue(true)
+    await setChecked(wrapper.get('[data-testid="gemini-custom-protocol"]'), true)
     await flushPromises()
 
     const responsesButton = wrapper.findAll('button').find((button) =>
