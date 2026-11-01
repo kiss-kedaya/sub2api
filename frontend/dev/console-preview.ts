@@ -5,7 +5,11 @@ import { fileURLToPath } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
 import type { InlineConfig, Plugin } from 'vite'
-import { DEMO_TOKEN, DEMO_USER_ID, PREVIEW_LABEL, settings } from './fixtures'
+import { DEMO_TOKEN, DEMO_USER_ID, PREVIEW_LABEL, settings as fixtureSettings } from './fixtures'
+
+// The owner previews every console page here, so the feature-gated sections (risk control,
+// on-chain deposits) are switched on; with the fixture defaults the router sends them to settings.
+const settings = { ...fixtureSettings, risk_control_enabled: true, crypto_enabled: true }
 import { createMockApi, PreviewError } from './mock-api'
 
 export const PREVIEW_MODE = 'console-preview'
