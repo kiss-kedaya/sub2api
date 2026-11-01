@@ -1,5 +1,5 @@
 <template>
-  <header class="user-page-header mb-6 flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+  <header class="user-page-header flex flex-wrap items-start justify-between gap-x-4 gap-y-3" :class="{ 'mb-6': !flush }">
     <div class="min-w-0 flex-1">
       <div class="flex min-w-0 flex-wrap items-center gap-2">
         <h1 class="text-xl font-semibold leading-8 text-highlighted text-pretty">
@@ -19,9 +19,11 @@
 
 <script setup lang="ts">
 // Page header row shared by the user console pages: title (+ optional badge and
-// description) on the left, page actions on the right.
+// description) on the left, page actions on the right. `flush` drops the bottom margin
+// when the surrounding layout already spaces its sections.
 defineProps<{
   title?: string
   description?: string
+  flush?: boolean
 }>()
 </script>

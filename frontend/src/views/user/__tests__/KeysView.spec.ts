@@ -306,7 +306,7 @@ describe('user KeysView column settings', () => {
   it('keeps named icon tools and the key count in the workspace heading', async () => {
     const wrapper = await mountView()
     expect(wrapper.get('h1').text()).toContain('API Keys')
-    expect(wrapper.get('.signal-count').text()).toBe('1')
+    expect(wrapper.get('[data-test="key-count"]').text()).toBe('1')
     const columns = wrapper.get('button[aria-label="Column Settings"]')
     expect(columns.attributes('title')).toBe('Column Settings')
     expect(columns.attributes('aria-expanded')).toBe('false')
