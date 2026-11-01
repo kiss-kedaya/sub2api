@@ -3541,17 +3541,16 @@ const authStore = useAuthStore();
 const onboardingStore = useOnboardingStore();
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(["name", "actions"]);
-// Default hidden columns (hidden on first load / after schema bumps). Capacity (live
-// concurrency badges) and type (exclusive/public, also a toolbar filter) are behind "显示列"
-// so the default columns fit next to the sidebar.
+// Default hidden columns, applied to fresh layouts only (no saved setting yet). Capacity
+// (live concurrency badges) and type (exclusive/public, also a toolbar filter) are behind
+// "显示列" so the default columns fit next to the sidebar. A layout an admin already saved
+// is kept exactly as saved: do not add new columns to VERSION_NEW_HIDDEN_COLUMNS for this.
 const DEFAULT_HIDDEN_COLUMNS = ["id", "capacity", "is_exclusive"];
 const HIDDEN_COLUMNS_KEY = "group-hidden-columns";
-// Bump when adding new default-hidden columns so existing admins pick them up once.
 const COLUMN_SETTINGS_VERSION_KEY = "group-column-settings-version";
-const COLUMN_SETTINGS_VERSION = 3;
+const COLUMN_SETTINGS_VERSION = 2;
 const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
   2: ["id"],
-  3: ["capacity", "is_exclusive"],
 };
 
 const allColumns = computed<Column[]>(() => {

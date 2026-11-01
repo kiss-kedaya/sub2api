@@ -315,7 +315,7 @@ describe('admin GroupsView column settings', () => {
       'actions',
     ])
     expect(localStorage.getItem('group-hidden-columns')).toBe(JSON.stringify(['id', 'capacity', 'is_exclusive']))
-    expect(localStorage.getItem('group-column-settings-version')).toBe('3')
+    expect(localStorage.getItem('group-column-settings-version')).toBe('2')
   })
 
   it('applies saved hidden columns on mount and ignores unknown keys', async () => {
@@ -323,8 +323,7 @@ describe('admin GroupsView column settings', () => {
       'group-hidden-columns',
       JSON.stringify(['usage', 'capacity', 'removed_column', 'name', 'actions']),
     )
-    // Current settings version: no migration step adds columns here.
-    localStorage.setItem('group-column-settings-version', '3')
+    localStorage.setItem('group-column-settings-version', '2')
 
     const wrapper = await mountView()
 
@@ -341,9 +340,9 @@ describe('admin GroupsView column settings', () => {
     ])
   })
 
-  it('auto-hides id, capacity and type for existing saved column prefs after version bump', async () => {
+  it('auto-hides id for existing saved column prefs after version bump', async () => {
     localStorage.setItem('group-hidden-columns', JSON.stringify(['usage']))
-    // No version key → treated as version 1, migrate to 3: hide id (v2), capacity and type (v3).
+    // No version key → treated as version 1, migrate to 2 and hide id.
 
     const wrapper = await mountView()
 
@@ -352,34 +351,28 @@ describe('admin GroupsView column settings', () => {
       'platform',
       'billing_type',
       'rate_multiplier',
+      'is_exclusive',
       'account_count',
+      'capacity',
       'status',
       'actions',
     ])
     expect(JSON.parse(localStorage.getItem('group-hidden-columns')!)).toEqual(
-      expect.arrayContaining(['usage', 'id', 'capacity', 'is_exclusive']),
+      expect.arrayContaining(['usage', 'id']),
     )
-    expect(localStorage.getItem('group-column-settings-version')).toBe('3')
+    expect(localStorage.getItem('group-column-settings-version')).toBe('2')
   })
 
-  it('hides capacity and type once for version 2 prefs and keeps a later choice to show them', async () => {
+  it('keeps a saved layout exactly as saved: new default-hidden columns apply to fresh layouts only', async () => {
     localStorage.setItem('group-hidden-columns', JSON.stringify(['id']))
     localStorage.setItem('group-column-settings-version', '2')
 
     const wrapper = await mountView()
 
-    expect(columnKeys(wrapper)).not.toContain('capacity')
-    expect(columnKeys(wrapper)).not.toContain('is_exclusive')
-    expect(localStorage.getItem('group-column-settings-version')).toBe('3')
-
-    await openColumnSettings(wrapper)
-    await clickColumnToggle(wrapper, 'Capacity')
     expect(columnKeys(wrapper)).toContain('capacity')
-    expect(localStorage.getItem('group-hidden-columns')).toBe(JSON.stringify(['id', 'is_exclusive']))
-    wrapper.unmount()
-
-    const remounted = await mountView()
-    expect(columnKeys(remounted)).toContain('capacity')
+    expect(columnKeys(wrapper)).toContain('is_exclusive')
+    expect(localStorage.getItem('group-hidden-columns')).toBe(JSON.stringify(['id']))
+    expect(localStorage.getItem('group-column-settings-version')).toBe('2')
   })
 
   it('toggles a column and persists hidden column keys', async () => {
