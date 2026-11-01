@@ -111,6 +111,9 @@ func chatCompletionsToResponses(req *ChatCompletionsRequest, anthropic bool, opt
 			Summary: "auto",
 		}
 	}
+	if preserveReasoningContent && req.Thinking != nil && req.Thinking.Type == "disabled" {
+		out.Reasoning = &ResponsesReasoning{Effort: "none"}
+	}
 
 	if format := chatResponseFormatToResponsesTextFormat(req.ResponseFormat); len(format) > 0 {
 		if out.Text == nil {

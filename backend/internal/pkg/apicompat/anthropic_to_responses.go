@@ -78,6 +78,10 @@ func AnthropicToResponsesWithOptions(req *AnthropicRequest, opts *AnthropicToRes
 	out.Reasoning = &ResponsesReasoning{
 		Effort: mapAnthropicEffortToResponses(effort),
 	}
+	if opts != nil && opts.PreserveThinkingContent && effort == "max" {
+		// DeepSeek max is not OpenAI xhigh (which DeepSeek maps to high).
+		out.Reasoning.Effort = "max"
+	}
 	if effort != "none" {
 		out.Reasoning.Summary = "auto"
 	}

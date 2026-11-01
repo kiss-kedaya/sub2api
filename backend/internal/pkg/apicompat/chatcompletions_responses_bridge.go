@@ -21,6 +21,9 @@ type toolOutputMediaByCallID map[string][]ChatContentPart
 // ResponsesToChatCompletionsRequestWithOptions. All fields are optional; a nil
 // *ResponsesToChatOptions behaves exactly like ResponsesToChatCompletionsRequest.
 type ResponsesToChatOptions struct {
+	// PreserveThinkingSwitch translates Responses none into the DeepSeek Chat
+	// thinking toggle rather than an unsupported reasoning_effort=none.
+	PreserveThinkingSwitch bool
 	// ReasoningContentByID looks up the cached reasoning text for a reasoning
 	// item id. Codex histories may carry reasoning items with no plaintext
 	// summary (empty summary + opaque encrypted_content, e.g. after remote
@@ -64,6 +67,14 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 	}
 	if req.Reasoning != nil {
 		out.ReasoningEffort = req.Reasoning.Effort
+		if opts != nil && opts.PreserveThinkingSwitch {
+			if req.Reasoning.Effort == "none" {
+				out.Thinking = &AnthropicThinking{Type: "disabled"}
+				out.ReasoningEffort = ""
+			} else if req.Reasoning.Effort != "" {
+				out.Thinking = &AnthropicThinking{Type: "enabled"}
+			}
+		}
 	}
 	effectiveTools, err := EffectiveResponsesTools(req)
 	if err != nil {

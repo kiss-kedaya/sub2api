@@ -61,7 +61,8 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	s.recacheReasoningItemsFromInput(responsesReq.Input)
 
 	chatReq, err := apicompat.ResponsesToChatCompletionsRequestWithOptions(&responsesReq, &apicompat.ResponsesToChatOptions{
-		ReasoningContentByID: s.reasoningContentByID,
+		ReasoningContentByID:   s.reasoningContentByID,
+		PreserveThinkingSwitch: account.Platform == PlatformDeepseek,
 	})
 	if err != nil {
 		writeOpenAIResponsesFallbackError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
