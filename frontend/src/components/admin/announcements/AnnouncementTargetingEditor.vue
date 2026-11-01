@@ -1,165 +1,111 @@
 <template>
-  <div class="rounded-2xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/50">
-    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <div class="text-sm font-medium text-gray-900 dark:text-white">
-          {{ t('admin.announcements.form.targetingMode') }}
-        </div>
-        <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-          {{ mode === 'all' ? t('admin.announcements.form.targetingAll') : t('admin.announcements.form.targetingCustom') }}
-        </div>
-      </div>
+  <div class="space-y-4">
+    <UFormField :label="t('admin.announcements.form.targetingMode')">
+      <URadioGroup
+        :model-value="mode"
+        :items="modeItems"
+        orientation="horizontal"
+        @update:model-value="(value: unknown) => setMode(value === 'custom' ? 'custom' : 'all')"
+      />
+    </UFormField>
 
-      <div class="flex items-center gap-3">
-        <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-          <input
-            type="radio"
-            name="announcement-targeting-mode"
-            value="all"
-            :checked="mode === 'all'"
-            @change="setMode('all')"
-            class="h-4 w-4"
-          />
-          {{ t('admin.announcements.form.targetingAll') }}
-        </label>
-        <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-          <input
-            type="radio"
-            name="announcement-targeting-mode"
-            value="custom"
-            :checked="mode === 'custom'"
-            @change="setMode('custom')"
-            class="h-4 w-4"
-          />
-          {{ t('admin.announcements.form.targetingCustom') }}
-        </label>
-      </div>
-    </div>
-
-    <div v-if="mode === 'custom'" class="mt-4 space-y-4">
-      <div class="flex items-center justify-between">
-        <div class="text-sm font-medium text-gray-900 dark:text-white">
-          OR
-          <span class="ml-1 text-xs font-normal text-gray-500 dark:text-dark-400">
-            ({{ anyOf.length }}/50)
-          </span>
-        </div>
-        <button
-          type="button"
-          class="btn btn-secondary"
+    <div v-if="mode === 'custom'" class="space-y-4">
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-sm font-medium text-highlighted">
+          OR <span class="ml-1 text-xs font-normal text-muted">({{ anyOf.length }}/50)</span>
+        </p>
+        <UButton
+          color="neutral"
+          variant="outline"
+          size="sm"
+          icon="i-lucide-plus"
           :disabled="anyOf.length >= 50"
+          :label="t('admin.announcements.form.addOrGroup')"
           @click="addOrGroup"
-        >
-          <Icon name="plus" size="sm" class="mr-1" />
-          {{ t('admin.announcements.form.addOrGroup') }}
-        </button>
+        />
       </div>
 
-      <div v-if="anyOf.length === 0" class="rounded-xl border border-dashed border-gray-300 p-4 text-sm text-gray-500 dark:border-dark-600 dark:text-dark-400">
+      <p v-if="anyOf.length === 0" class="text-sm text-muted">
         {{ t('admin.announcements.form.targetingCustom') }}: {{ t('admin.announcements.form.addOrGroup') }}
-      </div>
+      </p>
 
-      <div
-        v-for="(group, groupIndex) in anyOf"
-        :key="groupIndex"
-        class="rounded-2xl border border-gray-200 bg-white p-4 shadow-xs dark:border-dark-700 dark:bg-dark-800"
-      >
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <div class="text-sm font-medium text-gray-900 dark:text-white">
+      <template v-for="(group, groupIndex) in anyOf" :key="groupIndex">
+        <USeparator v-if="groupIndex > 0" label="OR" />
+        <div class="space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <p class="text-sm font-medium text-highlighted">
               {{ t('admin.announcements.form.targetingCustom') }} #{{ groupIndex + 1 }}
-              <span class="ml-2 text-xs font-normal text-gray-500 dark:text-dark-400">AND ({{ (group.all_of?.length || 0) }}/50)</span>
-            </div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-              {{ t('admin.announcements.form.addAndCondition') }}
-            </div>
+              <span class="ml-2 text-xs font-normal text-muted">AND ({{ (group.all_of?.length || 0) }}/50)</span>
+            </p>
+            <UButton
+              color="error"
+              variant="ghost"
+              size="sm"
+              icon="i-lucide-trash"
+              :label="t('common.delete')"
+              @click="removeOrGroup(groupIndex)"
+            />
           </div>
 
-          <button
-            type="button"
-            class="btn btn-secondary"
-            @click="removeOrGroup(groupIndex)"
-          >
-            <Icon name="trash" size="sm" class="mr-1" />
-            {{ t('common.delete') }}
-          </button>
-        </div>
-
-        <div class="mt-4 space-y-3">
           <div
             v-for="(cond, condIndex) in (group.all_of || [])"
             :key="condIndex"
-            class="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/30"
+            class="flex flex-col gap-3 md:flex-row md:items-end"
           >
-            <div class="flex flex-col gap-3 md:flex-row md:items-end">
-              <div class="w-full md:w-52">
-                <label class="input-label">{{ t('admin.announcements.form.conditionType') }}</label>
+            <UFormField :label="t('admin.announcements.form.conditionType')" class="w-full md:w-52">
+              <Select
+                :model-value="cond.type"
+                :options="conditionTypeOptions"
+                @update:model-value="(v) => setConditionType(groupIndex, condIndex, v as any)"
+              />
+            </UFormField>
+            <UFormField v-if="cond.type === 'subscription'" :label="t('admin.announcements.form.selectPackages')" class="flex-1">
+              <GroupSelector v-model="subscriptionSelections[groupIndex][condIndex]" :groups="groups" />
+            </UFormField>
+            <template v-else>
+              <UFormField :label="t('admin.announcements.form.operator')" class="w-full sm:w-44">
                 <Select
-                  :model-value="cond.type"
-                  :options="conditionTypeOptions"
-                  @update:model-value="(v) => setConditionType(groupIndex, condIndex, v as any)"
+                  :model-value="cond.operator"
+                  :options="balanceOperatorOptions"
+                  @update:model-value="(v) => setOperator(groupIndex, condIndex, v as any)"
                 />
-              </div>
-
-              <div v-if="cond.type === 'subscription'" class="flex-1">
-                <label class="input-label">{{ t('admin.announcements.form.selectPackages') }}</label>
-                <GroupSelector
-                  v-model="subscriptionSelections[groupIndex][condIndex]"
-                  :groups="groups"
+              </UFormField>
+              <UFormField :label="t('admin.announcements.form.balanceValue')" class="w-full sm:flex-1">
+                <UInput
+                  :model-value="String(cond.value ?? '')"
+                  type="number"
+                  step="any"
+                  class="w-full"
+                  @update:model-value="(value) => setBalanceValue(groupIndex, condIndex, String(value ?? ''))"
                 />
-              </div>
-
-              <div v-else class="flex flex-1 flex-col gap-3 sm:flex-row">
-                <div class="w-full sm:w-44">
-                  <label class="input-label">{{ t('admin.announcements.form.operator') }}</label>
-                  <Select
-                    :model-value="cond.operator"
-                    :options="balanceOperatorOptions"
-                    @update:model-value="(v) => setOperator(groupIndex, condIndex, v as any)"
-                  />
-                </div>
-                <div class="w-full sm:flex-1">
-                  <label class="input-label">{{ t('admin.announcements.form.balanceValue') }}</label>
-                  <input
-                    :value="String(cond.value ?? '')"
-                    type="number"
-                    step="any"
-                    class="input"
-                    @input="(e) => setBalanceValue(groupIndex, condIndex, (e.target as HTMLInputElement).value)"
-                  />
-                </div>
-              </div>
-
-              <div class="flex justify-end">
-                <button
-                  type="button"
-                  class="btn btn-secondary"
-                  @click="removeAndCondition(groupIndex, condIndex)"
-                >
-                  <Icon name="trash" size="sm" class="mr-1" />
-                  {{ t('common.delete') }}
-                </button>
-              </div>
-            </div>
+              </UFormField>
+            </template>
+            <UButton
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-x"
+              square
+              class="self-end"
+              :aria-label="t('common.delete')"
+              :title="t('common.delete')"
+              @click="removeAndCondition(groupIndex, condIndex)"
+            />
           </div>
 
-          <div class="flex justify-end">
-            <button
-              type="button"
-              class="btn btn-secondary"
-              :disabled="(group.all_of?.length || 0) >= 50"
-              @click="addAndCondition(groupIndex)"
-            >
-              <Icon name="plus" size="sm" class="mr-1" />
-              {{ t('admin.announcements.form.addAndCondition') }}
-            </button>
-          </div>
+          <UButton
+            color="neutral"
+            variant="link"
+            size="sm"
+            icon="i-lucide-plus"
+            class="px-0"
+            :disabled="(group.all_of?.length || 0) >= 50"
+            :label="t('admin.announcements.form.addAndCondition')"
+            @click="addAndCondition(groupIndex)"
+          />
         </div>
-      </div>
+      </template>
 
-      <div v-if="validationError" class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300">
-        {{ validationError }}
-      </div>
+      <UAlert v-if="validationError" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="validationError" />
     </div>
   </div>
 </template>
@@ -178,7 +124,6 @@ import type {
 
 import Select from '@/components/common/Select.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
-import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 
@@ -207,6 +152,11 @@ const balanceOperatorOptions = computed(() => [
   { value: 'lt', label: t('admin.announcements.operators.lt') },
   { value: 'lte', label: t('admin.announcements.operators.lte') },
   { value: 'eq', label: t('admin.announcements.operators.eq') }
+])
+
+const modeItems = computed(() => [
+  { label: t('admin.announcements.form.targetingAll'), value: 'all' },
+  { label: t('admin.announcements.form.targetingCustom'), value: 'custom' }
 ])
 
 function setMode(next: Mode) {

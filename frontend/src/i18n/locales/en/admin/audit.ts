@@ -7,6 +7,7 @@ export default {
     empty: 'No audit logs yet',
     loadFailed: 'Failed to load audit logs',
     filters: {
+      more: 'More filters',
       all: 'All',
       q: 'Keyword',
       qPlaceholder: 'Path / action / actor email',

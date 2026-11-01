@@ -7,6 +7,7 @@ export default {
     empty: '暂无操作日志',
     loadFailed: '加载操作日志失败',
     filters: {
+      more: '更多筛选',
       all: '全部',
       q: '关键字',
       qPlaceholder: '路径 / 动作 / 操作者邮箱',
