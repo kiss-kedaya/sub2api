@@ -62,6 +62,8 @@ async function mountDetail(detail: TicketDetail, admin = true) {
       plugins: [router],
       stubs: {
         AppLayout: { template: '<div><slot /></div>' },
+        // The status tabs and refresh / new buttons sit in PageToolbar; render its slots.
+        PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         TicketTimeline: {
           template: '<div />',
           methods: { scrollToBottom: vi.fn() },

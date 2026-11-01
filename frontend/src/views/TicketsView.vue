@@ -1,9 +1,11 @@
 <template>
   <AppLayout>
-    <section class="flex min-w-0 flex-col gap-4">
-      <div class="flex flex-wrap items-center justify-between gap-1.5">
-        <UTabs v-model="statusTab" :items="statusTabItems" :content="false" size="sm" :aria-label="t('tickets.status')" />
-        <div class="flex flex-wrap items-center gap-1.5">
+    <section class="tickets-page-root flex min-w-0 flex-col gap-4">
+      <PageToolbar>
+        <template #left>
+          <UTabs v-model="statusTab" :items="statusTabItems" :content="false" size="sm" :aria-label="t('tickets.status')" />
+        </template>
+        <template #right>
           <UBadge v-if="syncFailed" color="warning" variant="subtle" icon="i-lucide-cloud-off" role="status">{{ t('tickets.syncFailed') }}</UBadge>
           <UBadge v-if="stats.unread" color="neutral" variant="subtle">{{ t('tickets.unread') }} {{ stats.unread }}</UBadge>
           <UButton
@@ -18,8 +20,8 @@
           />
           <UButton v-if="!admin" icon="i-lucide-plus" :disabled="stats.can_create === false || loading" @click="newTicketOpen = true">{{ t('tickets.newTicket') }}</UButton>
           <UButton v-if="admin" icon="i-lucide-plus" @click="openProactive">{{ t('tickets.proactiveNew') }}</UButton>
-        </div>
-      </div>
+        </template>
+      </PageToolbar>
 
       <p v-if="!admin" class="-mt-1 flex flex-wrap items-center gap-1.5 text-xs" :class="stats.can_create === false ? 'text-warning' : 'text-muted'">
         <UIcon :name="stats.can_create === false ? 'i-lucide-clock' : 'i-lucide-info'" class="size-3.5 shrink-0" />
@@ -27,7 +29,7 @@
         <time v-if="stats.can_create === false && stats.next_create_at" class="ms-auto">{{ t('tickets.nextCreate', { time: quotaTime(stats.next_create_at) }) }}</time>
       </p>
 
-      <div class="flex h-[calc(100dvh-14rem)] max-h-[1100px] min-h-[560px] overflow-hidden rounded-lg ring ring-default max-[900px]:min-h-[520px]">
+      <div class="tickets-workspace flex h-[calc(100dvh-12rem)] max-h-[1100px] min-h-[560px] overflow-hidden rounded-lg bg-default ring ring-default max-[900px]:min-h-[520px]">
         <aside
           class="flex min-h-0 min-w-0 flex-col border-default min-[901px]:w-[min(340px,32%)] min-[901px]:min-w-[250px] min-[901px]:shrink-0 min-[901px]:border-r max-[900px]:flex-1"
           :class="{ 'max-[900px]:hidden': selectedID }"
@@ -278,6 +280,7 @@ import { useI18n } from 'vue-i18n'
 import type { TabsItem } from '@nuxt/ui'
 import { useAppStore } from '@/stores/app'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -461,3 +464,10 @@ async function submitTicket() {
   }
 }
 </script>
+
+<style>
+/* Tickets: the list + detail panel fills the console panel body (it scrolls, not the window). */
+.console-frame .signal-main:has(> .tickets-page-root) { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.console-frame .signal-main > .tickets-page-root { flex: 1 1 auto; min-height: 0; }
+.console-frame .signal-main > .tickets-page-root .tickets-workspace { flex: 1 1 auto; height: auto; }
+</style>

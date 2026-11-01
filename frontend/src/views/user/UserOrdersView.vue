@@ -6,13 +6,15 @@
           <UBadge color="neutral" variant="subtle" class="tabular-nums">{{ pagination.total }}</UBadge>
         </template>
       </UserPageHeader>
-      <div class="flex flex-wrap items-center justify-between gap-1.5">
-        <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="handlePageChange(1)" />
-        <div class="flex items-center gap-1.5">
+      <PageToolbar>
+        <template #left>
+          <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="handlePageChange(1)" />
+        </template>
+        <template #right>
           <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :ui="{ leadingIcon: loading ? 'animate-spin' : '' }" :disabled="loading" :title="t('common.refresh')" :aria-label="t('common.refresh')" @click="fetchOrders" />
           <UButton icon="i-lucide-credit-card" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</UButton>
-        </div>
-      </div>
+        </template>
+      </PageToolbar>
 
       <!-- Table -->
       <OrderTable :orders="orders" :loading="loading">
@@ -82,6 +84,7 @@ import { paymentAPI } from '@/api/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import type { PaymentOrder } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'

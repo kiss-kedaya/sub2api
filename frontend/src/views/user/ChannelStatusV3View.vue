@@ -11,8 +11,8 @@
         </template>
       </UserPageHeader>
 
-      <div class="flex flex-wrap items-center justify-between gap-1.5">
-        <div class="flex flex-wrap items-center gap-3">
+      <PageToolbar>
+        <template #left>
           <UFieldGroup class="channel-range-switch">
             <UButton
               v-for="option in ranges"
@@ -25,8 +25,8 @@
             >{{ option.label }}</UButton>
           </UFieldGroup>
           <span class="text-xs text-muted">{{ t('channelMonitorV3.description') }}</span>
-        </div>
-        <div class="flex items-center gap-3">
+        </template>
+        <template #right>
           <span v-if="snapshot" class="text-xs font-medium tabular-nums text-muted">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - (latestSnapshotMetrics?.error_rate ?? 0)), cache: formatPercent(latestSnapshotMetrics?.cache_rate ?? 0) }) }}</span>
           <UButton
             color="neutral"
@@ -38,8 +38,8 @@
             :aria-label="t('common.refresh')"
             @click="reload(false)"
           />
-        </div>
-      </div>
+        </template>
+      </PageToolbar>
 
       <div v-if="loading && rows.length === 0" class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <USkeleton v-for="i in 8" :key="i" class="h-72 rounded-lg" />
@@ -93,6 +93,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useAppStore } from '@/stores/app'

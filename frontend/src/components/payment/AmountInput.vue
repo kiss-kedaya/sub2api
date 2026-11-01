@@ -26,7 +26,7 @@
           :variant="modelValue === amt ? 'subtle' : 'outline'"
           :aria-pressed="modelValue === amt"
           :class="[
-            'payment-amount-input__option min-h-11 min-w-0 justify-center text-base font-semibold tabular-nums',
+            'payment-amount-quick min-h-11 min-w-0 justify-center text-base font-semibold tabular-nums',
             modelValue === amt ? 'text-highlighted ring-2 ring-inset ring-primary' : 'text-default'
           ]"
           @click="selectAmount(amt)"

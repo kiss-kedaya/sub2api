@@ -1,11 +1,12 @@
 <template>
   <AppLayout>
     <div class="mx-auto flex w-full max-w-5xl flex-col gap-4 sm:gap-6">
-      <UserPageHeader flush :title="text('安全记录', 'Security records')" :description="text('查看自己的 API 安全限制、原因与解除时间；网站登录不受这些限制影响。', 'Review your API restrictions, reasons and expiry. These restrictions do not disable website sign-in.')" />
+      <UserPageHeader flush :title="text('安全记录', 'Security records')" :description="text('查看自己的 API 安全限制、原因与解除时间；网站登录不受这些限制影响。', 'Review your API restrictions, reasons and expiry. These restrictions do not disable website sign-in.')">
+        <template #actions>
+          <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :ui="{ leadingIcon: loading ? 'animate-spin' : '' }" :disabled="loading" @click="load">{{ text('刷新', 'Refresh') }}</UButton>
+        </template>
+      </UserPageHeader>
 
-      <div class="flex flex-wrap items-center justify-end gap-1.5">
-        <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :ui="{ leadingIcon: loading ? 'animate-spin' : '' }" :disabled="loading" @click="load">{{ text('刷新', 'Refresh') }}</UButton>
-      </div>
 
       <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
 

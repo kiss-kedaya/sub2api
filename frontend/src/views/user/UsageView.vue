@@ -3,8 +3,8 @@
     <div class="flex flex-col gap-4 sm:gap-6">
       <UserPageHeader flush :title="t('usage.title')" />
 
-      <div class="flex flex-wrap items-center justify-between gap-1.5">
-        <div class="flex flex-wrap items-center gap-1.5">
+      <PageToolbar>
+        <template #left>
           <DateRangePicker
             ref="dateRangeRef"
             v-model:start-date="startDate"
@@ -14,11 +14,13 @@
           <div class="w-28">
             <Select v-model="granularity" :options="granularityOptions" :aria-label="t('admin.dashboard.granularity')" @change="loadChartData" />
           </div>
-        </div>
-        <span class="inline-flex items-center gap-1.5 text-sm tabular-nums text-muted">
-          <UIcon name="i-lucide-calendar" class="size-4" />{{ startDate }} / {{ endDate }}
-        </span>
-      </div>
+        </template>
+        <template #right>
+          <span class="inline-flex items-center gap-1.5 text-sm tabular-nums text-muted">
+            <UIcon name="i-lucide-calendar" class="size-4" />{{ startDate }} / {{ endDate }}
+          </span>
+        </template>
+      </PageToolbar>
 
       <div class="usage-stats-strip overflow-hidden rounded-lg ring ring-default">
         <UsageStatsCards class="signal-usage-metrics" :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
@@ -237,6 +239,7 @@ import EndpointDistributionChart from '@/components/charts/EndpointDistributionC
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { fetchPaginatedItems } from '@/utils/paginatedItems'

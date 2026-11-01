@@ -10,58 +10,59 @@
       </template>
 
       <template #filters>
-        <div class="flex flex-col gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-1.5">
+        <!-- Filter row in the console toolbar under the navbar (in place outside the frame). -->
+        <PageToolbar>
+          <template #left>
             <SearchInput
               v-model="filterSearch"
               :placeholder="t('keys.searchPlaceholder')"
               class="w-full sm:max-w-sm"
               @search="onFilterChange"
             />
-            <div class="flex flex-wrap items-center gap-1.5">
-              <Select
-                :model-value="filterGroupId"
-                class="w-full sm:w-40"
-                :options="groupFilterOptions"
-                @update:model-value="onGroupFilterChange"
-              />
-              <Select
-                :model-value="filterStatus"
-                class="w-full sm:w-36"
-                :options="statusFilterOptions"
-                @update:model-value="onStatusFilterChange"
-              />
-              <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }" :ui="{ content: 'max-h-80' }">
-                <UButton
-                  color="neutral"
-                  variant="outline"
-                  trailing-icon="i-lucide-settings-2"
-                  :label="t('keys.displayColumns')"
-                  :title="t('keys.columnSettings')"
-                  :aria-label="t('keys.columnSettings')"
-                />
-              </UDropdownMenu>
+          </template>
+          <template #right>
+            <Select
+              :model-value="filterGroupId"
+              class="w-full sm:w-40"
+              :options="groupFilterOptions"
+              @update:model-value="onGroupFilterChange"
+            />
+            <Select
+              :model-value="filterStatus"
+              class="w-full sm:w-36"
+              :options="statusFilterOptions"
+              @update:model-value="onStatusFilterChange"
+            />
+            <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }" :ui="{ content: 'max-h-80' }">
               <UButton
                 color="neutral"
                 variant="outline"
-                icon="i-lucide-refresh-cw"
-                :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
-                :disabled="loading"
-                :title="t('common.refresh')"
-                :aria-label="t('common.refresh')"
-                @click="loadApiKeys"
+                trailing-icon="i-lucide-settings-2"
+                :label="t('keys.displayColumns')"
+                :title="t('keys.columnSettings')"
+                :aria-label="t('keys.columnSettings')"
               />
-              <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="showCreateModal = true">
-                {{ t('keys.createKey') }}
-              </UButton>
-            </div>
-          </div>
-          <EndpointPopover
-            v-if="publicSettings?.api_base_url || customEndpoints.length > 0"
-            :api-base-url="publicSettings?.api_base_url || ''"
-            :custom-endpoints="customEndpoints"
-          />
-        </div>
+            </UDropdownMenu>
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-refresh-cw"
+              :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+              :disabled="loading"
+              :title="t('common.refresh')"
+              :aria-label="t('common.refresh')"
+              @click="loadApiKeys"
+            />
+            <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="showCreateModal = true">
+              {{ t('keys.createKey') }}
+            </UButton>
+          </template>
+        </PageToolbar>
+        <EndpointPopover
+          v-if="publicSettings?.api_base_url || customEndpoints.length > 0"
+          :api-base-url="publicSettings?.api_base_url || ''"
+          :custom-endpoints="customEndpoints"
+        />
       </template>
 
       <template #table>
@@ -769,6 +770,7 @@ const { t } = useI18n()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI, endpointsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 	import DataTable from '@/components/common/DataTable.vue'
 	import Pagination from '@/components/common/Pagination.vue'
 	import BaseDialog from '@/components/common/BaseDialog.vue'

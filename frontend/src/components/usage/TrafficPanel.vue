@@ -1,7 +1,9 @@
 <!-- Adapted from ranxi2001/sub2api @ 9620d315, licensed under LGPL-3.0-or-later. -->
 <template>
   <section class="flex flex-col gap-4 sm:gap-6" :aria-label="t('traffic.title')" :aria-busy="loading">
-    <form class="flex flex-wrap items-start justify-between gap-1.5" @submit.prevent="applyFilters">
+    <!-- Filters and actions in the console toolbar row (in place outside the frame). -->
+    <PageToolbar>
+    <form class="flex w-full flex-wrap items-start justify-between gap-1.5" @submit.prevent="applyFilters">
       <div class="flex flex-wrap items-start gap-1.5">
         <div id="traffic-period">
           <UTabs :model-value="period" :items="periodItems" :content="false" size="sm" :aria-label="t('traffic.period')" @update:model-value="(value) => (period = value as TrafficPeriod)" />
@@ -38,6 +40,7 @@
         <UButton color="neutral" variant="outline" icon="i-lucide-filter-x" @click="reset">{{ t('common.reset') }}</UButton>
       </div>
     </form>
+    </PageToolbar>
 
     <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
       <div class="flex items-center gap-1.5">
@@ -183,6 +186,7 @@ import type { TableColumn, TabsItem } from '@nuxt/ui'
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip, Legend, type ChartOptions } from 'chart.js'
 import { Bar } from 'vue-chartjs'
 import UsageFilters from '@/components/usage/TrafficIdentityFilters.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import trafficZh from '@/i18n/locales/zh/traffic'
 import trafficEn from '@/i18n/locales/en/traffic'
 import Select, { type SelectOption } from '@/components/common/Select.vue'

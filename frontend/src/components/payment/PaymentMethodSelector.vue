@@ -14,7 +14,7 @@
         :disabled="!method.available"
         :aria-pressed="selected === method.type"
         :class="[
-          'payment-method-selector__option relative h-[60px] min-w-0 justify-center px-3',
+          'payment-method-card relative h-[60px] min-w-0 justify-center px-3',
           selected === method.type ? 'bg-elevated/60 ring-2 ring-inset ring-primary' : ''
         ]"
         @click="method.available && emit('select', method.type)"

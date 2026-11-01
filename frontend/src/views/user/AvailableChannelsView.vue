@@ -10,7 +10,8 @@
       </template>
 
       <template #filters>
-        <div class="flex flex-wrap items-center justify-between gap-1.5">
+        <PageToolbar>
+          <template #left>
           <UInput
             v-model="searchQuery"
             type="text"
@@ -19,6 +20,8 @@
             :placeholder="t('availableChannels.searchPlaceholder')"
             :aria-label="t('availableChannels.searchPlaceholder')"
           />
+          </template>
+          <template #right>
           <UButton
             color="neutral"
             variant="outline"
@@ -29,7 +32,8 @@
             :aria-label="t('common.refresh', 'Refresh')"
             @click="loadChannels"
           />
-        </div>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
@@ -54,6 +58,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import AvailableChannelsTable from '@/components/channels/AvailableChannelsTable.vue'
 import userChannelsAPI, { type UserAvailableChannel } from '@/api/channels'
 import userGroupsAPI from '@/api/groups'

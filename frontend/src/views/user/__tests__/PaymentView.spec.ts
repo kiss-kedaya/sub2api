@@ -243,6 +243,8 @@ async function mountSubscriptionConfirm(options: Parameters<typeof checkoutInfoW
         // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
         // button text (amount) stays checkable.
         Button: buttonStub,
+        // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+        PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
       },
     },
   })
@@ -286,6 +288,8 @@ async function mountSubscriptionPlanList(planCount: number) {
         // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
         // button text (amount) stays checkable.
         Button: buttonStub,
+        // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+        PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
       },
     },
   })
@@ -314,6 +318,8 @@ describe('PaymentView help text', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -383,6 +389,7 @@ describe('PaymentView recharge center visibility', () => {
     }))
     const wrapper = shallowMount(PaymentView, { global: { stubs: {
       AppLayout: { template: '<div><slot /></div>' }, Teleport: true, Transition: false,
+      Button: buttonStub, PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
     } } })
     wrappers.push(wrapper)
     await flushPromises()
@@ -647,6 +654,8 @@ describe('PaymentView recharge rate preview', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -826,6 +835,8 @@ describe('PaymentView payment recovery', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -876,6 +887,8 @@ describe('PaymentView WeChat JSAPI flow', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -908,6 +921,8 @@ describe('PaymentView WeChat JSAPI flow', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -932,6 +947,8 @@ describe('PaymentView WeChat JSAPI flow', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -979,6 +996,8 @@ describe('PaymentView WeChat JSAPI flow', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -1020,6 +1039,8 @@ describe('PaymentView WeChat JSAPI flow', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -1071,6 +1092,8 @@ describe('PaymentView WeChat JSAPI flow', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })
@@ -1137,6 +1160,8 @@ describe('PaymentView instance recharge terms', () => {
           // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
           // button text (amount) stays checkable.
           Button: buttonStub,
+          // PageToolbar holds the tabs + orders button; render its slots under shallowMount.
+          PageToolbar: { template: '<div><slot /><slot name="left" /><slot name="right" /></div>' },
         },
       },
     })

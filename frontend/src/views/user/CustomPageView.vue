@@ -3,9 +3,7 @@
     <div class="custom-page-layout">
       <div class="custom-page-card flex-1 min-h-0 overflow-hidden">
         <div v-if="loading" class="flex h-full items-center justify-center py-12">
-          <div
-            class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
-          ></div>
+          <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
         </div>
 
         <div
@@ -440,10 +438,9 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.custom-page-layout { display: flex; flex-direction: column; height: calc(100vh - 64px - 4rem); }
-/* One card with a hairline ring; flat in dark (today's surface). */
-.custom-page-card { border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .custom-page-card { box-shadow: 0 0 0 1px var(--ui-border); }
+.custom-page-layout { display: flex; flex-direction: column; height: calc(100dvh - 2rem); min-height: 480px; }
+/* One quiet card around the page. */
+.custom-page-card { border-radius: calc(var(--ui-radius) * 2); background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border); }
 
 .toc-sidebar { display: flex; flex-direction: column; width: min(240px, 30%); min-width: 160px; max-width: 280px; height: 100%; overflow: hidden; border-right: 1px solid var(--ui-border); background: var(--ui-bg-muted); }
 @media (max-width: 640px) {
@@ -512,4 +509,10 @@ onUnmounted(() => {
 }
 .copy-btn:hover { background: rgba(255, 255, 255, 0.25); }
 pre:hover .copy-btn { opacity: 1; }
+</style>
+
+<style>
+/* Fill the console panel body (it scrolls, not the window), like the table pages do. */
+.console-frame .signal-main:has(> .custom-page-layout) { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.console-frame .signal-main > .custom-page-layout { flex: 1 1 auto; height: auto; }
 </style>

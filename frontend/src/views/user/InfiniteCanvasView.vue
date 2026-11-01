@@ -1,15 +1,15 @@
 <template>
   <AppLayout>
     <div class="canvas-page-layout">
-      <div class="card flex-1 min-h-0 overflow-hidden">
+      <div class="flex-1 min-h-0 overflow-hidden rounded-lg bg-default ring ring-default">
         <div v-if="loading" class="flex h-full flex-col items-center justify-center gap-3 py-12">
-          <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
-          <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('infiniteCanvas.preparing') }}</p>
+          <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
+          <p class="text-sm text-muted">{{ t('infiniteCanvas.preparing') }}</p>
         </div>
 
         <div v-else-if="errorCode === 'not-configured'" class="flex h-full items-center justify-center p-6 text-center">
           <div class="max-w-md">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('infiniteCanvas.notConfigured') }}</h3>
+            <h3 class="text-lg font-semibold text-highlighted">{{ t('infiniteCanvas.notConfigured') }}</h3>
             <UButton class="mt-6" @click="prepareSession(true)">
               <Icon name="plus" size="sm" class="mr-2" />
               {{ t('infiniteCanvas.createAndEnter') }}
@@ -123,16 +123,19 @@ onUnmounted(() => { disposed = true })
 
 <style scoped>
 @reference "../../style.css";
-.canvas-page-layout {
-  @apply flex flex-col;
-  height: calc(100vh - 64px - 4rem);
-}
+.canvas-page-layout { display: flex; flex-direction: column; height: calc(100dvh - 2rem); min-height: 480px; }
 
 .canvas-embed-shell {
-  @apply relative h-full min-h-0 overflow-hidden bg-gray-50 dark:bg-dark-900;
+  @apply relative h-full min-h-0 overflow-hidden bg-muted;
 }
 
 .canvas-embed-frame {
-  @apply h-full w-full border-0 bg-white dark:bg-dark-900;
+  @apply h-full w-full border-0 bg-default;
 }
+</style>
+
+<style>
+/* Fill the console panel body (it scrolls, not the window), like the table pages do. */
+.console-frame .signal-main:has(> .canvas-page-layout) { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.console-frame .signal-main > .canvas-page-layout { flex: 1 1 auto; height: auto; }
 </style>

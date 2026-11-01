@@ -7,14 +7,18 @@
       <template v-else>
         <UserPageHeader v-if="paymentPhase === 'select' && !selectedPlan" flush :title="t('nav.buySubscription')" />
         <!-- Toolbar row: tab switcher (hidden during payment and subscription confirm) + orders -->
-        <div v-if="paymentPhase === 'select' && !selectedPlan" class="flex flex-wrap items-center justify-between gap-1.5">
-          <ConsoleTabs v-if="tabs.length > 1"
-            id="payment-view" class="signal-payment-tabs" :label="t('payment.title')"
-            :model-value="activeTab" :items="tabs"
-            @update:model-value="activeTab = $event === 'rechargeCenter' ? 'rechargeCenter' : 'recharge'"
-          />
-          <UButton to="/orders" color="neutral" variant="outline" icon="i-lucide-receipt-text" class="ms-auto">{{ t('payment.orders.title') }}</UButton>
-        </div>
+        <PageToolbar v-if="paymentPhase === 'select' && !selectedPlan">
+          <template #left>
+            <ConsoleTabs v-if="tabs.length > 1"
+              id="payment-view" class="signal-payment-tabs" :label="t('payment.title')"
+              :model-value="activeTab" :items="tabs"
+              @update:model-value="activeTab = $event === 'rechargeCenter' ? 'rechargeCenter' : 'recharge'"
+            />
+          </template>
+          <template #right>
+            <UButton to="/orders" color="neutral" variant="outline" icon="i-lucide-receipt-text">{{ t('payment.orders.title') }}</UButton>
+          </template>
+        </PageToolbar>
         <!-- Payment in progress (shared by recharge and subscription) -->
         <template v-if="paymentPhase === 'paying'">
           <PaymentStatusPanel
@@ -342,6 +346,7 @@ import { isMobileDevice } from '@/utils/device'
 import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel, type PeakRateFields } from '@/utils/peak-rate'
 import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import ConsoleTabs from '@/components/common/ConsoleTabs.vue'
