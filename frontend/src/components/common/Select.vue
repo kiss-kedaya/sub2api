@@ -35,13 +35,12 @@
         @mousedown.stop
         @keydown.enter.stop.prevent="clearSelection"
       >
-        <Icon name="x" size="sm" />
+        <UIcon name="i-lucide-x" class="size-4" />
       </span>
       <span class="select-icon">
-        <Icon
-          name="chevronDown"
-          size="md"
-          :class="['transition-transform duration-200', isOpen && 'rotate-180']"
+        <UIcon
+          name="i-lucide-chevron-down"
+          :class="['size-5 transition-transform duration-150', isOpen && 'rotate-180']"
         />
       </span>
     </button>
@@ -62,7 +61,7 @@
         >
           <!-- Search input -->
           <div v-if="isSearchable" class="select-search">
-            <Icon name="search" size="sm" class="text-gray-400" />
+            <UIcon name="i-lucide-search" class="size-4 shrink-0 text-gray-400" />
             <input
               ref="searchInputRef"
               v-model="searchQuery"
@@ -97,20 +96,17 @@
               ]"
             >
               <slot name="option" :option="option" :selected="isSelected(option)">
-                <Icon
+                <UIcon
                   v-if="option._creatable"
-                  name="search"
-                  size="sm"
-                  class="flex-shrink-0 text-gray-400"
+                  name="i-lucide-search"
+                  class="size-4 flex-shrink-0 text-gray-400"
                 />
                 <span v-if="getOptionFamily(option)" class="select-option-family">{{ getOptionFamily(option) }}</span>
                 <span class="select-option-label" :class="option._creatable && 'italic text-gray-500 dark:text-dark-300'">{{ getOptionLabel(option) }}</span>
-                <Icon
+                <UIcon
                   v-if="isSelected(option)"
-                  name="check"
-                  size="sm"
-                  class="text-primary-500"
-                  :stroke-width="2"
+                  name="i-lucide-check"
+                  class="size-4 shrink-0 text-highlighted dark:text-primary-500"
                 />
               </slot>
             </div>
@@ -132,7 +128,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 
@@ -576,6 +571,7 @@ onUnmounted(() => {
   @apply rounded text-gray-400 transition-colors;
   @apply hover:text-gray-600 dark:hover:text-gray-200;
 }
+
 </style>
 
 <style>
@@ -677,12 +673,82 @@ onUnmounted(() => {
 
 .select-dropdown-enter-active,
 .select-dropdown-leave-active {
-  transition: all 0.2s ease;
+  transition: opacity 150ms cubic-bezier(0.2, 0, 0, 1), transform 150ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .select-dropdown-enter-from,
 .select-dropdown-leave-to {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(-4px);
+}
+
+/* Light theme as Nuxt UI's SelectMenu trigger: hairline border, 6px radius, xs shadow and a
+   neutral focus ring. The doubled class outranks the scoped utilities; night theme unchanged. */
+html:not(.dark) .select-trigger.select-trigger {
+  border-color: var(--ui-border-accented);
+  border-radius: calc(var(--ui-radius) * 1.5);
+  box-shadow: 0 1px 2px rgb(10 10 10 / 0.05);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+html:not(.dark) .select-trigger.select-trigger:is(:focus-visible, .select-trigger-open) {
+  border-color: var(--ui-border-inverted);
+  box-shadow: 0 0 0 1px var(--ui-border-inverted);
+}
+
+html:not(.dark) .select-trigger.select-trigger-error {
+  border-color: var(--ui-error);
+}
+
+html:not(.dark) .select-trigger .select-icon {
+  color: var(--ui-text-dimmed);
+}
+
+/* Light theme as Nuxt UI's SelectMenu content: hairline ring, 8px radius, shadow-lg, compact
+   rows with a soft highlight, the current value marked by its check. Night theme unchanged. */
+html:not(.dark) .select-dropdown-portal {
+  border-color: var(--ui-border);
+  border-radius: calc(var(--ui-radius) * 2);
+  box-shadow: 0 10px 15px -3px rgb(10 10 10 / 0.08), 0 4px 6px -4px rgb(10 10 10 / 0.06);
+}
+
+html:not(.dark) .select-dropdown-portal :is(.select-search, .select-popover-head, .select-popover-foot) {
+  border-color: var(--ui-border);
+}
+
+html:not(.dark) .select-dropdown-portal .select-option {
+  border-radius: calc(var(--ui-radius) * 1.5);
+  padding: 6px 8px;
+  color: var(--ui-text);
+}
+
+html:not(.dark) .select-dropdown-portal :is(.select-option:hover, .select-option-focused) {
+  background-color: color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
+  color: var(--ui-text-highlighted);
+}
+
+html:not(.dark) .select-dropdown-portal .select-option-selected {
+  background-color: transparent;
+  color: var(--ui-text-highlighted);
+}
+
+html:not(.dark) .select-dropdown-portal .select-option-selected:is(:hover, .select-option-focused) {
+  background-color: color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
+}
+
+html:not(.dark) .select-dropdown-portal .select-option-group,
+html:not(.dark) .select-dropdown-portal .select-option-group:hover {
+  background-color: transparent;
+  color: var(--ui-text-highlighted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+html:not(.dark) .select-dropdown-portal .select-popover-head strong {
+  color: var(--ui-text-highlighted);
+  letter-spacing: 0;
+  text-transform: none;
 }
 </style>
