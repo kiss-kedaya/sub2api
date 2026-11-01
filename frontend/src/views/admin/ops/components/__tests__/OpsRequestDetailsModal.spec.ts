@@ -10,7 +10,11 @@ const { listRequestDetails, viewport } = vi.hoisted(() => ({
   viewport: { desktop: true },
 }))
 
-vi.mock('@vueuse/core', () => ({ useMediaQuery: () => ref(viewport.desktop) }))
+// Keep the rest of @vueuse/core: Nuxt UI components (UButton → ULink) use its helpers.
+vi.mock('@vueuse/core', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@vueuse/core')>(),
+  useMediaQuery: () => ref(viewport.desktop),
+}))
 vi.mock('@/api/admin/ops', () => ({ opsAPI: { listRequestDetails } }))
 vi.mock('@/api', () => ({ adminAPI: { groups: { getAll: vi.fn().mockResolvedValue([]) } } }))
 vi.mock('@/stores', () => ({
@@ -50,6 +54,8 @@ describe('Ops request latency details', () => {
   it('opens the TTFT card with first-token sorting and successful requests', async () => {
     const wrapper = shallowMount(OpsDashboardHeader, {
       props: { overview: {} as OpsDashboardOverview, platform: '', groupId: null, timeRange: '1h', queryMode: 'auto', loading: false, lastUpdated: null },
+      // The card actions are Nuxt UI UButton; render it and its inner link chain so the native <button> is queryable.
+      global: { stubs: { UButton: false, Button: false, ULink: false, Link: false, ULinkBase: false, LinkBase: false, Primitive: false, Slot: false, PrimitiveSlot: false } },
     })
     await flushPromises()
     const button = wrapper.findAll('button').find((item) =>

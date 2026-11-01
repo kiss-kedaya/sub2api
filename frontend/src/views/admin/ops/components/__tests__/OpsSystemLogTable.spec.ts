@@ -138,9 +138,11 @@ describe('OpsSystemLogTable host support', () => {
     })
     await flushPromises()
 
-    const label = wrapper.findAll('label').find((item) => item.text().includes('admin.ops.systemLogs.persistAccessLogs'))
-    expect(label).toBeDefined()
-    expect((label!.find('input').element as HTMLInputElement).checked).toBe(false)
+    // UCheckbox renders a role="checkbox" button next to its own <label>.
+    const checkbox = wrapper.findAllComponents({ name: 'Checkbox' }).find((item) => item.props('label') === 'admin.ops.systemLogs.persistAccessLogs')
+    expect(checkbox).toBeDefined()
+    expect(checkbox!.props('modelValue')).toBe(false)
+    expect(checkbox!.get('[role="checkbox"]').attributes('aria-checked')).toBe('false')
   })
 
   it.each([

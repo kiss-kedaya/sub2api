@@ -173,13 +173,13 @@ function downloadChart() {
 </script>
 
 <template>
-  <div class="flex h-full min-w-0 flex-col rounded-lg bg-white p-6 shadow-xs ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
+  <div class="flex h-full min-w-0 flex-col rounded-lg bg-default p-6 shadow-xs ring-1 ring-default">
     <div
       data-testid="throughput-chart-header"
       class="mb-4 flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
     >
-      <h3 class="flex min-w-0 items-center gap-2 text-sm font-bold text-gray-900 dark:text-white">
-        <svg class="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <h3 class="flex min-w-0 items-center gap-2 text-sm font-bold text-highlighted">
+        <svg class="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
         </svg>
         {{ t('admin.ops.throughputTrend') }}
@@ -187,73 +187,88 @@ function downloadChart() {
       </h3>
       <div
         data-testid="throughput-chart-toolbar"
-        class="flex w-full min-w-0 flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400 sm:w-auto sm:justify-end"
+        class="flex w-full min-w-0 flex-wrap items-center gap-2 text-xs text-muted sm:w-auto sm:justify-end"
       >
-        <span class="flex shrink-0 items-center gap-1"><span class="h-2 w-2 rounded-full bg-blue-500"></span>QPS</span>
+        <span class="flex shrink-0 items-center gap-1"><span class="h-2 w-2 rounded-full bg-primary"></span>QPS</span>
         <span class="flex shrink-0 items-center gap-1"><span class="h-2 w-2 rounded-full bg-green-500"></span>{{ t('admin.ops.tpsK') }}</span>
         <template v-if="!props.fullscreen">
-          <button
+          <UButton
             type="button"
-            class="inline-flex shrink-0 items-center rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-800"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            class="inline-flex shrink-0 items-center text-[11px] font-semibold"
             :disabled="state !== 'ready'"
             :title="t('admin.ops.requestDetails.title')"
             @click="emit('openDetails')"
           >
             {{ t('admin.ops.requestDetails.details') }}
-          </button>
-          <button
+          </UButton>
+          <UButton
             type="button"
-            class="inline-flex shrink-0 items-center rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-800"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            class="inline-flex shrink-0 items-center text-[11px] font-semibold"
             :disabled="state !== 'ready'"
             :title="t('admin.ops.charts.resetZoomHint')"
             @click="resetZoom"
           >
             {{ t('admin.ops.charts.resetZoom') }}
-          </button>
-          <button
+          </UButton>
+          <UButton
             type="button"
-            class="inline-flex shrink-0 items-center rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-800"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            class="inline-flex shrink-0 items-center text-[11px] font-semibold"
             :disabled="state !== 'ready'"
             :title="t('admin.ops.charts.downloadChartHint')"
             @click="downloadChart"
           >
             {{ t('admin.ops.charts.downloadChart') }}
-          </button>
+          </UButton>
         </template>
       </div>
     </div>
 
     <!-- Drilldown chips (baseline interaction: click to set global filter) -->
     <div v-if="(props.topGroups?.length ?? 0) > 0" class="mb-3 flex flex-wrap gap-2">
-      <button
+      <UButton
         v-for="g in props.topGroups"
         :key="g.group_id"
         type="button"
-        class="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-200 dark:hover:bg-dark-800"
+        color="neutral"
+        variant="outline"
+        size="sm"
+        class="inline-flex items-center gap-2 text-[11px] font-semibold"
         @click="emit('selectGroup', g.group_id)"
       >
         <span class="max-w-[180px] truncate">{{ g.group_name || `#${g.group_id}` }}</span>
-        <span class="text-gray-400 dark:text-gray-500">{{ formatNumber(g.request_count) }}</span>
-      </button>
+        <span class="text-dimmed">{{ formatNumber(g.request_count) }}</span>
+      </UButton>
     </div>
 
     <div v-else-if="(props.byPlatform?.length ?? 0) > 0" class="mb-3 flex flex-wrap gap-2">
-      <button
+      <UButton
         v-for="p in props.byPlatform"
         :key="p.platform"
         type="button"
-        class="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-200 dark:hover:bg-dark-800"
+        color="neutral"
+        variant="outline"
+        size="sm"
+        class="inline-flex items-center gap-2 text-[11px] font-semibold"
         @click="emit('selectPlatform', p.platform)"
       >
         <span class="uppercase">{{ p.platform }}</span>
-        <span class="text-gray-400 dark:text-gray-500">{{ formatNumber(p.request_count) }}</span>
-      </button>
+        <span class="text-dimmed">{{ formatNumber(p.request_count) }}</span>
+      </UButton>
     </div>
 
     <div class="min-h-0 min-w-0 flex-1">
       <Line v-if="state === 'ready' && chartData" ref="throughputChartRef" :data="chartData" :options="options" />
       <div v-else class="flex h-full items-center justify-center">
-        <div v-if="state === 'loading'" class="animate-pulse text-sm text-gray-400">{{ t('common.loading') }}</div>
+        <div v-if="state === 'loading'" class="animate-pulse text-sm text-dimmed">{{ t('common.loading') }}</div>
         <EmptyState v-else :title="t('common.noData')" :description="t('admin.ops.charts.emptyRequest')" />
       </div>
     </div>

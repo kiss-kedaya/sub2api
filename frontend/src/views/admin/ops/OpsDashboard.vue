@@ -1,5 +1,5 @@
 <template>
-  <component :is="isFullscreen ? 'div' : AppLayout" :class="isFullscreen ? 'flex min-h-screen flex-col justify-center bg-gray-50 dark:bg-dark-950' : ''">
+  <component :is="isFullscreen ? 'div' : AppLayout" :class="isFullscreen ? 'flex min-h-screen flex-col justify-center bg-elevated/50' : ''">
     <div :class="[isFullscreen ? 'p-4 md:p-6' : '', 'space-y-6 pb-12']">
       <div
         v-if="errorMessage"
