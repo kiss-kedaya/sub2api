@@ -47,7 +47,10 @@ describe('refund balance warning', () => {
 
   it('keeps the warning hidden when balance deduction is disabled', async () => {
     const wrapper = await openRefund()
-    await wrapper.get('#deduct-balance').setValue(false)
+    // Nuxt UI checkbox (button role="checkbox"): a click unchecks it.
+    expect(wrapper.get('#deduct-balance').attributes('aria-checked')).toBe('true')
+    await wrapper.get('#deduct-balance').trigger('click')
+    expect(wrapper.get('#deduct-balance').attributes('aria-checked')).toBe('false')
     expect(wrapper.text()).not.toContain(warning)
   })
 })

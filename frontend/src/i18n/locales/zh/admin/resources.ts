@@ -98,6 +98,8 @@ export default {
 
     // Proxies Management
     proxies: {
+      displayColumns: '显示列',
+      advancedOptions: '高级选项',
       title: 'IP管理',
       description: '管理代理服务器配置',
       createProxy: '添加代理',
@@ -294,6 +296,7 @@ export default {
 
     // Redeem Codes Management
     redeem: {
+      displayColumns: '显示列',
       title: '兑换码管理',
       description: '生成和管理兑换码',
       generateCodes: '生成兑换码',
@@ -428,6 +431,7 @@ export default {
 
     // Announcements
     announcements: {
+      displayColumns: '显示列',
       title: '公告管理',
       description: '创建公告并按条件投放',
       createFirstAnnouncement: '还没有公告，创建您的第一条公告。',
@@ -504,6 +508,7 @@ export default {
 
     // Promo Codes
     promo: {
+      displayColumns: '显示列',
       title: '优惠码管理',
       description: '创建和管理注册优惠码',
       createCode: '创建优惠码',

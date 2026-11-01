@@ -389,6 +389,7 @@ export default {
     },
 
     affiliates: {
+      displayColumns: 'Columns',
       invitesDescription: 'View site-wide inviter and invitee relationships',
       rebatesDescription: 'View recharge orders that generated affiliate rebates',
       transfersDescription: 'View affiliate quota transfers into account balance',
@@ -433,6 +434,8 @@ export default {
 
     // Users
     users: {
+      displayColumns: 'Columns',
+      advancedOptions: 'Advanced options',
       title: 'User Management',
       description: 'Manage users and their permissions',
       createUser: 'Create User',
@@ -444,6 +447,7 @@ export default {
         failed: 'Failed to delete {count} users. They remain selected for retry.'
       },
       bulkLimits: {
+        short: 'Set limits',
         action: 'Set limits ({count})',
         title: 'Set user limits',
         selectedCount: '{count} users selected',

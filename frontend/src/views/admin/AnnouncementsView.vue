@@ -8,47 +8,45 @@
           :description="t('admin.announcements.description')"
         >
           <template #actions>
-            <button @click="openCreateDialog" class="btn btn-primary">
-              <Icon name="plus" size="md" class="mr-1" />
-              {{ t('admin.announcements.createAnnouncement') }}
-            </button>
+            <UButton icon="i-lucide-plus" :label="t('admin.announcements.createAnnouncement')" @click="openCreateDialog" />
           </template>
         </AdminPageHeader>
-        <div class="flex flex-wrap items-center gap-3">
-          <!-- Left: Search + Filters -->
-          <div class="flex-1 sm:max-w-64">
-            <input
+        <!-- Toolbar row (template customers page) -->
+        <PageToolbar>
+          <template #left>
+            <UInput
               v-model="searchQuery"
-              type="text"
+              icon="i-lucide-search"
               :placeholder="t('admin.announcements.searchAnnouncements')"
-              class="input"
-              @input="handleSearch"
+              class="w-56 sm:w-64"
+              @update:model-value="handleSearch"
             />
-          </div>
-          <Select
-            v-model="filters.status"
-            :options="statusFilterOptions"
-            class="w-40"
-            @change="handleStatusChange"
-          />
-
-          <!-- Right: Action buttons -->
-          <div class="flex flex-1 flex-wrap items-center justify-end gap-2">
-            <button
-              @click="loadAnnouncements"
+            <Select v-model="filters.status" :options="statusFilterOptions" class="w-40" @change="handleStatusChange" />
+          </template>
+          <template #right>
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-refresh-cw"
+              square
               :disabled="loading"
-              class="btn btn-secondary"
+              :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
               :title="t('common.refresh')"
-            >
-              <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-            </button>
-          </div>
-        </div>
+              :aria-label="t('common.refresh')"
+              @click="loadAnnouncements"
+            />
+            <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }">
+              <UButton color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" :aria-label="t('admin.announcements.displayColumns')">
+                <span class="hidden sm:inline">{{ t('admin.announcements.displayColumns') }}</span>
+              </UButton>
+            </UDropdownMenu>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
         <DataTable
-          :columns="columns"
+          :columns="visibleColumns"
           :data="announcements"
           :loading="loading"
           :server-side-sort="true"
@@ -58,74 +56,49 @@
         >
           <template #cell-title="{ value, row }">
             <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="truncate font-medium text-gray-900 dark:text-white">{{ value }}</span>
-              </div>
-              <div class="mt-1 flex items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
-                <span>#{{ row.id }}</span>
-                <span class="text-gray-300 dark:text-dark-700">·</span>
-                <span>{{ formatDateTime(row.created_at) }}</span>
-              </div>
+              <p class="truncate font-medium text-highlighted">{{ value }}</p>
+              <p class="mt-0.5 text-xs text-muted">#{{ row.id }} · {{ formatDateTime(row.created_at) }}</p>
             </div>
           </template>
 
           <template #cell-status="{ value }">
-            <span
-              :class="[
-                'badge',
-                value === 'active'
-                  ? 'badge-success'
-                  : value === 'draft'
-                    ? 'badge-gray'
-                    : 'badge-warning'
-              ]"
-            >
-              {{ statusLabel(value) }}
-            </span>
+            <UBadge
+              :color="value === 'active' ? 'success' : value === 'draft' ? 'neutral' : 'warning'"
+              variant="subtle"
+              :label="statusLabel(value)"
+            />
           </template>
 
           <template #cell-notify_mode="{ row }">
-            <span
-              :class="[
-                'badge',
-                row.notify_mode === 'popup'
-                  ? 'badge-warning'
-                  : 'badge-gray'
-              ]"
-            >
-              {{ row.notify_mode === 'popup' ? t('admin.announcements.notifyModeLabels.popup') : t('admin.announcements.notifyModeLabels.silent') }}
-            </span>
+            <UBadge
+              :color="row.notify_mode === 'popup' ? 'warning' : 'neutral'"
+              variant="subtle"
+              :label="row.notify_mode === 'popup' ? t('admin.announcements.notifyModeLabels.popup') : t('admin.announcements.notifyModeLabels.silent')"
+            />
           </template>
 
           <template #cell-targeting="{ row }">
-            <span class="text-sm text-gray-600 dark:text-gray-300">
-              {{ targetingSummary(row.targeting) }}
-            </span>
+            <span class="text-default">{{ targetingSummary(row.targeting) }}</span>
           </template>
 
           <template #cell-timeRange="{ row }">
-            <div class="text-sm text-gray-600 dark:text-gray-300">
-              <div>
-                <span class="font-medium">{{ t('admin.announcements.form.startsAt') }}:</span>
-                <span class="ml-1">{{ row.starts_at ? formatDateTime(row.starts_at) : t('admin.announcements.timeImmediate') }}</span>
-              </div>
-              <div class="mt-0.5">
-                <span class="font-medium">{{ t('admin.announcements.form.endsAt') }}:</span>
-                <span class="ml-1">{{ row.ends_at ? formatDateTime(row.ends_at) : t('admin.announcements.timeNever') }}</span>
-              </div>
+            <div class="text-xs text-muted">
+              <p>{{ t('admin.announcements.form.startsAt') }}: <span class="text-default">{{ row.starts_at ? formatDateTime(row.starts_at) : t('admin.announcements.timeImmediate') }}</span></p>
+              <p class="mt-0.5">{{ t('admin.announcements.form.endsAt') }}: <span class="text-default">{{ row.ends_at ? formatDateTime(row.ends_at) : t('admin.announcements.timeNever') }}</span></p>
             </div>
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-muted">{{ formatDateTime(value) }}</span>
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center space-x-1">
-              <AdminRowAction @click="openPreview(row)" :label="t('admin.announcements.preview')" icon="eye" />
-              <AdminRowAction @click="openReadStatus(row)" :label="t('admin.announcements.readStatus')" icon="chartBar" />
-              <AdminRowAction @click="openEditDialog(row)" :label="t('common.edit')" icon="edit" />
-              <AdminRowAction @click="handleDelete(row)" :label="t('common.delete')" icon="trash" tone="danger" />
+            <div class="flex items-center justify-end gap-0.5">
+              <AdminRowAction :label="t('admin.announcements.preview')" icon="eye" @click="openPreview(row)" />
+              <AdminRowAction :label="t('common.edit')" icon="edit" @click="openEditDialog(row)" />
+              <UDropdownMenu :items="rowMenuItems(row)" :content="{ align: 'end' }">
+                <AdminRowAction :label="t('common.more')" icon="more" />
+              </UDropdownMenu>
             </div>
           </template>
 
@@ -159,56 +132,35 @@
       width="wide"
       @close="closeEdit"
     >
-      <form id="announcement-form" @submit.prevent="handleSave" class="space-y-4">
-        <div>
-          <label class="input-label">{{ t('admin.announcements.form.title') }}</label>
-          <input v-model="form.title" type="text" class="input" required />
-        </div>
-
-        <div>
-          <label class="input-label">{{ t('admin.announcements.form.content') }}</label>
-          <textarea v-model="form.content" rows="6" class="input" required></textarea>
-        </div>
-
+      <UForm id="announcement-form" :state="form" class="space-y-4" @submit="handleSave">
+        <UFormField :label="t('admin.announcements.form.title')" required>
+          <UInput v-model="form.title" required class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.announcements.form.content')" required>
+          <UTextarea v-model="form.content" :rows="6" required class="w-full" />
+        </UFormField>
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div>
-            <label class="input-label">{{ t('admin.announcements.form.status') }}</label>
+          <UFormField :label="t('admin.announcements.form.status')">
             <Select v-model="form.status" :options="statusOptions" />
-          </div>
-          <div>
-            <label class="input-label">{{ t('admin.announcements.form.notifyMode') }}</label>
+          </UFormField>
+          <UFormField :label="t('admin.announcements.form.notifyMode')" :help="t('admin.announcements.form.notifyModeHint')">
             <Select v-model="form.notify_mode" :options="notifyModeOptions" />
-            <p class="input-hint">{{ t('admin.announcements.form.notifyModeHint') }}</p>
-          </div>
+          </UFormField>
         </div>
-
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div>
-            <label class="input-label">{{ t('admin.announcements.form.startsAt') }}</label>
-            <input v-model="form.starts_at_str" type="datetime-local" max="9999-12-31T23:59" class="input" />
-            <p class="input-hint">{{ t('admin.announcements.form.startsAtHint') }}</p>
-          </div>
-          <div>
-            <label class="input-label">{{ t('admin.announcements.form.endsAt') }}</label>
-            <input v-model="form.ends_at_str" type="datetime-local" max="9999-12-31T23:59" class="input" />
-            <p class="input-hint">{{ t('admin.announcements.form.endsAtHint') }}</p>
-          </div>
+          <UFormField :label="t('admin.announcements.form.startsAt')" :help="t('admin.announcements.form.startsAtHint')">
+            <UInput v-model="form.starts_at_str" type="datetime-local" max="9999-12-31T23:59" class="w-full" />
+          </UFormField>
+          <UFormField :label="t('admin.announcements.form.endsAt')" :help="t('admin.announcements.form.endsAtHint')">
+            <UInput v-model="form.ends_at_str" type="datetime-local" max="9999-12-31T23:59" class="w-full" />
+          </UFormField>
         </div>
-
-        <AnnouncementTargetingEditor
-          v-model="form.targeting"
-          :groups="subscriptionGroups"
-        />
-      </form>
-
+        <AnnouncementTargetingEditor v-model="form.targeting" :groups="subscriptionGroups" />
+      </UForm>
       <template #footer>
-        <div class="flex justify-end gap-3">
-          <button type="button" @click="closeEdit" class="btn btn-secondary">
-            {{ t('common.cancel') }}
-          </button>
-          <button type="submit" form="announcement-form" :disabled="saving" class="btn btn-primary">
-            {{ saving ? t('common.saving') : t('common.save') }}
-          </button>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="closeEdit" />
+          <UButton type="submit" form="announcement-form" :loading="saving" :label="saving ? t('common.saving') : t('common.save')" />
         </div>
       </template>
     </BaseDialog>
@@ -258,8 +210,10 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import Icon from '@/components/icons/Icon.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
+import type { DropdownMenuItem } from '@nuxt/ui'
+import { useListColumnMenu } from './useListColumnMenu'
 
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import AnnouncementTargetingEditor from '@/components/admin/announcements/AnnouncementTargetingEditor.vue'
@@ -307,7 +261,7 @@ const notifyModeOptions = computed(() => [
   { value: 'popup', label: t('admin.announcements.notifyModeLabels.popup') }
 ])
 
-const columns = computed<Column[]>(() => [
+const allColumns = computed<Column[]>(() => [
   { key: 'title', label: t('admin.announcements.columns.title'), sortable: true },
   { key: 'status', label: t('admin.announcements.columns.status'), sortable: true },
   { key: 'notify_mode', label: t('admin.announcements.columns.notifyMode'), sortable: true },
@@ -316,6 +270,20 @@ const columns = computed<Column[]>(() => [
   { key: 'created_at', label: t('admin.announcements.columns.createdAt'), sortable: true },
   { key: 'actions', label: t('admin.announcements.columns.actions') }
 ])
+
+// "显示列": the title cell already shows the created time, so the created column starts hidden
+const { visibleColumns, menuItems: columnMenuItems } = useListColumnMenu({
+  storageKey: 'admin-announcements-hidden-columns',
+  columns: allColumns,
+  fixed: ['title', 'actions'],
+  defaultHidden: ['created_at']
+})
+
+// Row "…" menu: read status, delete
+const rowMenuItems = (row: Announcement): DropdownMenuItem[][] => [
+  [{ label: t('admin.announcements.readStatus'), icon: 'i-lucide-chart-column', onSelect: () => openReadStatus(row) }],
+  [{ label: t('common.delete'), icon: 'i-lucide-trash', color: 'error', onSelect: () => handleDelete(row) }]
+]
 
 const statusLabel = (status: string) => {
   if (status === 'draft') return t('admin.announcements.statusLabels.draft')

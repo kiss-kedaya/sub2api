@@ -510,6 +510,8 @@ export default {
     perMonth: 'month',
     perYear: 'year',
     admin: {
+      displayColumns: 'Columns',
+      advancedOptions: 'Advanced options',
       tabs: {
         overview: 'Overview',
         orders: 'Orders',

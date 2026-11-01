@@ -389,6 +389,7 @@ export default {
     },
 
     affiliates: {
+      displayColumns: '显示列',
       invitesDescription: '查看全站邀请关系和被邀请用户累计返利',
       rebatesDescription: '查看每一笔产生返利的充值订单',
       transfersDescription: '查看返利额度转入账户余额的提取流水',
@@ -433,6 +434,8 @@ export default {
 
     // Users Management
     users: {
+      displayColumns: '显示列',
+      advancedOptions: '高级选项',
       title: '用户管理',
       description: '管理用户账户和权限',
       createUser: '创建用户',
@@ -444,6 +447,7 @@ export default {
         failed: '{count} 个用户删除失败，已保留选中，可重试。'
       },
       bulkLimits: {
+        short: '设置限制',
         action: '批量设置限制（{count}）',
         title: '批量设置用户限制',
         selectedCount: '已选择 {count} 个用户',

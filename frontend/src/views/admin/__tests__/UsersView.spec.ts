@@ -383,10 +383,11 @@ describe('admin UsersView', () => {
           UserBalanceModal: true,
           UserBalanceHistoryModal: true,
           GroupReplaceModal: true,
-          Icon: true,
-          Teleport: true
+          Icon: true
+          // No Teleport stub: the usage sort menu (Nuxt UI dropdown) must render into document.body.
         }
-      }
+      },
+      attachTo: document.body
     })
 
     await flushPromises()
@@ -395,9 +396,12 @@ describe('admin UsersView', () => {
 
     expect(wrapper.get('[data-test="row-order"]').text()).toBe('last-used-first@example.com,usage-first@example.com')
 
+    // The sort menu is a Nuxt UI dropdown: its items teleport to document.body.
     await wrapper.get('[data-test="usage-sort-trigger-usage"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="usage-sort-usage-today"]').trigger('click')
+    const todayItem = document.body.querySelector<HTMLElement>('[data-test="usage-sort-usage-today"]')
+    expect(todayItem).not.toBeNull()
+    todayItem!.click()
     await flushPromises()
 
     expect(wrapper.get('[data-test="row-order"]').text()).toBe('usage-first@example.com,last-used-first@example.com')

@@ -8,97 +8,93 @@
           :description="t('admin.proxies.description')"
         >
           <template #actions>
-            <button @click="showCreateModal = true" class="btn btn-primary">
-              <Icon name="plus" size="md" class="mr-2" />
-              {{ t('admin.proxies.createProxy') }}
-            </button>
+            <UButton icon="i-lucide-plus" :label="t('admin.proxies.createProxy')" @click="showCreateModal = true" />
           </template>
         </AdminPageHeader>
-        <div class="flex flex-wrap items-center gap-3">
-          <!-- Left: Search + Filters -->
-          <div class="relative w-full sm:w-64">
-            <Icon
-              name="search"
-              size="md"
-              class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
-            />
-            <input
+        <!-- Toolbar row (template customers page) -->
+        <PageToolbar>
+          <template #left>
+            <UInput
               v-model="searchQuery"
-              type="text"
+              icon="i-lucide-search"
               :placeholder="t('admin.proxies.searchProxies')"
-              class="input pl-10"
-              @input="handleSearch"
+              class="w-56 sm:w-64"
+              @update:model-value="handleSearch"
             />
-          </div>
-
-          <div class="w-full sm:w-40">
-            <Select
-              v-model="filters.protocol"
-              :options="protocolOptions"
-              :placeholder="t('admin.proxies.allProtocols')"
-              @change="handleFilterChange"
-            />
-          </div>
-          <div class="w-full sm:w-36">
-            <Select
-              v-model="filters.status"
-              :options="statusOptions"
-              :placeholder="t('admin.proxies.allStatus')"
-              @change="handleFilterChange"
-            />
-          </div>
-
-          <!-- Right: All action buttons -->
-          <div class="flex flex-1 flex-wrap items-center justify-end gap-2">
-            <button
-              @click="loadProxies"
-              :disabled="loading"
-              class="btn btn-secondary"
-              :title="t('common.refresh')"
-            >
-              <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-            </button>
-            <button
-              @click="handleBatchTest"
-              :disabled="batchTesting || loading"
-              class="btn btn-secondary"
-              :title="t('admin.proxies.testConnection')"
-            >
-              <Icon name="play" size="md" class="mr-2" />
-              {{ t('admin.proxies.testConnection') }}
-            </button>
-            <button
-              @click="handleBatchQualityCheck"
-              :disabled="batchQualityChecking || loading"
-              class="btn btn-secondary"
-              :title="t('admin.proxies.batchQualityCheck')"
-            >
-              <Icon name="shield" size="md" class="mr-2" :class="batchQualityChecking ? 'animate-pulse' : ''" />
-              {{ t('admin.proxies.batchQualityCheck') }}
-            </button>
-            <button
-              @click="openBatchDelete"
-              :disabled="selectedCount === 0"
-              class="btn btn-danger"
+            <div class="w-40">
+              <Select
+                v-model="filters.protocol"
+                :options="protocolOptions"
+                :placeholder="t('admin.proxies.allProtocols')"
+                @change="handleFilterChange"
+              />
+            </div>
+            <div class="w-36">
+              <Select
+                v-model="filters.status"
+                :options="statusOptions"
+                :placeholder="t('admin.proxies.allStatus')"
+                @change="handleFilterChange"
+              />
+            </div>
+          </template>
+          <template #right>
+            <UButton
+              v-if="selectedCount > 0"
+              color="error"
+              variant="subtle"
+              icon="i-lucide-trash"
+              :label="t('common.delete')"
               :title="t('admin.proxies.batchDeleteAction')"
+              @click="openBatchDelete"
             >
-              <Icon name="trash" size="md" class="mr-2" />
-              {{ t('admin.proxies.batchDeleteAction') }}
-            </button>
-            <button @click="showImportData = true" class="btn btn-secondary">
-              {{ t('admin.proxies.dataImport') }}
-            </button>
-            <button @click="showExportDataDialog = true" class="btn btn-secondary">
-              {{ selectedCount > 0 ? t('admin.proxies.dataExportSelected') : t('admin.proxies.dataExport') }}
-            </button>
-          </div>
-        </div>
+              <template #trailing>
+                <UBadge :label="String(selectedCount)" color="error" variant="outline" size="sm" />
+              </template>
+            </UButton>
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-refresh-cw"
+              square
+              :disabled="loading"
+              :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+              :title="t('common.refresh')"
+              :aria-label="t('common.refresh')"
+              @click="loadProxies"
+            />
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-play"
+              :disabled="batchTesting || loading"
+              :ui="{ leadingIcon: batchTesting ? 'animate-pulse' : '' }"
+              :title="t('admin.proxies.testConnection')"
+              :label="t('admin.proxies.testConnection')"
+              @click="handleBatchTest"
+            />
+            <UDropdownMenu :items="toolbarMenuItems" :content="{ align: 'end' }">
+              <UButton color="neutral" variant="outline" trailing-icon="i-lucide-chevron-down" :label="t('common.more')" />
+            </UDropdownMenu>
+            <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }">
+              <UButton
+                color="neutral"
+                variant="outline"
+                trailing-icon="i-lucide-settings-2"
+                :title="t('admin.proxies.displayColumns')"
+                :aria-label="t('admin.proxies.displayColumns')"
+              >
+                <span class="hidden sm:inline">{{ t('admin.proxies.displayColumns') }}</span>
+              </UButton>
+            </UDropdownMenu>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
         <div ref="proxyTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
-          :columns="columns"
+          :columns="visibleColumns"
           :data="proxies"
           :loading="loading"
           :server-side-sort="true"
@@ -107,88 +103,78 @@
           @sort="handleSort"
         >
           <template #header-select>
-            <input
-              type="checkbox"
-              class="h-4 w-4 cursor-pointer rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-              :checked="allVisibleSelected"
-              @click.stop
-              @change="toggleSelectAllVisible($event)"
-            />
+            <div @click.stop>
+              <UCheckbox
+                :model-value="allVisibleSelected"
+                :aria-label="t('common.all')"
+                @update:model-value="(value) => toggleVisible(!!value)"
+              />
+            </div>
           </template>
 
           <template #cell-select="{ row }">
-            <input
-              type="checkbox"
-              class="h-4 w-4 cursor-pointer rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500"
-              :checked="selectedProxyIds.has(row.id)"
-              @click.stop
-              @change="toggleSelectRow(row.id, $event)"
-            />
+            <div @click.stop>
+              <UCheckbox
+                :model-value="selectedProxyIds.has(row.id)"
+                :aria-label="row.name"
+                @update:model-value="(value) => (value ? select(row.id) : deselect(row.id))"
+              />
+            </div>
           </template>
 
           <template #cell-name="{ value }">
-            <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+            <span class="font-medium text-highlighted">{{ value }}</span>
           </template>
 
           <template #cell-protocol="{ value }">
-            <span
+            <UBadge
               v-if="value"
-              :class="['badge', value.startsWith('socks5') ? 'badge-primary' : 'badge-gray']"
-            >
-              {{ value.toUpperCase() }}
-            </span>
-            <span v-else class="text-sm text-gray-400">-</span>
+              :color="value.startsWith('socks5') ? 'primary' : 'neutral'"
+              variant="subtle"
+              :label="value.toUpperCase()"
+            />
+            <span v-else class="text-dimmed">-</span>
           </template>
 
           <template #cell-address="{ row }">
-            <div class="flex items-center gap-1.5">
-              <code class="code text-xs">{{ row.host }}:{{ row.port }}</code>
-              <div class="relative">
-                <button
-                  type="button"
-                  class="rounded-sm p-0.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400"
+            <div class="flex items-center gap-1">
+              <code class="font-mono text-xs text-default">{{ row.host }}:{{ row.port }}</code>
+              <!-- Click copies the URL; right click lists the other formats -->
+              <UContextMenu :items="copyFormatMenuItems(row)">
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  square
+                  icon="i-lucide-copy"
                   :title="t('admin.proxies.copyProxyUrl')"
+                  :aria-label="t('admin.proxies.copyProxyUrl')"
                   @click.stop="copyProxyUrl(row)"
-                  @contextmenu.prevent="toggleCopyMenu(row.id)"
-                >
-                  <Icon name="copy" size="sm" />
-                </button>
-                <!-- 右键展开格式选择菜单 -->
-                <div
-                  v-if="copyMenuProxyId === row.id"
-                  class="absolute left-0 top-full z-50 mt-1 w-auto min-w-[180px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-500 dark:bg-dark-700"
-                >
-                  <button
-                    v-for="fmt in getCopyFormats(row)"
-                    :key="fmt.label"
-                    class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-gray-100 dark:hover:bg-dark-600"
-                    @click.stop="copyFormat(fmt.value)"
-                  >
-                    <span class="truncate font-mono text-gray-600 dark:text-gray-300">{{ fmt.label }}</span>
-                  </button>
-                </div>
-              </div>
+                />
+              </UContextMenu>
             </div>
           </template>
 
           <template #cell-auth="{ row }">
-            <div v-if="row.username || row.password" class="flex items-center gap-1.5">
+            <div v-if="row.username || row.password" class="flex items-center gap-1">
               <div class="flex flex-col text-xs">
-                <span v-if="row.username" class="text-gray-700 dark:text-gray-200">{{ row.username }}</span>
-                <span v-if="row.password" class="font-mono text-gray-500 dark:text-gray-400">
+                <span v-if="row.username" class="text-default">{{ row.username }}</span>
+                <span v-if="row.password" class="font-mono text-muted">
                   {{ visiblePasswordIds.has(row.id) ? row.password : '••••••' }}
                 </span>
               </div>
-              <button
+              <UButton
                 v-if="row.password"
-                type="button"
-                class="ml-1 rounded-sm p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                square
+                :icon="visiblePasswordIds.has(row.id) ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                :aria-label="t('admin.proxies.password')"
                 @click.stop="visiblePasswordIds.has(row.id) ? visiblePasswordIds.delete(row.id) : visiblePasswordIds.add(row.id)"
-              >
-                <Icon :name="visiblePasswordIds.has(row.id) ? 'eyeOff' : 'eye'" size="sm" />
-              </button>
+              />
             </div>
-            <span v-else class="text-sm text-gray-400">-</span>
+            <span v-else class="text-dimmed">-</span>
           </template>
 
           <template #cell-location="{ row }">
@@ -199,108 +185,85 @@
                 :alt="row.country || row.country_code"
                 class="h-4 w-6 rounded-xs"
               />
-              <span v-if="formatLocation(row)" class="text-sm text-gray-700 dark:text-gray-200">
-                {{ formatLocation(row) }}
-              </span>
-              <span v-else class="text-sm text-gray-400">-</span>
+              <span v-if="formatLocation(row)" class="text-default">{{ formatLocation(row) }}</span>
+              <span v-else class="text-dimmed">-</span>
             </div>
           </template>
 
           <template #cell-account_count="{ row, value }">
-            <button
+            <UButton
               v-if="(value || 0) > 0"
-              type="button"
-              class="inline-flex items-center rounded-sm bg-gray-100 px-2 py-0.5 text-xs font-medium text-primary-700 hover:bg-gray-200 dark:bg-dark-600 dark:text-primary-300 dark:hover:bg-dark-500"
+              color="neutral"
+              variant="soft"
+              size="xs"
+              :label="t('admin.groups.accountsCount', { count: value || 0 })"
               @click="openAccountsModal(row)"
-            >
-              {{ t('admin.groups.accountsCount', { count: value || 0 }) }}
-            </button>
-            <span
-              v-else
-              class="inline-flex items-center rounded-sm bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
-            >
-              {{ t('admin.groups.accountsCount', { count: 0 }) }}
-            </span>
+            />
+            <span v-else class="text-xs text-muted">{{ t('admin.groups.accountsCount', { count: 0 }) }}</span>
           </template>
 
           <template #cell-latency="{ row }">
-            <div class="flex flex-col gap-1">
-              <span
+            <div class="flex flex-col items-start gap-1">
+              <UBadge
                 v-if="row.latency_status === 'failed'"
-                class="badge badge-danger"
+                color="error"
+                variant="subtle"
+                :label="t('admin.proxies.latencyFailed')"
                 :title="row.latency_message || undefined"
-              >
-                {{ t('admin.proxies.latencyFailed') }}
-              </span>
-              <span
+              />
+              <UBadge
                 v-else-if="typeof row.latency_ms === 'number'"
-                :class="['badge', row.latency_ms < 200 ? 'badge-success' : 'badge-warning']"
-              >
-                {{ row.latency_ms }}ms
-              </span>
-              <span v-else class="text-sm text-gray-400">-</span>
+                :color="row.latency_ms < 200 ? 'success' : 'warning'"
+                variant="subtle"
+                class="tabular-nums"
+                :label="`${row.latency_ms}ms`"
+              />
+              <span v-else class="text-dimmed">-</span>
               <div
                 v-if="typeof row.quality_checked === 'number'"
-                class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
+                class="flex items-center gap-1 text-xs text-muted"
                 :title="row.quality_summary || undefined"
               >
                 <span>{{ t('admin.proxies.qualityInline', { grade: row.quality_grade || '-', score: row.quality_score ?? '-' }) }}</span>
-                <span class="badge" :class="qualityOverallClass(row.quality_status)">
-                  {{ qualityOverallLabel(row.quality_status) }}
-                </span>
+                <UBadge :color="qualityOverallColor(row.quality_status)" variant="subtle" size="sm" :label="qualityOverallLabel(row.quality_status)" />
               </div>
             </div>
           </template>
 
           <template #cell-expiry="{ row }">
-            <span v-if="!row.expires_at" class="text-sm text-gray-400">{{ t('admin.proxies.neverExpires') }}</span>
-            <div v-else class="flex flex-col text-xs">
-              <span class="text-gray-700 dark:text-gray-200">{{ formatDateTime(row.expires_at) }}</span>
-              <span :class="expiryBadgeClass(row)">{{ expiryLabel(row) }}</span>
+            <span v-if="!row.expires_at" class="text-muted">{{ t('admin.proxies.neverExpires') }}</span>
+            <div v-else class="flex flex-col items-start gap-0.5 text-xs">
+              <span class="text-default">{{ formatDateTime(row.expires_at) }}</span>
+              <UBadge v-if="expiryColor(row)" :color="expiryColor(row)!" variant="subtle" size="sm" :label="expiryLabel(row)" />
+              <span v-else class="text-muted">{{ expiryLabel(row) }}</span>
             </div>
           </template>
 
           <template #cell-created_at="{ row }">
-            <span class="text-xs text-gray-600 dark:text-gray-300">{{ formatDateTime(row.created_at) }}</span>
+            <span class="text-muted">{{ formatDateTime(row.created_at) }}</span>
           </template>
 
           <template #cell-status="{ value }">
-            <span
-              :class="[
-                'badge',
-                value === 'active' ? 'badge-success' : value === 'expired' ? 'badge-danger' : 'badge-danger'
-              ]"
-            >
-              {{ t('admin.accounts.status.' + value) }}
-            </span>
+            <UBadge :color="value === 'active' ? 'success' : 'error'" variant="subtle" :label="t('admin.accounts.status.' + value)" />
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
+            <div class="flex items-center justify-end gap-0.5">
               <AdminRowAction
-                @click="handleTestConnection(row)"
                 :disabled="testingProxyIds.has(row.id)"
                 :label="t('admin.proxies.testConnection')"
                 tone="success"
+                @click="handleTestConnection(row)"
               >
                 <template #icon>
-                  <svg v-if="testingProxyIds.has(row.id)" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                  <Icon v-else name="checkCircle" size="sm" aria-hidden="true" />
+                  <UIcon v-if="testingProxyIds.has(row.id)" name="i-lucide-loader-circle" class="size-4 animate-spin" />
+                  <UIcon v-else name="i-lucide-circle-check" class="size-4" />
                 </template>
               </AdminRowAction>
-              <AdminRowAction
-                @click="handleQualityCheck(row)"
-                :disabled="qualityCheckingProxyIds.has(row.id)"
-                :label="t('admin.proxies.qualityCheck')"
-                tone="primary"
-              >
-                <template #icon>
-                  <svg v-if="qualityCheckingProxyIds.has(row.id)" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                  <Icon v-else name="shield" size="sm" aria-hidden="true" />
-                </template>
-              </AdminRowAction>
-              <AdminRowAction @click="handleEdit(row)" :label="t('common.edit')" icon="edit" tone="primary" />
-              <AdminRowAction @click="handleDelete(row)" :label="t('common.delete')" icon="trash" tone="danger" />
+              <AdminRowAction :label="t('common.edit')" icon="edit" tone="primary" @click="handleEdit(row)" />
+              <UDropdownMenu :items="rowMenuItems(row)" :content="{ align: 'end' }">
+                <AdminRowAction :label="t('common.more')" icon="more" />
+              </UDropdownMenu>
             </div>
           </template>
 
@@ -335,289 +298,154 @@
       width="normal"
       @close="closeCreateModal"
     >
-      <!-- Tab Switch -->
-      <div
-        class="mb-6 flex items-center justify-between gap-3 border-b border-gray-200 dark:border-dark-600"
-      >
-        <div class="flex min-w-0 shrink-0">
-          <button
-            type="button"
-            @click="createMode = 'standard'"
-            :class="[
-              '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
-              createMode === 'standard'
-                ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-            ]"
-          >
-            <Icon name="plus" size="sm" class="mr-1.5 inline" />
-            {{ t('admin.proxies.standardAdd') }}
-          </button>
-          <button
-            type="button"
-            @click="createMode = 'batch'"
-            :class="[
-              '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
-              createMode === 'batch'
-                ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-            ]"
-          >
-            <svg
-              class="mr-1.5 inline h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.5"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z"
-              />
-            </svg>
-            {{ t('admin.proxies.batchAdd') }}
-          </button>
-        </div>
+      <div class="mb-5 flex items-center justify-between gap-3">
+        <UTabs
+          :model-value="createMode"
+          :items="createModeTabs"
+          @update:model-value="(value) => (createMode = value === 'batch' ? 'batch' : 'standard')"
+          :content="false"
+          variant="link"
+          size="sm"
+        />
         <ProxyAdBanner />
       </div>
 
-      <!-- Standard Add Form -->
-      <form
+      <UForm
         v-if="createMode === 'standard'"
         id="create-proxy-form"
-        @submit.prevent="handleCreateProxy"
-        class="space-y-5"
+        :state="createForm"
+        class="space-y-4"
+        @submit="handleCreateProxy"
       >
-        <div>
-          <label class="input-label">{{ t('admin.proxies.name') }}</label>
-          <input
-            v-model="createForm.name"
-            type="text"
-            required
-            class="input"
-            :placeholder="t('admin.proxies.enterProxyName')"
-          />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.protocol') }}</label>
+        <UFormField :label="t('admin.proxies.name')" required>
+          <UInput v-model="createForm.name" required class="w-full" :placeholder="t('admin.proxies.enterProxyName')" />
+        </UFormField>
+        <UFormField :label="t('admin.proxies.protocol')">
           <Select v-model="createForm.protocol" :options="protocolSelectOptions" />
-        </div>
+        </UFormField>
         <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="input-label">{{ t('admin.proxies.host') }}</label>
-            <input
-              v-model="createForm.host"
-              type="text"
-              required
-              :placeholder="t('admin.proxies.form.hostPlaceholder')"
-              class="input"
-            />
-          </div>
-          <div>
-            <label class="input-label">{{ t('admin.proxies.port') }}</label>
-            <input
+          <UFormField :label="t('admin.proxies.host')" required>
+            <UInput v-model="createForm.host" required class="w-full" :placeholder="t('admin.proxies.form.hostPlaceholder')" />
+          </UFormField>
+          <UFormField :label="t('admin.proxies.port')" required>
+            <UInput
               v-model.number="createForm.port"
               type="number"
               required
               min="1"
               max="65535"
+              class="w-full"
               :placeholder="t('admin.proxies.form.portPlaceholder')"
-              class="input"
             />
-          </div>
+          </UFormField>
         </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.username') }}</label>
-          <input
-            v-model="createForm.username"
-            type="text"
-            class="input"
+        <UFormField :label="t('admin.proxies.username')">
+          <UInput v-model="createForm.username" class="w-full" :placeholder="t('admin.proxies.optionalAuth')" />
+        </UFormField>
+        <UFormField :label="t('admin.proxies.password')">
+          <UInput
+            v-model="createForm.password"
+            :type="createPasswordVisible ? 'text' : 'password'"
+            class="w-full"
             :placeholder="t('admin.proxies.optionalAuth')"
-          />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.password') }}</label>
-          <div class="relative">
-            <input
-              v-model="createForm.password"
-              :type="createPasswordVisible ? 'text' : 'password'"
-              class="input pr-10"
-              :placeholder="t('admin.proxies.optionalAuth')"
-            />
-            <button
-              type="button"
-              class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-              @click="createPasswordVisible = !createPasswordVisible"
-            >
-              <Icon :name="createPasswordVisible ? 'eyeOff' : 'eye'" size="md" />
-            </button>
+            :ui="{ trailing: 'pe-1' }"
+          >
+            <template #trailing>
+              <UButton
+                color="neutral"
+                variant="link"
+                size="sm"
+                :icon="createPasswordVisible ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                :aria-label="t('admin.proxies.password')"
+                @click="createPasswordVisible = !createPasswordVisible"
+              />
+            </template>
+          </UInput>
+        </UFormField>
+        <UFormField :label="t('admin.proxies.expiresAt')">
+          <div class="space-y-2">
+            <div class="flex flex-wrap gap-1.5">
+              <UButton
+                v-for="d in EXPIRY_PRESETS"
+                :key="d"
+                size="xs"
+                :color="createForm.expires_at === addDaysToBase('', d) ? 'primary' : 'neutral'"
+                :variant="createForm.expires_at === addDaysToBase('', d) ? 'solid' : 'outline'"
+                :label="t('admin.proxies.nDays', { days: d })"
+                @click="createExpiresDays = d"
+              />
+            </div>
+            <UInput v-model.number="createExpiresDays" type="number" min="0" class="w-full" :placeholder="t('admin.proxies.expiryDaysPlaceholder')" />
+            <UInput v-model="createForm.expires_at" type="date" max="9999-12-31" class="w-full" />
           </div>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.expiresAt') }}</label>
-          <div class="mb-2 flex flex-wrap gap-2">
-            <button
-              v-for="d in EXPIRY_PRESETS"
-              :key="d"
-              type="button"
-              class="btn btn-sm"
-              :class="createForm.expires_at === addDaysToBase('', d) ? 'btn-primary' : 'btn-secondary'"
-              @click="createExpiresDays = d"
-            >
-              {{ t('admin.proxies.nDays', { days: d }) }}
-            </button>
-          </div>
-          <input
-            v-model.number="createExpiresDays"
-            type="number"
-            min="0"
-            class="input mb-2"
-            :placeholder="t('admin.proxies.expiryDaysPlaceholder')"
+        </UFormField>
+        <UCollapsible :unmount-on-hide="false" class="flex flex-col gap-4">
+          <UButton
+            color="neutral"
+            variant="link"
+            size="sm"
+            class="self-start px-0"
+            trailing-icon="i-lucide-chevron-down"
+            :label="t('admin.proxies.advancedOptions')"
+            :ui="{ trailingIcon: 'group-data-[state=open]:rotate-180 transition-transform' }"
           />
-          <input v-model="createForm.expires_at" type="date" max="9999-12-31" class="input" />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.fallbackMode') }}</label>
-          <Select v-model="createForm.fallback_mode" :options="[
-            { label: t('admin.proxies.fallbackNone'), value: 'none' },
-            { label: t('admin.proxies.fallbackProxy'), value: 'proxy' },
-            { label: t('admin.proxies.fallbackDirect'), value: 'direct' },
-          ]" />
-        </div>
-        <div v-if="createForm.fallback_mode === 'proxy'">
-          <label class="input-label">{{ t('admin.proxies.backupProxy') }}</label>
-          <Select v-model="createForm.backup_proxy_id" :options="backupProxyOptions()" />
-        </div>
-
-      </form>
+          <template #content>
+            <div class="space-y-4">
+              <UFormField :label="t('admin.proxies.fallbackMode')">
+                <Select v-model="createForm.fallback_mode" :options="fallbackModeOptions" />
+              </UFormField>
+              <UFormField v-if="createForm.fallback_mode === 'proxy'" :label="t('admin.proxies.backupProxy')">
+                <Select v-model="createForm.backup_proxy_id" :options="backupProxyOptions()" />
+              </UFormField>
+            </div>
+          </template>
+        </UCollapsible>
+      </UForm>
 
       <!-- Batch Add Form -->
-      <div v-else class="space-y-5">
-        <div>
-          <label class="input-label">{{ t('admin.proxies.batchInput') }}</label>
-          <textarea
+      <div v-else class="space-y-4">
+        <UFormField :label="t('admin.proxies.batchInput')" :help="t('admin.proxies.batchInputHint')">
+          <UTextarea
             v-model="batchInput"
-            rows="10"
-            class="input font-mono text-sm"
+            :rows="10"
+            class="w-full font-mono"
             :placeholder="t('admin.proxies.batchInputPlaceholder')"
-            @input="parseBatchInput"
-          ></textarea>
-          <p class="input-hint mt-2">
-            {{ t('admin.proxies.batchInputHint') }}
-          </p>
+            @update:model-value="parseBatchInput"
+          />
+        </UFormField>
+        <div v-if="batchParseResult.total > 0" class="flex flex-wrap items-center gap-4 text-sm">
+          <span class="flex items-center gap-1.5 text-default">
+            <UIcon name="i-lucide-circle-check" class="size-4 text-success" />
+            {{ t('admin.proxies.parsedCount', { count: batchParseResult.valid }) }}
+          </span>
+          <span v-if="batchParseResult.invalid > 0" class="flex items-center gap-1.5 text-warning">
+            <UIcon name="i-lucide-circle-alert" class="size-4" />
+            {{ t('admin.proxies.invalidCount', { count: batchParseResult.invalid }) }}
+          </span>
+          <span v-if="batchParseResult.duplicate > 0" class="flex items-center gap-1.5 text-muted">
+            <UIcon name="i-lucide-copy" class="size-4" />
+            {{ t('admin.proxies.duplicateCount', { count: batchParseResult.duplicate }) }}
+          </span>
         </div>
-
-        <!-- Parse Result -->
-        <div v-if="batchParseResult.total > 0" class="rounded-lg bg-gray-50 p-4 dark:bg-dark-700">
-            <div class="flex items-center gap-4 text-sm">
-              <div class="flex items-center gap-1.5">
-              <Icon name="checkCircle" size="sm" :stroke-width="2" class="text-primary-500" />
-              <span class="text-gray-700 dark:text-gray-300">
-                {{ t('admin.proxies.parsedCount', { count: batchParseResult.valid }) }}
-              </span>
-            </div>
-            <div v-if="batchParseResult.invalid > 0" class="flex items-center gap-1.5">
-              <Icon
-                name="exclamationCircle"
-                size="sm"
-                :stroke-width="2"
-                class="text-amber-500"
-              />
-              <span class="text-amber-600 dark:text-amber-400">
-                {{ t('admin.proxies.invalidCount', { count: batchParseResult.invalid }) }}
-              </span>
-            </div>
-            <div v-if="batchParseResult.duplicate > 0" class="flex items-center gap-1.5">
-              <svg
-                class="h-4 w-4 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75"
-                />
-              </svg>
-              <span class="text-gray-500 dark:text-gray-400">
-                {{ t('admin.proxies.duplicateCount', { count: batchParseResult.duplicate }) }}
-              </span>
-            </div>
-          </div>
-        </div>
-
       </div>
 
       <template #footer>
-        <div class="flex justify-end gap-3">
-          <button @click="closeCreateModal" type="button" class="btn btn-secondary">
-            {{ t('common.cancel') }}
-          </button>
-          <button
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="closeCreateModal" />
+          <UButton
             v-if="createMode === 'standard'"
             type="submit"
             form="create-proxy-form"
-            :disabled="submitting"
-            class="btn btn-primary"
-          >
-            <svg
-              v-if="submitting"
-              class="-ml-1 mr-2 h-4 w-4 animate-spin"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              ></circle>
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              ></path>
-            </svg>
-            {{ submitting ? t('admin.proxies.creating') : t('common.create') }}
-          </button>
-          <button
+            :loading="submitting"
+            :label="submitting ? t('admin.proxies.creating') : t('common.create')"
+          />
+          <UButton
             v-else
-            @click="handleBatchCreate"
-            type="button"
+            :loading="submitting"
             :disabled="submitting || batchParseResult.valid === 0"
-            class="btn btn-primary"
-          >
-            <svg
-              v-if="submitting"
-              class="-ml-1 mr-2 h-4 w-4 animate-spin"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              ></circle>
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              ></path>
-            </svg>
-            {{
-              submitting
-                ? t('admin.proxies.importing')
-                : t('admin.proxies.importProxies', { count: batchParseResult.valid })
-            }}
-          </button>
+            :label="submitting ? t('admin.proxies.importing') : t('admin.proxies.importProxies', { count: batchParseResult.valid })"
+            @click="handleBatchCreate"
+          />
         </div>
       </template>
     </BaseDialog>
@@ -629,136 +457,104 @@
       width="normal"
       @close="closeEditModal"
     >
-      <form
+      <UForm
         v-if="editingProxy"
         id="edit-proxy-form"
-        @submit.prevent="handleUpdateProxy"
-        class="space-y-5"
+        :state="editForm"
+        class="space-y-4"
+        @submit="handleUpdateProxy"
       >
-        <div>
-          <label class="input-label">{{ t('admin.proxies.name') }}</label>
-          <input v-model="editForm.name" type="text" required class="input" />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.protocol') }}</label>
+        <UFormField :label="t('admin.proxies.name')" required>
+          <UInput v-model="editForm.name" required class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.proxies.protocol')">
           <Select v-model="editForm.protocol" :options="protocolSelectOptions" />
-        </div>
+        </UFormField>
         <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="input-label">{{ t('admin.proxies.host') }}</label>
-            <input v-model="editForm.host" type="text" required class="input" />
-          </div>
-          <div>
-            <label class="input-label">{{ t('admin.proxies.port') }}</label>
-            <input
-              v-model.number="editForm.port"
-              type="number"
-              required
-              min="1"
-              max="65535"
-              class="input"
-            />
-          </div>
+          <UFormField :label="t('admin.proxies.host')" required>
+            <UInput v-model="editForm.host" required class="w-full" />
+          </UFormField>
+          <UFormField :label="t('admin.proxies.port')" required>
+            <UInput v-model.number="editForm.port" type="number" required min="1" max="65535" class="w-full" />
+          </UFormField>
         </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.username') }}</label>
-          <input v-model="editForm.username" type="text" class="input" />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.password') }}</label>
-          <div class="relative">
-            <input
-              v-model="editForm.password"
-              :type="editPasswordVisible ? 'text' : 'password'"
-              :placeholder="t('admin.proxies.leaveEmptyToKeep')"
-              class="input pr-10"
-              @input="editPasswordDirty = true"
-            />
-            <button
-              type="button"
-              class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-              @click="editPasswordVisible = !editPasswordVisible"
-            >
-              <Icon :name="editPasswordVisible ? 'eyeOff' : 'eye'" size="md" />
-            </button>
-          </div>
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.status') }}</label>
+        <UFormField :label="t('admin.proxies.username')">
+          <UInput v-model="editForm.username" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.proxies.password')">
+          <UInput
+            v-model="editForm.password"
+            :type="editPasswordVisible ? 'text' : 'password'"
+            :placeholder="t('admin.proxies.leaveEmptyToKeep')"
+            class="w-full"
+            :ui="{ trailing: 'pe-1' }"
+            @update:model-value="editPasswordDirty = true"
+          >
+            <template #trailing>
+              <UButton
+                color="neutral"
+                variant="link"
+                size="sm"
+                :icon="editPasswordVisible ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                :aria-label="t('admin.proxies.password')"
+                @click="editPasswordVisible = !editPasswordVisible"
+              />
+            </template>
+          </UInput>
+        </UFormField>
+        <UFormField :label="t('admin.proxies.status')">
           <Select v-model="editForm.status" :options="editStatusOptions" />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.expiresAt') }}</label>
-          <div class="mb-2 flex flex-wrap gap-2">
-            <button
-              v-for="d in EXPIRY_PRESETS"
-              :key="d"
-              type="button"
-              class="btn btn-sm"
-              :class="editForm.expires_at === addDaysToBase(editBaseDate, d) ? 'btn-primary' : 'btn-secondary'"
-              @click="editExpiresDays = d"
-            >
-              {{ t('admin.proxies.nDays', { days: d }) }}
-            </button>
+        </UFormField>
+        <UFormField :label="t('admin.proxies.expiresAt')">
+          <div class="space-y-2">
+            <div class="flex flex-wrap gap-1.5">
+              <UButton
+                v-for="d in EXPIRY_PRESETS"
+                :key="d"
+                size="xs"
+                :color="editForm.expires_at === addDaysToBase(editBaseDate, d) ? 'primary' : 'neutral'"
+                :variant="editForm.expires_at === addDaysToBase(editBaseDate, d) ? 'solid' : 'outline'"
+                :label="t('admin.proxies.nDays', { days: d })"
+                @click="editExpiresDays = d"
+              />
+            </div>
+            <UInput v-model.number="editExpiresDays" type="number" min="0" class="w-full" :placeholder="t('admin.proxies.expiryDaysPlaceholder')" />
+            <UInput v-model="editForm.expires_at" type="date" max="9999-12-31" class="w-full" />
           </div>
-          <input
-            v-model.number="editExpiresDays"
-            type="number"
-            min="0"
-            class="input mb-2"
-            :placeholder="t('admin.proxies.expiryDaysPlaceholder')"
+        </UFormField>
+        <UCollapsible :unmount-on-hide="false" class="flex flex-col gap-4">
+          <UButton
+            color="neutral"
+            variant="link"
+            size="sm"
+            class="self-start px-0"
+            trailing-icon="i-lucide-chevron-down"
+            :label="t('admin.proxies.advancedOptions')"
+            :ui="{ trailingIcon: 'group-data-[state=open]:rotate-180 transition-transform' }"
           />
-          <input v-model="editForm.expires_at" type="date" max="9999-12-31" class="input" />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.proxies.fallbackMode') }}</label>
-          <Select v-model="editForm.fallback_mode" :options="[
-            { label: t('admin.proxies.fallbackNone'), value: 'none' },
-            { label: t('admin.proxies.fallbackProxy'), value: 'proxy' },
-            { label: t('admin.proxies.fallbackDirect'), value: 'direct' },
-          ]" />
-        </div>
-        <div v-if="editForm.fallback_mode === 'proxy'">
-          <label class="input-label">{{ t('admin.proxies.backupProxy') }}</label>
-          <Select v-model="editForm.backup_proxy_id" :options="backupProxyOptions(editingProxy?.id)" />
-        </div>
-
-      </form>
+          <template #content>
+            <div class="space-y-4">
+              <UFormField :label="t('admin.proxies.fallbackMode')">
+                <Select v-model="editForm.fallback_mode" :options="fallbackModeOptions" />
+              </UFormField>
+              <UFormField v-if="editForm.fallback_mode === 'proxy'" :label="t('admin.proxies.backupProxy')">
+                <Select v-model="editForm.backup_proxy_id" :options="backupProxyOptions(editingProxy?.id)" />
+              </UFormField>
+            </div>
+          </template>
+        </UCollapsible>
+      </UForm>
 
       <template #footer>
-        <div class="flex justify-end gap-3">
-          <button @click="closeEditModal" type="button" class="btn btn-secondary">
-            {{ t('common.cancel') }}
-          </button>
-          <button
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="closeEditModal" />
+          <UButton
             v-if="editingProxy"
             type="submit"
             form="edit-proxy-form"
-            :disabled="submitting"
-            class="btn btn-primary"
-          >
-            <svg
-              v-if="submitting"
-              class="-ml-1 mr-2 h-4 w-4 animate-spin"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              ></circle>
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              ></path>
-            </svg>
-            {{ submitting ? t('admin.proxies.updating') : t('common.update') }}
-          </button>
+            :loading="submitting"
+            :label="submitting ? t('admin.proxies.updating') : t('common.update')"
+          />
         </div>
       </template>
     </BaseDialog>
@@ -802,6 +598,7 @@
       @imported="handleDataImported"
     />
 
+
     <BaseDialog
       :show="showQualityReportDialog"
       :title="t('admin.proxies.qualityReportTitle')"
@@ -809,71 +606,45 @@
       @close="closeQualityReportDialog"
     >
       <div v-if="qualityReport" class="space-y-4">
-        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-700">
-          <div class="flex items-center justify-between gap-4">
-            <div>
-              <div class="text-sm text-gray-500 dark:text-gray-400">
-                {{ qualityReportProxy?.name || '-' }}
-              </div>
-              <div class="mt-1 text-sm text-gray-700 dark:text-gray-200">
-                {{ qualityReport.summary }}
-              </div>
-            </div>
-            <div class="text-right">
-              <div class="text-2xl font-semibold text-gray-900 dark:text-white">
-                {{ qualityReport.score }}
-              </div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.proxies.qualityGrade', { grade: qualityReport.grade }) }}
-              </div>
-            </div>
+        <div class="flex items-start justify-between gap-4">
+          <div class="min-w-0">
+            <p class="text-sm text-muted">{{ qualityReportProxy?.name || '-' }}</p>
+            <p class="mt-1 text-sm text-default">{{ qualityReport.summary }}</p>
           </div>
-          <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300">
-            <div>{{ t('admin.proxies.qualityExitIP') }}: {{ qualityReport.exit_ip || '-' }}</div>
-            <div>{{ t('admin.proxies.qualityCountry') }}: {{ qualityReport.country || '-' }}</div>
-            <div>
-              {{ t('admin.proxies.qualityBaseLatency') }}:
-              {{ typeof qualityReport.base_latency_ms === 'number' ? `${qualityReport.base_latency_ms}ms` : '-' }}
-            </div>
-            <div>{{ t('admin.proxies.qualityCheckedAt') }}: {{ new Date(qualityReport.checked_at * 1000).toLocaleString() }}</div>
+          <div class="text-right">
+            <p class="text-2xl font-semibold tabular-nums text-highlighted">{{ qualityReport.score }}</p>
+            <p class="text-xs text-muted">{{ t('admin.proxies.qualityGrade', { grade: qualityReport.grade }) }}</p>
           </div>
         </div>
-
-        <div class="max-h-80 overflow-auto rounded-lg border border-gray-200 dark:border-dark-600">
-          <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-700">
-            <thead class="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-dark-800 dark:text-dark-400">
-              <tr>
-                <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableTarget') }}</th>
-                <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableStatus') }}</th>
-                <th class="whitespace-nowrap px-3 py-2 text-left">HTTP</th>
-                <th class="whitespace-nowrap px-3 py-2 text-left">{{ t('admin.proxies.qualityTableLatency') }}</th>
-                <th class="px-3 py-2 text-left">{{ t('admin.proxies.qualityTableMessage') }}</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
-              <tr v-for="item in qualityReport.items" :key="item.target">
-                <td class="whitespace-nowrap px-3 py-2 text-gray-900 dark:text-white">{{ qualityTargetLabel(item.target) }}</td>
-                <td class="whitespace-nowrap px-3 py-2">
-                  <span class="badge whitespace-nowrap" :class="qualityStatusClass(item.status)">{{ qualityStatusLabel(item.status) }}</span>
-                </td>
-                <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">{{ item.http_status ?? '-' }}</td>
-                <td class="whitespace-nowrap px-3 py-2 text-gray-600 dark:text-gray-300">
-                  {{ typeof item.latency_ms === 'number' ? `${item.latency_ms}ms` : '-' }}
-                </td>
-                <td class="px-3 py-2 text-gray-600 dark:text-gray-300">
-                  <span>{{ item.message || '-' }}</span>
-                  <span v-if="item.cf_ray" class="ml-1 text-xs text-gray-400">(cf-ray: {{ item.cf_ray }})</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <div class="flex gap-1"><dt class="text-muted">{{ t('admin.proxies.qualityExitIP') }}:</dt><dd class="text-default">{{ qualityReport.exit_ip || '-' }}</dd></div>
+          <div class="flex gap-1"><dt class="text-muted">{{ t('admin.proxies.qualityCountry') }}:</dt><dd class="text-default">{{ qualityReport.country || '-' }}</dd></div>
+          <div class="flex gap-1">
+            <dt class="text-muted">{{ t('admin.proxies.qualityBaseLatency') }}:</dt>
+            <dd class="text-default">{{ typeof qualityReport.base_latency_ms === 'number' ? `${qualityReport.base_latency_ms}ms` : '-' }}</dd>
+          </div>
+          <div class="flex gap-1"><dt class="text-muted">{{ t('admin.proxies.qualityCheckedAt') }}:</dt><dd class="text-default">{{ new Date(qualityReport.checked_at * 1000).toLocaleString() }}</dd></div>
+        </dl>
+        <UTable :data="qualityReport.items" :columns="qualityColumns" class="max-h-80">
+          <template #target-cell="{ row }">
+            <span class="text-highlighted">{{ qualityTargetLabel(row.original.target) }}</span>
+          </template>
+          <template #status-cell="{ row }">
+            <UBadge :color="qualityStatusColor(row.original.status)" variant="subtle" :label="qualityStatusLabel(row.original.status)" />
+          </template>
+          <template #http_status-cell="{ row }">{{ row.original.http_status ?? '-' }}</template>
+          <template #latency_ms-cell="{ row }">
+            {{ typeof row.original.latency_ms === 'number' ? `${row.original.latency_ms}ms` : '-' }}
+          </template>
+          <template #message-cell="{ row }">
+            <span class="whitespace-normal">{{ row.original.message || '-' }}</span>
+            <span v-if="row.original.cf_ray" class="ml-1 text-xs text-dimmed">(cf-ray: {{ row.original.cf_ray }})</span>
+          </template>
+        </UTable>
       </div>
       <template #footer>
         <div class="flex justify-end">
-          <button @click="closeQualityReportDialog" class="btn btn-secondary">
-            {{ t('common.close') }}
-          </button>
+          <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="closeQualityReportDialog" />
         </div>
       </template>
     </BaseDialog>
@@ -885,40 +656,21 @@
       width="normal"
       @close="closeAccountsModal"
     >
-      <div v-if="accountsLoading" class="flex items-center justify-center py-8 text-sm text-gray-500">
-        <Icon name="refresh" size="md" class="mr-2 animate-spin" />
-        {{ t('common.loading') }}
-      </div>
-      <div v-else-if="proxyAccounts.length === 0" class="py-6 text-center text-sm text-gray-500">
+      <p v-if="!accountsLoading && proxyAccounts.length === 0" class="py-6 text-center text-sm text-muted">
         {{ t('admin.proxies.accountsEmpty') }}
-      </div>
-      <div v-else class="max-h-80 overflow-auto">
-        <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-700">
-          <thead class="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-dark-800 dark:text-dark-400">
-            <tr>
-              <th class="px-4 py-2 text-left">{{ t('admin.proxies.accountName') }}</th>
-              <th class="px-4 py-2 text-left">{{ t('admin.accounts.columns.platformType') }}</th>
-              <th class="px-4 py-2 text-left">{{ t('admin.proxies.accountNotes') }}</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
-            <tr v-for="account in proxyAccounts" :key="account.id">
-              <td class="px-4 py-2 font-medium text-gray-900 dark:text-white">{{ account.name }}</td>
-              <td class="px-4 py-2">
-                <PlatformTypeBadge :platform="account.platform" :type="account.type" />
-              </td>
-              <td class="px-4 py-2 text-gray-600 dark:text-gray-300">
-                {{ account.notes || '-' }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      </p>
+      <UTable v-else :data="proxyAccounts" :columns="accountColumns" :loading="accountsLoading" class="max-h-80">
+        <template #name-cell="{ row }">
+          <span class="font-medium text-highlighted">{{ row.original.name }}</span>
+        </template>
+        <template #platform-cell="{ row }">
+          <PlatformTypeBadge :platform="row.original.platform" :type="row.original.type" />
+        </template>
+        <template #notes-cell="{ row }">{{ row.original.notes || '-' }}</template>
+      </UTable>
       <template #footer>
         <div class="flex justify-end">
-          <button @click="closeAccountsModal" class="btn btn-secondary">
-            {{ t('common.close') }}
-          </button>
+          <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="closeAccountsModal" />
         </div>
       </template>
     </BaseDialog>
@@ -930,8 +682,10 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import type { Proxy, ProxyAccountSummary, ProxyProtocol, ProxyQualityCheckResult } from '@/types'
+import type { Proxy, ProxyAccountSummary, ProxyProtocol, ProxyQualityCheckItem, ProxyQualityCheckResult } from '@/types'
 import type { Column } from '@/components/common/types'
+import type { ContextMenuItem, DropdownMenuItem, TableColumn } from '@nuxt/ui'
+import { useListColumnMenu } from './useListColumnMenu'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -942,8 +696,8 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
-import Icon from '@/components/icons/Icon.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import { useClipboard } from '@/composables/useClipboard'
@@ -957,7 +711,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
 
-const columns = computed<Column[]>(() => [
+const allColumns = computed<Column[]>(() => [
   { key: 'select', label: '', sortable: false },
   { key: 'name', label: t('admin.proxies.columns.name'), sortable: true },
   { key: 'protocol', label: t('admin.proxies.columns.protocol'), sortable: true },
@@ -970,6 +724,25 @@ const columns = computed<Column[]>(() => [
   { key: 'created_at', label: t('admin.proxies.columns.createdAt'), sortable: true },
   { key: 'status', label: t('admin.proxies.columns.status'), sortable: true },
   { key: 'actions', label: t('admin.proxies.columns.actions'), sortable: false }
+])
+
+// "显示列": the most used columns stay visible, auth and created time start hidden
+const { visibleColumns, menuItems: columnMenuItems } = useListColumnMenu({
+  storageKey: 'admin-proxies-hidden-columns',
+  columns: allColumns,
+  fixed: ['select', 'name', 'actions'],
+  defaultHidden: ['auth', 'created_at']
+})
+
+const createModeTabs = computed(() => [
+  { label: t('admin.proxies.standardAdd'), value: 'standard', icon: 'i-lucide-plus' },
+  { label: t('admin.proxies.batchAdd'), value: 'batch', icon: 'i-lucide-list' }
+])
+
+const fallbackModeOptions = computed(() => [
+  { label: t('admin.proxies.fallbackNone'), value: 'none' },
+  { label: t('admin.proxies.fallbackProxy'), value: 'proxy' },
+  { label: t('admin.proxies.fallbackDirect'), value: 'direct' }
 ])
 
 // Filter options
@@ -1003,7 +776,6 @@ const editStatusOptions = computed(() => [
 
 const proxies = ref<Proxy[]>([])
 const visiblePasswordIds = reactive(new Set<number>())
-const copyMenuProxyId = ref<number | null>(null)
 const loading = ref(false)
 const searchQuery = ref('')
 const filters = reactive({
@@ -1127,20 +899,6 @@ const isAbortError = (error: unknown) => {
   if (!error || typeof error !== 'object') return false
   const maybeError = error as { name?: string; code?: string }
   return maybeError.name === 'AbortError' || maybeError.code === 'ERR_CANCELED'
-}
-
-const toggleSelectRow = (id: number, event: Event) => {
-  const target = event.target as HTMLInputElement
-  if (target.checked) {
-    select(id)
-    return
-  }
-  deselect(id)
-}
-
-const toggleSelectAllVisible = (event: Event) => {
-  const target = event.target as HTMLInputElement
-  toggleVisible(target.checked)
 }
 
 const buildProxyQueryFilters = () => ({
@@ -1662,11 +1420,12 @@ const closeQualityReportDialog = () => {
   qualityReport.value = null
 }
 
-const qualityStatusClass = (status: string) => {
-  if (status === 'pass') return 'badge-success'
-  if (status === 'warn') return 'badge-warning'
-  if (status === 'challenge') return 'badge-danger'
-  return 'badge-danger'
+type BadgeColor = 'success' | 'warning' | 'error'
+
+const qualityStatusColor = (status: string): BadgeColor => {
+  if (status === 'pass') return 'success'
+  if (status === 'warn') return 'warning'
+  return 'error'
 }
 
 const qualityStatusLabel = (status: string) => {
@@ -1726,14 +1485,18 @@ const expiryLabel = (row: Proxy): string => {
   return params ? t(key, params) : t(key)
 }
 
-const expiryBadgeClass = (row: Proxy): string =>
-  proxyExpiryBadgeClass(row.expires_at, row.status)
+// Same thresholds as the shared expiry helper, mapped onto badge colors (no badge = plain muted text)
+const expiryColor = (row: Proxy): BadgeColor | null => {
+  const cls = proxyExpiryBadgeClass(row.expires_at, row.status)
+  if (cls.includes('badge-danger')) return 'error'
+  if (cls.includes('badge-warning')) return 'warning'
+  return null
+}
 
-const qualityOverallClass = (status?: string) => {
-  if (status === 'healthy') return 'badge-success'
-  if (status === 'warn') return 'badge-warning'
-  if (status === 'challenge') return 'badge-danger'
-  return 'badge-danger'
+const qualityOverallColor = (status?: string): BadgeColor => {
+  if (status === 'healthy') return 'success'
+  if (status === 'warn') return 'warning'
+  return 'error'
 }
 
 const qualityOverallLabel = (status?: string) => {
@@ -2023,31 +1786,74 @@ function getCopyFormats(row: any) {
 
 function copyProxyUrl(row: any) {
   copyToClipboard(buildProxyUrl(row), t('admin.proxies.urlCopied'))
-  copyMenuProxyId.value = null
-}
-
-function toggleCopyMenu(id: number) {
-  copyMenuProxyId.value = copyMenuProxyId.value === id ? null : id
 }
 
 function copyFormat(value: string) {
   copyToClipboard(value, t('admin.proxies.urlCopied'))
-  copyMenuProxyId.value = null
 }
 
-function closeCopyMenu() {
-  copyMenuProxyId.value = null
-}
+// Right click on the copy button: every copy format (UContextMenu)
+const copyFormatMenuItems = (row: Proxy): ContextMenuItem[] =>
+  getCopyFormats(row).map((fmt) => ({
+    label: fmt.label,
+    class: 'font-mono text-xs',
+    onSelect: () => copyFormat(fmt.value)
+  }))
+
+// Toolbar "更多" menu: batch quality check, import, export
+const toolbarMenuItems = computed<DropdownMenuItem[][]>(() => [
+  [
+    {
+      label: t('admin.proxies.batchQualityCheck'),
+      icon: 'i-lucide-shield-check',
+      disabled: batchQualityChecking.value || loading.value,
+      onSelect: () => handleBatchQualityCheck()
+    }
+  ],
+  [
+    { label: t('admin.proxies.dataImport'), icon: 'i-lucide-upload', onSelect: () => { showImportData.value = true } },
+    {
+      label: selectedCount.value > 0 ? t('admin.proxies.dataExportSelected') : t('admin.proxies.dataExport'),
+      icon: 'i-lucide-download',
+      onSelect: () => { showExportDataDialog.value = true }
+    }
+  ]
+])
+
+// Row "…" menu: quality check, delete
+const rowMenuItems = (row: Proxy): DropdownMenuItem[][] => [
+  [
+    {
+      label: t('admin.proxies.qualityCheck'),
+      icon: 'i-lucide-shield',
+      disabled: qualityCheckingProxyIds.value.has(row.id),
+      onSelect: () => handleQualityCheck(row)
+    }
+  ],
+  [{ label: t('common.delete'), icon: 'i-lucide-trash', color: 'error', onSelect: () => handleDelete(row) }]
+]
+
+const qualityColumns = computed<TableColumn<ProxyQualityCheckItem>[]>(() => [
+  { accessorKey: 'target', header: t('admin.proxies.qualityTableTarget') },
+  { accessorKey: 'status', header: t('admin.proxies.qualityTableStatus') },
+  { accessorKey: 'http_status', header: 'HTTP' },
+  { accessorKey: 'latency_ms', header: t('admin.proxies.qualityTableLatency') },
+  { accessorKey: 'message', header: t('admin.proxies.qualityTableMessage') }
+])
+
+const accountColumns = computed<TableColumn<ProxyAccountSummary>[]>(() => [
+  { accessorKey: 'name', header: t('admin.proxies.accountName') },
+  { accessorKey: 'platform', header: t('admin.accounts.columns.platformType') },
+  { accessorKey: 'notes', header: t('admin.proxies.accountNotes') }
+])
 
 onMounted(() => {
   loadProxies()
   loadBackupProxyOptions()
-  document.addEventListener('click', closeCopyMenu)
 })
 
 onUnmounted(() => {
   clearTimeout(searchTimeout)
   abortController?.abort()
-  document.removeEventListener('click', closeCopyMenu)
 })
 </script>

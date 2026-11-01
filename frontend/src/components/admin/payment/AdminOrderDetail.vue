@@ -6,108 +6,37 @@
     @close="emit('close')"
   >
     <div v-if="order" class="space-y-4">
-      <div class="grid grid-cols-2 gap-4">
+      <dl class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+        <div><dt class="text-xs text-muted">{{ t('payment.orders.orderId') }}</dt><dd class="font-mono font-medium text-highlighted">#{{ order.id }}</dd></div>
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.orderId') }}</p>
-          <p class="font-mono text-sm font-medium text-gray-900 dark:text-white">#{{ order.id }}</p>
+          <dt class="text-xs text-muted">{{ t('payment.orders.status') }}</dt>
+          <dd><UBadge :color="statusColor(order.status)" variant="subtle" :label="t('payment.status.' + order.status.toLowerCase(), order.status)" /></dd>
         </div>
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.status') }}</p>
-          <span :class="['badge', statusBadgeClass(order.status)]">
-            {{ t('payment.status.' + order.status.toLowerCase(), order.status) }}
-          </span>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.baseAmount') }}</p>
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ paymentAmountSymbol }}{{ baseAmount.toFixed(2) }}</p>
-        </div>
-        <div v-if="order.fee_rate > 0">
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.fee') }} ({{ order.fee_rate }}%)</p>
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ paymentAmountSymbol }}{{ feeAmount.toFixed(2) }}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</p>
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ paymentAmountSymbol }}{{ order.pay_amount.toFixed(2) }}</p>
-        </div>
-        <div v-if="order.amount !== order.pay_amount">
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.creditedAmount') }}</p>
-          <p class="text-sm font-medium text-gray-900 dark:text-white">{{ creditedAmountSymbol }}{{ order.amount.toFixed(2) }}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.paymentMethod') }}</p>
-          <p class="text-sm text-gray-700 dark:text-gray-300">
-            {{ t('payment.methods.' + order.payment_type, order.payment_type) }}
-          </p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.orderType') }}</p>
-          <p class="text-sm text-gray-700 dark:text-gray-300">
-            {{ t('payment.admin.' + order.order_type + 'Order', order.order_type) }}
-          </p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.userId') }}</p>
-          <p class="text-sm text-gray-700 dark:text-gray-300">#{{ order.user_id }}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.createdAt') }}</p>
-          <p class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(order.created_at) }}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.expiresAt') }}</p>
-          <p class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(order.expires_at) }}</p>
-        </div>
-        <div v-if="order.paid_at">
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.paidAt') }}</p>
-          <p class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(order.paid_at) }}</p>
-        </div>
-        <div v-if="order.completed_at">
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.completedAt') }}</p>
-          <p class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(order.completed_at) }}</p>
-        </div>
-      </div>
+        <div><dt class="text-xs text-muted">{{ t('payment.orders.baseAmount') }}</dt><dd class="font-medium tabular-nums text-highlighted">{{ paymentAmountSymbol }}{{ baseAmount.toFixed(2) }}</dd></div>
+        <div v-if="order.fee_rate > 0"><dt class="text-xs text-muted">{{ t('payment.orders.fee') }} ({{ order.fee_rate }}%)</dt><dd class="font-medium tabular-nums text-highlighted">{{ paymentAmountSymbol }}{{ feeAmount.toFixed(2) }}</dd></div>
+        <div><dt class="text-xs text-muted">{{ t('payment.orders.payAmount') }}</dt><dd class="font-medium tabular-nums text-highlighted">{{ paymentAmountSymbol }}{{ order.pay_amount.toFixed(2) }}</dd></div>
+        <div v-if="order.amount !== order.pay_amount"><dt class="text-xs text-muted">{{ t('payment.orders.creditedAmount') }}</dt><dd class="font-medium tabular-nums text-highlighted">{{ creditedAmountSymbol }}{{ order.amount.toFixed(2) }}</dd></div>
+        <div><dt class="text-xs text-muted">{{ t('payment.orders.paymentMethod') }}</dt><dd class="text-default">{{ t('payment.methods.' + order.payment_type, order.payment_type) }}</dd></div>
+        <div><dt class="text-xs text-muted">{{ t('payment.admin.orderType') }}</dt><dd class="text-default">{{ t('payment.admin.' + order.order_type + 'Order', order.order_type) }}</dd></div>
+        <div><dt class="text-xs text-muted">{{ t('payment.orders.userId') }}</dt><dd class="text-default">#{{ order.user_id }}</dd></div>
+        <div><dt class="text-xs text-muted">{{ t('payment.orders.createdAt') }}</dt><dd class="text-default">{{ formatDateTime(order.created_at) }}</dd></div>
+        <div><dt class="text-xs text-muted">{{ t('payment.admin.expiresAt') }}</dt><dd class="text-default">{{ formatDateTime(order.expires_at) }}</dd></div>
+        <div v-if="order.paid_at"><dt class="text-xs text-muted">{{ t('payment.admin.paidAt') }}</dt><dd class="text-default">{{ formatDateTime(order.paid_at) }}</dd></div>
+        <div v-if="order.completed_at"><dt class="text-xs text-muted">{{ t('payment.admin.completedAt') }}</dt><dd class="text-default">{{ formatDateTime(order.completed_at) }}</dd></div>
+      </dl>
 
-      <div
-        v-if="order.refund_amount"
-        class="rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-900/20"
-      >
-        <h4 class="mb-2 text-sm font-semibold text-red-700 dark:text-red-400">
-          {{ t('payment.admin.refundInfo') }}
-        </h4>
-        <div class="grid grid-cols-2 gap-2 text-sm">
-          <div>
-            <span class="text-red-600 dark:text-red-400">{{ t('payment.admin.refundAmount') }}:</span>
-            <span class="ml-1 font-medium text-red-700 dark:text-red-300">{{ creditedAmountSymbol }}{{ order.refund_amount.toFixed(2) }}</span>
-          </div>
-          <div v-if="order.refund_reason" class="col-span-2">
-            <span class="text-red-600 dark:text-red-400">{{ t('payment.admin.refundReason') }}:</span>
-            <span class="ml-1 text-red-700 dark:text-red-300">{{ order.refund_reason }}</span>
-          </div>
-        </div>
-      </div>
+      <template v-if="order.refund_amount">
+        <USeparator :label="t('payment.admin.refundInfo')" />
+        <dl class="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+          <div><dt class="text-xs text-muted">{{ t('payment.admin.refundAmount') }}</dt><dd class="font-medium tabular-nums text-error">{{ creditedAmountSymbol }}{{ order.refund_amount.toFixed(2) }}</dd></div>
+          <div v-if="order.refund_reason" class="col-span-2"><dt class="text-xs text-muted">{{ t('payment.admin.refundReason') }}</dt><dd class="text-default">{{ order.refund_reason }}</dd></div>
+        </dl>
+      </template>
 
-      <div class="flex items-center justify-end gap-2 border-t border-gray-200 pt-4 dark:border-dark-700">
-        <button
-          v-if="order.status === 'PENDING'"
-          @click="emit('cancel', order)"
-          class="btn btn-sm rounded-md bg-yellow-50 px-3 py-1.5 text-sm text-yellow-600 hover:bg-yellow-100 dark:bg-yellow-900/20 dark:text-yellow-400 dark:hover:bg-yellow-900/30"
-        >
-          {{ t('payment.orders.cancel') }}
-        </button>
-        <button
-          v-if="order.status === 'FAILED'"
-          @click="emit('retry', order)"
-          class="btn btn-sm btn-secondary"
-        >
-          {{ t('payment.admin.retry') }}
-        </button>
-        <button
-          v-if="canRefund(order)"
-          @click="emit('refund', order)"
-          class="btn btn-sm rounded-md bg-red-50 px-3 py-1.5 text-sm text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30"
-        >
-          {{ t('payment.admin.refund') }}
-        </button>
+      <div v-if="order.status === 'PENDING' || order.status === 'FAILED' || canRefund(order)" class="flex items-center justify-end gap-2 pt-2">
+        <UButton v-if="order.status === 'PENDING'" color="warning" variant="subtle" size="sm" :label="t('payment.orders.cancel')" @click="emit('cancel', order)" />
+        <UButton v-if="order.status === 'FAILED'" color="neutral" variant="subtle" size="sm" :label="t('payment.admin.retry')" @click="emit('retry', order)" />
+        <UButton v-if="canRefund(order)" color="error" variant="subtle" size="sm" :label="t('payment.admin.refund')" @click="emit('refund', order)" />
       </div>
     </div>
   </BaseDialog>
@@ -161,5 +90,17 @@ function canRefund(order: PaymentOrder): boolean {
 
 function formatDateTime(dateStr: string): string {
   return formatOrderDateTime(dateStr)
+}
+
+// Status chip color from the shared status → badge class map
+type StatusColor = 'success' | 'warning' | 'error' | 'primary' | 'info' | 'neutral'
+function statusColor(status: string): StatusColor {
+  const cls = statusBadgeClass(status)
+  if (cls.includes('success')) return 'success'
+  if (cls.includes('warning')) return 'warning'
+  if (cls.includes('danger') || cls.includes('error')) return 'error'
+  if (cls.includes('primary') || cls.includes('purple')) return 'primary'
+  if (cls.includes('info') || cls.includes('blue')) return 'info'
+  return 'neutral'
 }
 </script>
