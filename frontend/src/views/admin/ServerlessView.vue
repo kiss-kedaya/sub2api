@@ -1,18 +1,92 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-5xl space-y-5">
-      <AdminPageHeader :title="t('serverless.title')" :description="t('serverless.description')"><template #actions><button class="btn btn-secondary" :disabled="busy" @click="load">{{ t('serverless.refresh') }}</button></template></AdminPageHeader>
-      <p v-if="error" role="alert" class="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ error }}</p><p v-if="notice" role="status" class="text-sm text-emerald-600">{{ notice }}</p>
+    <div class="mx-auto flex w-full flex-col gap-4 sm:gap-6 lg:max-w-2xl">
+      <AdminPageHeader :title="t('serverless.title')" :description="t('serverless.description')"><template #actions><UButton icon="i-lucide-refresh-cw" color="neutral" variant="outline" :label="t('serverless.refresh')" :disabled="busy" @click="load" /></template></AdminPageHeader>
+      <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="error" />
+      <UAlert v-if="notice" role="status" color="success" variant="subtle" icon="i-lucide-circle-check" :title="notice" />
       <template v-if="status && draft">
-        <section class="card space-y-3 p-5"><p class="text-sm text-gray-500">{{ t('serverless.setup') }}</p><div class="flex flex-wrap gap-4 text-sm"><span v-for="field in runtimeFields" :key="field.key">{{ t(field.label) }}: {{ status.runtime[field.key] ? t('serverless.yes') : t('serverless.no') }}</span></div></section>
-        <form class="space-y-5" @submit.prevent="save">
-          <section class="card space-y-4 p-5"><label class="flex items-center gap-2 font-medium"><input v-model="draft.enabled" type="checkbox" :disabled="!status.runtime.secret_configured || !status.runtime.redis_configured" />{{ t('serverless.enabled') }}</label><p class="text-sm text-gray-500">{{ t('serverless.continuity') }}</p></section>
-          <section class="card space-y-4 p-5"><div class="flex items-center justify-between"><h2 class="font-semibold">{{ t('serverless.nodes') }}</h2><button type="button" class="btn btn-secondary" @click="draft.pods.push({ id: '', endpoint: '', enabled: false })">{{ t('serverless.add') }}</button></div><div v-for="(pod, index) in draft.pods" :key="index" class="grid gap-3 rounded-xl border p-3 sm:grid-cols-[1fr_2fr_auto] dark:border-dark-700"><label class="text-sm">{{ t('serverless.nodeId') }}<input v-model.trim="pod.id" class="input mt-1 w-full" maxlength="63" required /></label><label class="text-sm">{{ t('serverless.endpoint') }}<input v-model.trim="pod.endpoint" class="input mt-1 w-full" type="url" maxlength="2048" required /></label><div class="flex flex-col justify-end gap-2"><label class="text-sm"><input v-model="pod.enabled" type="checkbox" /> {{ t('serverless.available') }}</label><button type="button" class="text-sm text-red-600" @click="removeNode(index)">{{ t('serverless.remove') }}</button></div></div></section>
-          <section class="card space-y-4 p-5"><div class="flex items-center justify-between"><h2 class="font-semibold">{{ t('serverless.regions') }}</h2><button type="button" class="btn btn-secondary" @click="draft.regions.push({ country: '', pod_ids: [] })">{{ t('serverless.add') }}</button></div><p class="text-sm text-gray-500">{{ t('serverless.countriesHint') }}</p><div v-for="(region, index) in draft.regions" :key="index" class="flex flex-wrap items-end gap-3"><label class="text-sm">{{ t('serverless.country') }}<input  :value="region.country" @input="region.country = ($event.target as HTMLInputElement).value.toUpperCase().trim()" class="input mt-1 w-24 uppercase" maxlength="2" pattern="[A-Z]{2}" required /></label><fieldset class="min-w-48 flex-1 text-sm"><legend class="mb-2">{{ t('serverless.ids') }}</legend><div class="flex flex-wrap gap-2"><label v-for="id in nodeChoices(region.pod_ids)" :key="id" class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 dark:border-dark-600"><input type="checkbox" :checked="region.pod_ids.includes(id)" @change="toggleNode(region, id, ($event.target as HTMLInputElement).checked)" /><span>{{ id }}</span></label><span v-if="!nodeChoices(region.pod_ids).length" class="text-gray-500">{{ t('serverless.addNodesFirst') }}</span></div></fieldset><button type="button" class="btn btn-secondary" @click="draft.regions.splice(index, 1)">{{ t('serverless.remove') }}</button></div></section>
-          <div class="flex justify-end"><button class="btn btn-primary" :disabled="busy">{{ t('serverless.save') }}</button></div>
+        <form id="serverless-routing" class="flex flex-col gap-4 sm:gap-6" @submit.prevent="save">
+          <div>
+            <UPageCard :title="t('serverless.assignment')" :description="t('serverless.continuity')" variant="naked" orientation="horizontal" class="mb-4" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }">
+              <UButton type="submit" form="serverless-routing" :label="t('serverless.save')" :disabled="busy" :loading="busy" class="w-fit lg:ms-auto" />
+            </UPageCard>
+            <UPageCard variant="subtle">
+              <UFormField :label="t('serverless.enabled')" :description="t('serverless.setup')" class="flex items-center justify-between gap-4">
+                <USwitch v-model="draft.enabled" data-testid="serverless-enabled" :disabled="!status.runtime.secret_configured || !status.runtime.redis_configured" />
+              </UFormField>
+              <USeparator />
+              <UFormField :label="t('serverless.runtime')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                <div class="flex flex-wrap gap-1.5 sm:justify-end">
+                  <UBadge v-for="field in runtimeFields" :key="field.key" :color="status.runtime[field.key] ? 'success' : 'neutral'" variant="subtle">{{ t(field.label) }}: {{ status.runtime[field.key] ? t('serverless.yes') : t('serverless.no') }}</UBadge>
+                </div>
+              </UFormField>
+            </UPageCard>
+          </div>
+          <div>
+            <UPageCard :title="t('serverless.nodes')" variant="naked" orientation="horizontal" class="mb-4" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }">
+              <UButton type="button" icon="i-lucide-plus" color="neutral" variant="outline" :label="t('serverless.add')" class="w-fit lg:ms-auto" @click="draft.pods.push({ id: '', endpoint: '', enabled: false })" />
+            </UPageCard>
+            <UPageCard variant="subtle">
+              <p v-if="!draft.pods.length" class="text-sm text-muted">{{ t('serverless.addNodesFirst') }}</p>
+              <template v-for="(pod, index) in draft.pods" :key="index">
+                <USeparator v-if="index" />
+                <div class="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+                  <UFormField :label="t('serverless.nodeId')"><UInput v-model.trim="pod.id" maxlength="63" required class="w-full" /></UFormField>
+                  <UFormField :label="t('serverless.endpoint')"><UInput v-model.trim="pod.endpoint" type="url" maxlength="2048" required class="w-full" /></UFormField>
+                  <UButton type="button" icon="i-lucide-trash-2" color="error" variant="ghost" :aria-label="t('serverless.remove')" :title="t('serverless.remove')" @click="removeNode(index)" />
+                </div>
+                <USwitch v-model="pod.enabled" size="sm" :label="t('serverless.available')" />
+              </template>
+            </UPageCard>
+          </div>
+          <div>
+            <UPageCard :title="t('serverless.regions')" :description="t('serverless.countriesHint')" variant="naked" orientation="horizontal" class="mb-4" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }">
+              <UButton type="button" icon="i-lucide-plus" color="neutral" variant="outline" :label="t('serverless.add')" class="w-fit lg:ms-auto" @click="draft.regions.push({ country: '', pod_ids: [] })" />
+            </UPageCard>
+            <UPageCard v-if="draft.regions.length" variant="subtle">
+              <template v-for="(region, index) in draft.regions" :key="index">
+                <USeparator v-if="index" />
+                <div class="flex flex-wrap items-start gap-4">
+                  <UFormField :label="t('serverless.country')" class="w-24"><UInput :model-value="region.country" class="w-full" :ui="{ base: 'uppercase' }" maxlength="2" pattern="[A-Z]{2}" required @update:model-value="region.country = String($event ?? '').toUpperCase().trim()" /></UFormField>
+                  <fieldset class="min-w-48 flex-1 text-sm">
+                    <legend class="mb-2 font-medium text-default">{{ t('serverless.ids') }}</legend>
+                    <div class="flex flex-wrap gap-x-4 gap-y-2">
+                      <UCheckbox v-for="id in nodeChoices(region.pod_ids)" :key="id" :label="id" :model-value="region.pod_ids.includes(id)" @update:model-value="toggleNode(region, id, $event === true)" />
+                      <span v-if="!nodeChoices(region.pod_ids).length" class="text-muted">{{ t('serverless.addNodesFirst') }}</span>
+                    </div>
+                  </fieldset>
+                  <UButton type="button" icon="i-lucide-trash-2" color="error" variant="ghost" class="mt-6" :aria-label="t('serverless.remove')" :title="t('serverless.remove')" @click="draft.regions.splice(index, 1)" />
+                </div>
+              </template>
+            </UPageCard>
+          </div>
         </form>
-        <section class="card p-5"><h2 class="mb-3 font-semibold">{{ t('serverless.heartbeat') }}</h2><p v-if="!status.pods.length" class="text-sm text-gray-500">{{ t('serverless.empty') }}</p><div v-for="pod in status.pods" :key="pod.id" class="flex flex-wrap justify-between gap-2 border-t py-3 text-sm dark:border-dark-700"><span>{{ pod.id }} · {{ pod.region || '—' }}</span><span>{{ t('serverless.ready') }}: {{ pod.ready ? t('serverless.yes') : t('serverless.no') }}</span><span>{{ t('serverless.version') }}: {{ pod.version }}</span></div></section>
-        <details class="card p-5"><summary class="cursor-pointer font-semibold">{{ t('serverless.advanced') }}</summary><div class="mt-3 flex gap-8 text-sm"><span>{{ t('serverless.requests') }}: {{ total('requests') }}</span><span>{{ t('serverless.errors') }}: {{ total('errors') }}</span></div></details>
+        <div>
+          <UPageCard :title="t('serverless.heartbeat')" variant="naked" class="mb-4" />
+          <UPageCard variant="subtle">
+            <p v-if="!status.pods.length" class="text-sm text-muted">{{ t('serverless.empty') }}</p>
+            <template v-for="(pod, index) in status.pods" :key="pod.id">
+              <USeparator v-if="index" />
+              <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span class="font-medium text-highlighted">{{ pod.id }} <span class="font-normal text-muted">· {{ pod.region || '—' }}</span></span>
+                <span class="flex items-center gap-2">
+                  <UBadge :color="pod.ready ? 'success' : 'neutral'" variant="subtle">{{ t('serverless.ready') }}: {{ pod.ready ? t('serverless.yes') : t('serverless.no') }}</UBadge>
+                  <span class="text-muted">{{ t('serverless.version') }}: {{ pod.version }}</span>
+                </span>
+              </div>
+            </template>
+          </UPageCard>
+        </div>
+        <UCollapsible v-model:open="statsOpen" class="flex flex-col gap-3">
+          <UButton color="neutral" variant="ghost" class="-mx-2.5 w-fit" :label="t('serverless.advanced')" :trailing-icon="statsOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" />
+          <template #content>
+            <UPageGrid class="gap-4 sm:grid-cols-2 lg:grid-cols-2">
+              <UPageCard v-for="key in (['requests', 'errors'] as const)" :key="key" variant="subtle" :title="t('serverless.' + key)" :ui="{ container: 'gap-y-1.5', title: 'font-normal text-muted text-xs uppercase' }">
+                <span class="text-2xl font-semibold text-highlighted">{{ total(key) }}</span>
+              </UPageCard>
+            </UPageGrid>
+          </template>
+        </UCollapsible>
       </template>
     </div>
   </AppLayout>
@@ -26,7 +100,7 @@ import { getRegionalRouting, saveRegionalRouting, type RegionalConfig, type Regi
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { serverlessMessages } from '@/components/admin/operations/serverlessMessages'
 const { t } = useI18n({ useScope: 'local', messages: serverlessMessages })
-const status = ref<RegionalStatus | null>(null), draft = ref<RegionalConfig | null>(null), busy = ref(false), error = ref(''), notice = ref('')
+const status = ref<RegionalStatus | null>(null), draft = ref<RegionalConfig | null>(null), busy = ref(false), error = ref(''), notice = ref(''), statsOpen = ref(false)
 const runtimeFields = [{ key: 'secret_configured', label: 'serverless.secret' }, { key: 'redis_configured', label: 'serverless.redis' }, { key: 'private_network_configured', label: 'serverless.private' }] as const
 let alive = true, sequence = 0
 const nodeChoices = (selected: string[]) => [...new Set([...(draft.value?.pods.map(pod => pod.id.trim()).filter(Boolean) || []), ...selected])]

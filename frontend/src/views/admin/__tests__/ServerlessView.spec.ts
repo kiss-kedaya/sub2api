@@ -10,7 +10,8 @@ beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.getRegionalRouting).mockRes
 describe('regional gateway configuration', () => {
   it('keeps routing disabled and does not accept a cluster secret', async () => {
     const view = mount(ServerlessView); await flushPromises()
-    const enabled = view.find('input[type="checkbox"]'); expect((enabled.element as HTMLInputElement).checked).toBe(false); expect(enabled.attributes('disabled')).toBeDefined()
+    // The routing switch is a USwitch (<button role="switch">): unchecked and disabled without a cluster secret.
+    const enabled = view.get('[data-testid="serverless-enabled"]'); expect(enabled.attributes('role')).toBe('switch'); expect(enabled.attributes('aria-checked')).toBe('false'); expect(enabled.attributes('disabled')).toBeDefined()
     expect(view.find('input[type="password"]').exists()).toBe(false); expect(api.saveRegionalRouting).not.toHaveBeenCalled(); view.unmount()
   })
   it('retains configured origins after a failed refresh', async () => {
