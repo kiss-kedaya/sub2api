@@ -76,7 +76,7 @@
       <UCard class="shadow-xs dark:shadow-none" :ui="{ root: 'overflow-visible', body: 'p-4 sm:p-5' }">
         <div v-if="activeTab === 'errors'" class="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <UFormField :label="t('admin.usage.requestId')">
-            <UInput v-model="errorFilter.request_id" type="text" size="lg" class="w-full" :ui="{ base: 'py-2.5' }" :placeholder="t('usage.requestIdPlaceholder')" @change="applyErrorFilters" @keyup.enter="applyErrorFilters" />
+            <UInput v-model="errorFilter.request_id" type="text" size="lg" class="w-full" :ui="{ base: 'py-[11px]' }" :placeholder="t('usage.requestIdPlaceholder')" @change="applyErrorFilters" @keyup.enter="applyErrorFilters" />
           </UFormField>
           <UFormField :label="t('usage.errors.keyName')">
             <Select v-model="errorFilter.api_key_id" :options="errorKeyOptions" @change="applyErrorFilters" />
@@ -101,7 +101,7 @@
         </div>
         <div v-else class="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           <UFormField :label="t('admin.usage.requestId')">
-            <UInput v-model="filters.request_id" type="text" size="lg" class="w-full" :ui="{ base: 'py-2.5' }" :placeholder="t('usage.requestIdPlaceholder')" @change="applyFilters" @keyup.enter="applyFilters" />
+            <UInput v-model="filters.request_id" type="text" size="lg" class="w-full" :ui="{ base: 'py-[11px]' }" :placeholder="t('usage.requestIdPlaceholder')" @change="applyFilters" @keyup.enter="applyFilters" />
           </UFormField>
           <UFormField :label="t('usage.apiKeyFilter')">
             <Select v-model="filters.api_key_id" :options="apiKeyOptions" @change="applyFilters" />
