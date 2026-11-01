@@ -5,62 +5,51 @@
     width="normal"
     @close="$emit('close')"
   >
-    <form id="create-user-form" @submit.prevent="submit" class="space-y-5">
-      <div>
-        <label class="input-label">{{ t('admin.users.email') }}</label>
-        <input v-model="form.email" type="email" required class="input" :placeholder="t('admin.users.enterEmail')" />
-      </div>
-      <div>
-        <label class="input-label">{{ t('admin.users.password') }}</label>
+    <UForm id="create-user-form" :state="form" class="space-y-4" @submit="submit">
+      <UFormField :label="t('admin.users.email')" required>
+        <UInput v-model="form.email" type="email" required class="w-full" :placeholder="t('admin.users.enterEmail')" />
+      </UFormField>
+      <UFormField :label="t('admin.users.password')" required>
         <div class="flex gap-2">
-          <div class="relative flex-1">
-            <input v-model="form.password" type="text" required class="input pr-10" :placeholder="t('admin.users.enterPassword')" />
-          </div>
-          <button type="button" @click="generateRandomPassword" class="btn btn-secondary px-3">
-            <Icon name="refresh" size="md" />
-          </button>
+          <UInput v-model="form.password" required class="flex-1" :placeholder="t('admin.users.enterPassword')" />
+          <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" square :aria-label="t('admin.users.generatePassword')" :title="t('admin.users.generatePassword')" @click="generateRandomPassword" />
         </div>
+      </UFormField>
+      <UFormField :label="t('admin.users.username')">
+        <UInput v-model="form.username" maxlength="50" class="w-full" :placeholder="t('admin.users.enterUsername')" />
+      </UFormField>
+      <UFormField :label="t('admin.users.form.roleLabel')">
+        <USelect v-model="form.role" :items="roleItems" class="w-full" />
+      </UFormField>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <UFormField :label="t('admin.users.columns.balance')">
+          <UInput v-model="form.balance" type="number" step="any" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.users.columns.concurrency')">
+          <UInput v-model.number="form.concurrency" type="number" min="0" step="1" class="w-full" />
+        </UFormField>
       </div>
-      <div>
-        <label class="input-label">{{ t('admin.users.username') }}</label>
-        <input v-model="form.username" type="text" class="input" maxlength="50" :placeholder="t('admin.users.enterUsername')" />
-      </div>
-      <div>
-        <label class="input-label">{{ t('admin.users.form.roleLabel') }}</label>
-        <select v-model="form.role" class="input">
-          <option value="user">{{ t('admin.users.roles.user') }}</option>
-          <option value="admin">{{ t('admin.users.roles.admin') }}</option>
-        </select>
-      </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label class="input-label">{{ t('admin.users.columns.balance') }}</label>
-          <input v-model="form.balance" type="number" step="any" class="input" />
-        </div>
-        <div>
-          <label class="input-label">{{ t('admin.users.columns.concurrency') }}</label>
-          <input v-model.number="form.concurrency" type="number" min="0" step="1" class="input" />
-        </div>
-      </div>
-      <div>
-        <label class="input-label">{{ t('admin.users.form.rpmLimit') }}</label>
-        <input
-          v-model.number="form.rpm_limit"
-          type="number"
-          min="0"
-          step="1"
-          class="input"
-          :placeholder="t('admin.users.form.rpmLimitPlaceholder')"
+      <UCollapsible :unmount-on-hide="false" class="flex flex-col gap-4">
+        <UButton
+          color="neutral"
+          variant="link"
+          size="sm"
+          class="self-start px-0"
+          trailing-icon="i-lucide-chevron-down"
+          :label="t('admin.users.advancedOptions')"
+          :ui="{ trailingIcon: 'group-data-[state=open]:rotate-180 transition-transform' }"
         />
-        <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
-      </div>
-    </form>
+        <template #content>
+          <UFormField :label="t('admin.users.form.rpmLimit')" :help="t('admin.users.form.rpmLimitHint')">
+            <UInput v-model.number="form.rpm_limit" type="number" min="0" step="1" class="w-full" :placeholder="t('admin.users.form.rpmLimitPlaceholder')" />
+          </UFormField>
+        </template>
+      </UCollapsible>
+    </UForm>
     <template #footer>
-      <div class="flex justify-end gap-3">
-        <button @click="$emit('close')" type="button" class="btn btn-secondary">{{ t('common.cancel') }}</button>
-        <button type="submit" form="create-user-form" :disabled="loading" class="btn btn-primary">
-          {{ loading ? t('admin.users.creating') : t('common.create') }}
-        </button>
+      <div class="flex justify-end gap-2">
+        <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="$emit('close')" />
+        <UButton type="submit" form="create-user-form" :loading="loading" :label="loading ? t('admin.users.creating') : t('common.create')" />
       </div>
     </template>
   </BaseDialog>
@@ -70,11 +59,10 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'; import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import Icon from '@/components/icons/Icon.vue'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { isUsernameValid } from '@/utils/usernamePolicy'
@@ -84,6 +72,10 @@ const emit = defineEmits(['close', 'success']); const { t } = useI18n()
 const appStore = useAppStore()
 
 const form = reactive({ email: '', password: '', username: '', notes: '', role: 'user' as 'user' | 'admin', balance: '', concurrency: 1, rpm_limit: 0 })
+const roleItems = computed(() => [
+  { label: t('admin.users.roles.user'), value: 'user' },
+  { label: t('admin.users.roles.admin'), value: 'admin' }
+])
 
 const stepUp = useStepUp()
 const loading = ref(false)
