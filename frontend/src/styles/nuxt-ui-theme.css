@@ -1,40 +1,22 @@
 /*
-  Nuxt UI design tokens mapped onto the existing look.
-  - Light: black primary on neutral greys (the values used by console-elevation.css).
-  - Dark: the plum-charcoal palette (`--signal-*` dark block in console-studio.css and the
-    `dark-*` colours in style.css).
+  Nuxt UI design tokens.
+  - Light: Nuxt UI's own defaults (text / bg / border derived from --ui-color-neutral-*), so
+    the admin's Appearance settings (neutral palette, primary, radius, font) drive the whole
+    light theme. useSiteTheme writes the palette and --ui-primary on html:root:not(.dark).
+  - Dark: today's plum-charcoal palette, written out, so the night theme keeps its colours
+    (rose primary unless the admin picks another one; useSiteTheme overrides it then).
   Nuxt UI declares its defaults in `@layer theme`; these rules are unlayered, so they win.
-  Every value is a literal so the result does not depend on which palette variables
-  Tailwind happens to emit. Keep `--ui-radius` at 0.25rem: Nuxt UI derives the whole
-  `rounded-*` scale from it, and 0.25rem reproduces Tailwind's default radii.
+  Keep `--ui-radius` at 0.25rem: Nuxt UI derives the whole `rounded-*` scale from it, and
+  0.25rem reproduces Tailwind's default radii (the Appearance radius overrides it).
 */
 :root {
   --ui-radius: 0.25rem;
+  /* Fallback until useSiteTheme runs (it writes the black / chromatic primary). */
+  --ui-primary: var(--ui-color-neutral-900);
 
-  --ui-primary: #171717;
-  --ui-secondary: #3b82f6;
-  --ui-success: #22c55e;
-  --ui-info: #3b82f6;
-  --ui-warning: #eab308;
-  --ui-error: #ef4444;
-
-  --ui-text-dimmed: #a3a3a3;
-  --ui-text-muted: #737373;
-  --ui-text-toned: #525252;
-  --ui-text: #404040;
-  --ui-text-highlighted: #171717;
-  --ui-text-inverted: #ffffff;
-
-  --ui-bg: #ffffff;
-  --ui-bg-muted: #fafafa;
-  --ui-bg-elevated: #f4f4f4;
-  --ui-bg-accented: #e5e5e5;
-  --ui-bg-inverted: #171717;
-
-  --ui-border: #e5e5e5;
-  --ui-border-muted: #f0f0f0;
-  --ui-border-accented: #d4d4d4;
-  --ui-border-inverted: #171717;
+  /* Frame surfaces: the page behind the panel and the sidebar (template: bg-elevated/25). */
+  --app-page-bg: var(--ui-bg);
+  --app-sidebar-bg: color-mix(in oklab, var(--ui-bg-elevated) 25%, var(--ui-bg));
 }
 
 .dark {
@@ -62,4 +44,7 @@
   --ui-border-muted: #33262d;
   --ui-border-accented: #5e4651;
   --ui-border-inverted: #f1e4e9;
+
+  --app-page-bg: #1c1519;
+  --app-sidebar-bg: #181215;
 }
