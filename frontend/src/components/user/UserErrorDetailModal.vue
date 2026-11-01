@@ -1,70 +1,59 @@
 <template>
   <BaseDialog :show="show" :title="t('usage.errors.detail.title')" width="wide" @close="emit('update:show', false)">
-    <!-- Loading -->
     <div v-if="loading" class="flex justify-center py-10">
-      <svg class="h-7 w-7 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-      </svg>
+      <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
     </div>
 
-    <!-- Error state -->
-    <div v-else-if="loadError" class="py-8 text-center text-sm text-red-500">
-      {{ t('usage.errors.detail.loadFailed') }}
-    </div>
+    <UAlert
+      v-else-if="loadError"
+      color="error"
+      variant="subtle"
+      icon="i-lucide-circle-alert"
+      :description="t('usage.errors.detail.loadFailed')"
+    />
 
-    <!-- Detail content -->
     <div v-else-if="detail" class="space-y-4 text-sm">
-      <div class="grid grid-cols-2 gap-x-6 gap-y-3">
-        <!-- Time -->
+      <dl class="grid grid-cols-2 gap-x-6 gap-y-3">
         <div>
-          <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.time') }}</span>
-          <p class="mt-0.5 text-gray-900 dark:text-dark-100">{{ formatDateTime(detail.created_at) }}</p>
+          <dt class="text-muted">{{ t('usage.errors.time') }}</dt>
+          <dd class="mt-0.5 text-highlighted">{{ formatDateTime(detail.created_at) }}</dd>
         </div>
-        <!-- Model -->
         <div>
-          <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.model') }}</span>
-          <p class="mt-0.5 text-gray-900 dark:text-dark-100">{{ detail.model || '-' }}</p>
+          <dt class="text-muted">{{ t('usage.errors.model') }}</dt>
+          <dd class="mt-0.5 text-highlighted">{{ detail.model || '-' }}</dd>
         </div>
-        <!-- Endpoint -->
         <div>
-          <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.endpoint') }}</span>
-          <p class="mt-0.5 text-gray-900 dark:text-dark-100">{{ detail.inbound_endpoint || '-' }}</p>
+          <dt class="text-muted">{{ t('usage.errors.endpoint') }}</dt>
+          <dd class="mt-0.5 break-all text-highlighted">{{ detail.inbound_endpoint || '-' }}</dd>
         </div>
-        <!-- Status Code -->
         <div>
-          <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.status') }}</span>
-          <p class="mt-0.5">
-            <span class="badge" :class="statusClass(detail.status_code)">{{ detail.status_code || '-' }}</span>
-          </p>
+          <dt class="text-muted">{{ t('usage.errors.status') }}</dt>
+          <dd class="mt-0.5">
+            <UBadge :color="statusColor(detail.status_code)" variant="subtle" class="tabular-nums">{{ detail.status_code || '-' }}</UBadge>
+          </dd>
         </div>
-        <!-- Category -->
         <div>
-          <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.category') }}</span>
-          <p class="mt-0.5 text-gray-900 dark:text-dark-100">{{ t('usage.errors.categories.' + detail.category) }}</p>
+          <dt class="text-muted">{{ t('usage.errors.category') }}</dt>
+          <dd class="mt-0.5 text-highlighted">{{ t('usage.errors.categories.' + detail.category) }}</dd>
         </div>
-        <!-- Platform -->
         <div>
-          <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.platform') }}</span>
-          <p class="mt-0.5 text-gray-900 dark:text-dark-100">{{ detail.platform || '-' }}</p>
+          <dt class="text-muted">{{ t('usage.errors.platform') }}</dt>
+          <dd class="mt-0.5 text-highlighted">{{ detail.platform || '-' }}</dd>
         </div>
-        <!-- Upstream status code -->
         <div v-if="detail.upstream_status_code != null">
-          <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.detail.upstreamStatus') }}</span>
-          <p class="mt-0.5 text-gray-900 dark:text-dark-100">{{ detail.upstream_status_code }}</p>
+          <dt class="text-muted">{{ t('usage.errors.detail.upstreamStatus') }}</dt>
+          <dd class="mt-0.5 tabular-nums text-highlighted">{{ detail.upstream_status_code }}</dd>
         </div>
-      </div>
+      </dl>
 
-      <!-- Message -->
       <div v-if="detail.message">
-        <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.message') }}</span>
-        <p class="mt-0.5 text-gray-900 dark:text-dark-100 break-all">{{ detail.message }}</p>
+        <p class="text-muted">{{ t('usage.errors.message') }}</p>
+        <p class="mt-0.5 break-all text-highlighted">{{ detail.message }}</p>
       </div>
 
-      <!-- Error Body -->
       <div v-if="detail.error_body">
-        <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.detail.responseBody') }}</span>
-        <pre class="mt-1 overflow-auto max-h-[40vh] whitespace-pre-wrap break-all rounded-lg bg-gray-50 dark:bg-dark-900 border border-gray-200 dark:border-dark-700 p-3 text-xs text-gray-800 dark:text-dark-200">{{ detail.error_body }}</pre>
+        <p class="text-muted">{{ t('usage.errors.detail.responseBody') }}</p>
+        <pre class="mt-1 max-h-[40vh] overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs text-toned">{{ detail.error_body }}</pre>
       </div>
     </div>
   </BaseDialog>
@@ -124,9 +113,9 @@ async function fetchDetail(id: number) {
   }
 }
 
-function statusClass(code: number) {
-  if (code >= 500) return 'badge-danger'
-  if (code === 429) return 'badge-warning'
-  return 'badge-gray'
+function statusColor(code: number) {
+  if (code >= 500) return 'error' as const
+  if (code === 429) return 'warning' as const
+  return 'neutral' as const
 }
 </script>

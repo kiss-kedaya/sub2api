@@ -1,37 +1,30 @@
 <template>
   <AppLayout>
-    <div class="signal-usage space-y-4">
-      <UserPageHeader :title="t('usage.title')">
-        <template #description>
-          <span class="inline-flex items-center gap-1.5 tabular-nums"><UIcon name="i-lucide-calendar" class="size-4" />{{ startDate }} / {{ endDate }}</span>
-        </template>
-      </UserPageHeader>
+    <div class="flex flex-col gap-4 sm:gap-6">
+      <UserPageHeader flush :title="t('usage.title')" />
 
-      <div class="usage-stats-strip overflow-hidden rounded-lg shadow-xs ring ring-default dark:shadow-none">
+      <div class="flex flex-wrap items-center justify-between gap-1.5">
+        <div class="flex flex-wrap items-center gap-1.5">
+          <DateRangePicker
+            ref="dateRangeRef"
+            v-model:start-date="startDate"
+            v-model:end-date="endDate"
+            @change="onDateRangeChange"
+          />
+          <div class="w-28">
+            <Select v-model="granularity" :options="granularityOptions" :aria-label="t('admin.dashboard.granularity')" @change="loadChartData" />
+          </div>
+        </div>
+        <span class="inline-flex items-center gap-1.5 text-sm tabular-nums text-muted">
+          <UIcon name="i-lucide-calendar" class="size-4" />{{ startDate }} / {{ endDate }}
+        </span>
+      </div>
+
+      <div class="usage-stats-strip overflow-hidden rounded-lg ring ring-default">
         <UsageStatsCards class="signal-usage-metrics" :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
       </div>
 
-      <UCard class="shadow-xs dark:shadow-none" :ui="{ root: 'overflow-visible', body: 'p-3 sm:px-4 sm:py-3' }">
-        <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-medium text-muted">{{ t('admin.dashboard.timeRange') }}</span>
-            <DateRangePicker
-              ref="dateRangeRef"
-              v-model:start-date="startDate"
-              v-model:end-date="endDate"
-              @change="onDateRangeChange"
-            />
-          </div>
-          <div class="ml-auto flex items-center gap-2">
-            <span class="text-sm font-medium text-muted">{{ t('admin.dashboard.granularity') }}</span>
-            <div class="w-28">
-              <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
-            </div>
-          </div>
-        </div>
-      </UCard>
-
-      <div class="usage-charts grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ModelDistributionChart
           v-model:metric="modelDistributionMetric"
           :model-stats="requestedModelStats"
@@ -73,189 +66,162 @@
         <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" :animation-duration="chartAnimationDuration" />
       </div>
 
-      <UCard class="shadow-xs dark:shadow-none" :ui="{ root: 'overflow-visible', body: 'p-4 sm:p-5' }">
-        <div v-if="activeTab === 'errors'" class="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <UFormField :label="t('admin.usage.requestId')">
-            <UInput v-model="errorFilter.request_id" type="text" size="lg" class="w-full" :ui="{ base: 'py-[11px]' }" :placeholder="t('usage.requestIdPlaceholder')" @change="applyErrorFilters" @keyup.enter="applyErrorFilters" />
-          </UFormField>
-          <UFormField :label="t('usage.errors.keyName')">
-            <Select v-model="errorFilter.api_key_id" :options="errorKeyOptions" @change="applyErrorFilters" />
-          </UFormField>
-          <UFormField :label="t('usage.errors.model')">
-            <Select
-              v-model="errorFilter.model"
-              :options="errorModelOptions"
-              searchable
-              creatable
-              clearable
-              :placeholder="t('usage.errors.modelPlaceholder')"
-              @change="applyErrorFilters"
-            />
-          </UFormField>
-          <UFormField :label="t('usage.errors.category')">
-            <Select v-model="errorFilter.category" :options="errorCategoryOptions" @change="applyErrorFilters" />
-          </UFormField>
-          <UFormField :label="t('usage.errors.status')">
-            <Select v-model="errorFilter.status_code" :options="errorStatusOptions" @change="applyErrorFilters" />
-          </UFormField>
-        </div>
-        <div v-else class="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          <UFormField :label="t('admin.usage.requestId')">
-            <UInput v-model="filters.request_id" type="text" size="lg" class="w-full" :ui="{ base: 'py-[11px]' }" :placeholder="t('usage.requestIdPlaceholder')" @change="applyFilters" @keyup.enter="applyFilters" />
-          </UFormField>
-          <UFormField :label="t('usage.apiKeyFilter')">
-            <Select v-model="filters.api_key_id" :options="apiKeyOptions" @change="applyFilters" />
-          </UFormField>
-          <UFormField :label="t('usage.model')">
-            <Select v-model="filters.model" :options="modelOptions" searchable @change="applyFilters" />
-          </UFormField>
-          <UFormField :label="t('admin.usage.group')">
-            <Select v-model="filters.group_id" :options="groupOptions" searchable @change="applyFilters" />
-          </UFormField>
-          <UFormField :label="t('usage.type')">
-            <Select v-model="filters.request_type" :options="requestTypeOptions" @change="applyFilters" />
-          </UFormField>
-          <UFormField :label="t('usage.compactionFilter')">
-            <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="applyFilters" />
-          </UFormField>
-          <UFormField :label="t('admin.usage.billingType')">
-            <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="applyFilters" />
-          </UFormField>
-          <UFormField :label="t('admin.usage.billingMode')">
-            <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="applyFilters" />
-          </UFormField>
-        </div>
-      </UCard>
-
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div v-if="errorViewEnabled" class="usage-tabs" role="tablist">
-          <button type="button" role="tab" class="usage-tab" :aria-selected="activeTab === 'usage'" @click="activeTab = 'usage'">
-            {{ t('usage.tabs.usage') }}
-          </button>
-          <button type="button" role="tab" class="usage-tab" :aria-selected="activeTab === 'errors'" @click="switchToErrors">
-            {{ t('usage.tabs.errors') }}
-          </button>
-        </div>
-        <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <UButton
-            color="neutral"
-            variant="outline"
-            icon="i-lucide-refresh-cw"
-            :ui="{ leadingIcon: (activeTab === 'errors' ? errorLoading : loading) ? 'animate-spin' : '' }"
-            :disabled="activeTab === 'errors' ? errorLoading : loading"
-            :title="t('common.refresh')"
-            :aria-label="t('common.refresh')"
-            @click="refreshData"
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-wrap items-center justify-between gap-1.5">
+          <UTabs
+            v-if="errorViewEnabled"
+            v-model="recordsTab"
+            :items="recordTabItems"
+            :content="false"
+            size="sm"
           />
-          <UButton
-            color="neutral"
-            variant="outline"
-            icon="i-lucide-filter-x"
-            :title="t('common.reset')"
-            :aria-label="t('common.reset')"
-            @click="resetFilters"
-          />
-          <div class="relative" ref="columnDropdownRef">
+          <div class="ml-auto flex flex-wrap items-center justify-end gap-1.5">
             <UButton
               color="neutral"
               variant="outline"
-              icon="i-lucide-columns-3"
-              data-testid="usage-column-settings"
-              :title="t('admin.users.columnSettings')"
-              :aria-label="t('admin.users.columnSettings')"
-              :aria-expanded="showColumnDropdown"
-              @click="showColumnDropdown = !showColumnDropdown"
+              icon="i-lucide-refresh-cw"
+              :ui="{ leadingIcon: (activeTab === 'errors' ? errorLoading : loading) ? 'animate-spin' : '' }"
+              :disabled="activeTab === 'errors' ? errorLoading : loading"
+              :title="t('common.refresh')"
+              :aria-label="t('common.refresh')"
+              @click="refreshData"
             />
-            <div
-              v-if="showColumnDropdown"
-              class="absolute right-0 top-full z-50 mt-1 max-h-80 w-52 overflow-y-auto rounded-lg bg-default p-1 shadow-lg ring ring-default"
-            >
-              <button
-                v-for="col in currentToggleableColumns"
-                :key="col.key"
-                type="button"
-                :data-testid="`usage-column-toggle-${col.key}`"
-                @click="toggleCurrentColumn(col.key)"
-                class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm text-default transition-colors hover:bg-elevated"
-              >
-                <span>{{ col.label }}</span>
-                <UIcon v-if="isCurrentColumnVisible(col.key)" name="i-lucide-check" class="size-4 text-highlighted" />
-              </button>
-            </div>
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-filter-x"
+              :title="t('common.reset')"
+              :aria-label="t('common.reset')"
+              @click="resetFilters"
+            />
+            <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }" :ui="{ content: 'max-h-80' }">
+              <UButton
+                color="neutral"
+                variant="outline"
+                trailing-icon="i-lucide-settings-2"
+                data-testid="usage-column-settings"
+                :label="t('usage.displayColumns')"
+                :title="t('admin.users.columnSettings')"
+                :aria-label="t('admin.users.columnSettings')"
+              />
+            </UDropdownMenu>
+            <UButton v-if="activeTab !== 'errors'" icon="i-lucide-download" :disabled="exporting" @click="exportToCSV">{{ exporting ? t('usage.exporting') : t('usage.exportCsv') }}</UButton>
           </div>
-          <UButton v-if="activeTab !== 'errors'" icon="i-lucide-download" :disabled="exporting" @click="exportToCSV">{{ exporting ? t('usage.exporting') : t('usage.exportCsv') }}</UButton>
         </div>
-      </div>
 
-      <template v-if="activeTab === 'usage'">
-        <InflightUsagePanel
-          :open="inflightOpen"
-          :total="inflightTotal"
-          :shown="inflightRows.length"
-          :loading="inflightLoading"
-          :loaded="inflightLoaded"
-          :has-more="inflightHasMore"
-          :error="inflightError"
-          @toggle="toggleInflight"
-          @refresh="loadInflight(false)"
-          @more="loadMoreInflight"
-        >
-          <UsageTable
-            flat
-            :data="inflightRows"
+        <div v-if="activeTab === 'errors'" class="flex flex-wrap items-center gap-1.5">
+          <UInput
+            v-model="errorFilter.request_id"
+            icon="i-lucide-search"
+            class="w-full sm:w-64"
+            :placeholder="t('usage.requestIdPlaceholder')"
+            :aria-label="t('admin.usage.requestId')"
+            @change="applyErrorFilters"
+            @keyup.enter="applyErrorFilters"
+          />
+          <Select v-model="errorFilter.api_key_id" class="w-full sm:w-40" :options="errorKeyOptions" :aria-label="t('usage.errors.keyName')" :title="t('usage.errors.keyName')" @change="applyErrorFilters" />
+          <Select
+            v-model="errorFilter.model"
+            class="w-full sm:w-44"
+            :options="errorModelOptions"
+            searchable
+            creatable
+            clearable
+            :placeholder="t('usage.errors.modelPlaceholder')"
+            :aria-label="t('usage.errors.model')"
+            :title="t('usage.errors.model')"
+            @change="applyErrorFilters"
+          />
+          <Select v-model="errorFilter.category" class="w-full sm:w-40" :options="errorCategoryOptions" :aria-label="t('usage.errors.category')" :title="t('usage.errors.category')" @change="applyErrorFilters" />
+          <Select v-model="errorFilter.status_code" class="w-full sm:w-32" :options="errorStatusOptions" :aria-label="t('usage.errors.status')" :title="t('usage.errors.status')" @change="applyErrorFilters" />
+        </div>
+        <div v-else class="flex flex-wrap items-center gap-1.5">
+          <UInput
+            v-model="filters.request_id"
+            icon="i-lucide-search"
+            class="w-full sm:w-64"
+            :placeholder="t('usage.requestIdPlaceholder')"
+            :aria-label="t('admin.usage.requestId')"
+            @change="applyFilters"
+            @keyup.enter="applyFilters"
+          />
+          <Select v-model="filters.api_key_id" class="w-full sm:w-40" :options="apiKeyOptions" :aria-label="t('usage.apiKeyFilter')" :title="t('usage.apiKeyFilter')" @change="applyFilters" />
+          <Select v-model="filters.model" class="w-full sm:w-44" :options="modelOptions" searchable :aria-label="t('usage.model')" :title="t('usage.model')" @change="applyFilters" />
+          <Select v-model="filters.group_id" class="w-full sm:w-40" :options="groupOptions" searchable :aria-label="t('admin.usage.group')" :title="t('admin.usage.group')" @change="applyFilters" />
+          <Select v-model="filters.request_type" class="w-full sm:w-32" :options="requestTypeOptions" :aria-label="t('usage.type')" :title="t('usage.type')" @change="applyFilters" />
+          <Select v-model="filters.native_compaction_v2" class="w-full sm:w-36" :options="compactionOptions" :aria-label="t('usage.compactionFilter')" :title="t('usage.compactionFilter')" @change="applyFilters" />
+          <Select v-model="filters.billing_type" class="w-full sm:w-36" :options="billingTypeOptions" :aria-label="t('admin.usage.billingType')" :title="t('admin.usage.billingType')" @change="applyFilters" />
+          <Select v-model="filters.billing_mode" class="w-full sm:w-36" :options="billingModeOptions" :aria-label="t('admin.usage.billingMode')" :title="t('admin.usage.billingMode')" @change="applyFilters" />
+        </div>
+
+        <template v-if="activeTab === 'usage'">
+          <InflightUsagePanel
+            :open="inflightOpen"
+            :total="inflightTotal"
+            :shown="inflightRows.length"
             :loading="inflightLoading"
-            :columns="inflightColumns"
+            :loaded="inflightLoaded"
+            :has-more="inflightHasMore"
+            :error="inflightError"
+            @toggle="toggleInflight"
+            @refresh="loadInflight(false)"
+            @more="loadMoreInflight"
+          >
+            <UsageTable
+              flat
+              :data="inflightRows"
+              :loading="inflightLoading"
+              :columns="inflightColumns"
+              :show-account-billing="false"
+              :show-upstream-endpoint="false"
+            />
+          </InflightUsagePanel>
+          <UsageTable
+            :data="usageLogs"
+            :loading="loading"
+            :columns="visibleColumns"
+            :server-side-sort="true"
             :show-account-billing="false"
             :show-upstream-endpoint="false"
+            default-sort-key="created_at"
+            default-sort-order="desc"
+            @sort="handleSort"
+            @ipGeoBatchFailed="handleIpGeoBatchFailed"
           />
-        </InflightUsagePanel>
-        <UsageTable
-          :data="usageLogs"
-          :loading="loading"
-          :columns="visibleColumns"
-          :server-side-sort="true"
-          :show-account-billing="false"
-          :show-upstream-endpoint="false"
-          default-sort-key="created_at"
-          default-sort-order="desc"
-          @sort="handleSort"
+
+          <Pagination
+            v-if="pagination.total > 0"
+            :page="pagination.page"
+            :total="pagination.total"
+            :page-size="pagination.page_size"
+            @update:page="handlePageChange"
+            @update:pageSize="handlePageSizeChange"
+          />
+        </template>
+
+        <UserErrorRequestsTable
+          v-else-if="errorViewEnabled"
+          :rows="errorRows"
+          :total="errorTotal"
+          :loading="errorLoading"
+          :page="errorPage"
+          :page-size="errorPageSize"
+          :visible-column-keys="errVisibleColumnKeys"
+          @sort="onErrorSort"
+          @update:page="onErrorPage"
+          @update:pageSize="onErrorPageSize"
           @ipGeoBatchFailed="handleIpGeoBatchFailed"
         />
-
-        <Pagination
-          class="signal-pagination"
-          v-if="pagination.total > 0"
-          :page="pagination.page"
-          :total="pagination.total"
-          :page-size="pagination.page_size"
-          @update:page="handlePageChange"
-          @update:pageSize="handlePageSizeChange"
-        />
-      </template>
-
-      <UserErrorRequestsTable
-        v-else-if="errorViewEnabled"
-        :rows="errorRows"
-        :total="errorTotal"
-        :loading="errorLoading"
-        :page="errorPage"
-        :page-size="errorPageSize"
-        :visible-column-keys="errVisibleColumnKeys"
-        @sort="onErrorSort"
-        @update:page="onErrorPage"
-        @update:pageSize="onErrorPageSize"
-        @ipGeoBatchFailed="handleIpGeoBatchFailed"
-      />
+      </section>
     </div>
   </AppLayout>
-
 </template>
 
 <script setup lang="ts">
-import '@/styles/console-workspace.css'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { usePreferredReducedMotion } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
+import type { DropdownMenuItem, TabsItem } from '@nuxt/ui'
 import { useAppStore } from '@/stores/app'
 import { keysAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -907,13 +873,20 @@ const toggleCurrentColumn = (key: string) => {
   else toggleColumn(key)
 }
 
-const showColumnDropdown = ref(false)
-const columnDropdownRef = ref<HTMLElement | null>(null)
-const handleColumnClickOutside = (event: MouseEvent) => {
-  if (columnDropdownRef.value && !columnDropdownRef.value.contains(event.target as HTMLElement)) {
-    showColumnDropdown.value = false
-  }
-}
+// "Display" menu: one checkbox per hideable column of the active tab; stays open while toggling.
+const columnMenuItems = computed<DropdownMenuItem[]>(() =>
+  currentToggleableColumns.value.map((col) => ({
+    label: col.label,
+    type: 'checkbox' as const,
+    checked: isCurrentColumnVisible(col.key),
+    onUpdateChecked(checked: boolean) {
+      if (checked !== isCurrentColumnVisible(col.key)) toggleCurrentColumn(col.key)
+    },
+    onSelect(event: Event) {
+      event.preventDefault()
+    }
+  }))
+)
 
 const loadApiKeys = async () => {
   const firstPage = await keysAPI.list(1, 100)
@@ -998,17 +971,28 @@ const switchToErrors = () => {
   if (errorRows.value.length === 0) void loadErrors()
 }
 
+// Usage / error records tabs; switching to errors loads them on first view.
+const recordTabItems = computed<TabsItem[]>(() => [
+  { label: t('usage.tabs.usage'), value: 'usage' },
+  { label: t('usage.tabs.errors'), value: 'errors' }
+])
+const recordsTab = computed({
+  get: () => activeTab.value,
+  set: (value: string | number) => {
+    if (value === 'errors') switchToErrors()
+    else activeTab.value = 'usage'
+  }
+})
+
 onMounted(() => {
   loadSavedColumns()
   loadSavedErrColumns()
-  document.addEventListener('click', handleColumnClickOutside)
   void loadFilterOptions()
   refreshData()
 })
 
 onUnmounted(() => {
   abortController?.abort()
-  document.removeEventListener('click', handleColumnClickOutside)
 })
 
 watch(endpointDistributionSource, () => {
@@ -1017,15 +1001,9 @@ watch(endpointDistributionSource, () => {
 </script>
 
 <style scoped>
-/* Stat strip: one card with hairline dividers (the cards keep their own dividers). */
+/* Stat strip: the four stat cards read as one row split by hairlines, like the template stats. */
 .usage-stats-strip { background: var(--ui-bg); }
-.usage-stats-strip :deep(.signal-usage-metrics) { border: 0; }
-.usage-stats-strip :deep(.signal-usage-metrics > .card) { border-radius: 0; box-shadow: none; background: transparent; }
-/* Usage / error records switch: neutral track with a raised pill. */
-.usage-tabs { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--ui-bg-elevated); }
-.usage-tab { min-height: 32px; padding: 4px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--ui-text-muted); transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease; }
-.usage-tab:hover { color: var(--ui-text-highlighted); }
-.usage-tab:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
-.usage-tab[aria-selected='true'] { background: var(--ui-bg); color: var(--ui-text-highlighted); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08), 0 0 0 1px var(--ui-border); }
-@media (prefers-reduced-motion: reduce) { .usage-tab { transition: none; } }
+.usage-stats-strip :deep(.signal-usage-metrics) { gap: 0; }
+.usage-stats-strip :deep(.signal-usage-metrics > .card) { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.usage-stats-strip :deep(.signal-usage-metrics > .card + .card) { box-shadow: inset 1px 0 0 var(--ui-border); }
 </style>

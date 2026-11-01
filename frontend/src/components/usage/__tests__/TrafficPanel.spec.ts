@@ -36,13 +36,17 @@ beforeEach(() => {
 })
 const render = (admin = false) => { const wrapper = mount(TrafficPanel, { props: { admin, apiKeyOptions: [{ value: null, label: 'All keys' }, { value: 8, label: 'Production key' }, { value: 9, label: 'Test key' }] }, global: { stubs: { Teleport: true } } }); wrappers.push(wrapper); return wrapper }
 
+// The period picker is a UTabs control: reka tabs switch on a left mousedown.
+const selectPeriod = (wrapper: ReturnType<typeof mount>, period: string) =>
+  wrapper.get('#traffic-period').findAll('button[role="tab"]').find(tab => tab.text() === `traffic.periods.${period}`)!.trigger('mousedown')
+
 describe('TrafficPanel', () => {
   it.each([['day', 'hour'], ['week', 'day'], ['month', 'day'], ['year', 'month']] as const)('plots independent %s buckets, including decreases and idle buckets', async (period, bucket) => {
     const uploads = [900, 100, 0, 400], downloads = [1800, 200, 0, 800]
     const trend = uploads.map((upload, i) => ({ bucket: `bucket-${i}`, upload_bytes: upload, download_bytes: downloads[i]!, total_bytes: upload + downloads[i]!, requests: upload ? 1 : 0 }))
     getTraffic.mockResolvedValue({ ...fixture(), period, trend, upload_bytes: 1400, download_bytes: 2800, total_bytes: 4200 })
     const wrapper = render(); await flushPromises()
-    await wrapper.get('#traffic-period').setValue(period); await flushPromises()
+    await selectPeriod(wrapper, period); await flushPromises()
     const data = wrapper.getComponent(Bar).props('data') as { labels: string[]; datasets: Array<{ data: number[] }> }
     expect(data.labels).toEqual(trend.map(point => point.bucket))
     expect(data.datasets.map(dataset => dataset.data)).toEqual([uploads, downloads])
@@ -77,7 +81,7 @@ describe('TrafficPanel', () => {
     const nextPage = wrapper.findAll('button').find(b => b.text() === 'traffic.next')!
     await nextPage.trigger('click'); await flushPromises()
     expect(getTraffic).toHaveBeenLastCalledWith(true, expect.objectContaining({ view: 'details', cursor: 'cursor-page-2', date: '2026-10-01' }), expect.any(AbortSignal))
-    await wrapper.get('#traffic-period').setValue('year'); await flushPromises()
+    await selectPeriod(wrapper, 'year'); await flushPromises()
     expect(getTraffic).toHaveBeenLastCalledWith(true, expect.objectContaining({ period: 'year', view: 'summary' }), expect.any(AbortSignal))
     await wrapper.findAll('button').find(b => b.text() === 'traffic.previousPeriod')!.trigger('click'); await flushPromises()
     expect(getTraffic).toHaveBeenLastCalledWith(true, expect.objectContaining({ date: '2025-10-01' }), expect.any(AbortSignal))
@@ -209,7 +213,7 @@ describe('TrafficPanel', () => {
     getTraffic.mockImplementationOnce(() => new Promise<TrafficReport>(resolve => { resolveFirst = resolve }))
     const wrapper = render()
     const firstSignal = getTraffic.mock.calls[0]![2] as AbortSignal
-    await wrapper.get('#traffic-period').setValue('day'); await flushPromises()
+    await selectPeriod(wrapper, 'day'); await flushPromises()
     expect(firstSignal.aborted).toBe(true)
     resolveFirst({ ...fixture(), items: [{ ...fixture().items[0]!, endpoint: '/stale' }] }); await flushPromises()
     expect(wrapper.text()).not.toContain('/stale')
@@ -228,7 +232,7 @@ describe('TrafficPanel', () => {
     await click('traffic.previous')
     expect(getTraffic.mock.lastCall?.[1]).toMatchObject({ view: 'details', cursor: undefined })
     await click('traffic.next')
-    await wrapper.get('#traffic-period').setValue('day'); await flushPromises()
+    await selectPeriod(wrapper, 'day'); await flushPromises()
     const detailCalls = getTraffic.mock.calls.filter(call => call[1].view === 'details')
     expect(detailCalls.at(-1)?.[1].cursor).toBeUndefined()
   })

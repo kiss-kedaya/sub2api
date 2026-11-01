@@ -304,7 +304,8 @@ describe('user UsageView', () => {
       expect.anything()
     )
 
-    await wrapper.findAll('button').find((button) => button.text() === 'Error records')!.trigger('click')
+    // UTabs (reka) switches tab on a left mousedown, not on click.
+    await wrapper.findAll('button[role="tab"]').find((button) => button.text() === 'Error records')!.trigger('mousedown')
     await flushPromises()
 
     const errorKeySelect = wrapper.findAllComponents(Select).find((select) =>
