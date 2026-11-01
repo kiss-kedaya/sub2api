@@ -42,24 +42,39 @@
         @update:search="searchQuery = $event"
       />
 
-      <!-- 分组分节的模型清单(默认按生效倍率升序) -->
-      <div v-if="filteredGroups.length > 0" class="space-y-5">
-        <PlazaGroupSection v-for="g in filteredGroups" :key="g.id" :group="g" />
-      </div>
+      <!-- 分组卡片(默认按生效倍率升序);点开看该组价格 -->
+      <UPageGrid v-if="filteredGroups.length > 0" class="gap-4 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3" data-testid="plaza-grid">
+        <PlazaGroupCard v-for="g in filteredGroups" :key="g.id" :group="g" :to="groupLocation(g.id)" />
+      </UPageGrid>
       <p v-else class="py-12 text-center text-sm text-muted">
         {{ searchActive ? t('modelPlaza.noSearchResult') : t('modelPlaza.empty') }}
       </p>
     </template>
+
+    <!-- 分组详情:?group=<id>,可分享;关闭或浏览器后退即返回列表 -->
+    <USlideover
+      :open="!!detailGroup"
+      :title="detailGroup?.name || t('modelPlaza.title')"
+      :description="detailGroup ? t('modelPlaza.detail.modelCount', { count: detailGroup.models.length }) : undefined"
+      :ui="{ content: 'max-w-none sm:max-w-[min(72rem,100vw-2rem)]', body: 'p-4 sm:p-6' }"
+      @update:open="(open: boolean) => { if (!open) closeDetail() }"
+    >
+      <template #body>
+        <PlazaGroupSection v-if="detailGroup" :group="detailGroup" plain />
+      </template>
+    </USlideover>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import PlazaFilterBar from './PlazaFilterBar.vue'
+import PlazaGroupCard from './PlazaGroupCard.vue'
 import PlazaGroupSection from './PlazaGroupSection.vue'
 import type { ModelPlazaGroup, ModelPlazaResponse } from '@/api/modelPlaza'
 import { useAuthStore } from '@/stores/auth'
@@ -142,6 +157,36 @@ const filteredGroups = computed(() => {
     (a, b) => effectiveRate(a) - effectiveRate(b) || a.name.localeCompare(b.name)
   )
 })
+
+// ---- Group detail (slideover), kept in the URL as ?group=<id> so it can be shared ----
+const route = useRoute()
+const router = useRouter()
+
+const detailGroupId = computed(() => {
+  const value = Number(route.query.group)
+  return Number.isInteger(value) && value > 0 ? value : null
+})
+
+/** The open group; while a model search is active it lists only the matching models. */
+const detailGroup = computed<ModelPlazaGroup | null>(() => {
+  const id = detailGroupId.value
+  if (id == null) return null
+  return filteredGroups.value.find((g) => g.id === id)
+    ?? props.response?.groups?.find((g) => g.id === id)
+    ?? null
+})
+
+/** Card link: the same page (keeps ?embedded=1 and other keys) plus the group. */
+function groupLocation(id: number) {
+  return { path: route.path, query: { ...route.query, group: String(id) } }
+}
+
+function closeDetail() {
+  if (route.query.group === undefined) return
+  const query = { ...route.query }
+  delete query.group
+  void router.push({ path: route.path, query })
+}
 </script>
 
 <style scoped>
