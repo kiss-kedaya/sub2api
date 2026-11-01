@@ -116,3 +116,13 @@ func TestDeepSeekNativeReasoningReplayPreservesNoneInDecodedRequest(t *testing.T
 		})
 	}
 }
+
+func TestDeepSeekChatCompletionsProtocolStillFiltersNonePlaceholder(t *testing.T) {
+	account := deepSeekNativeReplayAccount()
+	account.Credentials["api_protocol"] = APIProtocolChatCompletions
+	body := []byte(`{"reasoning":{"effort":"none"},"reasoning_effort":"none"}`)
+	out, err := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(out, "reasoning.effort").Exists())
+	require.False(t, gjson.GetBytes(out, "reasoning_effort").Exists())
+}
