@@ -428,19 +428,27 @@ describe('EditAccountModal', () => {
 
     const wrapper = mountModal(account, true)
     await wrapper.setProps({ groups: [activeGroup] as any })
+    // GroupSelector is a Nuxt UI select menu; its options are teleported to <body>.
     const selector = wrapper.get('[data-tour="account-form-groups"]')
-    expect(selector.findAll('input[type="checkbox"]').map(input => input.attributes('value')))
-      .toEqual(['1', '2'])
     expect(selector.text()).toContain('Active group')
     expect(selector.text()).not.toContain('Outdated name')
-    const pausedCheckbox = selector.get<HTMLInputElement>('input[value="2"]')
-    expect(pausedCheckbox.element.checked).toBe(true)
+    await selector.get('[data-test="group-selector"]').trigger('click')
+    await flushPromises()
+    const options = () => Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'))
+    const pausedSelected = () => options().find(option => option.textContent?.includes('Paused group'))?.getAttribute('aria-selected')
+    const togglePaused = async () => {
+      options().find(option => option.textContent?.includes('Paused group'))!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushPromises()
+    }
+    expect(options().map(option => option.textContent?.includes('Active group') ? 1 : option.textContent?.includes('Paused group') ? 2 : 0))
+      .toEqual([1, 2])
+    expect(pausedSelected()).toBe('true')
 
-    await pausedCheckbox.setValue(false)
-    expect(selector.get<HTMLInputElement>('input[value="2"]').element.checked).toBe(false)
-    await pausedCheckbox.setValue(true)
-    expect(pausedCheckbox.element.checked).toBe(true)
-    await pausedCheckbox.setValue(false)
+    await togglePaused()
+    expect(pausedSelected()).toBe('false')
+    await togglePaused()
+    expect(pausedSelected()).toBe('true')
+    await togglePaused()
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)

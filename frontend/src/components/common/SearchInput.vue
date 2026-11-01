@@ -1,14 +1,12 @@
 <template>
   <div class="relative w-full">
-    <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-      <UIcon name="i-lucide-search" class="size-5 text-gray-400" />
-    </div>
-    <input
-      :value="modelValue"
+    <UInput
+      :model-value="modelValue"
       type="text"
-      class="input pl-10"
+      icon="i-lucide-search"
+      class="w-full"
       :placeholder="placeholder"
-      @input="handleInput"
+      @update:model-value="handleInput"
     />
   </div>
 </template>
@@ -34,8 +32,8 @@ const debouncedEmitSearch = useDebounceFn((value: string) => {
   emit('search', value)
 }, props.debounceMs)
 
-const handleInput = (event: Event) => {
-  const value = (event.target as HTMLInputElement).value
+const handleInput = (raw: string | number | null | undefined) => {
+  const value = raw == null ? '' : String(raw)
   emit('update:modelValue', value)
   debouncedEmitSearch(value)
 }

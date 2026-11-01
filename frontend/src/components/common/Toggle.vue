@@ -4,10 +4,7 @@
     :model-value="modelValue"
     color="primary"
     size="md"
-    :ui="{
-      base: 'cursor-pointer dark:data-[state=checked]:bg-primary-600 dark:data-[state=unchecked]:bg-dark-600',
-      thumb: 'dark:bg-white'
-    }"
+    :ui="{ base: 'cursor-pointer' }"
     @update:model-value="toggle"
   />
 </template>

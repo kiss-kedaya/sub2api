@@ -66,7 +66,11 @@ describe('version controls follow the owner permission', () => {
     expect(app.fetchVersion).toHaveBeenCalledWith(false)
 
     await wrapper.get('button').trigger('click')
-    await wrapper.get('[title="version.refresh"]').trigger('click')
+    await flushPromises()
+    // The details open in a popover teleported to <body>.
+    document.body.querySelector<HTMLButtonElement>('[title="version.refresh"]')!.click()
     expect(app.fetchVersion).toHaveBeenCalledWith(true)
+    wrapper.unmount()
+    document.body.innerHTML = ''
   })
 })

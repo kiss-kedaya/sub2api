@@ -1,66 +1,68 @@
 <template>
   <div>
-    <label class="input-label">
-      {{ t('admin.users.groups') }}
-      <span class="font-normal text-gray-400">{{ t('common.selectedCount', { count: modelValue.length }) }}</span>
-    </label>
-    <div
-      v-if="isSearchable"
-      class="flex items-center gap-2 rounded-t-lg border border-b-0 border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-600 dark:bg-dark-800"
-    >
-      <Icon name="search" size="sm" class="shrink-0 text-gray-400" />
-      <input
-        v-model="searchText"
-        type="text"
-        :placeholder="t('common.searchPlaceholder')"
-        class="flex-1 bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-hidden dark:text-gray-100 dark:placeholder:text-dark-400"
-      />
-    </div>
-    <div
-      :class="[
-        'grid max-h-32 grid-cols-2 gap-1 overflow-y-auto p-2',
-        isSearchable
-          ? 'rounded-b-lg border border-t-0 border-gray-200 bg-gray-50 dark:border-dark-600 dark:bg-dark-800'
-          : 'rounded-lg border border-gray-200 bg-gray-50 dark:border-dark-600 dark:bg-dark-800'
-      ]"
-    >
-      <label
-        v-for="group in filteredGroups"
-        :key="group.id"
-        class="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 transition-colors hover:bg-white dark:hover:bg-dark-700"
-        :title="group.rate_multiplier == null ? group.name : t('admin.groups.rateAndAccounts', { rate: group.rate_multiplier, count: group.account_count || 0 })"
+    <UFormField :label="t('admin.users.groups')" :hint="t('common.selectedCount', { count: modelValue.length })">
+      <USelectMenu
+        :model-value="selectedVisibleIds"
+        :items="items"
+        value-key="value"
+        multiple
+        :search-input="isSearchable ? { placeholder: t('common.searchPlaceholder'), icon: 'i-lucide-search' } : false"
+        :filter-fields="['label', 'searchText']"
+        :placeholder="t('common.selectedCount', { count: 0 })"
+        class="w-full"
+        :ui="{ base: 'min-h-9 py-1', content: 'min-w-72' }"
+        data-test="group-selector"
+        @update:model-value="handleSelect"
       >
-        <input
-          type="checkbox"
-          :value="group.id"
-          :checked="modelValue.includes(group.id)"
-          @change="handleChange(group.id, ($event.target as HTMLInputElement).checked)"
-          class="h-3.5 w-3.5 shrink-0 rounded-sm border-gray-300 text-primary-500 focus:ring-primary-500 dark:border-dark-500"
-        />
-        <GroupBadge
-          :name="group.name"
-          :platform="group.platform"
-          :subscription-type="group.subscription_type || undefined"
-          :rate-multiplier="group.rate_multiplier == null ? undefined : group.rate_multiplier"
-          class="min-w-0 flex-1"
-        />
-        <span class="shrink-0 text-xs text-gray-400">{{ group.account_count || 0 }}</span>
-      </label>
-      <div
-        v-if="filteredGroups.length === 0"
-        class="col-span-2 py-2 text-center text-sm text-gray-500 dark:text-gray-400"
-      >
-        {{ t('common.noGroupsAvailable') }}
-      </div>
-    </div>
+        <template #default>
+          <span v-if="selectedGroups.length" class="flex min-w-0 flex-wrap items-center gap-1">
+            <GroupBadge
+              v-for="group in selectedGroups.slice(0, maxTriggerBadges)"
+              :key="group.id"
+              :name="group.name"
+              :platform="group.platform"
+              :subscription-type="group.subscription_type || undefined"
+              :rate-multiplier="group.rate_multiplier == null ? undefined : group.rate_multiplier"
+            />
+            <UBadge
+              v-if="selectedGroups.length > maxTriggerBadges"
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              :label="`+${selectedGroups.length - maxTriggerBadges}`"
+            />
+          </span>
+          <span v-else class="truncate text-dimmed">{{ t('common.selectedCount', { count: 0 }) }}</span>
+        </template>
+
+        <template #item-label="{ item }">
+          <span
+            class="flex min-w-0 flex-1 items-center gap-2"
+            :title="titleOf((item as GroupItem).group)"
+          >
+            <GroupBadge
+              :name="(item as GroupItem).group.name"
+              :platform="(item as GroupItem).group.platform"
+              :subscription-type="(item as GroupItem).group.subscription_type || undefined"
+              :rate-multiplier="(item as GroupItem).group.rate_multiplier == null ? undefined : (item as GroupItem).group.rate_multiplier"
+              class="min-w-0"
+            />
+            <span class="ml-auto shrink-0 text-xs text-dimmed tabular-nums">{{ (item as GroupItem).group.account_count || 0 }}</span>
+          </span>
+        </template>
+
+        <template #empty>
+          <span class="text-sm text-muted">{{ t('common.noGroupsAvailable') }}</span>
+        </template>
+      </USelectMenu>
+    </UFormField>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
-import Icon from '@/components/icons/Icon.vue'
 import type { Group, GroupPlatform } from '@/types'
 import { useAuthStore } from '@/stores'
 
@@ -81,8 +83,6 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   'update:modelValue': [value: number[]]
 }>()
-
-const searchText = ref('')
 
 const isSearchable = computed(() => {
   if (props.searchable === 'auto') return props.groups.length > 5
@@ -116,14 +116,42 @@ const filteredGroups = computed(() => {
       result = result.filter((g) => g.platform === props.platform || g.platform === 'composite')
     }
   }
-  if (isSearchable.value && searchText.value) {
-    const q = searchText.value.toLowerCase()
-    result = result.filter(
-      (g) => g.name.toLowerCase().includes(q) || g.description?.toLowerCase().includes(q)
-    )
-  }
   return result
 })
+
+type SelectableGroup = Group & { account_count?: number }
+type GroupItem = { value: number; label: string; searchText: string; group: SelectableGroup }
+
+// The menu searches by name and description, like the old inline filter.
+const items = computed<GroupItem[]>(() =>
+  filteredGroups.value.map((group) => ({
+    value: group.id,
+    label: group.name,
+    searchText: group.description || '',
+    group
+  }))
+)
+
+const maxTriggerBadges = 3
+const selectedGroups = computed(() => {
+  const byId = new Map(filteredGroups.value.map((group) => [group.id, group]))
+  return props.modelValue.map((id) => byId.get(id)).filter((group): group is SelectableGroup => !!group)
+})
+// Ids the menu can show; selections outside the current filter stay in modelValue untouched.
+const selectedVisibleIds = computed(() => selectedGroups.value.map((group) => group.id))
+
+const titleOf = (group: SelectableGroup) =>
+  group.rate_multiplier == null
+    ? group.name
+    : t('admin.groups.rateAndAccounts', { rate: group.rate_multiplier, count: group.account_count || 0 })
+
+// The menu reports the full visible selection; toggle the difference so hidden ids are kept.
+const handleSelect = (value: unknown) => {
+  const next = new Set(Array.isArray(value) ? (value as number[]) : [])
+  const current = new Set(selectedVisibleIds.value)
+  for (const id of current) if (!next.has(id)) handleChange(id, false)
+  for (const id of next) if (!current.has(id)) handleChange(id, true)
+}
 
 watch(
   () => [authStore.isSimpleMode, props.groups, props.modelValue] as const,
