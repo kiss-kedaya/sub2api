@@ -1,120 +1,145 @@
 <template>
   <AppLayout>
-    <div class="deposit-view">
-      <UserPageHeader class="deposit-view__header" flush :title="t('deposit.title')" :description="t('deposit.description')">
-        <template #actions>
+    <div class="mx-auto flex w-full max-w-5xl flex-col gap-4 sm:gap-6">
+      <UserPageHeader flush :title="t('deposit.title')" :description="t('deposit.description')">
+        <template #badge>
           <UBadge v-if="info?.enabled && !loadError" color="success" variant="subtle" icon="i-lucide-shield-check">{{ t('deposit.exclusiveAddress') }}</UBadge>
         </template>
       </UserPageHeader>
 
-      <div v-if="loading" class="card deposit-view__empty" role="status"><LoadingSpinner /></div>
-      <div v-else-if="loadError" class="card deposit-view__empty" role="alert">
-        <strong>{{ t('deposit.loadFailed') }}</strong>
-        <p>{{ t('deposit.loadFailedHint') }}</p>
-        <button type="button" class="btn btn-secondary" @click="load">{{ t('deposit.retry') }}</button>
+      <div v-if="loading" class="flex justify-center py-16" role="status"><LoadingSpinner /></div>
+      <div v-else-if="loadError" class="flex flex-col items-center gap-2 py-16 text-center" role="alert">
+        <UIcon name="i-lucide-circle-alert" class="size-8 text-error" />
+        <strong class="text-highlighted">{{ t('deposit.loadFailed') }}</strong>
+        <p class="text-sm text-muted">{{ t('deposit.loadFailedHint') }}</p>
+        <UButton color="neutral" variant="outline" class="mt-2" @click="load">{{ t('deposit.retry') }}</UButton>
       </div>
-      <div v-else-if="!info?.enabled" class="card deposit-view__empty">
-        <Icon name="wallet" size="md" />
-        <strong>{{ t('deposit.disabled') }}</strong>
-        <p>{{ t('deposit.disabledHint') }}</p>
+      <div v-else-if="!info?.enabled" class="flex flex-col items-center gap-2 py-16 text-center">
+        <UIcon name="i-lucide-wallet" class="size-8 text-dimmed" />
+        <strong class="text-highlighted">{{ t('deposit.disabled') }}</strong>
+        <p class="text-sm text-muted">{{ t('deposit.disabledHint') }}</p>
       </div>
       <template v-else>
-        <div class="deposit-view__layout">
-          <section class="card deposit-view__funding" :aria-label="t('deposit.yourAddress')">
-            <div class="deposit-view__section-head">
-              <span class="deposit-view__step">01</span>
-              <h2>{{ t('deposit.chooseNetwork') }}</h2>
-            </div>
-            <div class="deposit-view__chains" :aria-label="t('deposit.chain')">
-              <button v-for="c in info.chains" :key="c.chain" type="button" class="deposit-view__chain"
-                :class="{ 'deposit-view__chain--active': selectedChain === c.chain }"
-                :aria-pressed="selectedChain === c.chain" @click="selectedChain = c.chain">
-                <span class="deposit-view__network-dot" aria-hidden="true"></span>
-                {{ chainLabel(c.chain) }}
-              </button>
-            </div>
-            <template v-if="current">
-              <div class="deposit-view__section-head deposit-view__section-head--address">
-                <span class="deposit-view__step">02</span>
-                <h2>{{ t('deposit.transferToAddress') }}</h2>
-                <span v-for="tk in current.tokens" :key="tk" class="deposit-view__token">{{ tk }}</span>
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+          <UPageCard variant="subtle" :aria-label="t('deposit.yourAddress')" :ui="{ container: 'gap-y-5' }">
+            <UFormField :label="t('deposit.chooseNetwork')">
+              <div class="flex flex-wrap gap-1.5" :aria-label="t('deposit.chain')">
+                <UButton
+                  v-for="c in info.chains"
+                  :key="c.chain"
+                  color="neutral"
+                  :variant="selectedChain === c.chain ? 'subtle' : 'outline'"
+                  :class="selectedChain === c.chain ? 'font-semibold text-highlighted ring-2 ring-inset ring-primary' : ''"
+                  :aria-pressed="selectedChain === c.chain"
+                  @click="selectedChain = c.chain"
+                >
+                  {{ chainLabel(c.chain) }}
+                </UButton>
               </div>
-              <div class="deposit-view__address-block">
-                <div class="deposit-view__qr-wrap">
-                  <div class="deposit-view__qr">
-                    <canvas v-show="!qrError" ref="qrCanvas" role="img" :aria-label="t('deposit.qrLabel')"></canvas>
-                    <span v-if="qrError">{{ t('deposit.qrFailed') }}</span>
-                  </div>
-                  <p>{{ t('deposit.scanAddress') }}</p>
-                </div>
-                <div class="deposit-view__address-info">
-                  <span class="deposit-view__label">{{ t('deposit.yourAddress') }} · {{ chainLabel(current.chain) }}</span>
-                  <code class="deposit-view__address">{{ current.address }}</code>
-                  <button type="button" class="btn btn-primary deposit-view__copy" @click="copyAddress">
-                    {{ copied ? t('deposit.copied') : t('deposit.copyAddress') }}
-                  </button>
-                  <p class="deposit-view__copy-status" role="status" aria-live="polite">{{ copyError ? t('deposit.copyFailed') : t('deposit.exclusiveNotice') }}</p>
-                </div>
-              </div>
-              <div class="deposit-view__notice">
-                <span class="deposit-view__notice-mark" aria-hidden="true">!</span>
-                <p>{{ t('deposit.networkNotice', { network: chainLabel(current.chain), tokens: current.tokens.join(' / ') }) }}</p>
-              </div>
-            </template>
-            <div v-else class="deposit-view__empty">{{ t('deposit.noNetworks') }}</div>
-          </section>
+            </UFormField>
 
-          <aside class="card deposit-view__guide">
-            <h2>{{ t('deposit.creditDetails') }}</h2>
-            <p class="deposit-view__desc">{{ t('deposit.creditDetailsHint') }}</p>
-            <dl class="deposit-view__terms">
-              <div><dt>{{ t('deposit.rateLabel') }}</dt><dd>1 USDT <span>= {{ info.rate }} {{ t('deposit.balanceUnits') }}</span></dd></div>
-              <div><dt>{{ t('deposit.minLabel') }}</dt><dd>{{ info.min_amount }} <span>USDT</span></dd></div>
-              <div v-if="info.max_amount > 0"><dt>{{ t('deposit.maxLabel') }}</dt><dd>{{ info.max_amount }} <span>USDT</span></dd></div>
+            <template v-if="current">
+              <USeparator />
+              <div class="flex flex-col gap-5 sm:flex-row sm:items-start">
+                <div class="flex shrink-0 flex-col items-center gap-2">
+                  <div class="grid size-50 place-items-center overflow-hidden rounded-lg bg-white ring ring-default">
+                    <canvas v-show="!qrError" ref="qrCanvas" class="block h-auto! max-w-full" role="img" :aria-label="t('deposit.qrLabel')"></canvas>
+                    <span v-if="qrError" class="text-sm text-muted">{{ t('deposit.qrFailed') }}</span>
+                  </div>
+                  <p class="text-xs text-muted">{{ t('deposit.scanAddress') }}</p>
+                </div>
+                <div class="flex min-w-0 flex-1 flex-col gap-3">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-sm font-medium text-highlighted">{{ t('deposit.transferToAddress') }}</span>
+                    <UBadge v-for="tk in current.tokens" :key="tk" color="neutral" variant="subtle">{{ tk }}</UBadge>
+                  </div>
+                  <span class="text-xs text-muted">{{ t('deposit.yourAddress') }} · {{ chainLabel(current.chain) }}</span>
+                  <code class="block break-all rounded-md bg-default px-3 py-2.5 font-mono text-sm text-highlighted ring ring-default">{{ current.address }}</code>
+                  <UButton size="lg" block class="justify-center" :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'" @click="copyAddress">
+                    {{ copied ? t('deposit.copied') : t('deposit.copyAddress') }}
+                  </UButton>
+                  <p class="text-xs text-muted" role="status" aria-live="polite">{{ copyError ? t('deposit.copyFailed') : t('deposit.exclusiveNotice') }}</p>
+                </div>
+              </div>
+              <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('deposit.networkNotice', { network: chainLabel(current.chain), tokens: current.tokens.join(' / ') })" />
+            </template>
+            <p v-else class="py-8 text-center text-sm text-muted">{{ t('deposit.noNetworks') }}</p>
+          </UPageCard>
+
+          <UPageCard :title="t('deposit.creditDetails')" :description="t('deposit.creditDetailsHint')" variant="subtle">
+            <dl class="divide-y divide-default">
+              <div class="flex items-baseline justify-between gap-3 py-2.5"><dt class="text-sm text-muted">{{ t('deposit.rateLabel') }}</dt><dd class="text-sm font-semibold tabular-nums text-highlighted">1 USDT <span class="font-normal text-muted">= {{ info.rate }} {{ t('deposit.balanceUnits') }}</span></dd></div>
+              <div class="flex items-baseline justify-between gap-3 py-2.5"><dt class="text-sm text-muted">{{ t('deposit.minLabel') }}</dt><dd class="text-sm font-semibold tabular-nums text-highlighted">{{ info.min_amount }} <span class="font-normal text-muted">USDT</span></dd></div>
+              <div v-if="info.max_amount > 0" class="flex items-baseline justify-between gap-3 py-2.5"><dt class="text-sm text-muted">{{ t('deposit.maxLabel') }}</dt><dd class="text-sm font-semibold tabular-nums text-highlighted">{{ info.max_amount }} <span class="font-normal text-muted">USDT</span></dd></div>
             </dl>
-            <div class="deposit-view__confirmation">
-              <span class="deposit-view__confirmation-dot" aria-hidden="true"></span>
-              <div><strong>{{ t('deposit.autoCredit') }}</strong><p>{{ t('deposit.confirmationHint') }}</p></div>
+            <div class="flex gap-2.5 rounded-md bg-success/10 p-3">
+              <UIcon name="i-lucide-badge-check" class="mt-0.5 size-4 shrink-0 text-success" />
+              <div>
+                <p class="text-sm font-medium text-highlighted">{{ t('deposit.autoCredit') }}</p>
+                <p class="mt-0.5 text-xs text-muted">{{ t('deposit.confirmationHint') }}</p>
+              </div>
             </div>
-          </aside>
+          </UPageCard>
         </div>
 
-        <section class="card deposit-view__history">
-          <div class="deposit-view__history-head">
-            <div><h2>{{ t('deposit.history') }}</h2><p class="deposit-view__desc">{{ t('deposit.autoRefresh') }}</p></div>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="refreshingHistory" @click="refreshHistory">
+        <section>
+          <UPageCard :title="t('deposit.history')" :description="t('deposit.autoRefresh')" variant="naked" orientation="horizontal" class="mb-4">
+            <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" class="w-fit lg:ms-auto" :ui="{ leadingIcon: refreshingHistory ? 'animate-spin' : '' }" :disabled="refreshingHistory" @click="refreshHistory">
               {{ refreshingHistory ? t('common.loading') : t('common.refresh') }}
-            </button>
+            </UButton>
+          </UPageCard>
+          <UAlert v-if="historyError" class="mb-3" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="t('deposit.historyFailed')" />
+          <UTable
+            v-if="history.length"
+            :data="history"
+            :columns="historyColumns"
+            :ui="{
+              root: 'rounded-lg ring ring-default',
+              base: 'border-separate border-spacing-0',
+              thead: '[&>tr]:bg-elevated/50 [&>tr]:after:content-none',
+              tbody: '[&>tr]:last:[&>td]:border-b-0',
+              th: 'py-2 border-b border-default',
+              td: 'border-b border-default',
+              separator: 'h-0'
+            }"
+          >
+            <template #chain-cell="{ row }">{{ chainLabel(row.original.chain) }}</template>
+            <template #amount-cell="{ row }"><span class="tabular-nums text-highlighted">{{ row.original.amount }}</span> <span class="text-muted">{{ row.original.token }}</span></template>
+            <template #credited-cell="{ row }"><span class="tabular-nums">{{ row.original.status === 'credited' ? fmtCredited(row.original.credited) : '—' }}</span></template>
+            <template #status-cell="{ row }">
+              <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusText(row.original.status) }}</UBadge>
+              <span v-if="row.original.reason" class="mt-1 block text-xs text-muted">{{ reasonText(row.original.reason) }}</span>
+            </template>
+            <template #tx_hash-cell="{ row }">
+              <div v-if="row.original.tx_hash" class="flex min-w-0 max-w-72 items-center gap-1">
+                <a
+                  v-if="explorerTxURL(row.original.chain, row.original.tx_hash)"
+                  :href="explorerTxURL(row.original.chain, row.original.tx_hash)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="deposit-view__hash truncate font-mono text-xs text-highlighted underline-offset-2 hover:underline"
+                  :aria-label="t('deposit.viewTransaction', { hash: row.original.tx_hash })"
+                >{{ row.original.tx_hash }}</a>
+                <code v-else class="deposit-view__hash truncate font-mono text-xs text-highlighted">{{ row.original.tx_hash }}</code>
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  icon="i-lucide-copy"
+                  class="deposit-view__hash-copy shrink-0"
+                  :aria-label="t('deposit.copyTxHash')"
+                  :title="t('deposit.copyTxHash')"
+                  @click="copyToClipboard(row.original.tx_hash)"
+                />
+              </div>
+              <span v-else class="text-muted">—</span>
+            </template>
+            <template #created_at-cell="{ row }"><span class="whitespace-nowrap tabular-nums text-muted">{{ formatTime(row.original.created_at) }}</span></template>
+          </UTable>
+          <div v-else-if="!historyError" class="flex flex-col items-center gap-1 rounded-lg py-10 text-center ring ring-default">
+            <strong class="text-sm text-highlighted">{{ t('deposit.noHistory') }}</strong>
+            <p class="text-sm text-muted">{{ t('deposit.noHistoryHint') }}</p>
           </div>
-          <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
-          <div v-if="history.length" class="deposit-view__table-wrap">
-            <table class="deposit-view__table">
-              <thead><tr><th>{{ t('deposit.chain') }}</th><th>{{ t('deposit.amount') }}</th><th>{{ t('deposit.credited') }}</th><th>{{ t('common.status') }}</th><th>{{ t('deposit.txHash') }}</th><th>{{ t('deposit.time') }}</th></tr></thead>
-              <tbody>
-                <tr v-for="(row, i) in history" :key="row.tx_hash + '-' + i">
-                  <td :data-label="t('deposit.chain')">{{ chainLabel(row.chain) }}</td>
-                  <td :data-label="t('deposit.amount')" class="deposit-view__number">{{ row.amount }} <span class="deposit-view__muted">{{ row.token }}</span></td>
-                  <td :data-label="t('deposit.credited')" class="deposit-view__number">{{ row.status === 'credited' ? fmtCredited(row.credited) : '—' }}</td>
-                  <td :data-label="t('common.status')"><span class="deposit-view__badge" :class="'deposit-view__badge--' + row.status">{{ statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span></td>
-                  <td :data-label="t('deposit.txHash')" class="deposit-view__transaction">
-                    <div v-if="row.tx_hash" class="deposit-view__hash-row">
-                      <a v-if="explorerTxURL(row.chain, row.tx_hash)" :href="explorerTxURL(row.chain, row.tx_hash)"
-                        target="_blank" rel="noopener noreferrer" class="deposit-view__hash"
-                        :aria-label="t('deposit.viewTransaction', { hash: row.tx_hash })">{{ row.tx_hash }}</a>
-                      <code v-else class="deposit-view__hash">{{ row.tx_hash }}</code>
-                      <button type="button" class="deposit-view__hash-copy" :aria-label="t('deposit.copyTxHash')"
-                        :title="t('deposit.copyTxHash')" @click="copyToClipboard(row.tx_hash)">
-                        <Icon name="copy" size="sm" />
-                      </button>
-                    </div>
-                    <span v-else class="deposit-view__muted">—</span>
-                  </td>
-                  <td :data-label="t('deposit.time')" class="deposit-view__time">{{ formatTime(row.created_at) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-else-if="!historyError" class="deposit-view__empty"><strong>{{ t('deposit.noHistory') }}</strong><p>{{ t('deposit.noHistoryHint') }}</p></div>
         </section>
       </template>
     </div>
@@ -124,10 +149,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { TableColumn } from '@nuxt/ui'
 import QRCode from 'qrcode'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
-import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { getDepositHistory, getDepositInfo, type DepositInfo, type DepositRecord } from '@/api/crypto'
 import { useClipboard } from '@/composables/useClipboard'
@@ -152,6 +177,25 @@ const qrCanvas = ref<HTMLCanvasElement | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const current = computed(() => info.value?.chains.find((c) => c.chain === selectedChain.value))
+
+// History columns; the order matches the old table (tx hash stays the 5th column).
+const historyColumns = computed<TableColumn<DepositRecord>[]>(() => [
+  { accessorKey: 'chain', header: t('deposit.chain') },
+  { accessorKey: 'amount', header: t('deposit.amount') },
+  { accessorKey: 'credited', header: t('deposit.credited') },
+  { accessorKey: 'status', header: t('common.status') },
+  { accessorKey: 'tx_hash', header: t('deposit.txHash') },
+  { accessorKey: 'created_at', header: t('deposit.time') }
+])
+
+function statusColor(status: string) {
+  switch (status) {
+    case 'credited': return 'success' as const
+    case 'pending': return 'warning' as const
+    case 'reverted': return 'error' as const
+    default: return 'neutral' as const
+  }
+}
 
 function chainLabel(chain: string): string {
   switch (chain) {
@@ -296,90 +340,3 @@ onUnmounted(() => {
   if (copyTimer) clearTimeout(copyTimer)
 })
 </script>
-
-<style scoped>
-.deposit-view { width: 100%; max-width: 76rem; margin: 0 auto; padding: clamp(1rem, 2.4vw, 2rem); color: var(--signal-text, inherit); }
-.deposit-view__header { margin-bottom: 1.5rem; }
-.deposit-view__layout { display: grid; grid-template-columns: minmax(0, 1fr) 18rem; gap: 1.25rem; align-items: start; }
-.deposit-view__funding, .deposit-view__guide, .deposit-view__history { min-width: 0; border: 1px solid var(--ui-border); border-radius: 8px; padding: 1.5rem; background: var(--ui-bg); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .deposit-view__funding, .dark .deposit-view__guide, .dark .deposit-view__history { box-shadow: none; }
-.deposit-view h2 { font-size: .9375rem; line-height: 1.5; font-weight: 650; }
-.deposit-view__section-head { display: flex; align-items: center; gap: .625rem; margin-bottom: 1rem; }
-.deposit-view__section-head--address { padding-top: 1.25rem; margin-top: 1.5rem; border-top: 1px solid var(--signal-line, #64748b30); }
-.deposit-view__step { color: var(--signal-muted, #8c99a6); font: .75rem ui-monospace, monospace; }
-.deposit-view__chains { display: flex; flex-wrap: wrap; gap: .5rem; }
-.deposit-view__chain { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2.5rem; padding: .55rem .875rem; border: 1px solid var(--ui-border-accented); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
-.deposit-view__chain:hover { background: var(--signal-accent-soft, #0891b212); }
-.deposit-view__chain--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
-.deposit-view__network-dot { width: .375rem; height: .375rem; flex-shrink: 0; border-radius: 50%; background: var(--signal-muted, #8c99a6); }
-.deposit-view__chain--active .deposit-view__network-dot { background: var(--signal-accent, #0891b2); }
-.deposit-view__token { padding: .15rem .5rem; border-radius: .375rem; border: 1px solid #10b98145; background: #10b98112; color: #10b981; font-size: .6875rem; font-weight: 600; }
-.deposit-view__address-block { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }
-.deposit-view__qr-wrap { text-align: center; }
-.deposit-view__qr { width: 12.5rem; min-height: 12.5rem; display: grid; place-items: center; border: 1px solid #e5e5e5; border-radius: 8px; background: white; color: #334155; overflow: hidden; }
-.deposit-view__qr canvas { display: block; max-width: 100%; height: auto !important; }
-.deposit-view__qr-wrap p { margin-top: .625rem; font-size: .75rem; color: var(--signal-muted, #8c99a6); }
-.deposit-view__label { display: block; margin: .2rem 0 .625rem; font-size: .75rem; color: var(--signal-muted, #8c99a6); }
-.deposit-view__address { display: block; padding: .875rem; min-width: 0; border: 1px solid var(--ui-border); border-radius: 6px; background: #64748b09; font-size: .8125rem; line-height: 1.8; overflow-wrap: anywhere; user-select: all; }
-.deposit-view__copy { width: 100%; min-height: 2.75rem; margin-top: .75rem; }
-.deposit-view__copy-status { margin-top: .75rem; font-size: .75rem; line-height: 1.7; color: var(--signal-muted, #8c99a6); }
-.deposit-view__notice { display: flex; gap: .625rem; align-items: flex-start; padding: .875rem 1rem; margin-top: 1.5rem; border: 1px solid #d9770638; border-radius: .625rem; background: #d9770609; font-size: .75rem; line-height: 1.7; }
-.deposit-view__notice-mark { display: grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; margin-top: .15rem; border: 1px solid #d97706; border-radius: 50%; color: #d97706; font-size: .6875rem; font-weight: 700; }
-.deposit-view__terms { margin-top: 1.25rem; }
-.deposit-view__terms > div { padding: 1rem 0; border-top: 1px solid var(--signal-line, #64748b30); }
-.deposit-view__terms dt { color: var(--signal-muted, #8c99a6); font-size: .75rem; }
-.deposit-view__terms dd { margin-top: .5rem; font-size: 1.1875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.deposit-view__terms dd span { font-size: .8125rem; font-weight: 400; }
-.deposit-view__confirmation { display: flex; align-items: flex-start; gap: .625rem; margin-top: .5rem; padding: 1rem; border-radius: .625rem; background: #10b9810a; }
-.deposit-view__confirmation-dot { width: .375rem; height: .375rem; flex-shrink: 0; margin-top: .4rem; background: #10b981; border-radius: 50%; }
-.deposit-view__confirmation strong { font-size: .8125rem; font-weight: 600; }
-.deposit-view__confirmation p { margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.7; }
-.deposit-view__history { margin-top: 1.25rem; }
-.deposit-view__transaction { min-width: 14rem; max-width: 24rem; }
-.deposit-view__hash-row { display: flex; align-items: flex-start; gap: .5rem; }
-.deposit-view__hash { min-width: 0; word-break: break-all; white-space: normal; font: .75rem/1.6 ui-monospace, monospace; }
-a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: underline; text-underline-offset: .15rem; }
-.deposit-view__hash-copy { flex: 0 0 auto; padding: .25rem; border-radius: .25rem; color: var(--signal-muted, #64748b); }
-.deposit-view__hash-copy:hover, .deposit-view__hash-copy:focus-visible { color: var(--signal-accent, #0891b2); outline: 2px solid currentColor; outline-offset: 2px; }
-.deposit-view__history-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
-.deposit-view__table-wrap { max-width: 100%; overflow-x: auto; }
-.deposit-view__table { width: 100%; border-collapse: collapse; text-align: left; }
-.deposit-view__table th { color: var(--signal-muted, #8c99a6); font-size: .6875rem; font-weight: 500; background: #64748b08; }
-.deposit-view__table th, .deposit-view__table td { padding: .875rem .75rem; border-bottom: 1px solid var(--signal-line, #64748b25); }
-.deposit-view__table td { font-size: .8125rem; }
-.deposit-view__table tr:last-child td { border-bottom: 0; }
-.deposit-view__number { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.deposit-view__time { color: var(--signal-muted, #8c99a6); white-space: nowrap; font-size: .75rem !important; }
-.deposit-view__muted { color: var(--signal-muted, #8c99a6); font-size: .75rem; }
-.deposit-view__badge { display: inline-flex; padding: .2rem .5rem; border: 1px solid transparent; border-radius: .375rem; font-size: .6875rem; background: #64748b18; }
-.deposit-view__badge--credited { background: #10b98112; border-color: #10b98130; color: #10b981; }
-.deposit-view__badge--pending { background: #d9770612; border-color: #d9770630; color: #d97706; }
-.deposit-view__badge--ignored, .deposit-view__badge--reverted { background: #ef444412; border-color: #ef444430; color: #ef4444; }
-.deposit-view__reason { display: block; max-width: 21rem; margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
-.deposit-view__empty { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 3rem 1.25rem; text-align: center; font-size: .875rem; }
-.deposit-view__empty p { max-width: 27rem; font-size: .8125rem; color: var(--signal-muted, #8c99a6); line-height: 1.7; }
-.deposit-view__history-error { margin-bottom: 1rem; color: #d97706; font-size: .8125rem; line-height: 1.6; }
-.deposit-view button:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 3px; }
-@media (max-width: 1100px) { .deposit-view__layout { grid-template-columns: minmax(0, 1fr); } .deposit-view__terms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; } }
-@media (max-width: 640px) {
-  .deposit-view { padding: 1rem .75rem; }
-  .deposit-view__live { display: none; }
-  .deposit-view__funding, .deposit-view__guide, .deposit-view__history { padding: 1.125rem; border-radius: .875rem; }
-  .deposit-view__chains { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .deposit-view__chain { padding: .65rem .4rem; font-size: .75rem; }
-  .deposit-view__address-block { grid-template-columns: minmax(0, 1fr); }
-  .deposit-view__qr-wrap { justify-self: center; }
-  .deposit-view__terms { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  .deposit-view__terms > div { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-  .deposit-view__terms dd { margin-top: 0; font-size: 1rem; text-align: right; }
-  .deposit-view__table, .deposit-view__table tbody { display: block; }
-  .deposit-view__table thead { display: none; }
-  .deposit-view__table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .875rem; padding: 1rem 0; border-top: 1px solid var(--signal-line, #64748b30); }
-  .deposit-view__table td { display: block; padding: 0; border: 0; min-width: 0; }
-  .deposit-view__table td::before { content: attr(data-label); display: block; margin-bottom: .35rem; color: var(--signal-muted, #8c99a6); font-size: .6875rem; }
-  .deposit-view__table td:first-child, .deposit-view__table td:last-child { grid-column: 1 / -1; }
-  .deposit-view__table td:nth-child(4) { grid-column: 1 / -1; }
-  .deposit-view__table td.deposit-view__transaction { grid-column: 1 / -1; min-width: 0; max-width: none; }
-}
-@media (prefers-reduced-motion: reduce) { .deposit-view__chain { transition: none; } }
-</style>

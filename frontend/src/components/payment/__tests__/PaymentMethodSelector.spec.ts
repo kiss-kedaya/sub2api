@@ -57,7 +57,8 @@ describe('PaymentMethodSelector', () => {
     })
 
     const button = wrapper.get('button')
-    expect(button.classes()).toContain('border-primary-500')
+    // The selected method is marked with the theme primary ring, never a hard-coded brand colour.
+    expect(button.classes()).toContain('ring-primary')
     expect(button.classes()).not.toContain('border-[#02A9F1]')
   })
 })

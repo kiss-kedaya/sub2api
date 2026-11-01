@@ -12,7 +12,7 @@
         </div>
         <h2 class="text-base font-semibold text-highlighted">{{ t('payment.airwallexLoadFailed') }}</h2>
         <p class="mt-2 text-sm text-muted">{{ errorMessage }}</p>
-        <button class="btn btn-primary mt-6" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
+        <UButton class="mt-6" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</UButton>
       </div>
 
       <div v-else class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6">

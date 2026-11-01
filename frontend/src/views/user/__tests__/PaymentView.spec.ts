@@ -96,6 +96,8 @@ vi.mock('@/utils/device', () => ({
   isMobileDevice: () => true,
 }))
 
+const buttonStub = { template: '<button><slot /></button>' }
+
 function checkoutInfoFixture(overrides: Partial<CheckoutInfoResponse> = {}) {
   const wxpayMethod: MethodLimit = {
     daily_limit: 0,
@@ -238,6 +240,9 @@ async function mountSubscriptionConfirm(options: Parameters<typeof checkoutInfoW
         },
         Teleport: true,
         Transition: false,
+        // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+        // button text (amount) stays checkable.
+        Button: buttonStub,
       },
     },
   })
@@ -278,6 +283,9 @@ async function mountSubscriptionPlanList(planCount: number) {
         },
         Teleport: true,
         Transition: false,
+        // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+        // button text (amount) stays checkable.
+        Button: buttonStub,
       },
     },
   })
@@ -303,6 +311,9 @@ describe('PaymentView help text', () => {
           AppLayout: { template: '<div><slot /></div>' },
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -633,6 +644,9 @@ describe('PaymentView recharge rate preview', () => {
           AppLayout: { template: '<div><slot /></div>' },
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -809,6 +823,9 @@ describe('PaymentView payment recovery', () => {
           },
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -856,6 +873,9 @@ describe('PaymentView WeChat JSAPI flow', () => {
         stubs: {
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -885,6 +905,9 @@ describe('PaymentView WeChat JSAPI flow', () => {
         stubs: {
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -906,6 +929,9 @@ describe('PaymentView WeChat JSAPI flow', () => {
         stubs: {
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -950,6 +976,9 @@ describe('PaymentView WeChat JSAPI flow', () => {
         stubs: {
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -988,6 +1017,9 @@ describe('PaymentView WeChat JSAPI flow', () => {
         stubs: {
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -1036,6 +1068,9 @@ describe('PaymentView WeChat JSAPI flow', () => {
         stubs: {
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })
@@ -1099,6 +1134,9 @@ describe('PaymentView instance recharge terms', () => {
           },
           Teleport: true,
           Transition: false,
+          // shallowMount stubs Nuxt UI buttons; render them as real <button>s so the pay
+          // button text (amount) stays checkable.
+          Button: buttonStub,
         },
       },
     })

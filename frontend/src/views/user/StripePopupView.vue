@@ -18,34 +18,19 @@
         >
           {{ error }}
         </div>
-        <button
-          class="w-full text-sm underline"
-          :style="{ color: methodColor }"
-          @click="closeWindow"
-        >
-          {{ t('common.close') }}
-        </button>
+        <UButton variant="link" block class="justify-center" @click="closeWindow">{{ t('common.close') }}</UButton>
       </div>
 
       <!-- Success -->
       <div v-else-if="success" class="space-y-3 py-4 text-center">
         <UIcon name="i-lucide-circle-check" class="mx-auto size-12 text-success" />
         <p class="text-sm text-muted">{{ t('payment.result.success') }}</p>
-        <button
-          class="text-sm underline"
-          :style="{ color: methodColor }"
-          @click="closeWindow"
-        >
-          {{ t('common.close') }}
-        </button>
+        <UButton variant="link" @click="closeWindow">{{ t('common.close') }}</UButton>
       </div>
 
       <!-- Loading / Redirecting -->
       <div v-else class="flex items-center justify-center py-8">
-        <div
-          class="h-8 w-8 animate-spin rounded-full border-2 border-t-transparent"
-          :style="{ borderColor: methodColor, borderTopColor: 'transparent' }"
-        />
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
         <span class="ml-3 text-sm text-muted">{{ hint }}</span>
       </div>
     </div>

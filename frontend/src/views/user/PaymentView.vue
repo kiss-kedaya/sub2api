@@ -2,20 +2,19 @@
   <AppLayout>
     <div :class="['signal-payment mx-auto w-full', activeTab === 'rechargeCenter' ? 'max-w-[1440px]' : 'max-w-5xl']">
       <div v-if="loading" class="flex items-center justify-center py-20">
-        <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
       </div>
       <template v-else>
-        <UserPageHeader v-if="paymentPhase === 'select' && !selectedPlan" flush :title="t('nav.buySubscription')">
-          <template #actions>
-            <UButton to="/orders" color="neutral" variant="outline" icon="i-lucide-receipt-text">{{ t('payment.orders.title') }}</UButton>
-          </template>
-        </UserPageHeader>
-        <!-- Tab Switcher (hide during payment and subscription confirm) -->
-        <ConsoleTabs v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan"
-          id="payment-view" class="signal-payment-tabs" :label="t('payment.title')"
-          :model-value="activeTab" :items="tabs"
-          @update:model-value="activeTab = $event === 'rechargeCenter' ? 'rechargeCenter' : 'recharge'"
-        />
+        <UserPageHeader v-if="paymentPhase === 'select' && !selectedPlan" flush :title="t('nav.buySubscription')" />
+        <!-- Toolbar row: tab switcher (hidden during payment and subscription confirm) + orders -->
+        <div v-if="paymentPhase === 'select' && !selectedPlan" class="flex flex-wrap items-center justify-between gap-1.5">
+          <ConsoleTabs v-if="tabs.length > 1"
+            id="payment-view" class="signal-payment-tabs" :label="t('payment.title')"
+            :model-value="activeTab" :items="tabs"
+            @update:model-value="activeTab = $event === 'rechargeCenter' ? 'rechargeCenter' : 'recharge'"
+          />
+          <UButton to="/orders" color="neutral" variant="outline" icon="i-lucide-receipt-text" class="ms-auto">{{ t('payment.orders.title') }}</UButton>
+        </div>
         <!-- Payment in progress (shared by recharge and subscription) -->
         <template v-if="paymentPhase === 'paying'">
           <PaymentStatusPanel
@@ -110,13 +109,10 @@
                 </p>
                 <div class="pay-action">
                 <span class="pay-action__mobile-total"><small>{{ t('payment.actualPay') }}</small><strong>{{ formatSelectedPaymentAmount(totalAmount) }}</strong></span>
-                <button :class="['btn pay-submit w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmit || submitting" @click="handleSubmitRecharge">
-                  <span v-if="submitting" class="flex items-center justify-center gap-2">
-                    <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
-                    {{ t('common.processing') }}
-                  </span>
+                <UButton size="xl" block class="pay-submit justify-center" :loading="submitting" :disabled="!canSubmit || submitting" @click="handleSubmitRecharge">
+                  <span v-if="submitting">{{ t('common.processing') }}</span>
                   <span v-else>{{ t('payment.createOrder') }} <span class="pay-submit__amount">{{ formatSelectedPaymentAmount(totalAmount) }}</span></span>
-                </button>
+                </UButton>
                 </div>
               </aside>
             </div>
@@ -129,18 +125,18 @@
                 <div>
                   <p class="text-sm font-semibold text-highlighted">{{ t('payment.rechargeCenterTitle') }}</p>
                   <p class="mt-1 text-xs text-muted">{{ t('payment.rechargeCenterDescription') }}</p>
-                  <p class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ t('payment.rechargeCenterNetworkHint') }}</p>
+                  <p class="mt-1 text-xs text-warning">{{ t('payment.rechargeCenterNetworkHint') }}</p>
                 </div>
                 <div v-if="rechargeCenterUrl" class="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    class="signal-tool-button"
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    :icon="isRechargeCenterFullscreen ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
                     :aria-label="isRechargeCenterFullscreen ? t('payment.rechargeCenterExitFullscreen') : t('payment.rechargeCenterFullscreen')"
                     @click="toggleRechargeCenterFullscreen"
                   >
-                    <UIcon :name="isRechargeCenterFullscreen ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'" class="size-4" aria-hidden="true" />
-                    <span>{{ isRechargeCenterFullscreen ? t('payment.rechargeCenterExitFullscreen') : t('payment.rechargeCenterFullscreen') }}</span>
-                  </button>
+                    {{ isRechargeCenterFullscreen ? t('payment.rechargeCenterExitFullscreen') : t('payment.rechargeCenterFullscreen') }}
+                  </UButton>
                   <a
                     :href="rechargeCenterUrl"
                     target="_blank"
@@ -190,9 +186,7 @@
               <div class="pay-card p-5">
                 <!-- Header: platform badge + plan name -->
                 <div class="mb-3 flex flex-wrap items-center gap-2">
-                  <span :class="['rounded-md border px-2 py-0.5 text-xs font-medium', planBadgeClass]">
-                    {{ platformLabel(selectedPlan.group_platform || '') }}
-                  </span>
+                  <UBadge color="neutral" variant="subtle">{{ platformLabel(selectedPlan.group_platform || '') }}</UBadge>
                   <h3 class="text-lg font-semibold text-highlighted">{{ selectedPlan.name }}</h3>
                 </div>
                 <!-- Price -->
@@ -200,7 +194,7 @@
                   <span v-if="selectedPlan.original_price" class="text-sm text-dimmed line-through">
                     {{ formatSelectedSubscriptionPaymentAmount(selectedPlan.original_price) }}
                   </span>
-                  <span :class="['text-3xl font-bold', planTextClass]">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.price) }}</span>
+                  <span class="text-3xl font-semibold tabular-nums text-highlighted">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.price) }}</span>
                   <span class="text-sm text-muted">/ {{ planValiditySuffix }}</span>
                 </div>
                 <!-- Description -->
@@ -212,12 +206,12 @@
                   <div>
                     <span class="text-xs text-muted">{{ t('payment.planCard.rate') }}</span>
                     <div class="flex items-baseline">
-                      <span :class="['text-lg font-bold', planTextClass]">×{{ selectedPlan.rate_multiplier ?? 1 }}</span>
+                      <span class="text-lg font-semibold tabular-nums text-highlighted">×{{ selectedPlan.rate_multiplier ?? 1 }}</span>
                     </div>
                   </div>
                   <div v-if="planHasPeakRate(selectedPlan)">
                     <span class="text-xs text-muted">{{ t('payment.planCard.peakRate') }}</span>
-                    <div class="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                    <div class="text-sm font-semibold text-warning">
                       {{ planPeakRateLabel(selectedPlan) }}
                     </div>
                   </div>
@@ -258,18 +252,15 @@
                   </div>
                   <div class="flex justify-between border-t border-default pt-2">
                     <span class="font-medium text-default">{{ t('payment.actualPay') }}</span>
-                    <span class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ formatSelectedPaymentAmount(subTotalAmount) }}</span>
+                    <span class="text-lg font-semibold tabular-nums text-highlighted">{{ formatSelectedPaymentAmount(subTotalAmount) }}</span>
                   </div>
                 </div>
               </div>
-              <button :class="['btn pay-submit w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmitSubscription || submitting" @click="confirmSubscribe">
-                <span v-if="submitting" class="flex items-center justify-center gap-2">
-                  <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
-                  {{ t('common.processing') }}
-                </span>
+              <UButton size="xl" block class="pay-submit justify-center" :loading="submitting" :disabled="!canSubmitSubscription || submitting" @click="confirmSubscribe">
+                <span v-if="submitting">{{ t('common.processing') }}</span>
                 <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(subTotalAmount) }}</span>
-              </button>
-              <button class="btn btn-secondary w-full" @click="selectedPlan = null">{{ t('common.cancel') }}</button>
+              </UButton>
+              <UButton color="neutral" variant="subtle" block class="justify-center" @click="selectedPlan = null">{{ t('common.cancel') }}</UButton>
             </template>
             <!-- Plan list -->
             <template v-else>
@@ -286,11 +277,11 @@
                 <div class="space-y-2">
                   <div v-for="sub in activeSubscriptions" :key="sub.id"
                     class="pay-card flex items-center gap-3 px-3 py-2">
-                    <div :class="['h-6 w-1 shrink-0 rounded-full', platformAccentBarClass(sub.group?.platform || '')]" />
+                    <PlatformIcon :platform="sub.group?.platform" size="sm" class="shrink-0" />
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-1.5">
                         <span class="truncate text-xs font-semibold text-highlighted">{{ sub.group?.name || t('payment.groupFallback', { id: sub.group_id }) }}</span>
-                        <span :class="['shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium', platformBadgeLightClass(sub.group?.platform || '')]">{{ platformLabel(sub.group?.platform || '') }}</span>
+                        <UBadge color="neutral" variant="subtle" size="sm" class="shrink-0">{{ platformLabel(sub.group?.platform || '') }}</UBadge>
                       </div>
                       <div class="flex flex-wrap gap-x-3 text-[11px] text-muted">
                         <span>{{ t('payment.planCard.rate') }}: ×{{ sub.group?.rate_multiplier ?? 1 }}</span>
@@ -300,7 +291,7 @@
                         <span v-else>{{ t('userSubscriptions.noExpiration') }}</span>
                       </div>
                     </div>
-                    <span class="badge badge-success shrink-0 text-[10px]">{{ t('userSubscriptions.status.active') }}</span>
+                    <UBadge color="success" variant="subtle" size="sm" class="shrink-0">{{ t('userSubscriptions.status.active') }}</UBadge>
                   </div>
                 </div>
               </div>
@@ -318,22 +309,11 @@
       </template>
     </div>
     <!-- Renewal Plan Selection Modal -->
-    <Teleport to="body">
-      <Transition name="modal">
-        <div v-if="showRenewalModal" class="fixed inset-0 z-50 flex items-center justify-center bg-neutral-100/75 p-4 dark:bg-black/60" @click.self="closeRenewalModal">
-          <div class="relative flex max-h-full w-full max-w-lg flex-col rounded-xl bg-default p-6 shadow-xl ring ring-default dark:bg-dark-900">
-            <!-- Close button -->
-            <button class="absolute right-4 top-4 rounded-md p-1 text-dimmed transition-colors hover:bg-elevated hover:text-highlighted" :aria-label="t('common.close')" @click="closeRenewalModal">
-              <UIcon name="i-lucide-x" class="size-5" />
-            </button>
-            <h3 class="mb-4 shrink-0 text-lg font-semibold text-highlighted">{{ t('payment.selectPlan') }}</h3>
-            <div class="min-h-0 space-y-4 overflow-y-auto">
-              <SubscriptionPlanCard v-for="plan in renewalPlans" :key="plan.id" :plan="plan" :active-subscriptions="activeSubscriptions" @select="selectPlanFromModal" />
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+    <BaseDialog :show="showRenewalModal" :title="t('payment.selectPlan')" width="normal" close-on-click-outside @close="closeRenewalModal">
+      <div class="space-y-4">
+        <SubscriptionPlanCard v-for="plan in renewalPlans" :key="plan.id" :plan="plan" :active-subscriptions="activeSubscriptions" @select="selectPlanFromModal" />
+      </div>
+    </BaseDialog>
     <!-- Image Preview Overlay -->
     <Teleport to="body">
       <Transition name="modal">
@@ -366,7 +346,7 @@ import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import ConsoleTabs from '@/components/common/ConsoleTabs.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
-import { METHOD_ORDER, getPaymentPopupFeatures, isBuiltInAlipayMethod, isBuiltInWxpayMethod } from '@/components/payment/providerConfig'
+import { METHOD_ORDER, getPaymentPopupFeatures } from '@/components/payment/providerConfig'
 import {
   PAYMENT_RECOVERY_STORAGE_KEY,
   buildCreateOrderPayload,
@@ -378,7 +358,9 @@ import {
   type PaymentRecoverySnapshot,
   writePaymentRecoverySnapshot,
 } from '@/components/payment/paymentFlow'
-import { platformAccentBarClass, platformBadgeLightClass, platformBadgeClass, platformTextClass, platformLabel } from '@/utils/platformColors'
+import { platformLabel } from '@/utils/platformColors'
+import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import PaymentStatusPanel from '@/components/payment/PaymentStatusPanel.vue'
 import { DEFAULT_PAYMENT_CURRENCY, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
@@ -895,20 +877,6 @@ watch(() => [validAmount.value, selectedMethod.value] as const, ([amt, method]) 
   if (available) selectedMethod.value = available
 })
 
-// Payment button class: follows selected payment method color
-const paymentButtonClass = computed(() => {
-  const m = selectedMethod.value
-  if (!m) return 'btn-primary'
-  if (isBuiltInAlipayMethod(m)) return 'btn-alipay'
-  if (isBuiltInWxpayMethod(m)) return 'btn-wxpay'
-  if (m === 'stripe') return 'btn-stripe'
-  if (m === 'airwallex') return 'btn-airwallex'
-  return 'btn-primary'
-})
-
-// Subscription confirm: platform accent colors (clean card, no gradient)
-const planBadgeClass = computed(() => platformBadgeClass(selectedPlan.value?.group_platform || ''))
-const planTextClass = computed(() => platformTextClass(selectedPlan.value?.group_platform || ''))
 
 // Renewal modal state
 const showRenewalModal = ref(false)
@@ -1365,28 +1333,20 @@ onUnmounted(() => {
 
 <style scoped>
 .signal-payment {
-  --payment-muted-bg: var(--ui-bg-muted);
-  --payment-text: var(--ui-text-highlighted);
-  --payment-muted: var(--ui-text-muted);
-  --payment-line: var(--ui-border);
-  --payment-surface: var(--ui-bg);
-  --payment-accent: var(--signal-accent, #171717);
-  --payment-accent-soft: var(--signal-accent-soft, #f4f4f4);
-  --payment-amber: var(--signal-amber, #906727);
   display: grid;
   gap: 16px;
   min-width: 0;
-  color: var(--payment-text);
+  color: var(--ui-text-highlighted);
   letter-spacing: 0;
 }
 
-/* Card surface shared by the page sections (native elements: the specs shallow-mount). */
+/* Card surface for the page sections. Native elements on purpose: the specs shallow-mount,
+   which would hide a UCard's slots. Same look as UCard outline. */
 .pay-card {
-  border-radius: 8px;
+  border-radius: calc(var(--ui-radius) * 2);
   background: var(--ui-bg);
-  box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05);
+  box-shadow: 0 0 0 1px var(--ui-border);
 }
-.dark .pay-card { box-shadow: 0 0 0 1px var(--ui-border); }
 .pay-empty { padding: 56px 20px; text-align: center; }
 
 .pay-layout {
@@ -1399,15 +1359,11 @@ onUnmounted(() => {
 .pay-section { min-width: 0; padding: 20px; }
 .pay-section + .pay-section { border-top: 1px solid var(--ui-border); }
 .pay-section__title { margin-bottom: 14px; color: var(--ui-text-highlighted); font-size: 14px; font-weight: 600; }
-.pay-section :deep(.payment-amount-input__entry > span:first-child),
-.pay-section :deep(.payment-method-selector > label) { display: none; }
-.pay-warning { margin: 10px 0 0; color: var(--payment-amber); font-size: 12px; }
+.pay-warning { margin: 10px 0 0; color: var(--ui-warning); font-size: 12px; }
 
 .signal-exchange-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 14px; color: var(--ui-text-muted); font-size: 12px; }
-.signal-exchange-link { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 10px; border-radius: 6px; color: var(--ui-text-highlighted); font-weight: 500; box-shadow: inset 0 0 0 1px var(--ui-border-accented); transition: background-color 150ms ease; }
+.signal-exchange-link { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 10px; border-radius: var(--ui-radius); color: var(--ui-text-highlighted); font-weight: 500; box-shadow: inset 0 0 0 1px var(--ui-border-accented); transition: background-color 150ms ease; }
 .signal-exchange-link:hover { background: var(--ui-bg-elevated); }
-.dark .signal-exchange-link { color: var(--payment-accent); box-shadow: inset 0 0 0 1px currentColor; }
-.dark .signal-exchange-link:hover { background: var(--payment-accent-soft); }
 
 .pay-summary { position: sticky; top: 82px; overflow: hidden; }
 .pay-summary__account { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-width: 0; padding: 16px 18px; border-bottom: 1px solid var(--ui-border); }
@@ -1415,52 +1371,28 @@ onUnmounted(() => {
 .pay-summary__name { margin: 3px 0 0; overflow: hidden; color: var(--ui-text-highlighted); font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .pay-summary__balance { display: grid; flex: 0 0 auto; gap: 2px; text-align: right; }
 .pay-summary__balance span { color: var(--ui-text-muted); font-size: 11px; }
-.pay-summary__balance strong { color: var(--payment-accent); font-size: 16px; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.pay-summary__total { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 20px 18px; border-bottom: 1px solid var(--ui-border); background: var(--payment-muted-bg); }
+.pay-summary__balance strong { color: var(--ui-text-highlighted); font-size: 16px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.pay-summary__total { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 20px 18px; border-bottom: 1px solid var(--ui-border); background: var(--ui-bg-muted); }
 .pay-summary__total span { color: var(--ui-text-muted); font-size: 12px; font-weight: 500; }
-.pay-summary__total strong { max-width: 100%; color: var(--payment-accent); font-size: 30px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pay-summary__total strong { max-width: 100%; color: var(--ui-text-highlighted); font-size: 30px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .pay-summary__rows { display: grid; gap: 10px; padding: 16px 18px; }
 .pay-summary__rows > div { display: flex; justify-content: space-between; gap: 16px; color: var(--ui-text-muted); font-size: 13px; }
 .pay-summary__rows strong { color: var(--ui-text-highlighted); font-weight: 600; font-variant-numeric: tabular-nums; }
-.pay-rate-note { margin: 0 18px 16px; padding: 10px 0 0; border-top: 1px solid var(--ui-border); color: var(--payment-amber); font-size: 11px; line-height: 1.5; }
+.pay-rate-note { margin: 0 18px 16px; padding: 10px 0 0; border-top: 1px solid var(--ui-border); color: var(--ui-warning); font-size: 11px; line-height: 1.5; }
 .pay-action { padding: 0 18px 18px; }
 .pay-action__mobile-total { display: none; }
-/* Light theme: flat brand fills, no coloured glow. Dark keeps today's buttons. */
-html:not(.dark) .pay-submit:is(.btn-alipay, .btn-wxpay, .btn-stripe, .btn-airwallex) { box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08); }
 
 .recharge-center-shell { overflow: hidden; }
 .recharge-center-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--ui-border); }
-.signal-tool-button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; border-radius: 6px; color: var(--ui-text-highlighted); background: var(--ui-bg); box-shadow: inset 0 0 0 1px var(--ui-border-accented); font-size: 13px; font-weight: 500; transition: background-color 150ms ease; }
+.signal-tool-button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; border-radius: var(--ui-radius); color: var(--ui-text-highlighted); background: var(--ui-bg); box-shadow: inset 0 0 0 1px var(--ui-border-accented); font-size: 13px; font-weight: 500; transition: background-color 150ms ease; }
 .signal-tool-button:hover { background: var(--ui-bg-elevated); }
-.recharge-center-frame { padding: 8px; background: var(--payment-muted-bg); }
-.recharge-center-fallback { display: flex; min-height: 320px; flex-direction: column; align-items: center; justify-content: center; padding: 48px 24px; text-align: center; background: var(--payment-muted-bg); }
-
-.signal-payment :deep(.payment-amount-input),
-.signal-payment :deep(.payment-method-selector) { color: var(--payment-text); }
-.signal-payment :deep(.payment-amount-input__grid) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.signal-payment :deep(.payment-amount-input__option) { min-width: 0; min-height: 44px; padding: 9px 10px; border-width: 1px; border-radius: 6px; font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 550; }
-.signal-payment :deep(.payment-method-selector__grid) { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.signal-payment :deep(.payment-method-selector__option) { min-height: 62px; height: auto; padding: 12px 46px 12px 16px; border-radius: 6px; box-shadow: none; }
-.signal-payment :deep(.payment-method-selector__option > span) { justify-content: flex-start; }
-.signal-payment :deep(.payment-method-selector__option::after) { content: ''; position: absolute; right: 18px; top: calc(50% - 7px); width: 14px; height: 14px; border: 1px solid var(--signal-control-line); border-radius: 50%; }
-.signal-payment :deep(.payment-method-selector__option[aria-pressed='true']::after) { border: 4px solid var(--payment-accent); background: var(--payment-surface); }
-.signal-payment :deep(.payment-method-selector__option[aria-pressed='true']) { border-color: var(--payment-accent); color: var(--payment-text); background: var(--payment-accent-soft); box-shadow: inset 0 -2px var(--payment-accent); }
-
-.signal-payment :deep(.payment-status-card),
-.signal-payment :deep(.payment-subscription-plan) { border: 0; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .signal-payment :deep(.payment-status-card),
-.dark .signal-payment :deep(.payment-subscription-plan) { box-shadow: 0 0 0 1px var(--ui-border); }
-.signal-payment :deep(.payment-status-panel) { width: min(100%, 620px); margin-inline: auto; }
-.signal-payment :deep(.payment-status-card .rounded-xl) { border: 1px solid var(--ui-border); border-radius: 6px; background: var(--payment-muted-bg); }
-.signal-payment :deep(.payment-subscription-plan) { transform: none; }
-.signal-payment :deep(.payment-subscription-plan:hover) { transform: none; box-shadow: 0 0 0 1px var(--ui-border-accented), 0 1px 3px rgba(10, 10, 10, 0.08); }
-.signal-payment :deep(.payment-subscription-plan > div:first-child) { height: 3px; background: var(--payment-accent); }
-.signal-payment :deep(.payment-subscription-plan__quota) { border: 1px solid var(--ui-border); border-radius: 6px; background: var(--payment-muted-bg); }
-.signal-payment :deep(.payment-subscription-plan__action) { border-radius: 6px; box-shadow: none; transform: none; scale: none; }
-
+.recharge-center-frame { padding: 8px; background: var(--ui-bg-muted); }
+.recharge-center-fallback { display: flex; min-height: 320px; flex-direction: column; align-items: center; justify-content: center; padding: 48px 24px; text-align: center; background: var(--ui-bg-muted); }
 .recharge-center-shell:fullscreen { display: flex; height: 100dvh; width: 100vw; flex-direction: column; border-radius: 0; }
 .recharge-center-shell:fullscreen .recharge-center-frame { min-height: 0; flex: 1; }
 .recharge-center-shell:fullscreen iframe { height: 100%; min-height: 0; }
+
+.signal-payment :deep(.payment-status-panel) { width: min(100%, 620px); margin-inline: auto; }
 
 @media (max-width: 767px) {
   .signal-payment { gap: 14px; }
@@ -1468,8 +1400,8 @@ html:not(.dark) .pay-submit:is(.btn-alipay, .btn-wxpay, .btn-stripe, .btn-airwal
   .pay-section { padding: 16px; }
   .pay-summary { position: static; overflow: visible; }
   .signal-payment:has(.pay-action) { padding-bottom: 98px; }
-  .pay-action { position: fixed; bottom: 0; left: 0; right: 0; z-index: 25; display: flex; align-items: center; gap: 16px; padding: 14px 16px max(14px, env(safe-area-inset-bottom)); border-top: 1px solid var(--ui-border); background: var(--ui-bg); box-shadow: 0 -6px 24px #0000000a; }
-  .pay-action > .btn { flex: 1; min-width: 0; width: auto; font-size: 14px; }
+  .pay-action { position: fixed; bottom: 0; left: 0; right: 0; z-index: 25; display: flex; align-items: center; gap: 16px; padding: 14px 16px max(14px, env(safe-area-inset-bottom)); border-top: 1px solid var(--ui-border); background: var(--ui-bg); }
+  .pay-action > .pay-submit { flex: 1; min-width: 0; width: auto; font-size: 14px; }
   .pay-action__mobile-total { display: grid; flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
   .pay-action__mobile-total small { font-size: 11px; color: var(--ui-text-muted); }
   .pay-action__mobile-total strong { font-size: 22px; overflow-wrap: anywhere; }
@@ -1480,7 +1412,6 @@ html:not(.dark) .pay-submit:is(.btn-alipay, .btn-wxpay, .btn-stripe, .btn-airwal
 @media (max-width: 374px) {
   .pay-summary__account { align-items: flex-start; flex-direction: column; gap: 12px; }
   .pay-summary__balance { width: 100%; padding-top: 10px; border-top: 1px solid var(--ui-border); text-align: left; }
-  .signal-payment :deep(.payment-amount-input__grid) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .recharge-center-toolbar > div:last-child { display: grid; width: 100%; grid-template-columns: 1fr; }
 }
 
