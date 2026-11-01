@@ -1,254 +1,126 @@
 <template>
-  <div class="card p-4">
-    <div class="mb-4 flex items-center justify-between gap-3">
-      <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+  <UCard :ui="{ header: 'flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5', body: 'p-4 sm:p-5' }">
+    <template #header>
+      <h3 class="text-xs font-medium uppercase text-muted">
         {{ !enableRankingView || activeView === 'model_distribution'
           ? t('admin.dashboard.modelDistribution')
           : t('admin.dashboard.spendingRankingTitle') }}
       </h3>
       <div class="flex flex-wrap items-center justify-end gap-2">
-        <div
+        <UTabs
           v-if="showSourceToggle"
-          class="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-dark-700 dark:bg-dark-800"
-        >
-          <button
-            type="button"
-            class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-            :class="source === 'requested'
-              ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-white'
-              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
-            @click="emit('update:source', 'requested')"
-          >
-            {{ t('usage.requestedModel') }}
-          </button>
-          <button
-            type="button"
-            class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-            :class="source === 'upstream'
-              ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-white'
-              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
-            @click="emit('update:source', 'upstream')"
-          >
-            {{ t('usage.upstreamModel') }}
-          </button>
-          <button
-            type="button"
-            class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-            :class="source === 'mapping'
-              ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-white'
-              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
-            @click="emit('update:source', 'mapping')"
-          >
-            {{ t('usage.mapping') }}
-          </button>
-        </div>
-        <div
+          :model-value="source"
+          :items="sourceItems"
+          :content="false"
+          color="neutral"
+          size="xs"
+          :ui="segmentedTabsUi"
+          @update:model-value="(value) => emit('update:source', value as ModelSource)"
+        />
+        <UTabs
           v-if="showMetricToggle"
-          class="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-dark-700 dark:bg-dark-800"
-        >
-          <button
-            type="button"
-            class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-            :class="metric === 'tokens'
-              ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-white'
-              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
-            @click="emit('update:metric', 'tokens')"
-          >
-            {{ t('admin.dashboard.metricTokens') }}
-          </button>
-          <button
-            type="button"
-            class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-            :class="metric === 'actual_cost'
-              ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-white'
-              : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
-            @click="emit('update:metric', 'actual_cost')"
-          >
-            {{ t('admin.dashboard.metricActualCost') }}
-          </button>
-        </div>
-        <div v-if="enableRankingView" class="inline-flex rounded-lg bg-gray-100 p-1 dark:bg-dark-800">
-          <button
-            type="button"
-            class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-            :class="
-              activeView === 'model_distribution'
-                ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-white'
-                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-            "
-            @click="activeView = 'model_distribution'"
-          >
-            {{ t('admin.dashboard.viewModelDistribution') }}
-          </button>
-          <button
-            type="button"
-            class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-            :class="
-              activeView === 'spending_ranking'
-                ? 'bg-white text-gray-900 shadow-xs dark:bg-dark-700 dark:text-white'
-                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-            "
-            @click="activeView = 'spending_ranking'"
-          >
-            {{ t('admin.dashboard.viewSpendingRanking') }}
-          </button>
-        </div>
+          :model-value="metric"
+          :items="metricItems"
+          :content="false"
+          color="neutral"
+          size="xs"
+          :ui="segmentedTabsUi"
+          @update:model-value="(value) => emit('update:metric', value as DistributionMetric)"
+        />
+        <UTabs
+          v-if="enableRankingView"
+          v-model="activeView"
+          :items="viewItems"
+          :content="false"
+          color="neutral"
+          size="xs"
+          :ui="segmentedTabsUi"
+        />
       </div>
-    </div>
+    </template>
 
     <div v-if="activeView === 'model_distribution' && loading" class="flex h-48 items-center justify-center">
       <LoadingSpinner />
     </div>
-    <div
+    <DistributionPanel
       v-else-if="activeView === 'model_distribution' && displayModelStats.length > 0 && chartData"
-      class="flex flex-col items-center gap-4 sm:flex-row sm:gap-6"
+      :chart-data="chartData"
+      :chart-options="doughnutOptions"
+      :rows="displayModelStats"
+      :columns="modelColumns"
+      :get-row-id="(model) => `model-${model.model}`"
+      :expanded-id="expandedKey"
+      :is-selectable="enableBreakdown ? () => true : undefined"
+      @select="(model) => toggleBreakdown('model', model.model)"
     >
-      <div class="h-48 w-48 shrink-0">
-        <Doughnut :data="chartData" :options="doughnutOptions" />
-      </div>
-      <div class="max-h-48 w-full min-w-0 flex-1 overflow-auto">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="text-gray-500 dark:text-gray-400">
-              <th class="pb-2 text-left">{{ t('admin.dashboard.model') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.requests') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.tokens') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.actual') }}</th>
-              <th v-if="showAccountCost" class="pb-2 text-right">{{ t('admin.dashboard.accountCost') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.standard') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template v-for="model in displayModelStats" :key="model.model">
-              <tr
-                class="border-t border-gray-100 transition-colors dark:border-dark-700"
-                :class="enableBreakdown ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-700/40' : ''"
-                @click="enableBreakdown && toggleBreakdown('model', model.model)"
-              >
-                <td
-                  class="max-w-[100px] truncate py-1.5 font-medium"
-                  :class="enableBreakdown ? 'text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300' : 'text-gray-900 dark:text-white'"
-                  :title="model.model"
-                >
-                  <span class="inline-flex items-center gap-1">
-                    <svg v-if="enableBreakdown && expandedKey === `model-${model.model}`" class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                    <svg v-else-if="enableBreakdown" class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                    {{ model.model }}
-                  </span>
-                </td>
-                <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
-                  {{ formatNumber(model.requests) }}
-                </td>
-                <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
-                  {{ formatTokens(model.total_tokens) }}
-                </td>
-                <td class="py-1.5 text-right text-green-600 dark:text-green-400">
-                  ${{ formatCost(model.actual_cost) }}
-                </td>
-                <td v-if="showAccountCost" class="py-1.5 text-right text-orange-500 dark:text-orange-400">
-                  ${{ formatCost(model.account_cost) }}
-                </td>
-                <td class="py-1.5 text-right text-gray-400 dark:text-gray-500">
-                  ${{ formatCost(model.cost) }}
-                </td>
-              </tr>
-              <tr v-if="expandedKey === `model-${model.model}`">
-                <td :colspan="distributionColspan" class="p-0">
-                  <UserBreakdownSubTable
-                    :items="breakdownItems"
-                    :loading="breakdownLoading"
-                    :show-account-cost="showAccountCost"
-                  />
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div
-      v-else-if="activeView === 'model_distribution'"
-      class="flex h-48 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
-    >
+      <template #model-cell="{ row }">
+        <span
+          class="inline-flex max-w-[100px] items-center gap-1 truncate font-medium"
+          :class="enableBreakdown ? 'text-primary' : 'text-highlighted'"
+          :title="row.original.model"
+        >
+          <UIcon
+            v-if="enableBreakdown"
+            :name="expandedKey === `model-${row.original.model}` ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+            class="size-3 shrink-0"
+          />
+          <span class="truncate">{{ row.original.model }}</span>
+        </span>
+      </template>
+      <template #expanded>
+        <UserBreakdownSubTable
+          :items="breakdownItems"
+          :loading="breakdownLoading"
+          :show-account-cost="showAccountCost"
+        />
+      </template>
+    </DistributionPanel>
+    <div v-else-if="activeView === 'model_distribution'" class="flex h-48 items-center justify-center text-sm text-muted">
       {{ t('admin.dashboard.noDataAvailable') }}
     </div>
 
     <div v-else-if="rankingLoading" class="flex h-48 items-center justify-center">
       <LoadingSpinner />
     </div>
-    <div
-      v-else-if="rankingError"
-      class="flex h-48 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
-    >
+    <div v-else-if="rankingError" class="flex h-48 items-center justify-center text-sm text-muted">
       {{ t('admin.dashboard.failedToLoad') }}
     </div>
-    <div v-else-if="rankingDisplayItems.length > 0 && rankingChartData" class="flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
-      <div class="h-48 w-48 shrink-0">
-        <Doughnut :data="rankingChartData" :options="rankingDoughnutOptions" />
-      </div>
-      <div class="max-h-48 w-full min-w-0 flex-1 overflow-auto">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="text-gray-500 dark:text-gray-400">
-              <th class="pb-2 text-left">{{ t('admin.dashboard.spendingRankingUser') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.spendingRankingRequests') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.spendingRankingTokens') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.spendingRankingSpend') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(item, index) in rankingDisplayItems"
-              :key="item.isOther ? 'others' : `${item.user_id}-${index}`"
-              class="border-t border-gray-100 transition-colors dark:border-dark-700"
-              :class="item.isOther
-                ? 'bg-gray-50/70 dark:bg-dark-700/20'
-                : 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-700/40'"
-              @click="item.isOther ? undefined : emit('ranking-click', item)"
-            >
-              <td class="py-1.5">
-                <div class="flex min-w-0 items-center gap-2">
-                  <span class="shrink-0 text-[11px] font-semibold text-gray-500 dark:text-gray-400">
-                    {{ item.isOther ? 'Σ' : `#${index + 1}` }}
-                  </span>
-                  <span
-                    class="block max-w-[140px] truncate font-medium text-gray-900 dark:text-white"
-                    :title="getRankingRowLabel(item)"
-                  >
-                    {{ getRankingRowLabel(item) }}
-                  </span>
-                </div>
-              </td>
-              <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
-                {{ formatNumber(item.requests) }}
-              </td>
-              <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
-                {{ formatTokens(item.tokens) }}
-              </td>
-              <td class="py-1.5 text-right text-green-600 dark:text-green-400">
-                ${{ formatCost(item.actual_cost) }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div
-      v-else
-      class="flex h-48 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
+    <DistributionPanel
+      v-else-if="rankingDisplayItems.length > 0 && rankingChartData"
+      :chart-data="rankingChartData"
+      :chart-options="rankingDoughnutOptions"
+      :rows="rankingDisplayItems"
+      :columns="rankingColumns"
+      :get-row-id="rankingRowId"
+      :is-selectable="(item) => !item.isOther"
+      @select="(item) => emit('ranking-click', item)"
     >
+      <template #user-cell="{ row }">
+        <span class="flex min-w-0 items-center gap-2">
+          <span class="shrink-0 text-[11px] font-semibold text-dimmed tabular-nums">
+            {{ row.original.isOther ? 'Σ' : `#${row.index + 1}` }}
+          </span>
+          <span class="block max-w-[140px] truncate font-medium text-highlighted" :title="getRankingRowLabel(row.original)">
+            {{ getRankingRowLabel(row.original) }}
+          </span>
+        </span>
+      </template>
+    </DistributionPanel>
+    <div v-else class="flex h-48 items-center justify-center text-sm text-muted">
       {{ t('admin.dashboard.noDataAvailable') }}
     </div>
-  </div>
+  </UCard>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, h, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js'
-import { Doughnut } from 'vue-chartjs'
+import type { TableColumn } from '@nuxt/ui'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import UserBreakdownSubTable from './UserBreakdownSubTable.vue'
+import DistributionPanel from './DistributionPanel.vue'
+import { chartTooltipStyle, doughnutDataset, segmentedTabsUi, useChartTheme } from './chartTheme'
 import type { ModelStat, UserSpendingRankingItem, UserBreakdownItem } from '@/types'
 import { getUserBreakdown } from '@/api/admin/dashboard'
 
@@ -337,23 +209,47 @@ const emit = defineEmits<{
 
 const enableRankingView = computed(() => props.enableRankingView)
 const showAccountCost = computed(() => props.showAccountCost)
-const distributionColspan = computed(() => showAccountCost.value ? 6 : 5)
 const activeView = ref<'model_distribution' | 'spending_ranking'>('model_distribution')
 
-const chartColors = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#ec4899',
-  '#14b8a6',
-  '#f97316',
-  '#6366f1',
-  '#84cc16',
-  '#06b6d4',
-  '#a855f7'
-]
+const theme = useChartTheme()
+const paletteColor = (index: number) => theme.value.categorical[index % theme.value.categorical.length]
+
+const sourceItems = computed(() => [
+  { label: t('usage.requestedModel'), value: 'requested' },
+  { label: t('usage.upstreamModel'), value: 'upstream' },
+  { label: t('usage.mapping'), value: 'mapping' }
+])
+const metricItems = computed(() => [
+  { label: t('admin.dashboard.metricTokens'), value: 'tokens' },
+  { label: t('admin.dashboard.metricActualCost'), value: 'actual_cost' }
+])
+const viewItems = computed(() => [
+  { label: t('admin.dashboard.viewModelDistribution'), value: 'model_distribution' },
+  { label: t('admin.dashboard.viewSpendingRanking'), value: 'spending_ranking' }
+])
+
+const numberCell = (value: string, tone = 'text-muted') => h('span', { class: `block text-right tabular-nums ${tone}` }, value)
+const rightHeader = (label: string) => () => h('span', { class: 'block text-right' }, label)
+
+const modelColumns = computed<TableColumn<ModelStat>[]>(() => [
+  { id: 'model', header: t('admin.dashboard.model') },
+  { id: 'requests', header: rightHeader(t('admin.dashboard.requests')), cell: ({ row }) => numberCell(formatNumber(row.original.requests)) },
+  { id: 'tokens', header: rightHeader(t('admin.dashboard.tokens')), cell: ({ row }) => numberCell(formatTokens(row.original.total_tokens)) },
+  { id: 'actual', header: rightHeader(t('admin.dashboard.actual')), cell: ({ row }) => numberCell(`$${formatCost(row.original.actual_cost)}`, 'text-success') },
+  ...(showAccountCost.value
+    ? [{ id: 'account', header: rightHeader(t('admin.dashboard.accountCost')), cell: ({ row }: { row: { original: ModelStat } }) => numberCell(`$${formatCost(row.original.account_cost)}`, 'text-warning') }]
+    : []),
+  { id: 'standard', header: rightHeader(t('admin.dashboard.standard')), cell: ({ row }) => numberCell(`$${formatCost(row.original.cost)}`, 'text-dimmed') }
+])
+
+const rankingColumns = computed<TableColumn<RankingDisplayItem>[]>(() => [
+  { id: 'user', header: t('admin.dashboard.spendingRankingUser') },
+  { id: 'requests', header: rightHeader(t('admin.dashboard.spendingRankingRequests')), cell: ({ row }) => numberCell(formatNumber(row.original.requests)) },
+  { id: 'tokens', header: rightHeader(t('admin.dashboard.spendingRankingTokens')), cell: ({ row }) => numberCell(formatTokens(row.original.tokens)) },
+  { id: 'spend', header: rightHeader(t('admin.dashboard.spendingRankingSpend')), cell: ({ row }) => numberCell(`$${formatCost(row.original.actual_cost)}`, 'text-success') }
+])
+
+const rankingRowId = (item: RankingDisplayItem, index: number) => (item.isOther ? 'others' : `${item.user_id}-${index}`)
 
 const displayModelStats = computed(() => {
   const sourceStats = props.source === 'upstream'
@@ -373,11 +269,11 @@ const chartData = computed(() => {
   return {
     labels: displayModelStats.value.map((m) => m.model),
     datasets: [
-      {
-        data: displayModelStats.value.map((m) => toFiniteNumber(props.metric === 'actual_cost' ? m.actual_cost : m.total_tokens)),
-        backgroundColor: chartColors.slice(0, displayModelStats.value.length),
-        borderWidth: 0
-      }
+      doughnutDataset(
+        theme.value,
+        displayModelStats.value.map((m) => toFiniteNumber(props.metric === 'actual_cost' ? m.actual_cost : m.total_tokens)),
+        displayModelStats.value.map((_, index) => paletteColor(index))
+      )
     ]
   }
 })
@@ -387,23 +283,18 @@ const rankingChartData = computed(() => {
 
   const labels = props.rankingItems.map((item, index) => `#${index + 1} ${getRankingUserLabel(item)}`)
   const data = props.rankingItems.map((item) => toFiniteNumber(item.actual_cost))
-  const backgroundColor = chartColors.slice(0, props.rankingItems.length)
+  const backgroundColor = props.rankingItems.map((_, index) => paletteColor(index))
 
   if (otherRankingItem.value) {
     labels.push(t('admin.dashboard.spendingRankingOther'))
     data.push(otherRankingItem.value.actual_cost)
-    backgroundColor.push('#94a3b8')
+    // "Others" always gets the dimmed neutral, never a palette colour.
+    backgroundColor.push(theme.value.other)
   }
 
   return {
     labels,
-    datasets: [
-      {
-        data,
-        backgroundColor,
-        borderWidth: 0
-      }
-    ]
+    datasets: [doughnutDataset(theme.value, data, backgroundColor)]
   }
 })
 
@@ -442,11 +333,13 @@ const doughnutOptions = computed(() => ({
   ...(props.animationDuration === undefined ? {} : { animation: { duration: props.animationDuration } }),
   responsive: true,
   maintainAspectRatio: false,
+  cutout: '62%',
   plugins: {
     legend: {
       display: false
     },
     tooltip: {
+      ...chartTooltipStyle(theme.value),
       callbacks: {
         label: (context: any) => {
           const value = context.raw as number
@@ -466,11 +359,13 @@ const rankingDoughnutOptions = computed(() => ({
   ...(props.animationDuration === undefined ? {} : { animation: { duration: props.animationDuration } }),
   responsive: true,
   maintainAspectRatio: false,
+  cutout: '62%',
   plugins: {
     legend: {
       display: false
     },
     tooltip: {
+      ...chartTooltipStyle(theme.value),
       callbacks: {
         label: (context: any) => {
           const value = context.raw as number
