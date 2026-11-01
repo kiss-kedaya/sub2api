@@ -81,21 +81,42 @@
 
         <section class="card deposit-view__history">
           <div class="deposit-view__history-head">
-            <div><h2>{{ t('deposit.history') }}</h2><p class="deposit-view__desc">{{ t('deposit.autoRefresh') }}</p></div>
+            <div><h2>{{ t('deposit.history') }}</h2><p class="deposit-view__desc">{{ pendingRows.length ? t('deposit.autoRefreshPending') : t('deposit.autoRefresh') }}</p></div>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="refreshingHistory" @click="refreshHistory">
               {{ refreshingHistory ? t('common.loading') : t('common.refresh') }}
             </button>
           </div>
           <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
+          <div v-if="pendingRows.length" class="deposit-view__pending" role="status">
+            <span class="deposit-view__pending-dot" aria-hidden="true"></span>
+            <div class="deposit-view__pending-body">
+              <strong>{{ t('deposit.pendingSummary', { n: pendingRows.length }) }}</strong>
+              <ul class="deposit-view__pending-list">
+                <li v-for="(item, i) in pendingRows.slice(0, PENDING_SUMMARY_LIMIT)" :key="item.row.tx_hash + '-' + i">{{ pendingLine(item) }}</li>
+              </ul>
+              <p v-if="pendingRows.length > PENDING_SUMMARY_LIMIT" class="deposit-view__pending-more">
+                {{ t('deposit.pendingMore', { n: pendingRows.length - PENDING_SUMMARY_LIMIT }) }}
+              </p>
+            </div>
+          </div>
           <div v-if="history.length" class="deposit-view__table-wrap">
             <table class="deposit-view__table">
               <thead><tr><th>{{ t('deposit.chain') }}</th><th>{{ t('deposit.amount') }}</th><th>{{ t('deposit.credited') }}</th><th>{{ t('common.status') }}</th><th>{{ t('deposit.txHash') }}</th><th>{{ t('deposit.time') }}</th></tr></thead>
               <tbody>
-                <tr v-for="(row, i) in history" :key="row.tx_hash + '-' + i">
+                <tr v-for="({ row, progress }, i) in rows" :key="row.tx_hash + '-' + i">
                   <td :data-label="t('deposit.chain')">{{ chainLabel(row.chain) }}</td>
                   <td :data-label="t('deposit.amount')" class="deposit-view__number">{{ row.amount }} <span class="deposit-view__muted">{{ row.token }}</span></td>
                   <td :data-label="t('deposit.credited')" class="deposit-view__number">{{ row.status === 'credited' ? fmtCredited(row.credited) : '—' }}</td>
-                  <td :data-label="t('common.status')"><span class="deposit-view__badge" :class="'deposit-view__badge--' + row.status">{{ statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span></td>
+                  <td :data-label="t('common.status')" class="deposit-view__status">
+                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + row.status">{{ statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span>
+                    <div v-if="progress" class="deposit-view__progress">
+                      <span class="deposit-view__progress-text">{{ progressText(progress) }}</span>
+                      <span class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
+                        :aria-valuemax="progress.required" :aria-valuenow="progress.done" :aria-label="progressText(progress)">
+                        <span class="deposit-view__progress-fill" :style="{ width: progress.percent + '%' }"></span>
+                      </span>
+                    </div>
+                  </td>
                   <td :data-label="t('deposit.txHash')" class="deposit-view__transaction">
                     <div v-if="row.tx_hash" class="deposit-view__hash-row">
                       <a v-if="explorerTxURL(row.chain, row.tx_hash)" :href="explorerTxURL(row.chain, row.tx_hash)"
@@ -131,10 +152,33 @@ import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { getDepositHistory, getDepositInfo, type DepositInfo, type DepositRecord } from '@/api/crypto'
 import { useClipboard } from '@/composables/useClipboard'
+import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
 
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
+const appStore = useAppStore()
+const authStore = useAuthStore()
+
+// While a deposit is confirming, re-read history quickly so the confirmation
+// count moves and the credit lands without a manual refresh. Otherwise keep
+// the slower refresh so a brand-new transfer still shows up on its own.
+const PENDING_POLL_MS = 8000
+const IDLE_POLL_MS = 30000
+const PENDING_SUMMARY_LIMIT = 3
+
+interface ConfirmationProgress {
+  done: number
+  required: number
+  remaining: number
+  percent: number
+}
+
+interface HistoryRow {
+  row: DepositRecord
+  progress: ConfirmationProgress | null
+}
 
 const info = ref<DepositInfo | null>(null)
 const history = ref<DepositRecord[]>([])
@@ -149,9 +193,36 @@ const refreshingHistory = ref(false)
 let disposed = false
 let copyTimer: ReturnType<typeof setTimeout> | null = null
 const qrCanvas = ref<HTMLCanvasElement | null>(null)
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 
 const current = computed(() => info.value?.chains.find((c) => c.chain === selectedChain.value))
+
+// Older backends send no confirmation fields, and a chain without a
+// confirmation target sends 0: both fall back to the plain status badge.
+function confirmationProgress(row: DepositRecord): ConfirmationProgress | null {
+  if (row.status !== 'pending') return null
+  const required = Math.floor(Number(row.required_confirmations))
+  const confirmations = Number(row.confirmations)
+  if (!Number.isFinite(required) || required <= 0 || !Number.isFinite(confirmations)) return null
+  const done = Math.min(Math.max(Math.floor(confirmations), 0), required)
+  return { done, required, remaining: required - done, percent: Math.round((done / required) * 100) }
+}
+
+function progressText(p: ConfirmationProgress): string {
+  return p.remaining > 0
+    ? t('deposit.confirmProgress', { done: p.done, required: p.required, remaining: p.remaining })
+    : t('deposit.confirmProgressDone', { done: p.done, required: p.required })
+}
+
+const rows = computed<HistoryRow[]>(() => history.value.map(row => ({ row, progress: confirmationProgress(row) })))
+const pendingRows = computed(() => rows.value.filter(item => item.row.status === 'pending'))
+
+// One summary line per confirming deposit: "10 USDT · BSC (BEP20) · 2/3".
+function pendingLine(item: HistoryRow): string {
+  const parts = [`${item.row.amount} ${item.row.token}`, chainLabel(item.row.chain)]
+  if (item.progress) parts.push(`${item.progress.done}/${item.progress.required}`)
+  return parts.join(' · ')
+}
 
 function chainLabel(chain: string): string {
   switch (chain) {
@@ -213,7 +284,7 @@ function statusText(status: string): string {
     case 'credited':
       return t('deposit.statusCredited')
     case 'pending':
-      return t('deposit.statusPending')
+      return t('deposit.statusConfirming')
     case 'ignored':
       return t('deposit.statusIgnored')
     case 'reverted':
@@ -246,17 +317,57 @@ async function renderQR() {
   }
 }
 
+function depositKey(row: DepositRecord): string {
+  return row.chain + ':' + row.tx_hash
+}
+
+// A deposit that was confirming on the last read and is credited now has just
+// landed: tell the user and reload the balance shown in the header.
+function announceCredited(previous: DepositRecord[], next: DepositRecord[]) {
+  const wasPending = new Set(previous.filter(r => r.status === 'pending' && r.tx_hash).map(depositKey))
+  const landed = next.filter(r => r.status === 'credited' && r.tx_hash && wasPending.has(depositKey(r)))
+  if (!landed.length) return
+  for (const r of landed) appStore.showSuccess(t('deposit.creditedToast', { amount: fmtCredited(r.credited) }))
+  void authStore.refreshUser().catch(() => undefined)
+}
+
+function stopPolling() {
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = null
+}
+
+// Re-armed after every read so the cadence follows the latest data: fast while
+// something is confirming, slow otherwise, and paused while the tab is hidden.
+function schedulePoll() {
+  stopPolling()
+  if (disposed || !info.value?.enabled || loadError.value) return
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+  pollTimer = setTimeout(() => void refreshHistory(), pendingRows.value.length ? PENDING_POLL_MS : IDLE_POLL_MS)
+}
+
 async function refreshHistory() {
   if (refreshingHistory.value) return
   refreshingHistory.value = true
   try {
-    history.value = await getDepositHistory()
+    const next = await getDepositHistory()
+    if (disposed) return
+    announceCredited(history.value, next)
+    history.value = next
     historyError.value = false
   } catch {
     historyError.value = true
   } finally {
     refreshingHistory.value = false
+    schedulePoll()
   }
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    stopPolling()
+    return
+  }
+  if (info.value?.enabled && !loadError.value && !loading.value) void refreshHistory()
 }
 
 async function load() {
@@ -282,17 +393,15 @@ watch(current, () => {
   void renderQR()
 }, { flush: 'post' })
 
-onMounted(async () => {
-  await load()
-  if (disposed) return
-  pollTimer = setInterval(() => {
-    if (info.value?.enabled && !loadError.value && !loading.value) void refreshHistory()
-  }, 30000)
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  void load()
 })
 
 onUnmounted(() => {
   disposed = true
-  if (pollTimer) clearInterval(pollTimer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopPolling()
   if (copyTimer) clearTimeout(copyTimer)
 })
 </script>
@@ -356,6 +465,19 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
 .deposit-view__badge--pending { background: #d9770612; border-color: #d9770630; color: #d97706; }
 .deposit-view__badge--ignored, .deposit-view__badge--reverted { background: #ef444412; border-color: #ef444430; color: #ef4444; }
 .deposit-view__reason { display: block; max-width: 21rem; margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
+.deposit-view__status { min-width: 9rem; }
+.deposit-view__progress { display: grid; gap: .35rem; max-width: 12rem; margin-top: .45rem; }
+.deposit-view__progress-text { color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.deposit-view__progress-track { display: block; height: .25rem; border-radius: 99px; background: #d9770624; overflow: hidden; }
+.deposit-view__progress-fill { display: block; height: 100%; border-radius: inherit; background: #d97706; transition: width .3s ease; }
+.deposit-view__pending { display: flex; align-items: flex-start; gap: .625rem; min-width: 0; margin-bottom: 1rem; padding: .875rem 1rem; border: 1px solid #d9770638; border-radius: .625rem; background: #d9770609; font-size: .8125rem; line-height: 1.6; }
+.deposit-view__pending-dot { width: .5rem; height: .5rem; flex-shrink: 0; margin-top: .45rem; border-radius: 50%; background: #d97706; animation: deposit-view-pulse 1.6s ease-in-out infinite; }
+.deposit-view__pending-body { min-width: 0; flex: 1 1 auto; }
+.deposit-view__pending-body strong { font-weight: 600; }
+.deposit-view__pending-list { margin: .25rem 0 0; padding: 0; list-style: none; font-variant-numeric: tabular-nums; }
+.deposit-view__pending-list li { overflow-wrap: anywhere; }
+.deposit-view__pending-more { margin-top: .25rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; }
+@keyframes deposit-view-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 .deposit-view__empty { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 3rem 1.25rem; text-align: center; font-size: .875rem; }
 .deposit-view__empty p { max-width: 27rem; font-size: .8125rem; color: var(--signal-muted, #8c99a6); line-height: 1.7; }
 .deposit-view__history-error { margin-bottom: 1rem; color: #d97706; font-size: .8125rem; line-height: 1.6; }
@@ -380,6 +502,9 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
   .deposit-view__table td:first-child, .deposit-view__table td:last-child { grid-column: 1 / -1; }
   .deposit-view__table td:nth-child(4) { grid-column: 1 / -1; }
   .deposit-view__table td.deposit-view__transaction { grid-column: 1 / -1; min-width: 0; max-width: none; }
+  .deposit-view__table td.deposit-view__status { min-width: 0; }
+  .deposit-view__progress { max-width: none; }
+  .deposit-view__pending { padding: .75rem .875rem; }
 }
-@media (prefers-reduced-motion: reduce) { .deposit-view__chain { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .deposit-view__chain, .deposit-view__progress-fill { transition: none; } .deposit-view__pending-dot { animation: none; } }
 </style>

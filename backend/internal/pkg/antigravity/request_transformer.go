@@ -670,7 +670,11 @@ func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
 		// 正预算需要做上限与 max_tokens 约束；动态预算（-1）直接透传给上游。
 		if budget > 0 {
 			// gemini-2.5-flash 上限
-			if strings.Contains(req.Model, "gemini-2.5-flash") && budget > Gemini25FlashThinkingBudgetLimit {
+			// Every flash tier caps thinking lower than the pro tiers. The 2.5-only
+			// check let newer flash models (e.g. gemini-3.8-flash) carry a budget
+			// the upstream rejects with 400 INVALID_ARGUMENT and empty details,
+			// which surfaced to clients as a broken stream before the first token.
+			if strings.Contains(req.Model, "flash") && budget > Gemini25FlashThinkingBudgetLimit {
 				budget = Gemini25FlashThinkingBudgetLimit
 			}
 
