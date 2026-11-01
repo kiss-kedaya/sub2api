@@ -48,16 +48,11 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 	// message is client context rather than model output. Rewrite only these
 	// synthetic messages to the user role; real assistant turns keep their role.
 	body = sanitizeDeepSeekNativeResponsesInput(body)
-	if s.cache == nil {
-		c.Set(deepSeekNativeReasoningScopeKey, nil)
-		c.Set(deepSeekNativeReasoningSourceKey, nil)
-		return body
-	}
 	keyID := getAPIKeyIDFromContext(c)
-	if keyID <= 0 {
+	canLookupReasoning := s.cache != nil && keyID > 0
+	if !canLookupReasoning {
 		c.Set(deepSeekNativeReasoningScopeKey, nil)
 		c.Set(deepSeekNativeReasoningSourceKey, nil)
-		return body
 	}
 	// A WebSocket may reuse its gin context for many turns. Always derive the
 	// current identity again; a prior turn's cached scope is not authorization.
@@ -81,9 +76,14 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		c.Set(deepSeekNativeReasoningSourceKey, nil)
 		return body
 	}
-	scopeString := deepSeekNativeReasoningDigest(fmt.Sprintf("%d\x00%s\x00%s", source.keyID, source.conversation, source.model))
-	c.Set(deepSeekNativeReasoningScopeKey, scopeString)
-	c.Set(deepSeekNativeReasoningSourceKey, source)
+	if !canLookupReasoning {
+		c.Set(deepSeekNativeReasoningScopeKey, nil)
+		c.Set(deepSeekNativeReasoningSourceKey, nil)
+	} else {
+		scopeString := deepSeekNativeReasoningDigest(fmt.Sprintf("%d\x00%s\x00%s", source.keyID, source.conversation, source.model))
+		c.Set(deepSeekNativeReasoningScopeKey, scopeString)
+		c.Set(deepSeekNativeReasoningSourceKey, source)
+	}
 	input := gjson.GetBytes(body, "input")
 	if !input.IsArray() {
 		return body
@@ -115,9 +115,14 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 			removals[i] = true
 			continue
 		}
+		if !canLookupReasoning {
+			removals[i] = true
+			continue
+		}
 		lookups++
 		if lookups > deepSeekNativeReasoningMaxItems || ctx.Err() != nil {
-			break
+			removals[i] = true
+			continue
 		}
 		cached, err := s.cache.GetReasoningContent(ctx, deepSeekNativeReasoningCacheKey(source.keyID, item.Get("id").String()))
 		if err != nil || len(cached) > deepSeekNativeReasoningMaxBytes {
@@ -140,22 +145,30 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 			continue
 		}
 		if len(entry.Content) > deepSeekNativeReasoningMaxBytes-addedBytes {
-			break
+			removals[i] = true
+			continue
 		}
 		if updated, err := sjson.SetRawBytes([]byte(item.Raw), "content", entry.Content); err == nil {
 			added := max(len(entry.Content), len(updated)-len(item.Raw))
 			if added > deepSeekNativeReasoningMaxBytes-addedBytes {
-				break
+				removals[i] = true
+				continue
 			}
 			replacements[i] = updated
 			addedBytes += added
 		}
 	}
+	// Keep the original presence bit separate from the post-recovery list. A
+	// removed reasoning item is still evidence that the following assistant/tool
+	// turn came from thinking-mode history and needs a safe downgrade.
 	hasReasoning := false
-	for _, item := range items {
-		if item.Get("type").String() == "reasoning" {
+	lastUser := -1
+	for i, item := range items {
+		if deepSeekNativeInputItemType(item) == "reasoning" {
 			hasReasoning = true
-			break
+		}
+		if deepSeekNativeInputItemType(item) == "message" && item.Get("role").String() == "user" {
+			lastUser = i
 		}
 	}
 	// DeepSeek's native Responses endpoint runs in thinking mode unless the
@@ -170,26 +183,6 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 	}
 	requiresReplay := hasReasoning || thinkingMode
 	needsRewrite := len(replacements) > 0 || len(removals) > 0
-	if !needsRewrite && requiresReplay {
-		reasoningSinceUser := false
-		for _, item := range items {
-			kind := item.Get("type").String()
-			if kind == "reasoning" {
-				reasoningSinceUser = true
-			}
-			if kind == "message" && item.Get("role").String() == "user" {
-				reasoningSinceUser = false
-			}
-			if kind == "message" && item.Get("role").String() == "assistant" && !reasoningSinceUser &&
-				strings.TrimSpace(deepSeekNativeMessageText(item.Get("content"))) != "" {
-				needsRewrite = true
-				break
-			}
-		}
-	}
-	if !needsRewrite {
-		return body
-	}
 	// Rebuild the input and request once. Rewriting the entire growing request
 	// once per restored item would multiply both allocations and copy time.
 	// Assistant messages without a preceding reasoning item are rewritten to
@@ -201,24 +194,58 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 	_ = restored.WriteByte('[')
 	first := true
 	reasoningSinceUser := false
+	reasoningValid := false
+	turnHadValidReasoning := false
+	coveredCalls := make(map[string]bool)
 	for i, item := range items {
 		if removals[i] {
+			if deepSeekNativeInputItemType(item) == "reasoning" {
+				reasoningSinceUser = false
+				reasoningValid = false
+			}
 			continue
 		}
 		raw := []byte(item.Raw)
 		if replacement, ok := replacements[i]; ok {
 			raw = replacement
 		}
-		kind := item.Get("type").String()
-		if kind == "reasoning" {
+		kind := deepSeekNativeInputItemType(item)
+		if kind == "reasoning" && hasDeepSeekNativeReasoningText(gjson.GetBytes(raw, "content")) {
 			reasoningSinceUser = true
+			reasoningValid = true
+			turnHadValidReasoning = true
 		}
 		if kind == "message" && item.Get("role").String() == "user" {
 			reasoningSinceUser = false
+			reasoningValid = false
+			turnHadValidReasoning = false
 		}
-		if kind == "message" && item.Get("role").String() == "assistant" && requiresReplay && !reasoningSinceUser &&
-			strings.TrimSpace(deepSeekNativeMessageText(item.Get("content"))) != "" {
-			raw = deepSeekNativeAsUserMessage(raw)
+		if kind == "function_call" || kind == "custom_tool_call" {
+			covered := reasoningValid || (i < lastUser && reasoningSinceUser)
+			coveredCalls[item.Get("call_id").String()] = covered
+			if requiresReplay && !covered {
+				raw = deepSeekNativeAsUserContext(raw, "[Previous tool context]")
+			}
+		}
+		if kind == "function_call_output" || kind == "custom_tool_call_output" {
+			covered, known := coveredCalls[item.Get("call_id").String()]
+			if !known {
+				covered = reasoningValid || (i < lastUser && reasoningSinceUser)
+			}
+			if requiresReplay && !covered {
+				raw = deepSeekNativeAsUserContext(raw, "[Previous tool context]")
+			}
+			reasoningValid = false
+			turnHadValidReasoning = false
+		}
+		if kind == "message" && item.Get("role").String() == "assistant" {
+			if requiresReplay && !turnHadValidReasoning && !reasoningValid && (i >= lastUser || !reasoningSinceUser) {
+				raw = deepSeekNativeAsUserMessage(raw)
+			}
+			reasoningValid = false
+		}
+		if !bytes.Equal(raw, []byte(item.Raw)) {
+			needsRewrite = true
 		}
 		if !first {
 			_ = restored.WriteByte(',')
@@ -227,6 +254,9 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		_, _ = restored.Write(raw)
 	}
 	_ = restored.WriteByte(']')
+	if !needsRewrite {
+		return body
+	}
 	if next, err := sjson.SetRawBytes(body, "input", restored.Bytes()); err == nil {
 		return next
 	}
@@ -273,7 +303,7 @@ func sanitizeDeepSeekNativeResponsesInput(body []byte) []byte {
 	items := input.Array()
 	changed := false
 	for i, item := range items {
-		if item.Get("type").String() != "message" || item.Get("role").String() != "assistant" {
+		if deepSeekNativeInputItemType(item) != "message" || item.Get("role").String() != "assistant" {
 			continue
 		}
 		text := strings.TrimSpace(deepSeekNativeMessageText(item.Get("content")))
@@ -304,6 +334,16 @@ func sanitizeDeepSeekNativeResponsesInput(body []byte) []byte {
 		return next
 	}
 	return body
+}
+
+func deepSeekNativeInputItemType(item gjson.Result) string {
+	if kind := item.Get("type").String(); kind != "" {
+		return kind
+	}
+	if item.Get("role").String() != "" {
+		return "message"
+	}
+	return ""
 }
 
 // deepSeekNativeAsUserMessage rewrites a message to the user role and converts
@@ -347,6 +387,22 @@ func deepSeekNativeAsUserMessage(raw []byte) []byte {
 		return next
 	}
 	return updated
+}
+
+func deepSeekNativeAsUserContext(raw []byte, label string) []byte {
+	message := map[string]any{
+		"type": "message",
+		"role": "user",
+		"content": []map[string]string{{
+			"type": "input_text",
+			"text": strings.TrimSpace(label) + "\n" + string(raw),
+		}},
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }
 
 func deepSeekNativeMessageText(content gjson.Result) string {
