@@ -1,203 +1,133 @@
 <template>
-  <aside
-    class="sidebar"
-    :class="[
-      sidebarCollapsed ? 'w-[72px]' : 'w-64',
-      { '-translate-x-full lg:translate-x-0': !mobileOpen, 'sidebar-mobile-open': mobileOpen, 'signal-sidebar': isConsoleSignal }
-    ]"
+  <!-- UDashboardSidebar: collapsible to a 4rem rail, resizable, a slideover on phones.
+       Root is the sidebar's own fragment (rail + resize handle + drawer). -->
+  <UDashboardSidebar
+    id="console"
+    v-model:open="mobileOpen"
+    v-model:collapsed="sidebarCollapsed"
+    collapsible
+    resizable
+    class="console-sidebar bg-(--app-sidebar-bg)"
+    :ui="{ body: 'min-h-0 overflow-visible', footer: 'sidebar-footer lg:border-t lg:border-default' }"
   >
-    <!-- Header (UDashboardSidebar header): logo, site name and version -->
-    <div class="sidebar-header" :class="{ 'sidebar-header-collapsed': sidebarCollapsed }">
-      <router-link
-        :to="homePath"
-        class="sidebar-logo flex h-8 w-8 items-center justify-center overflow-hidden rounded-md transition-opacity hover:opacity-80"
-        :title="sidebarCollapsed ? siteName : undefined"
-        @click="handleMenuItemClick(homePath)"
-      >
-        <img v-if="settingsLoaded" :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
-      </router-link>
-      <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-        <router-link :to="homePath" class="sidebar-brand-title" @click="handleMenuItemClick(homePath)">
-          {{ siteName }}
+    <!-- Header (TeamsMenu in the template): logo, site name and version. -->
+    <template #header="{ collapsed }">
+      <div class="sidebar-brand" :class="{ 'sidebar-brand--collapsed': collapsed }">
+        <router-link :to="homePath" class="sidebar-brand-link" :title="collapsed ? siteName : undefined" @click="closeMobile">
+          <span class="sidebar-logo">
+            <img v-if="settingsLoaded" :src="siteLogo || '/logo.svg'" alt="Logo" class="size-full object-contain" />
+          </span>
+          <span v-if="!collapsed" class="sidebar-brand-title">{{ siteName }}</span>
         </router-link>
-        <!-- Version Badge -->
-        <VersionBadge :version="siteVersion" />
+        <VersionBadge v-if="!collapsed" class="sidebar-version" :version="siteVersion" />
       </div>
-    </div>
+    </template>
 
-    <!-- Search button (UDashboardSearchButton); the palette opens with it or Ctrl/⌘ K. -->
-    <div v-if="isConsoleSignal" class="sidebar-search">
-      <ConsoleNavigationSearch :collapsed="sidebarCollapsed" />
-    </div>
+    <template #default="{ collapsed }">
+      <!-- UDashboardSearchButton: opens the UDashboardSearch palette (also Ctrl/⌘ K). -->
+      <UDashboardSearchButton
+        :collapsed="collapsed"
+        tooltip
+        class="console-search-trigger bg-transparent ring-default"
+      />
 
-    <!-- Body: navigation (UNavigationMenu, vertical pills) -->
-    <nav ref="sidebarNavRef" class="sidebar-nav scrollbar-hide">
-      <!-- Admin View: Admin menu first, then personal menu -->
-      <template v-if="isAdmin">
-        <!-- Admin Section -->
-        <div class="sidebar-section">
-          <template v-for="item in adminNavItems" :key="item.path">
-            <!-- Collapsible group (has children) -->
-            <template v-if="item.children?.length">
-              <!-- Collapsed rail: the children open in a menu beside the rail. -->
-              <UDropdownMenu
-                v-if="sidebarCollapsed"
-                :items="collapsedGroupItems(item)"
-                :content="{ side: 'right', align: 'start', sideOffset: 10 }"
-                :ui="{ content: 'min-w-48' }"
-              >
-                <button
-                  type="button"
-                  class="sidebar-link sidebar-link-collapsed sidebar-group-trigger mb-0.5 w-full"
-                  :class="{ 'sidebar-link-active': isGroupActive(item) }"
-                  :title="item.label"
-                  :aria-label="item.label"
-                >
-                  <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-                </button>
-              </UDropdownMenu>
-              <button
-                v-else
-                type="button"
-                class="sidebar-link mb-0.5 w-full"
-                :class="{ 'sidebar-link-active': isGroupActive(item) && !isGroupExpanded(item) }"
-                :aria-expanded="isGroupExpanded(item) ? 'true' : 'false'"
-                @click="handleGroupClick(item)"
-              >
-                <component :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-                <span class="sidebar-label sidebar-label-flex">
-                  <span class="min-w-0 truncate">{{ item.label }}</span>
-                  <ChevronDownIcon
-                    class="sidebar-group-chevron h-4 w-4 flex-shrink-0 transition-transform duration-200"
-                    :class="isGroupExpanded(item) ? 'rotate-180' : ''"
-                  />
-                </span>
-              </button>
-              <!-- Children: an indented list on a hairline, labels only -->
-              <div v-if="!sidebarCollapsed && isGroupExpanded(item)" class="sidebar-children">
-                <template v-for="child in item.children" :key="child.path">
-                  <p v-if="child.section" class="sidebar-child-section">
-                    {{ child.label }}
-                  </p>
-                  <router-link
-                    v-else
-                    :to="child.path"
-                    class="sidebar-link sidebar-child-link"
-                    :class="{ 'sidebar-link-active': route.path === child.path }"
-                    @click="handleMenuItemClick(child.path)"
-                  >
-                    <span class="min-w-0 truncate">{{ child.label }}</span>
-                  </router-link>
-                </template>
-              </div>
-            </template>
-            <!-- Normal item (no children) -->
-            <router-link
-              v-else
-              :to="item.path"
-              class="sidebar-link mb-0.5"
-              :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              :id="
-                item.path === '/admin/accounts'
-                  ? 'sidebar-channel-manage'
-                  : item.path === '/admin/groups'
-                    ? 'sidebar-group-manage'
-                    : item.path === '/admin/redeem'
-                      ? 'sidebar-wallet'
-                      : undefined
-              "
-              @click="handleMenuItemClick(item.path)"
-            >
-              <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-              <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </router-link>
+      <!-- The links scroll on their own; the bottom group stays in view. -->
+      <nav ref="sidebarNavRef" class="sidebar-nav scrollbar-hide" :aria-label="t('common.toggleMenu')">
+        <UNavigationMenu
+          v-if="mainNavItems.length"
+          v-model="expandedGroups"
+          :items="toMenuItems(mainNavItems, collapsed)"
+          :collapsed="collapsed"
+          orientation="vertical"
+          tooltip
+          :popover="{ mode: 'click' }"
+        >
+          <!-- Leading icon: the lucide icon, or an admin-uploaded SVG (sanitized). -->
+          <template #item-leading="{ item, active, ui }">
+            <span
+              v-if="item.iconSvg"
+              data-slot="linkLeadingIcon"
+              class="sidebar-svg-icon"
+              :class="ui.linkLeadingIcon({ active })"
+              v-html="sanitizeSvg(String(item.iconSvg))"
+            ></span>
+            <UIcon
+              v-else-if="item.icon"
+              :name="item.icon"
+              data-slot="linkLeadingIcon"
+              :class="ui.linkLeadingIcon({ active, disabled: !!item.disabled })"
+            />
           </template>
+
+          <!-- Collapsed rail: a group opens its children (with tier headers) beside the rail. -->
+          <template #item-content="{ item, close, ui }">
+            <ul data-slot="childList" :class="ui.childList({ class: 'console-flyout-list' })">
+              <li data-slot="childLabel" :class="ui.childLabel()">{{ item.label }}</li>
+              <template v-for="row in flyoutRows(item)" :key="row.key">
+                <li v-if="row.section" data-slot="childLabel" :class="ui.childLabel({ class: 'sidebar-flyout-section' })">{{ row.label }}</li>
+                <li v-else data-slot="childItem" :class="ui.childItem()">
+                  <ULink
+                    :to="row.path"
+                    :active="row.active"
+                    raw
+                    data-slot="childLink"
+                    :class="ui.childLink({ active: row.active })"
+                    @click="onFlyoutSelect(row.path, close)"
+                  >
+                    <span data-slot="childLinkLabel" :class="ui.childLinkLabel()">{{ row.label }}</span>
+                  </ULink>
+                </li>
+              </template>
+            </ul>
+          </template>
+        </UNavigationMenu>
+      </nav>
+
+      <!-- Bottom group: subscription status, docs and model plaza. -->
+      <div class="sidebar-secondary">
+        <div v-if="showSubscriptions" class="sidebar-subscriptions" :class="{ 'sidebar-subscriptions--collapsed': collapsed }">
+          <SubscriptionProgressMini />
+          <span v-if="!collapsed" class="sidebar-subscriptions-label" aria-hidden="true">{{ t('nav.mySubscriptions') }}</span>
         </div>
+        <UNavigationMenu
+          v-if="secondaryNavItems.length"
+          :items="secondaryNavItems"
+          :collapsed="collapsed"
+          orientation="vertical"
+          tooltip
+        />
+      </div>
+    </template>
 
-        <!-- Personal Section for Admin (hidden in simple mode) -->
-        <div v-if="!authStore.isSimpleMode" class="sidebar-section">
-          <div class="sidebar-section-title" :class="{ 'sidebar-section-title-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
-            <span class="sidebar-section-title-text" :class="{ 'sidebar-section-title-text-collapsed': sidebarCollapsed }">
-              {{ t('nav.myAccount') }}
-            </span>
-          </div>
-
-          <router-link
-            v-for="item in personalNavItems"
-            :key="item.path"
-            :to="item.path"
-            class="sidebar-link mb-0.5"
-            :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-            :title="sidebarCollapsed ? item.label : undefined"
-            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
-            @click="handleMenuItemClick(item.path)"
-          >
-            <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-          </router-link>
-        </div>
-      </template>
-
-      <!-- Regular User View -->
-      <template v-else-if="!appStore.backendModeEnabled">
-        <div class="sidebar-section">
-          <router-link
-            v-for="item in userNavItems"
-            :key="item.path"
-            :to="item.path"
-            class="sidebar-link mb-0.5"
-            :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-            :title="sidebarCollapsed ? item.label : undefined"
-            :data-tour="item.path === '/keys' ? 'sidebar-my-keys' : undefined"
-            @click="handleMenuItemClick(item.path)"
-          >
-            <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-            <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-          </router-link>
-        </div>
-      </template>
-    </nav>
-
-    <!-- Footer: the user menu (account, theme, logout). Collapse and light/dark live in the navbar. -->
-    <div v-if="authStore.user" class="sidebar-footer">
-      <UserMenu variant="sidebar" :collapsed="sidebarCollapsed" />
-    </div>
-  </aside>
-
-  <!-- Mobile Overlay -->
-  <transition name="sidebar-overlay">
-    <div
-      v-if="mobileOpen"
-      class="sidebar-overlay fixed inset-0 z-30 lg:hidden"
-      @click="closeMobile"
-    ></div>
-  </transition>
+    <!-- Footer: the user menu (account, theme, language, logout). -->
+    <template #footer="{ collapsed }">
+      <UserMenu v-if="authStore.user" variant="sidebar" :collapsed="collapsed" />
+    </template>
+  </UDashboardSidebar>
 </template>
 
 <script setup lang="ts">
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
+import type { NavigationMenuItem } from '@nuxt/ui'
+import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore, useSubscriptionStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
-import Icon from '@/components/icons/Icon.vue'
+import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
-import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
+import { resolveDocsUrl } from '@/utils/docsUrl'
+import { FeatureFlags, isFeatureFlagEnabled, makeSidebarFlag } from '@/utils/featureFlags'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
-import { useConsoleSignal } from '@/composables/useConsoleSignal'
-import type { DropdownMenuItem } from '@nuxt/ui'
-import ConsoleNavigationSearch from './ConsoleNavigationSearch.vue'
+import { SIDEBAR_TOUR_ANCHORS, SIDEBAR_TOUR_SELECTORS } from '@/components/Guide/steps'
 import UserMenu from './UserMenu.vue'
 
 interface NavItem {
   path: string
   label: string
-  icon: unknown
+  /** Iconify name (lucide set, bundled at build time). */
+  icon?: string
+  /** Admin-uploaded custom menu icon, sanitized before rendering. */
   iconSvg?: string
   hideInSimpleMode?: boolean
   children?: NavItem[]
@@ -238,432 +168,33 @@ function applyFeatureFlags(items: NavItem[]): NavItem[] {
 const { t, locale } = useI18n()
 
 const route = useRoute()
-const { isConsoleSignal } = useConsoleSignal()
-const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
+const subscriptionStore = useSubscriptionStore()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 
-const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
-const mobileOpen = computed(() => appStore.mobileOpen)
+// The store stays the source of truth (UDashboardGroup persists the collapsed state too).
+const sidebarCollapsed = computed({
+  get: () => appStore.sidebarCollapsed,
+  set: (value: boolean) => appStore.setSidebarCollapsed(value)
+})
+const mobileOpen = computed({
+  get: () => appStore.mobileOpen,
+  set: (value: boolean) => appStore.setMobileOpen(value)
+})
 const isAdmin = computed(() => authStore.isAdmin)
 const sidebarNavRef = ref<HTMLElement | null>(null)
 
 const homePath = computed(() => authStore.isAdminObserver ? '/admin/usage' : isAdmin.value ? '/admin/dashboard' : '/dashboard')
-
-// Per-group expand/collapse overrides. A group with no entry follows the
-// automatic behavior (expanded while the active route is one of its children);
-// a chevron click records the user's choice, which wins over the automatic
-// state so an active group can still be collapsed manually.
-const groupExpandOverrides = ref<Map<string, boolean>>(new Map())
 
 // Site settings from appStore (cached, no flicker)
 const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
-
-// SVG Icon Components
-const DashboardIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z'
-        })
-      ]
-    )
-}
-
-const KeyIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z'
-        })
-      ]
-    )
-}
-
-const BatchImageIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.25 2.25 0 00-1.906-1.059H9.554a2.25 2.25 0 00-1.906 1.059l-.821 1.316z'
-        }),
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z'
-        })
-      ]
-    )
-}
-
-const InfiniteCanvasIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M3.75 4.5A.75.75 0 014.5 3.75h15a.75.75 0 01.75.75v15a.75.75 0 01-.75.75h-15a.75.75 0 01-.75-.75v-15z'
-        }),
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M8.25 8.25h7.5v7.5h-7.5z'
-        }),
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M12 10.5v3m-1.5-1.5h3'
-        })
-      ]
-    )
-}
-
-const ChartIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z'
-        })
-      ]
-    )
-}
-
-const GiftIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M21 11.25v8.25a1.5 1.5 0 01-1.5 1.5H5.25a1.5 1.5 0 01-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 109.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1114.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z'
-        })
-      ]
-    )
-}
-
-const UserIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z'
-        })
-      ]
-    )
-}
-
-const UsersIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z'
-        })
-      ]
-    )
-}
-
-const FolderIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z'
-        })
-      ]
-    )
-}
-
-const ChannelIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0l4.179 2.25L12 17.25 2.25 12m15.321-2.25l4.179 2.25L12 17.25l-9.75-5.25'
-        })
-      ]
-    )
-}
-
-const CreditCardIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z'
-        })
-      ]
-    )
-}
-
-const RechargeSubscriptionIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'currentColor', viewBox: '0 0 1024 1024' },
-      [
-        h('path', {
-          d: 'M512 992C247.3 992 32 776.7 32 512S247.3 32 512 32s480 215.3 480 480c0 84.4-22.2 167.4-64.2 240-8.9 15.3-28.4 20.6-43.7 11.7-15.3-8.8-20.5-28.4-11.7-43.7 36.4-62.9 55.6-134.8 55.6-208 0-229.4-186.6-416-416-416S96 282.6 96 512s186.6 416 416 416c17.7 0 32 14.3 32 32s-14.3 32-32 32z'
-        }),
-        h('path', {
-          d: 'M640 512H384c-17.7 0-32-14.3-32-32s14.3-32 32-32h256c17.7 0 32 14.3 32 32s-14.3 32-32 32zM640 640H384c-17.7 0-32-14.3-32-32s14.3-32 32-32h256c17.7 0 32 14.3 32 32s-14.3 32-32 32z'
-        }),
-        h('path', {
-          d: 'M512 480c-8.2 0-16.4-3.1-22.6-9.4l-128-128c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l128 128c12.5 12.5 12.5 32.8 0 45.3-6.3 6.3-14.5 9.4-22.7 9.4z'
-        }),
-        h('path', {
-          d: 'M512 480c-8.2 0-16.4-3.1-22.6-9.4-12.5-12.5-12.5-32.8 0-45.3l128-128c12.5-12.5 32.8-12.5 45.3 0s12.5 32.8 0 45.3l-128 128c-6.3 6.3-14.5 9.4-22.7 9.4z'
-        }),
-        h('path', {
-          d: 'M512 736c-17.7 0-32-14.3-32-32V448c0-17.7 14.3-32 32-32s32 14.3 32 32v256c0 17.7-14.3 32-32 32zM896 992H512c-17.7 0-32-14.3-32-32s14.3-32 32-32h306.8l-73.4-73.4c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l128 128c9.2 9.2 11.9 22.9 6.9 34.9S908.9 992 896 992z'
-        })
-      ]
-    )
-}
-
-const GlobeIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418'
-        })
-      ]
-    )
-}
-
-const ServerIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z'
-        })
-      ]
-    )
-}
-
-const PluginIcon = {
-  render: () => h(Icon, { name: 'cube' })
-}
-
-const BellIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9a6 6 0 10-12 0v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0'
-        })
-      ]
-    )
-}
-
-const TicketIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 010 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 010-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375z'
-        })
-      ]
-    )
-}
-
-const WalletIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3'
-        })
-      ]
-    )
-}
-
-const CogIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z'
-        }),
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z'
-        })
-      ]
-    )
-}
-
-const OrderIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15a2.25 2.25 0 012.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z'
-        })
-      ]
-    )
-}
-
-const OrderListIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z'
-        })
-      ]
-    )
-}
-
-const SignalIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M9.348 14.651a3.75 3.75 0 010-5.303m5.304 0a3.75 3.75 0 010 5.303m-7.425 2.122a6.75 6.75 0 010-9.546m9.546 0a6.75 6.75 0 010 9.546M5.106 18.894c-3.808-3.807-3.808-9.98 0-13.788m13.788 0c3.808 3.807 3.808 9.98 0 13.788M12 12h.008v.008H12V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z'
-        })
-      ]
-    )
-}
-
-const ShieldIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z'
-        })
-      ]
-    )
-}
-
-const PriceTagIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z'
-        }),
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M6 6h.008v.008H6V6z'
-        })
-      ]
-    )
-}
-
-const ChevronDownIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'm19.5 8.25-7.5 7.5-7.5-7.5'
-        })
-      ]
-    )
-}
+const showSubscriptions = computed(() => !!authStore.user && subscriptionStore.hasActiveSubscriptions)
 
 // Public-settings flags go through the registry in utils/featureFlags.ts,
 // which handles the opt-in vs opt-out fallback when settings haven't loaded
@@ -690,27 +221,27 @@ const RECHARGE_CENTER_MENU_ID = '322273f5aaa4d036'
 function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   const items: NavItem[] = []
   if (withDashboard) {
-    items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
+    items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: 'i-lucide-layout-dashboard' })
   }
   items.push(
-    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
-    { path: '/infinite-canvas', label: t('nav.infiniteCanvas'), icon: InfiniteCanvasIcon },
-    { path: '/deposit', label: t('nav.cryptoDeposit'), icon: WalletIcon, featureFlag: flagCrypto },
-    { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
-    { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
-    { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
-    { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
-    { path: '/purchase', label: t('nav.buySubscription'), icon: RechargeSubscriptionIcon, hideInSimpleMode: true, featureFlag: flagPayment },
-    { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
-    { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
-    { path: '/affiliate', label: t('nav.affiliate'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate },
-    { path: '/tickets', label: t('tickets.title'), icon: { render: () => h(Icon, { name: 'chat' }) } },
-    { path: '/profile', label: t('nav.profile'), icon: UserIcon },
-    { path: '/security', label: locale.value === 'zh' ? '安全记录' : 'Security records', icon: ShieldIcon },
+    { path: '/keys', label: t('nav.apiKeys'), icon: 'i-lucide-key-round' },
+    { path: '/infinite-canvas', label: t('nav.infiniteCanvas'), icon: 'i-lucide-frame' },
+    { path: '/deposit', label: t('nav.cryptoDeposit'), icon: 'i-lucide-wallet', featureFlag: flagCrypto },
+    { path: '/batch-image', label: t('nav.batchImage'), icon: 'i-lucide-images', hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
+    { path: '/usage', label: t('nav.usage'), icon: 'i-lucide-chart-column', hideInSimpleMode: true },
+    { path: '/available-channels', label: t('nav.availableChannels'), icon: 'i-lucide-layers', hideInSimpleMode: true, featureFlag: flagAvailableChannels },
+    { path: '/monitor', label: t('nav.channelStatus'), icon: 'i-lucide-activity', featureFlag: flagChannelMonitor },
+    { path: '/purchase', label: t('nav.buySubscription'), icon: 'i-lucide-circle-dollar-sign', hideInSimpleMode: true, featureFlag: flagPayment },
+    { path: '/orders', label: t('nav.myOrders'), icon: 'i-lucide-receipt-text', hideInSimpleMode: true, featureFlag: flagPayment },
+    { path: '/redeem', label: t('nav.redeem'), icon: 'i-lucide-gift', hideInSimpleMode: true },
+    { path: '/affiliate', label: t('nav.affiliate'), icon: 'i-lucide-user-plus', hideInSimpleMode: true, featureFlag: flagAffiliate },
+    { path: '/tickets', label: t('tickets.title'), icon: 'i-lucide-message-circle' },
+    { path: '/profile', label: t('nav.profile'), icon: 'i-lucide-user' },
+    { path: '/security', label: locale.value === 'zh' ? '安全记录' : 'Security records', icon: 'i-lucide-shield-check' },
     ...customMenuItemsForUser.value.map((item): NavItem => ({
       path: `/custom/${item.id}`,
       label: item.label,
-      icon: null,
+      icon: 'i-lucide-file-text',
       iconSvg: item.icon_svg,
     })),
   )
@@ -749,101 +280,101 @@ const customMenuItemsForAdmin = computed(() => {
 // Admin navigation items
 const adminNavItems = computed((): NavItem[] => {
   if (authStore.isAdminObserver) {
-    return [{ path: '/admin/usage', label: t('nav.usage'), icon: ChartIcon }]
+    return [{ path: '/admin/usage', label: t('nav.usage'), icon: 'i-lucide-chart-column' }]
   }
   const baseItems: NavItem[] = [
-    { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
+    { path: '/admin/dashboard', label: t('nav.dashboard'), icon: 'i-lucide-layout-dashboard' },
     {
       path: '/admin/ops-center',
       label: locale.value === 'zh' ? '运营中心' : 'Operations center',
-      icon: ChartIcon,
+      icon: 'i-lucide-gauge',
       expandOnly: true,
       children: [
-        { path: '/admin/ops-center', label: locale.value === 'zh' ? '运营总览' : 'Operations overview', icon: ChartIcon },
-        { path: '#ops-tier-accounts', label: locale.value === 'zh' ? '账号运营' : 'Account operations', icon: UsersIcon, section: true },
-        { path: '/admin/account-ops', label: locale.value === 'zh' ? '账号通知' : 'Account notifications', icon: BellIcon },
-        { path: '/admin/ops-automation', label: locale.value === 'zh' ? '账号自动化' : 'Account automation', icon: ChartIcon },
-        { path: '/admin/credential-guard', label: locale.value === 'zh' ? '凭证巡检' : 'Credential inspection', icon: ShieldIcon },
-        { path: '#ops-tier-channels', label: locale.value === 'zh' ? '渠道运营' : 'Channel operations', icon: ChannelIcon, section: true },
-        { path: '/admin/channel-operations', label: locale.value === 'zh' ? '渠道运维' : 'Channel operations', icon: ChannelIcon },
-        { path: '/admin/model-comparison', label: locale.value === 'zh' ? '模型比价' : 'Model comparison', icon: PriceTagIcon },
-        { path: '/admin/mihomo', label: locale.value === 'zh' ? '代理出口' : 'Managed proxies', icon: GlobeIcon },
-        { path: '#ops-tier-diagnostics', label: locale.value === 'zh' ? '监控诊断' : 'Monitoring and diagnostics', icon: SignalIcon, section: true },
-        { path: '/admin/ops', label: locale.value === 'zh' ? '渠道状态' : 'Channel status', icon: SignalIcon, featureFlag: flagOpsMonitoring },
-        { path: '/admin/ops?alertRules=1', label: locale.value === 'zh' ? '告警阈值' : 'Alert thresholds', icon: BellIcon, featureFlag: flagOpsMonitoring },
-        { path: '/admin/connections', label: locale.value === 'zh' ? '连接诊断' : 'Connections', icon: ChartIcon },
-        { path: '/admin/group-cache-tests', label: locale.value === 'zh' ? '分组缓存测试' : 'Cache tests', icon: ChartIcon },
-        { path: '/admin/request-captures', label: locale.value === 'zh' ? '请求采集' : 'Request capture', icon: ChartIcon },
-        { path: '/admin/traffic', label: locale.value === 'zh' ? '用户流量' : 'User traffic', icon: ChartIcon },
-        { path: '#ops-tier-platform', label: locale.value === 'zh' ? '平台工具' : 'Platform tools', icon: GlobeIcon, section: true },
-        { path: '/admin/excel-grants', label: locale.value === 'zh' ? 'Excel 协议授权' : 'Excel authorization', icon: ShieldIcon },
-        { path: '/admin/serverless', label: locale.value === 'zh' ? '地区路由' : 'Regional routing', icon: GlobeIcon },
+        { path: '/admin/ops-center', label: locale.value === 'zh' ? '运营总览' : 'Operations overview' },
+        { path: '#ops-tier-accounts', label: locale.value === 'zh' ? '账号运营' : 'Account operations', section: true },
+        { path: '/admin/account-ops', label: locale.value === 'zh' ? '账号通知' : 'Account notifications' },
+        { path: '/admin/ops-automation', label: locale.value === 'zh' ? '账号自动化' : 'Account automation' },
+        { path: '/admin/credential-guard', label: locale.value === 'zh' ? '凭证巡检' : 'Credential inspection' },
+        { path: '#ops-tier-channels', label: locale.value === 'zh' ? '渠道运营' : 'Channel operations', section: true },
+        { path: '/admin/channel-operations', label: locale.value === 'zh' ? '渠道运维' : 'Channel operations' },
+        { path: '/admin/model-comparison', label: locale.value === 'zh' ? '模型比价' : 'Model comparison' },
+        { path: '/admin/mihomo', label: locale.value === 'zh' ? '代理出口' : 'Managed proxies' },
+        { path: '#ops-tier-diagnostics', label: locale.value === 'zh' ? '监控诊断' : 'Monitoring and diagnostics', section: true },
+        { path: '/admin/ops', label: locale.value === 'zh' ? '渠道状态' : 'Channel status', featureFlag: flagOpsMonitoring },
+        { path: '/admin/ops?alertRules=1', label: locale.value === 'zh' ? '告警阈值' : 'Alert thresholds', featureFlag: flagOpsMonitoring },
+        { path: '/admin/connections', label: locale.value === 'zh' ? '连接诊断' : 'Connections' },
+        { path: '/admin/group-cache-tests', label: locale.value === 'zh' ? '分组缓存测试' : 'Cache tests' },
+        { path: '/admin/request-captures', label: locale.value === 'zh' ? '请求采集' : 'Request capture' },
+        { path: '/admin/traffic', label: locale.value === 'zh' ? '用户流量' : 'User traffic' },
+        { path: '#ops-tier-platform', label: locale.value === 'zh' ? '平台工具' : 'Platform tools', section: true },
+        { path: '/admin/excel-grants', label: locale.value === 'zh' ? 'Excel 协议授权' : 'Excel authorization' },
+        { path: '/admin/serverless', label: locale.value === 'zh' ? '地区路由' : 'Regional routing' },
       ],
     },
-    { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
-    { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon },
+    { path: '/admin/users', label: t('nav.users'), icon: 'i-lucide-users', hideInSimpleMode: true },
+    { path: '/admin/groups', label: t('nav.groups'), icon: 'i-lucide-folder' },
     {
       path: '/admin/channels',
       label: t('nav.channelManagement'),
-      icon: ChannelIcon,
+      icon: 'i-lucide-layers',
       hideInSimpleMode: true,
       expandOnly: true,
       children: [
-        { path: '/admin/channels/pricing', label: t('nav.channelPricing'), icon: PriceTagIcon },
-        { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), icon: SignalIcon, featureFlag: flagChannelMonitor },
+        { path: '/admin/channels/pricing', label: t('nav.channelPricing') },
+        { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), featureFlag: flagChannelMonitor },
       ],
     },
-    { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
-    { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
-    { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
-    { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
-    { path: '/admin/tickets', label: t('tickets.adminTitle'), icon: { render: () => h(Icon, { name: 'chat' }) } },
-    { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
+    { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: 'i-lucide-credit-card', hideInSimpleMode: true },
+    { path: '/admin/accounts', label: t('nav.accounts'), icon: 'i-lucide-globe' },
+    { path: '/admin/plugins', label: t('nav.plugins'), icon: 'i-lucide-box', featureFlag: flagPluginManagement },
+    { path: '/admin/announcements', label: t('nav.announcements'), icon: 'i-lucide-megaphone' },
+    { path: '/admin/tickets', label: t('tickets.adminTitle'), icon: 'i-lucide-message-circle' },
+    { path: '/admin/proxies', label: t('nav.proxies'), icon: 'i-lucide-server' },
     {
       path: '/admin/security-audit',
       label: t('nav.securityAudit'),
-      icon: ShieldIcon,
+      icon: 'i-lucide-shield',
       expandOnly: true,
       featureFlag: flagRiskControl,
       children: [
-        { path: '/admin/risk-control', label: t('nav.contentModeration'), icon: ShieldIcon },
-{path:'/admin/ip-risk',label:locale.value==='zh'?'IP风控':'IP policies',icon:ShieldIcon},
-{path:'/admin/ip-audit',label:locale.value==='zh'?'IP审计':'IP audit',icon:ShieldIcon},
-        { path: '/admin/prompt-audit', label: t('nav.promptAudit'), icon: ShieldIcon },
-        { path: '/admin/security-penalties', label: locale.value === 'zh' ? '分层安全限制' : 'Layered API restrictions', icon: ShieldIcon },
+        { path: '/admin/risk-control', label: t('nav.contentModeration') },
+        { path: '/admin/ip-risk', label: locale.value === 'zh' ? 'IP风控' : 'IP policies' },
+        { path: '/admin/ip-audit', label: locale.value === 'zh' ? 'IP审计' : 'IP audit' },
+        { path: '/admin/prompt-audit', label: t('nav.promptAudit') },
+        { path: '/admin/security-penalties', label: locale.value === 'zh' ? '分层安全限制' : 'Layered API restrictions' },
       ],
     },
-    { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: TicketIcon, hideInSimpleMode: true },
-    { path: '/admin/crypto', label: t('nav.cryptoDeposits'), icon: WalletIcon, hideInSimpleMode: true },
-    { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: GiftIcon, hideInSimpleMode: true },
+    { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: 'i-lucide-ticket', hideInSimpleMode: true },
+    { path: '/admin/crypto', label: t('nav.cryptoDeposits'), icon: 'i-lucide-wallet', hideInSimpleMode: true },
+    { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: 'i-lucide-badge-percent', hideInSimpleMode: true },
     {
       path: '/admin/affiliates',
       label: t('nav.affiliateManagement'),
-      icon: UsersIcon,
+      icon: 'i-lucide-user-plus',
       hideInSimpleMode: true,
       expandOnly: true,
       featureFlag: flagAffiliate,
       children: [
-        { path: '/admin/affiliates/invites', label: t('nav.affiliateInviteRecords'), icon: UsersIcon },
-        { path: '/admin/affiliates/rebates', label: t('nav.affiliateRebateRecords'), icon: OrderIcon },
-        { path: '/admin/affiliates/transfers', label: t('nav.affiliateTransferRecords'), icon: CreditCardIcon },
+        { path: '/admin/affiliates/invites', label: t('nav.affiliateInviteRecords') },
+        { path: '/admin/affiliates/rebates', label: t('nav.affiliateRebateRecords') },
+        { path: '/admin/affiliates/transfers', label: t('nav.affiliateTransferRecords') },
       ],
     },
     {
       path: '/admin/orders',
       label: t('nav.orderManagement'),
-      icon: OrderIcon,
+      icon: 'i-lucide-clipboard-list',
       hideInSimpleMode: true,
       expandOnly: true,
       featureFlag: flagAdminPayment,
       children: [
-        { path: '/admin/orders/dashboard', label: t('nav.paymentDashboard'), icon: ChartIcon },
-        { path: '/admin/orders', label: t('nav.orderManagement'), icon: OrderIcon },
-        { path: '/admin/orders/plans', label: t('nav.paymentPlans'), icon: CreditCardIcon },
+        { path: '/admin/orders/dashboard', label: t('nav.paymentDashboard') },
+        { path: '/admin/orders', label: t('nav.orderManagement') },
+        { path: '/admin/orders/plans', label: t('nav.paymentPlans') },
       ],
     },
-    { path: '/admin/usage', label: t('nav.usage'), icon: ChartIcon },
-    { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: ShieldIcon, hideInSimpleMode: true }
+    { path: '/admin/usage', label: t('nav.usage'), icon: 'i-lucide-chart-column' },
+    { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: 'i-lucide-scroll-text', hideInSimpleMode: true }
   ]
 
   const visible = applyFeatureFlags(baseItems)
@@ -851,61 +382,54 @@ const adminNavItems = computed((): NavItem[] => {
   // 简单模式下，在系统设置前插入 API密钥
   if (authStore.isSimpleMode) {
     const filtered = visible.filter(item => !item.hideInSimpleMode)
-    filtered.push({ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon })
-    filtered.push({ path: '/admin/settings', label: t('nav.settings'), icon: CogIcon })
+    filtered.push({ path: '/keys', label: t('nav.apiKeys'), icon: 'i-lucide-key-round' })
+    filtered.push({ path: '/admin/settings', label: t('nav.settings'), icon: 'i-lucide-settings' })
     for (const cm of customMenuItemsForAdmin.value) {
-      filtered.push({ path: `/custom/${cm.id}`, label: cm.label, icon: null, iconSvg: cm.icon_svg })
+      filtered.push({ path: `/custom/${cm.id}`, label: cm.label, icon: 'i-lucide-file-text', iconSvg: cm.icon_svg })
     }
     return filtered
   }
 
-  visible.push({ path: '/admin/settings', label: t('nav.settings'), icon: CogIcon })
+  visible.push({ path: '/admin/settings', label: t('nav.settings'), icon: 'i-lucide-settings' })
   for (const cm of customMenuItemsForAdmin.value) {
-    visible.push({ path: `/custom/${cm.id}`, label: cm.label, icon: null, iconSvg: cm.icon_svg })
+    visible.push({ path: `/custom/${cm.id}`, label: cm.label, icon: 'i-lucide-file-text', iconSvg: cm.icon_svg })
   }
   return visible
 })
 
-/** Menu for a group on the collapsed rail: its title, tier headers and child links. */
-function collapsedGroupItems(item: NavItem): DropdownMenuItem[] {
-  return [
-    { type: 'label', label: item.label },
-    ...(item.children ?? []).map((child): DropdownMenuItem =>
-      child.section
-        ? { type: 'label', label: child.label, class: 'pt-2 text-xs font-medium text-muted' }
-        : {
-            label: child.label,
-            to: child.path,
-            active: route.path === child.path,
-            onSelect: () => handleMenuItemClick(child.path)
-          }
-    )
-  ]
+/** Admins: admin menu, then "My account" (hidden in simple mode). Users: their own menu. */
+const mainNavItems = computed((): NavItem[] => {
+  if (isAdmin.value) {
+    if (authStore.isSimpleMode) return adminNavItems.value
+    return [
+      ...adminNavItems.value,
+      { path: '#my-account', label: t('nav.myAccount'), section: true },
+      ...personalNavItems.value
+    ]
+  }
+  return appStore.backendModeEnabled ? [] : userNavItems.value
+})
+
+// Expanded groups (UNavigationMenu's accordion v-model, keyed by group path). A group with
+// no entry follows the automatic behavior (expanded while the active route is one of its
+// children); a chevron click records the user's choice, which wins over the automatic
+// state so an active group can still be collapsed manually.
+const groupExpandOverrides = ref<Map<string, boolean>>(new Map())
+
+function isGroupExpanded(item: NavItem): boolean {
+  const override = groupExpandOverrides.value.get(item.path)
+  if (override !== undefined) return override
+  return isGroupActive(item)
 }
 
-function closeMobile() {
-  appStore.setMobileOpen(false)
-}
-
-function handleMenuItemClick(itemPath: string) {
-  if (mobileOpen.value) {
-    setTimeout(() => {
-      appStore.setMobileOpen(false)
-    }, 150)
+const expandedGroups = computed<string[]>({
+  get: () => mainNavItems.value.filter((item) => item.children?.length && isGroupExpanded(item)).map((item) => item.path),
+  set: (open) => {
+    for (const item of mainNavItems.value) {
+      if (item.children?.length) groupExpandOverrides.value.set(item.path, open.includes(item.path))
+    }
   }
-
-  // Map paths to tour selectors
-  const pathToSelector: Record<string, string> = {
-    '/admin/groups': '#sidebar-group-manage',
-    '/admin/accounts': '#sidebar-channel-manage',
-    '/keys': '[data-tour="sidebar-my-keys"]'
-  }
-
-  const selector = pathToSelector[itemPath]
-  if (selector && onboardingStore.isCurrentStep(selector)) {
-    onboardingStore.nextStep(500)
-  }
-}
+})
 
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path + '/')
@@ -916,34 +440,109 @@ function isGroupActive(item: NavItem): boolean {
   return item.children.some(child => !child.section && route.path === child.path)
 }
 
-function isGroupExpanded(item: NavItem): boolean {
-  const override = groupExpandOverrides.value.get(item.path)
-  if (override !== undefined) return override
-  return isGroupActive(item)
+// Onboarding tour anchors (components/Guide/steps.ts) on the matching links.
+function tourAttrs(path: string): Record<string, string> {
+  const anchor = SIDEBAR_TOUR_ANCHORS[path]
+  return anchor ? { 'data-tour': anchor } : {}
 }
 
-function toggleGroup(item: NavItem) {
-  groupExpandOverrides.value.set(item.path, !isGroupExpanded(item))
+/** Maps our nav declarations onto UNavigationMenu items (the declarations stay the source). */
+function toMenuItems(items: NavItem[], collapsed: boolean): NavigationMenuItem[] {
+  return items.map((item): NavigationMenuItem => {
+    if (item.section) {
+      return { type: 'label', label: item.label, value: item.path, class: 'sidebar-section-label' }
+    }
+    if (item.children?.length) {
+      const active = isGroupActive(item)
+      return {
+        label: item.label,
+        icon: item.icon,
+        type: 'trigger',
+        value: item.path,
+        'aria-label': item.label,
+        // The group button is highlighted when it hides the current page (rail, or closed).
+        active: active && (collapsed || !isGroupExpanded(item)),
+        children: item.children.map((child): NavigationMenuItem => child.section
+          ? { type: 'label', label: child.label, value: child.path, class: 'sidebar-child-section' }
+          : {
+              label: child.label,
+              to: child.path,
+              value: child.path,
+              active: route.path === child.path,
+              onSelect: () => handleMenuItemClick(child.path)
+            })
+      }
+    }
+    return {
+      label: item.label,
+      icon: item.iconSvg ? undefined : item.icon,
+      iconSvg: item.iconSvg,
+      to: item.path,
+      value: item.path,
+      active: isActive(item.path),
+      'aria-label': item.label,
+      ...tourAttrs(item.path),
+      onSelect: () => handleMenuItemClick(item.path)
+    }
+  })
 }
 
-/**
- * Click handler for collapsible parent items.
- * - When sidebar is collapsed: do nothing (children are not visible).
- * - When `expandOnly` is true: only toggle expand state.
- * - Otherwise (default, e.g. /admin/orders): navigate to the parent path
- *   (router-link semantics) and ensure the group is expanded.
- */
-function handleGroupClick(item: NavItem) {
-  if (sidebarCollapsed.value) return
-  if (item.expandOnly) {
-    toggleGroup(item)
-    return
+interface FlyoutRow {
+  key: string
+  label: string
+  path: string
+  section: boolean
+  active: boolean
+}
+
+/** Rows of a group's flyout on the collapsed rail: tier headers and child links. */
+function flyoutRows(item: NavigationMenuItem): FlyoutRow[] {
+  return (item.children ?? []).map((child, index) => ({
+    key: String(child.value ?? index),
+    label: String(child.label ?? ''),
+    path: typeof child.to === 'string' ? child.to : '',
+    section: child.type === 'label',
+    active: !!child.active
+  }))
+}
+
+function onFlyoutSelect(path: string, close?: () => void) {
+  close?.()
+  handleMenuItemClick(path)
+}
+
+// Bottom group, like the template's Feedback / Help links: docs and the model plaza.
+const docUrl = computed(() => resolveDocsUrl(appStore.docUrl))
+const modelPlazaEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.modelPlaza))
+const secondaryNavItems = computed((): NavigationMenuItem[] => {
+  const items: NavigationMenuItem[] = []
+  if (authStore.user && modelPlazaEnabled.value) {
+    items.push({
+      label: t('nav.modelPlaza'),
+      icon: 'i-lucide-layout-grid',
+      to: { path: '/model-plaza', query: { embedded: '1' } },
+      active: route.path === '/model-plaza',
+      'aria-label': t('nav.modelPlaza')
+    })
   }
-  // Push to path and ensure expanded
-  if (route.path !== item.path) {
-    router.push(item.path)
+  if (docUrl.value) {
+    items.push({ label: t('nav.docs'), icon: 'i-lucide-book-open', to: docUrl.value, target: '_blank', 'aria-label': t('nav.docs') })
   }
-  groupExpandOverrides.value.set(item.path, true)
+  return items
+})
+
+function closeMobile() {
+  appStore.setMobileOpen(false)
+}
+
+function handleMenuItemClick(itemPath: string) {
+  // The next page mounts a fresh layout, so close the phone drawer right away.
+  closeMobile()
+
+  const selector = SIDEBAR_TOUR_SELECTORS[itemPath]
+  if (selector && onboardingStore.isCurrentStep(selector)) {
+    onboardingStore.nextStep(500)
+  }
 }
 
 // Fetch admin settings (for feature-gated nav items like Ops).
@@ -969,6 +568,15 @@ onMounted(() => {
         sidebarNavRef.value.scrollTop = appStore.sidebarScrollTop
       }
     })
+  } else {
+    // First visit: bring the current page's link into view (long admin lists).
+    void nextTick(() => {
+      const nav = sidebarNavRef.value
+      const link = nav?.querySelector<HTMLElement>('[aria-current="page"]')
+      if (!nav || !link) return
+      const top = link.getBoundingClientRect().top - nav.getBoundingClientRect().top
+      if (top + link.offsetHeight > nav.clientHeight) nav.scrollTop += top - nav.clientHeight / 2
+    })
   }
 })
 
@@ -979,320 +587,192 @@ onBeforeUnmount(() => {
 })
 </script>
 
-<style scoped>
-.sidebar-logo {
-  flex: 0 0 2rem;
-  min-width: 2rem;
-}
-
+<style>
+/* Brand row in the sidebar header (where the template has TeamsMenu). */
 .sidebar-brand {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  white-space: nowrap;
-  transition:
-    max-width 0.22s ease,
-    opacity 0.14s ease,
-    transform 0.14s ease;
-  max-width: 12rem;
+  align-items: center;
+  gap: 8px;
 }
 
-.sidebar-brand-collapsed {
-  max-width: 0;
+.sidebar-brand--collapsed {
+  justify-content: center;
+}
+
+.sidebar-brand-link {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: calc(var(--ui-radius) * 1.5);
+  color: var(--ui-text-highlighted);
+  transition: background-color 150ms ease;
+}
+
+.sidebar-brand--collapsed .sidebar-brand-link {
+  flex: 0 0 auto;
+}
+
+.sidebar-brand-link:hover {
+  background: color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
+}
+
+.sidebar-brand-link:focus-visible {
+  outline: 2px solid var(--ui-border-inverted);
+  outline-offset: -2px;
+}
+
+.sidebar-logo {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
   overflow: hidden;
-  opacity: 0;
-  transform: translateX(-4px);
-  pointer-events: none;
+  border-radius: var(--ui-radius);
 }
 
 .sidebar-brand-title {
-  display: block;
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
 }
 
-.sidebar-section-title {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-height: 1.25rem;
-  overflow: hidden;
-  white-space: nowrap;
+/* VersionBadge: a small neutral tag after the name (its amber update state stays). */
+.sidebar-version {
+  flex-shrink: 0;
 }
 
-.sidebar-section-title-text {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition:
-    opacity 0.16s ease,
-    transform 0.16s ease;
+.sidebar-version > button {
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: var(--ui-radius);
+  font-size: 11px;
+  line-height: 18px;
 }
 
-.sidebar-section-title::after {
-  content: '';
-  position: absolute;
-  left: 0.75rem;
-  right: 0.75rem;
-  top: 50%;
-  height: 1px;
-  background: rgb(229 231 235);
-  opacity: 0;
-  transform: translateY(-50%);
-  transition: opacity 0.18s ease;
+html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text-muted);
 }
 
-.dark .sidebar-section-title::after {
-  background: rgb(55 65 81);
+/* The link list scrolls by itself; the search button and the bottom group stay put. */
+.sidebar-nav {
+  min-height: 0;
+  flex: 1 1 auto;
+  margin-inline: -16px;
+  padding-inline: 16px;
+  overflow-y: auto;
 }
 
-.sidebar-section-title-text-collapsed {
-  opacity: 0;
-  transform: translateX(-4px);
+.sidebar-section-label {
+  padding-top: 14px;
 }
 
-.sidebar-section-title-collapsed::after {
-  opacity: 1;
-  transition-delay: 0.08s;
-}
-
-.sidebar-label {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition:
-    max-width 0.2s ease,
-    opacity 0.12s ease,
-    transform 0.12s ease;
-  max-width: 12rem;
-}
-
-.sidebar-label-flex {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.sidebar-label-collapsed {
-  max-width: 0;
-  opacity: 0;
-  transform: translateX(-4px);
-  pointer-events: none;
+.sidebar-child-section,
+.sidebar-flyout-section {
+  padding-top: 8px;
+  color: var(--ui-text-muted);
+  font-weight: 500;
 }
 
 /* Custom SVG icon in sidebar: constrain size without overriding uploaded SVG colors */
 .sidebar-svg-icon {
   color: currentColor;
-}
-
-.sidebar-svg-icon :deep(svg) {
   display: block;
-  width: 1.25rem;
-  height: 1.25rem;
 }
 
-.sidebar-overlay {
-  background: rgb(0 0 0 / 0.5);
+.sidebar-svg-icon > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.sidebar-overlay-enter-active,
-.sidebar-overlay-leave-active {
-  transition: opacity 150ms ease;
+.sidebar-secondary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.sidebar-overlay-enter-from,
-.sidebar-overlay-leave-to {
-  opacity: 0;
-}
-</style>
-
-<style>
-/*
-  Nuxt UI dashboard sidebar (UDashboardSidebar + vertical UNavigationMenu pills).
-  Selectors start with `.console-signal aside.sidebar.signal-sidebar` so they outrank
-  console-signal.css, console-studio.css and console-elevation.css whatever order the
-  stylesheets load in. Sizes apply to both themes; colours below `html:not(.dark)` are
-  the light theme only, so the night theme keeps its --signal-* colours.
-*/
-.console-signal aside.sidebar.signal-sidebar .sidebar-header {
-  height: 64px;
-  gap: 10px;
-  padding-inline: 16px;
+/* Subscription status (SubscriptionProgressMini) drawn as a nav row: icon, label, dots. */
+.sidebar-subscriptions {
+  position: relative;
 }
 
-.console-signal aside.sidebar.signal-sidebar .sidebar-header-collapsed {
-  gap: 0;
-  padding-inline: 20px;
-}
-
-.console-signal aside.sidebar.signal-sidebar .sidebar-brand-title {
-  font-family: inherit;
-  font-size: 15px;
-  line-height: 20px;
-  font-weight: 600;
-}
-
-.console-signal aside.sidebar.signal-sidebar .sidebar-brand > .relative > button {
-  padding: 0 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 18px;
-}
-
-.console-signal aside.sidebar.signal-sidebar .sidebar-search {
-  flex-shrink: 0;
-  padding: 4px 12px 0;
-}
-
-.console-signal aside.sidebar.signal-sidebar .sidebar-nav {
-  padding: 8px 12px 16px;
-}
-
-.console-signal aside.sidebar.signal-sidebar .sidebar-section {
-  margin-bottom: 16px;
-}
-
-.console-signal aside.sidebar.signal-sidebar .sidebar-section-title {
-  margin-bottom: 2px;
-  padding: 6px 10px;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-/* Links: 32px pills, 20px icons, 14px medium labels, 6px radius. */
-.console-signal aside.sidebar.signal-sidebar .sidebar-link {
+.sidebar-subscriptions > div > button {
+  display: flex;
+  width: 100%;
   min-height: 32px;
-  gap: 8px;
-  padding: 5px 9px;
-  border-radius: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: calc(var(--ui-radius) * 1.5);
+  background: transparent;
+  color: var(--ui-text-muted);
+}
+
+.sidebar-subscriptions > div > button:hover {
+  background: color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
+  color: var(--ui-text-highlighted);
+}
+
+.sidebar-subscriptions > div > button > svg {
+  width: 20px;
+  height: 20px;
+  color: var(--ui-text-dimmed);
+}
+
+.sidebar-subscriptions > div > button span {
+  color: var(--ui-text-muted);
+}
+
+.sidebar-subscriptions-label {
+  position: absolute;
+  top: 50%;
+  left: 36px;
+  translate: 0 -50%;
+  overflow: hidden;
+  max-width: calc(100% - 96px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--ui-text-muted);
   font-size: 14px;
-  line-height: 20px;
   font-weight: 500;
 }
 
-.console-signal aside.sidebar.signal-sidebar .sidebar-link-collapsed {
-  gap: 0;
-  padding-inline: 13px;
+.sidebar-subscriptions > div > div {
+  top: auto;
+  right: auto;
+  bottom: 100%;
+  left: 0;
+  margin: 0 0 8px;
 }
 
-.console-signal aside.sidebar.signal-sidebar .sidebar-group-trigger[data-state='open'] {
-  background: var(--signal-nav-hover);
-  color: var(--signal-nav-strong);
+.sidebar-subscriptions--collapsed > div > button {
+  justify-content: center;
+  padding-inline: 6px;
 }
 
-/* Children: indented on a hairline that lines up with the parent icon. */
-.console-signal aside.sidebar.signal-sidebar .sidebar-children {
-  margin: 2px 0 6px 19px;
-  padding-left: 7px;
-  border-left: 1px solid var(--signal-nav-line);
+.sidebar-subscriptions--collapsed > div > button > div {
+  display: none;
 }
 
-.console-signal aside.sidebar.signal-sidebar .sidebar-child-link {
-  min-height: 30px;
-  margin-bottom: 1px;
-  padding-block: 4px;
+.sidebar-subscriptions--collapsed > div > div {
+  bottom: 0;
+  left: 100%;
+  margin: 0 0 0 10px;
 }
 
-.console-signal aside.sidebar.signal-sidebar .sidebar-child-section {
-  padding: 8px 10px 2px;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 500;
-}
-
-.console-signal aside.sidebar.signal-sidebar .sidebar-footer {
-  margin-top: auto;
-  padding: 8px 12px;
-  border-top: 1px solid var(--signal-nav-line);
-}
-
-@media (max-width: 639px) {
-  .console-signal aside.sidebar.signal-sidebar .sidebar-link {
-    min-height: 44px;
-  }
-}
-
-/* ---- Light theme colours: Nuxt UI neutral pills, highlighted labels, dimmed icons ---- */
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-brand-title,
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-brand-title:hover {
-  color: #171717;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-brand > .relative > button:not([class*='bg-amber']) {
-  background: #fafafa;
-  color: #525252;
-  box-shadow: inset 0 0 0 1px #e5e5e5;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-section-title {
-  color: #171717;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-child-section {
-  color: #737373;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link {
-  color: #737373;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link > :is(svg, .sidebar-svg-icon),
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-group-chevron {
-  color: #a3a3a3;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link:hover,
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-group-trigger[data-state='open'] {
-  background: #fafafa;
-  color: #171717;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link:hover > :is(svg, .sidebar-svg-icon) {
-  color: #404040;
-}
-
-/* After :hover so an active pill keeps its fill under the pointer. */
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link-active,
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link-active:hover {
-  background: #f4f4f4;
-  color: #171717;
-  font-weight: 500;
-  box-shadow: none;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-link-active > :is(svg, .sidebar-svg-icon) {
-  color: #171717;
-}
-
-/* The sakura dot marks pages; a group button keeps its chevron there instead. */
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar button.sidebar-link-active::after {
-  content: none;
-}
-
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-children,
-html:not(.dark) .console-signal aside.sidebar.signal-sidebar .sidebar-footer {
-  border-color: #e5e5e5;
-}
-
-html:not(.dark) .sidebar-overlay {
-  background: rgb(245 245 245 / 0.75);
-}
-
-@media (max-width: 1023px) {
-  html:not(.dark) .console-signal aside.sidebar.sidebar-mobile-open {
-    box-shadow: 0 20px 25px -5px rgb(10 10 10 / 0.1), 0 8px 10px -6px rgb(10 10 10 / 0.08);
-  }
+.console-flyout-list {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
 }
 </style>

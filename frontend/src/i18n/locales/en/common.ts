@@ -207,6 +207,7 @@ export default {
     mySubscriptions: 'My Subscriptions',
     buySubscription: 'Recharge Center',
     docs: 'Docs',
+    language: 'Language / 语言',
     myOrders: 'My Orders',
     orderManagement: 'Orders',
     paymentDashboard: 'Payment Dashboard',

@@ -53,8 +53,10 @@ describe('AppSidebar collapsible groups', () => {
 
 describe('AppSidebar operations center group', () => {
   it('renders tier headers inside a collapsible group', () => {
-    expect(componentSource).toContain('v-if="child.section"')
+    // Section children become UNavigationMenu label items (expanded) and flyout headers (rail).
+    expect(componentSource).toContain("child.section\n          ? { type: 'label'")
     expect(componentSource).toContain('sidebar-child-section')
+    expect(componentSource).toContain('v-if="row.section"')
   })
 
   it('groups account, channel and diagnostics entries under one expandable parent', () => {
@@ -73,14 +75,15 @@ describe('AppSidebar operations center group', () => {
 
 describe('AppSidebar header styles', () => {
   it('does not clip the version badge dropdown', () => {
-    // Tailwind v4: the component class is declared as `@utility sidebar-header { ... }`.
+    // The header is UDashboardSidebar's own (no overflow); the old `@utility sidebar-header`
+    // is gone from style.css, so nothing there can clip the badge either.
     const sidebarHeaderBlockMatch = styleSource.match(/@utility sidebar-header\s*\{[\s\S]*?\n\}/)
     const sidebarBrandBlockMatch = componentSource.match(/\.sidebar-brand\s*\{[\s\S]*?\n\}/)
 
-    expect(sidebarHeaderBlockMatch).not.toBeNull()
+    expect(sidebarHeaderBlockMatch).toBeNull()
     expect(sidebarBrandBlockMatch).not.toBeNull()
-    expect(sidebarHeaderBlockMatch?.[0]).not.toContain('@apply overflow-hidden;')
     expect(sidebarBrandBlockMatch?.[0]).not.toContain('overflow: hidden;')
+    expect(componentSource).toContain('<VersionBadge')
   })
 })
 
