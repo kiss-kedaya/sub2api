@@ -102,7 +102,7 @@ func TestOutflowMonitoringRunsWhenNoDepositRecipientsExist(t *testing.T) {
 		calls++
 		return incident
 	})
-	_ = mock // the head guard stops before any cursor/database work
+	_ = mock // the head failure no longer stops the pass; the unmocked cursor read fails and the incident must still surface
 	if err := worker.ScanOnce(t.Context()); !errors.Is(err, incident) || calls != 1 {
 		t.Fatal("empty recipient pool hid gas wallet outflow", calls, err)
 	}
