@@ -25,6 +25,11 @@ export interface DepositRecord {
   reason?: string
   created_at: string
   credited: number
+  // Confirmation progress. Older backends omit these fields; the page then
+  // shows the plain status without a progress line.
+  confirmations?: number
+  required_confirmations?: number
+  block_number?: number
 }
 
 export async function getDepositInfo(): Promise<DepositInfo> {
