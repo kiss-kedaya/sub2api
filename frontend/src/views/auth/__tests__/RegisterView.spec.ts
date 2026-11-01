@@ -248,7 +248,7 @@ describe('RegisterView invitation layout', () => {
     expect(registerMock).not.toHaveBeenCalled()
     // 校验失败通过 validationToastMessage watcher 弹 toast
     expect(showErrorMock).toHaveBeenCalledWith('auth.emailSuffixNotAllowedWithAllowed')
-    expect(wrapper.get('#email').classes()).toContain('input-error')
+    expect(wrapper.get('#email').attributes('aria-invalid')).toBe('true')
   })
 
   it('still submits whitelisted email domains when the domain quota switch is disabled', async () => {
@@ -287,6 +287,6 @@ describe('RegisterView invitation layout', () => {
 
     expect(registerMock).not.toHaveBeenCalled()
     expect(showErrorMock).toHaveBeenCalledWith('auth.emailFormatInvalid')
-    expect(wrapper.get('#email').classes()).toContain('input-error')
+    expect(wrapper.get('#email').attributes('aria-invalid')).toBe('true')
   })
 })

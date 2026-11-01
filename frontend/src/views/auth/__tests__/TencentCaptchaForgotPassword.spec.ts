@@ -16,6 +16,12 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
+// Nuxt UI's UButton/ULink read the current route.
+vi.mock('vue-router', async () => {
+  const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
+  return { ...actual, useRoute: () => ({ query: {}, hash: '' }) }
+})
+
 vi.mock('@/stores', () => ({
   useAppStore: () => ({
     showError: vi.fn(),

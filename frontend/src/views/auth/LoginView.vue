@@ -1,163 +1,29 @@
 <template>
   <AuthLayout>
     <div class="space-y-6">
-      <!-- Title -->
-      <div class="text-center">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
-          {{ t('auth.welcomeBack') }}
-        </h2>
-        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
-          {{ t('auth.signInToAccount') }}
-        </p>
-      </div>
-      <!-- Login Form -->
-      <form @submit.prevent="handleLogin" class="space-y-5">
-        <!-- Email Input -->
-        <div>
-          <label for="email" class="input-label">
-            {{ t('auth.emailLabel') }}
-          </label>
-          <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="mail" size="md" class="text-gray-400 dark:text-dark-500" />
-            </div>
-            <input
-              id="email"
-              v-model="formData.email"
-              type="email"
-              required
-              autofocus
-              autocomplete="email"
-              :disabled="authActionDisabled"
-              class="input pl-11"
-              :class="{ 'input-error': errors.email }"
-              :placeholder="t('auth.emailPlaceholder')"
-            />
-          </div>
-        </div>
+      <AuthFormHeader icon="i-lucide-lock" :title="t('auth.welcomeBack')">
+        <template v-if="!backendModeEnabled && publicSettingsLoaded && registrationEnabled" #default>
+          {{ t('auth.dontHaveAccount') }}
+          <router-link to="/register" class="font-medium text-primary transition-colors hover:text-primary/75">
+            {{ t('auth.signUp') }}
+          </router-link>
+        </template>
+      </AuthFormHeader>
 
-        <!-- Password Input -->
-        <div>
-          <label for="password" class="input-label">
-            {{ t('auth.passwordLabel') }}
-          </label>
-          <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="lock" size="md" class="text-gray-400 dark:text-dark-500" />
-            </div>
-            <input
-              id="password"
-              v-model="formData.password"
-              :type="showPassword ? 'text' : 'password'"
-              required
-              autocomplete="current-password"
-              :disabled="authActionDisabled"
-              class="input pl-11 pr-11"
-              :class="{ 'input-error': errors.password }"
-              :placeholder="t('auth.passwordPlaceholder')"
-            />
-            <button
-              type="button"
-              @click="showPassword = !showPassword"
-              :disabled="authActionDisabled"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
-            >
-              <Icon v-if="showPassword" name="eyeOff" size="md" />
-              <Icon v-else name="eye" size="md" />
-            </button>
-          </div>
-          <div class="mt-1 flex items-center justify-between">
-            <span></span>
-            <router-link
-              v-if="passwordResetEnabled && !backendModeEnabled"
-              to="/forgot-password"
-              class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
-            >
-              {{ t('auth.forgotPassword') }}
-            </router-link>
-          </div>
-        </div>
-
-        <!-- Turnstile Widget -->
-        <div v-if="captchaEnabled">
-          <TurnstileWidget
-            ref="turnstileRef"
-            :turnstile-enabled="turnstileEnabled"
-            :turnstile-site-key="turnstileSiteKey"
-            :tencent-enabled="tencentCaptchaEnabled"
-            :tencent-app-id="tencentCaptchaAppId"
-            :tencent-region="tencentCaptchaRegion"
-            :aliyun-enabled="aliyunCaptchaEnabled"
-            :aliyun-scene-id="aliyunCaptchaSceneId"
-            :aliyun-prefix="aliyunCaptchaPrefix"
-            :aliyun-region="aliyunCaptchaRegion"
-            @verify="onTurnstileVerify"
-            @expire="onTurnstileExpire"
-            @error="onTurnstileError"
-          />
-        </div>
-
-        <!-- Submit Button -->
-        <button
-          type="submit"
-          :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
-          class="btn btn-primary w-full"
-        >
-          <svg
-            v-if="isLoading"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
-          <Icon v-else name="login" size="md" class="mr-2" />
-          {{ isLoading ? t('auth.signingIn') : t('auth.signIn') }}
-        </button>
-
-        <LoginAgreementPrompt
-          v-if="loginAgreementEnabled"
-          :accepted="agreementAccepted"
-          :documents="loginAgreementDocuments"
-          :mode="loginAgreementMode"
-          :updated-at="loginAgreementUpdatedAt"
-          :visible="showAgreementModal"
-          @accept="acceptLoginAgreement"
-          @reject="rejectLoginAgreement"
-          @open="showAgreementModal = true"
-        />
-
-        <div v-if="showPasskeyLogin || showOAuthLogin" class="space-y-3 pt-1">
-          <div class="flex items-center gap-3">
-            <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-            <span class="text-xs text-gray-500 dark:text-dark-400">
-              {{ t('auth.oauthOrContinue') }}
-            </span>
-            <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-          </div>
-
-          <button
+      <div class="flex flex-col gap-y-6">
+        <!-- Other ways in first, then the email form, as in Nuxt UI's UAuthForm -->
+        <div v-if="showPasskeyLogin || showOAuthLogin" class="space-y-3">
+          <UButton
             v-if="showPasskeyLogin"
-            type="button"
-            class="btn btn-secondary w-full"
+            data-testid="passkey-login"
+            block
+            color="neutral"
+            variant="subtle"
+            icon="i-lucide-key-round"
+            :label="passkeyLoading ? t('auth.passkeySigningIn') : t('auth.passkeySignIn')"
             :disabled="authActionDisabled"
             @click="handlePasskeyLogin"
-          >
-            <Icon name="key" size="md" class="mr-2" />
-            {{ passkeyLoading ? t('auth.passkeySigningIn') : t('auth.passkeySignIn') }}
-          </button>
+          />
 
           <EmailOAuthButtons
             :disabled="authActionDisabled"
@@ -166,7 +32,6 @@
             :show-divider="false"
             @start="handleOAuthStart"
           />
-
           <LinuxDoOAuthSection
             v-if="linuxdoOAuthEnabled"
             :disabled="authActionDisabled"
@@ -193,21 +58,98 @@
             @start="handleOAuthStart"
           />
         </div>
-      </form>
-    </div>
+        <USeparator v-if="showPasskeyLogin || showOAuthLogin" :label="t('auth.or')" />
 
-    <!-- Footer -->
-    <template v-if="!backendModeEnabled && publicSettingsLoaded && registrationEnabled" #footer>
-      <p class="text-gray-500 dark:text-dark-400">
-        {{ t('auth.dontHaveAccount') }}
-        <router-link
-          to="/register"
-          class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
-        >
-          {{ t('auth.signUp') }}
-        </router-link>
-      </p>
-    </template>
+        <UForm :state="formData" class="space-y-5" @submit="handleLogin">
+          <UFormField :label="t('auth.emailLabel')" :error="!!errors.email">
+            <UInput
+              id="email"
+              v-model="formData.email"
+              type="email"
+              required
+              autofocus
+              autocomplete="email"
+              :disabled="authActionDisabled"
+              :placeholder="t('auth.emailPlaceholder')"
+              class="w-full"
+            />
+          </UFormField>
+
+          <UFormField :label="t('auth.passwordLabel')" :error="!!errors.password">
+            <template v-if="passwordResetEnabled && !backendModeEnabled" #hint>
+              <router-link
+                to="/forgot-password"
+                tabindex="-1"
+                class="font-medium text-primary transition-colors hover:text-primary/75"
+              >
+                {{ t('auth.forgotPassword') }}
+              </router-link>
+            </template>
+            <UInput
+              id="password"
+              v-model="formData.password"
+              :type="showPassword ? 'text' : 'password'"
+              required
+              autocomplete="current-password"
+              :disabled="authActionDisabled"
+              :placeholder="t('auth.passwordPlaceholder')"
+              class="w-full"
+            >
+              <template #trailing>
+                <UButton
+                  color="neutral"
+                  variant="link"
+                  size="sm"
+                  :icon="showPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                  :aria-label="showPassword ? t('auth.hidePassword') : t('auth.showPassword')"
+                  :aria-pressed="showPassword"
+                  :disabled="authActionDisabled"
+                  @click="showPassword = !showPassword"
+                />
+              </template>
+            </UInput>
+          </UFormField>
+
+          <div v-if="captchaEnabled">
+            <TurnstileWidget
+              ref="turnstileRef"
+              :turnstile-enabled="turnstileEnabled"
+              :turnstile-site-key="turnstileSiteKey"
+              :tencent-enabled="tencentCaptchaEnabled"
+              :tencent-app-id="tencentCaptchaAppId"
+              :tencent-region="tencentCaptchaRegion"
+              :aliyun-enabled="aliyunCaptchaEnabled"
+              :aliyun-scene-id="aliyunCaptchaSceneId"
+              :aliyun-prefix="aliyunCaptchaPrefix"
+              :aliyun-region="aliyunCaptchaRegion"
+              @verify="onTurnstileVerify"
+              @expire="onTurnstileExpire"
+              @error="onTurnstileError"
+            />
+          </div>
+
+          <LoginAgreementPrompt
+            v-if="loginAgreementEnabled"
+            :accepted="agreementAccepted"
+            :documents="loginAgreementDocuments"
+            :mode="loginAgreementMode"
+            :updated-at="loginAgreementUpdatedAt"
+            :visible="showAgreementModal"
+            @accept="acceptLoginAgreement"
+            @reject="rejectLoginAgreement"
+            @open="showAgreementModal = true"
+          />
+
+          <UButton
+            type="submit"
+            block
+            :loading="isLoading"
+            :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
+            :label="isLoading ? t('auth.signingIn') : t('auth.signIn')"
+          />
+        </UForm>
+      </div>
+    </div>
   </AuthLayout>
 
   <!-- 2FA Modal -->
@@ -233,7 +175,7 @@ import WechatOAuthSection from '@/components/auth/WechatOAuthSection.vue'
 import EmailOAuthButtons from '@/components/auth/EmailOAuthButtons.vue'
 import LoginAgreementPrompt from '@/components/auth/LoginAgreementPrompt.vue'
 import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
-import Icon from '@/components/icons/Icon.vue'
+import AuthFormHeader from '@/components/auth/AuthFormHeader.vue'
 import TurnstileWidget from '@/components/CaptchaChallenge.vue'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
@@ -745,16 +687,3 @@ function handle2FACancel(): void {
   totpUserEmailMasked.value = ''
 }
 </script>
-
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: all 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-</style>

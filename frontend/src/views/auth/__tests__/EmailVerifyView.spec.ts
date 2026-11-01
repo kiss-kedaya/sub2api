@@ -51,6 +51,8 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({
     push: pushMock,
   }),
+  // Nuxt UI's UButton/ULink read the current route.
+  useRoute: () => ({ query: {}, hash: '' }),
 }))
 
 vi.mock('vue-i18n', () => ({

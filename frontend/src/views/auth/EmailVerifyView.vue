@@ -1,70 +1,43 @@
 <template>
   <AuthLayout>
     <div class="space-y-6">
-      <!-- Title -->
-      <div class="text-center">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
-          {{ t('auth.verifyYourEmail') }}
-        </h2>
-        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+      <AuthFormHeader icon="i-lucide-mail" :title="t('auth.verifyYourEmail')">
+        <template v-if="email" #default>
           {{ t('auth.sendCodeDesc') }}
-          <span class="font-medium text-gray-700 dark:text-gray-300">{{ email }}</span>
-        </p>
-      </div>
+          <span class="font-medium text-highlighted">{{ email }}</span>
+        </template>
+      </AuthFormHeader>
 
-      <!-- No Data Warning -->
-      <div
+      <UAlert
         v-if="!hasRegisterData"
-        class="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800/50 dark:bg-amber-900/20"
-      >
-        <div class="flex items-start gap-3">
-          <div class="flex-shrink-0">
-            <Icon name="exclamationCircle" size="md" class="text-amber-500" />
-          </div>
-          <div class="text-sm text-amber-700 dark:text-amber-400">
-            <p class="font-medium">{{ t('auth.sessionExpired') }}</p>
-            <p class="mt-1">{{ t('auth.sessionExpiredDesc') }}</p>
-          </div>
-        </div>
-      </div>
+        color="neutral"
+        variant="soft"
+        icon="i-lucide-circle-alert"
+        :title="t('auth.sessionExpired')"
+        :description="t('auth.sessionExpiredDesc')"
+        :ui="{ icon: 'text-warning', title: 'text-highlighted', description: 'text-default opacity-100' }"
+      />
 
-      <!-- Verification Form -->
-      <form v-else @submit.prevent="handleVerify" class="space-y-5">
-        <!-- Verification Code Input -->
-        <div>
-          <label for="code" class="input-label text-center">
-            {{ t('auth.verificationCode') }}
-          </label>
-          <input
+      <form v-else class="space-y-5" @submit.prevent="handleVerify">
+        <UFormField
+          :label="t('auth.verificationCode')"
+          :help="codeSent ? t('auth.codeSentSuccess') : t('auth.verificationCodeHint')"
+          :error="!!errors.code"
+        >
+          <UInput
             id="code"
             v-model="verifyCode"
-            type="text"
             required
             autocomplete="one-time-code"
             inputmode="numeric"
             maxlength="6"
             :disabled="isLoading"
-            class="input py-3 text-center font-mono text-xl tracking-[0.5em]"
-            :class="{ 'input-error': errors.code }"
             placeholder="000000"
+            size="xl"
+            :ui="{ base: 'text-center font-mono tracking-[0.5em]' }"
+            class="w-full"
           />
-          <p class="input-hint text-center">{{ t('auth.verificationCodeHint') }}</p>
-        </div>
-
-        <!-- Code Status -->
-        <div
-          v-if="codeSent"
-          class="rounded-xl border border-green-200 bg-green-50 p-4 dark:border-green-800/50 dark:bg-green-900/20"
-        >
-          <div class="flex items-start gap-3">
-            <div class="flex-shrink-0">
-              <Icon name="checkCircle" size="md" class="text-green-500" />
-            </div>
-            <p class="text-sm text-green-700 dark:text-green-400">
-              {{ t('auth.codeSentSuccess') }}
-            </p>
-          </div>
-        </div>
+        </UFormField>
 
         <!-- Turnstile Widget for Resend -->
         <div v-if="actionCaptchaEnabled || (turnstileEnabled && showResendTurnstile)">
@@ -105,43 +78,20 @@
           />
         </div>
 
-        <!-- Submit Button -->
-        <button
+        <UButton
           type="submit"
+          block
+          :loading="isLoading"
           :disabled="isLoading || !verifyCode || (pendingOAuthCreateTurnstileRequired && !createAccountTurnstileToken)"
-          class="btn btn-primary w-full"
-        >
-          <svg
-            v-if="isLoading"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
-          <Icon v-else name="checkCircle" size="md" class="mr-2" />
-          {{ isLoading ? t('auth.verifying') : t('auth.verifyAndCreate') }}
-        </button>
+          :label="isLoading ? t('auth.verifying') : t('auth.verifyAndCreate')"
+        />
 
-        <!-- Resend Code -->
-        <div class="text-center">
+        <div class="text-center text-sm">
           <button
             v-if="countdown > 0"
             type="button"
             disabled
-            class="cursor-not-allowed text-sm text-gray-400 dark:text-dark-500"
+            class="cursor-not-allowed text-dimmed"
           >
             {{ t('auth.resendCountdown', { countdown }) }}
           </button>
@@ -152,7 +102,7 @@
             :disabled="
               isSendingCode || (turnstileEnabled && showResendTurnstile && !resendTurnstileToken)
             "
-            class="text-sm text-primary-600 transition-colors hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-primary-400 dark:hover:text-primary-300"
+            class="font-medium text-primary transition-colors hover:text-primary/75 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span v-if="isSendingCode">{{ t('auth.sendingCode') }}</span>
             <span v-else-if="captchaEnabled && !showResendTurnstile">
@@ -164,13 +114,13 @@
       </form>
     </div>
 
-    <!-- Footer -->
     <template #footer>
       <button
+        type="button"
+        class="inline-flex items-center gap-1.5 transition-colors hover:text-highlighted"
         @click="handleBack"
-        class="flex items-center gap-2 text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-gray-300"
       >
-        <Icon name="arrowLeft" size="sm" />
+        <UIcon name="i-lucide-arrow-left" class="size-4" />
         {{ t('auth.backToRegistration') }}
       </button>
     </template>
@@ -182,7 +132,7 @@ import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
-import Icon from '@/components/icons/Icon.vue'
+import AuthFormHeader from '@/components/auth/AuthFormHeader.vue'
 import TurnstileWidget from '@/components/CaptchaChallenge.vue'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
@@ -820,16 +770,3 @@ function buildRegistrationErrorMessage(error: unknown, fallback: string): string
   return buildAuthErrorMessage(error, { fallback })
 }
 </script>
-
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: all 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-</style>
