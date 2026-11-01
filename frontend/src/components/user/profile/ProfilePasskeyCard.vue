@@ -1,11 +1,11 @@
 <template>
-  <div class="card">
-    <div class="flex items-start justify-between border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+  <div class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+    <div class="flex items-start justify-between gap-4 border-b border-default px-5 py-4 sm:px-6">
       <div>
-        <h2 class="text-lg font-medium text-gray-900 dark:text-white">
+        <h2 class="text-base font-semibold text-highlighted">
           {{ t('profile.passkey.title') }}
         </h2>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <p class="mt-1 text-sm text-muted">
           {{ t('profile.passkey.description') }}
         </p>
       </div>
@@ -20,7 +20,7 @@
       </button>
     </div>
 
-    <div class="px-6 py-6">
+    <div class="p-5 sm:p-6">
       <div v-if="!enabled" class="mb-5 text-sm text-gray-500 dark:text-gray-400">
         {{ t('profile.passkey.featureDisabled') }}
       </div>

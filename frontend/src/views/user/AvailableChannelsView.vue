@@ -3,18 +3,11 @@
     <div class="signal-channel-page signal-available-page">
       <TablePageLayout>
         <template #actions>
-          <header class="signal-channel-masthead">
-            <div class="signal-channel-identity">
-              <span class="signal-channel-mark" aria-hidden="true">
-                <Icon name="server" size="lg" />
-              </span>
-              <div class="signal-channel-heading">
-                <h1>{{ t('availableChannels.title') }}</h1>
-                <p>{{ t('availableChannels.description') }}</p>
-              </div>
-            </div>
-            <span class="signal-channel-count" aria-live="polite">{{ filteredChannels.length }}</span>
-          </header>
+          <UserPageHeader flush :title="t('availableChannels.title')" :description="t('availableChannels.description')">
+            <template #badge>
+              <UBadge color="neutral" variant="subtle" class="tabular-nums" aria-live="polite">{{ filteredChannels.length }}</UBadge>
+            </template>
+          </UserPageHeader>
         </template>
 
         <template #filters>
@@ -71,6 +64,7 @@ import { computed, onMounted, ref } from 'vue'
 import './channel-signal.css'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AvailableChannelsTable from '@/components/channels/AvailableChannelsTable.vue'

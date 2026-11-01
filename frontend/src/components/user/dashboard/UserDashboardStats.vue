@@ -1,55 +1,69 @@
 <template>
-  <section class="signal-stats" :aria-label="t('dashboard.title')">
-    <div v-if="section !== 'platforms'" class="signal-lead-grid" :class="{ 'signal-lead-grid--simple': isSimple }">
-      <div v-if="!isSimple" class="signal-metric signal-metric--balance">
-        <p class="signal-label">{{ t('dashboard.balance') }} <span>USD</span></p>
-        <p class="signal-value">$<AnimatedNumber :value="balance" :format="formatBalance" /></p>
-        <div class="signal-metric-foot">
-          <span>{{ t('dashboard.recentTotal') }} / {{ t('dashboard.actual') }}</span>
-          <strong>${{ formatCost(stats?.total_actual_cost || 0) }}</strong>
-          <span>{{ t('dashboard.standard') }} ${{ formatCost(stats?.total_cost || 0) }}</span>
-        </div>
-      </div>
-      <div class="signal-metric signal-metric--total">
+  <section class="signal-stats min-w-0" :aria-label="t('dashboard.title')">
+    <div v-if="section !== 'platforms'" class="grid gap-4" :class="isSimple ? 'sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]' : 'sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.7fr)]'">
+      <UCard v-if="!isSimple" class="signal-metric signal-metric--balance" :ui="tileUi">
+        <p class="signal-label">{{ t('dashboard.balance') }} <span class="signal-unit">USD</span></p>
+        <p class="signal-value signal-value--lead">$<AnimatedNumber :value="balance" :format="formatBalance" /></p>
+        <template #footer>
+          <div class="signal-metric-foot">
+            <span>{{ t('dashboard.recentTotal') }} / {{ t('dashboard.actual') }}</span>
+            <strong>${{ formatCost(stats?.total_actual_cost || 0) }}</strong>
+            <span>{{ t('dashboard.standard') }} ${{ formatCost(stats?.total_cost || 0) }}</span>
+          </div>
+        </template>
+      </UCard>
+      <UCard class="signal-metric signal-metric--total" :ui="tileUi">
         <p class="signal-label">{{ t('dashboard.recentTokens') }}</p>
-        <p class="signal-value"><AnimatedNumber :value="stats?.total_tokens || 0" :format="formatTokens" /> <small>tokens</small></p>
-        <dl class="signal-token-split">
-          <div><dt>{{ t('dashboard.input') }}</dt><dd>{{ formatTokens(stats?.total_input_tokens || 0) }}</dd></div>
-          <div><dt>{{ t('dashboard.output') }}</dt><dd>{{ formatTokens(stats?.total_output_tokens || 0) }}</dd></div>
-          <div><dt>{{ t('dashboard.cache') }}</dt><dd>{{ formatTokens((stats?.total_cache_creation_tokens || 0) + (stats?.total_cache_read_tokens || 0)) }}</dd></div>
-        </dl>
-      </div>
+        <p class="signal-value signal-value--lead"><AnimatedNumber :value="stats?.total_tokens || 0" :format="formatTokens" /> <small>tokens</small></p>
+        <template #footer>
+          <dl class="signal-token-split">
+            <div><dt>{{ t('dashboard.input') }}</dt><dd>{{ formatTokens(stats?.total_input_tokens || 0) }}</dd></div>
+            <div><dt>{{ t('dashboard.output') }}</dt><dd>{{ formatTokens(stats?.total_output_tokens || 0) }}</dd></div>
+            <div><dt>{{ t('dashboard.cache') }}</dt><dd>{{ formatTokens((stats?.total_cache_creation_tokens || 0) + (stats?.total_cache_read_tokens || 0)) }}</dd></div>
+          </dl>
+        </template>
+      </UCard>
       <slot name="actions" />
     </div>
 
-    <div v-if="section !== 'platforms'" class="signal-stat-strip" :class="{ 'signal-stat-strip--models': $slots.models }">
-      <div class="signal-metric signal-metric--tokens">
-        <p class="signal-label">{{ t('dashboard.todayTokens') }}</p>
+    <div v-if="section !== 'platforms'" class="mt-4 grid grid-cols-2 gap-4" :class="$slots.models ? 'xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(205px,1.35fr)]' : 'xl:grid-cols-4'">
+      <UCard class="signal-metric signal-metric--tokens" :ui="tileUi">
+        <p class="signal-label"><UIcon name="i-lucide-coins" class="size-3.5" />{{ t('dashboard.todayTokens') }}</p>
         <p class="signal-value"><AnimatedNumber :value="stats?.today_tokens || 0" :format="formatTokens" /></p>
-        <div class="signal-metric-foot">
-          <span>{{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} / {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }}</span>
-          <span>{{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}</span>
-        </div>
-      </div>
-      <div class="signal-metric signal-metric--cost">
-        <p class="signal-label"><Icon name="dollar" size="sm" />{{ t('dashboard.todayCost') }}</p>
+        <template #footer>
+          <div class="signal-metric-foot">
+            <span>{{ t('dashboard.input') }} {{ formatTokens(stats?.today_input_tokens || 0) }} / {{ t('dashboard.output') }} {{ formatTokens(stats?.today_output_tokens || 0) }}</span>
+            <span>{{ t('dashboard.cache') }} {{ formatTokens((stats?.today_cache_creation_tokens || 0) + (stats?.today_cache_read_tokens || 0)) }}</span>
+          </div>
+        </template>
+      </UCard>
+      <UCard class="signal-metric signal-metric--cost" :ui="tileUi">
+        <p class="signal-label"><UIcon name="i-lucide-circle-dollar-sign" class="size-3.5" />{{ t('dashboard.todayCost') }}</p>
         <p class="signal-value" :title="t('dashboard.actual')">$<AnimatedNumber :value="stats?.today_actual_cost || 0" :format="formatCost" :duration="480" /></p>
-        <div class="signal-metric-foot"><span>{{ t('dashboard.standard') }}</span><strong>${{ formatCost(stats?.today_cost || 0) }}</strong></div>
-      </div>
-      <div class="signal-metric">
-        <p class="signal-label"><Icon name="chart" size="sm" />{{ t('dashboard.todayRequests') }}</p>
+        <template #footer>
+          <div class="signal-metric-foot"><span>{{ t('dashboard.standard') }}</span><strong>${{ formatCost(stats?.today_cost || 0) }}</strong></div>
+        </template>
+      </UCard>
+      <UCard class="signal-metric" :ui="tileUi">
+        <p class="signal-label"><UIcon name="i-lucide-chart-column" class="size-3.5" />{{ t('dashboard.todayRequests') }}</p>
         <p class="signal-value"><AnimatedNumber :value="stats?.today_requests || 0" :decimals="0" /></p>
-        <div class="signal-metric-foot"><span>{{ t('dashboard.recentTotal') }}</span><strong>{{ formatNumber(stats?.total_requests || 0) }}</strong></div>
-      </div>
-      <div class="signal-metric">
-        <p class="signal-label"><Icon name="key" size="sm" />{{ t('dashboard.apiKeys') }}</p>
+        <template #footer>
+          <div class="signal-metric-foot"><span>{{ t('dashboard.recentTotal') }}</span><strong>{{ formatNumber(stats?.total_requests || 0) }}</strong></div>
+        </template>
+      </UCard>
+      <UCard class="signal-metric" :ui="tileUi">
+        <p class="signal-label"><UIcon name="i-lucide-key-round" class="size-3.5" />{{ t('dashboard.apiKeys') }}</p>
         <p class="signal-value"><AnimatedNumber :value="stats?.total_api_keys || 0" :decimals="0" /></p>
-        <div class="signal-metric-foot"><span class="signal-active">{{ stats?.active_api_keys || 0 }} {{ t('common.active') }}</span></div>
-      </div>
+        <template #footer>
+          <div class="signal-metric-foot">
+            <UBadge class="signal-active self-start" color="primary" variant="subtle">{{ stats?.active_api_keys || 0 }} {{ t('common.active') }}</UBadge>
+          </div>
+        </template>
+      </UCard>
       <slot name="models" />
     </div>
 
-    <div v-if="section !== 'platforms'" class="signal-telemetry">
+    <div v-if="section !== 'platforms'" class="mt-3 flex flex-wrap justify-start gap-x-6 gap-y-2 sm:justify-end">
       <div class="signal-reading">
         <p class="signal-label">{{ t('dashboard.performance') }}</p>
         <p class="signal-reading-value">{{ formatTokens(stats?.rpm || 0) }} <span>RPM</span> / {{ formatTokens(stats?.tpm || 0) }} <span>TPM</span></p>
@@ -61,11 +75,11 @@
     </div>
 
     <section v-if="section !== 'summary' && !isSimple && platformCards.length > 0" class="signal-platforms">
-      <header class="signal-section-heading">
-        <h2>{{ t('dashboard.last30Days') }}</h2>
-        <span>{{ t('dashboard.platformCount', { count: platformCards.length }) }}</span>
+      <header class="flex flex-wrap items-baseline justify-between gap-2 pb-3 pt-4">
+        <h2 class="text-sm font-semibold text-highlighted">{{ t('dashboard.last30Days') }}</h2>
+        <span class="text-xs text-muted">{{ t('dashboard.platformCount', { count: platformCards.length }) }}</span>
       </header>
-      <div class="signal-platform-grid">
+      <div class="grid grid-cols-1 gap-x-6 min-[421px]:grid-cols-2 min-[1101px]:grid-cols-4">
         <article v-for="item in platformCards" :key="item.platform" class="signal-platform">
           <header class="signal-platform-heading">
             <span class="signal-platform-name">
@@ -112,7 +126,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import AnimatedNumber from '@/components/common/AnimatedNumber.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import type { UserDashboardStats as UserStatsType } from '@/api/usage'
@@ -135,6 +148,13 @@ const props = defineProps<{
   section?: 'summary' | 'platforms'
 }>()
 const { t } = useI18n()
+
+// Stat tile layout (UCard slots): value block grows so the footers line up across a row.
+const tileUi = {
+  root: 'flex flex-col shadow-xs dark:shadow-none',
+  body: 'flex-1 p-4 sm:p-5',
+  footer: 'px-4 py-3 sm:px-5',
+}
 
 const PLATFORM_LABELS: Record<string, string> = {
   anthropic: 'Claude',
@@ -257,62 +277,54 @@ const formatDuration = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)}s`
 </script>
 
 <style scoped>
-.signal-stats { min-width: 0; }
-.signal-platform-empty { padding: 48px 0; color: var(--signal-muted); font-size: 14px; text-align: center; }
-.signal-stat-strip, .signal-telemetry {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-bottom: 1px solid var(--signal-line, #dce2df);
-}
-.signal-stat-strip { background: var(--signal-surface, #fff); border-top: 1px solid var(--signal-line, #dce2df); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--signal-accent, #087f68) 12%, transparent); }
-.signal-stat-strip--simple { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.signal-metric, .signal-reading { min-width: 0; padding: 20px; }
-.signal-metric + .signal-metric, .signal-reading + .signal-reading { border-left: 1px solid var(--signal-line, #dce2df); }
-.signal-label { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; color: var(--signal-muted, #65716a); }
-.signal-value { margin: 10px 0 5px; font-size: 28px; line-height: 1.25; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.signal-metric--balance .signal-value, .signal-active { color: var(--signal-accent, #087f68); }
-.signal-metric--cost .signal-value, .signal-spend { color: var(--signal-amber, #99640c); }
-.signal-detail { margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--signal-muted, #65716a); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.signal-detail--wrap { display: flex; flex-wrap: wrap; gap: 0 8px; }
-.signal-detail.signal-active { color: var(--signal-accent, #087f68); }
-.signal-reading { padding-top: 16px; padding-bottom: 16px; }
-.signal-reading-value { margin-top: 7px; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.signal-reading-value span { font-size: 11px; color: var(--signal-muted, #65716a); font-weight: 500; }
-.signal-section-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; padding: 20px 0 12px; }
-.signal-section-heading h2 { font-size: 14px; font-weight: 600; }
-.signal-section-heading > span { font-size: 12px; color: var(--signal-muted, #65716a); }
-.signal-platform-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 24px; }
-.signal-platform { min-width: 0; padding: 16px 0; border-top: 1px solid var(--signal-line, #dce2df); }
-.signal-platform--other { border-top-style: dashed; }
-.signal-platform-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.signal-label { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--ui-text-muted); }
+.signal-value { margin-top: 10px; font-size: 24px; line-height: 32px; font-weight: 600; color: var(--ui-text-highlighted); font-variant-numeric: lining-nums tabular-nums; overflow-wrap: anywhere; }
+.signal-value--lead { font-size: 28px; line-height: 36px; }
+.signal-value small { font-size: 14px; font-weight: 400; color: var(--ui-text-muted); }
+.signal-metric--cost .signal-value, .signal-spend { color: var(--signal-amber, #906727); }
+.signal-metric-foot { display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 18px; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.signal-metric-foot strong { font-weight: 500; color: var(--ui-text-highlighted); }
+.signal-token-split { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.signal-token-split dt { color: var(--ui-text-muted); }
+.signal-token-split dd { margin-top: 4px; font-weight: 500; color: var(--ui-text-highlighted); overflow-wrap: anywhere; }
+
+/* Balance tile: one step up from the page (neutral-50 in light, the raised plum in dark). */
+.signal-metric--balance { --ui-border: var(--signal-hero-line, #e5e5e5); background: var(--ui-bg-muted); }
+.signal-unit { color: var(--ui-text-muted); }
+.dark .signal-metric--balance .signal-value,
+.dark .signal-metric--balance .signal-metric-foot strong { color: var(--signal-hero-text, #f6e9ee); }
+.dark .signal-metric--balance .signal-label,
+.dark .signal-metric--balance .signal-metric-foot { color: var(--signal-hero-muted, #c3a9b3); }
+.dark .signal-unit { color: var(--signal-hero-mark, #f0aec3); }
+
+.signal-reading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; }
+.signal-reading-value { font-size: 12px; font-weight: 500; color: var(--ui-text-highlighted); font-variant-numeric: lining-nums tabular-nums; overflow-wrap: anywhere; }
+.signal-reading-value span { font-size: 11px; font-weight: 500; color: var(--ui-text-muted); }
+
+.signal-platform-empty { padding: 40px 0; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
+.signal-platform { min-width: 0; padding: 16px 0; border-top: 1px solid var(--ui-border); }
+.signal-platform-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 13px; font-weight: 600; color: var(--ui-text-highlighted); font-variant-numeric: tabular-nums; }
 .signal-platform-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
-.signal-platform-name :deep(svg) { color: var(--signal-text, #202423); flex-shrink: 0; }
+.signal-platform-name :deep(svg) { flex-shrink: 0; }
 .signal-platform-ledger { margin-top: 12px; }
 .signal-platform-ledger > div, .signal-quota-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; line-height: 1.6; font-variant-numeric: tabular-nums; }
-.signal-platform-ledger dt { color: var(--signal-muted, #65716a); }
-.signal-platform-ledger dd, .signal-quota-label > span:last-child { text-align: right; overflow-wrap: anywhere; min-width: 0; }
-.signal-quota { margin-top: 12px; border-top: 1px solid var(--signal-line, #dce2df); padding-top: 10px; }
+.signal-platform-ledger dt { color: var(--ui-text-muted); }
+.signal-platform-ledger dd, .signal-quota-label > span:last-child { min-width: 0; text-align: right; overflow-wrap: anywhere; color: var(--ui-text-highlighted); }
+.signal-quota { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--ui-border); }
 .signal-quota-window { margin-top: 8px; }
-.signal-quota-track { height: 4px; margin-top: 4px; overflow: hidden; background: var(--signal-line, #dce2df); }
-.signal-quota-fill { height: 100%; }
-.signal-quota-fill.bg-green-500 { background: var(--signal-accent, #087f68); }
-.signal-quota-fill.bg-amber-500 { background: var(--signal-amber, #99640c); }
+.signal-quota-label > span:first-child { color: var(--ui-text-muted); }
+.signal-quota-track { height: 4px; margin-top: 4px; overflow: hidden; border-radius: 999px; background: var(--ui-bg-accented); }
+.signal-quota-fill { height: 100%; border-radius: inherit; }
+.signal-quota-fill.bg-green-500 { background: var(--signal-accent, #171717); }
+.signal-quota-fill.bg-amber-500 { background: var(--signal-amber, #906727); }
 .signal-quota-fill.bg-red-500 { background: var(--signal-danger, #dc4545); }
-.signal-disabled { color: var(--signal-danger, #dc4545); }
-.signal-reset { margin-top: 4px; font-size: 11px; color: var(--signal-muted, #65716a); }
-@media (max-width: 1100px) {
-  .signal-platform-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .signal-metric, .signal-reading { padding: 16px 12px; }
-}
+.signal-quota-label > .signal-disabled { color: var(--signal-danger, #dc4545); }
+.signal-reset { margin-top: 4px; font-size: 11px; color: var(--ui-text-muted); }
 @media (max-width: 640px) {
-  .signal-stat-strip, .signal-stat-strip--simple, .signal-telemetry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .signal-metric:nth-child(odd), .signal-reading:nth-child(odd) { border-left: 0; }
-  .signal-metric:nth-child(n+3), .signal-reading:nth-child(n+3) { border-top: 1px solid var(--signal-line, #dce2df); }
-  .signal-value { font-size: 24px; }
-  .signal-platform-grid { gap: 0 16px; }
+  .signal-value { font-size: 22px; line-height: 30px; }
+  .signal-value--lead { font-size: 24px; line-height: 32px; }
 }
 @media (max-width: 420px) {
-  .signal-platform-grid { grid-template-columns: minmax(0, 1fr); }
   .signal-platform-ledger { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .signal-platform-ledger > div { display: block; }
   .signal-platform-ledger dd { text-align: left; }

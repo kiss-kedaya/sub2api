@@ -1,16 +1,7 @@
 <template>
   <AppLayout>
     <div class="signal-subscriptions">
-      <header class="signal-subscriptions-heading">
-        <div class="signal-subscriptions-heading__icon" aria-hidden="true">
-          <Icon name="creditCard" size="lg" />
-        </div>
-        <div class="min-w-0">
-          <p aria-hidden="true">06 / SUBSCRIPTIONS</p>
-          <h1>{{ t('userSubscriptions.title') }}</h1>
-          <span>{{ t('userSubscriptions.description') }}</span>
-        </div>
-      </header>
+      <UserPageHeader flush :title="t('userSubscriptions.title')" :description="t('userSubscriptions.description')" />
       <!-- Loading State -->
       <div v-if="loading" class="flex justify-center py-12">
         <div
@@ -266,6 +257,7 @@ import { useAppStore } from '@/stores/app'
 import subscriptionsAPI from '@/api/subscriptions'
 import type { UserSubscription } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTimeToMinute } from '@/utils/format'
 import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
@@ -407,29 +399,20 @@ onMounted(() => {
 <style scoped>
 .signal-subscriptions {
   --subscriptions-bg: var(--signal-bg, #f5f6f5);
-  --subscriptions-surface: var(--signal-surface, #ffffff);
-  --subscriptions-line: var(--signal-line, #dce2df);
-  --subscriptions-text: var(--signal-text, #202423);
-  --subscriptions-muted: var(--signal-muted, #65716a);
+  --subscriptions-surface: var(--ui-bg);
+  --subscriptions-line: var(--ui-border);
+  --subscriptions-text: var(--ui-text-highlighted);
+  --subscriptions-muted: var(--ui-text-muted);
   --subscriptions-accent: var(--signal-accent, #087f68);
   --subscriptions-accent-soft: var(--signal-accent-soft, #e5f3ee);
   --subscriptions-amber: var(--signal-amber, #a86610);
   display: grid;
-  gap: 18px;
+  gap: 16px;
   min-width: 0;
   color: var(--subscriptions-text);
   letter-spacing: 0;
 }
 
-.signal-subscriptions-heading {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--subscriptions-line);
-}
-
-.signal-subscriptions-heading__icon,
 .signal-subscriptions-empty__icon {
   display: grid;
   width: 38px;
@@ -440,28 +423,6 @@ onMounted(() => {
   border-radius: 6px;
   color: var(--subscriptions-accent);
   background: var(--subscriptions-surface);
-}
-
-.signal-subscriptions-heading p {
-  margin: 0;
-  color: var(--subscriptions-muted);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.signal-subscriptions-heading h1 {
-  margin: 2px 0 0;
-  color: var(--subscriptions-text);
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.signal-subscriptions-heading span {
-  display: block;
-  margin-top: 4px;
-  color: var(--subscriptions-muted);
-  font-size: 13px;
 }
 
 .signal-subscriptions-grid {
@@ -476,7 +437,10 @@ onMounted(() => {
   border: 1px solid var(--subscriptions-line);
   border-radius: 8px;
   background: var(--subscriptions-surface);
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
 }
+
+.dark .signal-subscription-card { box-shadow: none; }
 
 .signal-subscription-card__header {
   display: flex;
@@ -485,8 +449,10 @@ onMounted(() => {
   gap: 14px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--subscriptions-line);
-  background: var(--subscriptions-bg);
+  background: var(--ui-bg-muted);
 }
+
+.dark .signal-subscription-card__header { background: var(--subscriptions-bg); }
 
 .signal-subscription-card__header > div:first-child {
   min-width: 0;
@@ -544,6 +510,7 @@ onMounted(() => {
   border: 1px solid var(--subscriptions-line);
   border-radius: 8px;
   background: var(--subscriptions-surface);
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
   text-align: center;
 }
 
@@ -560,14 +527,6 @@ onMounted(() => {
 }
 
 @media (max-width: 479px) {
-  .signal-subscriptions-heading__icon {
-    display: none;
-  }
-
-  .signal-subscriptions-heading h1 {
-    font-size: 21px;
-  }
-
   .signal-subscription-card__header {
     align-items: stretch;
     flex-direction: column;

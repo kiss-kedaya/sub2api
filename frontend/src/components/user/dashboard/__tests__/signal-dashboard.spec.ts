@@ -19,7 +19,12 @@ const getMyPlatformQuotas = vi.fn()
 vi.mock('vue-i18n', async (original) => ({ ...await original<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@vueuse/core', async (original) => ({ ...await original<typeof import('@vueuse/core')>(), usePreferredReducedMotion: () => preferredMotion }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
+// UButton renders through Nuxt UI's router-aware ULink, which also reads useRoute/RouterLink.
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push }),
+  useRoute: () => ({ path: '/', query: {}, hash: '' }),
+  RouterLink: { name: 'RouterLink', props: ['to', 'custom'], template: '<a><slot /></a>' },
+}))
 vi.mock('@/composables/useBatchImageAccess', () => ({
   useBatchImageAccess: () => ({ canUseBatchImage, refreshBatchImageAccess }),
 }))

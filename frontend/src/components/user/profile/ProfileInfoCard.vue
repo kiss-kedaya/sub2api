@@ -2,98 +2,79 @@
   <div class="space-y-6">
     <section
       data-testid="profile-overview-hero"
-      class="card overflow-hidden border border-primary-100/80 bg-linear-to-br/srgb from-primary-50 via-white to-amber-50/70 dark:border-primary-900/40 dark:from-primary-950/40 dark:via-dark-900 dark:to-dark-950"
+      class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
     >
-      <div class="px-6 py-6 md:px-8">
-        <div class="flex flex-col gap-6 lg:flex-row lg:items-start">
-          <div
-            class="profile-identity-avatar flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[1.75rem] bg-linear-to-br/srgb from-primary-500 to-primary-600 text-2xl font-bold text-white shadow-lg shadow-primary-500/20"
+      <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
+        <div class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-elevated text-xl font-semibold text-highlighted ring ring-default">
+          <img
+            v-if="avatarUrl"
+            :src="avatarUrl"
+            :alt="displayName"
+            class="h-full w-full object-cover"
           >
-            <img
-              v-if="avatarUrl"
-              :src="avatarUrl"
-              :alt="displayName"
-              class="h-full w-full object-cover"
+          <span v-else>{{ avatarInitial }}</span>
+        </div>
+
+        <div class="min-w-0 flex-1 space-y-1.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="truncate text-lg font-semibold text-highlighted">
+              {{ displayName }}
+            </h2>
+            <UBadge :color="user?.role === 'admin' ? 'primary' : 'neutral'" variant="subtle">
+              {{ user?.role === 'admin' ? t('profile.administrator') : t('profile.user') }}
+            </UBadge>
+            <UBadge :color="user?.status === 'active' ? 'success' : 'error'" variant="subtle">
+              {{
+                user?.status === 'active'
+                  ? t('common.active')
+                  : t('common.disabled')
+              }}
+            </UBadge>
+          </div>
+          <p class="truncate text-sm text-muted">
+            {{ primaryEmailDisplay }}
+          </p>
+          <div
+            v-if="sourceHints.length"
+            class="flex flex-wrap gap-1.5 pt-1"
+          >
+            <UBadge
+              v-for="hint in sourceHints"
+              :key="hint.key"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-link"
             >
-            <span v-else>{{ avatarInitial }}</span>
+              {{ hint.text }}
+            </UBadge>
           </div>
+        </div>
+      </div>
 
-          <div class="min-w-0 flex-1 space-y-5">
-            <div class="space-y-3">
-              <div class="flex flex-wrap items-center gap-2">
-                <h2 class="truncate text-2xl font-semibold text-gray-900 dark:text-white">
-                  {{ displayName }}
-                </h2>
-                <span :class="['badge', user?.role === 'admin' ? 'badge-primary' : 'badge-gray']">
-                  {{ user?.role === 'admin' ? t('profile.administrator') : t('profile.user') }}
-                </span>
-                <span
-                  :class="['badge', user?.status === 'active' ? 'badge-success' : 'badge-danger']"
-                >
-                  {{
-                    user?.status === 'active'
-                      ? t('common.active')
-                      : t('common.disabled')
-                  }}
-                </span>
-              </div>
-
-              <div class="space-y-1">
-                <p class="truncate text-sm text-gray-600 dark:text-gray-300">
-                  {{ primaryEmailDisplay }}
-                </p>
-                <div
-                  v-if="sourceHints.length"
-                  class="flex flex-wrap gap-2 text-xs text-gray-500 dark:text-gray-400"
-                >
-                  <span
-                    v-for="hint in sourceHints"
-                    :key="hint.key"
-                    class="inline-flex items-center gap-1 rounded-full bg-white/80 px-3 py-1 ring-1 ring-primary-100 dark:bg-dark-900/70 dark:ring-primary-900/40"
-                  >
-                    <Icon name="link" size="sm" />
-                    {{ hint.text }}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div class="profile-identity-metrics grid gap-3 sm:grid-cols-3">
-              <div
-                data-testid="profile-overview-metric-balance"
-                class="rounded-2xl bg-white/85 px-4 py-3 shadow-xs ring-1 ring-white/70 dark:bg-dark-900/60 dark:ring-dark-700"
-              >
-                <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
-                  {{ t('profile.accountBalance') }}
-                </p>
-                <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
-                  {{ formatCurrency(user?.balance || 0) }}
-                </p>
-              </div>
-              <div
-                data-testid="profile-overview-metric-concurrency"
-                class="rounded-2xl bg-white/85 px-4 py-3 shadow-xs ring-1 ring-white/70 dark:bg-dark-900/60 dark:ring-dark-700"
-              >
-                <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
-                  {{ t('profile.concurrencyLimit') }}
-                </p>
-                <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
-                  {{ user?.concurrency || 0 }}
-                </p>
-              </div>
-              <div
-                data-testid="profile-overview-metric-member-since"
-                class="rounded-2xl bg-white/85 px-4 py-3 shadow-xs ring-1 ring-white/70 dark:bg-dark-900/60 dark:ring-dark-700"
-              >
-                <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
-                  {{ t('profile.memberSince') }}
-                </p>
-                <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
-                  {{ memberSinceLabel }}
-                </p>
-              </div>
-            </div>
-          </div>
+      <div class="grid grid-cols-1 divide-y divide-default border-t border-default sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <div data-testid="profile-overview-metric-balance" class="px-5 py-4 sm:px-6">
+          <p class="text-xs font-medium text-muted">
+            {{ t('profile.accountBalance') }}
+          </p>
+          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
+            {{ formatCurrency(user?.balance || 0) }}
+          </p>
+        </div>
+        <div data-testid="profile-overview-metric-concurrency" class="px-5 py-4 sm:px-6">
+          <p class="text-xs font-medium text-muted">
+            {{ t('profile.concurrencyLimit') }}
+          </p>
+          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
+            {{ user?.concurrency || 0 }}
+          </p>
+        </div>
+        <div data-testid="profile-overview-metric-member-since" class="px-5 py-4 sm:px-6">
+          <p class="text-xs font-medium text-muted">
+            {{ t('profile.memberSince') }}
+          </p>
+          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
+            {{ memberSinceLabel }}
+          </p>
         </div>
       </div>
     </section>
@@ -102,28 +83,26 @@
       <div data-testid="profile-main-column" class="space-y-6">
         <section
           data-testid="profile-basics-panel"
-          class="card border border-gray-100 bg-white/90 p-6 dark:border-dark-700 dark:bg-dark-900/50"
+          class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
         >
-          <div class="mb-5 flex items-start justify-between gap-4">
-            <div>
-              <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-                {{ t('profile.basicsTitle') }}
-              </h3>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {{ t('profile.basicsDescription') }}
-              </p>
-            </div>
-          </div>
+          <header class="border-b border-default px-5 py-4 sm:px-6">
+            <h3 class="text-base font-semibold text-highlighted">
+              {{ t('profile.basicsTitle') }}
+            </h3>
+            <p class="mt-1 text-sm text-muted">
+              {{ t('profile.basicsDescription') }}
+            </p>
+          </header>
 
-          <div class="grid gap-6 sm:grid-cols-1 md:grid-cols-2">
-            <div class="rounded-3xl border border-gray-100 bg-gray-50/80 p-5 dark:border-dark-700 dark:bg-dark-900/30">
+          <div class="grid divide-y divide-default md:grid-cols-2 md:divide-x md:divide-y-0">
+            <div class="p-5 sm:p-6">
               <ProfileAvatarCard
                 :user="user"
                 embedded
               />
             </div>
 
-            <div class="rounded-3xl border border-gray-100 bg-gray-50/80 p-5 dark:border-dark-700 dark:bg-dark-900/30">
+            <div class="p-5 sm:p-6">
               <ProfileEditForm
                 :initial-username="user?.username || ''"
                 embedded
@@ -134,7 +113,7 @@
 
         <section
           data-testid="profile-auth-bindings-panel"
-          class="card border border-gray-100 bg-white/90 p-6 dark:border-dark-700 dark:bg-dark-900/50"
+          class="profile-bindings-panel rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none"
         >
           <ProfileIdentityBindingsSection
             :user="user"
@@ -154,25 +133,27 @@
       <div data-testid="profile-side-column" class="space-y-6">
         <section
           v-if="sourceHints.length"
-          class="card border border-gray-100 bg-white/90 p-6 dark:border-dark-700 dark:bg-dark-900/50"
+          class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
         >
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-            {{ t('profile.linkedProfileSources') }}
-          </h3>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {{ t('profile.linkedProfileSourcesDescription') }}
-          </p>
+          <header class="border-b border-default px-5 py-4 sm:px-6">
+            <h3 class="text-base font-semibold text-highlighted">
+              {{ t('profile.linkedProfileSources') }}
+            </h3>
+            <p class="mt-1 text-sm text-muted">
+              {{ t('profile.linkedProfileSourcesDescription') }}
+            </p>
+          </header>
 
-          <div class="mt-5 grid gap-3">
-            <div
+          <ul class="divide-y divide-default">
+            <li
               v-for="hint in sourceHints"
               :key="hint.key"
-              class="flex items-start gap-3 rounded-2xl border border-gray-100 bg-gray-50/80 px-4 py-3 text-sm text-gray-600 dark:border-dark-700 dark:bg-dark-900/30 dark:text-gray-300"
+              class="flex items-start gap-3 px-5 py-3 text-sm text-default sm:px-6"
             >
-              <Icon name="link" size="sm" class="mt-0.5 text-gray-400 dark:text-gray-500" />
+              <UIcon name="i-lucide-link" class="mt-0.5 size-4 shrink-0 text-dimmed" />
               <span>{{ hint.text }}</span>
-            </div>
-          </div>
+            </li>
+          </ul>
         </section>
       </div>
     </div>
@@ -182,7 +163,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import ProfileAvatarCard from '@/components/user/profile/ProfileAvatarCard.vue'
 import ProfileEditForm from '@/components/user/profile/ProfileEditForm.vue'
 import ProfileIdentityBindingsSection from '@/components/user/profile/ProfileIdentityBindingsSection.vue'
@@ -379,3 +359,12 @@ const sourceHints = computed(() => {
   return hints
 })
 </script>
+
+<style scoped>
+/* Login methods inside the bindings card: hairline-divided rows, not nested cards. */
+.profile-bindings-panel :deep(.space-y-4 > .rounded-2xl.border) { margin-top: 0; padding: 16px 0 0; border-width: 1px 0 0; border-radius: 0; background: transparent; box-shadow: none; }
+.profile-bindings-panel :deep(.space-y-4 > .rounded-2xl.border:not(:last-child)) { padding-bottom: 16px; }
+.profile-bindings-panel :deep(.space-y-4 > div:first-child) { margin-bottom: 16px; }
+.profile-bindings-panel :deep(.space-y-4 > div:first-child > p:first-child) { font-size: 16px; line-height: 24px; }
+.profile-bindings-panel :deep(.rounded-2xl.h-11.w-11) { width: 36px; height: 36px; border-radius: 8px; }
+</style>

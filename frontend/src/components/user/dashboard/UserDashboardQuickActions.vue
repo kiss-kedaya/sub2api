@@ -1,43 +1,43 @@
 <template>
-  <nav class="signal-actions" :aria-label="t('dashboard.quickActions')">
-    <h2 class="signal-actions-label">{{ t('dashboard.quickActions') }}</h2>
-    <div class="signal-actions-list">
-      <button @click="router.push('/keys')"><Icon name="key" size="md" /><span>{{ t('dashboard.createApiKey') }}</span><Icon name="arrowRight" size="sm" /></button>
-      <button @click="router.push('/infinite-canvas')"><Icon name="grid" size="md" /><span>{{ t('dashboard.infiniteCanvas') }}</span><Icon name="arrowRight" size="sm" /></button>
-      <button @click="router.push('/usage')"><Icon name="chart" size="md" /><span>{{ t('dashboard.viewUsage') }}</span><Icon name="arrowRight" size="sm" /></button>
-      <button v-if="canUseBatchImage" @click="router.push('/batch-image')"><Icon name="sparkles" size="md" /><span>{{ t('dashboard.batchImageAgent') }}</span><Icon name="arrowRight" size="sm" /></button>
-      <button @click="router.push('/redeem')"><Icon name="gift" size="md" /><span>{{ t('dashboard.redeemCode') }}</span><Icon name="arrowRight" size="sm" /></button>
+  <UCard
+    as="nav"
+    class="signal-actions min-w-0 shadow-xs sm:col-span-2 xl:col-span-1 dark:shadow-none"
+    :aria-label="t('dashboard.quickActions')"
+    :ui="{ header: 'px-4 py-3 sm:px-5', body: 'p-2 sm:p-2' }"
+  >
+    <template #header>
+      <h2 class="signal-actions-label text-sm font-semibold text-highlighted">{{ t('dashboard.quickActions') }}</h2>
+    </template>
+    <div class="grid grid-cols-2 gap-1 sm:grid-cols-4 xl:grid-cols-2">
+      <UButton v-bind="actionProps" icon="i-lucide-key-round" @click="router.push('/keys')"><span class="flex-1 truncate text-left">{{ t('dashboard.createApiKey') }}</span></UButton>
+      <UButton v-bind="actionProps" icon="i-lucide-layout-grid" @click="router.push('/infinite-canvas')"><span class="flex-1 truncate text-left">{{ t('dashboard.infiniteCanvas') }}</span></UButton>
+      <UButton v-bind="actionProps" icon="i-lucide-chart-column" @click="router.push('/usage')"><span class="flex-1 truncate text-left">{{ t('dashboard.viewUsage') }}</span></UButton>
+      <UButton v-if="canUseBatchImage" v-bind="actionProps" icon="i-lucide-sparkles" @click="router.push('/batch-image')"><span class="flex-1 truncate text-left">{{ t('dashboard.batchImageAgent') }}</span></UButton>
+      <UButton v-bind="actionProps" icon="i-lucide-gift" @click="router.push('/redeem')"><span class="flex-1 truncate text-left">{{ t('dashboard.redeemCode') }}</span></UButton>
     </div>
-  </nav>
+  </UCard>
 </template>
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 const router = useRouter()
 const { t } = useI18n()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 
+// Shared look for the shortcut rows: quiet neutral rows with a trailing arrow.
+const actionProps = {
+  color: 'neutral',
+  variant: 'ghost',
+  size: 'lg',
+  block: true,
+  trailingIcon: 'i-lucide-arrow-right',
+  ui: { leadingIcon: 'text-muted', trailingIcon: 'text-dimmed' },
+} as const
+
 onMounted(() => {
   void refreshBatchImageAccess()
 })
 </script>
-
-<style scoped>
-.signal-actions { display: flex; align-items: center; gap: 18px; padding: 12px 0; min-width: 0; }
-.signal-actions-label { flex-shrink: 0; font-size: 11px; color: var(--signal-muted, #65716a); }
-.signal-actions-list { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
-.signal-actions button { display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px; min-height: 36px; padding: 6px 9px; border-radius: 4px; font-size: 12px; font-weight: 500; color: var(--signal-text, #202423); text-align: left; }
-.signal-actions button :deep(svg) { color: var(--signal-accent, #087f68); flex-shrink: 0; }
-.signal-actions button:hover { background: var(--signal-surface, #fff); color: var(--signal-accent, #087f68); }
-.signal-actions button:focus-visible { outline: 2px solid var(--signal-accent, #087f68); outline-offset: 2px; }
-@media (max-width: 640px) {
-  .signal-actions { align-items: flex-start; gap: 8px; padding: 10px 0; }
-  .signal-actions-label { padding-top: 14px; }
-  .signal-actions-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 1; gap: 0 6px; }
-  .signal-actions button { min-height: 44px; padding: 7px 4px; overflow-wrap: anywhere; }
-}
-</style>
