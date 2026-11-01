@@ -619,7 +619,7 @@ const renderedHelpText = computed(() => DOMPurify.sanitize(
 
 const rechargeCenterEnabled = computed(() => checkout.value.recharge_center_enabled === true)
 
-// Alipay / WeChat comes first in the tab bar; the page still opens on the balance top-up tab.
+// Alipay / WeChat comes first in the tab bar and is the tab the page opens on (see onMounted).
 const tabs = computed(() => {
   const result: { key: 'recharge' | 'rechargeCenter'; label: string }[] = []
   if (rechargeCenterEnabled.value) result.push({ key: 'rechargeCenter', label: t('payment.tabRechargeCenter') })
@@ -1336,7 +1336,10 @@ onMounted(async () => {
       }
     }
     await resumeWechatPaymentFromQuery()
-    if (checkout.value.balance_disabled && rechargeCenterEnabled.value) {
+    // Alipay / WeChat (recharge centre) is the first tab and opens by default. Stay on balance
+    // top-up while a balance payment is being resumed, or when a link asks for it (?tab=recharge).
+    const wantsBalance = route.query.tab === 'recharge' || paymentPhase.value === 'paying'
+    if (rechargeCenterEnabled.value && (checkout.value.balance_disabled || !wantsBalance)) {
       activeTab.value = 'rechargeCenter'
     }
     // Preserve legacy subscription deep links for payment callbacks and old renewal URLs.
