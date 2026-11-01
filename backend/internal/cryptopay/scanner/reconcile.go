@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strconv"
 	"strings"
@@ -327,6 +328,13 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 					if verifyErr == nil && p.status == "pending" {
 						final, err := transactionIsFinalForChain(rpcCtx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
 						verifyErr = err
+						if err == nil && final && !w.securityCovered(chain.Chain, transfer.BlockNumber) {
+							// Head observation records pending rows before any security
+							// range reached their block. Final alone is not enough: wait
+							// until the cursor or a successful security range covers it.
+							slog.Debug("[cryptopay] pending credit waits for security scan", "chain", chain.Chain, "tx", p.txHash, "block", transfer.BlockNumber)
+							final = false
+						}
 						if err == nil && final {
 							cancelObservation()
 							var changed bool
@@ -347,8 +355,11 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 							if !reincluded && status != "pending" {
 								continue
 							}
-							if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
+							credited, err := w.handler.Process(ctx, transfer, decimals)
+							if err != nil {
 								errs = append(errs, err)
+							} else if credited {
+								w.markCreditedConfirmations(ctx, chain, transfer)
 							}
 							continue
 						}
@@ -367,6 +378,14 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 		if err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		if changed && status == "pending" && w.liveProgress {
+			if head, ok := w.passHead(p.chain); ok {
+				if err := w.updatePendingConfirmations(ctx, p.chain, p.txHash, p.logIndex,
+					confirmationsAt(head, p.blockNumber, chain.Confirmations)); err != nil {
+					errs = append(errs, err)
+				}
+			}
 		}
 		// Persist first, notify once on the guarded credited -> reverted
 		// transition. No refund or debit is attempted here.

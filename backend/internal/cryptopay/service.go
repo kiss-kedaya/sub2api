@@ -1047,6 +1047,11 @@ type UserDepositRecord struct {
 	Reason    string  `json:"reason,omitempty"` // human text for non-credited rows
 	CreatedAt string  `json:"created_at"`
 	Credited  float64 `json:"credited"`
+	// BlockNumber, Confirmations and RequiredConfirmations drive the
+	// "confirming n/m" progress for pending deposits.
+	BlockNumber           uint64 `json:"block_number"`
+	Confirmations         int    `json:"confirmations"`
+	RequiredConfirmations int    `json:"required_confirmations"`
 }
 
 // UserDepositHistory lists the caller's deposits against their addresses.
@@ -1056,7 +1061,7 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.reason, d.created_at,
-		       COALESCE(o.amount, 0), d.log_index, d.order_id
+		       COALESCE(o.amount, 0), d.log_index, d.order_id, d.block_number, d.confirmations
 		  FROM deposit_transactions d
 		  JOIN deposit_addresses a ON
 		       (a.chain = 'evm' AND d.chain <> 'solana' AND lower(a.address) = lower(d.to_address))
@@ -1068,6 +1073,7 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		return nil, fmt.Errorf("user deposit history: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	required := s.Config().Confirmations
 	var out []UserDepositRecord
 	legacy := map[string][]int{}
 	for rows.Next() {
@@ -1075,8 +1081,15 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		var created time.Time
 		var logIndex int
 		var orderID sql.NullInt64
-		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Token, &r.Amount, &r.Status, &r.Reason, &created, &r.Credited, &logIndex, &orderID); err != nil {
+		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Token, &r.Amount, &r.Status, &r.Reason, &created, &r.Credited, &logIndex, &orderID,
+			&r.BlockNumber, &r.Confirmations); err != nil {
 			return nil, err
+		}
+		r.RequiredConfirmations = required[r.Chain]
+		if r.Status == "credited" && r.Confirmations < r.RequiredConfirmations {
+			// Rows credited before the counter existed stored 0. Credit already
+			// required full depth, so show the requirement instead of 0/n.
+			r.Confirmations = r.RequiredConfirmations
 		}
 		// The user sees the symbol; the raw contract stays internal.
 		r.Token = tokenSymbol(r.Chain, r.Token)
