@@ -15,7 +15,7 @@
       <URadioGroup
         v-if="availableGroups.length > 0"
         :model-value="selectedGroupId ?? undefined"
-        @update:model-value="(value) => (selectedGroupId = value == null ? null : Number(value))"
+        @update:model-value="(value: string | number | null | undefined) => (selectedGroupId = value == null ? null : Number(value))"
         :items="groupItems"
         variant="card"
         class="max-h-64 overflow-y-auto"

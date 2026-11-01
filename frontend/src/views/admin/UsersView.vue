@@ -78,7 +78,7 @@
                     { value: '', label: getAttributeDefinitionName(Number(attrId)) },
                     ...(getAttributeDefinition(Number(attrId))?.options || [])
                   ]"
-                  @update:model-value="(val) => { updateAttributeFilter(Number(attrId), String(val ?? '')); applyFilter() }"
+                  @update:model-value="(val: string | number | boolean | null) => { updateAttributeFilter(Number(attrId), String(val ?? '')); applyFilter() }"
                 />
                 <UInput
                   v-else
@@ -1553,3 +1553,4 @@ onUnmounted(() => {
   abortController?.abort()
 })
 </script>
+

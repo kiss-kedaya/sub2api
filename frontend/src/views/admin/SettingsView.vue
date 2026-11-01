@@ -2656,13 +2656,13 @@
                   <span class="font-mono text-xs text-toned">{{ p }}</span>
                 </template>
                 <template #daily-cell="{ row: { original: { platform: p } } }">
-                  <UInput v-model.number="form.default_platform_quotas[p]!.daily" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
+                  <UInput v-model.number="form.default_platform_quotas[p as keyof DefaultPlatformQuotasMap]!.daily" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
                 </template>
                 <template #weekly-cell="{ row: { original: { platform: p } } }">
-                  <UInput v-model.number="form.default_platform_quotas[p]!.weekly" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
+                  <UInput v-model.number="form.default_platform_quotas[p as keyof DefaultPlatformQuotasMap]!.weekly" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
                 </template>
                 <template #monthly-cell="{ row: { original: { platform: p } } }">
-                  <UInput v-model.number="form.default_platform_quotas[p]!.monthly" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
+                  <UInput v-model.number="form.default_platform_quotas[p as keyof DefaultPlatformQuotasMap]!.monthly" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
                 </template>
               </UTable>
               <p class="text-xs text-warning mt-2">
@@ -2897,13 +2897,13 @@
                       <span class="font-mono text-xs text-toned">{{ p }}</span>
                     </template>
                     <template #daily-cell="{ row: { original: { platform: p } } }">
-                      <UInput v-model.number="authSourceDefaults[authSource.source].platform_quotas[p]!.daily" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
+                      <UInput v-model.number="authSourceDefaults[authSource.source].platform_quotas[p as keyof DefaultPlatformQuotasMap]!.daily" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
                     </template>
                     <template #weekly-cell="{ row: { original: { platform: p } } }">
-                      <UInput v-model.number="authSourceDefaults[authSource.source].platform_quotas[p]!.weekly" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
+                      <UInput v-model.number="authSourceDefaults[authSource.source].platform_quotas[p as keyof DefaultPlatformQuotasMap]!.weekly" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
                     </template>
                     <template #monthly-cell="{ row: { original: { platform: p } } }">
-                      <UInput v-model.number="authSourceDefaults[authSource.source].platform_quotas[p]!.monthly" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
+                      <UInput v-model.number="authSourceDefaults[authSource.source].platform_quotas[p as keyof DefaultPlatformQuotasMap]!.monthly" type="number" step="0.01" min="0" :placeholder="t('admin.settings.platformQuota.placeholder')" size="sm" class="w-28" />
                     </template>
                   </UTable>
                 </UFormField>
@@ -10483,3 +10483,5 @@ watch(
     0 1px 0 rgb(255 255 255 / 0.08) inset;
 }
 </style>
+
+

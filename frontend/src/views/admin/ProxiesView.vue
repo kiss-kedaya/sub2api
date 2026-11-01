@@ -107,7 +107,7 @@
               <UCheckbox
                 :model-value="allVisibleSelected"
                 :aria-label="t('common.all')"
-                @update:model-value="(value) => toggleVisible(!!value)"
+                @update:model-value="(value: boolean | 'indeterminate') => toggleVisible(!!value)"
               />
             </div>
           </template>
@@ -117,7 +117,7 @@
               <UCheckbox
                 :model-value="selectedProxyIds.has(row.id)"
                 :aria-label="row.name"
-                @update:model-value="(value) => (value ? select(row.id) : deselect(row.id))"
+                @update:model-value="(value: boolean | 'indeterminate') => (value ? select(row.id) : deselect(row.id))"
               />
             </div>
           </template>
@@ -1857,3 +1857,5 @@ onUnmounted(() => {
   abortController?.abort()
 })
 </script>
+
+
