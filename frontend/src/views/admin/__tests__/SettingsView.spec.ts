@@ -7,6 +7,7 @@ import enSettings from "@/i18n/locales/en/admin/settings";
 import zhCommon from "@/i18n/locales/zh/common";
 import zhSettings from "@/i18n/locales/zh/admin/settings";
 import SettingsView from "../SettingsView.vue";
+import ThemeCustomizer from "@/components/admin/theme/ThemeCustomizer.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 
 vi.mock('@/views/admin/settings/GatewayIPNoticeSettings.vue', () => ({ default: { template: '<div />' } }));
@@ -554,6 +555,7 @@ function mountView() {
     global: {
       stubs: {
         teleport: true,
+        ThemeCustomizer: true,
         AppLayout: AppLayoutStub,
         Select: SelectStub,
         Toggle: ToggleStub,
@@ -876,6 +878,26 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ compact_home_enabled: true }),
     );
+  });
+
+  it("shows the site theme panel on the appearance tab without the settings save button", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findComponent(ThemeCustomizer).exists()).toBe(false);
+
+    const tab = wrapper
+      .findAll("button")
+      .find((node) => node.text().includes("admin.settings.tabs.appearance"));
+    expect(tab).toBeDefined();
+    await tab!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findComponent(ThemeCustomizer).exists()).toBe(true);
+    const save = wrapper
+      .findAll('button[type="submit"]')
+      .find((node) => node.text().includes("admin.settings.saveSettings"));
+    expect(save?.isVisible()).toBe(false);
+    wrapper.unmount();
   });
 
   it("renders panel rate limit card and saves settings", async () => {

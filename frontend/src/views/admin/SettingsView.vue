@@ -1,6 +1,7 @@
 <template>
   <AppLayout>
     <div class="mx-auto max-w-6xl space-y-6">
+      <AdminPageHeader :title="t('admin.settings.title')" :description="t('admin.settings.description')" />
       <!-- Loading State -->
       <div v-if="loading" class="flex items-center justify-center py-12">
         <div
@@ -9055,8 +9056,13 @@
           <BackupSettings />
         </div>
 
+        <!-- Tab: Appearance (site theme; the panel loads and saves on its own) -->
+        <div v-if="activeTab === 'appearance'" data-testid="settings-appearance">
+          <ThemeCustomizer />
+        </div>
+
         <!-- Save Button -->
-        <div v-show="activeTab !== 'backup'" class="flex justify-end">
+        <div v-show="activeTab !== 'backup' && activeTab !== 'appearance'" class="flex justify-end">
           <button
             type="submit"
             :disabled="saving || loadFailed"
@@ -9177,6 +9183,8 @@ import Toggle from "@/components/common/Toggle.vue";
 import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
+import ThemeCustomizer from "@/components/admin/theme/ThemeCustomizer.vue";
+import AdminPageHeader from "@/components/admin/page/AdminPageHeader.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import GatewayIPNoticeSettings from "@/views/admin/settings/GatewayIPNoticeSettings.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
@@ -9241,6 +9249,7 @@ const paymentMethodsHref = computed(() =>
 
 type SettingsTab =
   | "general"
+  | "appearance"
   | "agreement"
   | "features"
   | "security"
@@ -9252,6 +9261,7 @@ type SettingsTab =
 const activeTab = ref<SettingsTab>("general");
 const settingsTabs = [
   { key: "general" as SettingsTab, icon: "home" as const },
+  { key: "appearance" as SettingsTab, icon: "sun" as const },
   { key: "agreement" as SettingsTab, icon: "document" as const },
   { key: "features" as SettingsTab, icon: "bolt" as const },
   { key: "security" as SettingsTab, icon: "shield" as const },
