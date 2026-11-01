@@ -18,7 +18,7 @@ permissions:
 jobs:
   scan:
     if: github.event_name != 'push' || !github.event.deleted
-    runs-on: [self-hosted, Linux, X64, release-builder]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
