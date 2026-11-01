@@ -459,7 +459,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Upstream model resolved: %s -> %s (account: %s, type: %s, isCodexCLI: %v)", billingModel, upstreamModel, account.Name, account.Type, isCodexCLI)
 		}
 	}
-	if strings.TrimSpace(requestRoot.Get("reasoning.effort").String()) == "minimal" {
+	if !nativeDeepSeekResponses && strings.TrimSpace(requestRoot.Get("reasoning.effort").String()) == "minimal" {
 		markPatchSet("reasoning.effort", "none")
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized reasoning.effort: minimal -> none (account: %s)", account.Name)
 	}
