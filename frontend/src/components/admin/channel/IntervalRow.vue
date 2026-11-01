@@ -1,109 +1,108 @@
 <template>
-  <div class="flex items-start gap-2 rounded-sm border p-2"
-       :class="isEmpty ? 'border-red-400 bg-red-50 dark:border-red-500 dark:bg-red-950/20' : 'border-gray-200 bg-white dark:border-dark-500 dark:bg-dark-700'">
+  <div
+    class="flex items-start gap-2 rounded-md p-2 ring ring-inset"
+    :class="isEmpty ? 'bg-error/5 ring-error/40' : 'bg-default ring-default'"
+  >
     <!-- Token mode: context range + prices ($/MTok) -->
     <template v-if="mode === 'token'">
       <div class="pricing-interval-grid grid min-w-0 flex-1 gap-2">
-        <div>
-          <label class="text-xs text-gray-400">{{ t('admin.channels.form.minTokens') }}</label>
-          <input :value="interval.min_tokens" @input="emitField('min_tokens', toInt(($event.target as HTMLInputElement).value))"
-            type="number" min="0" class="input mt-0.5 text-xs" />
-        </div>
-        <div>
-          <label class="text-xs text-gray-400">{{ t('admin.channels.form.maxTokens') }} <span class="text-gray-300">{{ t('admin.channels.form.inclusive') }}</span></label>
-          <input :value="interval.max_tokens ?? ''" @input="emitField('max_tokens', toIntOrNull(($event.target as HTMLInputElement).value))"
-            type="number" min="0" class="input mt-0.5 text-xs" :placeholder="'∞'" />
-        </div>
-        <div>
-          <label class="text-xs text-gray-400">{{ t('admin.channels.form.inputPrice') }} <span v-if="isEmpty" class="text-red-500">*</span> <span class="text-gray-300">$/M</span></label>
-          <input :value="interval.input_price" @input="emitField('input_price', ($event.target as HTMLInputElement).value)"
-            type="number" step="any" min="0" class="input mt-0.5 text-xs" />
-        </div>
-        <div>
-          <label class="text-xs text-gray-400">{{ t('admin.channels.form.outputPrice') }} <span v-if="isEmpty" class="text-red-500">*</span> <span class="text-gray-300">$/M</span></label>
-          <input :value="interval.output_price" @input="emitField('output_price', ($event.target as HTMLInputElement).value)"
-            type="number" step="any" min="0" class="input mt-0.5 text-xs" />
-        </div>
-        <div>
-          <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWrite5mPriceShort') }} <span class="text-gray-300">$/M</span></label>
-          <input :value="interval.cache_write_price" @input="emitField('cache_write_price', ($event.target as HTMLInputElement).value)"
-            type="number" step="any" min="0" class="input mt-0.5 text-xs" />
-        </div>
-        <div>
-          <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWrite1hPriceShort') }} <span class="text-gray-300">$/M</span></label>
-          <input :value="interval.cache_write_1h_price" @input="emitField('cache_write_1h_price', ($event.target as HTMLInputElement).value)"
-            type="number" step="any" min="0" class="input mt-0.5 text-xs" />
-        </div>
-        <div>
-          <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheReadPriceShort') }} <span class="text-gray-300">$/M</span></label>
-          <input :value="interval.cache_read_price" @input="emitField('cache_read_price', ($event.target as HTMLInputElement).value)"
-            type="number" step="any" min="0" class="input mt-0.5 text-xs" />
-        </div>
+        <UFormField :label="t('admin.channels.form.minTokens')" size="xs" :ui="fieldUi">
+          <UInput :model-value="String(interval.min_tokens ?? '')" @input="emitField('min_tokens', toInt(($event.target as HTMLInputElement).value))"
+            type="number" min="0" size="sm" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.channels.form.maxTokens')" :hint="t('admin.channels.form.inclusive')" size="xs" :ui="fieldUi">
+          <UInput :model-value="String(interval.max_tokens ?? '')" @input="emitField('max_tokens', toIntOrNull(($event.target as HTMLInputElement).value))"
+            type="number" min="0" size="sm" class="w-full" :placeholder="'∞'" />
+        </UFormField>
+        <UFormField :label="t('admin.channels.form.inputPrice')" hint="$/M" :required="isEmpty" size="xs" :ui="fieldUi">
+          <UInput :model-value="String(interval.input_price ?? '')" @input="emitField('input_price', ($event.target as HTMLInputElement).value)"
+            type="number" step="any" min="0" size="sm" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.channels.form.outputPrice')" hint="$/M" :required="isEmpty" size="xs" :ui="fieldUi">
+          <UInput :model-value="String(interval.output_price ?? '')" @input="emitField('output_price', ($event.target as HTMLInputElement).value)"
+            type="number" step="any" min="0" size="sm" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.channels.form.cacheWrite5mPriceShort')" hint="$/M" size="xs" :ui="fieldUi">
+          <UInput :model-value="String(interval.cache_write_price ?? '')" @input="emitField('cache_write_price', ($event.target as HTMLInputElement).value)"
+            type="number" step="any" min="0" size="sm" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.channels.form.cacheWrite1hPriceShort')" hint="$/M" size="xs" :ui="fieldUi">
+          <UInput :model-value="String(interval.cache_write_1h_price ?? '')" @input="emitField('cache_write_1h_price', ($event.target as HTMLInputElement).value)"
+            type="number" step="any" min="0" size="sm" class="w-full" />
+        </UFormField>
+        <UFormField :label="t('admin.channels.form.cacheReadPriceShort')" hint="$/M" size="xs" :ui="fieldUi">
+          <UInput :model-value="String(interval.cache_read_price ?? '')" @input="emitField('cache_read_price', ($event.target as HTMLInputElement).value)"
+            type="number" step="any" min="0" size="sm" class="w-full" />
+        </UFormField>
         <template v-if="enableMultipliers">
-          <div>
-            <label class="text-xs text-gray-400">{{ t('admin.channels.form.inputMultiplier') }}</label>
-            <input :value="interval.input_multiplier" @input="emitField('input_multiplier', ($event.target as HTMLInputElement).value)"
-              type="number" step="any" min="0.000001" class="input mt-0.5 text-xs" />
-          </div>
-          <div>
-            <label class="text-xs text-gray-400">{{ t('admin.channels.form.outputMultiplier') }}</label>
-            <input :value="interval.output_multiplier" @input="emitField('output_multiplier', ($event.target as HTMLInputElement).value)"
-              type="number" step="any" min="0.000001" class="input mt-0.5 text-xs" />
-          </div>
-          <div>
-            <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWriteMultiplier') }}</label>
-            <input :value="interval.cache_write_multiplier" @input="emitField('cache_write_multiplier', ($event.target as HTMLInputElement).value)"
-              type="number" step="any" min="0.000001" class="input mt-0.5 text-xs" />
-          </div>
-          <div>
-            <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheReadMultiplier') }}</label>
-            <input :value="interval.cache_read_multiplier" @input="emitField('cache_read_multiplier', ($event.target as HTMLInputElement).value)"
-              type="number" step="any" min="0.000001" class="input mt-0.5 text-xs" />
-          </div>
+          <UFormField :label="t('admin.channels.form.inputMultiplier')" size="xs" :ui="fieldUi">
+            <UInput :model-value="String(interval.input_multiplier ?? '')" @input="emitField('input_multiplier', ($event.target as HTMLInputElement).value)"
+              type="number" step="any" min="0.000001" size="sm" class="w-full" />
+          </UFormField>
+          <UFormField :label="t('admin.channels.form.outputMultiplier')" size="xs" :ui="fieldUi">
+            <UInput :model-value="String(interval.output_multiplier ?? '')" @input="emitField('output_multiplier', ($event.target as HTMLInputElement).value)"
+              type="number" step="any" min="0.000001" size="sm" class="w-full" />
+          </UFormField>
+          <UFormField :label="t('admin.channels.form.cacheWriteMultiplier')" size="xs" :ui="fieldUi">
+            <UInput :model-value="String(interval.cache_write_multiplier ?? '')" @input="emitField('cache_write_multiplier', ($event.target as HTMLInputElement).value)"
+              type="number" step="any" min="0.000001" size="sm" class="w-full" />
+          </UFormField>
+          <UFormField :label="t('admin.channels.form.cacheReadMultiplier')" size="xs" :ui="fieldUi">
+            <UInput :model-value="String(interval.cache_read_multiplier ?? '')" @input="emitField('cache_read_multiplier', ($event.target as HTMLInputElement).value)"
+              type="number" step="any" min="0.000001" size="sm" class="w-full" />
+          </UFormField>
         </template>
       </div>
     </template>
 
     <!-- Per-request / Image mode: tier label + context range + price -->
     <template v-else>
-      <div class="w-24">
-        <label class="text-xs text-gray-400">
-          {{ mode === 'image' ? t('admin.channels.form.resolution') : t('admin.channels.form.tierLabel') }}
-        </label>
-        <input :value="interval.tier_label" @input="emitField('tier_label', ($event.target as HTMLInputElement).value)"
-          type="text" class="input mt-0.5 text-xs" :placeholder="mode === 'image' ? '1K / 2K / 4K' : ''" />
-      </div>
-      <div class="w-20">
-        <label class="text-xs text-gray-400">{{ t('admin.channels.form.minTokens') }}</label>
-        <input :value="interval.min_tokens" @input="emitField('min_tokens', toInt(($event.target as HTMLInputElement).value))"
-          type="number" min="0" class="input mt-0.5 text-xs" />
-      </div>
-      <div class="w-20">
-        <label class="text-xs text-gray-400">{{ t('admin.channels.form.maxTokens') }} <span class="text-gray-300">{{ t('admin.channels.form.inclusive') }}</span></label>
-        <input :value="interval.max_tokens ?? ''" @input="emitField('max_tokens', toIntOrNull(($event.target as HTMLInputElement).value))"
-          type="number" min="0" class="input mt-0.5 text-xs" :placeholder="'∞'" />
-      </div>
-      <div class="flex-1">
-        <label class="text-xs text-gray-400">{{ t('admin.channels.form.perRequestPrice') }} <span v-if="isEmpty" class="text-red-500">*</span> <span class="text-gray-300">$</span></label>
-        <input :value="interval.per_request_price" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
-          type="number" step="any" min="0" class="input mt-0.5 text-xs" />
-      </div>
+      <UFormField
+        :label="mode === 'image' ? t('admin.channels.form.resolution') : t('admin.channels.form.tierLabel')"
+        size="xs"
+        :ui="fieldUi"
+        class="w-24"
+      >
+        <UInput :model-value="String(interval.tier_label ?? '')" @input="emitField('tier_label', ($event.target as HTMLInputElement).value)"
+          type="text" size="sm" class="w-full" :placeholder="mode === 'image' ? '1K / 2K / 4K' : ''" />
+      </UFormField>
+      <UFormField :label="t('admin.channels.form.minTokens')" size="xs" :ui="fieldUi" class="w-20">
+        <UInput :model-value="String(interval.min_tokens ?? '')" @input="emitField('min_tokens', toInt(($event.target as HTMLInputElement).value))"
+          type="number" min="0" size="sm" class="w-full" />
+      </UFormField>
+      <UFormField :label="t('admin.channels.form.maxTokens')" :hint="t('admin.channels.form.inclusive')" size="xs" :ui="fieldUi" class="w-20">
+        <UInput :model-value="String(interval.max_tokens ?? '')" @input="emitField('max_tokens', toIntOrNull(($event.target as HTMLInputElement).value))"
+          type="number" min="0" size="sm" class="w-full" :placeholder="'∞'" />
+      </UFormField>
+      <UFormField :label="t('admin.channels.form.perRequestPrice')" hint="$" :required="isEmpty" size="xs" :ui="fieldUi" class="flex-1">
+        <UInput :model-value="String(interval.per_request_price ?? '')" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
+          type="number" step="any" min="0" size="sm" class="w-full" />
+      </UFormField>
     </template>
 
-    <button type="button" @click="emit('remove')" class="mt-4 rounded-sm p-0.5 text-gray-400 hover:text-red-500">
-      <Icon name="x" size="sm" />
-    </button>
+    <UButton
+      icon="i-lucide-x"
+      color="neutral"
+      variant="ghost"
+      size="xs"
+      class="mt-4 shrink-0"
+      :aria-label="t('common.remove')"
+      :title="t('common.remove')"
+      @click="emit('remove')"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Icon from '@/components/icons/Icon.vue'
 import type { IntervalFormEntry } from './types'
 import type { BillingMode } from '@/api/admin/channels'
 
 const { t } = useI18n()
+
+// Compact field labels for the dense tier grid: muted, no bold, unit as a dimmed hint.
+const fieldUi = { label: 'font-normal text-muted', hint: 'text-dimmed', container: 'mt-0.5' }
 
 const props = defineProps<{
   interval: IntervalFormEntry

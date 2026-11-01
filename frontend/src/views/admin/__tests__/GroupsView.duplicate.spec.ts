@@ -175,6 +175,15 @@ function mountView() {
   })
 }
 
+// Opens the first row's "…" menu (a Nuxt UI dropdown teleported to <body>) and returns its item labels.
+async function openRowMenu(wrapper: ReturnType<typeof mountView>) {
+  const trigger = wrapper.get('[data-testid="group-row-more"]')
+  await trigger.trigger('click')
+  await flushPromises()
+  const menu = document.getElementById(trigger.attributes('aria-controls') ?? '')
+  return Array.from(menu?.querySelectorAll('[role="menuitem"] [data-slot="itemLabel"]') ?? []).map((el) => el.textContent?.trim())
+}
+
 describe('GroupsView duplicate action', () => {
   beforeEach(() => {
     authState.isSimpleMode = false
@@ -239,9 +248,27 @@ describe('GroupsView duplicate action', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="group-duplicate"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="group-composite-routes"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="group-rate-multipliers"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="group-rpm-overrides"]').exists()).toBe(false)
+    // Composite routes, rate multipliers and RPM overrides live in the row's "…" menu now.
+    const items = await openRowMenu(wrapper)
+    expect(items).not.toContain('admin.groups.compositeRoutes.action')
+    expect(items).not.toContain('admin.groups.rateMultipliers')
+    expect(items).not.toContain('admin.groups.rpmOverrides')
+    expect(items).toContain('common.delete')
+    wrapper.unmount()
+  })
+
+  it('lists the advanced group actions in the row menu outside simple mode', async () => {
+    const compositeGroup = { ...sourceGroup, platform: 'composite' }
+    listGroups.mockResolvedValueOnce({ items: [compositeGroup], total: 1, page: 1, page_size: 20, pages: 1 })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(await openRowMenu(wrapper)).toEqual([
+      'admin.groups.compositeRoutes.action',
+      'admin.groups.rateMultipliers',
+      'admin.groups.rpmOverrides',
+      'common.delete',
+    ])
     wrapper.unmount()
   })
 
