@@ -1,26 +1,24 @@
 <template>
   <div v-if="hasProviders" class="space-y-4">
-    <div v-if="showDivider" class="flex items-center gap-3">
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-        {{ t('auth.oauthOrContinue') }}
-      </span>
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-    </div>
+    <USeparator v-if="showDivider" :label="t('auth.oauthOrContinue')" />
 
     <div :class="providerGridClass">
-      <button
+      <!-- Provider buttons as in Nuxt UI's UAuthForm: block, neutral, subtle -->
+      <UButton
         v-for="provider in visibleProviders"
         :key="provider"
-        type="button"
+        block
+        color="neutral"
+        variant="subtle"
+        :label="providerLabel(provider)"
         :disabled="disabled"
-        class="btn btn-secondary h-12 w-full justify-center gap-2"
         @click="startLogin(provider)"
       >
-        <GitHubMark v-if="provider === 'github'" class="h-5 w-5 text-gray-800 dark:text-gray-100" />
-        <GoogleMark v-else class="h-5 w-5" />
-        <span class="font-medium">{{ providerLabel(provider) }}</span>
-      </button>
+        <template #leading>
+          <GitHubMark v-if="provider === 'github'" class="size-5 shrink-0" />
+          <GoogleMark v-else class="size-5 shrink-0" />
+        </template>
+      </UButton>
     </div>
   </div>
 </template>

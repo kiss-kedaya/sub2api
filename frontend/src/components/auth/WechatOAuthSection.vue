@@ -1,29 +1,32 @@
 <template>
   <div class="space-y-4">
-    <button type="button" :disabled="buttonDisabled" class="btn btn-secondary w-full" @click="startLogin">
-      <span
-        class="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-300"
-      >
-        W
-      </span>
-      {{ t('auth.oidc.signIn', { providerName }) }}
-    </button>
+    <UButton
+      block
+      color="neutral"
+      variant="subtle"
+      :label="t('auth.oidc.signIn', { providerName })"
+      :disabled="buttonDisabled"
+      @click="startLogin"
+    >
+      <template #leading>
+        <span
+          class="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-success/15 text-xs font-semibold text-success"
+        >
+          W
+        </span>
+      </template>
+    </UButton>
 
     <p
       v-if="disabledHint"
       data-testid="wechat-oauth-hint"
-      class="text-sm text-amber-600 dark:text-amber-400"
+      class="flex items-start gap-1.5 text-sm text-muted"
     >
-      {{ disabledHint }}
+      <UIcon name="i-lucide-circle-alert" class="mt-0.5 size-4 shrink-0 text-warning" />
+      <span>{{ disabledHint }}</span>
     </p>
 
-    <div v-if="showDivider" class="flex items-center gap-3">
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-        {{ t('auth.oauthOrContinue') }}
-      </span>
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-    </div>
+    <USeparator v-if="showDivider" :label="t('auth.oauthOrContinue')" />
   </div>
 </template>
 
