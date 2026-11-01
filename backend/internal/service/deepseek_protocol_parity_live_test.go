@@ -66,6 +66,11 @@ func TestDeepSeekProtocolParityLive(t *testing.T) {
 						body["messages"] = []any{map[string]string{"role": "user", "content": prompt}}
 						body["max_tokens"] = 768
 						body["thinking"] = map[string]string{"type": "disabled"}
+						if stream {
+							// The gateway always requests usage for billing. Use the
+							// same explicit option on the direct baseline as well.
+							body["stream_options"] = map[string]bool{"include_usage": true}
+						}
 						if tools {
 							body["tools"] = []any{map[string]any{"type": "function", "function": map[string]any{"name": "parity_lookup", "parameters": schema}}}
 							body["tool_choice"] = map[string]any{"type": "function", "function": map[string]string{"name": "parity_lookup"}}

@@ -31,8 +31,8 @@ type deepSeekNativeReasoningSource struct {
 // DeepSeek requires the full reasoning_text of historical assistant turns when
 // tools are enabled. Responses clients such as Codex retain summary/encrypted
 // fields but may omit the provider-specific content array on replay. Preserve
-// only reasoning that this gateway actually received, in shared Redis, scoped
-// to the authenticated key, conversation and requested model. Never read the
+// only reasoning that this gateway actually received, in shared Redis, bound
+// to the authenticated key, opaque item id and encrypted digest. Never read the
 // older unscoped Chat fallback cache and never substitute a summary for CoT.
 func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Context, account *Account, body []byte) []byte {
 	if s == nil || c == nil || account == nil || account.Platform != PlatformDeepseek || !account.UsesNativeCNResponses() {

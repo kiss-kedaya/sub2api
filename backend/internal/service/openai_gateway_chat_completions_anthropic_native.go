@@ -57,7 +57,9 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 	includeUsage := ccReq.StreamOptions != nil && ccReq.StreamOptions.IncludeUsage
 
 	// 2. Convert CC → Responses → Anthropic (chained conversion)
-	anthropicReq, err := apicompat.ChatCompletionsToAnthropicRequest(&ccReq)
+	anthropicReq, err := apicompat.ChatCompletionsToAnthropicRequestWithOptions(&ccReq, &apicompat.ChatCompletionsToResponsesOptions{
+		PreserveReasoningContent: account.Platform == PlatformDeepseek,
+	})
 	if err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", "Failed to convert request")
 		return nil, fmt.Errorf("convert chat completions to anthropic: %w", err)

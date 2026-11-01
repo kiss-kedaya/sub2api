@@ -38,11 +38,17 @@ func ChatCompletionsToResponsesWithOptions(req *ChatCompletionsRequest, opts *Ch
 // retaining Anthropic cache extensions. Ordinary Responses upstreams must not
 // receive these extensions, so ChatCompletionsToResponses leaves them out.
 func ChatCompletionsToAnthropicRequest(req *ChatCompletionsRequest) (*AnthropicRequest, error) {
-	responses, err := chatCompletionsToResponses(req, true, nil)
+	return ChatCompletionsToAnthropicRequestWithOptions(req, nil)
+}
+
+func ChatCompletionsToAnthropicRequestWithOptions(req *ChatCompletionsRequest, opts *ChatCompletionsToResponsesOptions) (*AnthropicRequest, error) {
+	responses, err := chatCompletionsToResponses(req, true, opts)
 	if err != nil {
 		return nil, err
 	}
-	return ResponsesToAnthropicRequest(responses)
+	return ResponsesToAnthropicRequestWithOptions(responses, &ResponsesToAnthropicOptions{
+		PreserveReasoningText: opts != nil && opts.PreserveReasoningContent,
+	})
 }
 
 func chatCompletionsToResponses(req *ChatCompletionsRequest, anthropic bool, opts *ChatCompletionsToResponsesOptions) (*ResponsesRequest, error) {
