@@ -694,6 +694,7 @@ export default {
       minutesRemaining: '剩余 {minutes} 分钟',
       remainingDays: '剩余天数',
       noExpiration: '无过期时间',
+      displayColumns: '显示列',
       status: {
         active: '生效中',
         expired: '已过期',

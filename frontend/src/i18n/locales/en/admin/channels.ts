@@ -694,6 +694,7 @@ export default {
       minutesRemaining: '{minutes}m remaining',
       remainingDays: 'Remaining days',
       noExpiration: 'No expiration',
+      displayColumns: 'Display',
       status: {
         active: 'Active',
         expired: 'Expired',
