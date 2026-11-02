@@ -1047,6 +1047,10 @@ type UserDepositRecord struct {
 	Reason    string  `json:"reason,omitempty"` // human text for non-credited rows
 	CreatedAt string  `json:"created_at"`
 	Credited  float64 `json:"credited"`
+	// CreditedKnown distinguishes a resolved settlement amount from legacy
+	// credited rows whose payment order can no longer be resolved. A numeric
+	// zero must not be presented as a confirmed zero-credit result.
+	CreditedKnown *bool `json:"credited_known,omitempty"`
 	// BlockNumber, Confirmations and RequiredConfirmations drive the
 	// "confirming n/m" progress for pending deposits.
 	BlockNumber           uint64 `json:"block_number"`
@@ -1090,6 +1094,10 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 			// Rows credited before the counter existed stored 0. Credit already
 			// required full depth, so show the requirement instead of 0/n.
 			r.Confirmations = r.RequiredConfirmations
+		}
+		if r.Status == "credited" {
+			known := orderID.Valid
+			r.CreditedKnown = &known
 		}
 		// The user sees the symbol; the raw contract stays internal.
 		r.Token = tokenSymbol(r.Chain, r.Token)
@@ -1136,6 +1144,8 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 			}
 			for _, index := range legacy[identity] {
 				out[index].Credited = amount
+				known := true
+				out[index].CreditedKnown = &known
 			}
 		}
 		if err := orders.Err(); err != nil {

@@ -24,6 +24,8 @@ func TestUserDepositHistoryReturnsFullTransactionHashForCaller(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, hash, rows[0].TxHash)
+	require.NotNil(t, rows[0].CreditedKnown)
+	require.True(t, *rows[0].CreditedKnown)
 	encoded, err := json.Marshal(rows)
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), `"tx_hash":"`+hash+`"`)
@@ -43,6 +45,8 @@ func TestDepositHistoryKeepsActualOrderAmountAfterRateChange(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, 67.0, rows[0].Credited)
+	require.NotNil(t, rows[0].CreditedKnown)
+	require.True(t, *rows[0].CreditedKnown)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -60,6 +64,8 @@ func TestLegacyHistoryResolvesOriginalOrderInOneBatch(t *testing.T) {
 	rows, err := s.UserDepositHistory(t.Context(), 1, 50)
 	require.NoError(t, err)
 	require.Equal(t, 67.0, rows[0].Credited)
+	require.NotNil(t, rows[0].CreditedKnown)
+	require.True(t, *rows[0].CreditedKnown)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
