@@ -96,7 +96,8 @@ test('scanSymlinks reports the runner-workspace links that broke 2.3.0', (t) => 
   const inside = links.find((link) => link.path.endsWith('inside.mjs'))
   assert.equal(absolute?.kind, 'broken')
   assert.match(absolute.target, /^\/home\/runner\/work\//)
-  assert.equal(inside?.kind, 'relative')
+  assert.equal(inside?.kind, 'absolute')
+  assert.equal(readFileSync(join(root, inside.path), 'utf8'), '\n')
 })
 
 test('ssr-release workflow rebuilds from main tooling, smokes the tarball, clobbers the asset', () => {

@@ -232,10 +232,22 @@ async function main() {
       fail('liveness payload is not a healthy Nuxt SSR renderer', [JSON.stringify(live)])
     }
 
-    const page = await get(`${base}/`, 20000)
+    // An unauthenticated application may redirect / to /login. Still render the
+    // destination: liveness alone cannot detect missing Nitro runtime modules.
+    let pageUrl = new URL('/', base)
+    let page
+    for (let redirects = 0; redirects <= 5; redirects += 1) {
+      page = await get(pageUrl, 20000)
+      if (![301, 302, 303, 307, 308].includes(page.status)) break
+      const location = page.headers.get('location')
+      if (!location || redirects === 5) fail('SSR page redirect is missing or loops')
+      const next = new URL(location, pageUrl)
+      if (next.origin !== base) fail('SSR page redirects outside the local smoke server')
+      pageUrl = next
+    }
     const contentType = page.headers.get('content-type') || ''
     const body = await page.text()
-    if (page.status !== 200) fail(`GET / -> ${page.status} (expected 200)`, [...output.slice(-40)])
+    if (page.status !== 200) fail(`GET ${pageUrl.pathname} -> ${page.status} (expected rendered HTML)`, [...output.slice(-40)])
     if (!contentType.includes('text/html')) fail(`GET / returned content-type ${contentType || '<none>'} instead of text/html`)
     if (!body.includes('<div')) fail('GET / returned no rendered markup')
   } finally {
