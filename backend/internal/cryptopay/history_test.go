@@ -17,8 +17,8 @@ func TestUserDepositHistoryReturnsFullTransactionHashForCaller(t *testing.T) {
 	hash := "0x" + strings.Repeat("ab", 32)
 	mock.ExpectQuery(`(?s)SELECT d.chain, d.tx_hash,.*WHERE a.user_id = \$1.*ORDER BY d.id DESC LIMIT \$2`).
 		WithArgs(int64(42), 50).
-		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id"}).
-			AddRow("bsc", hash, "0xtoken", "10", "credited", "", time.Now(), 67, 2, 10))
+		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations"}).
+			AddRow("bsc", hash, "0xtoken", "10", "credited", "", time.Now(), 67, 2, 10, 101, 0))
 	s := &Service{db: db}
 	rows, err := s.UserDepositHistory(t.Context(), 42, 50)
 	require.NoError(t, err)
@@ -36,8 +36,8 @@ func TestDepositHistoryKeepsActualOrderAmountAfterRateChange(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	mock.ExpectQuery(`(?s)COALESCE\(o.amount, 0\).*LEFT JOIN payment_orders`).
 		WithArgs(int64(1), 50).
-		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id"}).
-			AddRow("bsc", "0xfixture", "0xtoken", "10.000000000000000000", "credited", "", time.Now(), 67, 2, 10))
+		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations"}).
+			AddRow("bsc", "0xfixture", "0xtoken", "10.000000000000000000", "credited", "", time.Now(), 67, 2, 10, 101, 0))
 	s := &Service{db: db, config: CryptoConfig{CreditMultiplier: 6}}
 	rows, err := s.UserDepositHistory(t.Context(), 1, 50)
 	require.NoError(t, err)
@@ -51,8 +51,8 @@ func TestLegacyHistoryResolvesOriginalOrderInOneBatch(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	mock.ExpectQuery(`(?s)COALESCE\(o.amount, 0\).*LEFT JOIN payment_orders`).WithArgs(int64(1), 50).
-		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id"}).
-			AddRow("bsc", "0xlegacy", "0xtoken", "10", "credited", "", time.Now(), 0, 0, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations"}).
+			AddRow("bsc", "0xlegacy", "0xtoken", "10", "credited", "", time.Now(), 0, 0, nil, 101, 0))
 	_, identity := depositOrderIdentity("bsc", "0xlegacy", 0)
 	mock.ExpectQuery(`SELECT out_trade_no, amount FROM payment_orders`).WithArgs(int64(1), identity).
 		WillReturnRows(sqlmock.NewRows([]string{"out_trade_no", "amount"}).AddRow(identity, 67))

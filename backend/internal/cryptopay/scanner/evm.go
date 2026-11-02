@@ -66,8 +66,9 @@ type evmLog struct {
 
 // ScanRange fetches transfers in [fromBlock, toBlock] for the given token
 // contracts and watched recipients, batching recipients by the filter limit.
-// Recipients are the addresses being watched (lowercased); tokens are the
-// contract addresses to filter on.
+// On a partial failure it returns transfers from successful batches together
+// with the error; cursor callers must not advance, while best-effort observers
+// may persist the matches without treating the range as fully scanned.
 func (s *EVMScanner) ScanRange(ctx context.Context, chain string, fromBlock, toBlock uint64, tokens []string, recipients []string) ([]Transfer, error) {
 	return s.scanRange(ctx, chain, fromBlock, toBlock, tokens, recipients, false)
 }
@@ -88,6 +89,7 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 	}
 
 	var out []Transfer
+	var scanErrs []error
 	// One budget per scanRange: a dense or slow range may be subdivided, but a
 	// node failing every request can never turn one pass into a request storm.
 	budget := maxGetLogsSplitRequests
@@ -98,7 +100,11 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 		}
 		logs, err := s.getLogsAdaptive(ctx, chain, fromBlock, toBlock, tokens, recipients[start:end], outgoing, start/batchSize, &budget)
 		if err != nil {
-			return nil, err
+			scanErrs = append(scanErrs, err)
+			if ctx.Err() != nil {
+				break
+			}
+			continue
 		}
 		for _, log := range logs {
 			if log.Removed || len(log.Topics) < 3 {
@@ -132,7 +138,7 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 			})
 		}
 	}
-	return out, nil
+	return out, errors.Join(scanErrs...)
 }
 
 // maxGetLogsSplitRequests caps the extra eth_getLogs requests one scanRange may
@@ -163,17 +169,18 @@ func (e *LogsError) Error() string {
 func (e *LogsError) Unwrap() error { return e.Err }
 
 // getLogsAdaptive returns logs only when the complete [from,to] x addresses
-// space was covered. A failed RPC query is retried as two halves: the block
-// range while it spans more than one block, then the address filter while it
-// holds more than minSplitAddresses. Splits are disjoint, so no log repeats.
-// Callers therefore still advance cursors only past fully scanned ranges.
+// space was covered. Recoverable remote query rejections are retried as two
+// halves: the block range, then the address filter. Rate limits are not split.
+// Splits are disjoint, so no log repeats.
 func (s *EVMScanner) getLogsAdaptive(ctx context.Context, chain string, from, to uint64, tokens, addresses []string, outgoing bool, batch int, budget *int) ([]evmLog, error) {
 	logs, err := s.getLogs(ctx, from, to, tokens, addresses, outgoing)
 	if err == nil {
 		return logs, nil
 	}
 	var failure *rpc.Failure
-	canSplit := ctx.Err() == nil && errors.As(err, &failure) && *budget >= 2 &&
+	canSplitFailure := errors.As(err, &failure) &&
+		(failure.Kind == "response" || (failure.Kind == "remote" && failure.RPCCode != 429))
+	canSplit := ctx.Err() == nil && canSplitFailure && *budget >= 2 &&
 		(to > from || len(addresses) > minSplitAddresses)
 	if !canSplit {
 		return nil, &LogsError{Chain: chain, FromBlock: from, ToBlock: to, Batch: batch, Addresses: len(addresses), Err: err}

@@ -74,6 +74,129 @@ type Worker struct {
 	failureAt    time.Time
 	// Per-chain report limiter: one slow chain must not hide another's errors.
 	chainFailureAt map[string]time.Time
+	// liveProgress enables the head observation window and the confirmation
+	// counter writes. Production workers (positive interval) turn it on.
+	liveProgress bool
+	// coverage is the per-pass record of security-scanned blocks. Pending
+	// credit is allowed only for blocks this pass proved were security-scanned.
+	coverage map[string]*chainCoverage
+}
+
+// chainCoverage records, for one chain and one pass, the durable cursor seen
+// (every block at or below it already passed securityRange) and the ranges
+// whose securityRange call succeeded during this pass.
+type chainCoverage struct {
+	cursor    uint64
+	hasCursor bool
+	ranges    [][2]uint64
+	head      uint64
+	hasHead   bool
+}
+
+type chainHeadSnapshot struct {
+	pool *rpc.Pool
+}
+
+func (w *Worker) chainCoverageLocked(chain string) *chainCoverage {
+	if w.coverage == nil {
+		w.coverage = make(map[string]*chainCoverage)
+	}
+	c := w.coverage[chain]
+	if c == nil {
+		c = &chainCoverage{}
+		w.coverage[chain] = c
+	}
+	return c
+}
+
+func (w *Worker) markSecurityCovered(chain string, from, to uint64) {
+	w.replayMu.Lock()
+	defer w.replayMu.Unlock()
+	c := w.chainCoverageLocked(chain)
+	c.ranges = append(c.ranges, [2]uint64{from, to})
+}
+
+func (w *Worker) noteCursor(chain string, cursor uint64) {
+	w.replayMu.Lock()
+	defer w.replayMu.Unlock()
+	c := w.chainCoverageLocked(chain)
+	c.cursor, c.hasCursor = cursor, true
+}
+
+func (w *Worker) noteHead(chain string, head uint64) {
+	w.replayMu.Lock()
+	defer w.replayMu.Unlock()
+	c := w.chainCoverageLocked(chain)
+	c.head, c.hasHead = head, true
+}
+
+func (w *Worker) passHead(chain string) (uint64, bool) {
+	w.replayMu.Lock()
+	defer w.replayMu.Unlock()
+	if c := w.coverage[chain]; c != nil && c.hasHead {
+		return c.head, true
+	}
+	return 0, false
+}
+
+// securityCovered reports whether block has passed the security range scan:
+// it is at or below the durable cursor, or inside a range this pass scanned
+// successfully. Head observation records pending rows above the cursor before
+// any security scan reached them; those must wait here. Without a security
+// hook nothing is gated.
+func (w *Worker) securityCovered(chain string, block uint64) bool {
+	if w.securityRange == nil {
+		return true
+	}
+	w.replayMu.Lock()
+	defer w.replayMu.Unlock()
+	c := w.coverage[chain]
+	if c == nil {
+		return false
+	}
+	if c.hasCursor && block <= c.cursor {
+		return true
+	}
+	for _, r := range c.ranges {
+		if block >= r[0] && block <= r[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// confirmationsAt reports blocks built on top of the inclusion block. This
+// matches transactionIsFinalForChain, which credits after head-block >= depth.
+func confirmationsAt(head, block, required uint64) uint64 {
+	if head <= block {
+		return 0
+	}
+	return min(head-block, required)
+}
+
+// updatePendingConfirmations only touches a pending row and only when the
+// value changed. It is display state: no balance or status depends on it.
+func (w *Worker) updatePendingConfirmations(ctx context.Context, chain, txHash string, logIndex int, confirmations uint64) error {
+	_, err := w.db.ExecContext(ctx, `UPDATE deposit_transactions SET confirmations = $1
+		WHERE chain = $2 AND tx_hash = $3 AND log_index = $4 AND status = 'pending' AND confirmations <> $1`,
+		int64(confirmations), chain, strings.ToLower(txHash), logIndex)
+	if err != nil {
+		return fmt.Errorf("update pending confirmations: %w", err)
+	}
+	return nil
+}
+
+// markCreditedConfirmations writes the chain's requirement once a row is
+// credited, so history shows a full counter instead of the stale pending one.
+func (w *Worker) markCreditedConfirmations(ctx context.Context, chain ChainConfig, t Transfer) {
+	if !w.liveProgress {
+		return
+	}
+	if _, err := w.db.ExecContext(ctx, `UPDATE deposit_transactions SET confirmations = $1
+		WHERE chain = $2 AND tx_hash = $3 AND log_index = $4 AND status = 'credited' AND confirmations <> $1`,
+		int64(chain.Confirmations), t.Chain, strings.ToLower(t.TxHash), t.LogIndex); err != nil {
+		slog.Warn("[cryptopay] credited confirmations not recorded", "chain", t.Chain, "tx", t.TxHash, "cause", rpc.SafeError(err))
+	}
 }
 
 // scanStageError attributes a per-chain failure to the scan step that produced
@@ -214,6 +337,7 @@ func NewWorker(
 		addresses: addresses, interval: interval, maxRange: maxRange,
 		done:         make(chan struct{}),
 		recentReplay: recentReplay,
+		liveProgress: recentReplay,
 	}
 }
 
@@ -385,10 +509,30 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 			}
 		}
 	}
+	// Coverage is per pass: pending credit below trusts only what this pass
+	// saw (durable cursor, successful security ranges, current head).
+	w.replayMu.Lock()
+	w.coverage = make(map[string]*chainCoverage)
+	w.replayMu.Unlock()
+	var bscHead *chainHeadSnapshot
+	if w.liveProgress && fromBlock == 0 && w.handler != nil {
+		for _, chain := range w.chains {
+			if chain.Chain == "bsc" {
+				bscHead = w.observeConfiguredHead(ctx, chain)
+				break
+			}
+		}
+	}
 	// Discover new payments before rotating historical receipt/reorg checks.
 	// Maintenance has its own bounded budget and must not delay fresh deposits.
 	for _, chain := range w.chains {
-		if scanErr := w.scanChainFrom(ctx, chain, fromBlock); scanErr != nil {
+		var scanErr error
+		if bscHead != nil && chain.Chain == "bsc" {
+			scanErr = w.scanChainFromSnapshot(ctx, chain, fromBlock, bscHead)
+		} else {
+			scanErr = w.scanChainFrom(ctx, chain, fromBlock)
+		}
+		if scanErr != nil {
 			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
 		}
 	}
@@ -484,6 +628,34 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 }
 
 func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFromBlock uint64) (scanErr error) {
+	return w.scanChainFromSnapshot(ctx, chain, manualFromBlock, nil)
+}
+
+func (w *Worker) observeConfiguredHead(ctx context.Context, chain ChainConfig) *chainHeadSnapshot {
+	observeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	pool := w.pools[chain.Chain]
+	if pool == nil {
+		return nil
+	}
+	pool, err := verifiedChainPool(observeCtx, pool, chain.Chain)
+	if err != nil {
+		w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", err: err})
+		return nil
+	}
+	head, err := pool.BlockNumber(observeCtx)
+	if err != nil {
+		w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", err: err})
+		return nil
+	}
+	w.noteHead(chain.Chain, head)
+	if err := w.observeHead(observeCtx, pool, chain, head); err != nil {
+		w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err})
+	}
+	return &chainHeadSnapshot{pool: pool}
+}
+
+func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, manualFromBlock uint64, snapshot *chainHeadSnapshot) (scanErr error) {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
@@ -498,15 +670,33 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		slog.Debug("[cryptopay] scan skipped: no pool", "chain", chain.Chain)
 		return nil
 	}
-	pool, err := verifiedChainPool(ctx, pool, chain.Chain)
-	if err != nil {
-		return stageErr(chain.Chain, "head", 0, 0, err)
-	}
-	head, err := pool.BlockNumber(ctx)
-	if err != nil {
-		return stageErr(chain.Chain, "head", 0, 0, err)
+	var head uint64
+	var err error
+	if snapshot != nil {
+		pool = snapshot.pool
+		head, err = pool.BlockNumber(ctx)
+		if err != nil {
+			return stageErr(chain.Chain, "head", 0, 0, err)
+		}
+	} else {
+		pool, err = verifiedChainPool(ctx, pool, chain.Chain)
+		if err != nil {
+			return stageErr(chain.Chain, "head", 0, 0, err)
+		}
+		head, err = pool.BlockNumber(ctx)
+		if err != nil {
+			return stageErr(chain.Chain, "head", 0, 0, err)
+		}
 	}
 	slog.Info("[cryptopay] scan tick", "chain", chain.Chain, "head", head, "confirmations", chain.Confirmations)
+	w.noteHead(chain.Chain, head)
+	if snapshot == nil && w.liveProgress && manualFromBlock == 0 && w.handler != nil {
+		// Recording pending deposits does not move the cursor or credit funds,
+		// so do this before the slower security sweep of the chain head.
+		if err := w.observeHead(ctx, pool, chain, head); err != nil {
+			w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err})
+		}
+	}
 	if w.securityRange != nil && head > 0 {
 		// Security incidents do not wait for deposit finality. Examine a
 		// bounded head window even when the credited-deposit cursor is caught
@@ -525,6 +715,8 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 			// progress. The failure stays in the result for manual callers.
 			headErr := stageErr(chain.Chain, "security", head-span+1, head, err)
 			defer func() { scanErr = errors.Join(headErr, scanErr) }()
+		} else {
+			w.markSecurityCovered(chain.Chain, head-span+1, head)
 		}
 	}
 	if head <= chain.Confirmations {
@@ -537,6 +729,9 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		slog.Warn("[cryptopay] cursor load failed", "chain", chain.Chain, "error", err)
 		return err
 	}
+	// The durable cursor is the security boundary for pending credit: every
+	// block at or below it passed securityRange before the cursor moved.
+	w.noteCursor(chain.Chain, last)
 	hadCursor := last != 0
 	if manualFromBlock != 0 {
 		// A manual start may rewind the cursor, but must never skip blocks
@@ -547,6 +742,7 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 			if err := w.cursor.Save(ctx, chain.Chain, last); err != nil {
 				return err
 			}
+			w.noteCursor(chain.Chain, last)
 		}
 	} else if last == 0 {
 		// First run: start from a small lookback window instead of the exact
@@ -628,6 +824,7 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		if err := w.cursor.Save(ctx, chain.Chain, to); err != nil {
 			return errors.Join(liveErr, stageErr(chain.Chain, "deposit", from, to, err))
 		}
+		w.noteCursor(chain.Chain, to)
 		from = to + 1
 	}
 	return liveErr
@@ -641,6 +838,7 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 		if err := w.securityRange(ctx, scanner, pool, chain, from, to); err != nil {
 			return stageErr(chain.Chain, "security", from, to, err)
 		}
+		w.markSecurityCovered(chain.Chain, from, to)
 	}
 	transfers, err := scanner.ScanRange(ctx, chain.Chain, from, to, chain.Tokens, recipients)
 	if err != nil {
@@ -714,8 +912,105 @@ func (w *Worker) processTransfer(ctx context.Context, pool *rpc.Pool, chain Chai
 		slog.Info("[cryptopay] deferred transfer", "chain", transfer.Chain, "tx", transfer.TxHash, "cause", rpc.SafeError(verifyErr))
 		return nil
 	}
-	if _, err := w.handler.Process(ctx, transfer, decimals); err != nil {
+	credited, err := w.handler.Process(ctx, transfer, decimals)
+	if err != nil {
 		return fmt.Errorf("persist deposit %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err)
 	}
+	if credited {
+		w.markCreditedConfirmations(ctx, chain, transfer)
+	}
 	return nil
+}
+
+// reportObserveFailure logs at error level (production keeps only errors),
+// at most once per chain per minute, and never joins the pass result: head
+// observation is best effort and must not fail the scan.
+func (w *Worker) reportObserveFailure(failure *scanStageError) {
+	key := failure.chain + "|observe"
+	now := time.Now()
+	w.replayMu.Lock()
+	if w.chainFailureAt == nil {
+		w.chainFailureAt = make(map[string]time.Time)
+	}
+	report := now.Sub(w.chainFailureAt[key]) >= time.Minute
+	if report {
+		w.chainFailureAt[key] = now
+	}
+	w.replayMu.Unlock()
+	if report {
+		slog.Error("[cryptopay] head observation incomplete; cursor scan unaffected", failure.logAttrs()...)
+	}
+}
+
+// observeHeadCap bounds the unconfirmed window: at most the chain's own
+// confirmation depth, 256 blocks and one eth_getLogs span.
+func observeHeadCap(confirmations, maxRange uint64) uint64 {
+	return min(confirmations, 256, maxRange)
+}
+
+// observeHead scans the not-yet-confirmed blocks [max(confirmed+1,
+// head-cap+1), head] and records matching transfers as pending only. It never
+// moves the cursor and never credits. Rows already recorded only get their
+// confirmation counter refreshed.
+func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainConfig, head uint64) error {
+	maxRange := w.maxRange
+	if chain.MaxRange > 0 {
+		maxRange = chain.MaxRange
+	}
+	if maxRange == 0 {
+		maxRange = 2000
+	}
+	limit := observeHeadCap(chain.Confirmations, maxRange)
+	if limit == 0 || head == 0 {
+		return nil
+	}
+	from := uint64(1)
+	if head >= limit {
+		from = head - limit + 1
+	}
+	if head > chain.Confirmations {
+		from = max(from, head-chain.Confirmations+1)
+	}
+	if from > head {
+		return nil
+	}
+	recipients, err := w.addresses(ctx, chain.Chain)
+	if err != nil || len(recipients) == 0 {
+		return err
+	}
+	observeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	transfers, scanErr := NewEVMScanner(pool).ScanRange(observeCtx, chain.Chain, from, head, chain.Tokens, recipients)
+	recorded, _ := w.handler.(recordedTransferHandler)
+	var errs []error
+	if scanErr != nil {
+		errs = append(errs, scanErr)
+	}
+	for _, transfer := range transfers {
+		if transfer.BlockNumber < from || transfer.BlockNumber > head || transfer.Amount == nil || transfer.Amount.Sign() <= 0 {
+			continue
+		}
+		decimals, watched := watchedDecimals(chain, transfer.Token)
+		if !watched {
+			continue
+		}
+		known := false
+		if recorded != nil {
+			if known, err = recorded.HasRecordedTransfer(ctx, transfer, decimals); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		if !known {
+			if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
+				errs = append(errs, fmt.Errorf("observe pending %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err))
+				continue
+			}
+		}
+		if err := w.updatePendingConfirmations(ctx, transfer.Chain, transfer.TxHash, transfer.LogIndex,
+			confirmationsAt(head, transfer.BlockNumber, chain.Confirmations)); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }

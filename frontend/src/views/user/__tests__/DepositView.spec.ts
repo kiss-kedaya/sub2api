@@ -134,39 +134,59 @@ describe('user deposit confirmation progress', () => {
     expect(wrapper.findAll('.deposit-view__pending-list li')).toHaveLength(3)
     expect(wrapper.get('.deposit-view__pending-more').text()).toBe('deposit.pendingMore {"n":1}')
   })
+
+  it('says the block confirmations are complete instead of promising an immediate credit', async () => {
+    mocks.getDepositHistory.mockResolvedValue([pendingRow({ confirmations: 3, required_confirmations: 3 })])
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__progress-text').text()).toBe('deposit.confirmProgressDone {"done":3,"required":3}')
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 100%')
+  })
 })
 
 describe('user deposit auto refresh', () => {
   const fakeTimers = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   const creditedRow = { chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'credited', credited: 67, created_at: '2026-01-01T00:00:00Z' }
 
-  it('re-reads history every 8 seconds while a deposit is confirming and stops after leaving the page', async () => {
+  it('discovers a new deposit within 5 seconds even when the history was empty', async () => {
     fakeTimers()
-    mocks.getDepositHistory.mockResolvedValue([pendingRow({ confirmations: 1, required_confirmations: 3 })])
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([pendingRow({ confirmations: 1, required_confirmations: 3 })])
     const wrapper = render()
     await flushPromises()
     expect(mocks.getDepositHistory).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(8000)
+    expect(wrapper.find('.deposit-view__pending').exists()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(4999)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(1)
     await flushPromises()
     expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
-    await vi.advanceTimersByTimeAsync(8000)
-    await flushPromises()
-    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(3)
-    wrapper.unmount()
-    await vi.advanceTimersByTimeAsync(60000)
-    await flushPromises()
-    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(3)
+    expect(wrapper.find('.deposit-view__pending').exists()).toBe(true)
   })
 
-  it('does not fast-poll when nothing is confirming', async () => {
+  it('keeps the 5 second cadence after the last pending deposit is credited', async () => {
     fakeTimers()
-    mocks.getDepositHistory.mockResolvedValue([creditedRow])
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([pendingRow({ confirmations: 2, required_confirmations: 3 })])
+      .mockResolvedValue([creditedRow])
     const wrapper = render()
     await flushPromises()
-    expect(wrapper.find('.deposit-view__pending').exists()).toBe(false)
-    await vi.advanceTimersByTimeAsync(24000)
+    await vi.advanceTimersByTimeAsync(5000)
     await flushPromises()
-    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(1)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.deposit-view__pending').exists()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(3)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(4)
   })
 
   it('pauses while the tab is hidden and refreshes as soon as it is visible again', async () => {
@@ -174,13 +194,61 @@ describe('user deposit auto refresh', () => {
     mocks.getDepositHistory.mockResolvedValue([pendingRow({ confirmations: 1, required_confirmations: 3 })])
     render()
     await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(1)
+
     setVisibility('hidden')
     await vi.advanceTimersByTimeAsync(40000)
     await flushPromises()
     expect(mocks.getDepositHistory).toHaveBeenCalledTimes(1)
+
     setVisibility('visible')
     await flushPromises()
     expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not poll after the view is unmounted', async () => {
+    fakeTimers()
+    mocks.getDepositHistory.mockResolvedValue([pendingRow({ confirmations: 1, required_confirmations: 3 })])
+    const wrapper = render()
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(30000)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not overlap an in-flight read and keeps polling after a visibility refresh', async () => {
+    fakeTimers()
+    let release: (rows: unknown[]) => void = () => undefined
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([creditedRow])
+      .mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+      .mockResolvedValue([creditedRow])
+    render()
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+
+    // Becoming visible asks for an immediate read, but the previous one is
+    // still in flight: no second request may be sent.
+    setVisibility('visible')
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+
+    release([creditedRow])
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(3)
   })
 
   it('refreshes the balance and shows a toast once when a confirming deposit is credited', async () => {
@@ -191,15 +259,17 @@ describe('user deposit auto refresh', () => {
     const wrapper = render()
     await flushPromises()
     expect(mocks.refreshUser).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(8000)
+
+    await vi.advanceTimersByTimeAsync(5000)
     await flushPromises()
     expect(mocks.refreshUser).toHaveBeenCalledOnce()
     expect(mocks.showSuccess).toHaveBeenCalledWith('deposit.creditedToast {"amount":"67"}')
     expect(wrapper.find('.deposit-view__pending').exists()).toBe(false)
-    // Nothing is confirming any more: the 8 second poll stops and the toast is not repeated.
-    await vi.advanceTimersByTimeAsync(16000)
+
+    // Credited rows keep the same 5 second cadence, but the toast must not repeat.
+    await vi.advanceTimersByTimeAsync(10000)
     await flushPromises()
-    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(4)
     expect(mocks.showSuccess).toHaveBeenCalledOnce()
   })
 
