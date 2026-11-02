@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   UPSTREAM_OPS_AUTH_CONTRACT,
   buildUpstreamOpsDataPayload,
+  buildUpstreamOpsImportRequest,
   buildUpstreamOpsPreview,
   describeUpstreamOpsAuthContract,
   inspectUpstreamOpsUrl,
@@ -247,6 +248,33 @@ describe('buildUpstreamOpsDataPayload', () => {
   })
 })
 
+describe('buildUpstreamOpsImportRequest', () => {
+  it('wraps the payload exactly as the existing import endpoint expects', () => {
+    const snapshot = parseUpstreamOpsSnapshot({ data: [providerRow()] })
+    const preview = buildUpstreamOpsPreview(snapshot)
+    const row = preview.rows[0]
+
+    const { request, includedKeys } = buildUpstreamOpsImportRequest(preview.rows, {
+      [row.key]: { apiKey: 'operator-typed-key-for-test' }
+    })
+
+    expect(request.skip_default_group_bind).toBe(true)
+    expect(request.data.type).toBe('sub2api-data')
+    expect(request.data.version).toBe(1)
+    expect(request.data.accounts).toHaveLength(1)
+    expect(request.data.accounts[0].credentials.api_key).toBe('operator-typed-key-for-test')
+    expect(includedKeys).toEqual([row.key])
+  })
+
+  it('never produces a request body when no key is supplied', () => {
+    const snapshot = parseUpstreamOpsSnapshot({ data: [providerRow()] })
+    const preview = buildUpstreamOpsPreview(snapshot)
+    const { request } = buildUpstreamOpsImportRequest(preview.rows)
+
+    expect(request.data.accounts).toEqual([])
+    expect(JSON.stringify(request)).not.toContain(PLANTED_SECRET)
+  })
+})
 describe('URL hardening', () => {
   it('rejects non-http(s) schemes instead of normalizing them into an importable URL', () => {
     expect(normalizeUpstreamOpsBaseUrl('javascript:alert(1)')).toBe('')

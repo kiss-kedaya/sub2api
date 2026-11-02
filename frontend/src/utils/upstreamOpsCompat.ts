@@ -464,6 +464,33 @@ export function buildUpstreamOpsPreview(
  * imported account from outranking or flooding existing traffic; the admin can
  * raise them afterwards.
  */
+export interface UpstreamOpsImportRequest {
+  data: AdminDataPayload
+  skip_default_group_bind: true
+}
+
+export interface UpstreamOpsImportRequestResult {
+  request: UpstreamOpsImportRequest
+  includedKeys: string[]
+  skipped: Array<{ key: string; status: UpstreamOpsRowStatus }>
+}
+
+/**
+ * Wraps the payload in the exact body the existing admin import endpoint expects
+ * (POST /api/v1/admin/accounts/data) with default-group binding left off, so an
+ * import never silently joins a group.
+ */
+export function buildUpstreamOpsImportRequest(
+  rows: UpstreamOpsPreviewRow[],
+  credentials: Record<string, UpstreamOpsOperatorCredential> = {}
+): UpstreamOpsImportRequestResult {
+  const result = buildUpstreamOpsDataPayload(rows, credentials)
+  return {
+    request: { data: result.payload, skip_default_group_bind: true },
+    includedKeys: result.includedKeys,
+    skipped: result.skipped
+  }
+}
 export function buildUpstreamOpsDataPayload(
   rows: UpstreamOpsPreviewRow[],
   credentials: Record<string, UpstreamOpsOperatorCredential> = {}

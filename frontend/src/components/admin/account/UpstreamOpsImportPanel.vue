@@ -178,7 +178,7 @@ import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
 import type { AccountPlatform, AdminDataImportResult } from '@/types'
 import {
-  buildUpstreamOpsDataPayload,
+  buildUpstreamOpsImportRequest,
   buildUpstreamOpsPreview,
   parseUpstreamOpsSnapshot,
   type UpstreamOpsExistingAccountKey,
@@ -437,16 +437,16 @@ const preview = computed(() => {
   })
 })
 
-const payloadResult = computed(() => {
+const requestResult = computed(() => {
   if (!preview.value) return null
   const operatorCredentials: Record<string, { apiKey: string }> = {}
   for (const [key, apiKey] of Object.entries(credentials.value)) {
     if (apiKey.trim()) operatorCredentials[key] = { apiKey }
   }
-  return buildUpstreamOpsDataPayload(preview.value.rows, operatorCredentials)
+  return buildUpstreamOpsImportRequest(preview.value.rows, operatorCredentials)
 })
 
-const importableCount = computed(() => payloadResult.value?.payload.accounts.length ?? 0)
+const importableCount = computed(() => requestResult.value?.request.data.accounts.length ?? 0)
 const importErrors = computed(() => importResult.value?.errors ?? [])
 const importFailedCount = computed(() => importResult.value?.account_failed ?? 0)
 const importSummaryText = computed(() => (importResult.value ? copy.value.importSummary(importResult.value.account_created, importResult.value.account_failed) : ''))
@@ -578,14 +578,11 @@ async function toggleExistingLoad() {
 }
 
 async function runImport() {
-  const payload = payloadResult.value?.payload
-  if (!payload || payload.accounts.length === 0) return
+  const request = requestResult.value?.request
+  if (!request || request.data.accounts.length === 0) return
   importing.value = true
   try {
-    const result = await adminAPI.accounts.importData({
-      data: payload,
-      skip_default_group_bind: true
-    })
+    const result = await adminAPI.accounts.importData(request)
     importResult.value = result
     confirmOpen.value = false
     credentials.value = {}
