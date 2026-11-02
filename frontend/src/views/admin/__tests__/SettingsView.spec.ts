@@ -563,11 +563,37 @@ const baseSettingsResponse = {
   },
 };
 
+/**
+ * SettingsView is a router page: Nuxt UI's ULink/UButton read the route injection.
+ * Mounting it without a router makes Vue print the component tree AND the whole
+ * settings form (legal documents included) on every render - 183 MB of warnings for
+ * this file alone - which floods the vitest worker RPC channel until the run dies
+ * with "Timeout calling onTaskUpdate".
+ */
+function specRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: "/:pathMatch(.*)*", component: { template: "<div />" } }],
+  });
+}
+
+/** Deep-link tests mount their own router; do not install a second one. */
+function isRouterPlugin(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "install" in value &&
+    "push" in value &&
+    "currentRoute" in value
+  );
+}
+
 function mountView(extra: { plugins?: unknown[]; attachTo?: HTMLElement } = {}) {
+  const plugins = extra.plugins ?? [];
   return mount(SettingsView, {
     attachTo: extra.attachTo,
     global: {
-      plugins: (extra.plugins ?? []) as never[],
+      plugins: (plugins.some(isRouterPlugin) ? plugins : [specRouter(), ...plugins]) as never[],
       stubs: {
         teleport: true,
         ThemeCustomizer: true,
@@ -1432,6 +1458,7 @@ describe("admin SettingsView payment visible method controls", () => {
 
     const wrapper = mount(SettingsView, {
       global: {
+        plugins: [specRouter()],
         stubs: {
           AppLayout: AppLayoutStub,
           Select: SelectStub,
@@ -1731,6 +1758,7 @@ describe("admin SettingsView payment visible method controls", () => {
 
     const wrapper = mount(SettingsView, {
       global: {
+        plugins: [specRouter()],
         stubs: {
           AppLayout: AppLayoutStub,
           Select: SelectStub,
@@ -2084,6 +2112,19 @@ describe("admin SettingsView command-palette deep links", () => {
     expect((wrapper.vm as unknown as { activeTab: string }).activeTab).toBe("security");
     expect(wrapper.get("#settings-wechat").classes()).toContain("settings-section-highlight");
     wrapper.unmount();
+  });
+
+  it("mounts without the route-injection warning flood", async () => {
+    // Without a router every Nuxt UI Link/Button dumps the whole settings form as a
+    // Vue warning; that is what starved the vitest worker RPC in CI.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const wrapper = mountView();
+    await flushPromises();
+    const warnings = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    wrapper.unmount();
+    warn.mockRestore();
+
+    expect(warnings).not.toContain('injection "Symbol(route location)" not found');
   });
 });
 

@@ -52,6 +52,8 @@
                 :key="row.group_id ?? `${row.platform}:${row.group_name ?? ''}`"
                 :row="row"
                 :user-rate-multiplier="getUserRateMultiplier(row.group_id)"
+                :is-new="resolvedGroupSignals[row.group_id ?? 0]?.isNew ?? false"
+                :rate-change="resolvedGroupSignals[row.group_id ?? 0]?.rateChange ?? null"
                 :countdown-seconds="countdownSeconds"
                 :timeline-length="timelineLength"
               />
@@ -70,6 +72,8 @@
               <ChannelMonitorV3Card
                 :row="item.row"
                 :user-rate-multiplier="getUserRateMultiplier(item.row.group_id)"
+                :is-new="resolvedGroupSignals[item.row.group_id ?? 0]?.isNew ?? false"
+                :rate-change="resolvedGroupSignals[item.row.group_id ?? 0]?.rateChange ?? null"
                 :countdown-seconds="countdownSeconds"
                 :timeline-length="timelineLength"
               />
@@ -98,6 +102,8 @@ import ChannelMonitorV3Card from '@/components/user/monitor/ChannelMonitorV3Card
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import { formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 import { buildChannelStatusLayout, channelStatusLayoutBlockKey } from '@/features/channel-monitor-v2/channelStatusLayout'
+import { isNewGroup, resolveRateChange } from '@/features/channel-monitor-v2/groupSignals'
+import type { GroupRateChange, GroupSignalSource } from '@/features/channel-monitor-v2/groupSignals'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
@@ -114,6 +120,8 @@ const matrix = ref<MonitorMatrixResponse | null>(null)
 const loading = ref(false)
 const refreshing = ref(false)
 const userGroupRates = ref<Record<number, number>>({})
+const groupSignals = ref<Record<number, GroupSignalSource>>({})
+// Snapshot of the clock used for the 24h freshness window; refreshed with the group payload.
 const countdownSeconds = ref(0)
 let controller: AbortController | null = null
 let refreshTimer: number | null = null
@@ -136,6 +144,18 @@ const platformSections = computed(() => {
     platform,
     rows: sectionRows.sort((a, b) => (a.group_id ?? 0) - (b.group_id ?? 0)),
   }))
+})
+const signalWindowNow = ref(Date.now())
+const resolvedGroupSignals = computed<Record<number, { isNew: boolean; rateChange: GroupRateChange | null }>>(() => {
+  const now = signalWindowNow.value
+  const resolved: Record<number, { isNew: boolean; rateChange: GroupRateChange | null }> = {}
+  for (const [rawId, source] of Object.entries(groupSignals.value)) {
+    resolved[Number(rawId)] = {
+      isNew: isNewGroup(source.createdAt, now),
+      rateChange: resolveRateChange(source, now),
+    }
+  }
+  return resolved
 })
 const layoutBlocks = computed(() => buildChannelStatusLayout(platformSections.value))
 const timelineLength = computed(() => ({ '90m': 18, '24h': 24, '7d': 14, '30d': 30 })[filter.value.range])
@@ -162,9 +182,20 @@ async function loadUserGroupRates() {
       userGroupsAPI.getAvailable(),
       userGroupsAPI.getUserGroupRates(),
     ])
+    const typedGroups = groups as Group[]
     userGroupRates.value = Object.fromEntries(
-      (groups as Group[]).map(group => [group.id, customRates[group.id] ?? group.rate_multiplier]),
+      typedGroups.map(group => [group.id, customRates[group.id] ?? group.rate_multiplier]),
     )
+    groupSignals.value = Object.fromEntries(
+      typedGroups.map(group => [group.id, {
+        createdAt: group.created_at ?? null,
+        // The badge shows the effective multiplier for this user, so the delta must use the same scale.
+        rateMultiplier: customRates[group.id] ?? group.rate_multiplier,
+        rateMultiplierChangedAt: group.rate_multiplier_changed_at ?? null,
+        previousRateMultiplier: group.previous_rate_multiplier ?? null,
+      } satisfies GroupSignalSource]),
+    )
+    signalWindowNow.value = Date.now()
   } catch (error) {
     // Monitoring remains usable when the optional pricing endpoint is unavailable.
     console.warn('Failed to load channel monitor group rates', error)
