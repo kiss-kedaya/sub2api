@@ -751,10 +751,6 @@ const (
 	// maxAPIKeyUsageRangeDays bounds the aggregate window so one request cannot
 	// scan an unbounded slice of usage_logs.
 	maxAPIKeyUsageRangeDays = 90
-	// maxGroupRateChangeGroups bounds the IN list of the rate-change probe.
-	maxGroupRateChangeGroups          = 100
-	defaultGroupRateChangeWindowHours = 24
-	maxGroupRateChangeWindowHours     = 24
 )
 
 // parseAPIKeyUsageRange resolves the range for GET /user/api-keys/:id/usage.
@@ -910,107 +906,6 @@ func (h *UsageHandler) GetMyAPIKeyUsage(c *gin.Context) {
 	})
 }
 
-// parseGroupIDsQuery reads group ids from repeated or comma separated
-// group_ids params and de-duplicates them.
-func parseGroupIDsQuery(c *gin.Context) ([]int64, bool) {
-	raw := c.QueryArray("group_ids")
-	ids := make([]int64, 0, len(raw))
-	seen := make(map[int64]struct{}, len(raw))
-	for _, entry := range raw {
-		for _, part := range strings.Split(entry, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			id, err := strconv.ParseInt(part, 10, 64)
-			if err != nil || id <= 0 {
-				response.BadRequest(c, "Invalid group_ids, expected positive integers")
-				return nil, false
-			}
-			if _, exists := seen[id]; exists {
-				continue
-			}
-			seen[id] = struct{}{}
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) > maxGroupRateChangeGroups {
-		response.BadRequest(c, "Too many group_ids, at most 100 are allowed")
-		return nil, false
-	}
-	return ids, true
-}
-
-// ListMyGroupRateChanges reports multiplier moves observed for the caller in
-// the recent window (default 24h).
-//
-// GET /api/v1/usage/groups/rate-changes?group_ids=3,7&hours=24
-//
-// Response:
-//
-//	{"window_hours":24,"start_time":"...","end_time":"...","items":[
-//	   {"group_id":3,"current_rate_multiplier":0.09,
-//	    "previous_rate_multiplier":0.12,"direction":"down",
-//	    "changed_at":"2026-11-02T03:12:00Z","requests":42}]}
-//
-// The values come from the multiplier actually applied on billed requests
-// (usage_logs.rate_multiplier), so they already include any per-user override.
-// Groups whose values oscillate (mixed billing modes, peak windows) are
-// suppressed instead of reporting noise. New groups (groups.created_at inside
-// the window) should be rendered as NEW by the client; this endpoint does not
-// distinguish new groups from changed ones.
-//
-// Semantics: this is an OBSERVATION, not a configuration audit. changed_at is
-// the first request billed at the new multiplier, which can be later than the
-// admin edit. The response therefore carries source=usage_observation and
-// changed_at_kind=first_request_at_new_rate; configuration change times are
-// only available from /admin/audit-logs/group-rate-changes (audit trail).
-func (h *UsageHandler) ListMyGroupRateChanges(c *gin.Context) {
-	subject, ok := middleware2.GetAuthSubjectFromContext(c)
-	if !ok {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	groupIDs, ok := parseGroupIDsQuery(c)
-	if !ok {
-		return
-	}
-	if len(groupIDs) == 0 {
-		response.Success(c, gin.H{
-			"window_hours": defaultGroupRateChangeWindowHours,
-			"items":        []usagestats.GroupRateChange{},
-		})
-		return
-	}
-
-	hours := defaultGroupRateChangeWindowHours
-	if raw := strings.TrimSpace(c.Query("hours")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 || parsed > maxGroupRateChangeWindowHours {
-			response.BadRequest(c, "Invalid hours, allowed range is 1-24")
-			return
-		}
-		hours = parsed
-	}
-
-	now := timezone.Now()
-	startTime := now.Add(-time.Duration(hours) * time.Hour)
-	changes, err := h.usageService.GetGroupRateChanges(c.Request.Context(), subject.UserID, groupIDs, startTime, now, now)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	response.Success(c, gin.H{
-		"window_hours":    hours,
-		"start_time":      startTime.UTC().Format(time.RFC3339),
-		"end_time":        now.UTC().Format(time.RFC3339),
-		"source":          usagestats.RateChangeSourceUsageObservation,
-		"changed_at_kind": usagestats.RateChangeKindFirstRequest,
-		"items":           changes,
-	})
-}
 func queryInflightOnly(c *gin.Context) bool {
 	value, err := strconv.ParseBool(strings.TrimSpace(c.Query("inflight_only")))
 	return err == nil && value

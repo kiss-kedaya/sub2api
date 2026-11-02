@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -27,10 +29,14 @@ const (
 	modelWhitelistAutoSyncRequestTimeout = 60 * time.Second
 	modelWhitelistAutoSyncMaxPerCycle    = 20
 	modelWhitelistAutoSyncDueScanLimit   = 100
+	modelWhitelistAutoSyncCycleTimeout   = 21 * time.Minute
 	modelWhitelistAutoSyncLeaderLockKey  = "model:whitelist:auto-sync:leader"
-	modelWhitelistAutoSyncLeaderLockTTL  = 3 * time.Minute
-	modelWhitelistAutoSyncBackoffBase    = 5 * time.Minute
-	modelWhitelistAutoSyncBackoffMax     = 6 * time.Hour
+	// The lease covers the bounded cycle and is always released after completion.
+	// TTL is only crash recovery if a process is terminated before defer runs.
+	modelWhitelistAutoSyncLeaderLockTTL = 23 * time.Minute
+	modelWhitelistAutoSyncMaxManualIDs  = 20
+	modelWhitelistAutoSyncBackoffBase   = 5 * time.Minute
+	modelWhitelistAutoSyncBackoffMax    = 6 * time.Hour
 )
 
 // ErrModelWhitelistAutoSyncUnavailable is returned when the runner has no
@@ -80,7 +86,7 @@ type ModelWhitelistAutoSyncResult struct {
 // "fetch upstream models and replace model_mapping" job.
 type ModelWhitelistAutoSyncService struct {
 	accountRepo        AccountRepository
-	accountTestService *AccountTestService
+	accountTestService modelWhitelistFetcher
 
 	parentCtx    context.Context
 	parentCancel context.CancelFunc
@@ -88,7 +94,7 @@ type ModelWhitelistAutoSyncService struct {
 	mu           sync.Mutex
 	started      bool
 	stopped      bool
-	cycleMu      sync.Mutex
+	runMu        sync.Mutex
 
 	now        func() time.Time
 	lockCache  LeaderLockCache
@@ -96,16 +102,20 @@ type ModelWhitelistAutoSyncService struct {
 	instanceID string
 }
 
+type modelWhitelistFetcher interface {
+	FetchUpstreamSupportedModels(context.Context, *Account) ([]string, error)
+}
+
 type modelWhitelistAutoSyncDueLister interface {
 	ListDueModelWhitelistAutoSyncAccounts(context.Context, time.Time, int) ([]Account, error)
 }
 
 type modelWhitelistAutoSyncMappingWriter interface {
-	UpdateAccountModelMappingCAS(ctx context.Context, id int64, expected, next map[string]string) (bool, error)
+	UpdateAccountModelMappingCAS(ctx context.Context, account *Account, expected, next map[string]string, expectedConfig map[string]any) (bool, error)
 }
 
 // NewModelWhitelistAutoSyncService creates the runner without starting it.
-func NewModelWhitelistAutoSyncService(accountRepo AccountRepository, accountTestService *AccountTestService) *ModelWhitelistAutoSyncService {
+func NewModelWhitelistAutoSyncService(accountRepo AccountRepository, accountTestService modelWhitelistFetcher) *ModelWhitelistAutoSyncService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ModelWhitelistAutoSyncService{
 		accountRepo:        accountRepo,
@@ -194,26 +204,27 @@ func (s *ModelWhitelistAutoSyncService) RunDue(ctx context.Context) error {
 	if s == nil || s.accountRepo == nil {
 		return nil
 	}
-	s.cycleMu.Lock()
-	defer s.cycleMu.Unlock()
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
 
 	now := s.currentTime()
-	release, acquired, err := s.tryAcquireLeaderLock(ctx, modelWhitelistAutoSyncCycleLockKey(now))
+	cycleCtx, cycleCancel := context.WithTimeout(ctx, modelWhitelistAutoSyncCycleTimeout)
+	defer cycleCancel()
+	release, acquired, err := s.tryAcquireLeaderLock(cycleCtx, modelWhitelistAutoSyncLeaderLockKey)
 	if err != nil {
 		return fmt.Errorf("acquire model whitelist auto sync cycle lock: %w", err)
 	}
 	if !acquired {
 		return nil
 	}
-	// Deliberately NOT released early: the key is bucket-scoped and expires with
-	// its TTL, so a peer instance cannot process the same minute twice.
-	_ = release
+	release = releaseOnce(release)
+	defer release()
 
 	lister, ok := s.accountRepo.(modelWhitelistAutoSyncDueLister)
 	if !ok {
 		return fmt.Errorf("account repository does not support model whitelist auto sync listing")
 	}
-	accounts, err := lister.ListDueModelWhitelistAutoSyncAccounts(ctx, now, modelWhitelistAutoSyncDueScanLimit)
+	accounts, err := lister.ListDueModelWhitelistAutoSyncAccounts(cycleCtx, now, modelWhitelistAutoSyncDueScanLimit)
 	if err != nil {
 		return fmt.Errorf("list due model whitelist auto sync accounts: %w", err)
 	}
@@ -223,10 +234,15 @@ func (s *ModelWhitelistAutoSyncService) RunDue(ctx context.Context) error {
 		if processed >= modelWhitelistAutoSyncMaxPerCycle {
 			break
 		}
-		if err := ctx.Err(); err != nil {
+		if err := cycleCtx.Err(); err != nil {
 			return err
 		}
 		account := &accounts[i]
+		freshAccount, readErr := s.accountRepo.GetByID(cycleCtx, account.ID)
+		if readErr != nil {
+			continue
+		}
+		account = freshAccount
 		enabled, interval, ok := modelWhitelistAutoSyncConfig(account.Extra)
 		if !ok || !enabled || !account.IsActive() {
 			continue
@@ -238,13 +254,15 @@ func (s *ModelWhitelistAutoSyncService) RunDue(ctx context.Context) error {
 		processed++
 		// Serial by construction: one account at a time, each with its own
 		// deadline, so a slow upstream cannot turn into a stampede.
-		accountCtx, cancel := context.WithTimeout(ctx, modelWhitelistAutoSyncRequestTimeout)
-		_, runErr := s.syncAccount(accountCtx, account, interval)
-		cancel()
-		if runErr != nil {
-			logger.LegacyPrintf("service.model_whitelist_auto_sync",
-				"account_id=%d sync_failed: %v", account.ID, runErr)
-		}
+		func() {
+			accountCtx, cancel := context.WithTimeout(cycleCtx, modelWhitelistAutoSyncRequestTimeout)
+			defer cancel()
+			_, runErr := s.syncAccount(accountCtx, account, interval)
+			if runErr != nil {
+				logger.LegacyPrintf("service.model_whitelist_auto_sync",
+					"account_id=%d sync_failed: %s", account.ID, safeModelWhitelistError(runErr))
+			}
+		}()
 	}
 	return nil
 }
@@ -255,37 +273,99 @@ func (s *ModelWhitelistAutoSyncService) RunNow(ctx context.Context, accountID in
 	if s == nil || s.accountRepo == nil {
 		return ModelWhitelistAutoSyncResult{AccountID: accountID}, ErrModelWhitelistAutoSyncUnavailable
 	}
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	lockCtx, lockCancel := context.WithTimeout(ctx, 2*time.Second)
+	release, acquired, err := s.tryAcquireLeaderLock(lockCtx, modelWhitelistAutoSyncLeaderLockKey)
+	lockCancel()
+	if err != nil {
+		return ModelWhitelistAutoSyncResult{AccountID: accountID}, err
+	}
+	if !acquired {
+		return ModelWhitelistAutoSyncResult{AccountID: accountID, SkippedReason: ModelWhitelistAutoSyncSkipLocked}, nil
+	}
+	release = releaseOnce(release)
+	defer release()
+	return s.runNowUnderGlobalLease(ctx, accountID)
+}
+
+// runNowUnderGlobalLease reloads every account field after the global lease is
+// held. It is also used inside a batch that owns one lease for its full run.
+func (s *ModelWhitelistAutoSyncService) runNowUnderGlobalLease(ctx context.Context, accountID int64) (ModelWhitelistAutoSyncResult, error) {
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
 		return ModelWhitelistAutoSyncResult{AccountID: accountID}, err
 	}
 	if account.Type != AccountTypeAPIKey {
-		return ModelWhitelistAutoSyncResult{
-			AccountID:     accountID,
-			SkippedReason: ModelWhitelistAutoSyncSkipNotAPIKey,
-			State:         decodeModelWhitelistAutoSyncState(account.Extra),
-		}, nil
+		return ModelWhitelistAutoSyncResult{AccountID: accountID, SkippedReason: ModelWhitelistAutoSyncSkipNotAPIKey, State: decodeModelWhitelistAutoSyncState(account.Extra)}, nil
 	}
-	_, interval, _ := modelWhitelistAutoSyncConfig(account.Extra)
-
-	lockCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	release, acquired, err := s.tryAcquireLeaderLock(lockCtx, modelWhitelistAutoSyncAccountLockKey(accountID))
-	cancel()
-	if err != nil {
-		return ModelWhitelistAutoSyncResult{AccountID: accountID}, err
+	if !account.IsActive() {
+		return ModelWhitelistAutoSyncResult{AccountID: accountID, SkippedReason: ModelWhitelistAutoSyncSkipDisabled, State: decodeModelWhitelistAutoSyncState(account.Extra)}, nil
 	}
-	if !acquired {
-		return ModelWhitelistAutoSyncResult{
-			AccountID:     accountID,
-			SkippedReason: ModelWhitelistAutoSyncSkipLocked,
-			State:         decodeModelWhitelistAutoSyncState(account.Extra),
-		}, nil
+	enabled, interval, ok := modelWhitelistAutoSyncConfig(account.Extra)
+	if !ok || !enabled {
+		return ModelWhitelistAutoSyncResult{AccountID: accountID, SkippedReason: ModelWhitelistAutoSyncSkipDisabled, State: decodeModelWhitelistAutoSyncState(account.Extra)}, nil
 	}
-	defer release()
-
 	runCtx, runCancel := context.WithTimeout(ctx, modelWhitelistAutoSyncRequestTimeout)
 	defer runCancel()
 	return s.syncAccount(runCtx, account, interval)
+}
+
+// RunManyNow processes an explicitly selected account set serially. It is used
+// by the bulk-edit dialog so the browser sends one request and upstream calls
+// never fan out concurrently. IDs are deduplicated and capped to bound request
+// duration and upstream load; individual failures are returned per account.
+func (s *ModelWhitelistAutoSyncService) RunManyNow(ctx context.Context, accountIDs []int64) []ModelWhitelistAutoSyncResult {
+	if s == nil || s.accountRepo == nil {
+		results := make([]ModelWhitelistAutoSyncResult, 0, len(accountIDs))
+		for _, id := range accountIDs {
+			results = append(results, ModelWhitelistAutoSyncResult{AccountID: id, Error: ErrModelWhitelistAutoSyncUnavailable.Error()})
+		}
+		return results
+	}
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	batchCtx, batchCancel := context.WithTimeout(ctx, modelWhitelistAutoSyncCycleTimeout)
+	defer batchCancel()
+	lockCtx, lockCancel := context.WithTimeout(batchCtx, 2*time.Second)
+	release, acquired, lockErr := s.tryAcquireLeaderLock(lockCtx, modelWhitelistAutoSyncLeaderLockKey)
+	lockCancel()
+	if lockErr != nil {
+		return []ModelWhitelistAutoSyncResult{{Error: safeModelWhitelistError(lockErr)}}
+	}
+	if !acquired {
+		return []ModelWhitelistAutoSyncResult{{SkippedReason: ModelWhitelistAutoSyncSkipLocked}}
+	}
+	release = releaseOnce(release)
+	defer release()
+	seen := make(map[int64]struct{}, len(accountIDs))
+	results := make([]ModelWhitelistAutoSyncResult, 0, min(len(accountIDs), modelWhitelistAutoSyncMaxManualIDs))
+	for _, id := range accountIDs {
+		if err := batchCtx.Err(); err != nil {
+			break
+		}
+		if id <= 0 {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		if len(results) >= modelWhitelistAutoSyncMaxManualIDs {
+			break
+		}
+		result, err := s.runNowUnderGlobalLease(batchCtx, id)
+		if err != nil && result.Error == "" {
+			result.Error = safeModelWhitelistError(err)
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+func releaseOnce(release func()) func() {
+	var once sync.Once
+	return func() { once.Do(release) }
 }
 
 // syncAccount is the single-account unit used by both the runner and RunNow.
@@ -304,18 +384,43 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 		result.SkippedReason = ModelWhitelistAutoSyncSkipCustomMap
 		return s.finishSkipped(ctx, account, interval, now, result)
 	}
+	baselineCredentials := cloneMap(account.Credentials)
+	baselineConfig := autoSyncConfigSnapshot(account.Extra)
 
 	if s.accountTestService == nil {
 		return s.finishWithError(ctx, account, interval, now, result, ErrModelWhitelistAutoSyncUnavailable)
 	}
-	catalog, fetchErr := s.accountTestService.SyncUpstreamModelCatalog(ctx, account)
+	// The auto-sync policy must only overwrite from a live upstream response.
+	// SyncUpstreamModelCatalog intentionally falls back to configured models for
+	// unsupported /models endpoints, which is useful for capability hydration but
+	// would make an auto-sync silently re-apply a stale whitelist.
+	models, fetchErr := s.accountTestService.FetchUpstreamSupportedModels(ctx, account)
 	if fetchErr != nil {
 		return s.finishWithError(ctx, account, interval, now, result, fetchErr)
 	}
-	models := normalizeModelWhitelistModels(catalog)
+	models = normalizeModelIDs(models)
 	if len(models) == 0 {
 		result.SkippedReason = ModelWhitelistAutoSyncSkipEmptyCatalog
 		return s.finishSkipped(ctx, account, interval, now, result)
+	}
+	current, err := s.accountRepo.GetByID(ctx, account.ID)
+	if err != nil {
+		return s.finishWithError(ctx, account, interval, now, result, err)
+	}
+	currentEnabled, currentInterval, configOK := modelWhitelistAutoSyncConfig(current.Extra)
+	if current.Type != AccountTypeAPIKey || !current.IsActive() || !configOK || !currentEnabled || currentInterval != interval ||
+		!reflect.DeepEqual(baselineConfig, autoSyncConfigSnapshot(current.Extra)) ||
+		!reflect.DeepEqual(baselineCredentials, cloneMap(current.Credentials)) {
+		result.SkippedReason = ModelWhitelistAutoSyncSkipConcurrent
+		return s.finishSkipped(ctx, account, interval, now, result)
+	}
+	baseline, custom, err = modelWhitelistBaselineMapping(current)
+	if err != nil {
+		return s.finishWithError(ctx, current, interval, now, result, err)
+	}
+	if custom {
+		result.SkippedReason = ModelWhitelistAutoSyncSkipCustomMap
+		return s.finishSkipped(ctx, current, interval, now, result)
 	}
 	result.Models = models
 	result.ModelCount = len(models)
@@ -329,7 +434,7 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 	if !ok {
 		return s.finishWithError(ctx, account, interval, now, result, fmt.Errorf("account repository does not support model mapping writes"))
 	}
-	applied, writeErr := writer.UpdateAccountModelMappingCAS(ctx, account.ID, baseline, next)
+	applied, writeErr := writer.UpdateAccountModelMappingCAS(ctx, current, baseline, next, autoSyncConfigSnapshot(current.Extra))
 	if writeErr != nil {
 		return s.finishWithError(ctx, account, interval, now, result, writeErr)
 	}
@@ -352,6 +457,32 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 		logger.LegacyPrintf("service.model_whitelist_auto_sync", "account_id=%d state_write_failed: %v", account.ID, err)
 	}
 	return result, nil
+}
+
+func cloneMap(input map[string]any) map[string]any {
+	if input == nil {
+		return map[string]any{}
+	}
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
+
+func autoSyncConfigSnapshot(extra map[string]any) map[string]any {
+	if extra == nil {
+		return map[string]any{}
+	}
+	raw, ok := extra[ModelWhitelistAutoSyncExtraKey]
+	if !ok {
+		return map[string]any{}
+	}
+	config, ok := raw.(map[string]any)
+	if !ok {
+		return map[string]any{"invalid": true}
+	}
+	return cloneMap(config)
 }
 
 func (s *ModelWhitelistAutoSyncService) finishSkipped(ctx context.Context, account *Account, interval time.Duration, now time.Time, result ModelWhitelistAutoSyncResult) (ModelWhitelistAutoSyncResult, error) {
@@ -398,7 +529,12 @@ func (s *ModelWhitelistAutoSyncService) writeState(ctx context.Context, accountI
 	if state == nil {
 		return nil
 	}
-	return s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
+	// The upstream request context may already be deadline-exceeded when a
+	// timeout is recorded. State is durable bookkeeping and must still be
+	// persisted with a short independent timeout.
+	stateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.accountRepo.UpdateExtra(stateCtx, accountID, map[string]any{
 		ModelWhitelistAutoSyncStateExtraKey: state.toMap(),
 	})
 }
@@ -421,9 +557,6 @@ func modelWhitelistAutoSyncCycleLockKey(now time.Time) string {
 
 func (s *ModelWhitelistAutoSyncService) tryAcquireLeaderLock(ctx context.Context, key string) (func(), bool, error) {
 	lockTTL := modelWhitelistAutoSyncLeaderLockTTL
-	if strings.Contains(key, ":cycle:") {
-		lockTTL = 2 * modelWhitelistAutoSyncCycleInterval
-	}
 	lockCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if s.lockCache != nil {
@@ -515,13 +648,10 @@ func modelWhitelistBaselineMapping(account *Account) (map[string]string, bool, e
 	return baseline, false, nil
 }
 
-func normalizeModelWhitelistModels(catalog *UpstreamModelCatalog) []string {
-	if catalog == nil {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(catalog.Models))
-	models := make([]string, 0, len(catalog.Models))
-	for _, model := range catalog.Models {
+func normalizeModelIDs(input []string) []string {
+	seen := make(map[string]struct{}, len(input))
+	models := make([]string, 0, len(input))
+	for _, model := range input {
 		model = strings.TrimSpace(model)
 		if model == "" {
 			continue
@@ -567,11 +697,11 @@ func safeModelWhitelistError(err error) string {
 	if err == nil {
 		return ""
 	}
-	message := strings.TrimSpace(err.Error())
-	if len(message) > 240 {
-		message = message[:240]
+	var syncErr *UpstreamModelSyncError
+	if errors.As(err, &syncErr) {
+		return syncErr.SafeMessage()
 	}
-	return message
+	return "model_sync_failed"
 }
 
 func modelWhitelistTimePtr(value time.Time) *time.Time {

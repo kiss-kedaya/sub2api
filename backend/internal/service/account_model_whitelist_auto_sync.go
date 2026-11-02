@@ -179,6 +179,7 @@ func managedAccountExtraKeysPreservedOnUpdate() []string {
 		OllamaCloudUsageSnapshotExtraKey,
 		OpenAIAutoResetCreditStateExtraKey,
 		ModelWhitelistAutoSyncExtraKey,
+		ModelWhitelistAutoSyncStateExtraKey,
 	}
 }
 

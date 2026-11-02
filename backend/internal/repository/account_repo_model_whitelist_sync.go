@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -32,10 +33,16 @@ func (r *accountRepository) ListDueModelWhitelistAutoSyncAccounts(ctx context.Co
 			AND status = 'active'
 			AND type = 'apikey'
 			AND extra @> '{"model_whitelist_auto_sync":{"enabled":true}}'::jsonb
+			AND (
+				extra #>> '{model_whitelist_auto_sync_state,next_run_at}' IS NULL
+				OR extra #>> '{model_whitelist_auto_sync_state,next_run_at}' = ''
+				OR extra #>> '{model_whitelist_auto_sync_state,next_run_at}' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+				OR extra #>> '{model_whitelist_auto_sync_state,next_run_at}' <= $1
+			)
 		ORDER BY COALESCE(extra #>> '{model_whitelist_auto_sync_state,next_run_at}', '') ASC,
 			id ASC
-		LIMIT $1
-	`, limit)
+		LIMIT $2
+	`, now.UTC().Format(time.RFC3339), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -79,10 +86,14 @@ func (r *accountRepository) ListDueModelWhitelistAutoSyncAccounts(ctx context.Co
 // the model_mapping key is touched: credentials.tokens and every other
 // credential stay exactly as they are, so a token refresh racing this job is
 // never clobbered.
-func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, id int64, expected, next map[string]string) (bool, error) {
+func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, account *service.Account, expected, next map[string]string, expectedConfig map[string]any) (bool, error) {
 	if r.sql == nil {
 		return false, errors.New("account repository SQL executor not configured")
 	}
+	if account == nil || account.ID <= 0 || account.Credentials == nil {
+		return false, errors.New("account snapshot is required for model mapping CAS")
+	}
+	id := account.ID
 	nextPayload, err := json.Marshal(next)
 	if err != nil {
 		return false, err
@@ -92,14 +103,51 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, id
 		return false, err
 	}
 
-	result, err := r.sql.ExecContext(ctx, `
+	expectedCredentialsPayload, err := json.Marshal(normalizeJSONMap(account.Credentials))
+	if err != nil {
+		return false, err
+	}
+	expectedConfigPayload, err := json.Marshal(normalizeJSONMap(expectedConfig))
+	if err != nil {
+		return false, err
+	}
+
+	var tx *dbent.Tx
+	queryCtx := ctx
+	queryExec := sqlExecutor(r.sql)
+	var outboxExec sqlExecutor
+	commit := false
+	if contextTx := dbent.TxFromContext(ctx); contextTx != nil {
+		queryExec = contextTx
+		outboxExec = contextTx
+	} else if r.client != nil {
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr != nil {
+			return false, txErr
+		}
+		defer func() { _ = tx.Rollback() }()
+		queryCtx = dbent.NewTxContext(ctx, tx)
+		queryExec = tx
+		outboxExec = tx
+		commit = true
+	} else {
+		return false, errors.New("account repository does not support atomic scheduler outbox writes")
+	}
+
+	result, err := queryExec.ExecContext(queryCtx, `
 		UPDATE accounts
 		SET credentials = jsonb_set(COALESCE(credentials, '{}'::jsonb), '{model_mapping}', $1::jsonb, true),
 			updated_at = NOW()
 		WHERE id = $2
 			AND deleted_at IS NULL
-			AND COALESCE(credentials -> 'model_mapping', '{}'::jsonb) = $3::jsonb
-	`, string(nextPayload), id, string(expectedPayload))
+			AND status = 'active'
+			AND type = 'apikey'
+			AND COALESCE(credentials, '{}'::jsonb) = $3::jsonb
+			AND COALESCE(credentials -> 'model_mapping', '{}'::jsonb) = $4::jsonb
+			AND extra -> 'model_whitelist_auto_sync' = $5::jsonb
+			AND COALESCE(extra @> '{"model_whitelist_auto_sync":{"enabled":true}}'::jsonb, FALSE)
+	`, string(nextPayload), id, string(expectedCredentialsPayload), string(expectedPayload), string(expectedConfigPayload))
 	if err != nil {
 		return false, err
 	}
@@ -110,9 +158,16 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, id
 	if affected == 0 {
 		return false, nil
 	}
-	if r.client != nil {
-		_ = enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil)
+	if outboxExec != nil {
+		if err := enqueueSchedulerOutbox(queryCtx, outboxExec, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+			return false, err
+		}
 	}
-	r.syncSchedulerAccountSnapshot(ctx, id)
+	if commit {
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		r.syncSchedulerAccountSnapshot(ctx, id)
+	}
 	return true, nil
 }

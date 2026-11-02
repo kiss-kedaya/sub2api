@@ -29,10 +29,8 @@ import (
 //	  "runner_available": true
 //	}
 //
-// The same two objects are already present on the normal account payload as
-// account.extra.model_whitelist_auto_sync and
-// account.extra.model_whitelist_auto_sync_state, so list views do not need an
-// extra request.
+// Account list/edit responses may carry the same objects in `extra`; this
+// focused endpoint is available when a view needs an authoritative refresh.
 func (h *AccountHandler) GetModelWhitelistAutoSync(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -106,4 +104,29 @@ func (h *AccountHandler) RunModelWhitelistAutoSync(c *gin.Context) {
 		// can show the reason without a second request.
 	}
 	response.Success(c, result)
+}
+
+// RunModelWhitelistAutoSyncBatch is the explicitly selected serial batch API.
+//
+// POST /api/v1/admin/accounts/model-whitelist-auto-sync/run
+// Body: {"account_ids":[12,13]}
+// Response data: {"results":[{account_id,applied,skipped_reason,model_count,error,state}]}
+//
+// The service deduplicates IDs, caps the batch to 100, and awaits each upstream
+// fetch before starting the next. The endpoint deliberately takes explicit IDs;
+// filter-wide execution requires a separate preview/approval contract.
+func (h *AccountHandler) RunModelWhitelistAutoSyncBatch(c *gin.Context) {
+	if h.modelWhitelistAutoSync == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Model whitelist auto sync is unavailable")
+		return
+	}
+	var req struct {
+		AccountIDs []int64 `json:"account_ids" binding:"required,min=1,max=100,dive,gt=0"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "account_ids must contain between 1 and 100 positive account IDs")
+		return
+	}
+	results := h.modelWhitelistAutoSync.RunManyNow(c.Request.Context(), req.AccountIDs)
+	response.Success(c, gin.H{"results": results})
 }

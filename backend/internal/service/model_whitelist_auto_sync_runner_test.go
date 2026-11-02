@@ -71,11 +71,9 @@ func TestModelWhitelistBaselineMappingEmpty(t *testing.T) {
 }
 
 func TestNormalizeModelWhitelistModelsDedupesAndSorts(t *testing.T) {
-	models := normalizeModelWhitelistModels(&UpstreamModelCatalog{
-		Models: []string{" gpt-5", "gpt-5", "", "claude-sonnet-4", "gemini-2.5-pro"},
-	})
+	models := normalizeModelIDs([]string{" gpt-5", "gpt-5", "", "claude-sonnet-4", "gemini-2.5-pro"})
 	require.Equal(t, []string{"claude-sonnet-4", "gemini-2.5-pro", "gpt-5"}, models)
-	require.Empty(t, normalizeModelWhitelistModels(nil))
+	require.Empty(t, normalizeModelIDs(nil))
 }
 
 func TestModelWhitelistBackoffGrowsAndCaps(t *testing.T) {

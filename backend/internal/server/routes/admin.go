@@ -448,6 +448,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.PUT("/:id", h.Admin.Account.Update)
 		accounts.GET("/:id/model-whitelist-auto-sync", h.Admin.Account.GetModelWhitelistAutoSync)
 		accounts.POST("/:id/model-whitelist-auto-sync/run", h.Admin.Account.RunModelWhitelistAutoSync)
+		accounts.POST("/model-whitelist-auto-sync/run", h.Admin.Account.RunModelWhitelistAutoSyncBatch)
 		accounts.GET("/:id/grok-media-eligibility", h.Admin.Account.GetGrokMediaEligibility)
 		accounts.PUT("/:id/grok-media-eligibility", h.Admin.Account.UpdateGrokMediaEligibility)
 		accounts.PUT("/:id/upstream-billing-probe", h.Admin.Account.SetUpstreamBillingProbeEnabled)

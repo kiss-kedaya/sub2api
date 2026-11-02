@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,14 +14,15 @@ func TestUpdateAccountModelMappingCASWritesOnlyWhenUnchanged(t *testing.T) {
 	repo := &accountRepository{sql: db}
 
 	mock.ExpectExec("UPDATE accounts").
-		WithArgs(`{"gpt-5":"gpt-5","gpt-5-mini":"gpt-5-mini"}`, int64(7), `{"gpt-5":"gpt-5"}`).
+		WithArgs(`{"gpt-5":"gpt-5","gpt-5-mini":"gpt-5-mini"}`, int64(7), `{}`, `{"gpt-5":"gpt-5"}`, `{}`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	applied, err := repo.UpdateAccountModelMappingCAS(
 		context.Background(),
-		7,
+		&service.Account{ID: 7, Credentials: map[string]any{}},
 		map[string]string{"gpt-5": "gpt-5"},
 		map[string]string{"gpt-5": "gpt-5", "gpt-5-mini": "gpt-5-mini"},
+		map[string]any{},
 	)
 	require.NoError(t, err)
 	require.True(t, applied)
@@ -34,14 +36,15 @@ func TestUpdateAccountModelMappingCASReportsConcurrentEdit(t *testing.T) {
 	repo := &accountRepository{sql: db}
 
 	mock.ExpectExec("UPDATE accounts").
-		WithArgs(sqlmock.AnyArg(), int64(7), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), int64(7), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	applied, err := repo.UpdateAccountModelMappingCAS(
 		context.Background(),
-		7,
+		&service.Account{ID: 7, Credentials: map[string]any{}},
 		map[string]string{"a": "a"},
 		map[string]string{"b": "b"},
+		map[string]any{},
 	)
 	require.NoError(t, err)
 	require.False(t, applied)

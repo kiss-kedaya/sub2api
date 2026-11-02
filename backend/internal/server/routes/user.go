@@ -124,8 +124,6 @@ func RegisterUserRoutes(
 			usage.GET("/errors/:id", h.Usage.GetErrorDetail)
 			usage.GET("/:id", h.Usage.GetByID)
 			usage.GET("/stats", h.Usage.Stats)
-			// 渠道状态卡片用：最近窗口内的用户倍率变动（只读聚合，见 handler 注释）
-			usage.GET("/groups/rate-changes", h.Usage.ListMyGroupRateChanges)
 			// User dashboard endpoints
 			usage.GET("/dashboard/stats", h.Usage.DashboardStats)
 			usage.GET("/dashboard/trend", h.Usage.DashboardTrend)
