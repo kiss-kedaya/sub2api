@@ -181,7 +181,13 @@ jobs:
       # GoReleaser creates the GitHub release and publishes GHCR images.
       contents: write
       packages: write
+      # gh workflow run dispatches the SSR artifact build; workflow_dispatch
+      # requires the Actions write scope on the job token.
       actions: write
+=======
+      # gh workflow run dispatches the SSR artifact build; workflow_dispatch
+      # requires the Actions write scope on the job token.
+>>>>>>> ac1ec5f9f (ci(release): grant actions write so the SSR artifact dispatch can run)
       actions: write
     runs-on: ubuntu-latest
     steps:
