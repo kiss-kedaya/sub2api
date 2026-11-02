@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { defineComponent, h, nextTick } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { useClientAnchorNavigation } from '@/composables/useClientAnchorNavigation'
 
 const routes = [
@@ -43,5 +43,15 @@ describe('client anchor navigation', () => {
     expect(event.defaultPrevented).toBe(false)
     expect(router.currentRoute.value.fullPath).toBe('/')
     wrapper.unmount()
+  })
+
+  it('stays inert when there is no browser window (SSR setup)', () => {
+    const router = createRouter({ history: createMemoryHistory(), routes })
+    vi.stubGlobal('window', undefined)
+    try {
+      expect(() => useClientAnchorNavigation(router)).not.toThrow()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
