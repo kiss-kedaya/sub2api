@@ -1,69 +1,40 @@
 <template>
-  <div class="flex flex-col gap-1" :title="runtimeKnown ? t('admin.groups.capacityRuntimeHint') : t('admin.groups.capacityUnknownHint')">
+  <div class="flex min-w-0 flex-col items-start gap-1">
     <!-- 并发槽位 -->
-    <div class="flex items-center gap-1">
-      <UBadge
-        color="neutral"
-        variant="soft"
-        size="sm"
-        :class="[
-          'gap-1 rounded-md px-2 py-1 text-xs font-medium',
-          capacityClass(concurrencyUsed, concurrencyMax)
-        ]"
-      >
-        <svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-        </svg>
-        <span class="font-mono">{{ runtimeKnown ? concurrencyUsed : '—' }}</span>
-        <span class="text-gray-400 dark:text-gray-500">/</span>
-        <span class="font-mono">{{ concurrencyMax }}</span>
-      </UBadge>
-    </div>
+    <CapacityMeterBadge
+      :label="t('admin.groups.capacityLabels.concurrency')"
+      :hint="meterHint('concurrency')"
+      :used="runtimeKnown ? concurrencyUsed : null"
+      :max="concurrencyMax"
+      icon="i-lucide-layout-grid"
+    />
 
-    <!-- 会话数 -->
-    <div v-if="sessionsMax > 0" class="flex items-center gap-1">
-      <UBadge
-        color="neutral"
-        variant="soft"
-        size="sm"
-        :class="[
-          'gap-1 rounded-md px-2 py-1 text-xs font-medium',
-          capacityClass(sessionsUsed, sessionsMax)
-        ]"
-      >
-        <svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
-        </svg>
-        <span class="font-mono">{{ runtimeKnown ? sessionsUsed : '—' }}</span>
-        <span class="text-gray-400 dark:text-gray-500">/</span>
-        <span class="font-mono">{{ sessionsMax }}</span>
-      </UBadge>
-    </div>
+    <!-- 使用人数（活跃会话） -->
+    <CapacityMeterBadge
+      v-if="showSessions"
+      :label="t('admin.groups.capacityLabels.sessions')"
+      :hint="meterHint('sessions')"
+      :used="runtimeKnown ? sessionsUsed : null"
+      :max="sessionsMax"
+      icon="i-lucide-users"
+    />
 
     <!-- RPM -->
-    <div v-if="rpmMax > 0" class="flex items-center gap-1">
-      <UBadge
-        color="neutral"
-        variant="soft"
-        size="sm"
-        :class="[
-          'gap-1 rounded-md px-2 py-1 text-xs font-medium',
-          capacityClass(rpmUsed, rpmMax)
-        ]"
-      >
-        <svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-        </svg>
-        <span class="font-mono">{{ runtimeKnown ? rpmUsed : '—' }}</span>
-        <span class="text-gray-400 dark:text-gray-500">/</span>
-        <span class="font-mono">{{ rpmMax }}</span>
-      </UBadge>
-    </div>
+    <CapacityMeterBadge
+      v-if="showRpm"
+      :label="t('admin.groups.capacityLabels.rpm')"
+      :hint="meterHint('rpm')"
+      :used="runtimeKnown ? rpmUsed : null"
+      :max="rpmMax"
+      icon="i-lucide-clock"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import CapacityMeterBadge from '@/components/common/CapacityMeterBadge.vue'
 
 const { t } = useI18n()
 interface Props {
@@ -76,7 +47,7 @@ interface Props {
   runtimeKnown?: boolean
 }
 
-withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<Props>(), {
   concurrencyUsed: 0,
   concurrencyMax: 0,
   sessionsUsed: 0,
@@ -86,13 +57,13 @@ withDefaults(defineProps<Props>(), {
   runtimeKnown: true
 })
 
-function capacityClass(used: number, max: number): string {
-  if (max > 0 && used >= max) {
-    return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-  }
-  if (used > 0) {
-    return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
-  }
-  return 'bg-elevated text-muted dark:bg-gray-800 dark:text-gray-400'
+// A meter row only exists when the group actually configures that limit; otherwise the
+// column would carry three permanent "0 / 0" lines.
+const showSessions = computed(() => props.sessionsMax > 0 || props.sessionsUsed > 0)
+const showRpm = computed(() => props.rpmMax > 0 || props.rpmUsed > 0)
+
+const meterHint = (meter: 'concurrency' | 'sessions' | 'rpm') => {
+  const hint = t(`admin.groups.capacityHints.${meter}`)
+  return props.runtimeKnown ? hint : `${hint} ${t('admin.groups.capacityHints.unknown')}`
 }
 </script>

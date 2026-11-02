@@ -197,11 +197,14 @@
           <template #cell-current_concurrency="{ value, row }">
             <span
               :class="[
-                'inline-flex min-w-8 items-center justify-center rounded-sm px-2 py-1 text-sm font-semibold tabular-nums',
+                'inline-flex min-w-8 items-center justify-center rounded-sm px-2 py-1 text-sm font-semibold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-current',
                 (value ?? 0) > 0
                   ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-300 dark:ring-emerald-800'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-400'
               ]"
+              :title="concurrencyHint(row)"
+              :aria-label="concurrencyHint(row)"
+              tabindex="0"
             >
               {{ value ?? 0 }}<span v-if="row.concurrency_limit" class="ml-1 opacity-70">/ {{ row.concurrency_limit }}</span>
             </span>
@@ -1121,6 +1124,13 @@ import '@/styles/console-workspace.css'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
+
+// The concurrency cell carries its own explanation: hover shows this sentence, keyboard
+// focus and screen readers get it from aria-label.
+const concurrencyHint = (row: Pick<ApiKey, 'concurrency_limit'>) => {
+  const limit = row.concurrency_limit
+  return limit ? t('keys.currentConcurrencyHint', { limit }) : t('keys.currentConcurrencyNoLimitHint')
+}
 import { keysAPI, authAPI, usageAPI, userGroupsAPI, endpointsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'

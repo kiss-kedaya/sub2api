@@ -1,24 +1,47 @@
 <template>
-  <div class="flex flex-col gap-0.5">
+  <div class="flex min-w-0 flex-col items-start gap-1">
+    <!-- 使用人数（活跃会话）：仅启用会话数限制的账号会返回该计数 -->
+    <CapacityMeterBadge
+      v-if="showUsers"
+      :label="t('admin.accounts.capacity.labels.users')"
+      :hint="sessionLimitTooltip"
+      :used="activeSessions"
+      :max="account.max_sessions"
+      icon="i-lucide-users"
+    />
+
     <!-- 并发槽位 -->
-    <CapacityBadge :color-class="concurrencyClass" :current="currentConcurrency" :max="account.concurrency">
-      <UIcon name="i-lucide-layout-grid" class="size-3" />
-    </CapacityBadge>
+    <CapacityMeterBadge
+      :label="t('admin.accounts.capacity.labels.concurrency')"
+      :hint="concurrencyHint"
+      :used="currentConcurrency"
+      :max="account.concurrency"
+      :tone="toneOf(concurrencyClass)"
+      icon="i-lucide-layout-grid"
+    />
 
     <!-- 5h窗口费用限制 -->
-    <CapacityBadge v-if="showWindowCost" :color-class="windowCostClass" :tooltip="windowCostTooltip" :current="'$' + formatCost(currentWindowCost)" :max="'$' + formatCost(account.window_cost_limit)">
-      <UIcon name="i-lucide-circle-dollar-sign" class="size-3" />
-    </CapacityBadge>
-
-    <!-- 会话数量限制 -->
-    <CapacityBadge v-if="showSessionLimit" :color-class="sessionLimitClass" :tooltip="sessionLimitTooltip" :current="activeSessions" :max="account.max_sessions!">
-      <UIcon name="i-lucide-users" class="size-3" />
-    </CapacityBadge>
+    <CapacityMeterBadge
+      v-if="showWindowCost"
+      :label="t('admin.accounts.capacity.labels.windowCost')"
+      :hint="windowCostTooltip"
+      :used="'$' + formatCost(currentWindowCost)"
+      :max="'$' + formatCost(account.window_cost_limit)"
+      :tone="toneOf(windowCostClass)"
+      icon="i-lucide-circle-dollar-sign"
+    />
 
     <!-- RPM 限制 -->
-    <CapacityBadge v-if="showRpmLimit" :color-class="rpmClass" :tooltip="rpmTooltip" :current="currentRPM" :max="account.base_rpm!" :suffix="rpmStrategyTag">
-      <UIcon name="i-lucide-clock" class="size-3" />
-    </CapacityBadge>
+    <CapacityMeterBadge
+      v-if="showRpmLimit"
+      :label="t('admin.accounts.capacity.labels.rpm')"
+      :hint="rpmTooltip"
+      :used="currentRPM"
+      :max="account.base_rpm!"
+      :suffix="rpmStrategyTag"
+      :tone="toneOf(rpmClass)"
+      icon="i-lucide-clock"
+    />
 
     <!-- API Key 账号配额限制 -->
     <QuotaBadge v-if="showDailyQuota" :used="account.quota_daily_used ?? 0" :limit="account.quota_daily_limit!" label="D" />
@@ -31,14 +54,32 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Account } from '@/types'
-import CapacityBadge from '@/components/account/CapacityBadge.vue'
+import CapacityMeterBadge from '@/components/common/CapacityMeterBadge.vue'
 import QuotaBadge from '@/components/account/QuotaBadge.vue'
+
+type BadgeTone = 'full' | 'active' | 'idle'
 
 const props = defineProps<{
   account: Account
 }>()
 
 const { t } = useI18n()
+
+// The thresholds below were tuned per meter; keep them and only translate the result
+// into the badge's tone so every cell uses the same three states.
+const toneOf = (colorClass: string): BadgeTone => {
+  if (colorClass === 'text-error') return 'full'
+  if (colorClass === 'text-warning') return 'active'
+  return 'idle'
+}
+
+// ====== 使用人数（活跃会话） ======
+const showUsers = computed(() =>
+  (props.account.max_sessions != null && props.account.max_sessions > 0) ||
+  props.account.active_sessions != null
+)
+
+const activeSessions = computed(() => props.account.active_sessions ?? 0)
 
 // ====== 并发 ======
 const currentConcurrency = computed(() => props.account.current_concurrency || 0)
@@ -49,6 +90,16 @@ const concurrencyClass = computed(() => {
   if (current >= max) return 'text-error'
   if (current > 0) return 'text-warning'
   return 'text-muted'
+})
+
+const concurrencyHint = computed(() => {
+  const base = t('admin.accounts.capacity.concurrency.hint')
+  const current = currentConcurrency.value
+  const max = props.account.concurrency || 0
+  if (max > 0 && current >= max) {
+    return `${base} ${t('admin.accounts.capacity.concurrency.full')}`
+  }
+  return base
 })
 
 // ====== 窗口费用 ======
@@ -87,29 +138,13 @@ const windowCostTooltip = computed(() => {
 })
 
 // ====== 会话限制 ======
-const showSessionLimit = computed(() =>
-  isAnthropicOAuthOrSetupToken.value &&
-  props.account.max_sessions != null &&
-  props.account.max_sessions > 0
-)
-
-const activeSessions = computed(() => props.account.active_sessions ?? 0)
-
-const sessionLimitClass = computed(() => {
-  if (!showSessionLimit.value) return ''
-  const current = activeSessions.value
-  const max = props.account.max_sessions || 0
-  if (current >= max) return 'text-error'
-  if (current >= max * 0.8) return 'text-warning'
-  return 'text-muted'
-})
-
-const sessionLimitTooltip = computed(() => {
-  if (!showSessionLimit.value) return ''
+const sessionLimitTooltip
+ = computed(() => {
+  if (!showUsers.value) return ''
   const current = activeSessions.value
   const max = props.account.max_sessions || 0
   const idle = props.account.session_idle_timeout_minutes || 5
-  if (current >= max) return t('admin.accounts.capacity.sessions.full', { idle })
+  if (max > 0 && current >= max) return t('admin.accounts.capacity.sessions.full', { idle })
   return t('admin.accounts.capacity.sessions.normal', { idle })
 })
 
