@@ -112,6 +112,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Check deployment scripts
         run: |
+          python3 deploy/nginx/test_api_prefix_hint.py
           /bin/bash -n deploy/apple-container.sh
           /bin/bash deploy/tests/apple-container-test.sh
           /bin/sh deploy/tests/docker-compose-security-test.sh
