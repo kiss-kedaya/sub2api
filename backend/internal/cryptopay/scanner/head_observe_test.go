@@ -2,9 +2,12 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -29,8 +32,11 @@ func TestObserveHeadWindowBounds(t *testing.T) {
 	if got := observeHeadCap(1000, 100); got != 100 {
 		t.Fatalf("cap=%d", got)
 	}
-	if got := confirmationsAt(110, 108, 5); got != 3 {
+	if got := confirmationsAt(110, 108, 5); got != 2 {
 		t.Fatalf("confirmations=%d", got)
+	}
+	if got := confirmationsAt(108, 108, 5); got != 0 {
+		t.Fatalf("inclusion block is not a descendant confirmation, got %d", got)
 	}
 	if got := confirmationsAt(110, 101, 5); got != 5 {
 		t.Fatalf("confirmations must cap at requirement, got %d", got)
@@ -45,7 +51,7 @@ func TestHeadObservationRecordsPendingOnlyAndCountsConfirmations(t *testing.T) {
 	fixture := newRPCFixture(tr)
 	w, mock, handler := workerFixture(t, fixture)
 	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET confirmations = \$1.*status = 'pending'`).
-		WithArgs(int64(3), "bsc", tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
+		WithArgs(int64(2), "bsc", tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
 	if err := w.observeHead(t.Context(), w.pools["bsc"], w.chains[0], 110); err != nil {
 		t.Fatal(err)
 	}
@@ -61,6 +67,44 @@ func TestHeadObservationRecordsPendingOnlyAndCountsConfirmations(t *testing.T) {
 	}
 }
 
+func TestHeadObservationPersistsSuccessfulBatchesDespiteRateLimit(t *testing.T) {
+	tr := headTransfer()
+	recipients := splitRecipients(batchSize + 1)
+	recipients[0] = tr.To
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Method != "eth_getLogs" {
+			t.Errorf("invalid RPC request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": []evmLog{logFor(tr)}})
+	}))
+	t.Cleanup(server.Close)
+
+	w, mock, handler := workerFixture(t, newRPCFixture(tr))
+	w.pools["bsc"] = rpc.NewPoolWithHTTPClient(server.URL, server.Client())
+	w.addresses = func(context.Context, string) ([]string, error) { return recipients, nil }
+	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET confirmations = \$1.*status = 'pending'`).
+		WithArgs(int64(2), "bsc", tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
+	err := w.observeHead(t.Context(), w.pools["bsc"], w.chains[0], 110)
+	if err == nil || calls != 2 {
+		t.Fatalf("expected one partial scan error without retry storm: calls=%d err=%v", calls, err)
+	}
+	if len(handler.pending) != 1 || len(handler.processed) != 0 {
+		t.Fatalf("successful batch must be displayed as pending only: pending=%d credited=%d", len(handler.pending), len(handler.processed))
+	}
+}
+
 func TestManualScanSkipsHeadObservation(t *testing.T) {
 	tr := testTransfer()
 	fixture := newRPCFixture(tr)
@@ -73,6 +117,31 @@ func TestManualScanSkipsHeadObservation(t *testing.T) {
 	}
 	if fixture.callCount("eth_getLogs") != 1 || len(handler.pending)+len(handler.processed) != 1 {
 		t.Fatalf("manual scan ran head observation: getLogs=%d", fixture.callCount("eth_getLogs"))
+	}
+}
+
+func TestHeadObservationRunsBeforeSecurityScan(t *testing.T) {
+	tr := headTransfer()
+	fixture := newRPCFixture(tr)
+	w, mock, handler := workerFixture(t, fixture)
+	w.liveProgress = true
+	securityErr := errors.New("security window unavailable")
+	w.SetSecurityGuards(nil, func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error {
+		if fixture.callCount("eth_getLogs") == 0 {
+			t.Fatal("security scan ran before the low-latency deposit observation")
+		}
+		return securityErr
+	})
+	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET confirmations = \$1.*status = 'pending'`).
+		WithArgs(int64(2), "bsc", tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT last_block`).WithArgs("bsc").
+		WillReturnRows(sqlmock.NewRows([]string{"last_block"}).AddRow(105))
+	err := w.scanChainFrom(t.Context(), w.chains[0], 0)
+	if !errors.Is(err, securityErr) {
+		t.Fatalf("security failure was lost: %v", err)
+	}
+	if len(handler.pending) != 1 || len(handler.processed) != 0 {
+		t.Fatalf("head observation must persist pending only: pending=%d credited=%d", len(handler.pending), len(handler.processed))
 	}
 }
 
@@ -189,7 +258,7 @@ func TestSameTransferCreditsOnceAcrossObserveCursorAndRetry(t *testing.T) {
 
 	// 1. Head observation: pending only.
 	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET confirmations = \$1.*status = 'pending'`).
-		WithArgs(int64(3), "bsc", tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
+		WithArgs(int64(2), "bsc", tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
 	if err := w.observeHead(t.Context(), w.pools["bsc"], w.chains[0], 110); err != nil {
 		t.Fatal(err)
 	}
