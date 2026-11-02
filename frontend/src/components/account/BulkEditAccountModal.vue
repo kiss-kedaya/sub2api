@@ -154,6 +154,67 @@
         </div>
       </div>
 
+      <!-- Upstream model auto-sync -->
+      <div class="pt-2">
+        <div class="mb-3 flex items-center justify-between">
+          <label
+            id="bulk-edit-auto-sync-label"
+            class="block text-sm font-medium text-default"
+            for="bulk-edit-auto-sync-enabled"
+          >
+            {{ t('admin.accounts.bulkEdit.autoSyncTitle') }}
+          </label>
+          <UCheckbox v-model="enableModelAutoSync" id="bulk-edit-auto-sync-enabled" aria-controls="bulk-edit-auto-sync-body" />
+        </div>
+
+        <div
+          id="bulk-edit-auto-sync-body"
+          :class="!enableModelAutoSync && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-auto-sync-label"
+        >
+          <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.bulkEdit.autoSyncHint')" class="mb-3" />
+
+          <div class="mb-3 flex items-center justify-between gap-3 rounded-lg border border-default px-3 py-2">
+            <span class="text-sm text-default">{{ t('admin.accounts.bulkEdit.autoSyncEnabledLabel') }}</span>
+            <Toggle v-model="modelAutoSyncEnabled" data-testid="bulk-edit-auto-sync-switch" />
+          </div>
+
+          <div class="mb-3 flex flex-wrap items-center gap-2">
+            <span class="text-xs font-medium text-muted">{{ t('admin.accounts.bulkEdit.autoSyncIntervalLabel') }}</span>
+            <Select
+              v-model="modelAutoSyncInterval"
+              id="bulk-edit-auto-sync-interval"
+              class="w-36"
+              :options="autoSyncIntervalOptions"
+            />
+          </div>
+
+          <div class="rounded-lg border border-default p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs text-muted">{{ t('admin.accounts.bulkEdit.autoSyncRunHint') }}</span>
+              <UButton
+                data-testid="bulk-edit-auto-sync-run"
+                type="button"
+                size="sm"
+                color="neutral"
+                variant="outline"
+                icon="i-lucide-refresh-cw"
+                :loading="modelSyncState.running"
+                :disabled="modelSyncState.running || targetMode === 'filtered' || accountIds.length === 0"
+                @click="runSerialModelSync"
+              >{{ t('admin.accounts.bulkEdit.autoSyncRunNow') }}</UButton>
+            </div>
+            <p v-if="targetMode === 'filtered'" class="mt-2 text-xs text-muted">{{ t('admin.accounts.bulkEdit.autoSyncSelectOnly') }}</p>
+            <div v-if="modelSyncState.total > 0" class="mt-3 space-y-2">
+              <UProgress :model-value="modelSyncPercent" size="sm" />
+              <p class="text-xs text-muted">{{ t('admin.accounts.bulkEdit.autoSyncProgress', { done: modelSyncState.completed, total: modelSyncState.total }) }}</p>
+              <p v-if="modelSyncState.failedIds.length" class="text-xs text-error">{{ t('admin.accounts.bulkEdit.autoSyncFailedIds', { ids: modelSyncState.failedIds.join(', ') }) }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Proxy -->
       <div class="pt-2">
         <div class="mb-3 flex items-center justify-between">
@@ -1030,6 +1091,7 @@ import {
 import type { OpenAIWSMode } from '@/utils/openaiWsMode'
 import Toggle from '@/components/common/Toggle.vue'
 import { confirm } from '@/composables/useConfirmation'
+import { useSerialModelWhitelistSync } from '@/composables/useSerialModelWhitelistSync'
 interface Props {
   show: boolean
   accountIds: number[]
@@ -1184,6 +1246,7 @@ const enableCodexCLIOnlyAppServer = ref(false)
 const enableOpenAICompactMode = ref(false)
 const enableOpenAICompactModelMapping = ref(false)
 const enableRpmLimit = ref(false)
+const enableModelAutoSync = ref(false)
 
 // State - field values
 const submitting = ref(false)
@@ -1232,6 +1295,17 @@ const codexFingerprintModeOptions = computed(() => [
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const rpmLimitEnabled = ref(false)
+const modelAutoSyncEnabled = ref(true)
+const modelAutoSyncInterval = ref('24')
+const { state: modelSyncState, start: startSerialModelSync, reset: resetSerialModelSync } = useSerialModelWhitelistSync()
+const autoSyncIntervalOptions = computed(() => [6, 12, 24, 72].map(hours => ({
+  value: String(hours),
+  label: t('admin.accounts.bulkEdit.autoSyncIntervalHours', { hours }),
+})))
+const modelSyncPercent = computed(() => {
+  const total = modelSyncState.value.total
+  return total > 0 ? Math.round((modelSyncState.value.completed / total) * 100) : 0
+})
 const bulkBaseRpm = ref<number | null>(null)
 const bulkRpmStrategy = ref<'tiered' | 'sticky_exempt'>('tiered')
 const bulkRpmStickyBuffer = ref<number | null>(null)
@@ -1547,6 +1621,17 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     }
   }
 
+  if (enableModelAutoSync.value) {
+    // Persisted as an account-level policy; the sync itself stays a serial read-then-write
+    // job so an upstream outage can never wipe a working whitelist.
+    const extra = ensureExtra()
+    extra.model_whitelist_auto_sync = {
+      enabled: modelAutoSyncEnabled.value,
+      interval_hours: Number(modelAutoSyncInterval.value) || 24,
+      mode: 'whitelist',
+    }
+  }
+
   if (enableCustomErrorCodes.value) {
     credentials.custom_error_codes_enabled = true
     credentials.custom_error_codes = [...selectedErrorCodes.value]
@@ -1722,6 +1807,7 @@ const handleSubmit = async () => {
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
     (enableOpenAIResponsesMode.value && allOpenAIAPIKey.value) ||
     enableModelRestriction.value ||
+    enableModelAutoSync.value ||
     enableCustomErrorCodes.value ||
     enableInterceptWarmup.value ||
     enableHeaderOverride.value ||
@@ -1847,6 +1933,22 @@ const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
   }
 }
 
+/** Serial pull-and-overwrite for the checked accounts; filtered targets must be selected explicitly. */
+const runSerialModelSync = async () => {
+  if (targetMode.value !== 'selected' || props.accountIds.length === 0) {
+    appStore.showInfo(t('admin.accounts.bulkEdit.autoSyncSelectOnly'))
+    return
+  }
+  const result = await startSerialModelSync([...props.accountIds])
+  if (result.failed === 0) {
+    appStore.showSuccess(t('admin.accounts.bulkEdit.autoSyncSuccess', { count: result.succeeded }))
+  } else if (result.succeeded === 0) {
+    appStore.showError(t('admin.accounts.bulkEdit.autoSyncFailed', { count: result.failed }))
+  } else {
+    appStore.showError(t('admin.accounts.bulkEdit.autoSyncPartial', { success: result.succeeded, failed: result.failed }))
+  }
+  if (result.succeeded > 0) emit('updated')
+}
 const handleMixedChannelConfirm = async () => {
   showMixedChannelWarning.value = false
   mixedChannelConfirmed.value = true
@@ -1893,6 +1995,10 @@ watch(
       enableOpenAICompactMode.value = false
       enableOpenAICompactModelMapping.value = false
       enableRpmLimit.value = false
+      enableModelAutoSync.value = false
+      modelAutoSyncEnabled.value = true
+      modelAutoSyncInterval.value = '24'
+      resetSerialModelSync()
 
       // Reset all values
       baseUrl.value = ''

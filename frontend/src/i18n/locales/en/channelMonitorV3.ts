@@ -17,6 +17,8 @@ export default {
     unknown: 'Insufficient samples',
     allModels: 'All models',
     userRate: 'User rate',
+    newGroupTip: 'This group was launched within the last 24 hours',
+    rateChangeTip: 'Your rate changed from {previous} to {current} within the last 24 hours ({time})',
     unknownGroup: 'Unknown group',
     timelineTooltip: '{time} · Availability {availability} · Cache {cache} · First token {ttft}',
     emptyTitle: 'No channel data',
