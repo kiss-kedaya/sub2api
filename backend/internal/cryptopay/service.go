@@ -3,6 +3,7 @@ package cryptopay
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"log/slog"
@@ -342,24 +343,13 @@ func (s *Service) reload(ctx context.Context) {
 	}
 
 	cursor := scanner.NewCursorStore(s.db)
-	led := ledger.New(s.db, s.creditor, newAddressResolver(s.addresses),
+	resolver := newAddressResolver(s.addresses)
+	led := ledger.New(s.db, s.creditor, resolver,
 		cfg.CreditMinAmount, cfg.CreditMaxAmount, cfg.CreditMultiplier)
 	// Funds that arrived but could not be credited are usually a mistyped
 	// deposit or a probe: tell the operator instead of leaving it in a table.
 	led.SetUnmatchedNotifier(func(ctx context.Context, t scanner.Transfer, reason string) {
-		slog.Warn("[cryptopay] unmatched deposit",
-			"chain", t.Chain, "tx", t.TxHash, "to", t.To, "reason", reason)
-		push := s.getPushNotifier()
-		if push == nil {
-			return
-		}
-		amount := toDisplayAmount(t.Amount, tokenDecimals(t.Chain, t.Token))
-		if err := push.PushToAdmins(ctx, "未匹配到账",
-			fmt.Sprintf("%s 收到 %s（%s），未入账：%s",
-				chainDisplayName(t.Chain), amount, shortAddr(t.To), reason),
-			"deposit"); err != nil {
-			slog.Warn("[cryptopay] unmatched deposit push failed", "error", err)
-		}
+		s.notifyUnmatchedDeposit(ctx, t, reason, cfg)
 	})
 	addressLister := func(ctx context.Context, chain string) ([]string, error) {
 		family, err := addresses.FamilyForChain(chain)
@@ -375,7 +365,17 @@ func (s *Service) reload(ctx context.Context) {
 	// 5s poll: finality is decided by the chain's safe tag, so a tighter
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
-	s.worker.SetSecurityGuards(s.checkWalletActivity, s.scanWalletOutflows)
+	s.worker.SetSecurityGuards(func(ctx context.Context) error {
+		if err := s.checkWalletActivity(ctx); err != nil {
+			return err
+		}
+		hot, err := s.wallet.PublicHotAddresses(ctx)
+		if err != nil {
+			return err
+		}
+		resolver.setHotAddresses(hot)
+		return nil
+	}, s.scanWalletOutflows)
 	// A reorged credited deposit means we paid out on a block that no longer
 	// exists: the operator must reconcile it by hand.
 	s.worker.SetReorgNotifier(func(chain, txHash string) {
@@ -1054,6 +1054,33 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	// Older observations may contain internal funding that was rejected as a
+	// deposit. Hide only uncredited, unlinked internal transfers; a real order
+	// or credited row must remain visible for financial reconciliation.
+	args := []any{userID, limit}
+	internalSender := `FALSE`
+	s.mu.RLock()
+	walletManager := s.wallet
+	noiseCeiling := depositDustNoiseCeiling(s.config.CreditMinAmount)
+	s.mu.RUnlock()
+	noiseFilter := ""
+	if noiseCeiling.IsPositive() {
+		args = append(args, noiseCeiling.String())
+		noiseFilter = ` AND NOT (d.order_id IS NULL AND d.status = 'ignored'
+			AND d.reason = 'below_min' AND d.amount > 0 AND d.amount < $3::numeric)`
+	}
+	if walletManager != nil {
+		hot, err := walletManager.PublicHotAddresses(ctx)
+		if err != nil && !errors.Is(err, wallet.ErrWalletNotConfigured) {
+			return nil, fmt.Errorf("user deposit history: gas wallet identity unavailable")
+		}
+		if hot != nil {
+			evmParameter, solanaParameter := len(args)+1, len(args)+2
+			internalSender += fmt.Sprintf(` OR (d.chain <> 'solana' AND $%d <> '' AND lower(d.from_address) = lower($%d))
+				OR (d.chain = 'solana' AND $%d <> '' AND d.from_address = $%d)`, evmParameter, evmParameter, solanaParameter, solanaParameter)
+			args = append(args, hot.EVM, hot.Solana)
+		}
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.reason, d.created_at,
 		       COALESCE(o.amount, 0), d.log_index, d.order_id
@@ -1063,7 +1090,8 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		       OR (a.chain = 'solana' AND d.chain = 'solana' AND a.address = d.to_address)
 		  LEFT JOIN payment_orders o ON o.id = d.order_id AND o.user_id = a.user_id
 		 WHERE a.user_id = $1
-		 ORDER BY d.id DESC LIMIT $2`, userID, limit)
+		   AND NOT (d.order_id IS NULL AND d.status IN ('ignored','pending') AND (`+internalSender+`))
+		 `+noiseFilter+` ORDER BY d.id DESC LIMIT $2`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("user deposit history: %w", err)
 	}
