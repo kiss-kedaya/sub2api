@@ -209,6 +209,18 @@ export async function getCurrentUser() {
   return apiClient.get<CurrentUserResponse>('/auth/me')
 }
 
+export interface BffAuthSessionProbe {
+  authenticated: boolean
+  session_managed: boolean
+  configured: boolean
+  csrf_token: string | null
+  expires_at: number | null
+}
+
+export async function getBffAuthSession() {
+  return apiClient.get<BffAuthSessionProbe>('/auth/session')
+}
+
 /**
  * User logout
  * Clears authentication token and user data from localStorage
@@ -235,6 +247,7 @@ export interface OAuthTokenResponse {
   refresh_token?: string
   expires_in?: number
   token_type?: string
+  session_managed?: boolean
 }
 
 export interface PendingOAuthBindLoginResponse extends Partial<OAuthTokenResponse> {
@@ -286,7 +299,7 @@ function serializeOAuthAdoptionDecision(
 export function isOAuthLoginCompletion(
   completion: Partial<OAuthTokenResponse>
 ): completion is OAuthTokenResponse {
-  return typeof completion.access_token === 'string' && completion.access_token.trim().length > 0
+  return (typeof completion.access_token === 'string' && completion.access_token.trim().length > 0) || completion.session_managed === true
 }
 
 export function getOAuthCompletionKind(
@@ -317,6 +330,7 @@ export function hasPendingOAuthSuggestedProfile(
 }
 
 export function persistOAuthTokenContext(tokens: Partial<OAuthTokenResponse>): void {
+  if (getAppRuntimeContext()?.cookieSession) return
   if (tokens.refresh_token) {
     setRefreshToken(tokens.refresh_token)
   }
@@ -326,7 +340,7 @@ export function persistOAuthTokenContext(tokens: Partial<OAuthTokenResponse>): v
 }
 
 export async function prepareOAuthBindAccessTokenCookie(): Promise<void> {
-  if (!getAuthToken()) {
+  if (!getAuthToken() && !getAppRuntimeContext()?.cookieSession) {
     return
   }
   await apiClient.post('/auth/oauth/bind-token')
@@ -695,6 +709,7 @@ export const authAPI = {
   isTotp2FARequired,
   register,
   getCurrentUser,
+  getBffAuthSession,
   logout,
   isAuthenticated,
   setAuthToken,

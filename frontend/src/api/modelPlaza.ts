@@ -18,6 +18,8 @@ export interface PlazaOfficialPricing {
   cache_read_price: number | null
   /** 官方长上下文阶梯（多档模型才有），不受分组开关影响。 */
   intervals?: UserPricingInterval[]
+  /** true 表示起步价来自该分组的自定义价卡，而不是官方目录价。 */
+  custom?: boolean
 }
 
 /**

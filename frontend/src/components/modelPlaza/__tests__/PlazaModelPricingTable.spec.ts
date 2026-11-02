@@ -89,6 +89,26 @@ describe('PlazaModelPricingTable', () => {
     expect(text).toContain('0.5x')
   })
 
+  it('分组自定义价卡生效时参考价列显示自定义价并带标记', () => {
+    const model = tokenModel({
+      official_pricing: {
+        input_price: 1e-6,
+        output_price: 5e-6,
+        cache_write_price: 1.25e-6,
+        cache_write_1h_price: null,
+        cache_read_price: 1e-7,
+        custom: true
+      }
+    })
+    const wrapper = mountTable([model], 1)
+    const text = wrapper.text()
+    // 参考价列使用后端返回的自定义起步价,而不是目录官方价
+    expect(text).toContain('$1.00')
+    expect(text).toContain('$5.00')
+    expect(text).toContain('modelPlaza.table.customReference')
+    expect(wrapper.find('[title="modelPlaza.table.customReferenceHint"]').exists()).toBe(true)
+  })
+
   it('用户专属倍率覆盖分组倍率,并划线展示原倍率', () => {
     const wrapper = mountTable([tokenModel()], 1, 0.8)
     const text = wrapper.text()

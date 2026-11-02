@@ -50,4 +50,26 @@ describe('InflightUsagePanel', () => {
     expect(wrapper.get('[data-testid="inflight-empty"]').text()).toContain('usage.inflightEmpty')
     wrapper.unmount()
   })
+
+  it('paints hover and focus inside the pill so the border above stays visible', () => {
+    const wrapper = mount(InflightUsagePanel, {
+      props: { open: true, loaded: true, total: 98, shown: 0 },
+    })
+
+    const row = wrapper.get('[data-testid="inflight-toggle-row"]')
+    const rowClass = row.attributes('class') ?? ''
+    expect(rowClass).toContain('pt-1')
+
+    const buttonClass = wrapper.get('[data-testid="inflight-toggle"]').attributes('class') ?? ''
+    // A hover ring drawn inside the box cannot land on the card edge above the pill.
+    expect(buttonClass).toContain('hover:ring-1')
+    expect(buttonClass).toContain('hover:ring-inset')
+    // The focus outline used to sit 2px outside the button.
+    expect(buttonClass).toContain('focus-visible:outline-offset-1')
+    // Only colour transitions; no size/transform animation on hover.
+    expect(buttonClass).toContain('transition-[background-color,border-color,color]')
+    expect(buttonClass).not.toContain('transition-all')
+    expect(buttonClass).not.toContain('hover:scale')
+    wrapper.unmount()
+  })
 })

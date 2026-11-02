@@ -12,9 +12,14 @@ on:
         description: 'Release tag (vX.Y.Z)'
         required: true
         type: string
+      source_run_id:
+        description: 'Optional Go Release run ID that uploaded frontend-dist for this exact tag commit'
+        required: false
+        type: string
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: ssr-release-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
@@ -50,6 +55,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Assert the checkout is the release tag
+        env:
+          TAG: ${{ steps.ref.outputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$TAG")"
+
+      - name: Resolve checked out tag commit
+        id: source-commit
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
@@ -66,9 +82,50 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: frontend
 
-      - name: Build the Nuxt SSR bundle
+      - name: Download the exact embedded SPA artifact from the Go Release run
+        id: embedded-spa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_RUN_ID: ${{ inputs.source_run_id }}
+          TAG: ${{ steps.ref.outputs.tag }}
+          COMMIT: ${{ steps.source-commit.outputs.commit }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          pnpm run build
+          set -euo pipefail
+          RELEASE_RUN="${INPUT_RUN_ID:-}"
+          CANDIDATES="$RELEASE_RUN"
+          if [ -z "$CANDIDATES" ]; then
+            CANDIDATES="$(gh run list --repo "$REPOSITORY" --workflow release.yml --commit "$COMMIT" --limit 20 --json databaseId --jq '.[].databaseId')"
+          fi
+          for candidate in $CANDIDATES; do
+            RUN_COMMIT="$(gh run view "$candidate" --repo "$REPOSITORY" --json headSha --jq .headSha)"
+            [ "$RUN_COMMIT" = "$COMMIT" ] || continue
+            FRONTEND_RESULT="$(gh api "repos/$REPOSITORY/actions/runs/$candidate/jobs" --jq '.jobs[] | select(.name == "build-frontend") | .conclusion' | head -n 1)"
+            [ "$FRONTEND_RESULT" = success ] || continue
+            ARTIFACT="$(gh api "repos/$REPOSITORY/actions/runs/$candidate/artifacts" --jq '.artifacts[] | select(.name == "frontend-dist" and .expired == false) | .id' | head -n 1)"
+            [ -n "$ARTIFACT" ] || continue
+            RELEASE_RUN="$candidate"
+            break
+          done
+          if [ -z "$RELEASE_RUN" ]; then
+            echo "::error::no completed Go Release run with frontend-dist found for $TAG ($COMMIT)"
+            exit 1
+          fi
+          rm -rf backend/internal/web/dist
+          mkdir -p backend/internal/web/dist
+          gh run download "$RELEASE_RUN" --repo "$REPOSITORY" --name frontend-dist --dir backend/internal/web/dist
+          node frontend/scripts/build-manifest.mjs verify \
+            --dir backend/internal/web/dist \
+            --mode spa \
+            --expect-commit "$COMMIT"
+          FRONTEND_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('backend/internal/web/dist/frontend-build.json','utf8')).version")"
+          echo "version=$FRONTEND_VERSION" >> "$GITHUB_OUTPUT"
+          echo "run_id=$RELEASE_RUN" >> "$GITHUB_OUTPUT"
+
+      - name: Build the Nuxt SSR bundle
+        env:
+          FRONTEND_BUILD_VERSION: ${{ steps.ref.outputs.version }}
+        run: |
           pnpm run build:ssr
         working-directory: frontend
 
@@ -83,6 +140,50 @@ jobs:
           --mode ssr
           --expect-commit ${{ steps.commit.outputs.commit }}
         working-directory: frontend
+
+      # A tag checkout carries the packaging helper that was current when the tag
+      # was cut. v2.3.0 shipped .output/server/node_modules/@vueuse/shared and
+      # @tanstack/virtual-core as absolute symlinks into /home/runner/work/...,
+      # which is dead on every other machine. Packaging therefore always runs with
+      # the tooling of the commit that owns THIS workflow file
+      # (github.workflow_sha, per GitHub's contexts reference), never with a
+      # moving branch: a dispatch from a fix branch can be rehearsed end to end,
+      # and a release event still gets exactly the reviewed tooling.
+      - name: Checkout packaging tooling from the workflow commit
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: .pack-tools
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Use the patched packaging tooling
+        id: tooling
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKFLOW_SHA}" ]; then
+            echo "::error::github.workflow_sha is empty; refusing to package with an unpinned helper"
+            exit 1
+          fi
+          cp .pack-tools/deploy/nuxt/release.mjs deploy/nuxt/release.mjs
+          cp .pack-tools/deploy/nuxt/smoke-ssr.mjs deploy/nuxt/smoke-ssr.mjs
+          cp .pack-tools/deploy/nuxt/smoke-authenticated-ssr.mjs deploy/nuxt/smoke-authenticated-ssr.mjs
+          cp .pack-tools/deploy/nuxt/release.test.mjs deploy/nuxt/release.test.mjs
+          # Fail loudly instead of silently repackaging with the old helper.
+          grep -q 'copyTreeDereferenced' deploy/nuxt/release.mjs
+          grep -q 'scanWorkspacePaths' deploy/nuxt/smoke-ssr.mjs
+          TOOLING_SHA="$(git -C .pack-tools rev-parse HEAD)"
+          test "${TOOLING_SHA}" = "${WORKFLOW_SHA}"
+          echo "packaging tooling from ${TOOLING_SHA}"
+          echo "tooling_sha=${TOOLING_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Test the packaging tooling
+        env:
+          SSR_WORKFLOW_PATH: .pack-tools/.github/workflows/ssr-release.yml
+        run: node --test deploy/nuxt/release.test.mjs
 
       - name: Download the released Go binary
         env:
@@ -103,6 +204,7 @@ jobs:
           --ssr frontend/.output
           --binary dist/backend/sub2api
           --spa-dist backend/internal/web/dist
+          --release-version ${{ steps.ref.outputs.version }}
           --out dist/release.json
 
       - name: Verify the release contract
@@ -114,16 +216,38 @@ jobs:
           --spa-dist backend/internal/web/dist
 
       - name: Stage and package
+        env:
+          VERSION: ${{ steps.ref.outputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.ref.outputs.version }}"
+          TARBALL="dist/sub2api_${VERSION}_ssr_linux_amd64.tar.gz"
+          # stage dereferences build-workspace symlinks, re-verifies the staged
+          # .output against the sealed manifest and refuses a tree with any link.
           node deploy/nuxt/release.mjs stage \
             --release dist/release.json \
             --ssr frontend/.output \
             --binary dist/backend/sub2api \
             --out dist/ssr
-          tar -C dist -czf "dist/sub2api_${VERSION}_ssr_linux_amd64.tar.gz" ssr
-          ( cd dist && sha256sum "sub2api_${VERSION}_ssr_linux_amd64.tar.gz" > "sub2api_${VERSION}_ssr_linux_amd64.checksums.txt" )
+          tar -C dist --owner=0 --group=0 --numeric-owner -czf "$TARBALL" ssr
+          # Belt and braces: the archive itself must not carry a single link entry.
+          if tar -tvzf "$TARBALL" | grep -qE '^l'; then
+            echo "::error::packaged archive contains symlink entries"
+            tar -tvzf "$TARBALL" | awk '$1 ~ /^l/ {print}' | head -20
+            exit 1
+          fi
+          ( cd dist && sha256sum "${TARBALL#dist/}" > "sub2api_${VERSION}_ssr_linux_amd64.checksums.txt" )
+
+      # The only artifact worth trusting is the one that is about to be uploaded:
+      # unpack it into a throwaway directory and boot that copy.
+      - name: Smoke test the packaged tarball
+        env:
+          VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          set -euo pipefail
+          EXTRACT="$(mktemp -d)"
+          tar -xzf "dist/sub2api_${VERSION}_ssr_linux_amd64.tar.gz" -C "$EXTRACT"
+          node deploy/nuxt/smoke-ssr.mjs --dir "$EXTRACT/ssr" --timeout 120000
+          node deploy/nuxt/smoke-authenticated-ssr.mjs "$EXTRACT/ssr/.output"
 
       - name: Upload to the GitHub release
         env:

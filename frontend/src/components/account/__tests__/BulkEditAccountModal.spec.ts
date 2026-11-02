@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import BulkEditAccountModal from '../BulkEditAccountModal.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import { adminAPI } from '@/api/admin'
+import { syncUpstreamModels, update as updateAccount } from '@/api/admin/accounts'
 
 // UCheckbox renders a role="checkbox" button: click only when the state has to change.
 async function setChecked(el: { attributes: (name: string) => string | undefined; trigger: (event: string) => Promise<unknown> }, value: boolean) {
@@ -36,7 +37,9 @@ vi.mock('@/api/admin', () => ({
 }))
 
 vi.mock('@/api/admin/accounts', () => ({
-  getAntigravityDefaultModelMapping: vi.fn()
+  getAntigravityDefaultModelMapping: vi.fn(),
+  syncUpstreamModels: vi.fn(),
+  update: vi.fn()
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -91,6 +94,8 @@ describe('BulkEditAccountModal', () => {
   beforeEach(() => {
     vi.mocked(adminAPI.accounts.bulkUpdate).mockReset()
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockReset()
+    vi.mocked(syncUpstreamModels).mockReset()
+    vi.mocked(updateAccount).mockReset()
     showError.mockReset()
     showSuccess.mockReset()
     translate.mockClear()
@@ -1017,5 +1022,86 @@ describe('BulkEditAccountModal', () => {
         codex_cli_only: true
       }
     })
+  })
+  it('勾选上游模型自动同步时把策略写进 extra', async () => {
+    const wrapper = mountModal()
+
+    await setChecked(wrapper.get('#bulk-edit-auto-sync-enabled'), true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        model_whitelist_auto_sync: {
+          enabled: true,
+          interval_hours: 24,
+          mode: 'whitelist'
+        }
+      }
+    })
+  })
+
+  it('关闭自动同步开关时策略按禁用保存', async () => {
+    const wrapper = mountModal()
+
+    await setChecked(wrapper.get('#bulk-edit-auto-sync-enabled'), true)
+    await wrapper.get('[data-testid="bulk-edit-auto-sync-switch"]').trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        model_whitelist_auto_sync: {
+          enabled: false,
+          interval_hours: 24,
+          mode: 'whitelist'
+        }
+      }
+    })
+  })
+
+  it('立即同步按账号串行请求并逐个覆盖白名单', async () => {
+    const order: string[] = []
+    vi.mocked(syncUpstreamModels).mockImplementation(async (id: number) => {
+      order.push(`start:${id}`)
+      await Promise.resolve()
+      order.push(`end:${id}`)
+      return { models: [`model-${id}`] } as any
+    })
+    vi.mocked(updateAccount).mockResolvedValue({} as any)
+
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="bulk-edit-auto-sync-run"]').trigger('click')
+    await flushPromises()
+
+    expect(order).toEqual(['start:1', 'end:1', 'start:2', 'end:2'])
+    expect(updateAccount).toHaveBeenNthCalledWith(1, 1, {
+      credentials: { model_mapping: { 'model-1': 'model-1' } }
+    })
+    expect(updateAccount).toHaveBeenNthCalledWith(2, 2, {
+      credentials: { model_mapping: { 'model-2': 'model-2' } }
+    })
+    expect(showSuccess).toHaveBeenCalledWith('admin.accounts.bulkEdit.autoSyncSuccess')
+  })
+
+  it('上游返回空模型列表时不覆盖已有白名单', async () => {
+    vi.mocked(syncUpstreamModels).mockResolvedValue({ models: [] } as any)
+
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="bulk-edit-auto-sync-run"]').trigger('click')
+    await flushPromises()
+
+    expect(updateAccount).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.accounts.bulkEdit.autoSyncFailed')
+  })
+
+  it('按筛选条件批量时禁用立即同步并给出说明', async () => {
+    const wrapper = mountModal({
+      target: { mode: 'filtered', filters: {}, previewCount: 120 }
+    })
+
+    const runButton = wrapper.get('[data-testid="bulk-edit-auto-sync-run"]')
+    expect(runButton.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('admin.accounts.bulkEdit.autoSyncSelectOnly')
   })
 })

@@ -17,6 +17,9 @@ importers:
 
   .:
     dependencies:
+      h3:
+        specifier: 1.15.11
+        version: 1.15.11
       '@airwallex/components-sdk':
         specifier: ^1.30.2
         version: 1.30.2

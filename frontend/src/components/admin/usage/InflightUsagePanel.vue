@@ -1,14 +1,15 @@
 <template>
   <section class="inflight-panel mb-4 min-w-0" data-testid="inflight-panel">
     <!-- Collapsed state: one narrow, centred bar. Opening it only affects the panel below. -->
-    <div class="flex justify-center">
+    <!-- pt-1 keeps a hover ring or a focus outline from ever reaching the row above. -->
+    <div class="flex justify-center px-1 pt-1" data-testid="inflight-toggle-row">
       <button
         :id="`${panelId}-heading`"
         type="button"
-        class="inline-flex max-w-full items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500"
+        class="inline-flex max-w-full items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-[background-color,border-color,color] duration-150 motion-reduce:transition-none hover:ring-1 hover:ring-inset focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-amber-500"
         :class="open
-          ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-700/60 dark:bg-amber-500/10 dark:text-amber-300'
-          : 'border-gray-200 bg-white text-gray-600 hover:border-amber-300 hover:text-amber-700 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-amber-700/60 dark:hover:text-amber-300'"
+          ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:ring-amber-200/70 dark:border-amber-700/60 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:ring-amber-700/40'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-amber-300 hover:text-amber-700 hover:ring-amber-200/70 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300 dark:hover:border-amber-700/60 dark:hover:text-amber-300 dark:hover:ring-amber-700/40'"
         :aria-expanded="open"
         :aria-controls="panelId"
         data-testid="inflight-toggle"
@@ -18,7 +19,7 @@
         <span class="truncate">{{ t('usage.inflightFold') }}</span>
         <span
           v-if="loaded"
-          class="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          class="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-amber-800 ring-1 ring-inset ring-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/25"
           aria-live="polite"
         >
           {{ t('usage.inflightCount', { count: total }) }}

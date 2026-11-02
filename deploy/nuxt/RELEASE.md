@@ -86,5 +86,9 @@ tar -C dist -czf sub2api_<version>_ssr_linux_amd64.tar.gz ssr
 
 ## 回滚
 
+- **运行中的发布目录不可覆盖**：禁止删除、解压覆盖或重新构建当前进程使用的 `.output`。Node 会缓存已加载模块；目录被替换后，后续懒加载仍会请求旧哈希 chunk，导致部分页面 500。
+- 每次部署必须使用新的版本/提交目录和独立的 loopback 端口。先校验完整归档、文件哈希和模块依赖，再启动新进程；验收已登录的表格页面，而不只是匿名登录页和 health。验证通过后灰度切换 nginx，保留旧进程和旧资源供回滚及旧页面继续使用。
+- 临时设置部分页面 `ssr: false` 仅是事故降级，不算完成 SSR 修复。正式修复须有无 `window`/`document` 的服务端渲染测试；新制品上线后移除临时降级。
+
 - 页面回滚：nginx 指回 Go 的静态入口即可——SPA 就在 Go 二进制里，且与当前 API 同 commit（`verify:embed` 已校验）。
 - 版本回滚：`release.json` 里两个 sha 写明当时制品；回到旧 tag 的二进制 + 旧 `.output` 一起换，不要混用。

@@ -52,6 +52,8 @@ export default {
       dataExportSelected: 'Export Selected',
       dataExportIncludeProxies: 'Include proxies linked to the exported accounts',
       dataImport: 'Import',
+      upstreamOpsImport: 'UpstreamOps import',
+      upstreamOpsImportHint: 'Preview, validate and dedupe an upstream-ops snapshot, then import its gateway providers',
       moreActions: 'More Actions',
       dataActions: 'Data',
       toolActions: 'Tools',
@@ -366,14 +368,24 @@ export default {
       subscriptionExpires: 'Expires',
       // Capacity status tooltips
       capacity: {
+        labels: {
+          users: 'Users',
+          concurrency: 'Concurrency',
+          windowCost: '5h cost',
+          rpm: 'RPM'
+        },
+        concurrency: {
+          hint: 'Live concurrent requests / this account concurrency capacity. At the limit, new requests queue or move to another account. Users are counted separately only on accounts with a session limit.',
+          full: 'Concurrency limit reached.'
+        },
         windowCost: {
           blocked: '5h window cost exceeded, account scheduling paused',
           stickyOnly: '5h window cost at threshold, only sticky sessions allowed',
           normal: '5h window cost normal'
         },
         sessions: {
-          full: 'Active sessions full, new sessions must wait (idle timeout: {idle} min)',
-          normal: 'Active sessions normal (idle timeout: {idle} min)'
+          full: 'Users (active sessions) at the limit, new sessions must wait (idle timeout: {idle} min)',
+          normal: 'Live users (active sessions) / session limit for this account; a session is released after {idle} min idle'
         },
         rpm: {
           full: 'RPM limit reached',
@@ -530,7 +542,20 @@ export default {
         rateSyncConflict: 'Cannot change account rates: {count} target account(s) have upstream rate sync enabled.',
         longContextShadowHint: 'Long-context billing belongs to the parent account. Selected shadow accounts keep following their parent, including when targets come from a filter.',
         longContextParentRequired: 'All selected accounts are shadows. Select the parent account to change long-context billing.',
-        mixedPlatformWarning: 'Selected accounts span multiple platforms ({platforms}). Model mapping presets shown are combined — ensure mappings are appropriate for each platform.'
+        mixedPlatformWarning: 'Selected accounts span multiple platforms ({platforms}). Model mapping presets shown are combined — ensure mappings are appropriate for each platform.',
+        autoSyncTitle: 'Upstream model auto-sync',
+        autoSyncHint: 'Pulls each account upstream model list in turn and overwrites the Model restriction whitelist with the result. An empty upstream list never overwrites an existing restriction.',
+        autoSyncEnabledLabel: 'Scheduled pull overwrites the whitelist',
+        autoSyncIntervalLabel: 'Interval',
+        autoSyncIntervalHours: 'Every {hours}h',
+        autoSyncRunNow: 'Sync selected accounts now',
+        autoSyncRunHint: 'Runs once now and writes the selected accounts (serial, never parallel)',
+        autoSyncProgress: 'Processed {done} / {total}',
+        autoSyncSuccess: 'Synced upstream models for {count} account(s)',
+        autoSyncPartial: 'Partially synced: {success} succeeded, {failed} failed',
+        autoSyncFailed: 'Sync failed: {count} account(s) were not updated',
+        autoSyncFailedIds: 'Not updated: {ids}',
+        autoSyncSelectOnly: 'Immediate sync needs explicit account selection; with a filter target only the schedule policy is saved.'
       },
       bulkDeleteTitle: 'Bulk Delete Accounts',
       bulkDeleteConfirm: 'Delete the selected {count} account(s)? This action cannot be undone.',

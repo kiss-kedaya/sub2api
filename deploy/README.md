@@ -28,6 +28,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 | `DATAMANAGEMENTD_CN.md` | datamanagementd 部署与联动说明（中文） |
 | `config.example.yaml` | Example configuration file |
 | `EDGE_SECURITY.md` | Reverse proxy, CDN/WAF, trusted proxy, and ingress hardening guide |
+| `nuxt/` | Nuxt 4 SSR (Nitro) runtime templates: systemd unit, nginx snippet, env example, release contract |
 
 ## 内置充值钱包部署
 
@@ -61,6 +62,66 @@ The script uses Apple named volumes, starts dependencies in order, and performs 
 See [APPLE_CONTAINER.md](./APPLE_CONTAINER.md) for configuration, upgrades, persistence, networking behavior, and limitations.
 
 ---
+
+## Nuxt SSR Frontend (BFF)
+
+The frontend ships in two forms. A release must use both from the same commit:
+
+- **Nuxt 4 SSR bundle** (`frontend/.output`, Nitro `node-server`) for normal page traffic and the admin API BFF.
+- **Legacy Vite SPA** embedded in the Go binary (`-tags=embed`) as the page-level rollback.
+
+Topology:
+
+```
+browser -> reverse proxy -> 127.0.0.1:3000  Nuxt SSR (Node/Nitro)
+                               /api/v1/** -> 127.0.0.1:8080  Go API
+browser -> /v1/** and WebSocket upgrades -> 127.0.0.1:8080  Go API
+```
+
+Node renders pages and proxies the admin API only. Gateway traffic, SSE, and WebSocket upgrades stay on Go; do not route them through Node.
+
+Required environment for the SSR process:
+
+| Variable | Meaning |
+|----------|---------|
+| `NUXT_BACKEND_ORIGIN` | Fixed Go API origin, for example `http://127.0.0.1:8080`. Only http/https, no embedded credentials. |
+| `NUXT_SESSION_PASSWORD` | Session sealing key, at least 32 random bytes. Generate with `openssl rand -base64 48`. Required in production; without it authenticated endpoints return 503. |
+| `HOST` / `PORT` | Loopback bind for the SSR process. Default `127.0.0.1:3000`. |
+| `NUXT_SESSION_COOKIE_SECURE` | `auto` (default), `true`, or `false`. |
+
+Build and verify:
+
+```bash
+pnpm --dir frontend run build
+pnpm --dir frontend run build:ssr
+pnpm --dir frontend run verify:ssr
+make release-ssr
+```
+
+Install on a host:
+
+```bash
+sudo install -d -o sub2api -g sub2api /opt/sub2api/ssr
+sudo tar -xzf <ssr-bundle>.tar.gz -C /opt/sub2api
+sudo chown -R sub2api:sub2api /opt/sub2api/ssr
+sudo cp /opt/sub2api/ssr/deploy/sub2api-ssr.service /etc/systemd/system/
+sudo install -m 0600 /opt/sub2api/ssr/deploy/ssr.env.example /opt/sub2api/ssr/.env
+sudo cat /opt/sub2api/ssr/release.env >> /opt/sub2api/ssr/.env
+# edit .env: set NUXT_SESSION_PASSWORD, then:
+sudo systemctl daemon-reload
+sudo systemctl enable --now sub2api-ssr
+curl -fsS http://127.0.0.1:3000/health/frontend
+```
+
+Container runtime:
+
+```bash
+docker build -f deploy/nuxt/Dockerfile -t <local-image-name> frontend
+```
+
+The staged bundle also contains `deploy/nginx-ssr.example.conf`, `deploy/Dockerfile`, and `deploy/RELEASE.md`; `SHA256SUMS` covers the whole tree.
+
+Full contract, session/CSRF behavior, nginx snippet, and rollback: [nuxt/README.md](./nuxt/README.md) and [nuxt/RELEASE.md](./nuxt/RELEASE.md).
 
 ## Docker Deployment (Recommended)
 

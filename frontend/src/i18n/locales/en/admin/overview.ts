@@ -435,6 +435,8 @@ export default {
     // Users
     users: {
       displayColumns: 'Columns',
+      concurrencyLabel: 'Concurrency',
+      concurrencyHint: 'Live concurrent requests / this user concurrency limit. Above the limit, new requests queue.',
       advancedOptions: 'Advanced options',
       title: 'User Management',
       description: 'Manage users and their permissions',
@@ -858,6 +860,17 @@ export default {
       rateLabel: 'rate',
       capacityRuntimeHint: 'Live account-side load: concurrency slots / sessions / RPM. This is not the number of users using this group.',
       capacityUnknownHint: 'Live counters are unavailable. — means missing or failed, not zero.',
+      capacityLabels: {
+        concurrency: 'Concurrency',
+        sessions: 'Users',
+        rpm: 'RPM'
+      },
+      capacityHints: {
+        concurrency: 'Currently used concurrency / sum of the concurrency of every schedulable account in this group. At the limit, new requests queue or move to another account.',
+        sessions: 'Active sessions (roughly the number of people using it) / sum of session limits in this group. Only accounts with a session limit are counted.',
+        rpm: 'Requests in this minute / sum of per-minute limits for this group.',
+        unknown: 'Live counters are unavailable: — means not configured or failed, not zero.'
+      },
       accountFilters: {
         title: 'Account Filter Controls',
         oauthOnly: 'Only allow OAuth accounts',

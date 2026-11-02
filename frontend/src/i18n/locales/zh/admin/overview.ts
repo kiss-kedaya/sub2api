@@ -435,6 +435,8 @@ export default {
     // Users Management
     users: {
       displayColumns: '显示列',
+      concurrencyLabel: '并发',
+      concurrencyHint: '当前并发请求数 / 该用户的并发上限；达到上限后新请求排队',
       advancedOptions: '高级选项',
       title: '用户管理',
       description: '管理用户账户和权限',
@@ -952,6 +954,17 @@ export default {
       rateLabel: '倍率',
       capacityRuntimeHint: '账号侧实时负载：并发槽位 / 会话 / RPM；不是当前使用该分组的用户数。',
       capacityUnknownHint: '实时计数暂不可用；— 表示读取失败或未配置，不代表 0。',
+      capacityLabels: {
+        concurrency: '并发',
+        sessions: '使用人数',
+        rpm: 'RPM'
+      },
+      capacityHints: {
+        concurrency: '当前占用并发 / 该分组所有可调度账号并发之和；达到上限时新请求会排队或换号',
+        sessions: '当前活跃会话（约等于正在使用的人数） / 该分组会话上限之和；只统计启用了会话数限制的账号',
+        rpm: '本分钟请求数 / 该分组每分钟请求上限之和',
+        unknown: '实时计数暂不可用：— 表示未配置或读取失败，不代表 0。'
+      },
       accountFilters: {
         title: '账号过滤控制',
         oauthOnly: '仅允许 OAuth 账号',

@@ -332,6 +332,7 @@ let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = nul
 let scrollTrackedEl: HTMLElement | null = null
 
 const detachDesktopTableTracking = () => {
+  if (typeof window === 'undefined') return
   resizeObserver?.disconnect()
   resizeObserver = null
   if (resizeHandler) {
@@ -343,6 +344,7 @@ const detachDesktopTableTracking = () => {
 }
 
 const attachDesktopTableTracking = () => {
+  if (typeof window === 'undefined') return
   checkScrollable()
   checkActionsColumnWidth()
   scrollTrackedEl = tableWrapperRef.value
@@ -616,6 +618,9 @@ const columnsSignature = computed(() =>
 watch(
   isDesktopViewport,
   async (isDesktop) => {
+    // Immediate watchers also run during SSR. No DOM listener may be attached
+    // until the component is running in a browser.
+    if (typeof window === 'undefined') return
     detachDesktopTableTracking()
     if (!isDesktop) return
     await nextTick()

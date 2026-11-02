@@ -177,7 +177,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { passkeyAPI, type PasskeyCredentialSummary } from '@/api'
 import { Icon } from '@/components/icons'
@@ -187,7 +187,8 @@ const props = defineProps<{ enabled: boolean }>()
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const supported = passkeyAPI.isSupported()
+// Keep the server and first hydration render identical; WebAuthn is browser-only.
+const supported = ref(false)
 const loading = ref(false)
 const busy = ref(false)
 const showAddForm = ref(false)
@@ -297,11 +298,15 @@ function formatDate(value: string): string {
   }).format(new Date(value))
 }
 
+onMounted(() => {
+  supported.value = passkeyAPI.isSupported()
+  void loadCredentials()
+})
+
 watch(
   () => props.enabled,
   () => {
     void loadCredentials()
-  },
-  { immediate: true }
+  }
 )
 </script>

@@ -63,6 +63,26 @@ beforeEach(() => {
 })
 
 describe('user deposit history transaction hashes', () => {
+  it.each([0, null, undefined, Number.NaN])('does not display an unknown credit as zero: %s', async (credited) => {
+    mocks.getDepositHistory.mockResolvedValue([{ chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'credited', credited, created_at: '2026-01-01T00:00:00Z' }])
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="deposit-credit-unknown"]').text()).toBe('deposit.creditUnknown')
+    expect(wrapper.get('.deposit-view__status').text()).toContain('deposit.statusReconciliation')
+    expect(wrapper.get('td:nth-child(3)').text()).not.toBe('0')
+    expect(wrapper.text()).not.toContain('deposit.statusCredited')
+    expect(mocks.showSuccess).not.toHaveBeenCalled()
+  })
+
+  it('keeps the original credited amount even when the displayed rate changes', async () => {
+    mocks.getDepositInfo.mockResolvedValue({ enabled: true, chains: [{ chain: 'bsc', address: '0x' + '12'.repeat(20), tokens: ['USDT'] }], rate: 99, min_amount: 1, max_amount: 0 })
+    mocks.getDepositHistory.mockResolvedValue([{ chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'credited', credited: 67, created_at: '2026-01-01T00:00:00Z' }])
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('td:nth-child(3)').text()).toBe('67')
+    expect(wrapper.find('[data-testid="deposit-credit-unknown"]').exists()).toBe(false)
+  })
+
   it('shows complete hashes for credited and pending deposits with their own network explorer', async () => {
     const wrapper = render()
     await flushPromises()

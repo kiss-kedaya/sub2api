@@ -16,8 +16,13 @@ interface CeremonyOptionsResponse {
   }
 }
 
+function isSupported(): boolean {
+  return typeof window !== 'undefined' && typeof navigator !== 'undefined' &&
+    Boolean(window.PublicKeyCredential && navigator.credentials)
+}
+
 function requirePasskeySupport(): void {
-  if (!window.PublicKeyCredential || !navigator.credentials) {
+  if (!isSupported()) {
     throw new Error('Passkeys are not supported by this browser')
   }
 }
@@ -159,7 +164,7 @@ async function remove(id: number, password: string): Promise<void> {
 }
 
 export const passkeyAPI = {
-  isSupported: () => Boolean(window.PublicKeyCredential && navigator.credentials),
+  isSupported,
   login,
   register,
   list,

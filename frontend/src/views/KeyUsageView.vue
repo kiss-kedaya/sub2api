@@ -439,7 +439,8 @@ const githubUrl = 'https://github.com/Wei-Shaw/sub2api'
 
 // ==================== Theme (same as HomeView) ====================
 
-const isDark = ref(document.documentElement.classList.contains('dark'))
+// Browser theme detection happens after hydration, never during SSR setup.
+const isDark = ref(false)
 
 function toggleTheme() {
   isDark.value = !isDark.value
@@ -908,6 +909,7 @@ async function queryKey() {
 // ==================== Lifecycle ====================
 
 function initTheme() {
+  isDark.value = document.documentElement.classList.contains('dark')
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
     isDark.value = true

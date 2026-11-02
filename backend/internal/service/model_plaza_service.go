@@ -7,8 +7,10 @@ import (
 	"strings"
 )
 
-// PlazaOfficialPricing 模型广场展示用的官方参考价（USD per token），与计费同源：
+// PlazaOfficialPricing 模型广场展示用的参考价（USD per token），与计费同源：
 // LiteLLM → 内置兜底价卡 → 模型策略。字段为 nil 表示该项缺失（0 视为未配置）。
+// 分组配置了逐模型价卡时，起步价改为该分组自定义价（Custom=true），
+// 长上下文阶梯仍沿用官方预设。
 type PlazaOfficialPricing struct {
 	InputPrice        *float64
 	OutputPrice       *float64
@@ -17,6 +19,8 @@ type PlazaOfficialPricing struct {
 	CacheReadPrice    *float64
 	// Intervals 官方长上下文阶梯（多档时给出），不受分组开关影响。
 	Intervals []PricingInterval
+	// Custom 为 true 表示上述起步价来自分组自定义价卡，而不是官方目录价。
+	Custom bool
 }
 
 // PlazaModel 模型广场中单个模型条目：按实收口径合成的展示定价 + 官方参考价。
@@ -216,8 +220,17 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 				fillGlobalPricingFallback(s.pricingService, one)
 				pg.Models[j].Pricing = one[0].Pricing
 			}
-			s.fillDisplayPricing(ctx, &pg.Models[j], g)
-			pg.Models[j].OfficialPricing = s.lookupOfficialPricing(ctx, pg.Models[j].Name, officialMemo)
+			sched := s.fillDisplayPricing(ctx, &pg.Models[j], g)
+			official := s.lookupOfficialPricing(ctx, pg.Models[j].Name, officialMemo)
+			// 分组配置了逐模型自定义价时，参考价显示自定义起步价，而不是目录官方价；
+			// 长上下文阶梯仍来自官方预设（价卡只覆盖起步价），保留官方 Intervals。
+			if sched != nil {
+				if card := matchGroupModelPricing(g, pg.Models[j].Name); card != nil &&
+					(card.BillingMode == "" || card.BillingMode == BillingModeToken) {
+					official = customReferencePricing(official, sched.Tiers[0])
+				}
+			}
+			pg.Models[j].OfficialPricing = official
 		}
 		out = append(out, *pg)
 	}
@@ -234,7 +247,7 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 // fillDisplayPricing 把模型的展示定价换成实收口径：
 // token 模型取计费阶梯表（单价与档位均由真实计费函数得出），
 // 图片/按次模型（或阶梯表不可用时）沿用渠道定价与分组图片档位价。
-func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaModel, g *Group) {
+func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaModel, g *Group) *ContextPricingSchedule {
 	if s.billingService != nil && s.resolver != nil {
 		sched, err := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{
 			Model:    m.Name,
@@ -247,10 +260,28 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 				m.LongContextBasis = sched.Basis
 			}
 			m.TimePricing = sched.TimePricing
-			return
+			return sched
 		}
 	}
 	m.Pricing = withDefaultMaxReasoningEffortMultiplier(plazaImageDisplayPricing(m.Pricing, g), m.Name)
+	return nil
+}
+
+// customReferencePricing 把参考价换成分组自定义价卡的首档单价。
+// 价卡只覆盖起步价，长上下文阶梯仍来自官方预设，因此保留官方 Intervals。
+func customReferencePricing(official *PlazaOfficialPricing, tier ContextPricingTier) *PlazaOfficialPricing {
+	ref := &PlazaOfficialPricing{
+		InputPrice:        tier.Input,
+		OutputPrice:       tier.Output,
+		CacheWritePrice:   tier.CacheWrite,
+		CacheWrite1hPrice: tier.CacheWrite1h,
+		CacheReadPrice:    tier.CacheRead,
+		Custom:            true,
+	}
+	if official != nil {
+		ref.Intervals = official.Intervals
+	}
+	return ref
 }
 
 func withDefaultMaxReasoningEffortMultiplier(pricing *ChannelModelPricing, model string) *ChannelModelPricing {

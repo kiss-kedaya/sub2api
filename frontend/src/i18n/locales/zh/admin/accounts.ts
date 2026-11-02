@@ -52,6 +52,8 @@ export default {
       dataExportSelected: '导出选中',
       dataExportIncludeProxies: '导出代理（导出账号关联的代理）',
       dataImport: '导入',
+      upstreamOpsImport: 'UpstreamOps 导入',
+      upstreamOpsImportHint: '从 upstream-ops 快照预览、校验、去重后导入网关通道',
       moreActions: '更多操作',
       dataActions: '数据操作',
       toolActions: '工具',
@@ -260,14 +262,24 @@ export default {
       subscriptionExpires: '到期',
       // 容量状态提示
       capacity: {
+        labels: {
+          users: '使用人数',
+          concurrency: '并发',
+          windowCost: '5h 费用',
+          rpm: 'RPM'
+        },
+        concurrency: {
+          hint: '当前并发请求数 / 该账号的并发容量；达到上限时新请求会排队或换号。使用人数只在启用会话数限制的账号上单独统计。',
+          full: '已达并发上限。'
+        },
         windowCost: {
           blocked: '5h窗口费用超限，账号暂停调度',
           stickyOnly: '5h窗口费用达阈值，仅允许粘性会话',
           normal: '5h窗口费用正常'
         },
         sessions: {
-          full: '活跃会话已满，新会话需等待（空闲超时：{idle}分钟）',
-          normal: '活跃会话正常（空闲超时：{idle}分钟）'
+          full: '使用人数（活跃会话）已达上限，新会话需等待（空闲超时：{idle}分钟）',
+          normal: '当前使用人数（活跃会话）/ 该账号会话上限；空闲 {idle} 分钟后会话自动释放'
         },
         rpm: {
           full: '已达 RPM 上限',
@@ -618,7 +630,20 @@ export default {
         rateSyncConflict: '无法修改账号倍率：{count} 个目标账号已开启上游倍率同步。',
         longContextShadowHint: '长上下文计费归母账号所有。选中的影子账号仍跟随母账号，筛选全量目标时同样如此。',
         longContextParentRequired: '选中的账号全部是影子账号，请选择母账号修改长上下文计费。',
-        mixedPlatformWarning: '所选账号跨越多个平台（{platforms}）。显示的模型映射预设为合并结果——请确保映射对每个平台都适用。'
+        mixedPlatformWarning: '所选账号跨越多个平台（{platforms}）。显示的模型映射预设为合并结果——请确保映射对每个平台都适用。',
+        autoSyncTitle: '上游模型自动同步',
+        autoSyncHint: '按账号依次拉取上游模型列表，并用结果覆盖「模型限制」白名单。上游返回空列表时不会覆盖已有限制。',
+        autoSyncEnabledLabel: '定时拉取并覆盖白名单',
+        autoSyncIntervalLabel: '拉取间隔',
+        autoSyncIntervalHours: '每 {hours} 小时',
+        autoSyncRunNow: '立即同步所选账号',
+        autoSyncRunHint: '立即执行一次并写入所选账号（逐个串行，不并发）',
+        autoSyncProgress: '已处理 {done} / {total}',
+        autoSyncSuccess: '已同步 {count} 个账号的上游模型',
+        autoSyncPartial: '部分同步成功：成功 {success} 个，失败 {failed} 个',
+        autoSyncFailed: '同步失败：{count} 个账号未更新',
+        autoSyncFailedIds: '未更新账号：{ids}',
+        autoSyncSelectOnly: '立即同步需要先勾选具体账号；按筛选条件批量时只保存定时策略。'
       },
       bulkDeleteTitle: '批量删除账号',
       bulkDeleteConfirm: '确定要删除选中的 {count} 个账号吗？此操作无法撤销。',

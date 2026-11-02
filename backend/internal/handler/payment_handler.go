@@ -281,7 +281,7 @@ func (h *PaymentHandler) CreateOrder(c *gin.Context) {
 		ClientIP:        c.ClientIP(),
 		IsMobile:        mobile,
 		IsWeChatBrowser: isWeChatBrowser(c),
-		SrcHost:         c.Request.Host,
+		SrcHost:         publicRequestHost(c),
 		SrcURL:          c.Request.Referer(),
 		ReturnURL:       req.ReturnURL,
 		PaymentSource:   req.PaymentSource,
@@ -687,4 +687,16 @@ func sanitizePaymentOrderForResponse(order *dbent.PaymentOrder) *PaymentOrderRes
 
 func isWeChatBrowser(c *gin.Context) bool {
 	return strings.Contains(strings.ToLower(c.GetHeader("User-Agent")), "micromessenger")
+}
+
+// publicRequestHost returns the host the browser actually used. The Nuxt BFF
+// proxies from loopback and Node's fetch cannot set Host, so the forwarded
+// header is the only same-origin signal available behind SSR.
+func publicRequestHost(c *gin.Context) string {
+	if xfHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host")); xfHost != "" {
+		if first := strings.TrimSpace(strings.Split(xfHost, ",")[0]); first != "" {
+			return first
+		}
+	}
+	return c.Request.Host
 }
