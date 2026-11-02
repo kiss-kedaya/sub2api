@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { collectNuxtAssets, fetchRenderedPage, scanWorkspacePaths } from './smoke-ssr.mjs'
 import { copyTreeDereferenced, scanSymlinks } from './release.mjs'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
@@ -26,6 +28,16 @@ function tryLink(t, target, path, type) {
     t.skip(`this host cannot create symlinks (${error.code}); runs on the Linux CI runner`)
     return false
   }
+}
+
+async function serve(t, handler) {
+  const server = createServer(handler)
+  await new Promise((done) => server.listen(0, '127.0.0.1', done))
+  t.after(() => {
+    server.closeAllConnections?.()
+    server.close()
+  })
+  return `http://127.0.0.1:${server.address().port}`
 }
 
 test('stage copy turns absolute file symlinks into real bytes', (t) => {
@@ -84,45 +96,110 @@ test('stage copy refuses a broken symlink instead of archiving it', (t) => {
 test('scanSymlinks reports the runner-workspace links that broke 2.3.0', (t) => {
   const root = workspace(t)
   mkdirSync(join(root, 'server', 'node_modules', '@vueuse'), { recursive: true })
-  mkdirSync(join(root, 'elsewhere'), { recursive: true })
-  writeFileSync(join(root, 'elsewhere', 'index.mjs'), '\n')
   mkdirSync(join(root, 'server', 'node_modules', '@tanstack'), { recursive: true })
+  mkdirSync(join(root, 'elsewhere'), { recursive: true })
+  writeFileSync(join(root, 'elsewhere', 'index.mjs'), 'export const inside = 1\n')
 
   if (!tryLink(t, '/home/runner/work/sub2api/sub2api/frontend/node_modules/.pnpm/x/node_modules/@vueuse/shared', join(root, 'server', 'node_modules', '@vueuse', 'shared'), 'dir')) return
-  if (!tryLink(t, join(root, 'elsewhere', 'index.mjs'), join(root, 'server', 'node_modules', 'inside.mjs'), 'file')) return
+  if (!tryLink(t, join(root, 'elsewhere', 'index.mjs'), join(root, 'server', 'node_modules', 'absolute.mjs'), 'file')) return
+  if (!tryLink(t, '../../elsewhere/index.mjs', join(root, 'server', 'node_modules', 'relative.mjs'), 'file')) return
 
   const links = scanSymlinks(root)
-  const absolute = links.find((link) => link.path.endsWith('@vueuse/shared'))
-  const inside = links.find((link) => link.path.endsWith('inside.mjs'))
-  assert.equal(absolute?.kind, 'broken')
-  assert.match(absolute.target, /^\/home\/runner\/work\//)
-  assert.equal(inside?.kind, 'absolute')
-  assert.equal(readFileSync(join(root, inside.path), 'utf8'), '\n')
+  const broken = links.find((link) => link.path.endsWith('@vueuse/shared'))
+  const absolute = links.find((link) => link.path.endsWith('absolute.mjs'))
+  const relative = links.find((link) => link.path.endsWith('relative.mjs'))
+  assert.equal(broken?.kind, 'broken')
+  assert.match(broken.target, /^\/home\/runner\/work\//)
+  assert.equal(absolute?.kind, 'absolute')
+  assert.equal(relative?.kind, 'relative')
+  assert.equal(readFileSync(join(root, 'server', 'node_modules', 'relative.mjs'), 'utf8'), 'export const inside = 1\n')
 })
 
-test('ssr-release workflow rebuilds from main tooling, smokes the tarball, clobbers the asset', () => {
+test('ssr-release workflow packages with the immutable workflow commit, smokes the tarball, clobbers the asset', () => {
   assert.equal(existsSync(WORKFLOW), true, `workflow not found at ${WORKFLOW}`)
   const yaml = readFileSync(WORKFLOW, 'utf8')
 
   assert.match(yaml, /ref: \$\{\{ steps\.ref\.outputs\.tag \}\}/)
-  // Packaging tooling must come from main: a tag checkout carries the old, buggy helper.
-  assert.match(yaml, /uses: actions\/checkout@v[0-9]+[\s\S]*?ref: main[\s\S]*?path: \.pack-tools/)
+  // Packaging tooling must come from the commit that owns this workflow file,
+  // never from a moving branch: a tag checkout carries the old, buggy helper.
+  assert.match(yaml, /ref: \$\{\{ github\.workflow_sha \}\}/)
+  assert.match(yaml, /path: \.pack-tools/)
+  assert.doesNotMatch(yaml, /ref: main\b/)
   assert.match(yaml, /cp \.pack-tools\/deploy\/nuxt\/release\.mjs deploy\/nuxt\/release\.mjs/)
   assert.match(yaml, /cp \.pack-tools\/deploy\/nuxt\/smoke-ssr\.mjs deploy\/nuxt\/smoke-ssr\.mjs/)
   assert.match(yaml, /grep -q 'copyTreeDereferenced' deploy\/nuxt\/release\.mjs/)
+  assert.match(yaml, /grep -q 'scanWorkspacePaths' deploy\/nuxt\/smoke-ssr\.mjs/)
+  assert.match(yaml, /test "\$\{TOOLING_SHA\}" = "\$\{WORKFLOW_SHA\}"/)
 
-  const overlay = yaml.indexOf('Checkout packaging tooling from main')
+  const manifest = yaml.indexOf('Verify the SSR manifest')
+  const overlay = yaml.indexOf('Checkout packaging tooling from the workflow commit')
   const seal = yaml.indexOf('Seal the release contract')
   const stage = yaml.indexOf('Stage and package')
   const smoke = yaml.indexOf('Smoke test the packaged tarball')
   const upload = yaml.indexOf('Upload to the GitHub release')
-  assert.ok(overlay > seal, 'tooling overlay must run after the build-time seal so the manifest stays clean')
-  assert.ok(stage > overlay, 'staging must use the overlaid helper')
-  assert.ok(smoke > stage && smoke < upload, 'the tarball must be smoked after packaging and before upload')
+  assert.ok(overlay > manifest, 'tooling overlay must run after the bundle and its manifest exist')
+  assert.ok(seal > overlay, 'the sealed contract must be produced by the pinned tooling')
+  assert.ok(stage > seal && smoke > stage && upload > smoke, 'stage -> smoke -> upload order')
 
   // Smoke runs on the bytes that get uploaded, not on the build tree.
+  assert.match(yaml, /EXTRACT="\$\(mktemp -d\)"/)
   assert.match(yaml, /tar -xzf/)
-  assert.match(yaml, /deploy\/nuxt\/smoke-ssr\.mjs --dir/)
+  assert.match(yaml, /smoke-ssr\.mjs --dir "\$EXTRACT\/ssr"/)
   assert.match(yaml, /tar -tvzf[\s\S]*?\^l/, 'the tarball must be rejected when it contains symlink entries')
   assert.match(yaml, /gh release upload[\s\S]*?--clobber/)
+})
+
+test('smoke follows a same-origin login redirect and never accepts the 302 itself', async (t) => {
+  const base = await serve(t, (req, res) => {
+    if (req.url === '/') {
+      res.writeHead(302, { location: '/login' })
+      res.end()
+      return
+    }
+    if (req.url === '/login') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end('<!doctype html><html><body><div id="app"></div><script src="/_nuxt/entry.js"></script></body></html>')
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+
+  const page = await fetchRenderedPage(base, '/')
+  assert.equal(page.status, 200)
+  assert.equal(page.url.pathname, '/login')
+  assert.equal(page.redirects, 1)
+  assert.match(page.body, /<div id="app">/)
+  assert.deepEqual(collectNuxtAssets(page.body), ['/_nuxt/entry.js'])
+})
+
+test('smoke rejects a redirect that leaves the packaged server', async (t) => {
+  const base = await serve(t, (req, res) => {
+    res.writeHead(302, { location: 'http://127.0.0.1:9/login' })
+    res.end()
+  })
+
+  await assert.rejects(() => fetchRenderedPage(base, '/'), /refusing cross-origin redirect/)
+})
+
+test('smoke rejects a redirect loop instead of passing a 302', async (t) => {
+  const base = await serve(t, (req, res) => {
+    res.writeHead(302, { location: '/' })
+    res.end()
+  })
+
+  await assert.rejects(() => fetchRenderedPage(base, '/'), /more than 5 redirects/)
+})
+
+test('smoke flags build-workspace paths left inside the archive', (t) => {
+  const root = workspace(t)
+  mkdirSync(join(root, '.output', 'server'), { recursive: true })
+  writeFileSync(join(root, '.output', 'server', 'index.mjs'), 'const from = "/home/runner/work/sub2api/sub2api/frontend/.output"\n')
+  writeFileSync(join(root, '.output', 'server', 'clean.mjs'), 'const from = "./chunks"\n')
+  writeFileSync(join(root, '.output', 'server', 'blob.bin'), Buffer.from([0, 47, 104, 111, 109, 101, 0]))
+
+  const hits = scanWorkspacePaths(root)
+  assert.equal(hits.length, 1)
+  assert.equal(hits[0].path, '.output/server/index.mjs')
+  assert.match(hits[0].sample, /\/home\/runner\/work\//)
 })

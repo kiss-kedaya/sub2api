@@ -14,21 +14,30 @@
  *      else and make Nitro die with ERR_MODULE_NOT_FOUND on the first render);
  *   2. the running Node matches the one recorded in the sealed release;
  *   3. SHA256SUMS still matches every packaged file;
- *   4. `node .output/server/index.mjs` answers `/health/frontend?live=1` and `/`
- *      with 200.
+ *   4. no file still names the throwaway CI workspace;
+ *   5. `node .output/server/index.mjs` answers `/health/frontend?live=1` with 200
+ *      and renders `/` with 200, following same-origin redirects (production
+ *      sends an unauthenticated `/` to `/login`, and a bare 302 is not a pass);
+ *   6. the client bundle referenced by that HTML is actually inside the archive.
  */
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { join, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { scanSymlinks } from './release.mjs'
 
 const DEFAULT_TIMEOUT_MS = 90000
 const MAX_REPORTED_LINKS = 20
+const MAX_REDIRECTS = 5
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308])
+// Anything below these roots is the throwaway CI workspace: dead on a server and
+// a leak of the build machine layout.
+const WORKSPACE_PATH_MARKERS = ['/home/runner/', '\\runneradmin\\', '/github/workspace/']
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = { _: [] }
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]
@@ -82,7 +91,7 @@ function nodeLine(version) {
   return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : ''
 }
 
-function verifyChecksums(dir) {
+export function verifyChecksums(dir) {
   const sumsFile = join(dir, 'SHA256SUMS')
   if (!existsSync(sumsFile)) return ['SHA256SUMS is missing from the package']
   const expected = new Map()
@@ -103,6 +112,76 @@ function verifyChecksums(dir) {
     if (!expected.has(path)) errors.push(`unlisted file in the package: ${path}`)
   }
   return errors
+}
+
+async function get(url, timeoutMs) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { signal: controller.signal, redirect: 'manual', cache: 'no-store' })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Follow same-origin redirects before judging a page. An unauthenticated root
+ * legitimately answers 302 to /login in production; the redirect itself is not a
+ * pass, only the 200 render behind it is. Cross-origin hops are refused because
+ * the smoke must stay on the package it just booted.
+ */
+export async function fetchRenderedPage(base, path = '/', { maxRedirects = MAX_REDIRECTS, timeoutMs = 20000 } = {}) {
+  const origin = new URL(base).origin
+  let url = new URL(path, base)
+  let page
+  let redirects = 0
+  for (;;) {
+    page = await get(url, timeoutMs)
+    if (!REDIRECT_STATUS.has(page.status)) break
+    const location = page.headers.get('location')
+    await page.arrayBuffer().catch(() => Buffer.alloc(0))
+    if (!location) throw new Error(`redirect from ${url.pathname} has no Location header`)
+    const next = new URL(location, url)
+    if (next.origin !== origin) throw new Error(`refusing cross-origin redirect ${url.pathname} -> ${next.origin}`)
+    redirects += 1
+    if (redirects > maxRedirects) throw new Error(`more than ${maxRedirects} redirects starting at ${path}`)
+    url = next
+  }
+  const contentType = page.headers.get('content-type') || ''
+  const body = await page.text()
+  return { status: page.status, contentType, body, url, redirects }
+}
+
+/** Nuxt asset URLs referenced by the rendered HTML, so the archive can prove it shipped them. */
+export function collectNuxtAssets(html, limit = 3) {
+  const assets = []
+  const pattern = /(?:src|href)="(\/_nuxt\/[^"]+)"/g
+  let match
+  while (assets.length < limit && (match = pattern.exec(html)) !== null) {
+    if (!assets.includes(match[1])) assets.push(match[1])
+  }
+  return assets
+}
+
+/** Text files that still name the CI workspace instead of a portable path. */
+export function scanWorkspacePaths(root, { maxBytes = 8 * 1024 * 1024 } = {}) {
+  const hits = []
+  for (const rel of listFiles(root)) {
+    const full = join(root, ...rel.split('/'))
+    let size = 0
+    try { size = statSync(full).size } catch { continue }
+    if (size === 0 || size > maxBytes) continue
+    const buffer = readFileSync(full)
+    if (buffer.includes(0)) continue
+    const text = buffer.toString('utf8')
+    for (const marker of WORKSPACE_PATH_MARKERS) {
+      const at = text.indexOf(marker)
+      if (at < 0) continue
+      hits.push({ path: rel, marker, sample: text.slice(Math.max(0, at - 40), at + 80).replace(/\s+/g, ' ') })
+      break
+    }
+  }
+  return hits
 }
 
 function freePort() {
@@ -129,16 +208,6 @@ async function stopChild(child) {
   if (exited) return
   try { child.kill('SIGKILL') } catch { /* already gone */ }
   await Promise.race([once(child, 'exit'), delay(2000)])
-}
-
-async function get(url, timeoutMs) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { signal: controller.signal, redirect: 'manual', cache: 'no-store' })
-  } finally {
-    clearTimeout(timer)
-  }
 }
 
 async function main() {
@@ -177,7 +246,16 @@ async function main() {
   const checksumErrors = verifyChecksums(dir)
   if (checksumErrors.length > 0) fail('packaged checksums do not match the extracted tree', checksumErrors.slice(0, 20))
 
-  // 4. Boot the extracted copy exactly the way an operator would.
+  // 4. No file may still name the throwaway CI workspace.
+  const workspacePaths = scanWorkspacePaths(dir)
+  if (workspacePaths.length > 0) {
+    fail(
+      `packaged artifact references ${workspacePaths.length} build-workspace path(s)`,
+      workspacePaths.slice(0, 10).map((hit) => `${hit.path}: ${hit.marker} ... ${hit.sample}`),
+    )
+  }
+
+  // 5. Boot the extracted copy exactly the way an operator would.
   const port = await freePort()
   const releaseEnv = readReleaseEnv(join(dir, 'release.env'))
   const child = spawn(process.execPath, [entry], {
@@ -232,24 +310,31 @@ async function main() {
       fail('liveness payload is not a healthy Nuxt SSR renderer', [JSON.stringify(live)])
     }
 
-    // An unauthenticated application may redirect / to /login. Still render the
-    // destination: liveness alone cannot detect missing Nitro runtime modules.
-    let pageUrl = new URL('/', base)
+    // A real page render, not just liveness: the root may legitimately 302 to
+    // /login, but a bare 302 is never a pass - the destination must render 200.
     let page
-    for (let redirects = 0; redirects <= 5; redirects += 1) {
-      page = await get(pageUrl, 20000)
-      if (![301, 302, 303, 307, 308].includes(page.status)) break
-      const location = page.headers.get('location')
-      if (!location || redirects === 5) fail('SSR page redirect is missing or loops')
-      const next = new URL(location, pageUrl)
-      if (next.origin !== base) fail('SSR page redirects outside the local smoke server')
-      pageUrl = next
+    try {
+      page = await fetchRenderedPage(base, '/', { maxRedirects: MAX_REDIRECTS, timeoutMs: 20000 })
+    } catch (error) {
+      fail(`GET / did not reach a rendered page: ${error?.message || error}`, [...output.slice(-40)])
     }
-    const contentType = page.headers.get('content-type') || ''
-    const body = await page.text()
-    if (page.status !== 200) fail(`GET ${pageUrl.pathname} -> ${page.status} (expected rendered HTML)`, [...output.slice(-40)])
-    if (!contentType.includes('text/html')) fail(`GET / returned content-type ${contentType || '<none>'} instead of text/html`)
-    if (!body.includes('<div')) fail('GET / returned no rendered markup')
+    if (page.status !== 200) {
+      fail(`GET ${page.url.pathname} -> ${page.status} (expected rendered HTML)`, [...output.slice(-40)])
+    }
+    if (!page.contentType.includes('text/html')) {
+      fail(`GET ${page.url.pathname} returned content-type ${page.contentType || '<none>'} instead of text/html`)
+    }
+    if (!page.body.includes('<div')) fail(`GET ${page.url.pathname} returned no rendered markup`)
+
+    // 6. HTML alone can render while every client asset is missing from the archive.
+    const assets = collectNuxtAssets(page.body)
+    if (assets.length === 0) console.log('note: rendered page references no /_nuxt/ asset')
+    for (const asset of assets) {
+      const assetRes = await get(new URL(asset, base), 20000)
+      await assetRes.arrayBuffer().catch(() => Buffer.alloc(0))
+      if (assetRes.status !== 200) fail(`packaged client asset ${asset} -> ${assetRes.status}`)
+    }
+    console.log(`page ok: ${page.url.pathname} 200 after ${page.redirects} redirect(s), ${assets.length} client asset(s) verified`)
   } finally {
     await stopChild(child)
   }
@@ -257,12 +342,25 @@ async function main() {
   console.log(
     `smoke ok: ${release.product || 'sub2api'} ${release.version || '?'} ` +
     `node ${release.frontend.node} commit ${String(release.commit || '').slice(0, 12)} ` +
-    `(0 symlinks, checksums match, /health/frontend?live=1 and / both 200)`,
+    '(0 symlinks, no workspace paths, checksums match, health + rendered page 200)',
   )
 }
 
-main().catch((error) => {
-  // fail() already printed a readable message; anything else is a crash worth showing.
-  if (!(error instanceof SmokeFailure)) console.error(`error: ${error?.stack || error}`)
-  process.exit(1)
-})
+// Importing this module (tests) must not run the CLI.
+function isMainModule() {
+  if (!process.argv[1]) return false
+  const self = fileURLToPath(import.meta.url)
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(self)
+  } catch {
+    return resolve(process.argv[1]) === self
+  }
+}
+
+if (isMainModule()) {
+  main().catch((error) => {
+    // fail() already printed a readable message; anything else is a crash worth showing.
+    if (!(error instanceof SmokeFailure)) console.error(`error: ${error?.stack || error}`)
+    process.exit(1)
+  })
+}
