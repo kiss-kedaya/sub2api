@@ -1,5 +1,6 @@
 import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
+import { managementFetchHeaders } from '@/api/managementFetch'
 
 export interface AccountModelTestEvent {
   type: string
@@ -209,11 +210,8 @@ export async function streamAccountModelTest(opts: StreamAccountModelTestOptions
   const url = buildApiUrl(`/admin/accounts/${opts.accountId}/test`)
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
-      'Content-Type': 'application/json',
-      [ADMIN_UI_REQUEST_HEADER]: '1'
-    },
+    credentials: 'same-origin',
+    headers: managementFetchHeaders({ [ADMIN_UI_REQUEST_HEADER]: '1' }),
     body: JSON.stringify(opts.body),
     signal: opts.signal
   })

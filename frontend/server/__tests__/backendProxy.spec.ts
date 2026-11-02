@@ -536,13 +536,13 @@ describe('csrf enforcement', () => {
     expect(Buffer.from(result.body as Buffer).toString()).not.toContain('private')
   })
 
-  it('blocks a cookie-authenticated mutation without the csrf header', async () => {
-    const fetchImpl = vi.fn() as unknown as typeof fetch
+  it('accepts a same-origin cookie mutation without an extra csrf header', async () => {
+    const { fetchImpl } = recorder(() => json({ code: 0, data: {} }))
     const result = await handleBffRequest(
       ctx({ method: 'POST', path: '/api/v1/keys', session: session(), body: Buffer.from('{}'), fetchImpl })
     )
-    expect(result.status).toBe(403)
-    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(result.status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('blocks a cross-origin mutation even with the token', async () => {

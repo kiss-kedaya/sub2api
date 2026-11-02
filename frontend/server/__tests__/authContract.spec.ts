@@ -109,7 +109,7 @@ describe('machine Bearer and browser cookie contracts', () => {
     expect(result.session.action).toBe('keep')
   })
 
-  it('does not let the bearer hint bypass cookie refresh CSRF or replace the session token', async () => {
+  it('does not let the bearer hint bypass cookie origin policy or replace the session token', async () => {
     const session = createSession({ accessToken: 'cookie-access', refreshToken: 'cookie-refresh', expiresIn: 3600, uid: 9 })
     const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer cookie-access')
@@ -118,10 +118,10 @@ describe('machine Bearer and browser cookie contracts', () => {
       return json(auth)
     }) as unknown as typeof fetch
     const input = context({ path: '/api/v1/auth/refresh', session, headers: { host: 'site.example', origin: PUBLIC, 'x-sub2api-auth-mode': 'bearer' }, body: Buffer.from('{"refresh_token":"attacker"}'), fetchImpl })
-    const blocked = await handleBffRequest(input)
+    const blocked = await handleBffRequest({ ...input, headers: { ...input.headers, origin: 'https://attacker.example' } })
     expect(blocked.status).toBe(403)
     expect(fetchImpl).not.toHaveBeenCalled()
-    const allowed = await handleBffRequest({ ...input, headers: { ...input.headers, 'x-sub2api-csrf': session.csrf } })
+    const allowed = await handleBffRequest(input)
     expect(allowed.status).toBe(200)
     expect(bodyOf(allowed).data.access_token).toBe('')
     expect(allowed.session.action).toBe('set')

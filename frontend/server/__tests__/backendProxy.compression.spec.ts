@@ -1,6 +1,7 @@
 import { createServer, type Server, type RequestListener } from 'node:http'
 import { createGzip, gzipSync, constants } from 'node:zlib'
 import * as h3 from 'h3'
+import { createSession, sealBffSession } from '../utils/session'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Real HTTP wire compression + native Node fetch + the actual Nitro route adapter.
@@ -34,7 +35,7 @@ afterAll(() => vi.unstubAllGlobals())
 
 beforeEach(async () => {
   runtime.backendOrigin = await listen((req, res) => {
-    if (req.url?.endsWith('/stream')) {
+    if (req.url?.endsWith('/stream') || req.url === '/api/v1/admin/accounts/7/test') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'content-encoding': 'gzip' })
       const gzip = createGzip()
       gzip.pipe(res)
@@ -148,6 +149,17 @@ describe('BFF decoded representation and downstream framing', () => {
       clearTimeout(timer)
       await reader.cancel()
     }
+  })
+
+  it('allows the real raw account-test POST with its Cookie and same-origin source, without an extra token', async () => {
+    const session = createSession({ accessToken: access, refreshToken: refresh, expiresIn: 3600, uid: 7 })
+    const cookie = `sub2_session=${sealBffSession(session, runtime.sessionPassword)}`
+    const response = await fetch(`${publicOrigin}/api/v1/admin/accounts/7/test`, { method: 'POST', body: '{}', headers: { cookie, origin: 'https://site.example', 'content-type': 'application/json' } })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('text/event-stream')
+    noWireHeaders(response)
+    finishStream()
+    expect(await response.text()).toBe('data: first\n\ndata: last\n\n')
   })
 
   it.each(['/settings/public', '/auth/login', '/auth/logout', '/auth/oauth/pending/exchange', '/auth/oauth/google/callback'])('handles HEAD %s without parsing a body or creating a login', async (path) => {

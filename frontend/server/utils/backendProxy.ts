@@ -194,7 +194,7 @@ export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
     (isTokenRoute(ctx.path) || isOAuthCompletionRoute(ctx.path))) {
     if (headerValue(ctx.headers, 'sec-fetch-site') === 'cross-site' ||
       !checkSameOrigin({ origin, referer, host, proto: ctx.protocol }).ok) {
-      return fail(403, 'Request blocked by CSRF policy')
+      return fail(403, 'Request blocked by origin policy')
     }
   }
 
@@ -209,7 +209,10 @@ export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
     host,
     proto: ctx.protocol,
   })
-  if (!csrf.ok) return fail(403, 'Request blocked by CSRF policy')
+  if (usesCookieSession && isMutatingMethod(ctx.method) && headerValue(ctx.headers, 'sec-fetch-site') === 'cross-site') {
+    return fail(403, 'Request blocked by origin policy')
+  }
+  if (!csrf.ok) return fail(403, 'Request blocked by origin policy')
   if (!machineTokens && ctx.path === `${API_PREFIX}/auth/refresh` && !session && isMutatingMethod(ctx.method)) {
     return fail(401, 'A valid browser session is required')
   }

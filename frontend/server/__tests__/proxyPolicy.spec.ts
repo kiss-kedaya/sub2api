@@ -259,17 +259,18 @@ describe('csrf policy', () => {
     expect(checkCsrf(base)).toEqual({ ok: true })
   })
 
-  it('rejects a same-length CSRF token with only the final byte changed', () => {
-    expect(checkCsrf({ ...base, csrfHeader: `${base.csrfHeader.slice(0, -1)}x` }).ok).toBe(false)
+  it('does not require an optional legacy csrf token to match for a same-origin request', () => {
+    expect(checkCsrf({ ...base, csrfHeader: `${base.csrfHeader.slice(0, -1)}x` }).ok).toBe(true)
   })
 
-  it('rejects a missing or mismatched token', () => {
-    expect(checkCsrf({ ...base, csrfHeader: undefined }).ok).toBe(false)
-    expect(checkCsrf({ ...base, csrfHeader: 'other-token-1234567890' }).ok).toBe(false)
+  it('accepts missing or stale extra tokens without weakening the origin check', () => {
+    expect(checkCsrf({ ...base, csrfHeader: undefined }).ok).toBe(true)
+    expect(checkCsrf({ ...base, csrfHeader: 'other-token-1234567890' }).ok).toBe(true)
+    expect(checkCsrf({ ...base, csrfHeader: undefined, origin: 'https://evil.example' }).ok).toBe(false)
   })
 
-  it('rejects a same-length token that differs only at the end', () => {
-    expect(checkCsrf({ ...base, csrfHeader: `${base.csrfHeader.slice(0, -1)}x` }).ok).toBe(false)
+  it('still rejects cross-site requests even with a matching optional token', () => {
+    expect(checkCsrf({ ...base, origin: 'https://evil.example' }).ok).toBe(false)
   })
 
   it('rejects cross-origin and origin-less mutations', () => {
@@ -288,10 +289,9 @@ describe('csrf policy', () => {
     const login = { ...base, path: '/api/v1/auth/login', csrfHeader: undefined }
     expect(checkCsrf({ ...login, origin: `https://${HOST}` }).ok).toBe(true)
     expect(checkCsrf({ ...login, origin: 'https://evil.example' }).ok).toBe(false)
-    // logout is not a credential route: it must echo the token.
-    expect(checkCsrf({ ...base, path: '/api/v1/auth/logout', csrfHeader: undefined }).ok).toBe(false)
-    // Cookie refresh spends an ambient credential, not the caller's body token.
-    expect(checkCsrf({ ...base, path: '/api/v1/auth/refresh', csrfHeader: undefined }).ok).toBe(false)
+    // Logout and refresh keep the origin requirement, not an extra token.
+    expect(checkCsrf({ ...base, path: '/api/v1/auth/logout', csrfHeader: undefined }).ok).toBe(true)
+    expect(checkCsrf({ ...base, path: '/api/v1/auth/refresh', csrfHeader: undefined }).ok).toBe(true)
     expect(checkCsrf({ ...base, path: '/api/v1/auth/refresh' }).ok).toBe(true)
   })
 })

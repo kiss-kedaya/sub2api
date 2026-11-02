@@ -5,7 +5,6 @@
  * stripping can be unit tested without a running Nitro server.
  */
 
-import { timingSafeEqual } from 'node:crypto'
 import { isIP } from 'node:net'
 
 export const API_PREFIX = '/api/v1'
@@ -446,7 +445,9 @@ export interface CsrfDecision {
 }
 
 /**
- * Double submit plus origin pinning for cookie-authenticated mutations.
+ * Origin pinning for cookie-authenticated mutations. The operator explicitly
+ * disabled the additional double-submit token requirement. Old token fields
+ * remain compatible but are not authorization credentials or required inputs.
  * Bearer-authenticated requests are exempt: the credential is not ambient.
  */
 export function checkCsrf(input: {
@@ -463,23 +464,7 @@ export function checkCsrf(input: {
   if (!isMutatingMethod(input.method)) return { ok: true }
   if (!input.usesCookieSession) return { ok: true }
 
-  // Login/2fa/register use body credentials. Cookie refresh instead substitutes
-  // the sealed session's refresh token, so it MUST echo that session's CSRF.
-  const credentialRoute = isTokenRoute(input.path) && !isLogoutRoute(input.path) &&
-    input.path !== `${API_PREFIX}/auth/refresh`
-  if (!credentialRoute) {
-    if (!input.csrfHeader || !input.csrfToken || !safeTokenEquals(input.csrfHeader, input.csrfToken)) {
-      return { ok: false, reason: 'csrf token missing or mismatched' }
-    }
-  }
-
   return checkSameOrigin(input)
-}
-
-function safeTokenEquals(left: string, right: string): boolean {
-  const a = Buffer.from(left)
-  const b = Buffer.from(right)
-  return a.length === b.length && timingSafeEqual(a, b)
 }
 
 export interface TokenPayload {
