@@ -242,6 +242,13 @@ jobs:
           node-version: '24.22'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
+      # The release packaging helpers only run inside ssr-release.yml, so a broken
+      # test there used to surface after the tag was already published. Run them
+      # here too: they are dependency-free (node:test) and take under a second.
+      - name: SSR release packaging tooling tests
+        env:
+          SSR_WORKFLOW_PATH: .github/workflows/ssr-release.yml
+        run: node --test deploy/nuxt/release.test.mjs
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
