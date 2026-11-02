@@ -91,6 +91,49 @@ jobs:
           --expect-commit ${{ steps.commit.outputs.commit }}
         working-directory: frontend
 
+      # A tag checkout carries the packaging helper that was current when the tag
+      # was cut. v2.3.0 shipped .output/server/node_modules/@vueuse/shared and
+      # @tanstack/virtual-core as absolute symlinks into /home/runner/work/...,
+      # which is dead on every other machine. Packaging therefore always runs with
+      # the tooling of the commit that owns THIS workflow file
+      # (github.workflow_sha, per GitHub's contexts reference), never with a
+      # moving branch: a dispatch from a fix branch can be rehearsed end to end,
+      # and a release event still gets exactly the reviewed tooling.
+      - name: Checkout packaging tooling from the workflow commit
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: .pack-tools
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Use the patched packaging tooling
+        id: tooling
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKFLOW_SHA}" ]; then
+            echo "::error::github.workflow_sha is empty; refusing to package with an unpinned helper"
+            exit 1
+          fi
+          cp .pack-tools/deploy/nuxt/release.mjs deploy/nuxt/release.mjs
+          cp .pack-tools/deploy/nuxt/smoke-ssr.mjs deploy/nuxt/smoke-ssr.mjs
+          cp .pack-tools/deploy/nuxt/release.test.mjs deploy/nuxt/release.test.mjs
+          # Fail loudly instead of silently repackaging with the old helper.
+          grep -q 'copyTreeDereferenced' deploy/nuxt/release.mjs
+          grep -q 'scanWorkspacePaths' deploy/nuxt/smoke-ssr.mjs
+          TOOLING_SHA="$(git -C .pack-tools rev-parse HEAD)"
+          test "${TOOLING_SHA}" = "${WORKFLOW_SHA}"
+          echo "packaging tooling from ${TOOLING_SHA}"
+          echo "tooling_sha=${TOOLING_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Test the packaging tooling
+        env:
+          SSR_WORKFLOW_PATH: .pack-tools/.github/workflows/ssr-release.yml
+        run: node --test deploy/nuxt/release.test.mjs
+
       - name: Download the released Go binary
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -120,47 +163,14 @@ jobs:
           --binary dist/backend/sub2api
           --spa-dist backend/internal/web/dist
 
-      # A tag checkout carries the packaging helper that was current when the
-      # tag was cut. v2.3.0 shipped .output/server/node_modules/@vueuse/shared and
-      # @tanstack/virtual-core as absolute symlinks into /home/runner/work/...,
-      # which is dead on every other machine. Packaging therefore always runs
-      # with main's tooling, fetched after the build so the sealed manifest keeps
-      # the clean tag checkout it was computed from.
-      - name: Checkout packaging tooling from main
-        uses: actions/checkout@v6
-        with:
-          ref: main
-          path: .pack-tools
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Use the patched packaging tooling
-        id: tooling
-        run: |
-          set -euo pipefail
-          cp .pack-tools/deploy/nuxt/release.mjs deploy/nuxt/release.mjs
-          cp .pack-tools/deploy/nuxt/smoke-ssr.mjs deploy/nuxt/smoke-ssr.mjs
-          cp .pack-tools/deploy/nuxt/release.test.mjs deploy/nuxt/release.test.mjs
-          # Fail loudly instead of silently repackaging with the old helper.
-          grep -q 'copyTreeDereferenced' deploy/nuxt/release.mjs
-          grep -q 'scanSymlinks' deploy/nuxt/smoke-ssr.mjs
-          TOOLING_SHA="$(git -C .pack-tools rev-parse HEAD)"
-          echo "packaging tooling from main@${TOOLING_SHA}"
-          echo "tooling_sha=$TOOLING_SHA" >> "$GITHUB_OUTPUT"
-
-      - name: Test the packaging tooling
-        env:
-          SSR_WORKFLOW_PATH: .pack-tools/.github/workflows/ssr-release.yml
-        run: node --test deploy/nuxt/release.test.mjs
-
       - name: Stage and package
         env:
           VERSION: ${{ steps.ref.outputs.version }}
         run: |
           set -euo pipefail
           TARBALL="dist/sub2api_${VERSION}_ssr_linux_amd64.tar.gz"
-          # stage dereferences build-workspace symlinks and refuses to emit a tree
-          # that still contains one.
+          # stage dereferences build-workspace symlinks, re-verifies the staged
+          # .output against the sealed manifest and refuses a tree with any link.
           node deploy/nuxt/release.mjs stage \
             --release dist/release.json \
             --ssr frontend/.output \
