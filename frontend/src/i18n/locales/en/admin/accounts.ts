@@ -52,6 +52,8 @@ export default {
       dataExportSelected: 'Export Selected',
       dataExportIncludeProxies: 'Include proxies linked to the exported accounts',
       dataImport: 'Import',
+      upstreamOpsImport: 'UpstreamOps import',
+      upstreamOpsImportHint: 'Preview, validate and dedupe an upstream-ops snapshot, then import its gateway providers',
       moreActions: 'More Actions',
       dataActions: 'Data',
       toolActions: 'Tools',

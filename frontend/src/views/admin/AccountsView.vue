@@ -464,6 +464,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch, defineAsyncComponent } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import SchedulableTimerControl from '@/components/account/SchedulableTimerControl.vue'
@@ -532,6 +533,7 @@ import { confirm } from '@/composables/useConfirmation'
 
 const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const appStore = useAppStore()
+const router = useRouter()
 const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
@@ -1508,6 +1510,11 @@ const openSyncFromCrs = () => {
   showSync.value = true
 }
 
+const openUpstreamOpsImport = () => {
+  closeAccountToolsDropdown()
+  void router.push({ name: 'AdminAccountsUpstreamOps' })
+}
+
 const openImportData = () => {
   closeAccountToolsDropdown()
   showImportData.value = true
@@ -1845,6 +1852,7 @@ const accountToolsMenuItems = computed<DropdownMenuItem[][]>(() => [
     { type: 'label', label: t('admin.accounts.dataActions') },
     { label: t('admin.accounts.syncFromCrs'), icon: 'i-lucide-refresh-cw', onSelect: openSyncFromCrs },
     { label: t('admin.accounts.dataImport'), icon: 'i-lucide-upload', onSelect: openImportData },
+    { label: t('admin.accounts.upstreamOpsImport'), icon: 'i-lucide-inbox', onSelect: openUpstreamOpsImport },
     {
       label: selIds.value.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport'),
       icon: 'i-lucide-download',

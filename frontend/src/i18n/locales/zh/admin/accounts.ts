@@ -52,6 +52,8 @@ export default {
       dataExportSelected: '导出选中',
       dataExportIncludeProxies: '导出代理（导出账号关联的代理）',
       dataImport: '导入',
+      upstreamOpsImport: 'UpstreamOps 导入',
+      upstreamOpsImportHint: '从 upstream-ops 快照预览、校验、去重后导入网关通道',
       moreActions: '更多操作',
       dataActions: '数据操作',
       toolActions: '工具',
