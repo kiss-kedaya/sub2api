@@ -700,4 +700,3 @@ func publicRequestHost(c *gin.Context) string {
 	}
 	return c.Request.Host
 }
-
