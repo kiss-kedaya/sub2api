@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView, useRouter, useRoute } from 'vue-router'
-import { onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
 import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
@@ -14,10 +14,15 @@ import { updateFavicon } from '@/utils/branding'
 import { applyPlatformProfile } from '@/utils/platform'
 import { useNuxtUiLocale } from '@/plugins/nuxtUiLocale'
 import { applySiteTheme, normalizeSiteTheme, useSiteTheme } from '@/composables/useSiteTheme'
+import AppLayout from '@/components/layout/AppLayout.vue'
+import { isConsoleLayoutRoute } from '@/components/layout/consoleShell'
+import { useClientAnchorNavigation } from '@/composables/useClientAnchorNavigation'
 
 const router = useRouter()
+useClientAnchorNavigation(router)
 const nuxtUiLocale = useNuxtUiLocale()
 const route = useRoute()
+const consoleShell = computed(() => isConsoleLayoutRoute(route.meta))
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const subscriptionStore = useSubscriptionStore()
@@ -179,7 +184,12 @@ onMounted(async () => {
        The app's own Toast and dialogs keep working alongside it. -->
   <UApp :locale="nuxtUiLocale">
     <NavigationProgress />
-    <Transition name="page" mode="out-in">
+    <AppLayout v-if="consoleShell">
+      <Transition name="page" mode="out-in">
+        <slot><RouterView /></slot>
+      </Transition>
+    </AppLayout>
+    <Transition v-else name="page" mode="out-in">
       <slot><RouterView /></slot>
     </Transition>
     <Toast />

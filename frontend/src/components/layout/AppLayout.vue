@@ -1,5 +1,7 @@
 <template>
+  <slot v-if="shellHost" />
   <div
+    v-else
     class="console-frame"
     :class="[isConsoleSignal ? 'console-signal' : '', { 'signal-admin': isAdminSignal, 'signal-nav-collapsed': sidebarCollapsed }]"
   >
@@ -32,11 +34,11 @@ import '@/styles/onboarding.css'
 import '@/styles/console-signal.css'
 import '@/styles/console-account.css'
 import '@/styles/console-studio.css'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, provide, ref } from 'vue'
 import { useAppStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
-import { useOnboardingTour } from '@/composables/useOnboardingTour'
 import { useOnboardingStore } from '@/stores/onboarding'
+import { useOnboardingTour } from '@/composables/useOnboardingTour'
 import { useConsoleSignal } from '@/composables/useConsoleSignal'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
@@ -45,6 +47,14 @@ import InkSakura from './InkSakura.vue'
 import SakuraPetalField from './SakuraPetalField.vue'
 import { provideDashboardFrame } from './dashboardFrame'
 import { usePanelScroll } from './panelScroll'
+import { CONSOLE_SHELL_KEY } from './consoleShell'
+
+// The app shell mounts this component once for authenticated pages. Views still
+// wrap their content in <AppLayout> for the standalone SPA build; when a host is
+// present they become a transparent slot instead of remounting the sidebar,
+// header and scroll container on every route change.
+const shellHost = inject(CONSOLE_SHELL_KEY, false)
+if (!shellHost) provide(CONSOLE_SHELL_KEY, true)
 
 const appStore = useAppStore()
 const authStore = useAuthStore()
@@ -53,36 +63,40 @@ const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const isAdmin = computed(() => authStore.user?.role === 'admin')
 
 // Page headers and <PageNavbar> / <PageToolbar> inject this to reach the navbar and toolbar.
-provideDashboardFrame()
-
 const mainRef = ref<HTMLElement | null>(null)
-let petalEnableTimer = 0
-let petalEnableIdleId = 0
-usePanelScroll(computed(() => mainRef.value?.parentElement ?? null))
+let replayTour: (() => void) | undefined
 
-const { replayTour } = useOnboardingTour({
-  storageKey: isAdmin.value ? 'admin_guide' : 'user_guide',
-  autoStart: !authStore.isAdminObserver
-})
+if (!shellHost) {
+  provideDashboardFrame()
+  usePanelScroll(computed(() => mainRef.value?.parentElement ?? null))
 
-const onboardingStore = useOnboardingStore()
+  const { replayTour: replay } = useOnboardingTour({
+    storageKey: isAdmin.value ? 'admin_guide' : 'user_guide',
+    autoStart: !authStore.isAdminObserver
+  })
+  replayTour = replay
 
-onMounted(() => {
-  onboardingStore.setReplayCallback(replayTour)
-  if (isConsoleSignal.value) {
-    const enable = () => document.documentElement.classList.add('console-petals-ready')
-    const idleWindow = window as unknown as { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number }
-    petalEnableIdleId = idleWindow.requestIdleCallback?.(enable, { timeout: 1500 }) ?? 0
-    if (!petalEnableIdleId) petalEnableTimer = window.setTimeout(enable, 500)
-  }
-})
+  const onboardingStore = useOnboardingStore()
+  let petalEnableTimer = 0
+  let petalEnableIdleId = 0
 
-onBeforeUnmount(() => {
-  document.documentElement.classList.remove('console-petals-ready')
-  window.clearTimeout(petalEnableTimer)
-  const idleWindow = window as unknown as { cancelIdleCallback?: (id: number) => void }
-  if (petalEnableIdleId) idleWindow.cancelIdleCallback?.(petalEnableIdleId)
-})
+  onMounted(() => {
+    onboardingStore.setReplayCallback(replay)
+    if (isConsoleSignal.value) {
+      const enable = () => document.documentElement.classList.add('console-petals-ready')
+      const idleWindow = window as unknown as { requestIdleCallback?: (callback: () => void, options: { timeout: number }) => number }
+      petalEnableIdleId = idleWindow.requestIdleCallback?.(enable, { timeout: 1500 }) ?? 0
+      if (!petalEnableIdleId) petalEnableTimer = window.setTimeout(enable, 500)
+    }
+  })
+
+  onBeforeUnmount(() => {
+    document.documentElement.classList.remove('console-petals-ready')
+    window.clearTimeout(petalEnableTimer)
+    const idleWindow = window as unknown as { cancelIdleCallback?: (id: number) => void }
+    if (petalEnableIdleId) idleWindow.cancelIdleCallback?.(petalEnableIdleId)
+  })
+}
 
 defineExpose({ replayTour })
 </script>
