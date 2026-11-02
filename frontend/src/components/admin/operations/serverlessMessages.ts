@@ -8,7 +8,8 @@ const zh = {
   addNodesFirst: '请先添加批准网关', nodeStillReferenced: '此网关仍被地区规则引用，请先在地区规则中取消选择。',
   ids: '分配网关', heartbeat: '在线网关', ready: '就绪', version: '版本', empty: '暂无在线网关',
   continuity: '已绑定的 Key 保持原网关，停用新分配不会迁走进行中的对话。绑定网关不可用时明确返回错误，不重放请求。',
-  advanced: '今日路由统计', requests: '请求', errors: '错误'
+  advanced: '今日路由统计', requests: '请求', errors: '错误',
+  assignment: '新请求分配', runtime: '运行环境'
 }
 const en = {
   title: 'Regional gateway routing', description: 'Route text requests by the trusted client IP country to approved gateways using existing authentication and billing. Disabled by default.',
@@ -20,6 +21,7 @@ const en = {
   addNodesFirst: 'Add an approved gateway first', nodeStillReferenced: 'A region still uses this gateway. Unselect it in the region rules before removing it.',
   ids: 'Assigned gateways', heartbeat: 'Registered gateways', ready: 'Ready', version: 'Version', empty: 'No registered gateway',
   continuity: 'An assigned key stays on its original gateway. Disabling new assignments preserves existing conversations. An unavailable bound gateway returns an explicit error without replaying the request.',
-  advanced: 'Routing totals today', requests: 'Requests', errors: 'Errors'
+  advanced: 'Routing totals today', requests: 'Requests', errors: 'Errors',
+  assignment: 'New request assignment', runtime: 'Runtime'
 }
 export const serverlessMessages = { zh: { serverless: zh }, en: { serverless: en } }

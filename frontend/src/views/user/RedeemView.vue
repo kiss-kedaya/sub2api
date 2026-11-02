@@ -1,222 +1,153 @@
 <template>
   <AppLayout>
-    <div class="signal-account-page signal-redeem mx-auto max-w-3xl space-y-6">
-      <header class="signal-account-heading">
-        <span class="signal-account-index">REDEEM</span>
-        <h1>{{ t('redeem.title') }}</h1>
-      </header>
-      <div class="signal-balance-strip">
-        <div>
-          <p class="signal-account-label">{{ t('redeem.currentBalance') }}</p>
-          <p class="signal-account-balance">
+    <div class="signal-account-page mx-auto max-w-3xl space-y-6">
+      <UserPageHeader flush :title="t('redeem.title')" />
+      <div class="grid grid-cols-1 divide-y divide-default overflow-hidden rounded-lg bg-default shadow-xs ring ring-default sm:grid-cols-[1.4fr_1fr] sm:divide-x sm:divide-y-0 dark:shadow-none">
+        <div class="px-5 py-4 sm:px-6">
+          <p class="text-sm text-muted">{{ t('redeem.currentBalance') }}</p>
+          <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">
             ${{ user?.balance?.toFixed(2) || '0.00' }}
           </p>
         </div>
-        <div>
-          <p class="signal-account-label">{{ t('redeem.concurrency') }}</p>
-          <p class="signal-account-number">
-            {{ user?.concurrency || 0 }} <span>{{ t('redeem.requests') }}</span>
+        <div class="px-5 py-4 sm:px-6">
+          <p class="text-sm text-muted">{{ t('redeem.concurrency') }}</p>
+          <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">
+            {{ user?.concurrency || 0 }} <span class="text-xs font-normal text-muted">{{ t('redeem.requests') }}</span>
           </p>
         </div>
       </div>
 
       <!-- Redeem Form -->
-      <div class="signal-account-section">
-        <div>
-          <form @submit.prevent="handleRedeem" class="space-y-5">
-            <div>
-              <label for="code" class="input-label">
-                {{ t('redeem.redeemCodeLabel') }}
-              </label>
-              <div class="relative mt-1">
-                <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
-                  <Icon name="gift" size="md" class="text-gray-400 dark:text-dark-500" />
-                </div>
-                <input
-                  id="code"
-                  v-model="redeemCode"
-                  type="text"
-                  required
-                  :placeholder="t('redeem.redeemCodePlaceholder')"
-                  :disabled="submitting"
-                  class="input py-3 pl-12 text-lg"
-                />
-              </div>
-              <p class="input-hint">
-                {{ t('redeem.redeemCodeHint') }}
-              </p>
-            </div>
+      <section class="rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none">
+        <form @submit.prevent="handleRedeem" class="space-y-5">
+          <div>
+            <label for="code" class="mb-1.5 block text-sm font-medium text-default">
+              {{ t('redeem.redeemCodeLabel') }}
+            </label>
+            <UInput
+              id="code"
+              v-model="redeemCode"
+              type="text"
+              required
+              size="xl"
+              icon="i-lucide-gift"
+              class="w-full"
+              :placeholder="t('redeem.redeemCodePlaceholder')"
+              :disabled="submitting"
+            />
+            <p class="mt-1.5 text-xs text-muted">
+              {{ t('redeem.redeemCodeHint') }}
+            </p>
+          </div>
 
-            <button
-              type="submit"
-              :disabled="!redeemCode || submitting"
-              class="btn btn-primary w-full py-3"
-            >
-              <Icon v-if="submitting" name="refresh" size="md" class="mr-2 animate-spin" />
-              <Icon v-else name="checkCircle" size="md" class="mr-2" />
-              {{ submitting ? t('redeem.redeeming') : t('redeem.redeemButton') }}
-            </button>
-          </form>
-        </div>
-      </div>
+          <UButton
+            type="submit"
+            size="xl"
+            block
+            :icon="submitting ? 'i-lucide-loader-circle' : 'i-lucide-circle-check'"
+            :ui="{ leadingIcon: submitting ? 'animate-spin' : '' }"
+            :disabled="!redeemCode || submitting"
+          >
+            {{ submitting ? t('redeem.redeeming') : t('redeem.redeemButton') }}
+          </UButton>
+        </form>
+      </section>
 
       <!-- Success Message -->
       <transition name="fade">
-        <div
+        <UAlert
           v-if="redeemResult"
-          class="card border-emerald-200 bg-emerald-50 dark:border-emerald-800/50 dark:bg-emerald-900/20"
+          color="success"
+          variant="subtle"
+          icon="i-lucide-circle-check"
+          :title="t('redeem.redeemSuccess')"
         >
-          <div class="p-6">
-            <div class="flex items-start gap-4">
-              <div
-                class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-emerald-100 dark:bg-emerald-900/30"
-              >
-                <Icon name="checkCircle" size="md" class="text-emerald-600 dark:text-emerald-400" />
-              </div>
-              <div class="flex-1">
-                <h2 class="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
-                  {{ t('redeem.redeemSuccess') }}
-                </h2>
-                <div class="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
-                  <div class="mt-3 space-y-1">
-                    <p v-if="redeemResult.type === 'balance'" class="font-medium">
-                      {{ t('redeem.added') }}: ${{ redeemResult.value.toFixed(2) }}
-                    </p>
-                    <p v-else-if="redeemResult.type === 'concurrency'" class="font-medium">
-                      {{ t('redeem.added') }}: {{ redeemResult.value }}
-                      {{ t('redeem.concurrentRequests') }}
-                    </p>
-                    <p v-else-if="redeemResult.type === 'subscription'" class="font-medium">
-                      {{ t('redeem.subscriptionAssigned') }}
-                      <span v-if="redeemResult.group?.name"> - {{ redeemResult.group.name }}</span>
-                      <span v-if="redeemResult.validity_days">
-                        ({{
-                          t('redeem.subscriptionDays', { days: redeemResult.validity_days })
-                        }})</span
-                      >
-                    </p>
-                    <p v-if="redeemResult.type === 'balance' && userRefreshedAfterRedeem && user">
-                      {{ t('redeem.newBalance') }}:
-                      <span class="font-semibold">${{ user.balance.toFixed(2) }}</span>
-                    </p>
-                    <p v-if="redeemResult.type === 'concurrency' && userRefreshedAfterRedeem && user">
-                      {{ t('redeem.newConcurrency') }}:
-                      <span class="font-semibold"
-                        >{{ user.concurrency }} {{ t('redeem.requests') }}</span
-                      >
-                    </p>
-                  </div>
-                </div>
-              </div>
+          <template #description>
+            <div class="mt-1 space-y-1">
+              <p v-if="redeemResult.type === 'balance'" class="font-medium">
+                {{ t('redeem.added') }}: ${{ redeemResult.value.toFixed(2) }}
+              </p>
+              <p v-else-if="redeemResult.type === 'concurrency'" class="font-medium">
+                {{ t('redeem.added') }}: {{ redeemResult.value }}
+                {{ t('redeem.concurrentRequests') }}
+              </p>
+              <p v-else-if="redeemResult.type === 'subscription'" class="font-medium">
+                {{ t('redeem.subscriptionAssigned') }}
+                <span v-if="redeemResult.group?.name"> - {{ redeemResult.group.name }}</span>
+                <span v-if="redeemResult.validity_days">
+                  ({{
+                    t('redeem.subscriptionDays', { days: redeemResult.validity_days })
+                  }})</span
+                >
+              </p>
+              <p v-if="redeemResult.type === 'balance' && userRefreshedAfterRedeem && user">
+                {{ t('redeem.newBalance') }}:
+                <span class="font-semibold">${{ user.balance.toFixed(2) }}</span>
+              </p>
+              <p v-if="redeemResult.type === 'concurrency' && userRefreshedAfterRedeem && user">
+                {{ t('redeem.newConcurrency') }}:
+                <span class="font-semibold"
+                  >{{ user.concurrency }} {{ t('redeem.requests') }}</span
+                >
+              </p>
             </div>
-          </div>
-        </div>
+          </template>
+        </UAlert>
       </transition>
 
       <!-- Error Message -->
       <transition name="fade">
-        <div
+        <UAlert
           v-if="errorMessage"
-          class="card border-red-200 bg-red-50 dark:border-red-800/50 dark:bg-red-900/20"
-        >
-          <div class="p-6">
-            <div class="flex items-start gap-4">
-              <div
-                class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-red-100 dark:bg-red-900/30"
-              >
-                <Icon
-                  name="exclamationCircle"
-                  size="md"
-                  class="text-red-600 dark:text-red-400"
-                />
-              </div>
-              <div class="flex-1">
-                <h2 class="text-sm font-semibold text-red-800 dark:text-red-300">
-                  {{ t('redeem.redeemFailed') }}
-                </h2>
-                <p class="mt-2 text-sm text-red-700 dark:text-red-400">
-                  {{ errorMessage }}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+          color="error"
+          variant="subtle"
+          icon="i-lucide-circle-alert"
+          :title="t('redeem.redeemFailed')"
+          :description="errorMessage"
+        />
       </transition>
 
       <!-- Information Card -->
-      <div
-        class="card border-primary-200 bg-primary-50 dark:border-primary-800/50 dark:bg-primary-900/20"
-      >
-        <div class="p-6">
-          <div class="flex items-start gap-4">
-            <div
-              class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-primary-100 dark:bg-primary-900/30"
-            >
-              <Icon name="infoCircle" size="md" class="text-primary-600 dark:text-primary-400" />
-            </div>
-            <div class="flex-1">
-              <h2 class="text-sm font-semibold text-primary-800 dark:text-primary-300">
-                {{ t('redeem.aboutCodes') }}
-              </h2>
-              <ul
-                class="mt-2 list-inside list-disc space-y-1 text-sm text-primary-700 dark:text-primary-400"
-              >
-                <li>{{ t('redeem.codeRule1') }}</li>
-                <li>{{ t('redeem.codeRule2') }}</li>
-                <li>
-                  {{ t('redeem.codeRule3') }}
-                  <span
-                    v-if="contactInfo"
-                    class="ml-1.5 inline-flex items-center rounded-md bg-primary-200/50 px-2 py-0.5 text-xs font-medium text-primary-800 dark:bg-primary-800/40 dark:text-primary-200"
-                  >
-                    {{ contactInfo }}
-                  </span>
-                </li>
-                <li>{{ t('redeem.codeRule4') }}</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
+      <UAlert color="neutral" variant="subtle" icon="i-lucide-info" class="dark:bg-primary/10 dark:text-primary dark:ring-primary/25" :title="t('redeem.aboutCodes')">
+        <template #description>
+          <ul class="mt-1 list-inside list-disc space-y-1">
+            <li>{{ t('redeem.codeRule1') }}</li>
+            <li>{{ t('redeem.codeRule2') }}</li>
+            <li>
+              {{ t('redeem.codeRule3') }}
+              <UBadge v-if="contactInfo" color="neutral" variant="outline" class="ml-1.5">
+                {{ contactInfo }}
+              </UBadge>
+            </li>
+            <li>{{ t('redeem.codeRule4') }}</li>
+          </ul>
+        </template>
+      </UAlert>
 
       <!-- Recent Activity -->
-      <div class="card">
-        <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+      <section class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+        <header class="border-b border-default px-5 py-4 sm:px-6">
+          <h2 class="text-base font-semibold text-highlighted">
             {{ t('redeem.recentActivity') }}
           </h2>
-        </div>
-        <div class="p-6">
+        </header>
+        <div class="px-5 py-4 sm:px-6">
           <!-- Loading State -->
           <div v-if="loadingHistory" class="flex items-center justify-center py-8">
-            <svg class="h-6 w-6 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24">
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              ></circle>
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              ></path>
-            </svg>
+            <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
           </div>
 
           <!-- History List -->
-          <div v-else-if="history.length > 0" class="space-y-3">
-            <div
+          <ul v-else-if="history.length > 0" class="-my-1 divide-y divide-default">
+            <li
               v-for="item in history"
               :key="item.id"
-              class="flex items-center justify-between rounded-xl bg-gray-50 p-4 dark:bg-dark-800"
+              class="flex items-center justify-between gap-4 py-3"
             >
-              <div class="flex items-center gap-4">
+              <div class="flex min-w-0 items-center gap-3">
                 <div
                   :class="[
-                    'flex h-10 w-10 items-center justify-center rounded-xl',
+                    'flex size-9 shrink-0 items-center justify-center rounded-lg',
                     isBalanceType(item.type)
                       ? item.value >= 0
                         ? 'bg-emerald-100 dark:bg-emerald-900/30'
@@ -258,19 +189,19 @@
                     "
                   />
                 </div>
-                <div>
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-highlighted">
                     {{ getHistoryItemTitle(item) }}
                   </p>
-                  <p class="text-xs text-gray-500 dark:text-dark-400">
+                  <p class="text-xs text-muted">
                     {{ formatDateTime(item.used_at) }}
                   </p>
                 </div>
               </div>
-              <div class="text-right">
+              <div class="shrink-0 text-right">
                 <p
                   :class="[
-                    'text-sm font-semibold',
+                    'text-sm font-semibold tabular-nums',
                     isBalanceType(item.type)
                       ? item.value >= 0
                         ? 'text-emerald-600 dark:text-emerald-400'
@@ -286,62 +217,64 @@
                 </p>
                 <p
                   v-if="!isAdminAdjustment(item.type)"
-                  class="font-mono text-xs text-gray-400 dark:text-dark-500"
+                  class="font-mono text-xs text-dimmed"
                 >
                   {{ item.code.slice(0, 8) }}...
                 </p>
-                <p v-else class="text-xs text-gray-400 dark:text-dark-500">
+                <p v-else class="text-xs text-dimmed">
                   {{ t('redeem.adminAdjustment') }}
                 </p>
                 <!-- Display notes for admin adjustments -->
                 <p
                   v-if="item.notes"
-                  class="mt-1 text-xs text-gray-500 dark:text-dark-400 italic max-w-[200px] truncate"
+                  class="mt-1 max-w-[200px] truncate text-xs italic text-muted"
                   :title="item.notes"
                 >
                   {{ item.notes }}
                 </p>
               </div>
-            </div>
-          </div>
+            </li>
+          </ul>
 
           <!-- Empty State -->
-          <div v-else class="empty-state py-8">
-            <div
-              class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gray-100 dark:bg-dark-800"
-            >
-              <Icon name="clock" size="xl" class="text-gray-400 dark:text-dark-500" />
+          <div v-else class="flex flex-col items-center py-8 text-center">
+            <div class="mb-3 flex size-12 items-center justify-center rounded-lg bg-elevated">
+              <UIcon name="i-lucide-clock" class="size-6 text-dimmed" />
             </div>
-            <p class="text-sm text-gray-500 dark:text-dark-400">
+            <p class="text-sm text-muted">
               {{ t('redeem.historyWillAppear') }}
             </p>
           </div>
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
-            <span>{{ t('common.total') }}: {{ historyTotal }} {{ t('pagination.results') }}</span>
-            <label>
+        </div>
+        <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-default px-5 py-3 text-sm text-muted sm:px-6">
+          <span>{{ t('common.total') }}: {{ historyTotal }} {{ t('pagination.results') }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-2">
               {{ t('pagination.perPage') }}
               <select
                 v-model="historyPageSize"
-                class="input w-20"
+                class="input w-20 py-1.5"
                 :disabled="loadingHistory || submitting"
                 @change="fetchHistory(1)"
               >
                 <option v-for="size in [20, 50, 100]" :key="size" :value="size">{{ size }}</option>
               </select>
             </label>
-            <button
-              class="btn btn-secondary"
+            <UButton
+              color="neutral"
+              variant="outline"
               :disabled="loadingHistory || submitting || historyPage <= 1"
               @click="fetchHistory(historyPage - 1)"
-            >{{ t('pagination.previous') }}</button>
-            <button
-              class="btn btn-secondary"
+            >{{ t('pagination.previous') }}</UButton>
+            <UButton
+              color="neutral"
+              variant="outline"
               :disabled="loadingHistory || submitting || historyPage * historyPageSize >= historyTotal"
               @click="fetchHistory(historyPage + 1)"
-            >{{ t('pagination.next') }}</button>
+            >{{ t('pagination.next') }}</UButton>
           </div>
-        </div>
-      </div>
+        </footer>
+      </section>
     </div>
   </AppLayout>
 </template>
@@ -356,6 +289,7 @@ import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import type { RedeemCode } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import { formatDateTime } from '@/utils/format'
 
 const { t } = useI18n()

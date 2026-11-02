@@ -6,57 +6,60 @@
     :show-close-button="!busy"
     @close="cancel"
   >
-    <div class="crypto-security">
-      <p class="crypto-security__operation">{{ label }}</p>
-      <p class="crypto-security__hint">{{ t('admin.crypto.securityPerRequest') }}</p>
-      <p v-if="stage === 'loading'" role="status">{{ t('common.loading') }}</p>
+    <div class="crypto-security space-y-4 text-sm">
+      <div class="space-y-1">
+        <p class="crypto-security__operation font-medium whitespace-pre-line wrap-anywhere text-highlighted">{{ label }}</p>
+        <p class="text-xs text-muted">{{ t('admin.crypto.securityPerRequest') }}</p>
+      </div>
+      <p v-if="stage === 'loading'" role="status" class="text-muted">{{ t('common.loading') }}</p>
       <form v-else-if="stage === 'enroll'" id="crypto-security-form" autocomplete="off" @submit.prevent="setup">
-        <p>{{ t('admin.crypto.securitySetupIntro') }}</p>
+        <p class="text-toned">{{ t('admin.crypto.securitySetupIntro') }}</p>
       </form>
-      <form v-else-if="stage === 'setup' || stage === 'verify'" id="crypto-security-form" autocomplete="off" @submit.prevent="submitCode">
+      <form v-else-if="stage === 'setup' || stage === 'verify'" id="crypto-security-form" class="space-y-4" autocomplete="off" @submit.prevent="submitCode">
         <template v-if="stage === 'setup'">
-          <p>{{ t('admin.crypto.securityScan') }}</p>
-          <img v-if="qrImage" :src="qrImage" :alt="t('admin.crypto.securityQrAlt')" width="224" height="224" class="crypto-security__qr" />
-          <p v-if="qrFailed" role="status">{{ t('admin.crypto.securityQrFailed') }}</p>
-          <label for="crypto-security-key">{{ t('admin.crypto.securityOfflineKey') }}</label>
-          <input id="crypto-security-key" :value="secret" class="input crypto-security__key" readonly autocomplete="off" spellcheck="false" />
-          <p class="crypto-security__hint">{{ t('admin.crypto.securityKeyHint') }}</p>
-          <p role="timer">{{ t('admin.crypto.securityCountdown', { seconds: countdown }) }}</p>
+          <p class="text-toned">{{ t('admin.crypto.securityScan') }}</p>
+          <img v-if="qrImage" :src="qrImage" :alt="t('admin.crypto.securityQrAlt')" width="224" height="224" class="mx-auto rounded-md" />
+          <p v-if="qrFailed" role="status" class="text-warning">{{ t('admin.crypto.securityQrFailed') }}</p>
+          <UFormField :label="t('admin.crypto.securityOfflineKey')" :help="t('admin.crypto.securityKeyHint')">
+            <UInput id="crypto-security-key" :model-value="secret" readonly autocomplete="off" spellcheck="false" class="w-full" :ui="{ base: 'font-mono' }" />
+          </UFormField>
+          <p role="timer" class="text-xs text-muted">{{ t('admin.crypto.securityCountdown', { seconds: countdown }) }}</p>
         </template>
-        <label for="crypto-security-code">{{ t('admin.crypto.securityCode') }}</label>
-        <TotpCodeInput
-          id="crypto-security-code"
-          ref="codeInput"
-          v-model="code"
-          :label="t('admin.crypto.securityCode')"
-          :invalid="!!errorMessage"
-          aria-describedby="crypto-security-code-hint"
-          :disabled="busy"
-          @complete="submitCode"
-          required
-        />
-        <p id="crypto-security-code-hint" class="crypto-security__hint">{{ t('admin.crypto.securityFreshCode') }}</p>
+        <div class="space-y-2">
+          <label for="crypto-security-code" class="block font-medium text-default">{{ t('admin.crypto.securityCode') }}</label>
+          <TotpCodeInput
+            id="crypto-security-code"
+            ref="codeInput"
+            v-model="code"
+            :label="t('admin.crypto.securityCode')"
+            :invalid="!!errorMessage"
+            aria-describedby="crypto-security-code-hint"
+            :disabled="busy"
+            @complete="submitCode"
+            required
+          />
+          <p id="crypto-security-code-hint" class="text-xs text-muted">{{ t('admin.crypto.securityFreshCode') }}</p>
+        </div>
       </form>
-      <p v-else-if="stage === 'done'" role="status">{{ t('admin.crypto.securityBound') }}</p>
-      <p v-else-if="stage === 'read-only'" role="alert">{{ t('admin.crypto.securityReadOnly') }}</p>
-      <p v-else-if="stage === 'expired'" role="alert">{{ t('admin.crypto.securitySetupExpired') }}</p>
-      <p v-else-if="stage === 'unavailable' && !errorMessage" role="alert">{{ t('admin.crypto.securityUnavailable') }}</p>
-      <p v-if="errorMessage" role="alert" class="crypto-security__error">{{ errorMessage }}</p>
+      <p v-else-if="stage === 'done'" role="status" class="text-success">{{ t('admin.crypto.securityBound') }}</p>
+      <UAlert v-else-if="stage === 'read-only'" role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="t('admin.crypto.securityReadOnly')" />
+      <UAlert v-else-if="stage === 'expired'" role="alert" color="warning" variant="subtle" :title="t('admin.crypto.securitySetupExpired')" />
+      <UAlert v-else-if="stage === 'unavailable' && !errorMessage" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="t('admin.crypto.securityUnavailable')" />
+      <UAlert v-if="errorMessage" role="alert" class="crypto-security__error" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="errorMessage" />
     </div>
     <template #footer>
-      <div class="crypto-security__actions">
-        <button type="button" class="btn btn-secondary" :disabled="busy" @click="cancel">{{ t('common.cancel') }}</button>
-        <button v-if="stage === 'enroll'" form="crypto-security-form" type="submit" class="btn btn-primary" :disabled="busy">
+      <div class="crypto-security__actions flex justify-end gap-2">
+        <UButton color="neutral" variant="subtle" data-testid="crypto-security-cancel" :disabled="busy" @click="cancel">{{ t('common.cancel') }}</UButton>
+        <UButton v-if="stage === 'enroll'" form="crypto-security-form" type="submit" :disabled="busy">
           {{ t('admin.crypto.securitySetupAction') }}
-        </button>
-        <button v-if="stage === 'setup' || stage === 'verify'" form="crypto-security-form" type="submit" class="btn btn-danger" :disabled="busy || !validCode">
+        </UButton>
+        <UButton v-if="stage === 'setup' || stage === 'verify'" form="crypto-security-form" type="submit" color="error" :disabled="busy || !validCode">
           {{ stage === 'setup' ? t('admin.crypto.securityBindAction') : t('admin.crypto.securityVerifyAction') }}
-        </button>
+        </UButton>
       </div>
     </template>
   </BaseDialog>
 </template>
-
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -290,13 +293,3 @@ onUnmounted(() => { generation++; clearSecrets(); settle(false) })
 defineExpose({ verify, cancel, forceClose })
 </script>
 
-<style scoped>
-.crypto-security { display: grid; gap: 1rem; font-size: .875rem; line-height: 1.7; }
-.crypto-security form { display: grid; gap: .75rem; }
-.crypto-security__operation { white-space: pre-line; overflow-wrap: anywhere; font-weight: 600; }
-.crypto-security__hint { color: var(--signal-muted, #6b7280); font-size: .8125rem; }
-.crypto-security__qr { justify-self: center; border-radius: .5rem; }
-.crypto-security__key { font-family: ui-monospace, monospace; }
-.crypto-security__error { color: #dc2626; }
-.crypto-security__actions { display: flex; justify-content: flex-end; gap: .75rem; }
-</style>

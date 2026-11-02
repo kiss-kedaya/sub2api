@@ -1,9 +1,15 @@
 <template>
   <BaseDialog :show="show" :title="t(hook ? 'accountOps.editRobot' : 'accountOps.addRobot')" width="normal" @close="close">
     <form id="account-ops-webhook-form" class="max-h-[68vh] space-y-3 overflow-y-auto pr-1" @submit.prevent="save"><fieldset :disabled="busy"><AccountOpsChannelFields ref="fields" v-model="draft" :encryption-configured="encryptionConfigured" single :testing-id="testingId" @test="emit('test', $event)" /></fieldset></form>
-    <template #footer><button type="button" class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button><button type="submit" form="account-ops-webhook-form" :disabled="busy || !encryptionConfigured" class="btn btn-primary">{{ t(busy ? 'common.loading' : 'accountOps.saveChannel') }}</button></template>
+    <template #footer>
+      <div class="flex justify-end gap-2">
+        <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="close" />
+        <UButton type="submit" form="account-ops-webhook-form" :disabled="busy || !encryptionConfigured" :label="t(busy ? 'common.loading' : 'accountOps.saveChannel')" />
+      </div>
+    </template>
   </BaseDialog>
 </template>
+
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

@@ -1,8 +1,8 @@
 <template>
-  <div class="card p-4">
-    <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
-      {{ t('payment.admin.dailyRevenue') }}
-    </h3>
+  <UCard :ui="{ header: 'p-4 sm:px-6', body: 'p-4 sm:p-6' }">
+    <template #header>
+      <p class="text-sm font-semibold text-highlighted">{{ t('payment.admin.dailyRevenue') }}</p>
+    </template>
     <div class="h-64">
       <div v-if="loading" class="flex h-full items-center justify-center">
         <LoadingSpinner size="md" />
@@ -10,12 +10,12 @@
       <Line v-else-if="chartData" :data="chartData" :options="chartOptions" />
       <div
         v-else
-        class="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400"
+        class="flex h-full items-center justify-center text-sm text-muted"
       >
         {{ t('payment.admin.noData') }}
       </div>
     </div>
-  </div>
+  </UCard>
 </template>
 
 <script setup lang="ts">

@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from './client'
+import { getAppRuntimeContext } from '@runtime/context'
 import { refreshAuthTokens, type RefreshTokenResponse } from './tokenRefresh'
 export type { RefreshTokenResponse } from './tokenRefresh'
 import type {
@@ -72,6 +73,7 @@ export function isTotp2FARequired(response: LoginResponse): response is TotpLogi
  * Store authentication token in localStorage
  */
 export function setAuthToken(token: string): void {
+  if (getAppRuntimeContext()?.cookieSession || typeof localStorage === 'undefined') return
   localStorage.setItem('auth_token', token)
 }
 
@@ -79,6 +81,7 @@ export function setAuthToken(token: string): void {
  * Store refresh token in localStorage
  */
 export function setRefreshToken(token: string): void {
+  if (getAppRuntimeContext()?.cookieSession || typeof localStorage === 'undefined') return
   localStorage.setItem('refresh_token', token)
 }
 
@@ -87,6 +90,7 @@ export function setRefreshToken(token: string): void {
  * Converts expires_in (seconds) to absolute timestamp (milliseconds)
  */
 export function setTokenExpiresAt(expiresIn: number): void {
+  if (getAppRuntimeContext()?.cookieSession || typeof localStorage === 'undefined') return
   const expiresAt = Date.now() + expiresIn * 1000
   localStorage.setItem('token_expires_at', String(expiresAt))
 }
@@ -95,6 +99,7 @@ export function setTokenExpiresAt(expiresIn: number): void {
  * Get authentication token from localStorage
  */
 export function getAuthToken(): string | null {
+  if (getAppRuntimeContext()?.cookieSession || typeof localStorage === 'undefined') return null
   return localStorage.getItem('auth_token')
 }
 
@@ -102,6 +107,7 @@ export function getAuthToken(): string | null {
  * Get refresh token from localStorage
  */
 export function getRefreshToken(): string | null {
+  if (getAppRuntimeContext()?.cookieSession || typeof localStorage === 'undefined') return null
   return localStorage.getItem('refresh_token')
 }
 
@@ -109,6 +115,7 @@ export function getRefreshToken(): string | null {
  * Get token expiration timestamp from localStorage
  */
 export function getTokenExpiresAt(): number | null {
+  if (typeof localStorage === 'undefined') return null
   const value = localStorage.getItem('token_expires_at')
   return value ? parseInt(value, 10) : null
 }
@@ -117,10 +124,16 @@ export function getTokenExpiresAt(): number | null {
  * Clear authentication token from localStorage
  */
 export function clearAuthToken(): void {
+  if (typeof localStorage === 'undefined') return
   localStorage.removeItem('auth_token')
   localStorage.removeItem('refresh_token')
   localStorage.removeItem('auth_user')
   localStorage.removeItem('token_expires_at')
+}
+
+function persistAuthUser(user: unknown): void {
+  if (getAppRuntimeContext()?.cookieSession || typeof localStorage === 'undefined') return
+  localStorage.setItem('auth_user', JSON.stringify(user))
 }
 
 /**
@@ -140,7 +153,7 @@ export async function login(credentials: LoginRequest): Promise<LoginResponse> {
     if (data.expires_in) {
       setTokenExpiresAt(data.expires_in)
     }
-    localStorage.setItem('auth_user', JSON.stringify(data.user))
+    persistAuthUser(data.user)
   }
 
   return data
@@ -162,7 +175,7 @@ export async function login2FA(request: TotpLogin2FARequest): Promise<AuthRespon
   if (data.expires_in) {
     setTokenExpiresAt(data.expires_in)
   }
-  localStorage.setItem('auth_user', JSON.stringify(data.user))
+  persistAuthUser(data.user)
 
   return data
 }
@@ -183,7 +196,7 @@ export async function register(userData: RegisterRequest): Promise<AuthResponse>
   if (data.expires_in) {
     setTokenExpiresAt(data.expires_in)
   }
-  localStorage.setItem('auth_user', JSON.stringify(data.user))
+  persistAuthUser(data.user)
 
   return data
 }

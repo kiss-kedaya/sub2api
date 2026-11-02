@@ -59,11 +59,11 @@ describe('MonitorQuotaView', () => {
     expect(text).toContain('95%')
 
     const html = wrapper.html()
-    // 阈值配色（三处共用的 UsageProgressBar 统一）：≥90 红 / ≥75 黄 / 其余绿
-    // 42.4 → 绿、80 → 黄、95 → 红
-    expect(html).toContain('bg-green-500')
-    expect(html).toContain('bg-amber-500')
-    expect(html).toContain('bg-red-500')
+    // 阈值配色（三处共用的 UsageProgressBar 统一，UProgress 色值）：≥90 error / ≥75 warning / 其余 primary
+    // 42.4 → primary、80 → warning、95 → error
+    expect(html).toContain('bg-primary')
+    expect(html).toContain('bg-warning')
+    expect(html).toContain('bg-error')
   })
 
   it('clamps the tier bar width into 0-100', () => {
@@ -72,7 +72,8 @@ describe('MonitorQuotaView', () => {
         snapshot: makeSnapshot({ tiers: [{ window: '5h', used_percent: 240 }] }),
       },
     })
-    expect(wrapper.html()).toContain('width: 100%')
+    // UProgress fills by translating its indicator; a full bar is translateX(-0%).
+    expect(wrapper.html()).toContain('translateX(-0%)')
   })
 
   it('shows the plan level badge and multi-currency balances', () => {
@@ -91,8 +92,8 @@ describe('MonitorQuotaView', () => {
     expect(wrapper.text()).toContain('Max20')
     expect(wrapper.text()).toContain('12.50 CNY')
     expect(wrapper.text()).toContain('0.00 USD')
-    // 余额为 0 用红色警示
-    expect(wrapper.html()).toContain('text-red-600')
+    // 余额为 0 用红色警示（error token）
+    expect(wrapper.html()).toContain('text-error')
   })
 
   it('falls back to the single balance + currency pair', () => {

@@ -15,24 +15,25 @@ function read(rel: string) {
 }
 
 describe('channel-monitor-v2 design system structure', () => {
-  it('user ChannelStatus V2 shell uses page-header, card, btn, tabs utilities', () => {
+  it('user ChannelStatus V2 shell uses the shared header, cards, Nuxt UI buttons/badges and segmented tabs', () => {
     // Route wrapper may switch V1/V2; design chrome lives on the V2 implementation.
+    // The view moved from the legacy utilities (page-header, btn, tab, badge) to the shared
+    // user header and Nuxt UI controls; the structure checks below follow that.
     const src = read('views/user/ChannelStatusV2View.vue')
-    expect(src).toContain('page-header')
-    expect(src).toContain('page-title')
+    expect(src).toContain('<UserPageHeader')
     expect(src).toContain('class="card')
-    expect(src).toContain('btn btn-secondary')
-    expect(src).toContain('class="tab')
-    expect(src).toContain('tab-active')
-    expect(src).toContain('badge badge-warning')
+    expect(src).toContain('<UButton')
+    expect(src).toContain('channel-range-switch')
+    expect(src).toContain(':aria-pressed=')
+    expect(src).toContain('<UBadge v-if="snapshot && !snapshot.coverage.coverage_complete && !bootstrapActive" color="warning"')
     // Compact single-row toolbar
     expect(src).toContain('monitor-toolbar')
     expect(src).toContain('clearFilters')
     expect(src).toContain('healthModeOptions')
     expect(src).toContain("'cache'")
-    // Ops elevation: rounded-3xl + ring surfaces
-    expect(src).toContain('rounded-3xl')
-    expect(src).toContain('ring-1 ring-gray-900/5')
+    // Toolbar card on the Nuxt UI surface tokens
+    expect(src).toContain('signal-channel-toolbar')
+    expect(src).toContain('ring ring-default')
     // Overview-first KPI strip before primary viz
     expect(src.indexOf('summaryAria')).toBeLessThan(src.indexOf('MonitorTrendChart'))
     // No page-level fixed min-width that forces viewport horizontal scroll

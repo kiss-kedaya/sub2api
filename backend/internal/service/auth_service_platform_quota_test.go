@@ -39,6 +39,10 @@ func (f *fakeInsertRecorder) ListByUser(_ context.Context, _ int64) ([]UserPlatf
 	return nil, nil
 }
 
+func (f *fakeInsertRecorder) ListByUsers(_ context.Context, _ []int64) (map[int64][]UserPlatformQuotaRecord, error) {
+	return map[int64][]UserPlatformQuotaRecord{}, nil
+}
+
 func (f *fakeInsertRecorder) UpsertForUser(_ context.Context, _ int64, _ []UserPlatformQuotaRecord) error {
 	return nil
 }

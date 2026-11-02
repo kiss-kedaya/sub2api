@@ -222,7 +222,7 @@ describe('AccountModelTestPanel race regressions', () => {
     await flushPromises()
     oldCatalog.resolve([{ id: 'gpt-stale', display_name: 'Stale' }])
     await flushPromises()
-    await wrapper.get('.model-test-option input').setValue(true)
+    await wrapper.get('.model-test-option [role="checkbox"]').trigger('click')
     expect(wrapper.find('[data-test="row-test-11-gpt-one"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('gpt-stale')
     expect(fetch).not.toHaveBeenCalled()

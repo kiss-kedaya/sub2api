@@ -20,6 +20,13 @@ export function proxyQualityOverallClass(status?: string): string {
   return 'badge-danger'
 }
 
+// 总体状态徽章的 Nuxt UI 颜色(与 proxyQualityOverallClass 同一映射)。
+export function proxyQualityOverallColor(status?: string): 'success' | 'warning' | 'error' {
+  if (status === 'healthy') return 'success'
+  if (status === 'warn') return 'warning'
+  return 'error'
+}
+
 // 总体状态文案的 i18n key(返回 key 而非已翻译文本,便于单测且不耦合 i18n)。
 export function proxyQualityOverallLabelKey(status?: string): string {
   if (status === 'healthy') return 'admin.proxies.qualityStatusHealthy'

@@ -476,6 +476,11 @@ export function createMockApi(now = new Date()) {
       if (method === 'GET') {
         if (path === '/setup/status') return { needs_setup: false, step: 'complete' }
         if (path === '/api/v1/settings/public') return settings
+        if (path === '/api/v1/announcements/summary') return { total: 0, unread: 0 }
+        if (path === '/api/v1/announcements/popups') return []
+        if (path === '/api/v1/tickets/stats' || path === '/api/v1/admin/tickets/stats') {
+          return { total: 0, unread: 0, open: 0, in_progress: 0, waiting_user: 0, resolved: 0, closed: 0, can_create: true }
+        }
         if (['/api/v1/auth/me', '/api/v1/user/profile'].includes(path)) return { ...data.user, run_mode: 'standard' }
         if (path === '/api/v1/admin/compliance') return {
           required: false, version: 'local-preview', document_path_zh: '', document_path_en: '',

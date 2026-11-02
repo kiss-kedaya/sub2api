@@ -121,6 +121,7 @@ export default {
     endsAt: '结束时间',
     empty: '暂无公告',
     emptyUnread: '暂无未读公告',
+    loadFailed: '加载公告失败',
     total: '条公告',
     emptyDescription: '暂时没有任何系统公告',
     readStatus: '您已阅读此公告',
@@ -534,6 +535,8 @@ export default {
     perMonth: '月',
     perYear: '年',
     admin: {
+      displayColumns: '显示列',
+      advancedOptions: '高级选项',
       tabs: {
         overview: '概览',
         orders: '订单管理',

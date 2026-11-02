@@ -100,9 +100,9 @@ describe("SubscriptionPlanCard", () => {
     expect(title.classes()).toEqual(expect.arrayContaining([
       "min-w-0",
       "h-12",
-      "break-words",
+      "wrap-break-word",
       "line-clamp-2",
-      "[overflow-wrap:anywhere]",
+      "wrap-anywhere",
     ]));
     expect(title.classes()).not.toContain("truncate");
   });

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
+import UDropdownMenu from '@nuxt/ui/components/DropdownMenu.vue'
 import AccountsView from '../AccountsView.vue'
 
 const { listAccounts } = vi.hoisted(() => ({
@@ -53,6 +54,17 @@ const DataTableStub = {
   `
 }
 
+// Columns hidden in a fresh layout are offered in the "列显示" menu; enable one through it.
+async function enableColumn(wrapper: { findAllComponents: (c: any) => any[] }, label: string) {
+  const menus = wrapper.findAllComponents(UDropdownMenu)
+  const menu = menus.find((m: any) => (m.props('items') as any[]).flat().some((item: any) => item?.type === 'checkbox' && item?.label === label))
+  expect(menu).toBeDefined()
+  const item = (menu.props('items') as any[]).flat().find((entry: any) => entry?.label === label)
+  expect(item.checked).toBe(false)
+  item.onUpdateChecked(true)
+  await flushPromises()
+}
+
 function mountView() {
   return mount(AccountsView, {
     global: {
@@ -63,7 +75,7 @@ function mountView() {
         },
         DataTable: DataTableStub,
         AccountTableActions: { template: '<div><slot name="after" /></div>' },
-        AccountTableFilters: true,
+        AccountTableFilters: { template: '<div><slot name="actions" /></div>' },
         AccountBulkActionsBar: true,
         Pagination: true,
         ConfirmDialog: true,
@@ -107,11 +119,14 @@ describe('admin AccountsView priority column preferences', () => {
     })
   })
 
-  it('shows priority as a sortable column for fresh preferences', async () => {
+  it('offers priority in 列显示 for fresh preferences and sorts by it once shown', async () => {
     const wrapper = mountView()
     await flushPromises()
 
+    expect(wrapper.find('[data-column="priority"]').exists()).toBe(false)
+    await enableColumn(wrapper, 'admin.accounts.columns.priority')
     expect(wrapper.get('[data-column="priority"]').text()).toBe('sortable')
+    expect(JSON.parse(localStorage.getItem('account-hidden-columns') || '[]')).not.toContain('priority')
 
     await wrapper.get('[data-test="sort-priority"]').trigger('click')
     await flushPromises()

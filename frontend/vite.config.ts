@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv, Plugin, searchForWorkspaceRoot } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import ui from '@nuxt/ui/vite'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
 
@@ -90,6 +91,16 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       vue(),
+      // Nuxt UI in Vue mode; also registers @tailwindcss/vite. Light/dark stays with the app
+      // (`.dark` on <html> from localStorage `theme`), so Nuxt UI's color-mode plugin is off.
+      // Icons are bundled from @iconify-json/* at build time (see src/plugins/nuxtUi.ts).
+      ui({
+        colorMode: false,
+        ui: { colors: { primary: 'neutral', neutral: 'neutral' } },
+        icon: { clientBundle: { scan: true } },
+        // Only Nuxt UI's U* components are auto-registered; app components stay explicit imports.
+        components: { globs: [] }
+      }),
       checker({
         vueTsc: true
       }),
@@ -97,6 +108,7 @@ export default defineConfig(({ mode }) => {
     ],
   resolve: {
     alias: {
+      '@runtime/context': resolve(__dirname, 'src/runtime/context.ts'),
       '@': resolve(__dirname, 'src'),
       // 使用 vue-i18n 运行时版本，避免 CSP unsafe-eval 问题
       'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js'
@@ -118,13 +130,10 @@ export default defineConfig(({ mode }) => {
          */
         manualChunks(id: string) {
           if (id.includes('node_modules')) {
-            // Vue 核心库
-            if (
-              id.includes('/vue/') ||
-              id.includes('/vue-router/') ||
-              id.includes('/pinia/') ||
-              id.includes('/@vue/')
-            ) {
+            // Vue 核心库。按包根目录匹配：`/vue/` 子串还会命中 @iconify/vue、@unhead/vue
+            // 和 @nuxt/ui 的 runtime/vue/，把它们拆进这个块后与 vendor-misc 互相引用，
+            // 首屏报 "Cannot access before initialization"。
+            if (/[\\/]node_modules[\\/](vue|vue-router|pinia|@vue[\\/][^\\/]+)[\\/]/.test(id)) {
               return 'vendor-vue'
             }
 

@@ -694,7 +694,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 	if requestedModel == "" {
 		requestedModel = l.Model
 	}
-	return UsageLog{
+	out := UsageLog{
 		ID:                        l.ID,
 		UserID:                    l.UserID,
 		APIKeyID:                  l.APIKeyID,
@@ -745,11 +745,51 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		CacheTTLOverridden:        l.CacheTTLOverridden,
 		BillingMode:               l.BillingMode,
 		CreatedAt:                 l.CreatedAt,
-		User:                      UserFromServiceShallow(l.User),
-		APIKey:                    APIKeyFromService(l.APIKey),
-		Group:                     GroupFromServiceShallow(l.Group),
-		Subscription:              UserSubscriptionFromService(l.Subscription),
 	}
+	applyUsageLogAssociations(&out, l)
+	return out
+}
+
+// applyUsageLogAssociations fills either the full association objects (user
+// endpoints, single-row admin reads) or the compact summaries used by large
+// list pages. Compact mode keeps full Group pricing maps, API key secrets and
+// subscription objects out of every row.
+func applyUsageLogAssociations(out *UsageLog, l *service.UsageLog) {
+	if out == nil || l == nil {
+		return
+	}
+	if l.AssociationsCompact {
+		if l.User != nil {
+			out.UserSummary = &UsageUserSummary{
+				ID:        l.User.ID,
+				Email:     l.User.Email,
+				Username:  l.User.Username,
+				DeletedAt: l.User.DeletedAt,
+			}
+		}
+		if l.APIKey != nil {
+			out.APIKeySummary = &UsageAPIKeySummary{ID: l.APIKey.ID, Name: l.APIKey.Name}
+		}
+		if l.Group != nil {
+			out.GroupSummary = &UsageGroupSummary{ID: l.Group.ID, Name: l.Group.Name}
+		}
+		if l.AccountNameOnly && l.Account != nil {
+			out.AccountSummary = AccountSummaryFromService(l.Account)
+		}
+		if l.Subscription != nil {
+			out.SubscriptionSummary = &UsageSubscriptionSummary{
+				ID:      l.Subscription.ID,
+				UserID:  l.Subscription.UserID,
+				GroupID: l.Subscription.GroupID,
+				Status:  l.Subscription.Status,
+			}
+		}
+		return
+	}
+	out.User = UserFromServiceShallow(l.User)
+	out.APIKey = APIKeyFromService(l.APIKey)
+	out.Group = GroupFromServiceShallow(l.Group)
+	out.Subscription = UserSubscriptionFromService(l.Subscription)
 }
 
 // UsageLogFromService converts a service UsageLog to DTO for regular users.

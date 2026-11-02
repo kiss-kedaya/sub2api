@@ -2,7 +2,7 @@
   <div class="auth-paper relative flex min-h-screen items-center justify-center overflow-hidden p-4">
     <!-- Background: plain white paper by day; the night background and grid are unchanged -->
     <div
-      class="absolute inset-0 hidden bg-gradient-to-br dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
+      class="absolute inset-0 hidden bg-linear-to-br/srgb dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
     ></div>
     <div class="pointer-events-none absolute inset-0 hidden overflow-hidden dark:block">
       <div class="auth-grid absolute inset-0"></div>
@@ -11,28 +11,28 @@
     <!-- Ink-wash sakura on the right, above the background and below the form -->
     <InkSakura front />
 
-    <!-- Content Container -->
+    <!-- Content: brand above a centred card, as in Nuxt UI's auth pages -->
     <div class="relative z-10 w-full max-w-md">
       <!-- Logo/Brand -->
-      <div class="mb-8 text-center">
+      <div class="mb-6 flex flex-col items-center text-center">
         <!-- Custom Logo or Default Logo -->
         <template v-if="settingsLoaded">
           <div
-            class="mb-4 inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl dark:shadow-lg dark:shadow-primary-500/30"
+            class="mb-4 inline-flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl dark:shadow-lg dark:shadow-primary-500/30"
           >
             <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
           </div>
-          <h1 class="text-gradient mb-2 text-3xl font-bold">
+          <h1 class="text-gradient text-2xl font-semibold">
             {{ siteName }}
           </h1>
-          <p class="text-sm text-gray-500 dark:text-dark-400">
+          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
             {{ siteSubtitle }}
           </p>
         </template>
       </div>
 
       <!-- Card Container -->
-      <div class="auth-card rounded-2xl border border-[#ebe8e9] bg-white/85 p-8 dark:border-dark-700/50 dark:bg-dark-800/70 dark:shadow-glass dark:backdrop-blur-xl">
+      <div class="auth-card rounded-2xl border border-[#ebe8e9] bg-white/85 p-6 sm:p-8 dark:border-dark-700/50 dark:bg-dark-800/70 dark:shadow-glass dark:backdrop-blur-xl">
         <slot />
       </div>
 
@@ -76,13 +76,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 /* Plain ink title by day; the night keeps its rose gradient. */
 .text-gradient {
-  color: #2f2a2c;
+  color: #171717;
 }
 
 :global(html.dark) .text-gradient {
-  @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
+  @apply bg-linear-to-r/srgb from-primary-600 to-primary-500 bg-clip-text text-transparent;
 }
 
 .auth-grid {
@@ -107,5 +108,16 @@ onMounted(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .auth-grid { animation: none; }
+}
+</style>
+
+<style>
+/* By day the card is a Nuxt UI card: white, hairline ring, 8px corners, a small shadow,
+   no glass. `div.auth-card` outranks console-elevation.css in any load order. */
+html:not(.dark) .auth-paper div.auth-card {
+  border-color: #e5e5e5;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(10 10 10 / 0.06), 0 1px 2px -1px rgb(10 10 10 / 0.06);
 }
 </style>

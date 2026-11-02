@@ -6,31 +6,16 @@
     close-on-click-outside
     @close="handleClose"
   >
-    <form id="import-proxy-data-form" class="space-y-4" @submit.prevent="handleImport">
-      <div class="text-sm text-gray-600 dark:text-dark-300">
-        {{ t('admin.proxies.dataImportHint') }}
-      </div>
-      <div
-        class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-600 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400"
-      >
-        {{ t('admin.proxies.dataImportWarning') }}
-      </div>
+    <UForm id="import-proxy-data-form" :state="{}" class="space-y-4" @submit="handleImport">
+      <p class="text-sm text-muted">{{ t('admin.proxies.dataImportHint') }}</p>
+      <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.proxies.dataImportWarning')" />
 
-      <div>
-        <label class="input-label">{{ t('admin.proxies.dataImportFile') }}</label>
-        <div
-          class="flex items-center justify-between gap-3 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 dark:border-dark-600 dark:bg-dark-800"
-        >
-          <div class="min-w-0">
-            <div class="truncate text-sm text-gray-700 dark:text-dark-200">
-              {{ fileName || t('admin.proxies.dataImportSelectFile') }}
-            </div>
-            <div class="text-xs text-gray-500 dark:text-dark-400">JSON (.json)</div>
-          </div>
-          <button type="button" class="btn btn-secondary shrink-0" @click="openFilePicker">
-            {{ t('common.chooseFile') }}
-          </button>
+      <UFormField :label="t('admin.proxies.dataImportFile')" help="JSON (.json)">
+        <div class="flex items-center gap-3">
+          <UButton color="neutral" variant="outline" icon="i-lucide-file-up" :label="t('common.chooseFile')" @click="openFilePicker" />
+          <span class="min-w-0 truncate text-sm text-default">{{ fileName || t('admin.proxies.dataImportSelectFile') }}</span>
         </div>
+        <!-- Hidden native picker (no Nuxt UI equivalent for a programmatic picker) -->
         <input
           ref="fileInput"
           type="file"
@@ -38,47 +23,31 @@
           accept="application/json,.json"
           @change="handleFileChange"
         />
-      </div>
+      </UFormField>
 
-      <div
-        v-if="result"
-        class="space-y-2 rounded-xl border border-gray-200 p-4 dark:border-dark-700"
-      >
-        <div class="text-sm font-medium text-gray-900 dark:text-white">
-          {{ t('admin.proxies.dataImportResult') }}
-        </div>
-        <div class="text-sm text-gray-700 dark:text-dark-300">
-          {{ t('admin.proxies.dataImportResultSummary', result) }}
-        </div>
-
-        <div v-if="errorItems.length" class="mt-2">
-          <div class="text-sm font-medium text-red-600 dark:text-red-400">
-            {{ t('admin.proxies.dataImportErrors') }}
-          </div>
-          <div
-            class="mt-2 max-h-48 overflow-auto rounded-lg bg-gray-50 p-3 font-mono text-xs dark:bg-dark-800"
-          >
+      <div v-if="result" class="space-y-2">
+        <p class="text-sm font-medium text-highlighted">{{ t('admin.proxies.dataImportResult') }}</p>
+        <p class="text-sm text-default">{{ t('admin.proxies.dataImportResultSummary', result) }}</p>
+        <div v-if="errorItems.length">
+          <p class="text-sm font-medium text-error">{{ t('admin.proxies.dataImportErrors') }}</p>
+          <div class="mt-2 max-h-48 overflow-auto rounded-md bg-elevated p-3 font-mono text-xs">
             <div v-for="(item, idx) in errorItems" :key="idx" class="whitespace-pre-wrap">
               {{ item.kind }} {{ item.name || item.proxy_key || '-' }} — {{ item.message }}
             </div>
           </div>
         </div>
       </div>
-    </form>
+    </UForm>
 
     <template #footer>
-      <div class="flex justify-end gap-3">
-        <button class="btn btn-secondary" type="button" :disabled="importing" @click="handleClose">
-          {{ t('common.cancel') }}
-        </button>
-        <button
-          class="btn btn-primary"
+      <div class="flex justify-end gap-2">
+        <UButton color="neutral" variant="subtle" :disabled="importing" :label="t('common.cancel')" @click="handleClose" />
+        <UButton
           type="submit"
           form="import-proxy-data-form"
-          :disabled="importing"
-        >
-          {{ importing ? t('admin.proxies.dataImporting') : t('admin.proxies.dataImportButton') }}
-        </button>
+          :loading="importing"
+          :label="importing ? t('admin.proxies.dataImporting') : t('admin.proxies.dataImportButton')"
+        />
       </div>
     </template>
   </BaseDialog>

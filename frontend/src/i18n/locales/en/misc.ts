@@ -123,6 +123,7 @@ export default {
     endsAt: 'Ends at',
     empty: 'No announcements',
     emptyUnread: 'No unread announcements',
+    loadFailed: 'Failed to load announcements',
     total: 'announcements',
     emptyDescription: 'There are no system announcements at this time',
     readStatus: 'You have read this announcement',
@@ -510,6 +511,8 @@ export default {
     perMonth: 'month',
     perYear: 'year',
     admin: {
+      displayColumns: 'Columns',
+      advancedOptions: 'Advanced options',
       tabs: {
         overview: 'Overview',
         orders: 'Orders',

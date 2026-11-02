@@ -2,7 +2,7 @@
   <div
     ref="containerRef"
     class="filter-menu relative"
-    :class="compact ? 'min-w-[6.5rem] sm:min-w-[7.25rem]' : 'min-w-[150px] sm:min-w-[160px]'"
+    :class="compact ? 'min-w-26 sm:min-w-29' : 'min-w-[150px] sm:min-w-[160px]'"
   >
     <button
       ref="triggerRef"
@@ -10,7 +10,7 @@
       class="select-trigger flex cursor-pointer list-none items-center justify-between gap-1.5 text-left"
       :class="[
         isOpen ? 'select-trigger-open' : '',
-        compact ? 'h-8 rounded-lg !px-2 !py-1 text-xs' : 'h-[42px]',
+        compact ? 'h-8 rounded-lg px-2! py-1! text-xs' : 'h-[42px]',
       ]"
       :aria-expanded="isOpen"
       aria-haspopup="listbox"
@@ -19,7 +19,7 @@
     >
       <span
         class="select-value min-w-0 truncate"
-        :class="compact ? 'max-w-[5.5rem] sm:max-w-[6.5rem]' : 'max-w-[11rem]'"
+        :class="compact ? 'max-w-22 sm:max-w-26' : 'max-w-44'"
       >
         {{ t('channelMonitorV2.filters.labelValue', { label, value: selectionLabel }) }}
       </span>
@@ -62,7 +62,7 @@
           >
             <span class="flex min-w-0 flex-1 items-center gap-2">
               <span
-                class="checkbox flex h-4 w-4 items-center justify-center rounded border border-gray-300 bg-white text-primary-500 dark:border-dark-600 dark:bg-dark-900"
+                class="checkbox flex h-4 w-4 items-center justify-center rounded-sm border border-gray-300 bg-white text-primary-500 dark:border-dark-600 dark:bg-dark-900"
                 :class="modelValue.includes(option.value) ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30' : ''"
               >
                 <Icon v-if="modelValue.includes(option.value)" name="check" size="sm" class="text-primary-500" />
@@ -231,6 +231,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .select-trigger {
   @apply flex w-full items-center justify-between gap-2;
   @apply rounded-xl px-4 py-2.5 text-sm;
@@ -238,7 +239,7 @@ onBeforeUnmount(() => {
   @apply border border-gray-200 dark:border-dark-600;
   @apply text-gray-900 dark:text-gray-100;
   @apply transition-all duration-200;
-  @apply focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30;
+  @apply focus:border-primary-500 focus:outline-hidden focus:ring-2 focus:ring-primary-500/30;
   @apply hover:border-gray-300 dark:hover:border-dark-500;
   @apply cursor-pointer;
 }

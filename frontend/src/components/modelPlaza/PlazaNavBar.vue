@@ -11,8 +11,8 @@
           </span>
         </template>
         <template v-else>
-          <span class="h-9 w-9 flex-shrink-0 animate-pulse rounded-lg bg-[var(--signal-inset,#ededf2)]" aria-hidden="true"></span>
-          <span class="h-5 w-28 animate-pulse rounded bg-[var(--signal-inset,#ededf2)]" aria-hidden="true"></span>
+          <span class="h-9 w-9 flex-shrink-0 animate-pulse rounded-lg bg-(--signal-inset,#ededf2)" aria-hidden="true"></span>
+          <span class="h-5 w-28 animate-pulse rounded-sm bg-(--signal-inset,#ededf2)" aria-hidden="true"></span>
         </template>
       </div>
 

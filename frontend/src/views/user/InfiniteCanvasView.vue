@@ -122,6 +122,7 @@ onUnmounted(() => { disposed = true })
 </script>
 
 <style scoped>
+@reference "../../style.css";
 .canvas-page-layout {
   @apply flex flex-col;
   height: calc(100vh - 64px - 4rem);

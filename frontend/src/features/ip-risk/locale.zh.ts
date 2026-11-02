@@ -88,6 +88,8 @@ export default {
   bans: '当前自动封禁',
   bansHint: '每种模式最多显示最近 500 条活动封禁；解封同时清空该网段两种模式的计数及对应的原有登录 IP 封禁。手动黑名单需在规则中修改。',
   refreshRecords: '刷新封禁与记录',
+  records: '封禁与检测',
+  moreInfo: '查看说明',
   expiresAt: '到期',
   unban: '解封并清空计数',
   unbanned: '自动封禁与相关计数已清除。',

@@ -23,6 +23,9 @@ import (
 type UserWithConcurrency struct {
 	dto.AdminUser
 	CurrentConcurrency int `json:"current_concurrency"`
+	// PlatformQuotas 仅在 include_platform_quotas=true 时内联返回，
+	// 供列表页一次取整页配额，避免逐行请求 /admin/users/:id/platform-quotas。
+	PlatformQuotas []map[string]any `json:"platform_quotas,omitempty"`
 }
 
 // UserHandler handles admin user management
@@ -150,6 +153,16 @@ func (h *UserHandler) List(c *gin.Context) {
 		includeSubscriptions := parseBoolQueryWithDefault(raw, true)
 		filters.IncludeSubscriptions = &includeSubscriptions
 	}
+	if raw, ok := c.GetQuery("include_allowed_groups"); ok {
+		includeAllowedGroups := parseBoolQueryWithDefault(raw, true)
+		filters.IncludeAllowedGroups = &includeAllowedGroups
+	}
+	// include_platform_quotas=true 时把整页用户配额一次性批量查出并内联进响应。
+	// 默认关闭，保持旧调用方的响应形状不变，也不额外付出一次查询。
+	includePlatformQuotas := false
+	if raw, ok := c.GetQuery("include_platform_quotas"); ok {
+		includePlatformQuotas = parseBoolQueryWithDefault(raw, false)
+	}
 
 	users, total, err := h.adminService.ListUsers(c.Request.Context(), page, pageSize, filters, sortBy, sortOrder)
 	if err != nil {
@@ -181,7 +194,44 @@ func (h *UserHandler) List(c *gin.Context) {
 		}
 	}
 
+	attachPlatformQuotas(c, h, out, includePlatformQuotas)
+
 	response.Paginated(c, out, total, page, pageSize)
+}
+
+// attachPlatformQuotas 用一次批量查询把整页用户的平台配额填进响应。
+// 相比前端逐行请求：1 次 HTTP + 1 条 IN 查询（原先 N 次 HTTP、N 次用户存在性校验、N 次查询）。
+// 配额读取失败时不阻断列表（与并发信息一致，失败即留空）。
+func attachPlatformQuotas(c *gin.Context, h *UserHandler, out []UserWithConcurrency, enabled bool) {
+	if !enabled || h.userPlatformQuotaRepo == nil || len(out) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(out))
+	seen := make(map[int64]struct{}, len(out))
+	for i := range out {
+		id := out[i].ID
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	quotas, err := h.userPlatformQuotaRepo.ListByUsers(c.Request.Context(), ids)
+	if err != nil || len(quotas) == 0 {
+		return
+	}
+	now := time.Now().UTC()
+	for i := range out {
+		records := quotas[out[i].ID]
+		if len(records) == 0 {
+			continue
+		}
+		list := make([]map[string]any, 0, len(records))
+		for _, record := range records {
+			list = append(list, quotaview.LazyZeroQuotaForResponse(record, now, true))
+		}
+		out[i].PlatformQuotas = list
+	}
 }
 
 // parseAttributeFilters extracts attribute filters from query params

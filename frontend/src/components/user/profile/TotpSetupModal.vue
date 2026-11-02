@@ -92,12 +92,12 @@
                 {{ t('profile.totp.manualEntry') }}
               </p>
               <div class="flex items-center justify-center gap-2">
-                <code class="rounded bg-gray-100 px-3 py-2 font-mono text-sm dark:bg-dark-700">
+                <code class="rounded-sm bg-gray-100 px-3 py-2 font-mono text-sm dark:bg-dark-700">
                   {{ setupData.secret }}
                 </code>
                 <button
                   type="button"
-                  class="rounded p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-dark-700"
+                  class="rounded-sm p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-dark-700"
                   @click="copySecret"
                 >
                   <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">

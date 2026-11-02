@@ -167,14 +167,11 @@ export async function listByGroup(
  */
 export async function listByUser(
   userId: number,
-  page: number = 1,
-  pageSize: number = 20
-): Promise<PaginatedResponse<UserSubscription>> {
-  const { data } = await apiClient.get<PaginatedResponse<UserSubscription>>(
+  options?: { signal?: AbortSignal }
+): Promise<UserSubscription[]> {
+  const { data } = await apiClient.get<UserSubscription[]>(
     `/admin/users/${userId}/subscriptions`,
-    {
-      params: { page, page_size: pageSize }
-    }
+    { signal: options?.signal }
   )
   return data
 }

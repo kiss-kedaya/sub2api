@@ -107,11 +107,13 @@ export interface BatchUserAttributesResponse {
  * Get attribute values for multiple users
  */
 export async function getBatchUserAttributes(
-  userIds: number[]
+  userIds: number[],
+  options?: { signal?: AbortSignal }
 ): Promise<BatchUserAttributesResponse> {
   const { data } = await apiClient.post<BatchUserAttributesResponse>(
     '/admin/user-attributes/batch',
-    { user_ids: userIds }
+    { user_ids: userIds },
+    { signal: options?.signal }
   )
   return data
 }

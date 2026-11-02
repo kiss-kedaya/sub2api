@@ -1,14 +1,11 @@
 <template>
   <AppLayout>
     <div class="deposit-view">
-      <header class="deposit-view__header">
-        <div class="deposit-view__icon"><Icon name="wallet" size="md" /></div>
-        <div>
-          <h1 class="deposit-view__title">{{ t('deposit.title') }}</h1>
-          <p class="deposit-view__desc">{{ t('deposit.description') }}</p>
-        </div>
-        <span v-if="info?.enabled && !loadError" class="deposit-view__live">{{ t('deposit.exclusiveAddress') }}</span>
-      </header>
+      <UserPageHeader class="deposit-view__header" flush :title="t('deposit.title')" :description="t('deposit.description')">
+        <template #actions>
+          <UBadge v-if="info?.enabled && !loadError" color="success" variant="subtle" icon="i-lucide-shield-check">{{ t('deposit.exclusiveAddress') }}</UBadge>
+        </template>
+      </UserPageHeader>
 
       <div v-if="loading" class="card deposit-view__empty" role="status"><LoadingSpinner /></div>
       <div v-else-if="loadError" class="card deposit-view__empty" role="alert">
@@ -150,6 +147,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { getDepositHistory, getDepositInfo, type DepositInfo, type DepositRecord } from '@/api/crypto'
@@ -410,19 +408,16 @@ onUnmounted(() => {
 
 <style scoped>
 .deposit-view { width: 100%; max-width: 76rem; margin: 0 auto; padding: clamp(1rem, 2.4vw, 2rem); color: var(--signal-text, inherit); }
-.deposit-view__header { display: flex; align-items: center; gap: .875rem; margin-bottom: 1.5rem; }
-.deposit-view__icon { display: grid; place-items: center; flex: 0 0 2.75rem; height: 2.75rem; border: 1px solid var(--signal-line, #64748b33); border-radius: .875rem; background: var(--signal-accent-soft, #0891b212); color: var(--signal-accent, #0891b2); }
-.deposit-view__title { font-size: 1.5rem; line-height: 1.3; font-weight: 650; letter-spacing: -.025em; }
-.deposit-view__desc { margin-top: .3rem; font-size: .8125rem; line-height: 1.6; color: var(--signal-muted, #8c99a6); }
-.deposit-view__live { margin-left: auto; padding: .4rem .7rem; border: 1px solid #10b98140; border-radius: 99px; background: #10b9810d; color: var(--signal-accent, #059669); font-size: .75rem; white-space: nowrap; }
+.deposit-view__header { margin-bottom: 1.5rem; }
 .deposit-view__layout { display: grid; grid-template-columns: minmax(0, 1fr) 18rem; gap: 1.25rem; align-items: start; }
-.deposit-view__funding, .deposit-view__guide, .deposit-view__history { min-width: 0; border: 1px solid var(--signal-line, #64748b30); border-radius: 1rem; padding: 1.5rem; }
+.deposit-view__funding, .deposit-view__guide, .deposit-view__history { min-width: 0; border: 1px solid var(--ui-border); border-radius: 8px; padding: 1.5rem; background: var(--ui-bg); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05); }
+.dark .deposit-view__funding, .dark .deposit-view__guide, .dark .deposit-view__history { box-shadow: none; }
 .deposit-view h2 { font-size: .9375rem; line-height: 1.5; font-weight: 650; }
 .deposit-view__section-head { display: flex; align-items: center; gap: .625rem; margin-bottom: 1rem; }
 .deposit-view__section-head--address { padding-top: 1.25rem; margin-top: 1.5rem; border-top: 1px solid var(--signal-line, #64748b30); }
 .deposit-view__step { color: var(--signal-muted, #8c99a6); font: .75rem ui-monospace, monospace; }
 .deposit-view__chains { display: flex; flex-wrap: wrap; gap: .5rem; }
-.deposit-view__chain { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2.75rem; padding: .65rem .875rem; border: 1px solid var(--signal-line, #64748b40); border-radius: .625rem; font-size: .8125rem; transition: border-color .15s, background .15s; }
+.deposit-view__chain { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2.5rem; padding: .55rem .875rem; border: 1px solid var(--ui-border-accented); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
 .deposit-view__chain:hover { background: var(--signal-accent-soft, #0891b212); }
 .deposit-view__chain--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
 .deposit-view__network-dot { width: .375rem; height: .375rem; flex-shrink: 0; border-radius: 50%; background: var(--signal-muted, #8c99a6); }
@@ -430,11 +425,11 @@ onUnmounted(() => {
 .deposit-view__token { padding: .15rem .5rem; border-radius: .375rem; border: 1px solid #10b98145; background: #10b98112; color: #10b981; font-size: .6875rem; font-weight: 600; }
 .deposit-view__address-block { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }
 .deposit-view__qr-wrap { text-align: center; }
-.deposit-view__qr { width: 12.5rem; min-height: 12.5rem; display: grid; place-items: center; border: 1px solid #dbe3eb; border-radius: .875rem; background: white; color: #334155; overflow: hidden; }
+.deposit-view__qr { width: 12.5rem; min-height: 12.5rem; display: grid; place-items: center; border: 1px solid #e5e5e5; border-radius: 8px; background: white; color: #334155; overflow: hidden; }
 .deposit-view__qr canvas { display: block; max-width: 100%; height: auto !important; }
 .deposit-view__qr-wrap p { margin-top: .625rem; font-size: .75rem; color: var(--signal-muted, #8c99a6); }
 .deposit-view__label { display: block; margin: .2rem 0 .625rem; font-size: .75rem; color: var(--signal-muted, #8c99a6); }
-.deposit-view__address { display: block; padding: .875rem; min-width: 0; border: 1px solid var(--signal-line, #64748b30); border-radius: .625rem; background: #64748b09; font-size: .8125rem; line-height: 1.8; overflow-wrap: anywhere; user-select: all; }
+.deposit-view__address { display: block; padding: .875rem; min-width: 0; border: 1px solid var(--ui-border); border-radius: 6px; background: #64748b09; font-size: .8125rem; line-height: 1.8; overflow-wrap: anywhere; user-select: all; }
 .deposit-view__copy { width: 100%; min-height: 2.75rem; margin-top: .75rem; }
 .deposit-view__copy-status { margin-top: .75rem; font-size: .75rem; line-height: 1.7; color: var(--signal-muted, #8c99a6); }
 .deposit-view__notice { display: flex; gap: .625rem; align-items: flex-start; padding: .875rem 1rem; margin-top: 1.5rem; border: 1px solid #d9770638; border-radius: .625rem; background: #d9770609; font-size: .75rem; line-height: 1.7; }
@@ -490,7 +485,6 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
 @media (max-width: 1100px) { .deposit-view__layout { grid-template-columns: minmax(0, 1fr); } .deposit-view__terms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; } }
 @media (max-width: 640px) {
   .deposit-view { padding: 1rem .75rem; }
-  .deposit-view__title { font-size: 1.25rem; }
   .deposit-view__live { display: none; }
   .deposit-view__funding, .deposit-view__guide, .deposit-view__history { padding: 1.125rem; border-radius: .875rem; }
   .deposit-view__chains { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }

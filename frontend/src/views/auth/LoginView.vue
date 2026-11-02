@@ -350,7 +350,7 @@ const authActionDisabled = computed(
 )
 
 const showPasskeyLogin = computed(
-  () => passkeyEnabled.value && typeof window.PublicKeyCredential !== 'undefined'
+  () => passkeyEnabled.value && typeof window !== 'undefined' && typeof window.PublicKeyCredential !== 'undefined'
 )
 
 const showOAuthLogin = computed(

@@ -81,6 +81,10 @@ func (f *fakeQuotaRepo) ListByUser(_ context.Context, _ int64) ([]UserPlatformQu
 	return nil, nil
 }
 
+func (f *fakeQuotaRepo) ListByUsers(_ context.Context, userIDs []int64) (map[int64][]UserPlatformQuotaRecord, error) {
+	return map[int64][]UserPlatformQuotaRecord{}, nil
+}
+
 func (f *fakeQuotaRepo) UpsertForUser(_ context.Context, _ int64, _ []UserPlatformQuotaRecord) error {
 	return nil
 }

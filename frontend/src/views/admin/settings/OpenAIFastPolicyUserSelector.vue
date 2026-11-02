@@ -1,79 +1,75 @@
 <template>
   <div ref="containerRef" class="relative">
     <div v-if="selectedUserIds.length > 0" class="mb-2 flex flex-wrap gap-2">
-      <span
+      <UBadge
         v-for="userId in selectedUserIds"
         :key="userId"
-        class="inline-flex max-w-full items-center gap-1.5 rounded-md bg-gray-100 px-2.5 py-1.5 text-xs text-gray-700 dark:bg-dark-600 dark:text-gray-200"
+        color="neutral"
+        variant="subtle"
+        class="max-w-full gap-1.5"
       >
         <span class="max-w-64 truncate font-medium" :title="selectedUserLabel(userId)">
           {{ selectedUserLabel(userId) }}
         </span>
-        <span class="shrink-0 text-gray-400">#{{ userId }}</span>
-        <span
-          v-if="selectedUsers[userId]?.deleted"
-          class="shrink-0 text-gray-400"
-        >
+        <span class="shrink-0 text-dimmed">#{{ userId }}</span>
+        <span v-if="selectedUsers[userId]?.deleted" class="shrink-0 text-dimmed">
           {{ t("admin.settings.openaiFastPolicy.userDeleted") }}
         </span>
-        <button
-          type="button"
-          class="shrink-0 rounded text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+        <UButton
+          icon="i-lucide-x"
+          square
           :aria-label="t('admin.settings.openaiFastPolicy.removeUser')"
           :title="t('admin.settings.openaiFastPolicy.removeUser')"
           @click="removeUser(userId)"
-        >
-          <Icon name="x" size="xs" :stroke-width="2" />
-        </button>
-      </span>
+          color="neutral"
+          variant="link"
+          size="xs"
+          class="shrink-0 p-0"
+        />
+      </UBadge>
     </div>
 
-    <div class="relative">
-      <Icon
-        name="search"
-        size="sm"
-        class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-      />
-      <input
+    <div>
+      <UInput
+        icon="i-lucide-search"
         v-model="searchQuery"
         type="text"
         autocomplete="off"
-        class="input input-sm w-full pl-9"
         :placeholder="t('admin.settings.openaiFastPolicy.userSearchPlaceholder')"
         @input="debounceSearch"
         @focus="showDropdown = true"
+        size="sm"
+        class="w-full"
       />
     </div>
 
     <div
       v-if="showDropdown && searchQuery.trim()"
-      class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-dark-600 dark:bg-dark-700"
+      class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-default p-1 ring ring-default shadow-lg"
     >
-      <div v-if="searchLoading" class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+      <div v-if="searchLoading" class="px-4 py-3 text-sm text-muted">
         {{ t("common.loading") }}
       </div>
-      <div
-        v-else-if="availableResults.length === 0"
-        class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400"
-      >
+      <div v-else-if="availableResults.length === 0" class="px-4 py-3 text-sm text-muted">
         {{ t("admin.settings.openaiFastPolicy.userSearchEmpty") }}
       </div>
       <template v-else>
-        <button
+        <UButton
           v-for="user in availableResults"
           :key="user.id"
-          type="button"
-          class="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-dark-600"
           @click="selectUser(user)"
+          color="neutral"
+          variant="ghost"
+          class="w-full justify-between"
         >
-          <span class="min-w-0 truncate font-medium text-gray-900 dark:text-white">
+          <span class="min-w-0 truncate font-medium text-highlighted">
             {{ user.email }}
-            <span v-if="user.deleted" class="ml-1 text-xs font-normal text-gray-400">
+            <span v-if="user.deleted" class="ml-1 text-xs font-normal text-dimmed">
               {{ t("admin.settings.openaiFastPolicy.userDeleted") }}
             </span>
           </span>
-          <span class="shrink-0 text-xs text-gray-400">#{{ user.id }}</span>
-        </button>
+          <span class="shrink-0 text-xs text-dimmed">#{{ user.id }}</span>
+        </UButton>
       </template>
     </div>
   </div>
@@ -84,7 +80,6 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api/admin";
 import type { SimpleUser } from "@/api/admin/usage";
-import Icon from "@/components/icons/Icon.vue";
 
 const props = defineProps<{
   modelValue: number[];

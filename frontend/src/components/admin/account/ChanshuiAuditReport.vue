@@ -21,10 +21,10 @@
         {{ t(`admin.scheduledTests.sections.${section}`) }}
         <span v-if="sectionScore(section) !== null" class="ml-2 text-xs text-gray-500">{{ sectionScore(section) }}</span>
       </summary>
-      <p class="mt-2 whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-300">{{ sectionSummary(section) }}</p>
+      <p class="mt-2 whitespace-pre-wrap wrap-break-word text-sm text-gray-700 dark:text-gray-300">{{ sectionSummary(section) }}</p>
       <details v-if="verdict[section] != null" class="mt-2">
         <summary class="cursor-pointer text-xs text-gray-500">{{ t('admin.scheduledTests.auditEvidence') }}</summary>
-        <pre class="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-950 p-3 text-xs text-gray-200">{{ JSON.stringify(verdict[section], null, 2) }}</pre>
+        <pre class="mt-2 max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word rounded-sm bg-gray-950 p-3 text-xs text-gray-200">{{ JSON.stringify(verdict[section], null, 2) }}</pre>
       </details>
     </details>
   </section>

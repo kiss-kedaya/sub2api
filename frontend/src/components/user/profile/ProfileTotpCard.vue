@@ -1,14 +1,14 @@
 <template>
-  <div class="card">
-    <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-      <h2 class="text-lg font-medium text-gray-900 dark:text-white">
+  <div class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+    <div class="border-b border-default px-5 py-4 sm:px-6">
+      <h2 class="text-base font-semibold text-highlighted">
         {{ t('profile.totp.title') }}
       </h2>
-      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      <p class="mt-1 text-sm text-muted">
         {{ t('profile.totp.description') }}
       </p>
     </div>
-    <div class="px-6 py-6">
+    <div class="p-5 sm:p-6">
       <!-- Loading state -->
       <div v-if="loading" class="flex items-center justify-center py-8">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>

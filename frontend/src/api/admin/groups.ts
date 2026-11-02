@@ -231,6 +231,52 @@ export async function deleteGroup(id: number): Promise<{ message: string }> {
 }
 
 /**
+ * Delete several groups with bounded concurrency.
+ *
+ * The backend only exposes the single-group DELETE route, so this fans out over
+ * it while keeping a small number of requests in flight. Individual failures do
+ * not reject the whole batch: the caller gets the ids that still exist so the
+ * optimistic list can put exactly those rows back.
+ *
+ * @param ids - Group ids to delete
+ * @param options.concurrency - Max parallel requests (default 4)
+ * @returns Per-batch counters plus the ids that failed
+ */
+export async function batchDelete(
+  ids: number[],
+  options?: { concurrency?: number }
+): Promise<{ success: number; failed: number; failed_ids: number[] }> {
+  const unique = Array.from(
+    new Set(ids.filter((id) => Number.isFinite(id) && id > 0))
+  )
+  const limit = Math.max(1, Math.min(options?.concurrency ?? 4, 8))
+  const failedIDs: number[] = []
+  let cursor = 0
+
+  const worker = async () => {
+    while (cursor < unique.length) {
+      const id = unique[cursor]
+      cursor += 1
+      try {
+        await deleteGroup(id)
+      } catch {
+        failedIDs.push(id)
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, unique.length) }, () => worker())
+  )
+
+  return {
+    success: unique.length - failedIDs.length,
+    failed: failedIDs.length,
+    failed_ids: failedIDs
+  }
+}
+
+/**
  * Toggle group status
  * @param id - Group ID
  * @param status - New status
@@ -442,10 +488,10 @@ export async function getUsageSummary(): Promise<
  * Get capacity summary (concurrency/sessions/RPM) for all active groups
  */
 export async function getCapacitySummary(): Promise<
-  { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number }[]
+  { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number; runtime_known?: boolean }[]
 > {
   const { data } = await apiClient.get<
-    { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number }[]
+    { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number; runtime_known?: boolean }[]
   >('/admin/groups/capacity-summary')
   return data
 }
@@ -462,6 +508,7 @@ export const groupsAPI = {
   duplicate,
   update,
   delete: deleteGroup,
+  batchDelete,
   toggleStatus,
   getGroupApiKeys,
   listCompositeRoutes,

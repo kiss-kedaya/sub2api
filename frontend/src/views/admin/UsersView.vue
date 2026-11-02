@@ -1,29 +1,28 @@
 <template>
   <AppLayout>
     <TablePageLayout class="admin-users-workbench">
-      <!-- Search, filters, view tools, and primary actions -->
+      <!-- Toolbar row (template customers page): search + filters left, selection and view tools right -->
       <template #filters>
-        <div class="users-command-bar">
-          <div class="users-query-zone">
-            <!-- Search Box -->
-            <div class="users-search relative">
-              <Icon
-                name="search"
-                size="md"
-                class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-              />
-              <input
-                v-model="searchQuery"
-                type="text"
-                :placeholder="t('admin.users.searchUsers')"
-                class="input pl-10"
-                @input="handleSearch"
-              />
-            </div>
+        <AdminPageHeader
+          class="mb-4"
+          :title="t('admin.users.title')"
+          :description="t('admin.users.description')"
+        >
+          <template #actions>
+            <UButton icon="i-lucide-plus" :label="t('admin.users.createUser')" @click="showCreateModal = true" />
+          </template>
+        </AdminPageHeader>
+        <PageToolbar>
+          <template #left>
+            <UInput
+              v-model="searchQuery"
+              icon="i-lucide-search"
+              :placeholder="t('admin.users.searchUsers')"
+              class="w-64 sm:w-80"
+              @update:model-value="handleSearch"
+            />
 
-            <div class="users-filter-row">
-              <!-- Role Filter (visible when enabled) -->
-              <div v-if="visibleFilters.has('role')" class="w-full sm:w-32">
+            <div v-if="visibleFilters.has('role')" class="w-32">
               <Select
                 v-model="filters.role"
                 :options="[
@@ -33,10 +32,9 @@
                 ]"
                 @change="applyFilter"
               />
-              </div>
+            </div>
 
-              <!-- Status Filter (visible when enabled) -->
-              <div v-if="visibleFilters.has('status')" class="w-full sm:w-32">
+            <div v-if="visibleFilters.has('status')" class="w-32">
               <Select
                 v-model="filters.status"
                 :options="[
@@ -46,10 +44,9 @@
                 ]"
                 @change="applyFilter"
               />
-              </div>
+            </div>
 
-              <!-- Group Filter (visible when enabled) -->
-              <div v-if="visibleFilters.has('group')" class="w-full sm:w-44">
+            <div v-if="visibleFilters.has('group')" class="w-44">
               <Select
                 v-model="filters.group"
                 :options="groupFilterOptions"
@@ -59,10 +56,9 @@
                 :search-placeholder="t('admin.users.searchAuthorizedGroups')"
                 @change="applyFilter"
               />
-              </div>
+            </div>
 
-              <!-- API Key Group Filter (visible when enabled) -->
-              <div v-if="visibleFilters.has('apiKeyGroup')" class="w-full sm:w-44">
+            <div v-if="visibleFilters.has('apiKeyGroup')" class="w-44">
               <Select
                 v-model="filters.apiKeyGroup"
                 :options="apiKeyGroupFilterOptions"
@@ -70,206 +66,104 @@
                 :search-placeholder="t('admin.users.searchApiKeyGroups')"
                 @change="applyFilter"
               />
-              </div>
+            </div>
 
-              <!-- Dynamic Attribute Filters -->
-              <template v-for="(value, attrId) in activeAttributeFilters" :key="attrId">
-              <div
-                v-if="visibleFilters.has(`attr_${attrId}`)"
-                class="relative w-full sm:w-36"
-              >
-                <!-- Text/Email/URL/Textarea/Date type: styled input -->
-                <input
-                  v-if="['text', 'textarea', 'email', 'url', 'date'].includes(getAttributeDefinition(Number(attrId))?.type || 'text')"
-                  :value="value"
-                  @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
-                  @keyup.enter="applyFilter"
-                  :placeholder="getAttributeDefinitionName(Number(attrId))"
-                  class="input w-full"
+            <!-- Dynamic attribute filters -->
+            <template v-for="(value, attrId) in activeAttributeFilters" :key="attrId">
+              <div v-if="visibleFilters.has(`attr_${attrId}`)" class="w-36">
+                <Select
+                  v-if="['select', 'multi_select'].includes(getAttributeDefinition(Number(attrId))?.type || '')"
+                  :model-value="value"
+                  :options="[
+                    { value: '', label: getAttributeDefinitionName(Number(attrId)) },
+                    ...(getAttributeDefinition(Number(attrId))?.options || [])
+                  ]"
+                  @update:model-value="(val: string | number | boolean | null) => { updateAttributeFilter(Number(attrId), String(val ?? '')); applyFilter() }"
                 />
-                <!-- Number type: number input -->
-                <input
-                  v-else-if="getAttributeDefinition(Number(attrId))?.type === 'number'"
-                  :value="value"
-                  type="number"
-                  @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
-                  @keyup.enter="applyFilter"
-                  :placeholder="getAttributeDefinitionName(Number(attrId))"
-                  class="input w-full"
-                />
-                <!-- Select/Multi-select type -->
-                <template v-else-if="['select', 'multi_select'].includes(getAttributeDefinition(Number(attrId))?.type || '')">
-                  <div class="w-full">
-                    <Select
-                      :model-value="value"
-                      :options="[
-                        { value: '', label: getAttributeDefinitionName(Number(attrId)) },
-                        ...(getAttributeDefinition(Number(attrId))?.options || [])
-                      ]"
-                      @update:model-value="(val) => { updateAttributeFilter(Number(attrId), String(val ?? '')); applyFilter() }"
-                    />
-                  </div>
-                </template>
-                <!-- Fallback -->
-                <input
+                <UInput
                   v-else
-                  :value="value"
-                  @input="(e) => updateAttributeFilter(Number(attrId), (e.target as HTMLInputElement).value)"
-                  @keyup.enter="applyFilter"
+                  :model-value="value"
+                  :type="getAttributeDefinition(Number(attrId))?.type === 'number' ? 'number' : 'text'"
                   :placeholder="getAttributeDefinitionName(Number(attrId))"
-                  class="input w-full"
+                  class="w-full"
+                  @update:model-value="(val: string | number | null) => updateAttributeFilter(Number(attrId), String(val ?? ''))"
+                  @keyup.enter="applyFilter"
                 />
               </div>
-              </template>
-            </div>
-          </div>
-
-          <div class="users-action-zone">
-            <div class="users-view-tools">
-              <!-- Refresh Button -->
-              <button
-                @click="loadUsers"
-                :disabled="loading"
-                class="btn btn-secondary px-2 md:px-3"
-                :title="t('common.refresh')"
-              >
-                <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-              </button>
-              <!-- Filter Settings Dropdown -->
-              <div class="relative" ref="filterDropdownRef">
-                <button
-                  @click="showFilterDropdown = !showFilterDropdown"
-                  class="btn btn-secondary px-2 md:px-3"
-                  :title="t('admin.users.filterSettings')"
-                >
-                  <Icon name="filter" size="sm" class="md:mr-1.5" />
-                  <span class="hidden md:inline">{{ t('admin.users.filterSettings') }}</span>
-                </button>
-                <!-- Dropdown menu -->
-                <div
-                  v-if="showFilterDropdown"
-                  class="absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
-                >
-                  <!-- Built-in filters -->
-                  <button
-                    v-for="filter in builtInFilters"
-                    :key="filter.key"
-                    @click="toggleBuiltInFilter(filter.key)"
-                    class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-                  >
-                    <span>{{ filter.name }}</span>
-                    <Icon
-                      v-if="visibleFilters.has(filter.key)"
-                      name="check"
-                      size="sm"
-                      class="text-primary-500"
-                      :stroke-width="2"
-                    />
-                  </button>
-                  <!-- Divider if custom attributes exist -->
-                  <div
-                    v-if="filterableAttributes.length > 0"
-                    class="my-1 border-t border-gray-100 dark:border-dark-700"
-                  ></div>
-                  <!-- Custom attribute filters -->
-                  <button
-                    v-for="attr in filterableAttributes"
-                    :key="attr.id"
-                    @click="toggleAttributeFilter(attr)"
-                    class="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-                  >
-                    <span>{{ attr.name }}</span>
-                    <Icon
-                      v-if="visibleFilters.has(`attr_${attr.id}`)"
-                      name="check"
-                      size="sm"
-                      class="text-primary-500"
-                      :stroke-width="2"
-                    />
-                  </button>
-                </div>
-              </div>
-              <!-- Column Settings Dropdown -->
-              <div class="relative" ref="columnDropdownRef">
-                <button
-                  @click="showColumnDropdown = !showColumnDropdown"
-                  class="btn btn-secondary px-2 md:px-3"
-                  :title="t('admin.users.columnSettings')"
-                >
-                  <svg class="h-4 w-4 md:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
-                  </svg>
-                  <span class="hidden md:inline">{{ t('admin.users.columnSettings') }}</span>
-                </button>
-                <!-- Dropdown menu -->
-                <div
-                  v-if="showColumnDropdown"
-                  class="absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
-                >
-                  <button
-                    v-for="col in toggleableColumns"
-                    :key="col.key"
-                    :disabled="isForcedVisibleColumn(col.key)"
-                    @click="toggleColumn(col.key)"
-                    :class="[
-                      'flex w-full items-center justify-between px-4 py-2 text-left text-sm',
-                      isForcedVisibleColumn(col.key)
-                        ? 'cursor-not-allowed text-gray-400 dark:text-gray-500'
-                        : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700'
-                    ]"
-                    :title="isForcedVisibleColumn(col.key) ? t('admin.users.columnAlwaysVisible') : ''"
-                  >
-                    <span>{{ col.label }}</span>
-                    <Icon
-                      v-if="isColumnVisible(col.key)"
-                      name="check"
-                      size="sm"
-                      :class="isForcedVisibleColumn(col.key) ? 'text-gray-400 dark:text-gray-500' : 'text-primary-500'"
-                      :stroke-width="2"
-                    />
-                  </button>
-                </div>
-              </div>
-              <!-- Attributes Config Button -->
-              <button
-                @click="showAttributesModal = true"
-                class="btn btn-secondary px-2 md:px-3"
-                :title="t('admin.users.attributes.configButton')"
-              >
-                <Icon name="cog" size="sm" class="md:mr-1.5" />
-                <span class="hidden md:inline">{{ t('admin.users.attributes.configButton') }}</span>
-              </button>
-            </div>
-
-            <div class="users-context-actions">
-              <button
-                v-if="selectedCount > 0"
-                class="btn btn-secondary flex-1 md:flex-initial"
+            </template>
+          </template>
+          <template #right>
+            <template v-if="selectedCount > 0">
+              <UButton
+                color="neutral"
+                variant="subtle"
+                icon="i-lucide-gauge"
+                :label="t('admin.users.bulkLimits.short')"
                 data-test="bulk-edit-limits"
                 @click="showBulkEditModal = true"
               >
-                <Icon name="users" size="md" class="mr-2" />
-                {{ t('admin.users.bulkLimits.action', { count: selectedCount }) }}
-              </button>
-
-              <button
-                v-if="selectedCount > 0"
-                class="btn btn-danger flex-1 md:flex-initial"
+                <template #trailing>
+                  <UBadge :label="String(selectedCount)" color="neutral" variant="outline" size="sm" />
+                </template>
+              </UButton>
+              <UButton
+                color="error"
+                variant="subtle"
+                icon="i-lucide-trash"
+                :label="t('common.delete')"
                 data-test="bulk-delete-users"
                 :disabled="bulkDeleting"
                 @click="bulkDeleteIds = [...selectedIds]"
               >
-                <Icon name="trash" size="md" class="mr-2" />
-                {{ t('admin.users.bulkDelete.action', { count: selectedCount }) }}
-              </button>
-
-              <button @click="showCreateModal = true" class="btn btn-primary users-create-action">
-                <Icon name="plus" size="md" class="mr-2" />
-                {{ t('admin.users.createUser') }}
-              </button>
-            </div>
-          </div>
-        </div>
+                <template #trailing>
+                  <UBadge :label="String(selectedCount)" color="error" variant="outline" size="sm" />
+                </template>
+              </UButton>
+            </template>
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-refresh-cw"
+              square
+              :disabled="loading"
+              :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+              :title="t('common.refresh')"
+              :aria-label="t('common.refresh')"
+              @click="loadUsers"
+            />
+            <UDropdownMenu :items="filterMenuItems" :content="{ align: 'end' }">
+              <UButton
+                color="neutral"
+                variant="outline"
+                icon="i-lucide-list-filter"
+                :title="t('admin.users.filterSettings')"
+                :aria-label="t('admin.users.filterSettings')"
+              >
+                <span class="hidden sm:inline">{{ t('admin.users.filterSettings') }}</span>
+              </UButton>
+            </UDropdownMenu>
+            <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }" :ui="{ content: 'max-h-80' }">
+              <UButton
+                color="neutral"
+                variant="outline"
+                trailing-icon="i-lucide-settings-2"
+                :title="t('admin.users.displayColumns')"
+                :aria-label="t('admin.users.displayColumns')"
+              >
+                <span class="hidden sm:inline">{{ t('admin.users.displayColumns') }}</span>
+              </UButton>
+            </UDropdownMenu>
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-tags"
+              square
+              :title="t('admin.users.attributes.configButton')"
+              :aria-label="t('admin.users.attributes.configButton')"
+              @click="showAttributesModal = true"
+            />
+          </template>
+        </PageToolbar>
       </template>
 
       <!-- Users Table -->
@@ -282,7 +176,7 @@
           selectable
           :selected-keys="selectedIds"
           :selection-label="getUserSelectionLabel"
-          :actions-count="7"
+          :actions-count="3"
           :server-side-sort="true"
           default-sort-key="created_at"
           default-sort-order="desc"
@@ -291,33 +185,25 @@
           @update:selected-keys="handleSelectedKeysUpdate"
         >
           <template #cell-email="{ value }">
-            <div class="flex items-center gap-2">
-              <div
-                class="flex h-8 w-8 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/30"
-              >
-                <span class="text-sm font-medium text-primary-700 dark:text-primary-300">
-                  {{ value.charAt(0).toUpperCase() }}
-                </span>
-              </div>
-              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+            <div class="flex items-center gap-3">
+              <UAvatar :alt="value" :text="(value || '').charAt(0).toUpperCase()" size="sm" />
+              <span class="font-medium text-highlighted">{{ value }}</span>
             </div>
           </template>
 
           <template #cell-username="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value || '-' }}</span>
+            <span class="text-default">{{ value || '-' }}</span>
           </template>
 
           <template #cell-notes="{ value }">
-            <div class="max-w-xs">
-              <span
-                v-if="value"
-                :title="value.length > 30 ? value : undefined"
-                class="block truncate text-sm text-gray-600 dark:text-gray-400"
-              >
-                {{ value.length > 30 ? value.substring(0, 25) + '...' : value }}
-              </span>
-              <span v-else class="text-sm text-gray-400">-</span>
-            </div>
+            <span
+              v-if="value"
+              :title="value.length > 30 ? value : undefined"
+              class="block max-w-xs truncate text-muted"
+            >
+              {{ value.length > 30 ? value.substring(0, 25) + '...' : value }}
+            </span>
+            <span v-else class="text-dimmed">-</span>
           </template>
 
           <!-- Dynamic attribute columns -->
@@ -326,92 +212,61 @@
             :key="def.id"
             #[`cell-attr_${def.id}`]="{ row }"
           >
-            <div class="max-w-xs">
-              <span
-                class="block truncate text-sm text-gray-700 dark:text-gray-300"
-                :title="getAttributeValue(row.id, def.id)"
-              >
-                {{ getAttributeValue(row.id, def.id) }}
-              </span>
-            </div>
-          </template>
-
-          <template #cell-role="{ value }">
-            <span :class="['badge', value === 'admin' ? 'badge-purple' : 'badge-gray']">
-              {{ t('admin.users.roles.' + value) }}
+            <span class="block max-w-xs truncate text-default" :title="getAttributeValue(row.id, def.id)">
+              {{ getAttributeValue(row.id, def.id) }}
             </span>
           </template>
 
+          <template #cell-role="{ value }">
+            <UBadge
+              :color="value === 'admin' ? 'primary' : 'neutral'"
+              variant="subtle"
+              :label="t('admin.users.roles.' + value)"
+            />
+          </template>
+
           <template #cell-groups="{ row }">
-            <div v-if="allGroups.length > 0" class="flex flex-col gap-1">
-              <!-- 专属分组行 -->
-              <span
+            <div v-if="allGroups.length > 0" class="flex flex-col items-start gap-0.5">
+              <!-- Exclusive groups: the menu lists them; picking one opens the replace dialog -->
+              <UDropdownMenu
                 v-if="getUserGroups(row).exclusive.length > 0"
-                class="group/ex relative inline-flex cursor-pointer items-center gap-1 whitespace-nowrap text-xs"
-                @click.stop="toggleExpandedGroup(row.id)"
+                :items="exclusiveGroupMenuItems(row)"
+                :content="{ align: 'start' }"
               >
-                <Icon name="shield" size="xs" class="h-3.5 w-3.5 text-purple-500 dark:text-purple-400" />
-                <span class="font-medium text-purple-600 dark:text-purple-400">{{ getUserGroups(row).exclusive.length }}</span>
-                <span class="text-gray-500 dark:text-dark-400">{{ t('admin.users.exclusiveLabel') }}</span>
-                <!-- Hover tooltip（操作菜单未打开时显示） -->
-                <div
-                  v-if="expandedGroupUserId !== row.id"
-                  class="pointer-events-none absolute left-0 top-full z-50 mt-1.5 rounded bg-gray-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-75 group-hover/ex:opacity-100 dark:bg-dark-600"
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  icon="i-lucide-shield"
+                  class="-mx-1.5"
+                  :title="getUserGroups(row).exclusive.map(g => g.name).join('\n')"
                 >
-                  <div class="absolute left-4 bottom-full border-4 border-transparent border-b-gray-900 dark:border-b-dark-600"></div>
-                  <div class="flex flex-col gap-0.5 whitespace-nowrap">
-                    <span v-for="g in getUserGroups(row).exclusive" :key="g.id">{{ g.name }}</span>
-                  </div>
-                </div>
-                <!-- 点击展开分组操作菜单 -->
-                <div
-                  v-if="expandedGroupUserId === row.id"
-                  class="absolute left-0 top-full z-50 mt-1.5 min-w-[160px] overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-xs shadow-xl dark:border-dark-600 dark:bg-dark-700"
-                >
-                  <div class="border-b border-gray-100 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:border-dark-600 dark:text-dark-400">
-                    {{ t('admin.users.clickToReplace') }}
-                  </div>
-                  <div
-                    v-for="g in getUserGroups(row).exclusive"
-                    :key="g.id"
-                    class="flex cursor-pointer items-center gap-2 px-3 py-2 text-gray-700 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:text-dark-200 dark:hover:bg-primary-900/30 dark:hover:text-primary-400"
-                    @click.stop="openGroupReplace(row, g)"
-                  >
-                    <Icon name="swap" size="xs" class="h-3.5 w-3.5 flex-shrink-0 opacity-50" />
-                    <span class="flex-1">{{ g.name }}</span>
-                  </div>
-                </div>
-              </span>
-              <!-- 公开分组行 -->
-              <span
-                v-if="getUserGroups(row).publicGroups.length > 0"
-                class="group/pub relative inline-flex cursor-default items-center gap-1 whitespace-nowrap text-xs"
-              >
-                <Icon name="globe" size="xs" class="h-3.5 w-3.5 text-gray-400 dark:text-dark-500" />
-                <span class="font-medium text-gray-600 dark:text-dark-300">{{ getUserGroups(row).publicGroups.length }}</span>
-                <span class="text-gray-400 dark:text-dark-500">{{ t('admin.users.publicLabel') }}</span>
-                <!-- Tooltip: 向下弹出 -->
-                <div class="pointer-events-none absolute left-0 top-full z-50 mt-1.5 rounded bg-gray-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-75 group-hover/pub:opacity-100 dark:bg-dark-600">
-                  <div class="absolute left-4 bottom-full border-4 border-transparent border-b-gray-900 dark:border-b-dark-600"></div>
+                  <span class="font-medium text-highlighted">{{ getUserGroups(row).exclusive.length }}</span>
+                  <span class="text-muted">{{ t('admin.users.exclusiveLabel') }}</span>
+                </UButton>
+              </UDropdownMenu>
+              <UTooltip v-if="getUserGroups(row).publicGroups.length > 0" :content="{ side: 'bottom', align: 'start' }">
+                <span class="inline-flex cursor-default items-center gap-1 px-0.5 text-xs">
+                  <UIcon name="i-lucide-globe" class="size-3.5 text-dimmed" />
+                  <span class="font-medium text-default">{{ getUserGroups(row).publicGroups.length }}</span>
+                  <span class="text-muted">{{ t('admin.users.publicLabel') }}</span>
+                </span>
+                <template #content>
                   <div class="flex flex-col gap-0.5 whitespace-nowrap">
                     <span v-for="g in getUserGroups(row).publicGroups" :key="g.id">{{ g.name }}</span>
                   </div>
-                </div>
-              </span>
-              <!-- 都没有 -->
+                </template>
+              </UTooltip>
               <span
                 v-if="getUserGroups(row).exclusive.length === 0 && getUserGroups(row).publicGroups.length === 0"
-                class="text-xs text-gray-400 dark:text-dark-500"
+                class="text-xs text-dimmed"
               >-</span>
             </div>
-            <span v-else class="text-xs text-gray-400 dark:text-dark-500">-</span>
+            <span v-else class="text-xs text-dimmed">-</span>
           </template>
 
           <template #cell-subscriptions="{ row }">
-            <div
-              v-if="row.subscriptions && row.subscriptions.length > 0"
-              class="flex flex-wrap gap-1.5"
-            >
+            <div v-if="row.subscriptions && row.subscriptions.length > 0" class="flex flex-wrap gap-1.5">
               <GroupBadge
                 v-for="sub in row.subscriptions"
                 :key="sub.id"
@@ -423,129 +278,74 @@
                 :title="sub.expires_at ? formatDateTime(sub.expires_at) : ''"
               />
             </div>
-            <span
-              v-else
-              class="inline-flex items-center gap-1.5 rounded-md bg-gray-50 px-2 py-1 text-xs text-gray-400 dark:bg-dark-700/50 dark:text-dark-500"
-            >
-              <Icon name="ban" size="xs" class="h-3.5 w-3.5" />
-              <span>{{ t('admin.users.noSubscription') }}</span>
-            </span>
+            <span v-else class="text-xs text-dimmed">{{ t('admin.users.noSubscription') }}</span>
           </template>
 
           <template #cell-balance="{ value, row }">
-            <div class="flex items-center gap-2">
-              <div class="group relative">
-                <button
-                  class="font-medium text-gray-900 underline decoration-dashed decoration-gray-300 underline-offset-4 transition-colors hover:text-primary-600 dark:text-white dark:decoration-dark-500 dark:hover:text-primary-400"
+            <div class="flex items-center gap-1">
+              <UTooltip :text="t('admin.users.balanceHistoryTip')">
+                <UButton
+                  color="neutral"
+                  variant="link"
+                  size="sm"
+                  class="-mx-2 font-medium tabular-nums text-highlighted"
+                  :label="`$${value.toFixed(2)}`"
                   @click="handleBalanceHistory(row)"
-                >
-                  ${{ value.toFixed(2) }}
-                </button>
-                <!-- Instant tooltip -->
-                <div class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-gray-900 px-2 py-1 text-xs text-white opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100 dark:bg-dark-600">
-                  {{ t('admin.users.balanceHistoryTip') }}
-                  <div class="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-900 dark:border-t-dark-600"></div>
-                </div>
-              </div>
-              <button
-                @click.stop="handleDeposit(row)"
-                class="rounded px-2 py-0.5 text-xs font-medium text-emerald-600 transition-colors hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
+                />
+              </UTooltip>
+              <UButton
+                color="success"
+                variant="ghost"
+                size="xs"
+                :label="t('admin.users.deposit')"
                 :title="t('admin.users.deposit')"
-              >
-                {{ t('admin.users.deposit') }}
-              </button>
+                @click.stop="handleDeposit(row)"
+              />
             </div>
           </template>
 
           <template #cell-balance_platform_quota="{ row }">
-            <button
-              type="button"
-              class="block text-left underline decoration-dashed decoration-gray-300 underline-offset-4 transition-colors hover:decoration-primary-400 dark:decoration-dark-500"
+            <UButton
+              color="neutral"
+              variant="ghost"
+              size="sm"
+              class="-mx-2 text-left"
               :title="t('admin.users.platformQuota.cellColumnTooltip')"
               @click="handlePlatformQuota(row)"
             >
               <UserPlatformQuotaCell :quotas="platformQuotaStats[row.id]" />
-            </button>
+            </UButton>
           </template>
 
-          <!-- 用量列自定义表头：列名 + 单个排序图标按钮，点击展开"今日/近30天"菜单。
-               column.sortable=false，DataTable 内置点击逻辑不会触发；
-               菜单项三态循环：desc → asc → off。 -->
+          <!-- Usage columns: a sort menu (today / last 30 days, desc → asc → off) sorts the current page only -->
           <template
             v-for="usageKey in USAGE_COLUMN_KEYS"
             :key="usageKey"
             #[`header-${usageKey}`]="{ column }"
           >
-            <div class="flex items-center gap-1.5">
+            <div class="flex items-center gap-1">
               <span>{{ column.label }}</span>
-              <div class="usage-sort-trigger relative">
-                <button
-                  type="button"
-                  class="flex items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-gray-200 dark:hover:bg-dark-700"
-                  :class="usageSort && usageSort.key === usageKey
-                    ? 'text-primary-600 dark:text-primary-400'
-                    : 'text-gray-400 dark:text-dark-500'"
+              <UDropdownMenu :items="usageSortMenuItems(usageKey)" :content="{ align: 'end' }">
+                <UButton
+                  :color="usageSort && usageSort.key === usageKey ? 'primary' : 'neutral'"
+                  variant="ghost"
+                  size="xs"
+                  :trailing-icon="usageSortIcon(usageKey)"
+                  :label="usageSort && usageSort.key === usageKey ? (usageSort.metric === 'today' ? t('admin.users.today') : t('admin.users.total')) : undefined"
                   :title="t('admin.users.sortBy')"
+                  :aria-label="t('admin.users.sortBy')"
                   :data-test="`usage-sort-trigger-${usageKey}`"
-                  @click.stop="toggleUsageSortMenu(usageKey)"
+                />
+                <template
+                  v-for="metric in (['today', 'total'] as const)"
+                  :key="metric"
+                  #[`usage-${usageKey}-${metric}-label`]
                 >
-                  <span
-                    v-if="usageSort && usageSort.key === usageKey"
-                    class="text-[10px] normal-case font-medium tracking-normal"
-                  >{{ usageSort.metric === 'today' ? t('admin.users.today') : t('admin.users.total') }}</span>
-                  <svg
-                    v-if="usageSort && usageSort.key === usageKey"
-                    class="h-3.5 w-3.5"
-                    :class="{ 'rotate-180': usageSort.order === 'desc' }"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fill-rule="evenodd"
-                      d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                  <svg v-else class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M10 3l-4 5h8l-4-5zM10 17l4-5H6l4 5z" />
-                  </svg>
-                </button>
-                <!-- 弹出菜单：今日 / 近30天，点击进行三态循环切换。 -->
-                <div
-                  v-if="openUsageSortMenu === usageKey"
-                  class="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
-                >
-                  <button
-                    v-for="metric in (['today', 'total'] as const)"
-                    :key="metric"
-                    type="button"
-                    class="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-xs normal-case tracking-normal hover:bg-gray-100 dark:hover:bg-dark-700"
-                    :class="isUsageSortActive(usageKey, metric)
-                      ? 'font-medium text-primary-600 dark:text-primary-400'
-                      : 'text-gray-700 dark:text-gray-300'"
-                    :data-test="`usage-sort-${usageKey}-${metric}`"
-                    @click.stop="toggleUsageSort(usageKey, metric)"
-                  >
-                    <span>{{ metric === 'today' ? t('admin.users.today') : t('admin.users.total') }}</span>
-                    <svg
-                      v-if="getUsageSortOrder(usageKey, metric)"
-                      class="h-3 w-3"
-                      :class="{ 'rotate-180': getUsageSortOrder(usageKey, metric) === 'desc' }"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                  </button>
-                  <div class="mt-1 border-t border-gray-100 px-3 py-1 text-[10px] normal-case tracking-normal text-gray-400 dark:border-dark-700 dark:text-dark-500">
-                    {{ t('admin.users.sortCurrentPageOnly') }}
-                  </div>
-                </div>
-              </div>
+                  <span :data-test="`usage-sort-${usageKey}-${metric}`">
+                    {{ metric === 'today' ? t('admin.users.today') : t('admin.users.total') }}
+                  </span>
+                </template>
+              </UDropdownMenu>
             </div>
           </template>
 
@@ -556,96 +356,46 @@
               :by-platform="usageStats[row.id]?.by_platform"
             />
           </template>
-
-          <template #cell-usage_anthropic="{ row }">
-            <PlatformCostCell :usage="getPlatformUsage(row.id, 'anthropic')" />
-          </template>
-
-          <template #cell-usage_openai="{ row }">
-            <PlatformCostCell :usage="getPlatformUsage(row.id, 'openai')" />
-          </template>
-
-          <template #cell-usage_gemini="{ row }">
-            <PlatformCostCell :usage="getPlatformUsage(row.id, 'gemini')" />
-          </template>
-
-          <template #cell-usage_antigravity="{ row }">
-            <PlatformCostCell :usage="getPlatformUsage(row.id, 'antigravity')" />
-          </template>
+          <template #cell-usage_anthropic="{ row }"><PlatformCostCell :usage="getPlatformUsage(row.id, 'anthropic')" /></template>
+          <template #cell-usage_openai="{ row }"><PlatformCostCell :usage="getPlatformUsage(row.id, 'openai')" /></template>
+          <template #cell-usage_gemini="{ row }"><PlatformCostCell :usage="getPlatformUsage(row.id, 'gemini')" /></template>
+          <template #cell-usage_antigravity="{ row }"><PlatformCostCell :usage="getPlatformUsage(row.id, 'antigravity')" /></template>
 
           <template #cell-concurrency="{ row }">
-            <UserConcurrencyCell
-              :current="row.current_concurrency ?? 0"
-              :max="row.concurrency"
-            />
+            <UserConcurrencyCell :current="row.current_concurrency ?? 0" :max="row.concurrency" />
           </template>
 
           <template #cell-status="{ value }">
-            <div class="flex items-center gap-1.5">
-              <span
-                :class="[
-                  'inline-block h-2 w-2 rounded-full',
-                  value === 'active' ? 'bg-green-500' : 'bg-red-500'
-                ]"
-              ></span>
-              <span class="text-sm text-gray-700 dark:text-gray-300">
-                {{ value === 'active' ? t('common.active') : t('admin.users.disabled') }}
-              </span>
-            </div>
+            <UBadge
+              :color="value === 'active' ? 'success' : 'error'"
+              variant="subtle"
+              :label="value === 'active' ? t('common.active') : t('admin.users.disabled')"
+            />
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-muted">{{ formatDateTime(value) }}</span>
           </template>
-
           <template #cell-last_used_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">
-              {{ value ? formatDateTime(value) : '-' }}
-            </span>
+            <span class="text-muted">{{ value ? formatDateTime(value) : '-' }}</span>
           </template>
-
           <template #cell-last_active_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">
-              {{ value ? formatDateTime(value) : '-' }}
-            </span>
+            <span class="text-muted">{{ value ? formatDateTime(value) : '-' }}</span>
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
-              <!-- Edit Button -->
-              <button
-                @click="handleEdit(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
-              >
-                <Icon name="edit" size="sm" />
-                <span class="text-xs">{{ t('common.edit') }}</span>
-              </button>
-
-              <!-- Toggle Status Button (not for admin) -->
-              <button
+            <div class="flex items-center justify-end gap-0.5">
+              <AdminRowAction :label="t('common.edit')" icon="edit" tone="primary" @click="handleEdit(row)" />
+              <AdminRowAction
                 v-if="row.role !== 'admin'"
+                :label="row.status === 'active' ? t('admin.users.disable') : t('admin.users.enable')"
+                :icon="row.status === 'active' ? 'ban' : 'checkCircle'"
+                :tone="row.status === 'active' ? 'warning' : 'success'"
                 @click="handleToggleStatus(row)"
-                :class="[
-                  'flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors',
-                  row.status === 'active'
-                    ? 'hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-900/20 dark:hover:text-orange-400'
-                    : 'hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400'
-                ]"
-              >
-                <Icon v-if="row.status === 'active'" name="ban" size="sm" />
-                <Icon v-else name="checkCircle" size="sm" />
-                <span class="text-xs">{{ row.status === 'active' ? t('admin.users.disable') : t('admin.users.enable') }}</span>
-              </button>
-
-              <!-- More Actions Menu Trigger -->
-              <button
-                @click="openActionMenu(row, $event)"
-                class="action-menu-trigger flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white"
-                :class="{ 'bg-gray-100 text-gray-900 dark:bg-dark-700 dark:text-white': activeMenuId === row.id }"
-              >
-                <Icon name="more" size="sm" />
-                <span class="text-xs">{{ t('common.more') }}</span>
-              </button>
+              />
+              <UDropdownMenu :items="rowMenuItems(row)" :content="{ align: 'end' }">
+                <AdminRowAction :label="t('common.more')" icon="more" />
+              </UDropdownMenu>
             </div>
           </template>
 
@@ -660,103 +410,17 @@
         </DataTable>
       </template>
 
-      <!-- Pagination -->
       <template #pagination>
-      <Pagination
-        v-if="pagination.total > 0"
-        :page="pagination.page"
-        :total="pagination.total"
-        :page-size="pagination.page_size"
-        @update:page="handlePageChange"
-        @update:pageSize="handlePageSizeChange"
-      />
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
       </template>
     </TablePageLayout>
-
-    <!-- Action Menu (Teleported) -->
-    <Teleport to="body">
-      <div
-        v-if="activeMenuId !== null && menuPosition"
-        class="action-menu-content fixed z-[9999] w-48 overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 dark:bg-dark-800 dark:ring-white/10"
-        :style="{ top: menuPosition.top + 'px', left: menuPosition.left + 'px' }"
-      >
-        <div class="py-1">
-          <template v-for="user in users" :key="user.id">
-            <template v-if="user.id === activeMenuId">
-              <!-- View API Keys -->
-              <button
-                @click="handleViewApiKeys(user); closeActionMenu()"
-                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-              >
-                <Icon name="key" size="sm" class="text-gray-400" :stroke-width="2" />
-                {{ t('admin.users.apiKeys') }}
-              </button>
-
-              <!-- Allowed Groups -->
-              <button
-                @click="handleAllowedGroups(user); closeActionMenu()"
-                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-              >
-                <Icon name="users" size="sm" class="text-gray-400" :stroke-width="2" />
-                {{ t('admin.users.groups') }}
-              </button>
-
-              <div class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
-
-              <!-- Deposit -->
-              <button
-                @click="handleDeposit(user); closeActionMenu()"
-                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-              >
-                <Icon name="plus" size="sm" class="text-emerald-500" :stroke-width="2" />
-                {{ t('admin.users.deposit') }}
-              </button>
-
-              <!-- Withdraw -->
-              <button
-                @click="handleWithdraw(user); closeActionMenu()"
-                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-              >
-                <svg class="h-4 w-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
-                </svg>
-                {{ t('admin.users.withdraw') }}
-              </button>
-
-              <!-- Platform Quotas -->
-              <button
-                @click="handlePlatformQuota(user); closeActionMenu()"
-                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-              >
-                <Icon name="chartBar" size="sm" class="text-gray-400" :stroke-width="2" />
-                {{ t('admin.users.platformQuota.menuItem') }}
-              </button>
-
-              <!-- Balance History -->
-              <button
-                @click="handleBalanceHistory(user); closeActionMenu()"
-                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-              >
-                <Icon name="dollar" size="sm" class="text-gray-400" :stroke-width="2" />
-                {{ t('admin.users.balanceHistory') }}
-              </button>
-
-              <div class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
-
-              <!-- Delete (not for admin) -->
-              <button
-                v-if="user.role !== 'admin'"
-                @click="handleDelete(user); closeActionMenu()"
-                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
-              >
-                <Icon name="trash" size="sm" :stroke-width="2" />
-                {{ t('common.delete') }}
-              </button>
-            </template>
-          </template>
-        </div>
-      </div>
-    </Teleport>
 
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.users.deleteUser')" :message="t('admin.users.deleteConfirm', { email: deletingUser?.email })" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <ConfirmDialog
@@ -798,7 +462,10 @@ import { useAppStore } from '@/stores/app'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { formatDateTime } from '@/utils/format'
-import Icon from '@/components/icons/Icon.vue'
+import type { DropdownMenuItem } from '@nuxt/ui'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 
 const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
@@ -997,7 +664,10 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key)
   }
   saveColumnsToStorage()
-  if (wasHidden && (key === 'usage' || key.startsWith('usage_') || key.startsWith('attr_') || key === 'balance_platform_quota')) {
+  if (wasHidden && key === 'balance_platform_quota') {
+    // 配额内联在列表响应里：重新显示时重拉当前页（1 次请求），不再逐行请求。
+    loadUsers()
+  } else if (wasHidden && (key === 'usage' || key.startsWith('usage_') || key.startsWith('attr_'))) {
     refreshCurrentPageSecondaryData()
   }
   if (key === 'subscriptions') {
@@ -1010,6 +680,18 @@ const toggleColumn = (key: string) => {
 
 // Check if column is visible (not in hidden set)
 const isColumnVisible = (key: string) => !hiddenColumns.has(key)
+
+// "显示列" menu: the page's own column settings as checkbox items
+const columnMenuItems = computed<DropdownMenuItem[]>(() =>
+  toggleableColumns.value.map((col) => ({
+    label: col.label,
+    type: 'checkbox' as const,
+    checked: isColumnVisible(col.key),
+    disabled: isForcedVisibleColumn(col.key),
+    onUpdateChecked: () => toggleColumn(col.key),
+    onSelect: (event: Event) => event.preventDefault()
+  }))
+)
 // usage 主列或任意 usage_<platform> 子列可见时都需要批量拉取用量数据
 // 列 key → 平台名（'usage' 主列汇总所有平台时为 null）
 // 显式数组取代 Object.keys()：保证迭代顺序（决定列头排序按钮渲染顺序）
@@ -1138,14 +820,6 @@ const activeAttributeFilters = reactive<Record<number, string>>({})
 // Keys: 'role', 'status', 'attr_${id}'
 const visibleFilters = reactive<Set<string>>(new Set())
 
-// Dropdown states
-const showFilterDropdown = ref(false)
-const showColumnDropdown = ref(false)
-
-// Dropdown refs for click outside detection
-const filterDropdownRef = ref<HTMLElement | null>(null)
-const columnDropdownRef = ref<HTMLElement | null>(null)
-
 // localStorage keys
 const FILTER_VALUES_KEY = 'user-filter-values'
 const VISIBLE_FILTERS_KEY = 'user-visible-filters'
@@ -1162,6 +836,29 @@ const builtInFilters = computed(() => [
   { key: 'group', name: t('admin.users.authorizedGroupFilter'), type: 'select' as const },
   { key: 'apiKeyGroup', name: t('admin.users.apiKeyGroupFilter'), type: 'select' as const }
 ])
+
+// "筛选设置" menu: built-in filters, then custom attribute filters
+const filterMenuItems = computed<DropdownMenuItem[][]>(() => {
+  const groups: DropdownMenuItem[][] = [
+    builtInFilters.value.map((filter) => ({
+      label: filter.name,
+      type: 'checkbox' as const,
+      checked: visibleFilters.has(filter.key),
+      onUpdateChecked: () => toggleBuiltInFilter(filter.key),
+      onSelect: (event: Event) => event.preventDefault()
+    }))
+  ]
+  if (filterableAttributes.value.length > 0) {
+    groups.push(filterableAttributes.value.map((attr) => ({
+      label: attr.name,
+      type: 'checkbox' as const,
+      checked: visibleFilters.has(`attr_${attr.id}`),
+      onUpdateChecked: () => toggleAttributeFilter(attr),
+      onSelect: (event: Event) => event.preventDefault()
+    })))
+  }
+  return groups
+})
 
 // Load saved filters from localStorage
 const loadSavedFilters = () => {
@@ -1225,8 +922,6 @@ const getPlatformUsage = (userId: number, platform: string) =>
 type UsageMetric = 'today' | 'total'
 type UsageSortState = { key: string; metric: UsageMetric; order: 'asc' | 'desc' } | null
 const USAGE_SORT_STORAGE_KEY = 'admin-users-usage-sort'
-// 列头排序按钮点击后弹出的"今日/近30天"选择菜单，同时只允许一个列展开。
-const openUsageSortMenu = ref<string | null>(null)
 
 const loadInitialUsageSort = (): UsageSortState => {
   try {
@@ -1256,7 +951,6 @@ const persistUsageSort = () => {
 const clearUsageSort = () => {
   if (!usageSort.value) return
   usageSort.value = null
-  openUsageSortMenu.value = null
   persistUsageSort()
 }
 
@@ -1275,13 +969,27 @@ const toggleUsageSort = (key: string, metric: UsageMetric) => {
     usageSort.value = { key, metric, order: 'desc' }
   }
   persistUsageSort()
-  openUsageSortMenu.value = null
 }
 
-// 点击图标本身不触发排序，仅开关菜单；首次排序由用户在菜单内选择 metric 触发（默认 desc，详见 toggleUsageSort）。
-const toggleUsageSortMenu = (key: string) => {
-  openUsageSortMenu.value = openUsageSortMenu.value === key ? null : key
+// 列头按钮只开关菜单；首次排序由用户在菜单内选择 metric 触发（默认 desc，详见 toggleUsageSort）。
+const usageSortIcon = (key: string) => {
+  if (!usageSort.value || usageSort.value.key !== key) return 'i-lucide-arrow-up-down'
+  return usageSort.value.order === 'desc' ? 'i-lucide-arrow-down-wide-narrow' : 'i-lucide-arrow-up-narrow-wide'
 }
+
+const usageSortMenuItems = (key: string): DropdownMenuItem[][] => [
+  (['today', 'total'] as const).map((metric) => {
+    const order = getUsageSortOrder(key, metric)
+    return {
+      label: metric === 'today' ? t('admin.users.today') : t('admin.users.total'),
+      slot: `usage-${key}-${metric}`,
+      color: order ? ('primary' as const) : undefined,
+      trailingIcon: order === 'desc' ? 'i-lucide-arrow-down-wide-narrow' : order === 'asc' ? 'i-lucide-arrow-up-narrow-wide' : undefined,
+      onSelect: () => toggleUsageSort(key, metric)
+    }
+  }),
+  [{ type: 'label' as const, label: t('admin.users.sortCurrentPageOnly') }]
+]
 
 const getUsageValue = (userId: number, key: string, metric: UsageMetric): number => {
   const stats = usageStats.value[userId]
@@ -1365,6 +1073,32 @@ const closePlatformQuotaModal = () => {
 let abortController: AbortController | null = null
 let secondaryDataSeq = 0
 
+const isStaleSecondary = (signal?: AbortSignal, expectedSeq?: number) =>
+  Boolean(signal?.aborted) || (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq)
+
+const currentUserIdSet = (userIds: number[]) => new Set(userIds.map((id) => String(id)))
+
+// 把二级数据裁剪到当前页，避免大 pageSize 反复翻页时 map 只增不减。
+function keepOnly<T>(map: Record<string, T>, keep: Set<string>): Record<string, T> {
+  const out: Record<string, T> = {}
+  for (const key of Object.keys(map)) {
+    if (keep.has(key)) out[key] = map[key]
+  }
+  return out
+}
+
+// 平台配额改为列表接口内联返回（include_platform_quotas），这里只做一次映射。
+const collectInlinePlatformQuotas = (items: AdminUser[]) => {
+  const quotas: Record<number, PlatformQuotaItem[]> = {}
+  if (!hasVisiblePlatformQuotaColumn.value) return quotas
+  for (const user of items) {
+    if (user.platform_quotas && user.platform_quotas.length > 0) {
+      quotas[user.id] = user.platform_quotas
+    }
+  }
+  return quotas
+}
+
 const loadUsersSecondaryData = async (
   userIds: number[],
   signal?: AbortSignal,
@@ -1372,70 +1106,40 @@ const loadUsersSecondaryData = async (
 ) => {
   if (userIds.length === 0) return
 
+  const idSet = currentUserIdSet(userIds)
   const tasks: Promise<void>[] = []
 
   if (hasVisibleUsageColumn.value) {
     tasks.push(
       (async () => {
         try {
-          const usageResponse = await adminAPI.dashboard.getBatchUsersUsage(userIds)
-          if (signal?.aborted) return
-          if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
-          usageStats.value = usageResponse.stats
+          const usageResponse = await adminAPI.dashboard.getBatchUsersUsage(userIds, { signal })
+          if (isStaleSecondary(signal, expectedSeq)) return
+          usageStats.value = keepOnly(usageResponse.stats, idSet)
         } catch (e) {
-          if (signal?.aborted) return
+          if (isStaleSecondary(signal, expectedSeq)) return
           console.error('Failed to load usage stats:', e)
         }
       })()
     )
   }
 
-  if (attributeDefinitions.value.length > 0 && hasVisibleAttributeColumns.value) {
-    tasks.push(
-      (async () => {
-        try {
-          const attrResponse = await adminAPI.userAttributes.getBatchUserAttributes(userIds)
-          if (signal?.aborted) return
-          if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
-          userAttributeValues.value = attrResponse.attributes
-        } catch (e) {
-          if (signal?.aborted) return
-          console.error('Failed to load user attribute values:', e)
-        }
-      })()
-    )
-  }
-
-  if (hasVisiblePlatformQuotaColumn.value) {
-    tasks.push(
-      (async () => {
-        try {
-          // 无批量端点：对当前页用户逐个拉取，分块并发（每批 6），批间检查中止条件，避免大 pageSize 时请求洪峰
-          const CHUNK = 6
-          for (let i = 0; i < userIds.length; i += CHUNK) {
-            if (signal?.aborted) return
-            if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
-            const chunk = userIds.slice(i, i + CHUNK)
-            const results = await Promise.allSettled(
-              chunk.map((id) => adminAPI.users.getPlatformQuotas(id))
-            )
-            if (signal?.aborted) return
-            if (typeof expectedSeq === 'number' && expectedSeq !== secondaryDataSeq) return
-            const merged = { ...platformQuotaStats.value }
-            results.forEach((r, idx) => {
-              if (r.status === 'fulfilled') {
-                merged[chunk[idx]] = r.value.platform_quotas || []
-              }
-            })
-            platformQuotaStats.value = merged
-          }
-        } catch (e) {
-          if (signal?.aborted) return
-          console.error('Failed to load platform quotas:', e)
-        }
-      })()
-    )
-  }
+  tasks.push(
+    (async () => {
+      try {
+        // 属性定义与用户列表并行加载：首屏不再被这个请求串行挡住。
+        await ensureAttributeDefinitions()
+        if (isStaleSecondary(signal, expectedSeq)) return
+        if (!hasVisibleAttributeColumns.value) return
+        const attrResponse = await adminAPI.userAttributes.getBatchUserAttributes(userIds, { signal })
+        if (isStaleSecondary(signal, expectedSeq)) return
+        userAttributeValues.value = attrResponse.attributes
+      } catch (e) {
+        if (isStaleSecondary(signal, expectedSeq)) return
+        console.error('Failed to load user attribute values:', e)
+      }
+    })()
+  )
 
   if (tasks.length > 0) {
     await Promise.allSettled(tasks)
@@ -1446,104 +1150,43 @@ const refreshCurrentPageSecondaryData = () => {
   const userIds = users.value.map((u) => u.id)
   if (userIds.length === 0) return
   const seq = ++secondaryDataSeq
-  void loadUsersSecondaryData(userIds, undefined, seq)
+  // 复用列表请求的 AbortSignal：翻页/筛选会真正取消在途的二级请求。
+  void loadUsersSecondaryData(userIds, abortController?.signal, seq)
 }
 
-// Action Menu State
-const activeMenuId = ref<number | null>(null)
-const menuPosition = ref<{ top: number; left: number } | null>(null)
-
-const openActionMenu = (user: AdminUser, e: MouseEvent) => {
-  if (activeMenuId.value === user.id) {
-    closeActionMenu()
-  } else {
-    const target = e.currentTarget as HTMLElement
-    if (!target) {
-      closeActionMenu()
-      return
-    }
-
-    const rect = target.getBoundingClientRect()
-    const menuWidth = 200
-    const menuHeight = 240
-    const padding = 8
-    const viewportWidth = window.innerWidth
-    const viewportHeight = window.innerHeight
-
-    let left, top
-
-    if (viewportWidth < 768) {
-      // 居中显示,水平位置
-      left = Math.max(padding, Math.min(
-        rect.left + rect.width / 2 - menuWidth / 2,
-        viewportWidth - menuWidth - padding
-      ))
-
-      // 优先显示在按钮下方
-      top = rect.bottom + 4
-
-      // 如果下方空间不够,显示在上方
-      if (top + menuHeight > viewportHeight - padding) {
-        top = rect.top - menuHeight - 4
-        // 如果上方也不够,就贴在视口顶部
-        if (top < padding) {
-          top = padding
-        }
-      }
-    } else {
-      left = Math.max(padding, Math.min(
-        e.clientX - menuWidth,
-        viewportWidth - menuWidth - padding
-      ))
-      top = e.clientY
-      if (top + menuHeight > viewportHeight - padding) {
-        top = viewportHeight - menuHeight - padding
-      }
-    }
-
-    menuPosition.value = { top, left }
-    activeMenuId.value = user.id
+// Row "…" menu (UDropdownMenu handles positioning, outside click, Escape and scroll)
+const rowMenuItems = (user: AdminUser): DropdownMenuItem[][] => {
+  const groups: DropdownMenuItem[][] = [
+    [
+      { label: t('admin.users.apiKeys'), icon: 'i-lucide-key-round', onSelect: () => handleViewApiKeys(user) },
+      { label: t('admin.users.groups'), icon: 'i-lucide-users', onSelect: () => handleAllowedGroups(user) }
+    ],
+    [
+      { label: t('admin.users.deposit'), icon: 'i-lucide-circle-plus', onSelect: () => handleDeposit(user) },
+      { label: t('admin.users.withdraw'), icon: 'i-lucide-circle-minus', onSelect: () => handleWithdraw(user) },
+      { label: t('admin.users.platformQuota.menuItem'), icon: 'i-lucide-chart-column', onSelect: () => handlePlatformQuota(user) },
+      { label: t('admin.users.balanceHistory'), icon: 'i-lucide-wallet', onSelect: () => handleBalanceHistory(user) }
+    ]
+  ]
+  if (user.role !== 'admin') {
+    groups.push([{ label: t('common.delete'), icon: 'i-lucide-trash', color: 'error', onSelect: () => handleDelete(user) }])
   }
+  return groups
 }
 
-const closeActionMenu = () => {
-  activeMenuId.value = null
-  menuPosition.value = null
-}
-
-// Close menu when clicking outside
-const handleClickOutside = (event: MouseEvent) => {
-  const target = event.target as HTMLElement
-  if (!target.closest('.action-menu-trigger') && !target.closest('.action-menu-content')) {
-    closeActionMenu()
-  }
-  // Close filter dropdown when clicking outside
-  if (filterDropdownRef.value && !filterDropdownRef.value.contains(target)) {
-    showFilterDropdown.value = false
-  }
-  // Close column dropdown when clicking outside
-  if (columnDropdownRef.value && !columnDropdownRef.value.contains(target)) {
-    showColumnDropdown.value = false
-  }
-  // Close usage sort dropdown when clicking outside any usage-sort-trigger
-  if (openUsageSortMenu.value !== null && !target.closest('.usage-sort-trigger')) {
-    openUsageSortMenu.value = null
-  }
-  // Close expanded group dropdown when clicking outside
-  if (expandedGroupUserId.value !== null) {
-    expandedGroupUserId.value = null
-  }
-}
+// Exclusive groups of a row: picking one opens the replace-group dialog
+const exclusiveGroupMenuItems = (user: AdminUser): DropdownMenuItem[][] => [
+  [{ type: 'label', label: t('admin.users.clickToReplace') }],
+  getUserGroups(user).exclusive.map((g) => ({
+    label: g.name,
+    icon: 'i-lucide-arrow-left-right',
+    onSelect: () => openGroupReplace(user, g)
+  }))
+]
 
 // Allowed groups modal state
 const showAllowedGroupsModal = ref(false)
 const allowedGroupsUser = ref<AdminUser | null>(null)
-
-// Expanded group dropdown state (click to show exclusive groups list)
-const expandedGroupUserId = ref<number | null>(null)
-const toggleExpandedGroup = (userId: number) => {
-  expandedGroupUserId.value = expandedGroupUserId.value === userId ? null : userId
-}
 
 // Group replace modal state
 const showGroupReplaceModal = ref(false)
@@ -1575,10 +1218,24 @@ const loadAttributeDefinitions = async () => {
   }
 }
 
+// 属性定义只拉一次；首屏与用户列表并行，不再串行 await。
+let attributeDefinitionsPromise: Promise<void> | null = null
+const ensureAttributeDefinitions = (): Promise<void> => {
+  if (!attributeDefinitionsPromise) {
+    attributeDefinitionsPromise = loadAttributeDefinitions()
+  }
+  return attributeDefinitionsPromise
+}
+
+const reloadAttributeDefinitions = async () => {
+  attributeDefinitionsPromise = loadAttributeDefinitions()
+  await attributeDefinitionsPromise
+}
+
 // Handle attributes modal close - reload definitions and users
 const handleAttributesModalClose = async () => {
   showAttributesModal.value = false
-  await loadAttributeDefinitions()
+  await reloadAttributeDefinitions()
   loadUsers()
 }
 
@@ -1607,8 +1264,11 @@ const loadUsers = async () => {
         group_name: filters.group || undefined,
         api_key_group_id: filters.apiKeyGroup ?? undefined,
         attributes: Object.keys(attrFilters).length > 0 ? attrFilters : undefined,
-        // 始终请求 subscriptions：列隐藏时仍需用于 UserPlatformQuotaModal 的 active-subscription 警示 banner
-        include_subscriptions: true,
+        // 订阅、可用分组只在对应列表列可见时联表批量加载。
+        include_subscriptions: !hiddenColumns.has('subscriptions'),
+        include_allowed_groups: hasVisibleGroupsColumn.value,
+        // 配额列可见时让后端一次批量内联，替代逐行 GET /admin/users/:id/platform-quotas
+        include_platform_quotas: hasVisiblePlatformQuotaColumn.value,
         sort_by: sortState.sort_by,
         sort_order: sortState.sort_order
       },
@@ -1620,9 +1280,11 @@ const loadUsers = async () => {
     users.value = response.items
     pagination.total = response.total
     pagination.pages = response.pages
+    // 清空上一页二级数据，避免同 ID 更新或请求失败时短暂展示过期数字。
     usageStats.value = {}
     userAttributeValues.value = {}
-    platformQuotaStats.value = {}
+    // 配额随列表响应一起到达，不再逐行发请求。
+    platformQuotaStats.value = collectInlinePlatformQuotas(response.items)
 
     // Defer heavy secondary data so table can render first.
     if (response.items.length > 0) {
@@ -1777,7 +1439,6 @@ const closeAllowedGroupsModal = () => {
 }
 
 const openGroupReplace = (user: AdminUser, group: { id: number; name: string }) => {
-  expandedGroupUserId.value = null
   groupReplaceUser.value = user
   groupReplaceOldGroup.value = group
   showGroupReplaceModal.value = true
@@ -1873,15 +1534,11 @@ const handleWithdrawFromHistory = () => {
   }
 }
 
-// 滚动时关闭菜单
-const handleScroll = () => {
-  closeActionMenu()
-}
-
-onMounted(async () => {
-  await loadAttributeDefinitions()
+onMounted(() => {
   loadSavedFilters()
   loadSavedColumns()
+  // 属性定义与用户列表并行：首屏不再等一个次要请求。
+  void ensureAttributeDefinitions()
   loadUsers()
   if (hasVisibleGroupsColumn.value || visibleFilters.has('group')) {
     loadAllGroups()
@@ -1889,171 +1546,10 @@ onMounted(async () => {
   if (visibleFilters.has('apiKeyGroup')) {
     loadAllGroupsForApiKeyFilter()
   }
-  document.addEventListener('click', handleClickOutside)
-  window.addEventListener('scroll', handleScroll, true)
 })
 
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
-  window.removeEventListener('scroll', handleScroll, true)
   clearTimeout(searchTimeout)
   abortController?.abort()
 })
 </script>
-
-<style scoped>
-.admin-users-workbench {
-  --users-control-height: 38px;
-}
-
-.users-command-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px 20px;
-  padding: 14px;
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 7%, transparent);
-}
-
-.users-query-zone {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.users-search {
-  width: min(100%, 30rem);
-}
-
-.users-search :deep(.input),
-.users-search > .input {
-  min-height: var(--users-control-height);
-}
-
-.users-filter-row,
-.users-view-tools,
-.users-context-actions {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.users-filter-row {
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--signal-line) 76%, transparent);
-}
-
-.users-action-zone {
-  display: flex;
-  min-width: max-content;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.users-view-tools {
-  justify-content: flex-end;
-}
-
-.users-context-actions {
-  justify-content: flex-end;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--signal-line) 76%, transparent);
-}
-
-.users-create-action {
-  flex: 0 0 auto;
-}
-
-.admin-users-workbench :deep(.table-scroll-container) {
-  border-top: 1px solid var(--signal-line);
-  border-bottom: 1px solid var(--signal-line);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 5%, transparent);
-}
-
-.admin-users-workbench :deep(.table-wrapper th) {
-  padding-top: 11px;
-  padding-bottom: 11px;
-}
-
-.admin-users-workbench :deep(.table-wrapper td) {
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.admin-users-workbench :deep(.table-body tr) {
-  transition: background-color 140ms ease, box-shadow 140ms ease;
-}
-
-.admin-users-workbench :deep(.table-body tr:hover) {
-  box-shadow: inset 2px 0 var(--signal-accent);
-}
-
-.admin-users-workbench :deep(.layout-section-fixed:last-child) {
-  padding-top: 2px;
-  border-top: 1px solid var(--signal-line);
-}
-
-@media (max-width: 1023px) {
-  .users-command-bar {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .users-action-zone {
-    min-width: 0;
-    align-items: stretch;
-  }
-
-  .users-view-tools,
-  .users-context-actions {
-    justify-content: flex-start;
-  }
-
-  .admin-users-workbench :deep(.table-scroll-container) {
-    border: 0;
-    box-shadow: none;
-  }
-
-  .admin-users-workbench :deep(.table-scroll-container > .space-y-3) {
-    min-width: 0;
-  }
-}
-
-@media (max-width: 639px) {
-  .users-command-bar {
-    padding: 12px;
-  }
-
-  .users-filter-row > *,
-  .users-context-actions > * {
-    width: 100%;
-  }
-
-  .users-view-tools {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .users-view-tools > * {
-    min-width: 0;
-  }
-
-  .users-view-tools :deep(.btn),
-  .users-view-tools > .btn {
-    width: 100%;
-    justify-content: center;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .admin-users-workbench :deep(*) {
-    transition-duration: 0.01ms !important;
-  }
-}
-</style>

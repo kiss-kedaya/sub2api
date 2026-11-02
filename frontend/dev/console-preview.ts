@@ -3,8 +3,23 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vue from '@vitejs/plugin-vue'
+import ui from '@nuxt/ui/vite'
 import type { InlineConfig, Plugin } from 'vite'
-import { DEMO_TOKEN, PREVIEW_LABEL, settings } from './fixtures'
+import { DEMO_TOKEN, DEMO_USER_ID, PREVIEW_LABEL, settings as fixtureSettings } from './fixtures'
+import { DEFAULT_SITE_THEME, normalizeSiteTheme, type SiteThemeSettings } from '../src/theme/settings'
+
+// The owner previews every console page here, so the feature-gated sections (risk control,
+// on-chain deposits) are switched on; with the fixture defaults the router sends them to settings.
+const settings = {
+  ...fixtureSettings,
+  risk_control_enabled: true,
+  crypto_enabled: true,
+  theme_primary: DEFAULT_SITE_THEME.theme_primary,
+  theme_neutral: DEFAULT_SITE_THEME.theme_neutral,
+  theme_radius: DEFAULT_SITE_THEME.theme_radius,
+  theme_font: DEFAULT_SITE_THEME.theme_font,
+  theme_default_mode: DEFAULT_SITE_THEME.theme_default_mode,
+}
 import { createMockApi, PreviewError } from './mock-api'
 
 export const PREVIEW_MODE = 'console-preview'
@@ -46,6 +61,7 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 export function consolePreviewPlugin(): Plugin {
   const api = createMockApi()
+  let previewTheme: SiteThemeSettings = { ...DEFAULT_SITE_THEME }
   let active = false
   return {
     name: 'local-console-preview',
@@ -104,6 +120,8 @@ export function consolePreviewPlugin(): Plugin {
         if (path === '/__preview/admin' || path === '/__preview/user') {
           const role = path.endsWith('/admin') ? 'admin' : 'user'
           api.handle('POST', '/api/v1/__preview/role', new URLSearchParams(), { role })
+          // Only admin id 1 is a full admin; other admin ids are observers limited to /admin/usage.
+          api.user.id = role === 'admin' ? 1 : DEMO_USER_ID
           res.writeHead(302, { Location: role === 'admin' ? '/admin/dashboard' : '/dashboard' })
           res.end()
           return
@@ -112,8 +130,20 @@ export function consolePreviewPlugin(): Plugin {
         void (async () => {
           try {
             const body = await readBody(req)
-            let result = api.handle(req.method || 'GET', path, url.searchParams, body)
-            if (path === '/api/v1/settings/public') result = { ...settings, api_base_url: `http://${host}` }
+            let result: unknown
+            if (path === '/api/v1/admin/settings/theme') {
+              if (req.method === 'GET') {
+                result = { ...previewTheme }
+              } else if (req.method === 'PUT') {
+                previewTheme = normalizeSiteTheme({ ...previewTheme, ...body })
+                result = { ...previewTheme }
+              } else {
+                throw new PreviewError(405, '演示主题接口仅支持 GET / PUT')
+              }
+            } else {
+              result = api.handle(req.method || 'GET', path, url.searchParams, body)
+            }
+            if (path === '/api/v1/settings/public') result = { ...settings, ...previewTheme, api_base_url: `http://${host}` }
             const raw = path === '/setup/status' || path.startsWith('/v1/')
             send(res, 200, raw ? result : { code: 0, message: '本地演示数据', data: result })
           } catch (error) {
@@ -130,19 +160,22 @@ export function consolePreviewPlugin(): Plugin {
         const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c')
         return {
           html: html.replace(/<title>[^<]*<\/title>/i, `<title>kedaya.ai · ${PREVIEW_LABEL}</title>`),
-          tags: [{ tag: 'script', injectTo: 'head-prepend', children: `
-            window.__APP_CONFIG__ = ${json(settings)};
+          // 'head', not 'head-prepend': this script carries Chinese text, and putting it before
+          // <meta charset> pushes the charset past the first 1024 bytes, so a zh-CN browser decodes
+          // the page as GBK and the string literals break.
+          tags: [{ tag: 'script', injectTo: 'head', children: `
+            window.__APP_CONFIG__ = ${json({ ...settings, ...previewTheme })};
             window.__APP_CONFIG__.api_base_url = location.origin;
             localStorage.setItem('auth_token', ${json(DEMO_TOKEN)});
             localStorage.setItem('auth_user', ${json(JSON.stringify(api.user))});
             localStorage.removeItem('refresh_token');
             localStorage.removeItem('token_expires_at');
             localStorage.removeItem('pending_auth_session');
-            if (!localStorage.getItem('theme')) localStorage.setItem('theme', 'dark');
+            if (!localStorage.getItem('theme')) localStorage.setItem('theme', 'system');
             if (!localStorage.getItem('sub2api_locale')) localStorage.setItem('sub2api_locale', 'zh');
             localStorage.setItem('user_guide_${api.user.id}_user_v4_interactive', 'true');
             localStorage.setItem('admin_guide_${api.user.id}_admin_v4_interactive', 'true');
-            document.documentElement.classList.toggle('dark', localStorage.getItem('theme') === 'dark');
+            document.documentElement.classList.toggle('dark', localStorage.getItem('theme') === 'dark' || (localStorage.getItem('theme') === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches));
             document.documentElement.lang = localStorage.getItem('sub2api_locale');
             document.addEventListener('DOMContentLoaded', function() {
               function labelTitle() {
@@ -176,8 +209,18 @@ export function consolePreviewConfig(): InlineConfig {
     // Do not expose inherited VITE_* variables in this isolated mode either.
     envPrefix: '__CONSOLE_PREVIEW_NO_ENV__',
     cacheDir: resolve(root, 'dev/.cache/vite'),
-    plugins: [consolePreviewPlugin(), vue()],
-    resolve: { alias: { '@': resolve(root, 'src'), 'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js' } },
+    // The app pins @vueuse/core 10 while Nuxt UI needs 14. Vite's dep optimizer keys pre-bundled deps by
+    // bare name, so Nuxt UI's raw .vue files would get the app's v10 copy (no `createRef`). Excluding both
+    // packages lets each importer resolve its own version.
+    optimizeDeps: { exclude: ['@vueuse/core', '@vueuse/shared'] },
+    // Same Nuxt UI options as vite.config.ts.
+    plugins: [consolePreviewPlugin(), vue(), ui({
+      colorMode: false,
+      ui: { colors: { primary: 'neutral', neutral: 'neutral' } },
+      icon: { clientBundle: { scan: true } },
+      components: { globs: [] },
+    })],
+    resolve: { alias: { '@runtime/context': resolve(root, 'src/runtime/context.ts'), '@': resolve(root, 'src'), 'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js' } },
     define: { __INTLIFY_JIT_COMPILATION__: true, 'import.meta.env.VITE_API_BASE_URL': JSON.stringify('/api/v1'),
       'import.meta.env.VITE_WS_BASE_URL': 'undefined', 'import.meta.env.VITE_INFINITE_CANVAS_URL': 'undefined' },
     server: { host: '127.0.0.1', port: 4317, strictPort: true, cors: false,

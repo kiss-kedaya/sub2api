@@ -5,85 +5,65 @@
     width="normal"
     @close="emit('close')"
   >
-    <form id="bulk-edit-user-limits-form" class="space-y-5" @submit.prevent="handleSubmit">
-      <p class="text-sm font-medium text-gray-700 dark:text-gray-300">
+    <UForm id="bulk-edit-user-limits-form" :state="{}" class="space-y-4" @submit="handleSubmit">
+      <p class="text-sm text-muted">
         {{ t('admin.users.bulkLimits.selectedCount', { count: selectedIds.length }) }}
       </p>
 
-      <div class="divide-y divide-gray-200 border-y border-gray-200 dark:divide-dark-700 dark:border-dark-700">
-        <div class="space-y-3 py-4">
-          <div class="flex items-center justify-between gap-4">
-            <label for="bulk-concurrency" class="input-label mb-0">
-              {{ t('admin.users.columns.concurrency') }}
-            </label>
-            <Toggle
-              v-model="enableConcurrency"
-              :aria-label="t('admin.users.bulkLimits.enableConcurrency')"
-              data-test="enable-concurrency"
-            />
-          </div>
-          <input
-            v-if="enableConcurrency"
-            id="bulk-concurrency"
-            v-model="concurrencyValue"
+      <div class="space-y-2">
+        <div class="flex items-center justify-between gap-4">
+          <label for="bulk-concurrency" class="text-sm font-medium text-default">{{ t('admin.users.columns.concurrency') }}</label>
+          <Toggle v-model="enableConcurrency" :aria-label="t('admin.users.bulkLimits.enableConcurrency')" data-test="enable-concurrency" />
+        </div>
+        <UInput
+          v-if="enableConcurrency"
+          id="bulk-concurrency"
+          :model-value="String(concurrencyValue)"
+          @update:model-value="(value: string | number | undefined) => (concurrencyValue = String(value ?? ''))"
+          type="number"
+          min="0"
+          step="1"
+          class="w-full"
+          data-test="concurrency-input"
+        />
+      </div>
+
+      <USeparator />
+
+      <div class="space-y-2">
+        <div class="flex items-center justify-between gap-4">
+          <label for="bulk-rpm-limit" class="text-sm font-medium text-default">{{ t('admin.users.form.rpmLimit') }}</label>
+          <Toggle v-model="enableRPMLimit" :aria-label="t('admin.users.bulkLimits.enableRPMLimit')" data-test="enable-rpm-limit" />
+        </div>
+        <template v-if="enableRPMLimit">
+          <UInput
+            id="bulk-rpm-limit"
+            :model-value="String(rpmLimitValue)"
+            @update:model-value="(value: string | number | undefined) => (rpmLimitValue = String(value ?? ''))"
             type="number"
             min="0"
             step="1"
-            class="input"
-            data-test="concurrency-input"
+            class="w-full"
+            data-test="rpm-limit-input"
           />
-        </div>
-
-        <div class="space-y-3 py-4">
-          <div class="flex items-center justify-between gap-4">
-            <label for="bulk-rpm-limit" class="input-label mb-0">
-              {{ t('admin.users.form.rpmLimit') }}
-            </label>
-            <Toggle
-              v-model="enableRPMLimit"
-              :aria-label="t('admin.users.bulkLimits.enableRPMLimit')"
-              data-test="enable-rpm-limit"
-            />
-          </div>
-          <div v-if="enableRPMLimit">
-            <input
-              id="bulk-rpm-limit"
-              v-model="rpmLimitValue"
-              type="number"
-              min="0"
-              step="1"
-              class="input"
-              data-test="rpm-limit-input"
-            />
-            <p v-if="parsedRPMLimit === 0" class="input-hint">
-              {{ t('admin.users.bulkLimits.unlimited') }}
-            </p>
-          </div>
-        </div>
+          <p v-if="parsedRPMLimit === 0" class="text-xs text-muted">{{ t('admin.users.bulkLimits.unlimited') }}</p>
+        </template>
       </div>
 
-      <p v-if="hasInvalidValue" class="text-sm text-red-600 dark:text-red-400">
-        {{ t('admin.users.bulkLimits.nonNegativeInteger') }}
-      </p>
-      <p v-if="selectionTooLarge" class="text-sm text-red-600 dark:text-red-400">
-        {{ t('admin.users.bulkLimits.selectionLimit', { max: MAX_BATCH_USER_IDS }) }}
-      </p>
-    </form>
+      <p v-if="hasInvalidValue" class="text-sm text-error">{{ t('admin.users.bulkLimits.nonNegativeInteger') }}</p>
+      <p v-if="selectionTooLarge" class="text-sm text-error">{{ t('admin.users.bulkLimits.selectionLimit', { max: MAX_BATCH_USER_IDS }) }}</p>
+    </UForm>
 
     <template #footer>
-      <div class="flex justify-end gap-3">
-        <button type="button" class="btn btn-secondary" @click="emit('close')">
-          {{ t('common.cancel') }}
-        </button>
-        <button
+      <div class="flex justify-end gap-2">
+        <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="emit('close')" />
+        <UButton
           type="submit"
           form="bulk-edit-user-limits-form"
-          class="btn btn-primary"
           :disabled="!canSubmit"
           data-test="submit"
-        >
-          {{ submitting ? t('admin.users.bulkLimits.applying') : t('admin.users.bulkLimits.apply') }}
-        </button>
+          :label="submitting ? t('admin.users.bulkLimits.applying') : t('admin.users.bulkLimits.apply')"
+        />
       </div>
     </template>
   </BaseDialog>
@@ -97,6 +77,7 @@ import type { BatchUpdateUserLimitsRequest } from '@/api/admin/users'
 import { useAppStore } from '@/stores/app'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import { confirm } from '@/composables/useConfirmation'
 
 const props = defineProps<{
   show: boolean
@@ -185,7 +166,7 @@ const handleSubmit = async () => {
     )
   }
 
-  const confirmed = window.confirm(
+  const confirmed = await confirm(
     t('admin.users.bulkLimits.confirm', {
       count: props.selectedIds.length,
       fields: fields.join(', ')

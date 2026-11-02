@@ -1,13 +1,13 @@
 <template>
-  <div :class="props.embedded ? 'space-y-4' : 'card overflow-hidden'">
+  <div :class="props.embedded ? 'space-y-4' : 'overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none'">
     <div
       v-if="!props.embedded"
-      class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+      class="border-b border-default px-5 py-4 sm:px-6"
     >
-      <h2 class="text-lg font-medium text-gray-900 dark:text-white">
+      <h2 class="text-base font-semibold text-highlighted">
         {{ t('profile.authBindings.title') }}
       </h2>
-      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      <p class="mt-1 text-sm text-muted">
         {{ t('profile.authBindings.description') }}
       </p>
     </div>
@@ -17,7 +17,7 @@
         <p class="text-sm font-semibold text-gray-900 dark:text-white">
           {{ t('profile.authBindings.title') }}
         </p>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <p class="mt-1 text-sm text-muted">
           {{ t('profile.authBindings.description') }}
         </p>
       </div>
@@ -284,7 +284,7 @@ const compact = computed(() => props.compact)
 const rowClass = computed(() =>
   props.embedded
     ? compact.value
-      ? 'rounded-2xl border border-gray-100 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-900/40'
+      ? 'rounded-2xl border border-gray-100 bg-white p-4 shadow-xs dark:border-dark-700 dark:bg-dark-900/40'
       : 'rounded-2xl border border-gray-100 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-900/30'
     : 'px-6 py-5'
 )

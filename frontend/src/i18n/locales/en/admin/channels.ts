@@ -54,6 +54,7 @@ export default {
       allStatus: 'All Status',
       groupsUnit: 'groups',
       pricingUnit: 'pricing rules',
+      displayColumns: 'Display',
       noChannelsYet: 'No Channels Yet',
       createFirstChannel: 'Create your first channel to manage model pricing',
       loadError: 'Failed to load channels',
@@ -693,6 +694,7 @@ export default {
       minutesRemaining: '{minutes}m remaining',
       remainingDays: 'Remaining days',
       noExpiration: 'No expiration',
+      displayColumns: 'Display',
       status: {
         active: 'Active',
         expired: 'Expired',

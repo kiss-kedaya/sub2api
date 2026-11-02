@@ -103,6 +103,10 @@ func (s *userPlatformQuotaRepoStub) ListByUser(context.Context, int64) ([]UserPl
 	panic("unexpected ListByUser call")
 }
 
+func (s *userPlatformQuotaRepoStub) ListByUsers(context.Context, []int64) (map[int64][]UserPlatformQuotaRecord, error) {
+	panic("unexpected ListByUsers call")
+}
+
 func (s *userPlatformQuotaRepoStub) IncrementUsageWithReset(context.Context, int64, string, float64, time.Time) error {
 	panic("unexpected IncrementUsageWithReset call")
 }

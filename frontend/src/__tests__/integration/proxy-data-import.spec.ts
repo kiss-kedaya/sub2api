@@ -165,7 +165,8 @@ describe('Proxy ImportDataModal', () => {
 
     await input.trigger('change')
     await wrapper.find('form').trigger('submit')
-    await Promise.resolve()
+    // UForm validates (async) before it calls the submit handler.
+    await flushPromises()
 
     expect(showError).toHaveBeenCalledWith('admin.proxies.dataImportParseFailed')
   })

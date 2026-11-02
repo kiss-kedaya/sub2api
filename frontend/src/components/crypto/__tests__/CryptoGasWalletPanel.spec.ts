@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import USelect from '@nuxt/ui/components/Select.vue'
 import CryptoGasWalletPanel from '../CryptoGasWalletPanel.vue'
 
 const mocks = vi.hoisted(() => ({ getAddress: vi.fn(), getStatus: vi.fn(), qr: vi.fn(), copy: vi.fn() }))
@@ -57,10 +58,13 @@ describe('Gas wallet funding (read-only address and local QR)', () => {
   it('distinguishes chains and native currencies, ignoring a balance for a different Gas seed', async () => {
     mocks.getStatus.mockResolvedValue([gasStatus(), gasStatus('base', '0.0234'), gasStatus('ethereum', '999', otherAddress)])
     const wrapper = await render({ available: true, chains: ['bsc', 'base', 'ethereum'], revision: 0 })
-    await wrapper.get('[data-testid="crypto-gas-network"]').setValue('base')
+    expect(wrapper.find('[data-testid="crypto-gas-network"]').exists()).toBe(true)
+    wrapper.findComponent(USelect).vm.$emit('update:modelValue', 'base')
+    await flushPromises()
     expect(wrapper.text()).toContain('0.0234 ETH')
     expect(wrapper.get('.gas-wallet__warning').text()).toContain('"network":"Base","symbol":"ETH"')
-    await wrapper.get('[data-testid="crypto-gas-network"]').setValue('ethereum')
+    wrapper.findComponent(USelect).vm.$emit('update:modelValue', 'ethereum')
+    await flushPromises()
     expect(wrapper.text()).not.toContain('999')
     expect(wrapper.text()).toContain('admin.crypto.hotWalletUnreachable')
   })

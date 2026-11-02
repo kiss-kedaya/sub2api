@@ -1,50 +1,50 @@
 <template>
-  <section class="card" aria-labelledby="gateway-ip-notice-title">
-    <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-      <h2 id="gateway-ip-notice-title" class="text-lg font-semibold text-gray-900 dark:text-white">
-        {{ t('admin.settings.gatewayIPNotice.title') }}
-      </h2>
-      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.settings.gatewayIPNotice.description') }}</p>
-    </div>
-    <div class="space-y-5 p-6" :aria-busy="loading || saving">
-      <p v-if="loading" role="status" class="text-sm text-gray-500">{{ t('common.loading') }}</p>
-      <template v-else>
-        <div class="flex items-center justify-between gap-4">
-          <label for="gateway-ip-notice-enabled" class="font-medium text-gray-900 dark:text-white">
-            {{ t('admin.settings.gatewayIPNotice.enabled') }}
-          </label>
-          <input id="gateway-ip-notice-enabled" v-model="form.enabled" type="checkbox" :disabled="saving || loadFailed" class="h-4 w-4 rounded" />
-        </div>
-        <div>
-          <label for="gateway-ip-notice-ips" class="input-label">{{ t('admin.settings.gatewayIPNotice.ips') }}</label>
-          <textarea id="gateway-ip-notice-ips" v-model="ipText" rows="5" class="input w-full font-mono" :disabled="saving || loadFailed" :aria-describedby="'gateway-ip-notice-ip-hint'" spellcheck="false" />
-          <p id="gateway-ip-notice-ip-hint" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.gatewayIPNotice.ipHint') }}</p>
-        </div>
-        <div>
-          <label for="gateway-ip-notice-message" class="input-label">{{ t('admin.settings.gatewayIPNotice.message') }}</label>
-          <textarea id="gateway-ip-notice-message" v-model="form.message" rows="3" maxlength="2048" class="input w-full" :disabled="saving || loadFailed" />
-        </div>
-        <div>
-          <label for="gateway-ip-notice-rpm" class="input-label">{{ t('admin.settings.gatewayIPNotice.rpm') }}</label>
-          <input id="gateway-ip-notice-rpm" v-model.number="form.rpm" type="number" min="1" max="100000" step="1" class="input w-36" :disabled="saving || loadFailed" />
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.gatewayIPNotice.rpmHint') }}</p>
-        </div>
-        <div v-if="form.message" class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800">
-          <p class="mb-2 text-xs font-medium text-gray-500">{{ t('admin.settings.gatewayIPNotice.preview') }}</p>
-          <p class="whitespace-pre-wrap break-words text-sm text-gray-900 dark:text-gray-100">{{ form.message }}</p>
-        </div>
-        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.gatewayIPNotice.effectiveHint') }}</p>
-        <p v-if="error" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
-        <div class="flex justify-end gap-3 border-t border-gray-100 pt-4 dark:border-dark-700">
-          <button v-if="loadFailed" type="button" class="btn btn-secondary btn-sm" @click="load">{{ t('admin.settings.gatewayIPNotice.retry') }}</button>
-          <button type="button" class="btn btn-primary btn-sm" :disabled="saving || loadFailed" @click="save">
-            {{ saving ? t('common.saving') : t('common.save') }}
-          </button>
-        </div>
+  <SettingsSection
+    :title="t('admin.settings.gatewayIPNotice.title')"
+    :description="t('admin.settings.gatewayIPNotice.description')"
+    :loading="loading"
+    :aria-busy="loading || saving"
+  >
+    <template #actions>
+      <UButton v-if="loadFailed" color="neutral" variant="outline" data-testid="gateway-ip-notice-retry" @click="load">
+        {{ t('admin.settings.gatewayIPNotice.retry') }}
+      </UButton>
+      <UButton data-testid="gateway-ip-notice-save" :loading="saving" :disabled="saving || loadFailed" @click="save">
+        {{ saving ? t('common.saving') : t('common.save') }}
+      </UButton>
+    </template>
+    <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
+    <UFormField :label="t('admin.settings.gatewayIPNotice.enabled')" class="flex items-center justify-between gap-4">
+      <Toggle id="gateway-ip-notice-enabled" v-model="form.enabled" :disabled="saving || loadFailed" />
+    </UFormField>
+    <UFormField :label="t('admin.settings.gatewayIPNotice.ips')" :description="t('admin.settings.gatewayIPNotice.ipHint')" :ui="{ container: 'w-full mt-3' }">
+      <UTextarea
+        id="gateway-ip-notice-ips"
+        v-model="ipText"
+        :rows="5"
+        autoresize
+        :disabled="saving || loadFailed"
+        spellcheck="false"
+        class="w-full font-mono"
+      />
+    </UFormField>
+    <UFormField :label="t('admin.settings.gatewayIPNotice.message')" :ui="{ container: 'w-full mt-3' }">
+      <UTextarea id="gateway-ip-notice-message" v-model="form.message" :rows="3" autoresize maxlength="2048" :disabled="saving || loadFailed" class="w-full" />
+      <template v-if="form.message" #help>
+        <span class="block text-xs font-medium text-muted">{{ t('admin.settings.gatewayIPNotice.preview') }}</span>
+        <span class="mt-1 block whitespace-pre-wrap wrap-break-word text-sm text-highlighted">{{ form.message }}</span>
       </template>
-    </div>
-    <TotpStepUpDialog :controller="stepUp" />
-  </section>
+    </UFormField>
+    <UFormField
+      :label="t('admin.settings.gatewayIPNotice.rpm')"
+      :description="t('admin.settings.gatewayIPNotice.rpmHint')"
+      :help="t('admin.settings.gatewayIPNotice.effectiveHint')"
+      class="flex max-sm:flex-col justify-between items-start gap-4"
+    >
+      <UInput id="gateway-ip-notice-rpm" v-model.number="form.rpm" type="number" min="1" max="100000" step="1" :disabled="saving || loadFailed" class="w-36" />
+    </UFormField>
+  </SettingsSection>
+  <TotpStepUpDialog :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
@@ -55,6 +55,8 @@ import { useAppStore } from '@/stores'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import Toggle from '@/components/common/Toggle.vue'
+import SettingsSection from './SettingsSection.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()

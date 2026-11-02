@@ -7,137 +7,98 @@
   >
     <form id="account-ops-batch-rule-form" class="space-y-5" @submit.prevent="save">
       <div class="space-y-3">
-        <p class="text-sm font-medium text-gray-900 dark:text-gray-100">
+        <p class="text-sm font-medium text-highlighted">
           {{ isMixed ? t('accountOps.batchMixedRuleScope') : t('accountOps.batchRuleScope', { count: accounts.length }) }}
         </p>
-        <p class="rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/20 dark:text-amber-300">
-          {{ t('accountOps.batchReplaceHint') }}
-        </p>
-        <p v-if="!validSelection" role="alert" class="text-sm text-red-600 dark:text-red-400">
+        <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('accountOps.batchReplaceHint')" />
+        <p v-if="!validSelection" role="alert" class="text-sm text-error">
           {{ t('accountOps.batchInvalidSelection') }}
         </p>
-        <p v-else-if="mixedUnits" role="alert" class="text-sm text-red-600 dark:text-red-400">
+        <p v-else-if="mixedUnits" role="alert" class="text-sm text-error">
           {{ t('accountOps.batchMixedUnits') }}
         </p>
       </div>
 
-      <div class="grid gap-5" :class="{ 'sm:grid-cols-2': isMixed }">
+      <div class="grid gap-x-8 gap-y-5" :class="{ 'sm:grid-cols-2': isMixed }">
         <fieldset
           v-for="section in sections"
           :key="section.metric"
           :disabled="busy"
           class="min-w-0 space-y-5"
-          :class="{ 'rounded-xl border border-gray-200 p-4 dark:border-dark-700': isMixed }"
         >
-          <legend class="px-1 text-sm font-semibold text-gray-900 dark:text-gray-100">
+          <legend class="text-sm font-semibold text-highlighted">
             {{ t(section.metric === 'quota' ? 'accountOps.batchQuotaRules' : 'accountOps.batchBalanceRules') }}
           </legend>
-          <details class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
-            <summary class="cursor-pointer text-xs text-gray-600 dark:text-gray-300">
-              {{ t('accountOps.selectedAccounts', { count: section.accounts.length }) }}
-            </summary>
-            <ul class="mt-3 max-h-32 space-y-2 overflow-y-auto">
-              <li v-for="account in section.accounts" :key="account.account_id" class="break-words text-sm">
-                <span class="font-medium">{{ account.account_name }}</span>
-                <span class="ml-2 text-xs text-gray-500">
-                  #{{ account.account_id }}<template v-if="account.type === 'apikey'"> · {{ account.unit }}</template>
-                </span>
-              </li>
-            </ul>
-          </details>
-          <label class="flex items-center justify-between text-sm">
-            <span>{{ t('accountOps.ruleEnabled') }}</span>
-            <input
-              v-model="section.form.enabled"
-              type="checkbox"
-              :data-testid="`${section.testIdPrefix}-enabled`"
-            />
-          </label>
-          <label class="block space-y-2 text-sm">
-            <span>{{ t('accountOps.thresholdValue') }}</span>
-            <div class="flex items-center gap-2">
-              <input
-                v-model="section.form.threshold"
-                type="number"
-                :min="section.metric === 'quota' ? 0.01 : 0"
-                :max="section.metric === 'quota' ? 100 : 1e12"
-                step="any"
-                class="input w-full"
-                :data-testid="`${section.testIdPrefix}-threshold`"
-              />
-              <span class="shrink-0 text-gray-500">
-                {{ section.metric === 'quota' ? '%' : mixedUnits ? '—' : unit }}
-              </span>
-            </div>
-          </label>
-          <label v-if="section.metric === 'quota'" class="block space-y-2 text-sm">
-            <span>{{ t('accountOps.quotaWindow') }}</span>
-            <select
-              v-model="section.form.window"
-              class="input w-full"
-              :data-testid="`${section.testIdPrefix}-window`"
+          <UCollapsible :unmount-on-hide="false" class="pt-3">
+            <UButton color="neutral" variant="link" size="xs" class="p-0" trailing-icon="i-lucide-chevron-down" :label="t('accountOps.selectedAccounts', { count: section.accounts.length })" />
+            <template #content>
+              <ul class="mt-2 max-h-32 space-y-2 overflow-y-auto">
+                <li v-for="account in section.accounts" :key="account.account_id" class="wrap-break-word text-sm text-default">
+                  <span class="font-medium">{{ account.account_name }}</span>
+                  <span class="ml-2 text-xs text-muted">
+                    #{{ account.account_id }}<template v-if="account.type === 'apikey'"> · {{ account.unit }}</template>
+                  </span>
+                </li>
+              </ul>
+            </template>
+          </UCollapsible>
+          <USwitch v-model="section.form.enabled" :label="t('accountOps.ruleEnabled')" :data-testid="`${section.testIdPrefix}-enabled`" />
+          <UFormField :label="t('accountOps.thresholdValue')">
+            <UInput
+              :model-value="String(section.form.threshold)"
+              type="number"
+              @update:model-value="section.form.threshold = $event as string | number"
+              :min="section.metric === 'quota' ? 0.01 : 0"
+              :max="section.metric === 'quota' ? 100 : 1e12"
+              step="any"
+              class="w-full"
+              :data-testid="`${section.testIdPrefix}-threshold`"
             >
-              <option value="any">{{ t('accountOps.anyWindow') }}</option>
-              <option v-for="window in commonWindows" :key="window.window" :value="window.window">
-                {{ window.label }}
-              </option>
-            </select>
-          </label>
-          <div class="space-y-3 border-y border-gray-200 py-4 dark:border-dark-700">
-            <p class="text-sm font-medium">{{ t('accountOps.transitionNotices') }}</p>
-            <label class="flex items-start gap-3 text-sm">
-              <input
-                v-model="section.form.notifyAlert"
-                type="checkbox"
-                class="mt-1"
-                :data-testid="`${section.testIdPrefix}-notify-alert`"
-              />
-              <span>
-                {{ t('accountOps.notifyAlert') }}
-                <small class="mt-1 block text-xs leading-5 text-gray-500">
-                  {{ t('accountOps.notifyAlertHint') }}
-                </small>
-              </span>
-            </label>
-            <label class="flex items-start gap-3 text-sm">
-              <input
-                v-model="section.form.notifyRecovery"
-                type="checkbox"
-                class="mt-1"
-                :data-testid="`${section.testIdPrefix}-notify-recovery`"
-              />
-              <span>
-                {{ t('accountOps.notifyRecovery') }}
-                <small class="mt-1 block text-xs leading-5 text-gray-500">
-                  {{ t('accountOps.notifyRecoveryHint') }}
-                </small>
-              </span>
-            </label>
+              <template #trailing>
+                <span class="text-xs text-muted">{{ section.metric === 'quota' ? '%' : mixedUnits ? '—' : unit }}</span>
+              </template>
+            </UInput>
+          </UFormField>
+          <UFormField v-if="section.metric === 'quota'" :label="t('accountOps.quotaWindow')">
+            <USelect
+              v-model="section.form.window"
+              :items="windowItems"
+              class="w-full"
+              :data-testid="`${section.testIdPrefix}-window`"
+            />
+          </UFormField>
+          <div class="space-y-3">
+            <p class="text-sm font-medium text-highlighted">{{ t('accountOps.transitionNotices') }}</p>
+            <UCheckbox
+              v-model="section.form.notifyAlert"
+              :label="t('accountOps.notifyAlert')"
+              :description="t('accountOps.notifyAlertHint')"
+              :data-testid="`${section.testIdPrefix}-notify-alert`"
+            />
+            <UCheckbox
+              v-model="section.form.notifyRecovery"
+              :label="t('accountOps.notifyRecovery')"
+              :description="t('accountOps.notifyRecoveryHint')"
+              :data-testid="`${section.testIdPrefix}-notify-recovery`"
+            />
           </div>
-          <p class="text-xs leading-5 text-gray-500">
+          <p class="text-xs leading-5 text-muted">
             {{ t(section.metric === 'quota' ? 'accountOps.quotaOnceHint' : 'accountOps.balanceOnceHint') }}
           </p>
         </fieldset>
       </div>
     </form>
     <template #footer>
-      <button
-        type="button"
-        class="btn btn-secondary"
-        data-testid="cancel-batch-rules"
-        @click="close"
-      >
-        {{ t('common.cancel') }}
-      </button>
-      <button
-        type="submit"
-        form="account-ops-batch-rule-form"
-        class="btn btn-primary"
-        data-testid="save-batch-rules"
-        :disabled="busy || !validSelection || mixedUnits"
-      >
-        {{ busy ? t('common.loading') : t('accountOps.saveBatchRules', { count: accounts.length }) }}
-      </button>
+      <div class="flex justify-end gap-2">
+        <UButton color="neutral" variant="subtle" data-testid="cancel-batch-rules" :label="t('common.cancel')" @click="close" />
+        <UButton
+          type="submit"
+          form="account-ops-batch-rule-form"
+          data-testid="save-batch-rules"
+          :disabled="busy || !validSelection || mixedUnits"
+          :label="busy ? t('common.loading') : t('accountOps.saveBatchRules', { count: accounts.length })"
+        />
+      </div>
     </template>
   </BaseDialog>
 </template>
@@ -188,6 +149,7 @@ const mixedUnits = computed(() => balanceAccounts.value.some(account => account.
 const commonWindows = computed(() => (quotaAccounts.value[0]?.usage_windows ?? [])
   .filter(window => window.window !== 'any'
     && quotaAccounts.value.every(account => account.usage_windows.some(candidate => candidate.window === window.window))))
+const windowItems = computed(() => [{ value: 'any', label: t('accountOps.anyWindow') }, ...commonWindows.value.map(window => ({ value: window.window, label: window.label }))])
 const sections = computed<RuleSection[]>(() => {
   const result: RuleSection[] = []
   if (balanceAccounts.value.length) result.push({

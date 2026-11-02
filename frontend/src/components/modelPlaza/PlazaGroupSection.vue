@@ -132,6 +132,10 @@ const longContextNote = computed(() => {
   border-bottom: 1px solid var(--signal-line);
 }
 
+/* One hairline card: no heavy top rule on the header; small shadow in light mode only. */
+.console-signal .plaza-group .plaza-group-header { border-top: 0; }
+html:not(.dark) .console-signal .plaza-group { box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05); }
+
 .plaza-chip {
   display: inline-flex;
   align-items: center;

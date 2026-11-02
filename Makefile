@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
+.PHONY: build build-backend build-frontend build-ssr verify-embed verify-ssr release-ssr test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
 	src/data/__tests__/apiDocs.spec.ts \
@@ -100,9 +100,28 @@ build: build-frontend build-backend
 build-backend:
 	@$(MAKE) -C backend build
 
-# 编译前端（需要已安装依赖）
+# 编译前端（需要已安装依赖）。构建末尾会写 backend/internal/web/dist/frontend-build.json，
+# 记录版本/commit/文件哈希；后端嵌入的就是这个清单描述的产物。
 build-frontend:
 	@pnpm --dir frontend run build
+
+# 校验后端将要嵌入的前端构建是否来自当前 checkout（CI 发布前同一步骤）。
+verify-embed:
+	@pnpm --dir frontend run verify:embed
+
+# Nuxt/Nitro SSR 产物。Nuxt 4.6.3 要求 Node ^22.22.3 或 ^24.15（CI 用 24.22.x）。
+build-ssr:
+	@pnpm --dir frontend run build:ssr
+
+verify-ssr:
+	@pnpm --dir frontend run verify:ssr
+
+# 把 Go 二进制（-tags=embed，内含 SPA 回滚页）与 SSR 产物合成一个发布目录：
+# release.json 绑定同一 commit，dist/ssr/ 可直接打包上传。
+release-ssr: build-frontend build-ssr build-backend verify-embed verify-ssr
+	@node deploy/nuxt/release.mjs seal --ssr frontend/.output --binary backend/bin/server --spa-dist backend/internal/web/dist --out release.json
+	@node deploy/nuxt/release.mjs verify --release release.json --ssr frontend/.output --binary backend/bin/server --spa-dist backend/internal/web/dist
+	@node deploy/nuxt/release.mjs stage --release release.json --ssr frontend/.output --binary backend/bin/server --out dist/ssr
 
 # 运行测试（后端 + 前端）
 # Public repository guard. Run before every commit; CI runs the same script.
@@ -122,4 +141,4 @@ test-frontend:
 	@pnpm --dir frontend exec vitest run --config dev/vitest.config.ts
 
 test-frontend-critical:
-	@pnpm --dir frontend exec vitest run $(FRONTEND_CRITICAL_VITEST)
+	@pnpm --dir frontend exec vitest run --minWorkers=1 --maxWorkers=1 --fileParallelism=false $(FRONTEND_CRITICAL_VITEST)

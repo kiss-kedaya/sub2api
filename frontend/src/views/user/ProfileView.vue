@@ -2,12 +2,9 @@
   <AppLayout>
     <div
       data-testid="profile-shell"
-      class="signal-account-page signal-profile mx-auto max-w-[950px] space-y-6"
+      class="signal-account-page mx-auto max-w-[950px] space-y-6"
     >
-      <header class="signal-account-heading">
-        <span class="signal-account-index">ACCOUNT</span>
-        <h1>{{ t('profile.title') }}</h1>
-      </header>
+      <UserPageHeader flush :title="t('profile.title')" />
       <ProfileInfoCard
         :user="user"
         :linuxdo-enabled="linuxdoOAuthEnabled"
@@ -19,22 +16,16 @@
         :wechat-mp-enabled="wechatOAuthMPEnabled"
       />
 
-      <div
+      <UAlert
         v-if="contactInfo"
-        class="signal-account-support"
-      >
-        <div class="flex items-center gap-4">
-          <div class="rounded-xl bg-primary-100 p-3 text-primary-600">
-            <Icon name="chat" size="lg" />
-          </div>
-          <div>
-            <h3 class="font-semibold text-primary-800 dark:text-primary-200">
-              {{ t('common.contactSupport') }}
-            </h3>
-            <p class="text-sm font-medium">{{ contactInfo }}</p>
-          </div>
-        </div>
-      </div>
+        color="neutral"
+        variant="outline"
+        icon="i-lucide-message-circle"
+        class="shadow-xs dark:shadow-none"
+        :title="t('common.contactSupport')"
+        :description="contactInfo"
+        :ui="{ description: 'font-medium break-all' }"
+      />
 
       <ProfilePasswordForm />
 
@@ -57,7 +48,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Icon } from '@/components/icons'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import ProfileBalanceNotifyCard from '@/components/user/profile/ProfileBalanceNotifyCard.vue'
 import ProfileInfoCard from '@/components/user/profile/ProfileInfoCard.vue'

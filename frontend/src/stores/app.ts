@@ -34,6 +34,9 @@ export const useAppStore = defineStore('app', () => {
   const docUrl = ref<string>('')
   const cachedPublicSettings = ref<PublicSettings | null>(null)
   let publicSettingsRequest: Promise<PublicSettings | null> | null = null
+  // Bumped whenever the cache is patched or cleared locally. A settings request
+  // that started before the patch must not overwrite the newer local state.
+  let publicSettingsVersion = 0
 
   // Version cache state
   const versionLoaded = ref<boolean>(false)
@@ -327,7 +330,12 @@ export const useAppStore = defineStore('app', () => {
     }
 
     // Check for injected config from server (eliminates flash)
-    if (!publicSettingsLoaded.value && !force && window.__APP_CONFIG__) {
+    if (
+      !publicSettingsLoaded.value &&
+      !force &&
+      typeof window !== 'undefined' &&
+      window.__APP_CONFIG__
+    ) {
       applySettings(window.__APP_CONFIG__)
       return Promise.resolve(window.__APP_CONFIG__)
     }
@@ -391,10 +399,16 @@ export const useAppStore = defineStore('app', () => {
         service_quota_enabled: false,
         affiliate_enabled: false,
         allow_user_view_error_requests: false,
+        theme_primary: 'sakura',
+        theme_neutral: 'neutral',
+        theme_radius: 0.375,
+        theme_font: 'system',
+        theme_default_mode: 'system',
       })
     }
 
     publicSettingsLoading.value = true
+    const requestVersion = publicSettingsVersion
     let apiRequest: Promise<PublicSettings>
     try {
       apiRequest = fetchPublicSettingsAPI()
@@ -406,6 +420,10 @@ export const useAppStore = defineStore('app', () => {
 
     const request = apiRequest
       .then((data) => {
+        if (requestVersion !== publicSettingsVersion) {
+          // A local patch landed while this request was in flight; keep it.
+          return cachedPublicSettings.value ?? data
+        }
         applySettings(data)
         return data
       })
@@ -428,8 +446,26 @@ export const useAppStore = defineStore('app', () => {
    * Clear public settings cache
    */
   function clearPublicSettingsCache(): void {
+    publicSettingsVersion += 1
     publicSettingsLoaded.value = false
     cachedPublicSettings.value = null
+  }
+
+  /**
+   * Apply a successful settings response without refetching the public payload.
+   * Only keys already present in the cached public payload are accepted, and a
+   * bump of the version counter makes an older in-flight GET keep the patch
+   * instead of replacing it with stale server data.
+   */
+  function patchPublicSettings(patch: Partial<PublicSettings>): void {
+    if (!cachedPublicSettings.value) return
+    const next: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) next[key] = value
+    }
+    if (Object.keys(next).length === 0) return
+    publicSettingsVersion += 1
+    applySettings({ ...cachedPublicSettings.value, ...next } as PublicSettings)
   }
 
   /**
@@ -438,7 +474,7 @@ export const useAppStore = defineStore('app', () => {
    * @returns true if config was found and applied, false otherwise
    */
   function initFromInjectedConfig(): boolean {
-    if (window.__APP_CONFIG__) {
+    if (typeof window !== 'undefined' && window.__APP_CONFIG__) {
       applySettings(window.__APP_CONFIG__)
       return true
     }
@@ -502,6 +538,7 @@ export const useAppStore = defineStore('app', () => {
 
     // Public settings actions
     fetchPublicSettings,
+    patchPublicSettings,
     clearPublicSettingsCache,
     initFromInjectedConfig
   }

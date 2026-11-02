@@ -1,62 +1,47 @@
 <template>
   <div class="w-full">
-    <label v-if="label" :for="id" class="input-label mb-1.5 block">
-      {{ label }}
-      <span v-if="required" class="text-red-500">*</span>
-    </label>
-    <div class="relative">
-      <!-- Prefix Icon Slot -->
-      <div
-        v-if="$slots.prefix"
-        class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-gray-400 dark:text-dark-400"
-      >
-        <slot name="prefix"></slot>
-      </div>
-
-      <input
+    <DefineControl>
+      <UInput
         :id="id"
         ref="inputRef"
         :type="type"
-        :value="modelValue"
+        :model-value="modelValue == null ? '' : String(modelValue)"
         :disabled="disabled"
         :required="required"
         :placeholder="placeholderText"
         :autocomplete="autocomplete"
         :readonly="readonly"
-        :class="[
-          'input w-full transition-all duration-200',
-          $slots.prefix ? 'pl-11' : '',
-          $slots.suffix ? 'pr-11' : '',
-          error ? 'input-error ring-2 ring-red-500/20' : '',
-          disabled ? 'cursor-not-allowed bg-gray-100 opacity-60 dark:bg-dark-900' : ''
-        ]"
-        @input="onInput"
+        class="w-full"
+        @update:model-value="onInput"
         @change="$emit('change', ($event.target as HTMLInputElement).value)"
         @blur="$emit('blur', $event)"
         @focus="$emit('focus', $event)"
         @keyup.enter="$emit('enter', $event)"
-      />
-
-      <!-- Suffix Slot (e.g. Password Toggle or Clear Button) -->
-      <div
-        v-if="$slots.suffix"
-        class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 dark:text-dark-400"
       >
-        <slot name="suffix"></slot>
-      </div>
-    </div>
-    <!-- Hint / Error Text -->
-    <p v-if="error" class="input-error-text mt-1.5">
-      {{ error }}
-    </p>
-    <p v-else-if="hint" class="input-hint mt-1.5">
-      {{ hint }}
-    </p>
+        <template v-if="$slots.prefix" #leading>
+          <span class="pointer-events-none flex items-center text-dimmed">
+            <slot name="prefix"></slot>
+          </span>
+        </template>
+        <!-- Suffix slot (e.g. password toggle or clear button) stays clickable. -->
+        <template v-if="$slots.suffix" #trailing>
+          <slot name="suffix"></slot>
+        </template>
+      </UInput>
+    </DefineControl>
+
+    <!-- A field wrapper only when this component shows its own label / hint / error,
+         so a page-level UFormField around <Input> keeps its own label link. -->
+    <UFormField v-if="label || error || hint" :label="label" :required="required" :error="error || false" :help="hint">
+      <ReuseControl />
+    </UFormField>
+    <ReuseControl v-else />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { createReusableTemplate } from '@vueuse/core'
 
 interface Props {
   modelValue: string | number | null | undefined
@@ -87,17 +72,18 @@ const emit = defineEmits<{
   (e: 'enter', event: KeyboardEvent): void
 }>()
 
-const inputRef = ref<HTMLInputElement | null>(null)
+const [DefineControl, ReuseControl] = createReusableTemplate()
+
+const inputRef = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
 const placeholderText = computed(() => props.placeholder || '')
 
-const onInput = (event: Event) => {
-  const value = (event.target as HTMLInputElement).value
-  emit('update:modelValue', value)
+const onInput = (value: string | null | undefined) => {
+  emit('update:modelValue', value == null ? '' : String(value))
 }
 
 // Expose focus method
 defineExpose({
-  focus: () => inputRef.value?.focus(),
-  select: () => inputRef.value?.select()
+  focus: () => inputRef.value?.inputRef?.focus(),
+  select: () => inputRef.value?.inputRef?.select()
 })
 </script>

@@ -28,10 +28,10 @@ describe('group account rule selection', () => {
   it('selects visible groups and emits all of their members for bulk editing', async () => {
     const wrapper = create()
     expect(wrapper.get('[data-testid="select-visible-groups"]').attributes('disabled')).toBeUndefined()
-    await wrapper.get('[data-testid="select-visible-groups"]').setValue(true)
+    await wrapper.get('[data-testid="select-visible-groups"]').trigger('click')
     await wrapper.get('[data-testid="batch-edit-rules"]').trigger('click')
     expect(wrapper.emitted('batch-edit')).toEqual([[accounts]])
-    await wrapper.get('[data-testid="select-group-manual-primary"]').setValue(false)
+    await wrapper.get('[data-testid="select-group-manual-primary"]').trigger('click')
     await wrapper.get('[data-testid="batch-edit-rules"]').trigger('click')
     expect(wrapper.emitted('batch-edit')?.[1]).toEqual([[accounts[2]]])
     wrapper.unmount()
@@ -39,10 +39,10 @@ describe('group account rule selection', () => {
 
   it('filters by group and prunes selection after filtering', async () => {
     const wrapper = create()
-    await wrapper.get('[data-testid="select-group-manual-primary"]').setValue(true)
+    await wrapper.get('[data-testid="select-group-manual-primary"]').trigger('click')
     await wrapper.get('input[aria-label="accountOps.search"]').setValue('Secondary')
-    expect((wrapper.get('[data-testid="select-group-manual-secondary"]').element as HTMLInputElement).checked).toBe(false)
-    await wrapper.get('[data-testid="select-group-manual-secondary"]').setValue(true)
+    expect(wrapper.get('[data-testid="select-group-manual-secondary"]').attributes('aria-checked')).toBe('false')
+    await wrapper.get('[data-testid="select-group-manual-secondary"]').trigger('click')
     await wrapper.get('[data-testid="batch-edit-rules"]').trigger('click')
     expect(wrapper.emitted('batch-edit')?.[0]).toEqual([[accounts[2]]])
     wrapper.unmount()
@@ -52,7 +52,7 @@ describe('group account rule selection', () => {
     const empty: AccountOpsGroup = { id: 'manual-empty', name: 'Empty', default_name: 'Empty', provider: 'sub2api', site: 'https://empty.example.com', mode: 'manual', account_ids: [] }
     const wrapper = mount(RuleList, { props: { accounts, groups: [...groups, empty], config, loading: false, ready: true, error: '', busy: false } })
     expect(wrapper.get('[data-testid="rule-row-manual-empty"]').exists()).toBe(true)
-    await wrapper.get('[data-testid="select-group-manual-secondary"]').setValue(true)
+    await wrapper.get('[data-testid="select-group-manual-secondary"]').trigger('click')
     await wrapper.setProps({ busy: true })
     expect(wrapper.get('[data-testid="batch-edit-rules"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[data-testid="select-group-manual-secondary"]').attributes('disabled')).toBeDefined()

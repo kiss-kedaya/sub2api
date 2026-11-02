@@ -1,29 +1,16 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <section
-        class="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-dark-700 sm:flex-row sm:items-end sm:justify-between"
-      >
-        <div class="min-w-0">
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-            {{ t("admin.plugins.title") }}
-          </h2>
-          <p class="mt-1 max-w-3xl text-sm text-gray-500 dark:text-gray-400">
-            {{ t("admin.plugins.description") }}
-          </p>
-          <div
-            class="mt-3 flex flex-wrap gap-2 text-xs text-gray-600 dark:text-gray-300"
-          >
-            <span class="rounded bg-gray-100 px-2 py-1 dark:bg-dark-700">{{
-              t("admin.plugins.onlyOpenAI")
-            }}</span>
-            <span class="rounded bg-gray-100 px-2 py-1 dark:bg-dark-700">{{
-              t("admin.plugins.noAccountCoupling")
-            }}</span>
+      <AdminPageHeader :title="t('admin.plugins.title')" :description="t('admin.plugins.description')">
+        <template #meta>
+          <div class="flex flex-wrap gap-1.5">
+            <UBadge color="neutral" variant="subtle" :label="t('admin.plugins.onlyOpenAI')" />
+            <UBadge color="neutral" variant="subtle" :label="t('admin.plugins.noAccountCoupling')" />
           </div>
-        </div>
+        </template>
 
-        <div class="flex flex-shrink-0 items-center gap-2">
+        <template #actions>
+          <!-- Hidden native picker behind the upload button (no Nuxt UI equivalent for a programmatic picker) -->
           <input
             ref="fileInput"
             class="hidden"
@@ -31,286 +18,159 @@
             accept=".s2plugin,application/zip"
             @change="handleFileSelected"
           />
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="uploading"
-            @click="fileInput?.click()"
-          >
-            <Icon name="upload" size="sm" />
-            {{ uploading ? t("common.processing") : t("admin.plugins.upload") }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-secondary"
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            square
             :disabled="loading"
+            :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
             :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
             @click="loadPlugins"
-          >
-            <Icon name="refresh" size="sm" />
-            <span class="sr-only">{{ t("common.refresh") }}</span>
-          </button>
-        </div>
-      </section>
+          />
+          <UButton
+            icon="i-lucide-upload"
+            :loading="uploading"
+            :title="t('admin.plugins.uploadHint')"
+            :label="uploading ? t('common.processing') : t('admin.plugins.upload')"
+            @click="fileInput?.click()"
+          />
+        </template>
+      </AdminPageHeader>
 
-      <p class="text-xs text-gray-500 dark:text-gray-400">
-        {{ t("admin.plugins.uploadHint") }}
-      </p>
+      <UAlert color="neutral" variant="subtle" icon="i-lucide-info">
+        <template #description>
+          <p>{{ t("admin.plugins.runtimeNotice") }}</p>
+          <p class="mt-1">{{ t("admin.plugins.menuNotice") }}</p>
+        </template>
+      </UAlert>
 
-      <div
-        class="border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200"
-      >
-        <p>{{ t("admin.plugins.runtimeNotice") }}</p>
-        <p class="mt-1">{{ t("admin.plugins.menuNotice") }}</p>
-      </div>
-
-      <div
-        v-if="loading"
-        class="flex min-h-48 items-center justify-center text-sm text-gray-500"
-      >
+      <div v-if="loading" class="flex min-h-48 items-center justify-center gap-2 text-sm text-muted">
+        <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" />
         {{ t("common.loading") }}
       </div>
 
-      <div
-        v-else-if="plugins.length === 0"
-        class="flex min-h-56 flex-col items-center justify-center border border-dashed border-gray-300 px-6 text-center dark:border-dark-600"
-      >
-        <Icon name="cube" size="xl" class="text-gray-400" />
-        <p class="mt-3 font-medium text-gray-800 dark:text-gray-200">
-          {{ t("admin.plugins.empty") }}
-        </p>
-        <p class="mt-1 max-w-lg text-sm text-gray-500 dark:text-gray-400">
-          {{ t("admin.plugins.emptyHint") }}
-        </p>
+      <div v-else-if="plugins.length === 0" class="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+        <UIcon name="i-lucide-box" class="size-10 text-dimmed" />
+        <p class="mt-3 font-medium text-highlighted">{{ t("admin.plugins.empty") }}</p>
+        <p class="mt-1 max-w-lg text-sm text-muted">{{ t("admin.plugins.emptyHint") }}</p>
       </div>
 
-      <div v-else class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <article
+      <!-- Installed plugins: one quiet row each (inbox list pattern) -->
+      <ul v-else class="divide-y divide-default border-y border-default">
+        <li
           v-for="plugin in plugins"
           :key="plugin.id"
-          class="card overflow-hidden border border-gray-200 dark:border-dark-700"
+          class="flex flex-col gap-4 py-5 lg:flex-row lg:items-start"
         >
-          <div
-            class="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 p-5 dark:border-dark-700"
-          >
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-2">
-                <h3
-                  class="truncate text-base font-semibold text-gray-900 dark:text-white"
-                >
-                  {{ plugin.name }}
-                </h3>
-                <span class="font-mono text-xs text-gray-500"
-                  >v{{ plugin.version }}</span
-                >
-                <span
-                  class="rounded px-2 py-0.5 text-xs font-medium"
-                  :class="stateClass(plugin.state)"
-                >
-                  {{ t(`admin.plugins.${plugin.state}`) }}
-                </span>
-              </div>
-              <p class="mt-1 text-xs text-gray-500">
-                {{ plugin.plugin_key
-                }}<span v-if="plugin.author"> · {{ plugin.author }}</span>
-              </p>
-              <p
-                v-if="plugin.description"
-                class="mt-2 text-sm text-gray-600 dark:text-gray-300"
-              >
-                {{ plugin.description }}
-              </p>
+          <div class="min-w-0 flex-1 space-y-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <h3 class="truncate text-base font-semibold text-highlighted">{{ plugin.name }}</h3>
+              <span class="font-mono text-xs text-muted">v{{ plugin.version }}</span>
+              <UBadge :color="stateColor(plugin.state)" variant="subtle" :label="t(`admin.plugins.${plugin.state}`)" />
             </div>
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm"
-              @click="openConfiguration(plugin)"
-            >
-              <Icon name="cog" size="sm" />
-              {{ t("admin.plugins.configure") }}
-            </button>
-          </div>
+            <p class="text-xs text-muted">
+              {{ plugin.plugin_key }}<span v-if="plugin.author"> · {{ plugin.author }}</span>
+            </p>
+            <p v-if="plugin.description" class="text-sm text-default">{{ plugin.description }}</p>
 
-          <div class="grid grid-cols-1 gap-x-6 gap-y-4 p-5 md:grid-cols-2">
-            <div>
-              <p class="text-xs font-medium uppercase text-gray-500">
-                {{ t("admin.plugins.compatibility") }}
-              </p>
-              <div class="mt-2 flex items-center gap-2">
-                <span
-                  class="rounded px-2 py-0.5 text-xs font-medium"
-                  :class="compatibilityClass(plugin.compatibility.status)"
-                >
-                  {{ t(`admin.plugins.${plugin.compatibility.status}`) }}
-                </span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{
-                  plugin.compatibility.message
-                }}</span>
-              </div>
-              <dl
-                class="mt-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs"
-              >
-                <dt class="text-gray-500">
-                  {{ t("admin.plugins.currentVersion") }}
-                </dt>
-                <dd class="font-mono text-gray-800 dark:text-gray-200">
-                  {{ plugin.compatibility.current_sub2api_version }}
-                </dd>
-                <dt class="text-gray-500">
-                  {{ t("admin.plugins.requiredVersion") }}
-                </dt>
-                <dd class="font-mono text-gray-800 dark:text-gray-200">
-                  {{ plugin.compatibility.required_sub2api_version }}
-                </dd>
-                <dt class="text-gray-500">
-                  {{ t("admin.plugins.recommendedVersion") }}
-                </dt>
-                <dd class="font-mono text-gray-800 dark:text-gray-200">
-                  {{ plugin.compatibility.recommended_sub2api_version || "-" }}
-                </dd>
-              </dl>
-            </div>
-
-            <div>
-              <p class="text-xs font-medium uppercase text-gray-500">
-                {{ t("admin.plugins.runtime") }}
-              </p>
-              <div class="mt-2 flex flex-wrap gap-2 text-xs">
-                <span
-                  class="rounded px-2 py-0.5"
-                  :class="
-                    plugin.runtime_healthy
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                      : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
-                  "
-                >
-                  {{
-                    plugin.runtime_healthy
-                      ? t("admin.plugins.healthy")
-                      : t("admin.plugins.unhealthy")
-                  }}
-                </span>
-                <span
-                  class="rounded bg-gray-100 px-2 py-0.5 text-gray-600 dark:bg-dark-700 dark:text-gray-300"
-                >
-                  {{ t("admin.plugins.signature") }}:
-                  {{ t(`admin.plugins.${plugin.signature_status}`) }}
-                </span>
-              </div>
-              <p
-                v-if="plugin.last_error"
-                class="mt-3 break-words text-xs text-red-600 dark:text-red-400"
-              >
-                {{ plugin.last_error }}
-              </p>
-              <p
-                v-else-if="plugin.runtime_message"
-                class="mt-3 break-words text-xs text-gray-500"
-              >
-                {{ plugin.runtime_message }}
-              </p>
-            </div>
-
-            <div class="md:col-span-2">
-              <label
-                class="flex items-center justify-between gap-4 text-xs font-medium text-gray-600 dark:text-gray-300"
-              >
-                <span>{{ t("admin.plugins.rollout") }}</span>
-                <span class="w-11 text-right font-mono"
-                  >{{
-                    rolloutValues[plugin.id] ?? currentRollout(plugin)
-                  }}%</span
-                >
-              </label>
-              <input
-                :value="rolloutValues[plugin.id] ?? currentRollout(plugin)"
-                type="range"
-                min="1"
-                max="100"
-                step="1"
-                class="mt-2 w-full accent-primary-600"
-                :disabled="hasEnabledBinding(plugin)"
-                @input="setRollout(plugin.id, $event)"
+            <div class="flex flex-wrap items-center gap-1.5 pt-1">
+              <UBadge
+                :color="compatibilityColor(plugin.compatibility.status)"
+                variant="subtle"
+                :label="`${t('admin.plugins.compatibility')}: ${t(`admin.plugins.${plugin.compatibility.status}`)}`"
               />
+              <UBadge
+                :color="plugin.runtime_healthy ? 'success' : 'neutral'"
+                variant="subtle"
+                :label="`${t('admin.plugins.runtime')}: ${plugin.runtime_healthy ? t('admin.plugins.healthy') : t('admin.plugins.unhealthy')}`"
+              />
+              <UBadge
+                color="neutral"
+                variant="outline"
+                :label="`${t('admin.plugins.signature')}: ${t(`admin.plugins.${plugin.signature_status}`)}`"
+              />
+              <span v-if="plugin.compatibility.message" class="text-xs text-muted">{{ plugin.compatibility.message }}</span>
             </div>
+
+            <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              <div class="flex gap-1">
+                <dt class="text-muted">{{ t("admin.plugins.currentVersion") }}</dt>
+                <dd class="font-mono text-default">{{ plugin.compatibility.current_sub2api_version }}</dd>
+              </div>
+              <div class="flex gap-1">
+                <dt class="text-muted">{{ t("admin.plugins.requiredVersion") }}</dt>
+                <dd class="font-mono text-default">{{ plugin.compatibility.required_sub2api_version }}</dd>
+              </div>
+              <div class="flex gap-1">
+                <dt class="text-muted">{{ t("admin.plugins.recommendedVersion") }}</dt>
+                <dd class="font-mono text-default">{{ plugin.compatibility.recommended_sub2api_version || "-" }}</dd>
+              </div>
+            </dl>
+
+            <p v-if="plugin.last_error" class="wrap-break-word text-xs text-error">{{ plugin.last_error }}</p>
+            <p v-else-if="plugin.runtime_message" class="wrap-break-word text-xs text-muted">{{ plugin.runtime_message }}</p>
           </div>
 
-          <div
-            class="flex flex-wrap justify-end gap-2 border-t border-gray-100 px-5 py-4 dark:border-dark-700"
-          >
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm"
-              :disabled="busyID === plugin.id"
-              @click="testPlugin(plugin)"
-            >
-              <Icon name="beaker" size="sm" />
-              {{ t("admin.plugins.test") }}
-            </button>
-            <button
-              v-if="hasEnabledBinding(plugin)"
-              type="button"
-              class="btn btn-secondary btn-sm"
-              :disabled="busyID === plugin.id"
-              @click="disablePlugin(plugin)"
-            >
-              <Icon name="ban" size="sm" />
-              {{ t("admin.plugins.disable") }}
-            </button>
-            <button
-              v-else
-              type="button"
-              class="btn btn-primary btn-sm"
-              :disabled="
-                busyID === plugin.id ||
-                plugin.state === 'starting' ||
-                !plugin.compatibility.compatible
-              "
-              @click="enablePlugin(plugin)"
-            >
-              <Icon name="play" size="sm" />
-              {{ t("admin.plugins.enable") }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-danger btn-sm"
-              :disabled="busyID === plugin.id || hasEnabledBinding(plugin)"
-              @click="uninstallPlugin(plugin)"
-            >
-              <Icon name="trash" size="sm" />
-              {{ t("admin.plugins.uninstall") }}
-            </button>
+          <div class="w-full space-y-2 lg:w-60">
+            <div class="flex items-center justify-between gap-4 text-xs font-medium text-muted">
+              <span>{{ t("admin.plugins.rollout") }}</span>
+              <span class="font-mono text-default">{{ rolloutValues[plugin.id] ?? currentRollout(plugin) }}%</span>
+            </div>
+            <USlider
+              :model-value="rolloutValues[plugin.id] ?? currentRollout(plugin)"
+              :min="1"
+              :max="100"
+              :step="1"
+              :disabled="hasEnabledBinding(plugin)"
+              :aria-label="t('admin.plugins.rollout')"
+              @update:model-value="(value: number | number[] | undefined) => setRollout(plugin.id, value)"
+            />
           </div>
-        </article>
-      </div>
+
+          <div class="flex flex-wrap items-center gap-1.5 lg:justify-end">
+            <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-settings" :label="t('admin.plugins.configure')" @click="openConfiguration(plugin)" />
+            <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-flask-conical" :disabled="busyID === plugin.id" :label="t('admin.plugins.test')" @click="testPlugin(plugin)" />
+            <UButton
+              v-if="hasEnabledBinding(plugin)"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              icon="i-lucide-ban"
+              :disabled="busyID === plugin.id"
+              :label="t('admin.plugins.disable')"
+              @click="disablePlugin(plugin)"
+            />
+            <UButton
+              v-else
+              size="sm"
+              icon="i-lucide-play"
+              :disabled="busyID === plugin.id || plugin.state === 'starting' || !plugin.compatibility.compatible"
+              :label="t('admin.plugins.enable')"
+              @click="enablePlugin(plugin)"
+            />
+            <UDropdownMenu :items="pluginMenuItems(plugin)" :content="{ align: 'end' }">
+              <UButton color="neutral" variant="ghost" size="sm" square icon="i-lucide-ellipsis" :aria-label="t('common.more')" />
+            </UDropdownMenu>
+          </div>
+        </li>
+      </ul>
 
       <BaseDialog
         :show="configPlugin !== null"
-        :title="
-          t('admin.plugins.configTitle', { name: configPlugin?.name || '' })
-        "
+        :title="t('admin.plugins.configTitle', { name: configPlugin?.name || '' })"
         width="full"
         @close="closeConfiguration"
       >
-        <div
-          class="relative min-h-[520px] overflow-hidden bg-gray-50 dark:bg-dark-900"
-          :style="{ height: `${iframeHeight}px` }"
-        >
-          <div
-            v-if="uiLoading"
-            class="absolute inset-0 z-10 flex items-center justify-center text-sm text-gray-500"
-          >
+        <div class="relative min-h-[520px] overflow-hidden bg-elevated" :style="{ height: `${iframeHeight}px` }">
+          <div v-if="uiLoading" class="absolute inset-0 z-10 flex items-center justify-center text-sm text-muted">
             {{ t("admin.plugins.loadingUI") }}
           </div>
-          <div
-            v-if="uiError"
-            class="absolute inset-0 z-20 flex flex-col items-center justify-center p-8 text-center"
-          >
-            <Icon name="exclamationTriangle" size="xl" class="text-amber-500" />
-            <p class="mt-3 font-medium text-gray-800 dark:text-gray-200">
-              {{ t("admin.plugins.uiUnavailable") }}
-            </p>
-            <p class="mt-1 max-w-xl text-sm text-gray-500">{{ uiError }}</p>
+          <div v-if="uiError" class="absolute inset-0 z-20 flex flex-col items-center justify-center p-8 text-center">
+            <UIcon name="i-lucide-triangle-alert" class="size-10 text-warning" />
+            <p class="mt-3 font-medium text-highlighted">{{ t("admin.plugins.uiUnavailable") }}</p>
+            <p class="mt-1 max-w-xl text-sm text-muted">{{ uiError }}</p>
           </div>
           <iframe
             v-if="uiSession"
@@ -318,10 +178,8 @@
             :src="uiSession.url"
             sandbox="allow-scripts"
             referrerpolicy="no-referrer"
-            class="h-full w-full border-0 bg-white dark:bg-dark-900"
-            :title="
-              t('admin.plugins.configTitle', { name: configPlugin?.name || '' })
-            "
+            class="h-full w-full border-0 bg-default"
+            :title="t('admin.plugins.configTitle', { name: configPlugin?.name || '' })"
             @load="handlePluginFrameLoad"
           />
         </div>
@@ -342,8 +200,9 @@ import {
 } from "@/api/admin";
 import { useAppStore } from "@/stores";
 import AppLayout from "@/components/layout/AppLayout.vue";
+import AdminPageHeader from "@/components/admin/page/AdminPageHeader.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
-import Icon from "@/components/icons/Icon.vue";
+import type { DropdownMenuItem } from "@nuxt/ui";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import {
   isStepUpBlocked,
@@ -351,6 +210,7 @@ import {
   stepUpBlockReason,
   useStepUp,
 } from "@/composables/useStepUp";
+import { confirm } from '@/composables/useConfirmation'
 
 interface PluginBridgeMessage {
   source?: string;
@@ -449,15 +309,27 @@ function hasEnabledBinding(plugin: PluginInstallation): boolean {
   return plugin.bindings.some((binding) => binding.enabled);
 }
 
-function setRollout(id: number, event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
+function setRollout(id: number, next: number | number[] | undefined): void {
+  const value = Number(Array.isArray(next) ? next[0] : next);
+  if (!Number.isFinite(value)) return;
   rolloutValues.value[id] = Math.min(100, Math.max(1, value));
+}
+
+// Row "…" menu: uninstall (blocked while a binding is enabled)
+function pluginMenuItems(plugin: PluginInstallation): DropdownMenuItem[][] {
+  return [[{
+    label: t("admin.plugins.uninstall"),
+    icon: "i-lucide-trash",
+    color: "error",
+    disabled: busyID.value === plugin.id || hasEnabledBinding(plugin),
+    onSelect: () => uninstallPlugin(plugin),
+  }]];
 }
 
 async function enablePlugin(plugin: PluginInstallation): Promise<void> {
   let acceptUntested = false;
   if (!plugin.compatibility.tested) {
-    acceptUntested = window.confirm(t("admin.plugins.confirmUntested"));
+    acceptUntested = await confirm(t("admin.plugins.confirmUntested"));
     if (!acceptUntested) return;
   }
   busyID.value = plugin.id;
@@ -479,7 +351,7 @@ async function enablePlugin(plugin: PluginInstallation): Promise<void> {
 }
 
 async function disablePlugin(plugin: PluginInstallation): Promise<void> {
-  if (!window.confirm(t("admin.plugins.confirmDisable"))) return;
+  if (!(await confirm(t("admin.plugins.confirmDisable")))) return;
   busyID.value = plugin.id;
   try {
     await pluginStepUp.run(() => adminAPI.plugins.disable(plugin.id));
@@ -493,7 +365,7 @@ async function disablePlugin(plugin: PluginInstallation): Promise<void> {
 }
 
 async function uninstallPlugin(plugin: PluginInstallation): Promise<void> {
-  if (!window.confirm(t("admin.plugins.confirmUninstall"))) return;
+  if (!(await confirm(t("admin.plugins.confirmUninstall")))) return;
   busyID.value = plugin.id;
   try {
     await pluginStepUp.run(() => adminAPI.plugins.remove(plugin.id));
@@ -684,24 +556,21 @@ async function handleBridgeMessage(event: MessageEvent): Promise<void> {
   }
 }
 
-function stateClass(state: PluginInstallation["state"]): string {
-  if (state === "enabled")
-    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300";
-  if (state === "error" || state === "incompatible")
-    return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300";
-  if (state === "starting")
-    return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
-  return "bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300";
+type BadgeColor = "success" | "error" | "warning" | "neutral";
+
+function stateColor(state: PluginInstallation["state"]): BadgeColor {
+  if (state === "enabled") return "success";
+  if (state === "error" || state === "incompatible") return "error";
+  if (state === "starting") return "warning";
+  return "neutral";
 }
 
-function compatibilityClass(
+function compatibilityColor(
   status: PluginInstallation["compatibility"]["status"],
-): string {
-  if (status === "compatible")
-    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300";
-  if (status === "untested")
-    return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300";
-  return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300";
+): BadgeColor {
+  if (status === "compatible") return "success";
+  if (status === "untested") return "warning";
+  return "error";
 }
 
 onMounted(() => {

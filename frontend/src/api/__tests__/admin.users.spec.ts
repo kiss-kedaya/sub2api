@@ -16,6 +16,7 @@ import {
   batchUpdateLimits,
   bindUserAuthIdentity,
   getUserApiKeys,
+  list,
   type AdminBindAuthIdentityRequest,
   type AdminBoundAuthIdentity,
   type BatchUpdateUserLimitsRequest,
@@ -167,5 +168,28 @@ describe('admin user API key pagination', () => {
     get.mockResolvedValue({ data: { items: [], total: 0, page: 1, page_size: 20, pages: 0 } })
     await getUserApiKeys(9)
     expect(get).toHaveBeenCalledWith('/admin/users/9/api-keys', { params: { page: 1, page_size: 20 } })
+  })
+})
+
+
+describe('admin users list pagination and lazy payload options', () => {
+  beforeEach(() => get.mockReset())
+
+  it.each([20, 50, 100])('forwards page_size=%i and opt-in secondary response flags', async (pageSize) => {
+    const page = { items: [], total: 0, page: 1, page_size: pageSize, pages: 1 }
+    get.mockResolvedValue({ data: page })
+    await expect(list(1, pageSize, {
+      include_subscriptions: false,
+      include_platform_quotas: true
+    })).resolves.toEqual(page)
+    expect(get).toHaveBeenCalledWith('/admin/users', {
+      params: expect.objectContaining({
+        page: 1,
+        page_size: pageSize,
+        include_subscriptions: false,
+        include_platform_quotas: true
+      }),
+      signal: undefined
+    })
   })
 })

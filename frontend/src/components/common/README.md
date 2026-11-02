@@ -36,7 +36,7 @@ A generic data table component with sorting, loading states, and custom cell ren
   :loading="isLoading"
 >
   <template #cell-actions="{ row }">
-    <button @click="editUser(row)">Edit</button>
+    <UButton color="neutral" variant="ghost" icon="i-lucide-pencil" aria-label="Edit" @click="editUser(row)" />
   </template>
 </DataTable>
 ```
@@ -103,8 +103,8 @@ Modal dialog with customizable size and close behavior.
   </form>
 
   <template #footer>
-    <button @click="showModal = false">Cancel</button>
-    <button @click="saveUser">Save</button>
+    <UButton color="neutral" variant="subtle" label="Cancel" @click="showModal = false" />
+    <UButton label="Save" @click="saveUser" />
   </template>
 </Modal>
 ```

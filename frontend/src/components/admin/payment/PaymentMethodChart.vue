@@ -1,11 +1,11 @@
 <template>
-  <div class="card p-4">
-    <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
-      {{ t('payment.admin.paymentDistribution') }}
-    </h3>
+  <UCard :ui="{ header: 'p-4 sm:px-6', body: 'p-4 sm:p-6' }">
+    <template #header>
+      <p class="text-sm font-semibold text-highlighted">{{ t('payment.admin.paymentDistribution') }}</p>
+    </template>
     <div
       v-if="!methods?.length"
-      class="flex h-32 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
+      class="flex h-32 items-center justify-center text-sm text-muted"
     >
       {{ t('payment.admin.noData') }}
     </div>
@@ -13,32 +13,33 @@
       <div v-for="method in methods" :key="method.type" class="space-y-1">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <span :class="['inline-block h-3 w-3 rounded-full', colorMap[method.type] || 'bg-gray-400']"></span>
-            <span class="text-sm text-gray-700 dark:text-gray-300">
+            <span :class="['inline-block h-3 w-3 rounded-full', colorMap[method.type] || 'bg-inverted/40']"></span>
+            <span class="text-sm text-default">
               {{ t('payment.methods.' + method.type, method.type) }}
             </span>
           </div>
           <div class="space-y-1 text-right">
-            <span v-for="[currency, amount] in sortedAmounts(method.amount)" :key="currency" class="block text-sm font-medium text-gray-900 dark:text-white">
+            <span v-for="[currency, amount] in sortedAmounts(method.amount)" :key="currency" class="block text-sm font-medium tabular-nums text-highlighted">
               {{ formatMoney(currency, amount) }}
             </span>
-            <span class="ml-2 text-xs text-gray-500 dark:text-gray-400">
+            <span class="ml-2 text-xs text-muted">
               ({{ method.count }})
             </span>
           </div>
         </div>
         <div v-for="[currency, amount] in sortedAmounts(method.amount)" :key="currency" class="flex items-center gap-2">
-          <span class="w-10 text-xs text-gray-500 dark:text-gray-400">{{ currency }}</span>
-          <div class="h-2 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
-            <div
-              :class="['h-full rounded-full transition-all', barColorMap[method.type] || 'bg-gray-400']"
-              :style="{ width: barWidth(currency, amount) + '%' }"
-            ></div>
-          </div>
+          <span class="w-10 text-xs text-muted">{{ currency }}</span>
+          <UProgress
+            :model-value="barWidth(currency, amount)"
+            :max="100"
+            size="sm"
+            class="flex-1"
+            :ui="{ indicator: barColorMap[method.type] || 'bg-inverted/40' }"
+          />
         </div>
       </div>
     </div>
-  </div>
+  </UCard>
 </template>
 
 <script setup lang="ts">

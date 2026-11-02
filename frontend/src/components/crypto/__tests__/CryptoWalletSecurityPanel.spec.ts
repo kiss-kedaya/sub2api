@@ -35,7 +35,7 @@ function render() {
 }
 
 async function confirmRecovery(wrapper: ReturnType<typeof render>) {
-  await wrapper.get('button.btn-danger').trigger('click')
+  await wrapper.get('[data-testid="wallet-security-recover"]').trigger('click')
   await wrapper.get('#wallet-security-confirmation').setValue('RECOVER')
   await wrapper.get('#wallet-security-recover-form').trigger('submit')
   await flushPromises()
@@ -55,7 +55,7 @@ describe('wallet security panel and recovery', () => {
   it('requires the confirmation phrase and a fresh complete TOTP before recovery, without enabling the channel', async () => {
     const wrapper = render()
     await flushPromises()
-    await wrapper.get('button.btn-danger').trigger('click')
+    await wrapper.get('[data-testid="wallet-security-recover"]').trigger('click')
     await wrapper.get('#wallet-security-confirmation').setValue('recover')
     await wrapper.get('#wallet-security-recover-form').trigger('submit')
     expect(mocks.post).not.toHaveBeenCalled()
@@ -82,11 +82,11 @@ describe('wallet security panel and recovery', () => {
     const wrapper = render()
     await flushPromises()
     mocks.get.mockRejectedValueOnce(new Error('status unavailable'))
-    await wrapper.get('button.btn-secondary').trigger('click')
+    await wrapper.get('[data-testid="wallet-security-refresh"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('admin.crypto.walletSecurityLocked')
     expect(wrapper.get('[role="alert"]').text()).toContain('status unavailable')
-    expect(wrapper.get('button.btn-danger').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="wallet-security-recover"]').attributes('disabled')).toBeDefined()
     expect(mocks.post).not.toHaveBeenCalled()
   })
 
@@ -108,7 +108,7 @@ describe('wallet security panel and recovery', () => {
     const wrapper = render()
     await flushPromises()
     await confirmRecovery(wrapper)
-    await wrapper.get('.crypto-security__actions .btn-secondary').trigger('click')
+    await wrapper.get('[data-testid="crypto-security-cancel"]').trigger('click')
     await flushPromises()
     expect(mocks.post).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('admin.crypto.walletSecurityLocked')

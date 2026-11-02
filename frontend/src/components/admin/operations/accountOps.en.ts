@@ -230,4 +230,8 @@ export default {
   ,"selectedGroups": "{count} account groups selected"
   ,"selectGroup": "Select {name}"
   ,"selectVisibleGroups": "Select all visible account groups"
+  ,"overviewTab": "Overview"
+  ,"attention": "Alerts that need attention"
+  ,"viewAll": "View all"
+  ,"noAttention": "No alerts need attention."
 }

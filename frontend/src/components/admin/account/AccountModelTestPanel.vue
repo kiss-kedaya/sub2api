@@ -7,72 +7,31 @@
       <div class="model-test-toolbar-controls">
         <label class="model-test-search-wrap">
           <Icon name="search" size="sm" aria-hidden="true" />
-          <input
+          <UInput
             v-model="modelQuery"
             type="search"
+            icon="i-lucide-search"
             class="model-test-search"
             :placeholder="t('admin.accounts.batchTest.filterModels')"
             :aria-label="t('admin.accounts.batchTest.filterModels')"
             :disabled="catalogLoading && rows.length === 0"
           />
         </label>
-        <label class="model-test-option">
-          <input v-model="includeMedia" type="checkbox" :disabled="anyRunning" />
-          <span>{{ t('admin.accounts.batchTest.includeMedia') }}</span>
-        </label>
+        <UCheckbox v-model="includeMedia" class="model-test-option" :disabled="anyRunning" :label="t('admin.accounts.batchTest.includeMedia')" />
       </div>
     </div>
 
     <div class="model-test-actions">
-      <button
-        v-if="anyRunning"
-        type="button"
-        class="model-test-button is-stop"
-        data-test="test-stop"
-        @click="stopRun"
-      >
-        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" /></svg>
-        {{ t('admin.accounts.batchTest.stop') }}
-      </button>
+      <UButton v-if="anyRunning" color="error" variant="subtle" icon="i-lucide-square" data-test="test-stop" :label="t('admin.accounts.batchTest.stop')" @click="stopRun" />
       <template v-else>
-        <button
-          type="button"
-          class="model-test-button is-primary"
-          data-test="test-all-models"
-          data-batch-test-start
-          :disabled="!canTestAll"
-          @click="startRun('all')"
-        >
-          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 4.7a.8.8 0 0 1 1.2-.7l8.1 5.3a.8.8 0 0 1 0 1.4L7.2 16a.8.8 0 0 1-1.2-.7Z" /></svg>
-          {{ testAllLabel }}
-        </button>
-        <button
-          type="button"
-          class="model-test-button is-secondary"
-          data-test="test-selected-models"
-          :disabled="!canTestSelected"
-          @click="startRun('selected')"
-        >
-          {{ testSelectedLabel }}
-        </button>
+        <UButton icon="i-lucide-play" data-test="test-all-models" data-batch-test-start :disabled="!canTestAll" :label="testAllLabel" @click="startRun('all')" />
+        <UButton color="neutral" variant="outline" data-test="test-selected-models" :disabled="!canTestSelected" :label="testSelectedLabel" @click="startRun('selected')" />
       </template>
       <div class="model-test-selection">
-        <button type="button" class="model-test-text-btn" :disabled="running || visibleRows.length === 0" @click="selectVisible(true)">
-          {{ t('admin.accounts.batchTest.selectAll') }}
-        </button>
-        <button type="button" class="model-test-text-btn" :disabled="running || visibleRows.length === 0" @click="invertVisible">
-          {{ t('admin.accounts.batchTest.invert') }}
-        </button>
+        <UButton color="neutral" variant="ghost" size="xs" :disabled="running || visibleRows.length === 0" :label="t('admin.accounts.batchTest.selectAll')" @click="selectVisible(true)" />
+        <UButton color="neutral" variant="ghost" size="xs" :disabled="running || visibleRows.length === 0" :label="t('admin.accounts.batchTest.invert')" @click="invertVisible" />
       </div>
-      <button
-        v-if="rows.length > 0"
-        type="button"
-        :aria-pressed="onlyFailed"
-        class="model-test-filter"
-        @click="onlyFailed = !onlyFailed"
-      >
-        {{ onlyFailed ? t('admin.accounts.batchTest.showAll') : t('admin.accounts.batchTest.onlyFailed') }}
-      </button>
+      <UButton v-if="rows.length > 0" color="neutral" :variant="onlyFailed ? 'soft' : 'ghost'" size="xs" :aria-pressed="onlyFailed" class="model-test-filter" @click="onlyFailed = !onlyFailed">{{ onlyFailed ? t('admin.accounts.batchTest.showAll') : t('admin.accounts.batchTest.onlyFailed') }}</UButton>
     </div>
 
     <div v-if="counts.success + counts.failed + counts.running + counts.skipped > 0" class="model-test-progress">
@@ -90,55 +49,46 @@
     </div>
 
     <div class="model-test-table-wrap">
-      <table v-if="visibleRows.length > 0" class="model-test-table">
-        <thead>
-          <tr>
-            <th class="model-test-check">
-              <input
-                type="checkbox"
-                :checked="allVisibleSelected"
-                :indeterminate.prop="someVisibleSelected"
-                :disabled="running || visibleRows.length === 0"
-                :aria-label="t('admin.accounts.batchTest.selectAll')"
-                @change="toggleAllVisible(($event.target as HTMLInputElement).checked)"
-              />
-            </th>
-            <th v-if="showAccount">{{ t('admin.accounts.batchTest.account') }}</th>
-            <th>{{ t('admin.accounts.batchTest.model') }}</th>
-            <th>{{ t('admin.accounts.batchTest.status') }}</th>
-            <th>{{ t('admin.accounts.batchTest.duration') }}</th>
-            <th>{{ t('admin.accounts.batchTest.result') }}</th>
-            <th class="model-test-actions-col">{{ t('admin.accounts.batchTest.action') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in visibleRows" :key="row.key" :class="`is-${row.status}`">
-            <td class="model-test-check">
-              <input
-                type="checkbox"
-                :checked="row.selected"
-                :disabled="running"
-                :data-test="selectTestId(row)"
-                @change="setSelected(row, ($event.target as HTMLInputElement).checked)"
-              />
-            </td>
-            <td v-if="showAccount">{{ row.accountName }}</td>
-            <td class="mono">{{ row.modelId }}</td>
-            <td>
-              <span class="model-test-status" :class="`is-${row.status}`">
-                {{ statusLabel(row.status) }}
-              </span>
-            </td>
-            <td class="mono">{{ formatAccountModelTestDuration(row.durationMs) }}</td>
-            <td class="model-test-result">
+      <UTable
+        v-if="visibleRows.length > 0"
+        :data="visibleRows"
+        :columns="tableColumns"
+        :meta="tableMeta"
+        class="model-test-table"
+        :ui="tableUi"
+      >
+        <template #select-header>
+          <UCheckbox
+            :model-value="someVisibleSelected ? 'indeterminate' : allVisibleSelected"
+            :disabled="running || visibleRows.length === 0"
+            :aria-label="t('admin.accounts.batchTest.selectAll')"
+            @update:model-value="toggleAllVisible($event === true)"
+          />
+        </template>
+        <template #select-cell="{ row }">
+          <UCheckbox
+            :model-value="row.original.selected"
+            :disabled="running"
+            :data-test="selectTestId(row.original)"
+            @update:model-value="setSelected(row.original, $event === true)"
+          />
+        </template>
+        <template #account-cell="{ row }">{{ row.original.accountName }}</template>
+        <template #model-cell="{ row }"><span class="font-mono text-xs">{{ row.original.modelId }}</span></template>
+        <template #status-cell="{ row }">
+          <span class="model-test-status" :class="`is-${row.original.status}`">{{ statusLabel(row.original.status) }}</span>
+        </template>
+        <template #duration-cell="{ row }"><span class="font-mono text-xs tabular-nums">{{ formatAccountModelTestDuration(row.original.durationMs) }}</span></template>
+        <template #result-cell="{ row }">
+          <div class="model-test-result">
               <p
                 class="model-test-result-text"
-                :class="`is-${row.status}`"
-                :data-test="`test-output-${row.accountId}-${row.modelId}`"
-              >{{ resultPreview(row) }}</p>
-              <div v-if="row.images.length > 0" class="model-test-media">
+                :class="`is-${row.original.status}`"
+                :data-test="`test-output-${row.original.accountId}-${row.original.modelId}`"
+              >{{ resultPreview(row.original) }}</p>
+              <div v-if="row.original.images.length > 0" class="model-test-media">
                 <img
-                  v-for="(image, index) in row.images"
+                  v-for="(image, index) in row.original.images"
                   :key="`${image.url}-${index}`"
                   :src="image.url"
                   :alt="t('admin.accounts.imagePreviewAlt', { index: index + 1 })"
@@ -146,46 +96,37 @@
                 />
               </div>
               <audio
-                v-for="(audio, index) in row.audios"
-                :key="`audio-${row.key}-${index}`"
+                v-for="(audio, index) in row.original.audios"
+                :key="`audio-${row.original.key}-${index}`"
                 :src="audio.url"
                 :type="audio.mimeType"
                 controls
               />
               <video
-                v-for="(video, index) in row.videos"
-                :key="`video-${row.key}-${index}`"
+                v-for="(video, index) in row.original.videos"
+                :key="`video-${row.original.key}-${index}`"
                 :src="video.url"
                 :type="video.mimeType"
                 controls
               />
-              <button
-                v-if="canExpand(row)"
-                type="button"
-                class="model-test-text-btn"
-                :aria-expanded="row.expanded"
-                @click="row.expanded = !row.expanded"
-              >
-                {{ row.expanded ? t('admin.accounts.batchTest.collapse') : t('admin.accounts.batchTest.expand') }}
-              </button>
-              <div class="model-test-disclosure" :class="{ 'is-open': row.expanded }" :inert="row.expanded ? undefined : true">
-                <div><pre class="model-test-result-full">{{ row.expanded ? fullResult(row) : '' }}</pre></div>
+              <UButton v-if="canExpand(row.original)" color="neutral" variant="link" size="xs" class="p-0" :aria-expanded="row.original.expanded" @click="row.original.expanded = !row.original.expanded">{{ row.original.expanded ? t('admin.accounts.batchTest.collapse') : t('admin.accounts.batchTest.expand') }}</UButton>
+              <div class="model-test-disclosure" :class="{ 'is-open': row.original.expanded }" :inert="row.original.expanded ? undefined : true">
+                <div><pre class="model-test-result-full">{{ row.original.expanded ? fullResult(row.original) : '' }}</pre></div>
               </div>
-            </td>
-            <td class="model-test-actions-col">
-              <button
-                type="button"
-                class="model-test-button is-row"
-                :data-test="rowTestId(row)"
-                :disabled="running || row.status === 'running' || row.catalogFailed"
-                @click="testOne(row)"
-              >
-                {{ t('admin.accounts.batchTest.testThis') }}
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </div>
+        </template>
+        <template #actions-cell="{ row }">
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :data-test="rowTestId(row.original)"
+            :disabled="running || row.original.status === 'running' || row.original.catalogFailed"
+            :label="t('admin.accounts.batchTest.testThis')"
+            @click="testOne(row.original)"
+          />
+        </template>
+      </UTable>
       <div v-else class="model-test-empty">
         {{ catalogLoading ? t('admin.accounts.batchTest.loadingCatalog') : t('admin.accounts.batchTest.noModels') }}
       </div>
@@ -206,6 +147,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { TableColumn } from '@nuxt/ui'
 import { adminAPI } from '@/api/admin'
 import Icon from '@/components/icons/Icon.vue'
 import type { ClaudeModel } from '@/types'
@@ -264,6 +206,26 @@ let loadVersion = 0
 const catalogLoads = new Map<number, Promise<ClaudeModel[]>>()
 
 const showAccount = computed(() => props.variant !== 'single' && props.accounts.length > 1)
+// Result table columns (the account column only when several accounts are tested together).
+const tableColumns = computed<TableColumn<ModelTestRow>[]>(() => [
+  { id: 'select', header: '', meta: { class: { th: 'w-10', td: 'w-10' } } },
+  ...(showAccount.value ? [{ id: 'account', header: t('admin.accounts.batchTest.account') }] : []),
+  { id: 'model', header: t('admin.accounts.batchTest.model') },
+  { id: 'status', header: t('admin.accounts.batchTest.status') },
+  { id: 'duration', header: t('admin.accounts.batchTest.duration') },
+  { id: 'result', header: t('admin.accounts.batchTest.result') },
+  { id: 'actions', header: t('admin.accounts.batchTest.action'), meta: { class: { th: 'text-right', td: 'text-right' } } }
+])
+// Rows keep an is-<status> class (styling and specs count rows by status).
+const tableMeta = { class: { tr: (row: { original: ModelTestRow }) => `is-${row.original.status}` } }
+const tableUi = {
+  base: 'border-separate border-spacing-0',
+  thead: '[&>tr]:bg-elevated [&>tr]:after:content-none',
+  tbody: '[&>tr]:last:[&>td]:border-b-0',
+  th: 'py-2 text-xs font-medium text-muted first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r',
+  td: 'py-2.5 align-top border-b border-default text-sm',
+  separator: 'h-0'
+}
 
 const headline = computed(() => {
   if (props.variant === 'single' && props.accounts[0]) {

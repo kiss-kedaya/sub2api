@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
+import UDropdownMenu from '@nuxt/ui/components/DropdownMenu.vue'
 import AccountsView from '../AccountsView.vue'
 
 const {
@@ -114,6 +115,20 @@ const AccountBulkActionsBarStub = {
   `
 }
 
+// The bulk actions bar renders in the filters toolbar's actions slot (and again in the footer).
+const AccountTableFiltersStub = { template: '<div><slot name="actions" /></div>' }
+
+// Columns hidden in a fresh layout are offered in the "列显示" menu; enable one through it.
+async function enableColumn(wrapper: { findAllComponents: (c: any) => any[] }, label: string) {
+  const menus = wrapper.findAllComponents(UDropdownMenu)
+  const menu = menus.find((m: any) => (m.props('items') as any[]).flat().some((item: any) => item?.type === 'checkbox' && item?.label === label))
+  expect(menu).toBeDefined()
+  const item = (menu.props('items') as any[]).flat().find((entry: any) => entry?.label === label)
+  expect(item.checked).toBe(false)
+  item.onUpdateChecked(true)
+  await flushPromises()
+}
+
 const PaginationStub = {
   emits: ['update:page'],
   template: '<button data-test="next-page" @click="$emit(\'update:page\', 2)">next</button>'
@@ -177,7 +192,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Pagination: true,
           ConfirmDialog: true,
           AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
-          AccountTableFilters: { template: '<div></div>' },
+          AccountTableFilters: AccountTableFiltersStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountActionMenu: true,
           ImportDataModal: true,
@@ -212,7 +227,7 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('filtered')
   })
 
-  it('renders the created_at column by default', async () => {
+  it('offers the created_at column in 列显示 and renders it once enabled', async () => {
     listAccounts.mockResolvedValue({
       items: [
         {
@@ -243,7 +258,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Pagination: true,
           ConfirmDialog: true,
           AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
-          AccountTableFilters: { template: '<div></div>' },
+          AccountTableFilters: AccountTableFiltersStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountActionMenu: true,
           ImportDataModal: true,
@@ -272,6 +287,8 @@ describe('admin AccountsView bulk edit scope', () => {
 
     await flushPromises()
 
+    expect(wrapper.findAll('[data-test="column-key"]').map(node => node.text())).not.toContain('created_at')
+    await enableColumn(wrapper, 'admin.accounts.columns.createdAt')
     const columnKeys = wrapper.findAll('[data-test="column-key"]').map(node => node.text())
     expect(columnKeys).toContain('created_at')
     const columns = wrapper.getComponent(DataTableStub).props('columns') as Array<{ key: string; label: string; sortable: boolean }>
@@ -318,7 +335,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Pagination: true,
           ConfirmDialog: true,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountBulkActionsBar: true,
           AccountActionMenu: true,
           ImportDataModal: true,
@@ -375,7 +392,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Pagination: PaginationStub,
           ConfirmDialog: true,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountActionMenu: true,
           ImportDataModal: true,
@@ -403,10 +420,10 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"] [role="checkbox"]').trigger('click')
     await wrapper.get('[data-test="next-page"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"] [role="checkbox"]').trigger('click')
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
@@ -450,7 +467,7 @@ describe('admin AccountsView bulk edit scope', () => {
           DataTable: DataTableStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountActionMenu: true,
           Pagination: PaginationStub,
           ConfirmDialog: true,
@@ -481,7 +498,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
     await wrapper.get('[data-test="next-page"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"] [role="checkbox"]').trigger('click')
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
@@ -521,11 +538,11 @@ describe('admin AccountsView bulk edit scope', () => {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
-          TablePageLayout: { template: '<div><slot name="table" /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /></div>' },
           DataTable: DataTableStub,
           AccountBulkActionsBar: AccountBulkActionsBarStub,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountActionMenu: true,
           Pagination: true,
           ConfirmDialog: true,
@@ -554,7 +571,7 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
-    await wrapper.get('[data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="select-row"] [role="checkbox"]').trigger('click')
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
@@ -598,7 +615,7 @@ describe('admin AccountsView bulk edit scope', () => {
           DataTable: ProbeDataTableStub,
           AccountBulkActionsBar: true,
           AccountTableActions: true,
-          AccountTableFilters: true,
+          AccountTableFilters: AccountTableFiltersStub,
           AccountActionMenu: true,
           Pagination: true,
           ConfirmDialog: true,

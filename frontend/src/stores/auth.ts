@@ -5,6 +5,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed, readonly } from 'vue'
+import { getAppRuntimeContext } from '@runtime/context'
 import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
 import type {
   User,
@@ -39,6 +40,7 @@ function normalizePendingAuthTokenField(value: unknown): PendingAuthTokenField {
 }
 
 function getPersistedPendingAuthSession(): PendingAuthSessionSummary | null {
+  if (typeof localStorage === 'undefined') return null
   const raw = localStorage.getItem(PENDING_AUTH_SESSION_KEY)
   if (!raw) {
     return null
@@ -71,6 +73,7 @@ function persistPendingAuthSession(session: PendingAuthSessionSummary): void {
 }
 
 function clearPendingAuthSessionStorage(): void {
+  if (typeof localStorage === 'undefined') return
   localStorage.removeItem(PENDING_AUTH_SESSION_KEY)
 }
 
@@ -79,6 +82,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const user = ref<User | null>(null)
   const token = ref<string | null>(null)
+  // Public authentication marker only. Session credentials stay inside Nitro.
+  const cookieSession = ref(false)
   const refreshTokenValue = ref<string | null>(null)
   const tokenExpiresAt = ref<number | null>(null) // 过期时间戳（毫秒）
   const runMode = ref<'standard' | 'simple'>('standard')
@@ -89,7 +94,7 @@ export const useAuthStore = defineStore('auth', () => {
   // ==================== Computed ====================
 
   const isAuthenticated = computed(() => {
-    return !!token.value && !!user.value
+    return (!!token.value || cookieSession.value) && !!user.value
   })
 
   const isAdmin = computed(() => {
@@ -109,6 +114,11 @@ export const useAuthStore = defineStore('auth', () => {
    * Also starts auto-refresh and immediately fetches latest user data
    */
   function checkAuth(): void {
+    if (getAppRuntimeContext()?.cookieSession) {
+      if (cookieSession.value && typeof window !== 'undefined') startAutoRefresh()
+      return
+    }
+    if (typeof localStorage === 'undefined') return
     const savedToken = localStorage.getItem(AUTH_TOKEN_KEY)
     const savedUser = localStorage.getItem(AUTH_USER_KEY)
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
@@ -147,11 +157,12 @@ export const useAuthStore = defineStore('auth', () => {
    * Refreshes user data every 60 seconds
    */
   function startAutoRefresh(): void {
+    if (typeof window === 'undefined') return
     // Clear existing interval if any
     stopAutoRefresh()
 
     refreshIntervalId = setInterval(() => {
-      if (token.value) {
+      if (token.value || cookieSession.value) {
         refreshUser().catch((error) => {
           console.error('Auto-refresh user failed:', error)
         })
@@ -299,6 +310,17 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function setAuthFromResponse(response: AuthResponse): void {
+    if (getAppRuntimeContext()?.cookieSession) {
+      cookieSession.value = true
+      token.value = null
+      refreshTokenValue.value = null
+      tokenExpiresAt.value = null
+      if (response.user.run_mode) runMode.value = response.user.run_mode
+      user.value = response.user
+      clearPendingAuthSession()
+      startAutoRefresh()
+      return
+    }
     // Store token and user
     token.value = response.access_token
 
@@ -435,7 +457,7 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if not authenticated or request fails
    */
   async function refreshUser(): Promise<User> {
-    if (!token.value) {
+    if (!token.value && !cookieSession.value) {
       throw new Error('Not authenticated')
     }
 
@@ -448,7 +470,7 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = userData
 
       // Update localStorage
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
+      if (!cookieSession.value && typeof localStorage !== 'undefined') localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
 
       return userData
     } catch (error) {
@@ -471,13 +493,16 @@ export const useAuthStore = defineStore('auth', () => {
     stopTokenRefresh()
 
     token.value = null
+    cookieSession.value = false
     refreshTokenValue.value = null
     tokenExpiresAt.value = null
     user.value = null
-    localStorage.removeItem(AUTH_TOKEN_KEY)
-    localStorage.removeItem(AUTH_USER_KEY)
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
-    localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(AUTH_TOKEN_KEY)
+      localStorage.removeItem(AUTH_USER_KEY)
+      localStorage.removeItem(REFRESH_TOKEN_KEY)
+      localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
+    }
 
     if (options?.preservePendingAuthSession) {
       pendingAuthSession.value = getPersistedPendingAuthSession()
@@ -494,6 +519,7 @@ export const useAuthStore = defineStore('auth', () => {
     // State
     user,
     token,
+    cookieSession,
     runMode: readonly(runMode),
     pendingAuthSession: readonly(pendingAuthSession),
 

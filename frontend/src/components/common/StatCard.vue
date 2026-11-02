@@ -1,30 +1,38 @@
 <template>
-  <div class="stat-card">
-    <div :class="['stat-icon', iconClass]">
-      <component v-if="icon" :is="icon" class="h-6 w-6" aria-hidden="true" />
+  <UPageCard
+    variant="subtle"
+    :title="title"
+    :ui="{
+      container: 'gap-y-1.5',
+      wrapper: 'items-start',
+      leading: ['p-2.5 rounded-full ring ring-inset', iconClass],
+      title: 'font-normal text-muted text-xs uppercase truncate'
+    }"
+    class="stat-card min-w-0"
+  >
+    <template v-if="icon" #leading>
+      <component :is="icon" class="size-5" aria-hidden="true" />
+    </template>
+    <div class="flex min-w-0 items-center gap-2">
+      <span class="truncate text-2xl font-semibold text-highlighted tabular-nums" :title="String(formattedValue)">
+        {{ formattedValue }}
+      </span>
+      <UBadge
+        v-if="change !== undefined"
+        :color="trendColor"
+        variant="subtle"
+        size="sm"
+        :icon="trendIcon"
+        :label="formattedChange"
+        class="stat-trend shrink-0 tabular-nums"
+      />
     </div>
-    <div class="min-w-0 flex-1">
-      <p class="stat-label truncate">{{ title }}</p>
-      <div class="mt-1 flex items-baseline gap-2">
-        <p class="stat-value" :title="String(formattedValue)">{{ formattedValue }}</p>
-        <span v-if="change !== undefined" :class="['stat-trend', trendClass]">
-          <Icon
-            v-if="changeType !== 'neutral'"
-            name="arrowUp"
-            size="xs"
-            :class="changeType === 'down' && 'rotate-180'"
-          />
-          {{ formattedChange }}
-        </span>
-      </div>
-    </div>
-  </div>
+  </UPageCard>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Component } from 'vue'
-import Icon from '@/components/icons/Icon.vue'
 
 type ChangeType = 'up' | 'down' | 'neutral'
 type IconVariant = 'primary' | 'success' | 'warning' | 'danger'
@@ -62,20 +70,26 @@ const formattedChange = computed(() => {
 
 const iconClass = computed(() => {
   const classes: Record<IconVariant, string> = {
-    primary: 'stat-icon-primary',
-    success: 'stat-icon-success',
-    warning: 'stat-icon-warning',
-    danger: 'stat-icon-danger'
+    primary: 'bg-primary/10 text-primary ring-primary/25',
+    success: 'bg-success/10 text-success ring-success/25',
+    warning: 'bg-warning/10 text-warning ring-warning/25',
+    danger: 'bg-error/10 text-error ring-error/25'
   }
   return classes[props.iconVariant]
 })
 
-const trendClass = computed(() => {
-  const classes: Record<ChangeType, string> = {
-    up: 'stat-trend-up',
-    down: 'stat-trend-down',
-    neutral: 'text-gray-500 dark:text-dark-400'
+const trendColor = computed(() => {
+  const colors: Record<ChangeType, 'success' | 'error' | 'neutral'> = {
+    up: 'success',
+    down: 'error',
+    neutral: 'neutral'
   }
-  return classes[props.changeType]
+  return colors[props.changeType]
+})
+
+const trendIcon = computed(() => {
+  if (props.changeType === 'up') return 'i-lucide-arrow-up'
+  if (props.changeType === 'down') return 'i-lucide-arrow-down'
+  return undefined
 })
 </script>
