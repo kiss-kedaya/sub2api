@@ -17,7 +17,8 @@ func TestValidateModelWhitelistAutoSyncExtraAcceptsUIConfig(t *testing.T) {
 
 	require.NoError(t, ValidateModelWhitelistAutoSyncExtra(extra))
 
-	config := extra[ModelWhitelistAutoSyncExtraKey].(map[string]any)
+	config, ok := extra[ModelWhitelistAutoSyncExtraKey].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, true, config["enabled"])
 	require.Equal(t, 24, config["interval_hours"], "hours must be stored as an integer")
 	require.Equal(t, "whitelist", config["mode"])
@@ -30,7 +31,8 @@ func TestValidateModelWhitelistAutoSyncExtraAppliesDefaults(t *testing.T) {
 
 	require.NoError(t, ValidateModelWhitelistAutoSyncExtra(extra))
 
-	config := extra[ModelWhitelistAutoSyncExtraKey].(map[string]any)
+	config, ok := extra[ModelWhitelistAutoSyncExtraKey].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, 24, config["interval_hours"])
 	require.Equal(t, "whitelist", config["mode"])
 }
@@ -80,7 +82,8 @@ func TestValidateModelWhitelistAutoSyncExtraKeepsUnknownSiblingKeys(t *testing.T
 	}
 
 	require.NoError(t, ValidateModelWhitelistAutoSyncExtra(extra))
-	config := extra[ModelWhitelistAutoSyncExtraKey].(map[string]any)
+	config, ok := extra[ModelWhitelistAutoSyncExtraKey].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, "2026-11-02T00:00:00Z", config["last_run_at"])
 }
 
