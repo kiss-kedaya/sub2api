@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { describe, expect, it } from 'vitest'
 import { useClientAnchorNavigation } from '@/composables/useClientAnchorNavigation'
 
@@ -21,7 +21,8 @@ describe('client anchor navigation', () => {
         return () => h('a', { href: '/tickets/1' }, 'open')
       }
     })
-    const wrapper = mount(Host, { global: { plugins: [router] } })
+    const wrapper = mount(Host, { attachTo: document.body, global: { plugins: [router] } })
+    await nextTick()
     await wrapper.get('a').trigger('click')
     await flushPromises()
 
