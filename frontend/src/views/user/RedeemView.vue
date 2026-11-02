@@ -57,7 +57,7 @@
       </section>
 
       <!-- Error Message -->
-      <div class="min-h-12" aria-live="polite">
+      <div class="h-24 min-h-24 overflow-y-auto rounded-lg" aria-live="polite" :tabindex="errorMessage ? 0 : undefined">
         <UAlert
           v-if="errorMessage"
           color="error"
@@ -92,9 +92,9 @@
             {{ t('redeem.recentActivity') }}
           </h2>
         </header>
-        <div class="px-5 py-4 sm:px-6">
+        <div class="px-5 py-4 sm:px-6" :aria-busy="loadingHistory" data-testid="redeem-history">
           <!-- Loading State -->
-          <div v-if="loadingHistory" class="flex items-center justify-center py-8">
+          <div v-if="loadingHistory && history.length === 0" class="flex items-center justify-center py-8">
             <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
           </div>
 
@@ -242,10 +242,9 @@
       v-model:open="showRedeemResult"
       :title="t('redeem.redeemSuccess')"
       :description="t('redeem.resultDescription')"
-      :dismissible="!submitting"
       data-testid="redeem-result-modal"
     >
-      <template #content>
+      <template #body>
         <div v-if="redeemResult" data-testid="redeem-result-modal-content" class="space-y-4">
           <UAlert color="success" variant="subtle" icon="i-lucide-circle-check">
             <template #description>
@@ -284,10 +283,12 @@
               <p v-else class="font-medium">{{ t('redeem.resultRecorded') }}</p>
             </template>
           </UAlert>
-          <UButton color="neutral" variant="outline" class="mt-4" @click="showRedeemResult = false">
-            {{ t('common.close') }}
-          </UButton>
         </div>
+      </template>
+      <template #footer>
+        <UButton color="neutral" variant="outline" @click="showRedeemResult = false">
+          {{ t('common.close') }}
+        </UButton>
       </template>
     </UModal>
   </AppLayout>
@@ -383,21 +384,9 @@ const formatHistoryValue = (item: RedeemHistoryItem) => {
 const formatSignedCurrency = (value: number) => `${value >= 0 ? '+' : '-'}$${Math.abs(value).toFixed(2)}`
 const formatSignedNumber = (value: number) => `${value >= 0 ? '+' : ''}${value}`
 
-/** The redeem response confirms the applied delta; patch only the auth store, never reload the page. */
-const applyRedeemDeltaLocally = (result: RedeemCode) => {
-  const current = authStore.user
-  if (!current) return
-
-  if (result.type === 'balance' && Number.isFinite(result.value)) {
-    redeemBalanceAfter.value = current.balance + result.value
-    authStore.user = { ...current, balance: redeemBalanceAfter.value }
-  } else if (result.type === 'concurrency' && Number.isFinite(result.value)) {
-    const delta = Math.trunc(result.value)
-    redeemConcurrencyAfter.value = current.concurrency + delta
-    authStore.user = { ...current, concurrency: redeemConcurrencyAfter.value }
-  }
-}
-
+// POST /redeem returns the consumed code, not an authoritative account total. Only
+// /auth/me can reconcile the shared balance/concurrency; adding the delta to a
+// cached user would double count if an automatic profile refresh already saw it.
 const refreshAccountAfterRedeem = async (type: RedeemCode['type']) => {
   try {
     const refreshed = await authStore.refreshUser()
@@ -453,28 +442,33 @@ const handleRedeem = async () => {
   } catch (error: any) {
     errorMessage.value = error.response?.data?.detail || t('redeem.failedToRedeem')
     appStore.showError(t('redeem.redeemFailed'))
-    return
-  } finally {
     submitting.value = false
+    return
   }
 
   // The code is consumed now: show the server-confirmed result immediately. Follow-up reads
   // update only the relevant stores and history; their failures must never turn success into error.
   redeemResult.value = result
-  applyRedeemDeltaLocally(result)
   redeemCode.value = ''
   showRedeemResult.value = true
   appStore.showSuccess(t('redeem.codeRedeemSuccess'))
 
-  if (result.type === 'balance' || result.type === 'concurrency') {
-    void refreshAccountAfterRedeem(result.type)
-  } else if (result.type === 'subscription') {
-    void subscriptionStore.fetchActiveSubscriptions(true).catch((error) => {
-      console.error('Failed to refresh subscriptions after redeem:', error)
-      appStore.showWarning(t('redeem.subscriptionRefreshFailed'))
-    })
+  try {
+    const refreshAccount = result.type === 'balance' || result.type === 'concurrency'
+      ? refreshAccountAfterRedeem(result.type)
+      : Promise.resolve()
+    const refreshSubscription = result.type === 'subscription'
+      ? subscriptionStore.fetchActiveSubscriptions(true).catch((error) => {
+        console.error('Failed to refresh subscriptions after redeem:', error)
+        appStore.showWarning(t('redeem.subscriptionRefreshFailed'))
+      })
+      : Promise.resolve()
+    // Keep the form single-flight through reconciliation. The success modal is
+    // already open and dismissible; no stale follow-up can overwrite a later redeem.
+    await Promise.all([refreshAccount, refreshSubscription, fetchHistory()])
+  } finally {
+    submitting.value = false
   }
-  void fetchHistory()
 }
 
 onMounted(async () => {

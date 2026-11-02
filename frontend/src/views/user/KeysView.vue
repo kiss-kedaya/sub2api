@@ -196,6 +196,7 @@
                   data-test="key-bound-group"
                   :data-group-id="row.group_id"
                 />
+                <UBadge v-else-if="row.group_id != null" color="neutral" variant="subtle" size="sm" data-test="key-bound-group" :data-group-id="row.group_id">#{{ row.group_id }}</UBadge>
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noGroup') }}</span>
                 <UBadge v-if="isSmartRoutingKey(row)" color="primary" variant="subtle" size="sm">
                   {{ t('keys.smartRouting') }}
@@ -1319,6 +1320,7 @@ const selectedKeyIds = ref<Array<string | number>>([])
 const showBulkDeleteDialog = ref(false)
 const keyRowId = (row: ApiKey) => row.id
 const groups = ref<Group[]>([])
+const availableGroupsById = computed(() => new Map(groups.value.map((group) => [group.id, group])))
 const loading = ref(false)
 const submitting = ref(false)
 const now = ref(new Date())
@@ -1574,8 +1576,7 @@ const keyGroupIds = (key: ApiKey): number[] => {
 
 const groupForKey = (key: ApiKey, groupId: number | null): Group | undefined => {
   if (groupId == null) return undefined
-  return groups.value.find((group) => group.id === groupId) ??
-    (key.group?.id === groupId ? key.group : undefined)
+  return key.group?.id === groupId ? key.group : availableGroupsById.value.get(groupId)
 }
 
 watch(

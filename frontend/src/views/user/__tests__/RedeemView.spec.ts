@@ -38,21 +38,11 @@ const mountedWrappers: VueWrapper[] = []
 const mountRedeemView = () => {
   const wrapper = mount(RedeemView, {
     attachTo: document.body,
-  global: {
-    stubs: {
-      AppLayout: { template: '<div><slot /></div>' },
-      Icon: true,
-      UModal: {
-        props: ['open', 'title', 'description'],
-        template: `
-          <section v-if="open" data-testid="redeem-result-modal">
-            <h2>{{ title }}</h2>
-            <p>{{ description }}</p>
-            <slot name="content" />
-          </section>
-        `,
+    global: {
+      stubs: {
+        AppLayout: { template: '<div><slot /></div>' },
+        Icon: true,
       },
-    },
     },
   })
   mountedWrappers.push(wrapper)
@@ -71,6 +61,7 @@ async function submitCode() {
 describe('RedeemView refresh after redemption', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    for (const request of [redeem, getHistory, refreshUser, fetchActiveSubscriptions]) request.mockReset()
     if (authStoreState.instance) authStoreState.instance.user = { balance: 10, concurrency: 2 }
     redeem.mockResolvedValue({ type: 'balance', value: 20, id: 1, code: 'REDEEM-CODE', status: 'used' })
     getHistory.mockResolvedValue({ items: [], total: 0 })
@@ -109,6 +100,8 @@ describe('RedeemView refresh after redemption', () => {
       expect(showSuccess).toHaveBeenCalledWith('redeem.codeRedeemSuccess')
       expect(document.body.textContent).toContain('redeem.redeemSuccess')
       expect(document.body.textContent).not.toContain('redeem.failedToRedeem')
+      expect(document.body.textContent).not.toContain('redeem.newBalance')
+      expect(document.body.textContent).not.toContain('redeem.newConcurrency')
       expect((wrapper.get('input#code').element as HTMLInputElement).value).toBe('')
       expect((wrapper.get('input#code').element as HTMLInputElement).disabled).toBe(false)
       expect(getHistory).toHaveBeenCalledTimes(2)
@@ -123,6 +116,11 @@ describe('RedeemView refresh after redemption', () => {
   )
 
   it('submits one redemption flight for rapid duplicate submits and opens the typed result modal', async () => {
+    refreshUser.mockImplementationOnce(async () => {
+      const refreshed = { balance: 10, concurrency: 5 }
+      authStoreState.instance.user = refreshed
+      return refreshed
+    })
     let resolveRedeem!: (value: unknown) => void
     redeem.mockImplementationOnce(() => new Promise((resolve) => { resolveRedeem = resolve }))
     const wrapper = mountRedeemView()
@@ -326,18 +324,24 @@ describe('RedeemView refresh after redemption', () => {
     wrapper.unmount()
   })
 
-  it('shows the locally reconciled balance immediately while the profile refresh is still pending', async () => {
+  it('shows the confirmed credit immediately but only publishes a balance confirmed by the server', async () => {
     let resolveRefresh!: (value: unknown) => void
     refreshUser.mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve }))
     const wrapper = await submitCode()
 
-    expect(wrapper.get('[data-testid="redeem-result-modal"]').exists()).toBe(true)
-    expect(document.body.textContent).toContain('$30.00')
-    expect(authStoreState.instance.user.balance).toBe(30)
+    expect(document.body.querySelector('[data-testid="redeem-result-modal-content"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('+$20.00')
+    expect(document.body.textContent).not.toContain('redeem.newBalance')
+    expect(authStoreState.instance.user.balance).toBe(10)
+    expect(wrapper.get('[data-testid="redeem-submit"]').attributes('disabled')).toBeDefined()
 
-    resolveRefresh({ balance: 30, concurrency: 2 })
+    // Concurrent spending means the server total need not equal cached balance + credit.
+    authStoreState.instance.user = { balance: 28.5, concurrency: 2 }
+    resolveRefresh({ balance: 28.5, concurrency: 2 })
     await flushPromises()
-    expect(document.body.textContent).toContain('$30.00')
+    expect(document.body.textContent).toContain('$28.50')
+    expect(document.body.textContent).not.toContain('$30.00')
+    expect(authStoreState.instance.user.balance).toBe(28.5)
     wrapper.unmount()
   })
 
@@ -379,6 +383,25 @@ describe('RedeemView refresh after redemption', () => {
     expect(redeem).toHaveBeenCalledTimes(2)
     expect(document.body.querySelector('[data-testid="redeem-result-modal-content"]')).not.toBeNull()
     expect((wrapper.get('input#code').element as HTMLInputElement).value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('keeps loaded history rows visible while refreshing after a successful redemption', async () => {
+    const row = { id: 1, code: 'PREVIOUS-CODE', type: 'balance', value: 4, used_at: '2026-03-08T00:00:00Z' }
+    getHistory.mockResolvedValueOnce({ items: [row], total: 1 })
+    let resolveHistory!: (value: unknown) => void
+    getHistory.mockImplementationOnce(() => new Promise((resolve) => { resolveHistory = resolve }))
+    const wrapper = await submitCode()
+
+    expect(wrapper.get('[data-testid="redeem-history"]').attributes('aria-busy')).toBe('true')
+    expect(wrapper.get('[data-testid="redeem-history"]').text()).toContain('PREVIOUS...')
+    expect(document.body.querySelector('[data-testid="redeem-result-modal-content"]')).not.toBeNull()
+    expect(redeem).toHaveBeenCalledTimes(1)
+
+    resolveHistory({ items: [row], total: 2 })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="redeem-history"]').attributes('aria-busy')).toBe('false')
+    expect(wrapper.get('[data-testid="redeem-history"]').text()).toContain('PREVIOUS...')
     wrapper.unmount()
   })
 
