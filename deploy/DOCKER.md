@@ -10,8 +10,21 @@ docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
   -e REDIS_URL="redis://host:6379" \
-  ghcr.io/kiss-kedaya/sub2api:0.1.237
+  ghcr.io/kiss-kedaya/sub2api:<version>
 ```
+
+## Nuxt SSR Frontend Image
+
+The Go image embeds the legacy Vite SPA for rollback. The Nuxt 4 SSR frontend runs as a separate Node image, built from the same commit:
+
+```bash
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend run build
+pnpm --dir frontend run build:ssr
+docker build -f deploy/nuxt/Dockerfile -t <local-image-name> frontend
+```
+
+Point `NUXT_BACKEND_ORIGIN` at the Go container, then route page traffic and `/api/v1/**` to this container. Gateway paths (`/v1/**`, SSE, WebSocket) stay on Go. Session key and full contract: [nuxt/README.md](./nuxt/README.md).
 
 ## Docker Compose
 
@@ -20,7 +33,7 @@ version: '3.8'
 
 services:
   sub2api:
-    image: ghcr.io/kiss-kedaya/sub2api:0.1.237
+    image: ghcr.io/kiss-kedaya/sub2api:<version>
     ports:
       - "8080:8080"
     environment:
@@ -34,7 +47,7 @@ services:
     image: postgres:15-alpine
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=<password>
       - POSTGRES_DB=sub2api
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -122,7 +135,7 @@ environment:
   SUB2API_UPDATE_DOCKER_COMMAND: docker
   SUB2API_UPDATE_AUTO_DOCKER_GROUP: "true"
   # Optional when .env is mode 600 and the app runs as a non-root user.
-  SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/kiss-kedaya/sub2api:0.1.237
+  SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/kiss-kedaya/sub2api:<version>
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock
   - /opt/sub2api:/opt/sub2api:ro
@@ -149,7 +162,7 @@ mounted; it never changes secret-file permissions. Compose files should use the
 version variable so the target image is unambiguous:
 
 ```yaml
-image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:-0.1.237}
+image: ghcr.io/kiss-kedaya/sub2api:${SUB2API_VERSION:?set SUB2API_VERSION}
 ```
 
 During each replacement the updater sends `SIGTERM` to exactly one replica.
