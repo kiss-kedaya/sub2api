@@ -866,6 +866,48 @@ describe('user KeysView mutations', () => {
     wrapper.unmount()
   })
 
+  it('shows a newly created smart-routing key when filtering by a secondary route group', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 2, name: 'OpenAI', platform: 'openai' },
+      { id: 3, name: 'Grok', platform: 'grok' },
+    ])
+    createKey.mockResolvedValue({
+      ...createApiKey(), id: 99, name: 'filtered route key', group_id: 2, group_ids: [2, 3],
+    })
+    const wrapper = await mountView()
+
+    const groupFilter = wrapper.findAllComponents({ name: 'Select' })[0]
+    groupFilter.vm.$emit('update:modelValue', 3)
+    await flushPromises()
+    listKeys.mockClear()
+
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('filtered route key')
+    await wrapper.get('input[name="key-provider"][value="openai"]').setValue()
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 2)
+    await nextTick()
+    const smartRouting = wrapper.findAll('[role="switch"]').find(
+      (node) => node.attributes('data-test') === 'key-smart-routing' || node.text().includes('keys.smartRouting')
+    )
+    if (!smartRouting) throw new Error('smart routing switch not found')
+    await smartRouting.trigger('click')
+    await nextTick()
+    await wrapper.get('input[name="key-provider"][value="other"]').setValue()
+    const addRoute = wrapper.findAllComponents({ name: 'Select' })
+      .find((select) => select.attributes('placeholder') === 'keys.smartRoutingAdd')!
+    addRoute.vm.$emit('update:modelValue', 3)
+    await nextTick()
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(listKeys).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('filtered route key')
+    expect(wrapper.findAll('[data-test="key-bound-group"]').map((node) => node.attributes('data-group-id')))
+      .toEqual(['2', '3'])
+    wrapper.unmount()
+  })
+
   it('renders every server-returned smart-routing group mapping immediately without refetching', async () => {
     getAvailableGroups.mockResolvedValue([
       { id: 1, name: 'Claude', platform: 'anthropic' },
