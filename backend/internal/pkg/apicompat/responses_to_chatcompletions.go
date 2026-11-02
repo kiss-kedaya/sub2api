@@ -17,6 +17,12 @@ import (
 // Completions response. Text output items are concatenated into
 // choices[0].message.content; function_call items become tool_calls.
 func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatCompletionsResponse {
+	return ResponsesToChatCompletionsWithOptions(resp, model, false)
+}
+
+// requireReasoningContent keeps display summaries out of replayable provider
+// reasoning_content on passback-required targets such as DeepSeek.
+func ResponsesToChatCompletionsWithOptions(resp *ResponsesResponse, model string, requireReasoningContent bool) *ChatCompletionsResponse {
 	id := resp.ID
 	if id == "" {
 		id = generateChatCmplID()
@@ -56,7 +62,11 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 				},
 			})
 		case "reasoning":
-			reasoningText += responsesReasoningText(item.Content, item.Summary)
+			if requireReasoningContent {
+				reasoningText += responsesReasoningContentText(item.Content)
+			} else {
+				reasoningText += responsesReasoningText(item.Content, item.Summary)
+			}
 		case "web_search_call":
 			// silently consumed — results already incorporated into text output
 		}
@@ -124,6 +134,8 @@ type ResponsesEventToChatState struct {
 	SawToolCall               bool
 	SawText                   bool
 	SawReasoningByOutputIndex map[int]bool
+	RequireReasoningContent   bool
+	ReasoningPartsSeen        map[string]bool
 	Finalized                 bool        // true after finish chunk has been emitted
 	NextToolCallIndex         int         // next sequential tool_call index to assign
 	OutputIndexToToolIndex    map[int]int // Responses output_index → Chat tool_calls index
@@ -381,22 +393,42 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 	if evt.Delta == "" {
 		return nil
 	}
+	if state.RequireReasoningContent && strings.Contains(evt.Type, "reasoning_summary") {
+		return nil
+	}
+	state.markReasoningPart(evt)
 	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
 	reasoning := evt.Delta
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
 }
 
 func resToChatHandleReasoningDone(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
-	if evt.Text == "" || state.SawReasoningByOutputIndex[evt.OutputIndex] {
+	if evt.Text == "" || (state.RequireReasoningContent && strings.Contains(evt.Type, "reasoning_summary")) || state.reasoningPartSeen(evt) {
 		return nil
 	}
+	state.markReasoningPart(evt)
 	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
 	reasoning := evt.Text
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
 }
 
 func resToChatHandleReasoningSnapshot(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
-	if evt.Item == nil || evt.Item.Type != "reasoning" || state.SawReasoningByOutputIndex[evt.OutputIndex] {
+	if evt.Item == nil || evt.Item.Type != "reasoning" {
+		return nil
+	}
+	if state.RequireReasoningContent {
+		var chunks []ChatCompletionsChunk
+		for index, part := range evt.Item.Content {
+			if part.Type != "reasoning_text" || part.Text == "" {
+				continue
+			}
+			chunks = append(chunks, resToChatHandleReasoningDone(&ResponsesStreamEvent{
+				Type: "response.reasoning_text.done", OutputIndex: evt.OutputIndex, ContentIndex: index, Text: part.Text,
+			}, state)...)
+		}
+		return chunks
+	}
+	if state.SawReasoningByOutputIndex[evt.OutputIndex] {
 		return nil
 	}
 	text := responsesReasoningText(evt.Item.Content, evt.Item.Summary)
@@ -405,6 +437,28 @@ func resToChatHandleReasoningSnapshot(evt *ResponsesStreamEvent, state *Response
 	}
 	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &text})}
+}
+
+func (state *ResponsesEventToChatState) reasoningPartKey(evt *ResponsesStreamEvent) string {
+	kind, index := "content", evt.ContentIndex
+	if strings.Contains(evt.Type, "reasoning_summary") {
+		kind, index = "summary", evt.SummaryIndex
+	}
+	return fmt.Sprintf("%d:%s:%d", evt.OutputIndex, kind, index)
+}
+
+func (state *ResponsesEventToChatState) reasoningPartSeen(evt *ResponsesStreamEvent) bool {
+	return state.ReasoningPartsSeen[state.reasoningPartKey(evt)]
+}
+
+func (state *ResponsesEventToChatState) markReasoningPart(evt *ResponsesStreamEvent) {
+	if state.ReasoningPartsSeen == nil {
+		state.ReasoningPartsSeen = make(map[string]bool)
+	}
+	if state.SawReasoningByOutputIndex == nil {
+		state.SawReasoningByOutputIndex = make(map[int]bool)
+	}
+	state.ReasoningPartsSeen[state.reasoningPartKey(evt)] = true
 }
 
 func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
