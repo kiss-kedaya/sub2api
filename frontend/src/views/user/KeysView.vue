@@ -157,24 +157,48 @@
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="isSmartRoutingKey(row) ? t('keys.smartRoutingChangeInEditor') : t('keys.clickToChangeGroup')"
               >
+                <div v-if="isSmartRoutingKey(row)" class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <span
+                    v-for="(groupId, index) in keyGroupIds(row)"
+                    :key="`${row.id}-${groupId}`"
+                    class="inline-flex min-w-0 items-center gap-1"
+                    data-test="key-bound-group"
+                    :data-group-id="groupId"
+                    :aria-label="`${t('keys.smartRoutingRoute')} ${index + 1}`"
+                  >
+                    <span class="shrink-0 text-[10px] font-semibold tabular-nums text-muted">{{ index + 1 }}.</span>
+                    <GroupBadge
+                      v-if="groupForKey(row, groupId)"
+                      :name="groupForKey(row, groupId)!.name"
+                      :platform="groupForKey(row, groupId)!.platform"
+                      :subscription-type="groupForKey(row, groupId)!.subscription_type"
+                      :rate-multiplier="groupForKey(row, groupId)!.rate_multiplier"
+                      :user-rate-multiplier="userGroupRates[groupId]"
+                      :peak-rate-enabled="groupForKey(row, groupId)!.peak_rate_enabled"
+                      :peak-start="groupForKey(row, groupId)!.peak_start"
+                      :peak-end="groupForKey(row, groupId)!.peak_end"
+                      :peak-rate-multiplier="groupForKey(row, groupId)!.peak_rate_multiplier"
+                    />
+                    <UBadge v-else color="neutral" variant="subtle" size="sm">#{{ groupId }}</UBadge>
+                  </span>
+                </div>
                 <GroupBadge
-                  v-if="row.group"
-                  :name="row.group.name"
-                  :platform="row.group.platform"
-                  :subscription-type="row.group.subscription_type"
-                  :rate-multiplier="row.group.rate_multiplier"
-                  :user-rate-multiplier="userGroupRates[row.group.id]"
-                  :peak-rate-enabled="row.group.peak_rate_enabled"
-                  :peak-start="row.group.peak_start"
-                  :peak-end="row.group.peak_end"
-                  :peak-rate-multiplier="row.group.peak_rate_multiplier"
+                  v-else-if="groupForKey(row, row.group_id)"
+                  :name="groupForKey(row, row.group_id)!.name"
+                  :platform="groupForKey(row, row.group_id)!.platform"
+                  :subscription-type="groupForKey(row, row.group_id)!.subscription_type"
+                  :rate-multiplier="groupForKey(row, row.group_id)!.rate_multiplier"
+                  :user-rate-multiplier="userGroupRates[row.group_id!]"
+                  :peak-rate-enabled="groupForKey(row, row.group_id)!.peak_rate_enabled"
+                  :peak-start="groupForKey(row, row.group_id)!.peak_start"
+                  :peak-end="groupForKey(row, row.group_id)!.peak_end"
+                  :peak-rate-multiplier="groupForKey(row, row.group_id)!.peak_rate_multiplier"
+                  data-test="key-bound-group"
+                  :data-group-id="row.group_id"
                 />
-                <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
-                  t('keys.noGroup')
-                }}</span>
+                <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noGroup') }}</span>
                 <UBadge v-if="isSmartRoutingKey(row)" color="primary" variant="subtle" size="sm">
                   {{ t('keys.smartRouting') }}
-                  {{ t('keys.smartRoutingMore', { count: (row.group_ids?.length || 1) - 1 }) }}
                 </UBadge>
                 <span v-else class="text-xs text-muted">{{ t('keys.selectGroup') }}</span>
                 <svg
@@ -1542,6 +1566,18 @@ const selectKeyProvider = (provider: KeyProvider) => {
 
 const isSmartRoutingKey = (key: ApiKey) => (key.group_ids?.length ?? 0) > 1
 
+/** The create DTO returns route group IDs, while its embedded Group is only the primary group. */
+const keyGroupIds = (key: ApiKey): number[] => {
+  if (Array.isArray(key.group_ids) && key.group_ids.length > 0) return [...new Set(key.group_ids)]
+  return key.group_id == null ? [] : [key.group_id]
+}
+
+const groupForKey = (key: ApiKey, groupId: number | null): Group | undefined => {
+  if (groupId == null) return undefined
+  return groups.value.find((group) => group.id === groupId) ??
+    (key.group?.id === groupId ? key.group : undefined)
+}
+
 watch(
   () => formData.value.smart_routing,
   (enabled) => {
@@ -1982,11 +2018,18 @@ const mergeKeyLocally = (updated: ApiKey | null | undefined): ApiKey | null => {
 /** Insert a freshly created key without refetching the page. */
 const insertKeyLocally = (created: ApiKey | null | undefined) => {
   if (!created || typeof created !== 'object' || typeof created.id !== 'number') return false
+  // The server's create DTO contains ordered group_ids but only embeds the primary Group.
+  // Resolve every bound route from the already-loaded available-group list for the new row.
+  const createdRow: ApiKey = {
+    ...created,
+    group_ids: keyGroupIds(created),
+    group: groupForKey(created, created.group_id),
+  }
   applyTotalDelta(1)
-  if (pagination.value.page !== 1 || !matchesActiveFilters(created)) return false
-  const index = apiKeys.value.findIndex((key) => compareRowsForCurrentSort(key, created) > 0)
+  if (pagination.value.page !== 1 || !matchesActiveFilters(createdRow)) return false
+  const index = apiKeys.value.findIndex((key) => compareRowsForCurrentSort(key, createdRow) > 0)
   const next = [...apiKeys.value]
-  next.splice(index === -1 ? next.length : index, 0, created)
+  next.splice(index === -1 ? next.length : index, 0, createdRow)
   apiKeys.value = next
   return true
 }

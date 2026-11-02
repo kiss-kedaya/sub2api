@@ -203,6 +203,9 @@ const DataTableStub = {
           <slot name="cell-id" :value="row.id" :row="row" />
         </div>
         <slot name="cell-name" :value="row.name" :row="row" />
+        <div data-test="key-groups">
+          <slot name="cell-group" :row="row" />
+        </div>
         <slot name="cell-actions" :row="row" />
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
@@ -281,7 +284,7 @@ const mountView = async () => {
         Icon: IconStub,
         UseKeyModal: true,
         EndpointPopover: true,
-        GroupBadge: true,
+        GroupBadge: { props: ['name'], template: '<span data-test="group-badge">{{ name }}</span>' },
         GroupOptionItem: true,
         Teleport: true,
       },
@@ -844,7 +847,7 @@ describe('user KeysView mutations', () => {
 
   it('inserts a created key locally without refetching the list', async () => {
     getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
-    createKey.mockResolvedValue({ ...createApiKey(), id: 99, name: 'new key' })
+    createKey.mockResolvedValue({ ...createApiKey(), id: 99, name: 'new key', group_id: 3, group_ids: [3] })
     const wrapper = await mountView()
 
     listKeys.mockClear()
@@ -858,6 +861,46 @@ describe('user KeysView mutations', () => {
     expect(createKey).toHaveBeenCalled()
     expect(listKeys).not.toHaveBeenCalled()
     expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(2)
+    expect(wrapper.get('[data-test="key-bound-group"]').attributes('data-group-id')).toBe('3')
+    expect(wrapper.text()).toContain('DeepSeek')
+    wrapper.unmount()
+  })
+
+  it('renders every server-returned smart-routing group mapping immediately without refetching', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'Claude', platform: 'anthropic' },
+      { id: 2, name: 'OpenAI', platform: 'openai' },
+      { id: 3, name: 'Grok', platform: 'grok' },
+    ])
+    createKey.mockResolvedValue({
+      ...createApiKey(), id: 99, name: 'mapped key', group_id: 2, group_ids: [2, 3],
+    })
+    const wrapper = await mountView()
+
+    listKeys.mockClear()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('mapped key')
+    await wrapper.get('input[name="key-provider"][value="openai"]').setValue()
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 2)
+    await nextTick()
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await nextTick()
+    await wrapper.get('input[name="key-provider"][value="other"]').setValue()
+    const addRoute = wrapper.findAllComponents({ name: 'Select' })
+      .find((select) => select.attributes('placeholder') === 'keys.smartRoutingAdd')!
+    addRoute.vm.$emit('update:modelValue', 3)
+    await nextTick()
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(createKey).toHaveBeenCalledWith('mapped key', 2, undefined, [], [], 0, undefined,
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, [2, 3], 'inherit',
+      { deepseekToolInjectionEnabled: true })
+    expect(listKeys).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-test="key-bound-group"]').map((node) => node.attributes('data-group-id'))).toEqual(['2', '3'])
+    expect(wrapper.text()).toContain('OpenAI')
+    expect(wrapper.text()).toContain('Grok')
     wrapper.unmount()
   })
 
