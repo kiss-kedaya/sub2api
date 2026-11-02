@@ -14,8 +14,8 @@
  * Run from the repository root (it reuses frontend/scripts/build-manifest.mjs).
  */
 import { createHash } from 'node:crypto'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, basename, join, resolve } from 'node:path'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -39,6 +39,117 @@ function listFiles(root, current = root, result = []) {
     else if (entry.isFile()) result.push(full)
   }
   return result
+}
+
+const MAX_COPY_ENTRIES = 400000
+const MAX_COPY_DEPTH = 48
+
+function isAbsoluteLinkTarget(target) {
+  return target.startsWith('/') || /^[A-Za-z]:[\\/]/.test(target) || target.startsWith('\\\\')
+}
+
+/**
+ * Copy a tree while materialising every symlink into plain files.
+ *
+ * Nitro's node-file-trace links external packages (for example
+ * `@vueuse/shared` and `@tanstack/virtual-core`) to absolute build-workspace
+ * paths such as `/home/runner/work/<repo>/node_modules/.pnpm/...`. Archiving the
+ * tree as-is ships those links to every server, where they are dead and the
+ * Nitro server exits with ERR_MODULE_NOT_FOUND on the first page render, so the
+ * staged tree must contain regular files only.
+ */
+export function copyTreeDereferenced(srcRoot, destRoot) {
+  const sourceRoot = resolve(srcRoot)
+  const targetRoot = resolve(destRoot)
+  const stats = { files: 0, dirs: 0, dereferenced: 0 }
+  const stack = []
+
+  const copyDirectory = (from, to, depth) => {
+    if (depth > MAX_COPY_DEPTH) throw new Error(`copy exceeded ${MAX_COPY_DEPTH} levels below ${sourceRoot} (symlink loop?)`)
+    const real = realpathSync(from)
+    if (stack.includes(real)) throw new Error(`symlink cycle: ${from} -> ${real}`)
+    stack.push(real)
+    mkdirSync(to, { recursive: true })
+    stats.dirs += 1
+    for (const entry of readdirSync(from, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (stats.files + stats.dirs > MAX_COPY_ENTRIES) throw new Error(`copy exceeded ${MAX_COPY_ENTRIES} entries below ${sourceRoot}`)
+      const link = join(from, entry.name)
+      const next = join(to, entry.name)
+      if (entry.isSymbolicLink()) {
+        const raw = readlinkSync(link)
+        let real
+        try {
+          real = realpathSync(link)
+        } catch {
+          throw new Error(`broken symlink while staging: ${link} -> ${raw}`)
+        }
+        stats.dereferenced += 1
+        const info = statSync(real)
+        if (info.isDirectory()) copyDirectory(real, next, depth + 1)
+        else {
+          copyFileSync(real, next)
+          try { chmodSync(next, info.mode) } catch { /* best effort on non-POSIX filesystems */ }
+          stats.files += 1
+        }
+        continue
+      }
+      if (entry.isDirectory()) copyDirectory(link, next, depth + 1)
+      else if (entry.isFile()) {
+        copyFileSync(link, next)
+        try { chmodSync(next, statSync(link).mode) } catch { /* best effort */ }
+        stats.files += 1
+      }
+    }
+    stack.pop()
+  }
+
+  copyDirectory(sourceRoot, targetRoot, 0)
+  return stats
+}
+
+/**
+ * List every symlink below `root` and classify it. An archived release must
+ * return an empty list: `absolute`, `outside-tree` and `broken` entries all
+ * point at the throwaway CI checkout instead of real bytes.
+ */
+export function scanSymlinks(root) {
+  const rootDir = resolve(root)
+  let realRoot = rootDir
+  try { realRoot = realpathSync(rootDir) } catch { /* keep the literal path */ }
+  const found = []
+
+  const walk = (dir) => {
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = join(dir, entry.name)
+      if (entry.isSymbolicLink()) {
+        let target = ''
+        try { target = readlinkSync(full) } catch { target = '<unreadable>' }
+        let kind = isAbsoluteLinkTarget(target) ? 'absolute' : 'relative'
+        let resolved = null
+        try { resolved = realpathSync(full) } catch { kind = 'broken' }
+        if (resolved && kind !== 'broken' && resolved !== realRoot && !resolved.startsWith(realRoot + sep)) {
+          kind = 'outside-tree'
+        }
+        found.push({ path: full.slice(rootDir.length + 1).split(sep).join('/'), target, kind })
+        continue
+      }
+      if (entry.isDirectory()) walk(full)
+    }
+  }
+
+  walk(rootDir)
+  return found
+}
+
+function assertNoSymlinks(root, label) {
+  const links = scanSymlinks(root)
+  if (links.length === 0) return
+  fail(
+    `${label} still contains ${links.length} symlink(s); the archive would ship build-workspace paths`,
+    links.slice(0, 20).map((link) => `${link.kind}: ${link.path} -> ${link.target}`),
+  )
 }
 
 function resolveSsrManifestDir(ssrDir) {
@@ -229,7 +340,11 @@ function stage(args) {
   verify({ ...args, release: file, ssr: ssrDir, binary })
   mkdirSync(out, { recursive: true })
   copyFileSync(binary, join(out, 'sub2api'))
-  cpSync(ssrDir, join(out, '.output'), { recursive: true })
+  const copyStats = copyTreeDereferenced(ssrDir, join(out, '.output'))
+  console.log(
+    `dereferenced ${copyStats.dereferenced} symlink(s) while staging .output ` +
+    `(${copyStats.files} files, ${copyStats.dirs} dirs)`,
+  )
   copyFileSync(file, join(out, 'release.json'))
   writeFileSync(join(out, 'VERSION'), `${release.version}\n`, 'utf8')
   writeFileSync(join(out, 'release.env'), [
@@ -246,6 +361,14 @@ function stage(args) {
     mkdirSync(join(out, 'deploy'), { recursive: true })
     copyFileSync(source, join(out, 'deploy', name))
   }
+  // Dereferencing must not change a single byte: the sealed manifest already
+  // hashed the traced closure, so the staged copy has to match it exactly.
+  const stagedManifestDir = resolveSsrManifestDir(join(out, '.output'))
+  const stagedCheck = verifyManifest(stagedManifestDir, { mode: 'ssr', allowCommitDrift: true })
+  if (stagedCheck.errors.length > 0) {
+    fail('staged .output no longer matches the sealed manifest after dereferencing', stagedCheck.errors.slice(0, 20))
+  }
+  assertNoSymlinks(out, 'staged release')
   const sumFiles = listFiles(out).filter((path) => path !== join(out, 'SHA256SUMS'))
   const sums = sumFiles.map((path) => `${sha256File(path)}  ${path.slice(out.length + 1).split('\\').join('/')}`).join('\n') + '\n'
   writeFileSync(join(out, 'SHA256SUMS'), sums)
@@ -258,6 +381,7 @@ function main() {
   const command = args._[0]
   if (!command || args.help) {
     console.log('usage: release.mjs <seal|verify|stage> --ssr <dir> --binary <file> [--spa-dist <dir>] [--release <file>] [--out <path>]')
+    console.log('  stage dereferences build-workspace symlinks and refuses to emit a tree that still contains any')
     process.exit(command ? 0 : 2)
   }
   if (command === 'seal') return seal(args)
@@ -266,4 +390,15 @@ function main() {
   fail(`unknown command "${command}"`)
 }
 
-main()
+// Importing this module (tests, smoke checks) must not run the CLI.
+function isMainModule() {
+  if (!process.argv[1]) return false
+  const self = fileURLToPath(import.meta.url)
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(self)
+  } catch {
+    return resolve(process.argv[1]) === self
+  }
+}
+
+if (isMainModule()) main()
