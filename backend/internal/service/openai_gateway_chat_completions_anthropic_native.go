@@ -135,9 +135,9 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
 
 	if clientStream {
-		return s.handleCCStreamingFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, includeUsage)
+		return s.handleCCStreamingFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, includeUsage, account.Platform == PlatformDeepseek)
 	}
-	return s.handleCCBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime)
+	return s.handleCCBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, account.Platform == PlatformDeepseek)
 }
 
 // handleCCBufferedFromNativeAnthropic reads Anthropic SSE events, assembles the
@@ -150,6 +150,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 	upstreamModel string,
 	reasoningEffort *string,
 	startTime time.Time,
+	requireReasoningContent ...bool,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -257,7 +258,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 	finalResp.Usage = claudeUsageToAnthropicUsage(usage)
 
 	responsesResp := apicompat.AnthropicToResponsesResponse(finalResp)
-	ccResp := apicompat.ResponsesToChatCompletionsWithOptions(responsesResp, originalModel, account.Platform == PlatformDeepseek)
+	ccResp := apicompat.ResponsesToChatCompletionsWithOptions(responsesResp, originalModel, len(requireReasoningContent) > 0 && requireReasoningContent[0])
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -296,6 +297,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 	reasoningEffort *string,
 	startTime time.Time,
 	includeUsage bool,
+	requireReasoningContent ...bool,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -311,7 +313,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 	anthState := apicompat.NewAnthropicEventToResponsesState()
 	anthState.Model = originalModel
 	ccState := apicompat.NewResponsesEventToChatState()
-	ccState.RequireReasoningContent = account.Platform == PlatformDeepseek
+	ccState.RequireReasoningContent = len(requireReasoningContent) > 0 && requireReasoningContent[0]
 	ccState.Model = originalModel
 	ccState.IncludeUsage = includeUsage
 
