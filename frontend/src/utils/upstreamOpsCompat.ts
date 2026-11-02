@@ -153,10 +153,6 @@ function pickString(record: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function pickBoolean(record: Record<string, unknown>, key: string): boolean {
-  return record[key] === true
-}
-
 function pickStringArray(record: Record<string, unknown>, key: string): string[] {
   const value = record[key]
   if (Array.isArray(value)) {
