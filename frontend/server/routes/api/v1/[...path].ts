@@ -1,4 +1,5 @@
 import { handleBffRequest } from '../../../utils/backendProxy'
+import { appendResponseHeader } from 'h3'
 import {
   isAllowedMethod,
   isBffOnlyRoute,
@@ -64,6 +65,11 @@ export default defineEventHandler(async (event) => {
       ? null
       : ((await readRawBody(event, false)) as Buffer | undefined) ?? null
 
+  // Overwrite, never trust: the browser must not be able to spoof the public
+  // origin the Go API uses for same-origin return_url validation.
+  headers['x-forwarded-host'] = host
+  headers['x-forwarded-proto'] = protocol
+
   const result = await handleBffRequest({
     method,
     path: decision.path,
@@ -92,7 +98,14 @@ export default defineEventHandler(async (event) => {
   }
 
   for (const [name, value] of Object.entries(result.headers)) {
-    setResponseHeader(event, name, value)
+    if (Array.isArray(value)) {
+      for (const item of value) appendResponseHeader(event, name, item)
+    } else {
+      setResponseHeader(event, name, value)
+    }
+  }
+  for (const cookie of result.setCookies ?? []) {
+    appendResponseHeader(event, 'set-cookie', cookie)
   }
   if (String(result.headers['content-type'] || '').includes('text/event-stream')) {
     setResponseHeader(event, 'x-accel-buffering', 'no')
@@ -102,6 +115,12 @@ export default defineEventHandler(async (event) => {
   // Bodies must never be handed back as a bare web stream: Nitro would keep the
   // response open while the caller waits for it. sendStream pipes and ends it.
   const responseBody = result.body
+  if (method === 'HEAD') {
+    // H3 interprets a bare null with status 200 as 204. End HEAD explicitly
+    // without changing its status or manufacturing a representation length.
+    event.node.res.end()
+    return
+  }
   if (result.status === 204 || result.status === 304) {
     return null
   }

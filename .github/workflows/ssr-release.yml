@@ -120,6 +120,7 @@ jobs:
           fi
           cp .pack-tools/deploy/nuxt/release.mjs deploy/nuxt/release.mjs
           cp .pack-tools/deploy/nuxt/smoke-ssr.mjs deploy/nuxt/smoke-ssr.mjs
+          cp .pack-tools/deploy/nuxt/smoke-authenticated-ssr.mjs deploy/nuxt/smoke-authenticated-ssr.mjs
           cp .pack-tools/deploy/nuxt/release.test.mjs deploy/nuxt/release.test.mjs
           # Fail loudly instead of silently repackaging with the old helper.
           grep -q 'copyTreeDereferenced' deploy/nuxt/release.mjs
@@ -195,6 +196,7 @@ jobs:
           EXTRACT="$(mktemp -d)"
           tar -xzf "dist/sub2api_${VERSION}_ssr_linux_amd64.tar.gz" -C "$EXTRACT"
           node deploy/nuxt/smoke-ssr.mjs --dir "$EXTRACT/ssr" --timeout 120000
+          node deploy/nuxt/smoke-authenticated-ssr.mjs "$EXTRACT/ssr/.output"
 
       - name: Upload to the GitHub release
         env:

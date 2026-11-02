@@ -106,9 +106,12 @@
                 <tr v-for="({ row, progress }, i) in rows" :key="row.tx_hash + '-' + i">
                   <td :data-label="t('deposit.chain')">{{ chainLabel(row.chain) }}</td>
                   <td :data-label="t('deposit.amount')" class="deposit-view__number">{{ row.amount }} <span class="deposit-view__muted">{{ row.token }}</span></td>
-                  <td :data-label="t('deposit.credited')" class="deposit-view__number">{{ row.status === 'credited' ? fmtCredited(row.credited) : '—' }}</td>
+                  <td :data-label="t('deposit.credited')" class="deposit-view__number">
+                    <UBadge v-if="row.status === 'credited' && !hasKnownCredit(row)" color="warning" variant="subtle" :title="t('deposit.creditUnknownHint')" data-testid="deposit-credit-unknown">{{ t('deposit.creditUnknown') }}</UBadge>
+                    <template v-else>{{ row.status === 'credited' ? fmtCredited(row.credited) : '—' }}</template>
+                  </td>
                   <td :data-label="t('common.status')" class="deposit-view__status">
-                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + row.status">{{ statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span>
+                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + (row.status === 'credited' && !hasKnownCredit(row) ? 'pending' : row.status)">{{ row.status === 'credited' && !hasKnownCredit(row) ? t('deposit.statusReconciliation') : statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span>
                     <div v-if="progress" class="deposit-view__progress">
                       <span class="deposit-view__progress-text">{{ progressText(progress) }}</span>
                       <span class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
@@ -260,6 +263,12 @@ function fmtCredited(value: number): string {
   return Number(value.toFixed(8)).toString()
 }
 
+// Deposits are positive. Older backends use 0 when no original settlement
+// order can be found; never present that unknown value as a confirmed credit.
+function hasKnownCredit(row: DepositRecord): boolean {
+  return row.credited_known !== false && Number.isFinite(row.credited) && row.credited > 0
+}
+
 // Map the backend's machine reason codes to localized text. The thresholds
 // come from deposit-info so the text always matches the live config.
 function reasonText(code: string): string {
@@ -327,7 +336,7 @@ function announceCredited(previous: DepositRecord[], next: DepositRecord[]) {
   const wasPending = new Set(previous.filter(r => r.status === 'pending' && r.tx_hash).map(depositKey))
   const landed = next.filter(r => r.status === 'credited' && r.tx_hash && wasPending.has(depositKey(r)))
   if (!landed.length) return
-  for (const r of landed) appStore.showSuccess(t('deposit.creditedToast', { amount: fmtCredited(r.credited) }))
+  for (const r of landed.filter(hasKnownCredit)) appStore.showSuccess(t('deposit.creditedToast', { amount: fmtCredited(r.credited) }))
   void authStore.refreshUser().catch(() => undefined)
 }
 

@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { managementFetchHeaders } from '@/api/managementFetch'
+import { getAppRuntimeContext } from '@runtime/context'
+
+vi.mock('@runtime/context', () => ({ getAppRuntimeContext: vi.fn() }))
 
 import {
   applyAccountModelTestEvent,
@@ -17,8 +21,25 @@ import {
 
 describe('accountModelTest helpers', () => {
   afterEach(() => {
+    vi.mocked(getAppRuntimeContext).mockReset()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('uses the Cookie session for raw streaming tests without leaking stale localStorage credentials', () => {
+    vi.mocked(getAppRuntimeContext).mockReturnValue({ cookieSession: true } as NonNullable<ReturnType<typeof getAppRuntimeContext>>)
+    const getItem = vi.fn(() => 'stale-token')
+    vi.stubGlobal('localStorage', { getItem })
+    expect(managementFetchHeaders({ 'x-admin-ui-request': '1' })).toEqual({ 'Content-Type': 'application/json', 'x-admin-ui-request': '1' })
+    expect(getItem).not.toHaveBeenCalled()
+  })
+
+  it('keeps Bearer compatibility for the embedded SPA but never sends Bearer null', () => {
+    vi.mocked(getAppRuntimeContext).mockReturnValue(undefined)
+    vi.stubGlobal('localStorage', { getItem: () => 'legacy-token' })
+    expect(managementFetchHeaders().Authorization).toBe('Bearer legacy-token')
+    vi.stubGlobal('localStorage', { getItem: () => null })
+    expect(managementFetchHeaders().Authorization).toBeUndefined()
   })
 
   it('flags media-heavy model ids', () => {

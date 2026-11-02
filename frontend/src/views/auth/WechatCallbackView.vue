@@ -345,6 +345,7 @@ import {
   loadOAuthAffiliateCode,
   oauthAffiliatePayload
 } from '@/utils/oauthAffiliate'
+import { consumeOAuthFragment } from '@/utils/oauthCallback'
 
 const route = useRoute()
 const router = useRouter()
@@ -387,7 +388,7 @@ const showBackToChooser = computed(
 )
 const needsCreateAccount = computed(() => pendingAccountAction.value === 'create_account')
 const needsBindLogin = computed(() => pendingAccountAction.value === 'bind_login')
-const hasCurrentAuthToken = computed(() => Boolean(getAuthToken()))
+const hasCurrentAuthToken = computed(() => Boolean(getAuthToken()) || authStore.isAuthenticated)
 
 watch(invitationError, value => {
   if (value) {
@@ -441,19 +442,19 @@ function clearPendingAuthSession() {
 }
 
 function parseFragmentParams(): URLSearchParams {
-  const raw = typeof window !== 'undefined' ? window.location.hash : ''
-  const hash = raw.startsWith('#') ? raw.slice(1) : raw
-  return new URLSearchParams(hash)
+  return consumeOAuthFragment()
 }
 
 function readLegacyFragmentLogin(params: URLSearchParams): OAuthTokenResponse | null {
   const accessToken = params.get('access_token')?.trim() || ''
-  if (!accessToken) {
+  const sessionManaged = params.get('session_managed') === '1'
+  if (!accessToken && !sessionManaged) {
     return null
   }
 
   const completion: OAuthTokenResponse = {
-    access_token: accessToken
+    access_token: accessToken,
+    ...(sessionManaged ? { session_managed: true } : {})
   }
   const refreshToken = params.get('refresh_token')?.trim() || ''
   if (refreshToken) {
@@ -627,7 +628,7 @@ async function handleBindCurrentAccount() {
 }
 
 async function handleExistingAccountBinding() {
-  if (getAuthToken()) {
+  if (getAuthToken() || authStore.isAuthenticated) {
     await handleBindCurrentAccount()
     return
   }
@@ -997,7 +998,7 @@ onMounted(async () => {
   }
 
   if (route.query.wechat_bind_existing === '1') {
-    if (getAuthToken()) {
+    if (getAuthToken() || authStore.isAuthenticated) {
       await handleBindCurrentAccount()
       return
     }

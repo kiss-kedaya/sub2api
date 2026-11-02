@@ -379,6 +379,8 @@ export const useAuthStore = defineStore('auth', () => {
    * @param newToken - 后端签发的 JWT access token
    */
   async function setToken(newToken: string): Promise<User> {
+    if (getAppRuntimeContext()?.cookieSession) return adoptCookieSession()
+
     // Clear any previous state first (avoid mixing sessions)
     // Note: Don't clear localStorage here as OAuth callback may have set refresh_token
     stopAutoRefresh()
@@ -411,6 +413,33 @@ export const useAuthStore = defineStore('auth', () => {
       }
 
       clearPendingAuthSession()
+      return userData
+    } catch (error) {
+      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      throw error
+    }
+  }
+
+  async function adoptCookieSession(): Promise<User> {
+    stopAutoRefresh()
+    stopTokenRefresh()
+    token.value = null
+    cookieSession.value = true
+    refreshTokenValue.value = null
+    tokenExpiresAt.value = null
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(AUTH_TOKEN_KEY)
+      localStorage.removeItem(REFRESH_TOKEN_KEY)
+      localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
+    }
+    try {
+      const probe = await authAPI.getBffAuthSession()
+      if (!probe.data.authenticated || !probe.data.session_managed) {
+        throw new Error('OAuth session was not established by the server')
+      }
+      const userData = await refreshUser()
+      clearPendingAuthSession()
+      startAutoRefresh()
       return userData
     } catch (error) {
       clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
@@ -536,6 +565,7 @@ export const useAuthStore = defineStore('auth', () => {
     login2FA,
     register,
     setToken,
+    adoptCookieSession,
     logout,
     checkAuth,
     refreshUser,

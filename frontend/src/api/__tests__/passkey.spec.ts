@@ -72,6 +72,24 @@ describe('passkey api', () => {
     vi.unstubAllGlobals()
   })
 
+  it('reports support only when both WebAuthn browser APIs exist', () => {
+    expect(passkeyAPI.isSupported()).toBe(true)
+    Object.defineProperty(navigator, 'credentials', { configurable: true, value: undefined })
+    expect(passkeyAPI.isSupported()).toBe(false)
+  })
+
+  it.each(['window', 'navigator'])('is safe without the SSR global %s', async (name) => {
+    vi.stubGlobal(name, undefined)
+    expect(passkeyAPI.isSupported()).toBe(false)
+    await expect(passkeyAPI.login()).rejects.toThrow('Passkeys are not supported by this browser')
+    await expect(passkeyAPI.register('Test device', 'test-only-password')).rejects.toThrow(
+      'Passkeys are not supported by this browser'
+    )
+    expect(post).not.toHaveBeenCalled()
+    expect(credentialGet).not.toHaveBeenCalled()
+    expect(credentialCreate).not.toHaveBeenCalled()
+  })
+
   it('converts assertion options and response bytes to WebAuthn JSON', async () => {
     post
       .mockResolvedValueOnce({

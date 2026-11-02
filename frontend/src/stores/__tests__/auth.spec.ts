@@ -7,6 +7,7 @@ const mockLogin = vi.fn()
 const mockLogin2FA = vi.fn()
 const mockLogout = vi.fn()
 const mockGetCurrentUser = vi.fn()
+const mockGetBffAuthSession = vi.fn()
 const mockRegister = vi.fn()
 const mockRefreshToken = vi.fn()
 
@@ -16,6 +17,7 @@ vi.mock('@/api', () => ({
     login2FA: (...args: any[]) => mockLogin2FA(...args),
     logout: (...args: any[]) => mockLogout(...args),
     getCurrentUser: (...args: any[]) => mockGetCurrentUser(...args),
+    getBffAuthSession: (...args: any[]) => mockGetBffAuthSession(...args),
     register: (...args: any[]) => mockRegister(...args),
     refreshToken: (...args: any[]) => mockRefreshToken(...args),
   },
@@ -73,7 +75,41 @@ describe('useAuthStore', () => {
     vi.useRealTimers()
   })
 
+  it('adopts the BFF OAuth session from the probe and loads /auth/me without persisting tokens', async () => {
+    mockGetBffAuthSession.mockResolvedValue({ data: { authenticated: true, session_managed: true } })
+    mockGetCurrentUser.mockResolvedValue({ data: { ...fakeUser } })
+    const store = useAuthStore()
+    localStorage.setItem('auth_token', 'old-token')
+    localStorage.setItem('refresh_token', 'old-refresh')
+    localStorage.setItem('token_expires_at', '123')
+
+    const user = await store.adoptCookieSession()
+
+    expect(mockGetBffAuthSession).toHaveBeenCalledTimes(1)
+    expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+    expect(user).toEqual(fakeUser)
+    expect(store.cookieSession).toBe(true)
+    expect(store.token).toBeNull()
+    expect(localStorage.getItem('auth_token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+    expect(localStorage.getItem('token_expires_at')).toBeNull()
+  })
+
   // --- login ---
+  it.each(['unauthenticated', 'probe failure', 'me failure'])('clears stale OAuth identity on %s', async (failure) => {
+    const store = useAuthStore()
+    store.token = 'old-token'
+    store.user = { ...fakeUser }
+    localStorage.setItem('auth_token', 'old-token')
+    mockGetBffAuthSession.mockResolvedValue({ data: { authenticated: failure !== 'unauthenticated', session_managed: true } })
+    if (failure === 'probe failure') mockGetBffAuthSession.mockRejectedValue(new Error('probe failed'))
+    mockGetCurrentUser.mockRejectedValue(new Error('me failed'))
+    await expect(store.adoptCookieSession()).rejects.toThrow()
+    expect(store.isAuthenticated).toBe(false)
+    expect(store.user).toBeNull()
+    expect(store.cookieSession).toBe(false)
+    expect(localStorage.getItem('auth_token')).toBeNull()
+  })
 
   describe('login', () => {
     it('成功登录后设置 token 和 user', async () => {

@@ -28,6 +28,11 @@ FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/redeem.spec.ts \
 	src/api/__tests__/keys.deepseek-tools.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
+	src/views/auth/__tests__/OAuthCallbackView.spec.ts \
+	src/views/auth/__tests__/OidcCallbackView.spec.ts \
+	src/stores/__tests__/auth.spec.ts \
+	src/api/__tests__/auth-oauth-adoption.spec.ts \
+	src/api/__tests__/auth-captcha-oauth-start.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
 	src/views/user/__tests__/PaymentResultView.spec.ts \
@@ -41,6 +46,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/layout/__tests__/AppSidebar.spec.ts \
 	src/components/common/__tests__/ConsoleTabs.spec.ts \
 	src/components/common/__tests__/DataTable.spec.ts \
+	src/components/common/__tests__/DataTable.ssr.spec.ts \
 	src/components/payment/__tests__/AmountInput.spec.ts \
 	src/components/admin/account/__tests__/AccountTableFilters.spec.ts \
 	src/components/admin/account/__tests__/AccountBulkActionsBar.spec.ts \

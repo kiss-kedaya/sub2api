@@ -29,11 +29,13 @@ beforeEach(() => {
 })
 afterEach(() => { clearCryptoGrant(); vi.restoreAllMocks() })
 
-function render(show = true) {
-  return mount(CryptoMnemonicsDialog, { props: { show }, global: { stubs: { teleport: true } } })
+async function render(show = true) {
+  const wrapper = mount(CryptoMnemonicsDialog, { props: { show }, global: { stubs: { teleport: true } } })
+  await flushPromises()
+  return wrapper
 }
 
-async function submitAndAuthorize(wrapper: ReturnType<typeof render>, waitForTransition = true) {
+async function submitAndAuthorize(wrapper: Awaited<ReturnType<typeof render>>, waitForTransition = true) {
   await wrapper.get('[data-testid="crypto-mnemonics-confirm"]').trigger('click')
   await wrapper.get('#crypto-mnemonics-form').trigger('submit')
   await flushPromises()
@@ -49,7 +51,7 @@ async function submitAndAuthorize(wrapper: ReturnType<typeof render>, waitForTra
 
 describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', () => {
   it('requires production confirmation before asking for TOTP', async () => {
-    const wrapper = render()
+    const wrapper = await render()
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     expect(mocks.get).not.toHaveBeenCalled()
     expect(mocks.post).not.toHaveBeenCalled()
@@ -59,7 +61,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
   it('sends only fresh TOTP with no-store, then shows two independently masked sections', async () => {
     const localWrite = vi.spyOn(localStorage, 'setItem')
     const sessionWrite = vi.spyOn(sessionStorage, 'setItem')
-    const wrapper = render()
+    const wrapper = await render()
     await submitAndAuthorize(wrapper)
     expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/wallet/export-mnemonics', {}, expect.objectContaining({
       headers: { 'X-Crypto-Grant': grantCredential, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
@@ -74,7 +76,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
   })
 
   it('reveals each seed independently and copies only the selected half of each mnemonic', async () => {
-    const wrapper = render()
+    const wrapper = await render()
     await submitAndAuthorize(wrapper)
     const sections = wrapper.findAll('.crypto-mnemonics__seed')
     const copy = vi.mocked(navigator.clipboard.writeText)
@@ -112,7 +114,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     const words24 = Array.from({ length: 24 }, (_, index) => `seed${index + 1}`)
     mocks.post.mockImplementation(async (path: string) => path.endsWith('/security/verify') ? grantResponse() : path.endsWith('/operation-intent')
       ? { data: { accepted: true } } : { data: { deposit_mnemonic: words24.join(' '), hot_mnemonic: hot } })
-    const wrapper = render()
+    const wrapper = await render()
     await submitAndAuthorize(wrapper)
     const depositButtons = wrapper.findAll('[data-copy-part]').filter((button) => button.attributes('data-copy-part')?.startsWith('deposit-'))
     const copy = vi.mocked(navigator.clipboard.writeText)
@@ -126,7 +128,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
 
   it('removes both plaintext seeds from the page after the short reveal window', async () => {
     vi.useFakeTimers()
-    const wrapper = render()
+    const wrapper = await render()
     await submitAndAuthorize(wrapper, false)
     await vi.advanceTimersByTimeAsync(200)
     await flushPromises()
@@ -144,7 +146,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
     let resolveExport!: (value: { data: { deposit_mnemonic: string; hot_mnemonic: string } }) => void
     mocks.post.mockImplementation((path: string) => path.endsWith('/security/verify') ? Promise.resolve(grantResponse()) : path.endsWith('/operation-intent')
       ? Promise.resolve({ data: { accepted: true } }) : new Promise((resolve) => { resolveExport = resolve }))
-    const wrapper = render()
+    const wrapper = await render()
     await wrapper.get('[data-testid="crypto-mnemonics-confirm"]').trigger('click')
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()
@@ -165,7 +167,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
   })
 
   it('cancels without a request, clears secrets on close/reopen, and never writes to clipboard', async () => {
-    const wrapper = render()
+    const wrapper = await render()
     await wrapper.get('[data-testid="crypto-mnemonics-confirm"]').trigger('click')
     await wrapper.get('[data-testid="crypto-mnemonics-cancel"]').trigger('click')
     expect(mocks.get).not.toHaveBeenCalled()
@@ -188,7 +190,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
       if (result === 'failure') throw new Error('Bark unavailable')
       return { data: { accepted: false } }
     })
-    const wrapper = render()
+    const wrapper = await render()
     await wrapper.get('[data-testid="crypto-mnemonics-confirm"]').trigger('click')
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()
@@ -202,7 +204,7 @@ describe('Crypto mnemonic plaintext dialog UI (not a backend security test)', ()
   it('ignores a late notification when the export dialog has closed', async () => {
     let completeIntent!: (value: unknown) => void
     mocks.post.mockImplementation(() => new Promise(resolve => { completeIntent = resolve }))
-    const wrapper = render()
+    const wrapper = await render()
     await wrapper.get('[data-testid="crypto-mnemonics-confirm"]').trigger('click')
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()

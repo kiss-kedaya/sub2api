@@ -5,7 +5,7 @@
  * stripping can be unit tested without a running Nitro server.
  */
 
-import { timingSafeEqual } from 'node:crypto'
+import { isIP } from 'node:net'
 
 export const API_PREFIX = '/api/v1'
 
@@ -13,6 +13,7 @@ export const API_PREFIX = '/api/v1'
 export const TOKEN_ROUTES = new Set([
   `${API_PREFIX}/auth/login`,
   `${API_PREFIX}/auth/login/2fa`,
+  `${API_PREFIX}/auth/passkey/login/finish`,
   `${API_PREFIX}/auth/register`,
   `${API_PREFIX}/auth/refresh`,
   `${API_PREFIX}/auth/logout`,
@@ -51,19 +52,152 @@ const REQUEST_HEADER_ALLOWLIST = new Set([
   'content-language',
   'content-type',
   'idempotency-key',
+  'origin',
+  // Same-origin return_url checks in the Go API read the browser's referer.
+  'referer',
   'range',
   'user-agent',
   'x-admin-ui-request',
   'x-client-request-id',
+  // Node's fetch cannot override Host, so the backend would see the loopback
+  // address. These carry the real public origin for same-origin checks.
+  'x-forwarded-host',
+  'x-forwarded-proto',
   'x-request-id',
   'x-user-ui-request',
 ])
 
-/** Response headers worth forwarding. Set-Cookie and CORS headers never are. */
+const OAUTH_COOKIE_NAMES = new Set([
+  'dingtalk_oauth_state', 'dingtalk_oauth_redirect', 'dingtalk_oauth_intent', 'dingtalk_oauth_bind_user',
+  'email_oauth_state', 'email_oauth_redirect', 'email_oauth_provider', 'email_oauth_affiliate',
+  'linuxdo_oauth_state', 'linuxdo_oauth_verifier', 'linuxdo_oauth_redirect', 'linuxdo_oauth_intent', 'linuxdo_oauth_bind_user',
+  'oauth_bind_access_token', 'oauth_pending_browser_session', 'oauth_pending_session', 'oauth_promo_code',
+  'oidc_oauth_state', 'oidc_oauth_verifier', 'oidc_oauth_redirect', 'oidc_oauth_nonce', 'oidc_oauth_intent', 'oidc_oauth_bind_user',
+  'wechat_oauth_state', 'wechat_oauth_redirect', 'wechat_oauth_intent', 'wechat_oauth_mode', 'wechat_oauth_bind_user',
+  'wechat_payment_oauth_state', 'wechat_payment_oauth_redirect', 'wechat_payment_oauth_context', 'wechat_payment_oauth_scope',
+])
+
+const OAUTH_PROVIDER_COOKIE_NAMES: Record<string, ReadonlySet<string>> = {
+  dingtalk: new Set(['dingtalk_oauth_state', 'dingtalk_oauth_redirect', 'dingtalk_oauth_intent', 'dingtalk_oauth_bind_user']),
+  github: new Set(),
+  google: new Set(),
+  linuxdo: new Set(['linuxdo_oauth_state', 'linuxdo_oauth_verifier', 'linuxdo_oauth_redirect', 'linuxdo_oauth_intent', 'linuxdo_oauth_bind_user']),
+  oidc: new Set(['oidc_oauth_state', 'oidc_oauth_verifier', 'oidc_oauth_redirect', 'oidc_oauth_nonce', 'oidc_oauth_intent', 'oidc_oauth_bind_user']),
+  wechat: new Set(['wechat_oauth_state', 'wechat_oauth_redirect', 'wechat_oauth_intent', 'wechat_oauth_mode', 'wechat_oauth_bind_user']),
+}
+
+const OAUTH_SHARED_COOKIE_NAMES = new Set([
+  'oauth_bind_access_token', 'oauth_pending_browser_session', 'oauth_pending_session', 'oauth_promo_code',
+])
+const OAUTH_SHARED_COOKIE_PATHS = new Set([
+  ...OAUTH_SHARED_COOKIE_NAMES,
+  'email_oauth_state', 'email_oauth_redirect', 'email_oauth_provider', 'email_oauth_affiliate',
+])
+
+const EMAIL_OAUTH_COOKIE_NAMES = new Set(['email_oauth_state', 'email_oauth_redirect', 'email_oauth_provider', 'email_oauth_affiliate'])
+const WECHAT_PAYMENT_COOKIE_NAMES = new Set([
+  'wechat_payment_oauth_state', 'wechat_payment_oauth_redirect', 'wechat_payment_oauth_context', 'wechat_payment_oauth_scope',
+])
+
+/** OAuth cookies are forwarded only on known OAuth endpoints and by exact name. */
+export function oauthCookieNamesForPath(path: string): ReadonlySet<string> | null {
+  const providerMatch = /^\/api\/v1\/auth\/oauth\/(dingtalk|github|google|linuxdo|oidc|wechat)\/(start|callback|bind\/start|complete-registration|bind-login|create-account)$/.exec(path)
+  if (providerMatch) {
+    const [, provider, action] = providerMatch
+    if ((provider === 'github' || provider === 'google') &&
+      !['start', 'callback', 'complete-registration'].includes(action)) return null
+    return new Set([
+      ...OAUTH_SHARED_COOKIE_NAMES,
+      ...(OAUTH_PROVIDER_COOKIE_NAMES[provider] ?? []),
+      ...(provider === 'github' || provider === 'google' ? EMAIL_OAUTH_COOKIE_NAMES : []),
+    ])
+  }
+  if (path === `${API_PREFIX}/auth/oauth/bind-token`) return new Set(['oauth_bind_access_token'])
+  if (/^\/api\/v1\/auth\/oauth\/wechat\/payment\/(?:start|callback)$/.test(path)) {
+    return WECHAT_PAYMENT_COOKIE_NAMES
+  }
+  if (/^\/api\/v1\/auth\/oauth\/pending\/(?:exchange|send-verify-code|create-account|bind-login)$/.test(path)) {
+    return OAUTH_SHARED_COOKIE_NAMES
+  }
+  return null
+}
+
+const OAUTH_COMPLETION_ROUTES = new Set([
+  `${API_PREFIX}/auth/oauth/pending/exchange`,
+  `${API_PREFIX}/auth/oauth/pending/create-account`,
+  `${API_PREFIX}/auth/oauth/pending/bind-login`,
+  ...['github', 'google'].map((provider) => `${API_PREFIX}/auth/oauth/${provider}/complete-registration`),
+  ...['dingtalk', 'linuxdo', 'oidc', 'wechat'].flatMap((provider) =>
+    ['complete-registration', 'bind-login', 'create-account'].map((action) => `${API_PREFIX}/auth/oauth/${provider}/${action}`)
+  ),
+])
+
+export function isOAuthCompletionRoute(path: string): boolean {
+  return OAUTH_COMPLETION_ROUTES.has(path)
+}
+
+export function isOAuthCallbackRoute(path: string): boolean {
+  return /^\/api\/v1\/auth\/oauth\/(?:dingtalk|github|google|linuxdo|oidc|wechat)\/callback$/.test(path)
+}
+
+export function isOAuthCookieRoute(path: string): boolean {
+  return oauthCookieNamesForPath(path) !== null
+}
+
+export function isOAuthLoginStartRoute(path: string): boolean {
+  return /^\/api\/v1\/auth\/oauth\/(?:github|google|linuxdo|oidc|dingtalk|wechat)\/start$/.test(path)
+}
+
+export function filterOAuthRequestCookie(path: string, rawCookie: string | undefined): string | undefined {
+  const allowed = oauthCookieNamesForPath(path)
+  if (!allowed || !rawCookie) return undefined
+  const kept: string[] = []
+  for (const part of rawCookie.split(';')) {
+    const separator = part.indexOf('=')
+    if (separator < 1) continue
+    const name = part.slice(0, separator).trim()
+    if (allowed.has(name) && OAUTH_COOKIE_NAMES.has(name)) kept.push(`${name}=${part.slice(separator + 1).trim()}`)
+  }
+  return kept.length ? kept.join('; ') : undefined
+}
+
+/** Returns only Go-issued OAuth Set-Cookie lines whose exact names belong to this endpoint. */
+export function filterOAuthSetCookieHeaders(path: string, values: readonly string[]): string[] {
+  const allowed = oauthCookieNamesForPath(path)
+  if (!allowed) return []
+  return values.filter((line) => {
+    const separator = line.indexOf('=')
+    if (separator < 1) return false
+    const name = line.slice(0, separator).trim().replace(/^Set-Cookie:\s*/i, '')
+    if (!allowed.has(name) || !OAUTH_COOKIE_NAMES.has(name) || /[\r\n]/.test(line)) return false
+    const attributes = line.slice(separator + 1).split(';').slice(1).map((part) => part.trim())
+    if (attributes.some((attribute) => /^domain\s*=/i.test(attribute))) return false
+    const cookiePath = attributes.find((attribute) => /^path\s*=/i.test(attribute))?.split('=', 2)[1]?.trim()
+    const expectedPath = OAUTH_SHARED_COOKIE_PATHS.has(name)
+      ? `${API_PREFIX}/auth/oauth`
+      : name.startsWith('wechat_payment_oauth_')
+        ? `${API_PREFIX}/auth/oauth/wechat/payment`
+        : name.startsWith('wechat_oauth_')
+          ? `${API_PREFIX}/auth/oauth/wechat`
+          : name.startsWith('oidc_oauth_')
+            ? `${API_PREFIX}/auth/oauth/oidc`
+            : name.startsWith('linuxdo_oauth_')
+              ? `${API_PREFIX}/auth/oauth/linuxdo`
+              : name.startsWith('dingtalk_oauth_')
+                ? `${API_PREFIX}/auth/oauth/dingtalk`
+                : ''
+    return Boolean(
+      expectedPath &&
+      cookiePath === expectedPath &&
+      attributes.some((attribute) => /^httponly$/i.test(attribute)) &&
+      attributes.some((attribute) => /^samesite=lax$/i.test(attribute))
+    )
+  })
+}
+
+/** Wire framing, Set-Cookie and CORS headers must not be generically forwarded. */
 const RESPONSE_HEADER_ALLOWLIST = new Set([
   'content-disposition',
-  'content-length',
-  'content-encoding',
   'content-type',
   'etag',
   'last-modified',
@@ -151,6 +285,50 @@ export function isLogoutRoute(path: string): boolean {
   return path === `${API_PREFIX}/auth/logout`
 }
 
+/** This selects a response contract, not authentication or permission.
+ * Go still verifies credentials, 2FA, refresh rotation and every Bearer request.
+ * Browser markers always win over a caller's bearer hint. Node fetch adds only
+ * sec-fetch-mode by default, so that header alone is not a browser credential.
+ */
+export function isMachineTokenRequest(
+  path: string,
+  headers: Record<string, string | string[] | undefined>,
+  hasSession: boolean,
+  method: string
+): boolean {
+  if (method.toUpperCase() !== 'POST' || !isTokenRoute(path) || hasSession) return false
+  const normalized = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]))
+  if (String(normalized['x-sub2api-auth-mode'] || '').toLowerCase().split(',').some((mode) => mode.trim() === 'cookie')) return false
+  for (const key of ['cookie', 'origin', 'referer', 'sec-fetch-site', 'sec-fetch-dest', 'sec-fetch-user']) {
+    if (normalized[key] !== undefined) return false
+  }
+  const fetchMode = String(normalized['sec-fetch-mode'] || '').toLowerCase()
+  if (fetchMode && fetchMode !== 'cors') return false
+  const contentType = String(normalized['content-type'] || '').split(';')[0].trim().toLowerCase()
+  return contentType === 'application/json'
+}
+
+/** Login CSRF matters before a cookie exists too. */
+export function checkSameOrigin(input: {
+  origin: string | undefined
+  referer: string | undefined
+  host: string | undefined
+  proto: string
+}): CsrfDecision {
+  const expectedHost = (input.host || '').toLowerCase()
+  if (!expectedHost) return { ok: false, reason: 'missing host' }
+  const source = input.origin || input.referer
+  if (!source) return { ok: false, reason: 'missing origin' }
+  try {
+    if (new URL(source).origin.toLowerCase() !== `${input.proto.toLowerCase()}://${expectedHost}`) {
+      return { ok: false, reason: 'cross-origin request' }
+    }
+  } catch {
+    return { ok: false, reason: 'malformed origin' }
+  }
+  return { ok: true }
+}
+
 export function filterRequestHeaders(
   headers: Record<string, string | string[] | undefined>
 ): Record<string, string> {
@@ -166,6 +344,8 @@ export function filterRequestHeaders(
 
 export function filterResponseHeaders(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {}
+  // Node fetch decompresses the body while retaining the upstream wire headers.
+  // Neither the compressed byte length nor its encoding describes our body.
   headers.forEach((value, name) => {
     if (RESPONSE_HEADER_ALLOWLIST.has(name.toLowerCase())) out[name.toLowerCase()] = value
   })
@@ -231,8 +411,16 @@ export function resolveClientIp(
     .filter(Boolean)
   const peerIsTrusted = isTrustedPeer(remoteAddress)
   if (peerIsTrusted && chain.length > 0) {
-    const candidate = chain[0]
-    if (isIpLiteral(candidate)) return candidate
+    // The ingress appends its observed peer on the right. Never use an
+    // attacker-controlled leftmost XFF value to bypass Go's IP rate limits.
+    for (let index = chain.length - 1; index >= 0; index -= 1) {
+      const candidate = chain[index]
+      if (!isIpLiteral(candidate)) return isIpLiteral(remoteAddress) ? remoteAddress! : ''
+      const address = candidate.replace(/^::ffff:/, '').toLowerCase()
+      const linkLocal = /^169\.254\./.test(address) || /^fe[89ab][0-9a-f]:/.test(address)
+      const privateV6 = /^(?:fc|fd)[0-9a-f]{2}:/.test(address)
+      if (!isTrustedPeer(candidate) && !linkLocal && !privateV6) return candidate
+    }
   }
   return isIpLiteral(remoteAddress) ? remoteAddress! : ''
 }
@@ -248,11 +436,7 @@ export function isTrustedPeer(address: string | undefined): boolean {
 }
 
 function isIpLiteral(value: string | undefined): boolean {
-  if (!value) return false
-  const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/
-  const ipv6 = /^[0-9a-f:]+$/i
-  if (ipv4.test(value)) return value.split('.').every((part) => Number(part) <= 255)
-  return ipv6.test(value) && value.includes(':')
+  return Boolean(value && isIP(value))
 }
 
 export interface CsrfDecision {
@@ -261,7 +445,9 @@ export interface CsrfDecision {
 }
 
 /**
- * Double submit plus origin pinning for cookie-authenticated mutations.
+ * Origin pinning for cookie-authenticated mutations. The operator explicitly
+ * disabled the additional double-submit token requirement. Old token fields
+ * remain compatible but are not authorization credentials or required inputs.
  * Bearer-authenticated requests are exempt: the credential is not ambient.
  */
 export function checkCsrf(input: {
@@ -278,35 +464,7 @@ export function checkCsrf(input: {
   if (!isMutatingMethod(input.method)) return { ok: true }
   if (!input.usesCookieSession) return { ok: true }
 
-  // Login/2fa/register/refresh are authorised by credentials in the body, not by
-  // the ambient cookie, so they only need the same-origin check below. Logout
-  // and everything else must echo the session's CSRF token.
-  const credentialRoute = isTokenRoute(input.path) && !isLogoutRoute(input.path)
-  if (!credentialRoute) {
-    if (!input.csrfHeader || !input.csrfToken || !safeTokenEquals(input.csrfHeader, input.csrfToken)) {
-      return { ok: false, reason: 'csrf token missing or mismatched' }
-    }
-  }
-
-  const expectedHost = (input.host || '').toLowerCase()
-  if (!expectedHost) return { ok: false, reason: 'missing host' }
-  const expectedOrigin = `${input.proto}://${expectedHost}`
-  const source = input.origin || input.referer
-  if (!source) return { ok: false, reason: 'missing origin' }
-  let sourceOrigin: string
-  try {
-    sourceOrigin = new URL(source).origin.toLowerCase()
-  } catch {
-    return { ok: false, reason: 'malformed origin' }
-  }
-  if (sourceOrigin !== expectedOrigin) return { ok: false, reason: 'cross-origin request' }
-  return { ok: true }
-}
-
-function safeTokenEquals(left: string, right: string): boolean {
-  const a = Buffer.from(left)
-  const b = Buffer.from(right)
-  return a.length === b.length && timingSafeEqual(a, b)
+  return checkSameOrigin(input)
 }
 
 export interface TokenPayload {

@@ -1,4 +1,9 @@
 @import 'tailwindcss';
+/* Nuxt runs with srcDir=app, so Tailwind v4 auto-detection only walks app/.
+   The legacy Vue app still lives in src/ — declare it explicitly or every
+   utility class used there (max-w-md, grid-cols-*, ...) is dropped in prod. */
+@source "../app";
+@source "../src";
 @import '@nuxt/ui';
 @import './styles/tailwind-v3-compat.css';
 @import './styles/nuxt-ui-theme.css';

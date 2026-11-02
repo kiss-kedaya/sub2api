@@ -34,8 +34,9 @@
               class="w-full"
               :placeholder="t('redeem.redeemCodePlaceholder')"
               :disabled="submitting"
+              aria-describedby="redeem-code-hint"
             />
-            <p class="mt-1.5 text-xs text-muted">
+            <p id="redeem-code-hint" class="mt-1.5 text-xs text-muted">
               {{ t('redeem.redeemCodeHint') }}
             </p>
           </div>
@@ -44,59 +45,19 @@
             type="submit"
             size="xl"
             block
+            :loading="submitting"
             :icon="submitting ? 'i-lucide-loader-circle' : 'i-lucide-circle-check'"
             :ui="{ leadingIcon: submitting ? 'animate-spin' : '' }"
-            :disabled="!redeemCode || submitting"
+            :disabled="!redeemCode.trim() || submitting"
+            data-testid="redeem-submit"
           >
             {{ submitting ? t('redeem.redeeming') : t('redeem.redeemButton') }}
           </UButton>
         </form>
       </section>
 
-      <!-- Success Message -->
-      <transition name="fade">
-        <UAlert
-          v-if="redeemResult"
-          color="success"
-          variant="subtle"
-          icon="i-lucide-circle-check"
-          :title="t('redeem.redeemSuccess')"
-        >
-          <template #description>
-            <div class="mt-1 space-y-1">
-              <p v-if="redeemResult.type === 'balance'" class="font-medium">
-                {{ t('redeem.added') }}: ${{ redeemResult.value.toFixed(2) }}
-              </p>
-              <p v-else-if="redeemResult.type === 'concurrency'" class="font-medium">
-                {{ t('redeem.added') }}: {{ redeemResult.value }}
-                {{ t('redeem.concurrentRequests') }}
-              </p>
-              <p v-else-if="redeemResult.type === 'subscription'" class="font-medium">
-                {{ t('redeem.subscriptionAssigned') }}
-                <span v-if="redeemResult.group?.name"> - {{ redeemResult.group.name }}</span>
-                <span v-if="redeemResult.validity_days">
-                  ({{
-                    t('redeem.subscriptionDays', { days: redeemResult.validity_days })
-                  }})</span
-                >
-              </p>
-              <p v-if="redeemResult.type === 'balance' && userRefreshedAfterRedeem && user">
-                {{ t('redeem.newBalance') }}:
-                <span class="font-semibold">${{ user.balance.toFixed(2) }}</span>
-              </p>
-              <p v-if="redeemResult.type === 'concurrency' && userRefreshedAfterRedeem && user">
-                {{ t('redeem.newConcurrency') }}:
-                <span class="font-semibold"
-                  >{{ user.concurrency }} {{ t('redeem.requests') }}</span
-                >
-              </p>
-            </div>
-          </template>
-        </UAlert>
-      </transition>
-
       <!-- Error Message -->
-      <transition name="fade">
+      <div class="h-24 min-h-24 overflow-y-auto rounded-lg" aria-live="polite" :tabindex="errorMessage ? 0 : undefined">
         <UAlert
           v-if="errorMessage"
           color="error"
@@ -105,7 +66,7 @@
           :title="t('redeem.redeemFailed')"
           :description="errorMessage"
         />
-      </transition>
+      </div>
 
       <!-- Information Card -->
       <UAlert color="neutral" variant="subtle" icon="i-lucide-info" class="dark:bg-primary/10 dark:text-primary dark:ring-primary/25" :title="t('redeem.aboutCodes')">
@@ -131,9 +92,9 @@
             {{ t('redeem.recentActivity') }}
           </h2>
         </header>
-        <div class="px-5 py-4 sm:px-6">
+        <div class="px-5 py-4 sm:px-6" :aria-busy="loadingHistory" data-testid="redeem-history">
           <!-- Loading State -->
-          <div v-if="loadingHistory" class="flex items-center justify-center py-8">
+          <div v-if="loadingHistory && history.length === 0" class="flex items-center justify-center py-8">
             <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
           </div>
 
@@ -276,6 +237,60 @@
         </footer>
       </section>
     </div>
+
+    <UModal
+      v-model:open="showRedeemResult"
+      :title="t('redeem.redeemSuccess')"
+      :description="t('redeem.resultDescription')"
+      data-testid="redeem-result-modal"
+    >
+      <template #body>
+        <div v-if="redeemResult" data-testid="redeem-result-modal-content" class="space-y-4">
+          <UAlert color="success" variant="subtle" icon="i-lucide-circle-check">
+            <template #description>
+              <div v-if="redeemResult.type === 'balance'" class="space-y-2">
+                <p class="font-semibold tabular-nums">
+                  {{ t(redeemResult.value >= 0 ? 'redeem.balanceChange' : 'redeem.balanceDeducted') }}:
+                  {{ formatSignedCurrency(redeemResult.value) }}
+                </p>
+                <p v-if="redeemBalanceAfter !== null" class="text-sm">
+                  {{ t('redeem.newBalance') }}:
+                  <span class="font-semibold tabular-nums">${{ redeemBalanceAfter.toFixed(2) }}</span>
+                </p>
+              </div>
+              <div v-else-if="redeemResult.type === 'concurrency'" class="space-y-2">
+                <p class="font-semibold tabular-nums">
+                  {{ t(redeemConcurrencyChange >= 0 ? 'redeem.concurrencyChange' : 'redeem.concurrencyReduced') }}:
+                  {{ formatSignedNumber(redeemConcurrencyChange) }} {{ t('redeem.concurrentRequests') }}
+                </p>
+                <p v-if="redeemConcurrencyAfter !== null" class="text-sm">
+                  {{ t('redeem.newConcurrency') }}:
+                  <span class="font-semibold tabular-nums">{{ redeemConcurrencyAfter }} {{ t('redeem.requests') }}</span>
+                </p>
+              </div>
+              <div v-else-if="redeemResult.type === 'subscription'" class="space-y-2">
+                <p class="font-semibold">
+                  {{ t(redeemResult.validity_days != null && redeemResult.validity_days < 0 ? 'redeem.subscriptionUpdated' : 'redeem.subscriptionAssigned') }}
+                </p>
+                <p v-if="redeemResult.group?.name" class="text-sm">{{ redeemResult.group.name }}</p>
+                <p v-else-if="redeemResult.group_id != null" class="text-sm text-muted">
+                  {{ t('redeem.subscriptionGroup') }} #{{ redeemResult.group_id }}
+                </p>
+                <p v-if="redeemSubscriptionDays" class="text-sm text-muted">
+                  {{ t(redeemSubscriptionDays < 0 ? 'redeem.subscriptionDaysReduced' : 'redeem.subscriptionDays', { days: Math.abs(redeemSubscriptionDays) }) }}
+                </p>
+              </div>
+              <p v-else class="font-medium">{{ t('redeem.resultRecorded') }}</p>
+            </template>
+          </UAlert>
+        </div>
+      </template>
+      <template #footer>
+        <UButton color="neutral" variant="outline" @click="showRedeemResult = false">
+          {{ t('common.close') }}
+        </UButton>
+      </template>
+    </UModal>
   </AppLayout>
 </template>
 
@@ -302,8 +317,16 @@ const user = computed(() => authStore.user)
 const redeemCode = ref('')
 const submitting = ref(false)
 const redeemResult = ref<RedeemCode | null>(null)
-const userRefreshedAfterRedeem = ref(false)
+const showRedeemResult = ref(false)
+const redeemBalanceAfter = ref<number | null>(null)
+const redeemConcurrencyAfter = ref<number | null>(null)
 const errorMessage = ref('')
+const redeemConcurrencyChange = computed(() => Math.trunc(redeemResult.value?.value ?? 0))
+// The service applies 30 days when an older/legacy subscription code carries zero days.
+const redeemSubscriptionDays = computed(() => {
+  if (redeemResult.value?.type !== 'subscription') return 0
+  return redeemResult.value.validity_days === 0 ? 30 : redeemResult.value.validity_days ?? 0
+})
 
 // History data
 const history = ref<RedeemHistoryItem[]>([])
@@ -358,6 +381,23 @@ const formatHistoryValue = (item: RedeemHistoryItem) => {
   }
 }
 
+const formatSignedCurrency = (value: number) => `${value >= 0 ? '+' : '-'}$${Math.abs(value).toFixed(2)}`
+const formatSignedNumber = (value: number) => `${value >= 0 ? '+' : ''}${value}`
+
+// POST /redeem returns the consumed code, not an authoritative account total. Only
+// /auth/me can reconcile the shared balance/concurrency; adding the delta to a
+// cached user would double count if an automatic profile refresh already saw it.
+const refreshAccountAfterRedeem = async (type: RedeemCode['type']) => {
+  try {
+    const refreshed = await authStore.refreshUser()
+    if (type === 'balance' && Number.isFinite(refreshed.balance)) redeemBalanceAfter.value = refreshed.balance
+    if (type === 'concurrency' && Number.isFinite(refreshed.concurrency)) redeemConcurrencyAfter.value = refreshed.concurrency
+  } catch (error) {
+    console.error('Failed to refresh user after redeem:', error)
+    appStore.showWarning(t('redeem.userRefreshFailed'))
+  }
+}
+
 const fetchHistory = async (page = 1) => {
   const request = ++historyRequest
   const pageSize = historyPageSize.value
@@ -381,6 +421,8 @@ const fetchHistory = async (page = 1) => {
 }
 
 const handleRedeem = async () => {
+  // Set synchronously before the request so rapid/double form submits share one flight.
+  if (submitting.value) return
   if (!redeemCode.value.trim()) {
     appStore.showError(t('redeem.pleaseEnterCode'))
     return
@@ -389,44 +431,41 @@ const handleRedeem = async () => {
   submitting.value = true
   errorMessage.value = ''
   redeemResult.value = null
-  userRefreshedAfterRedeem.value = false
+  showRedeemResult.value = false
+  redeemBalanceAfter.value = null
+  redeemConcurrencyAfter.value = null
+
+  let result: RedeemCode
 
   try {
-    const result = await redeemAPI.redeem(redeemCode.value.trim())
-
-    redeemResult.value = result
-
-    // Refresh user data to get updated balance/concurrency
-    try {
-      await authStore.refreshUser()
-      userRefreshedAfterRedeem.value = true
-    } catch (error) {
-      console.error('Failed to refresh user after redeem:', error)
-      appStore.showWarning(t('redeem.userRefreshFailed'))
-    }
-
-    // If subscription type, immediately refresh subscription status
-    if (result.type === 'subscription') {
-      try {
-        await subscriptionStore.fetchActiveSubscriptions(true) // force refresh
-      } catch (error) {
-        console.error('Failed to refresh subscriptions after redeem:', error)
-        appStore.showWarning(t('redeem.subscriptionRefreshFailed'))
-      }
-    }
-
-    // Clear the input
-    redeemCode.value = ''
-
-    // Refresh history
-    await fetchHistory()
-
-    // Show success toast
-    appStore.showSuccess(t('redeem.codeRedeemSuccess'))
+    result = await redeemAPI.redeem(redeemCode.value.trim())
   } catch (error: any) {
     errorMessage.value = error.response?.data?.detail || t('redeem.failedToRedeem')
-
     appStore.showError(t('redeem.redeemFailed'))
+    submitting.value = false
+    return
+  }
+
+  // The code is consumed now: show the server-confirmed result immediately. Follow-up reads
+  // update only the relevant stores and history; their failures must never turn success into error.
+  redeemResult.value = result
+  redeemCode.value = ''
+  showRedeemResult.value = true
+  appStore.showSuccess(t('redeem.codeRedeemSuccess'))
+
+  try {
+    const refreshAccount = result.type === 'balance' || result.type === 'concurrency'
+      ? refreshAccountAfterRedeem(result.type)
+      : Promise.resolve()
+    const refreshSubscription = result.type === 'subscription'
+      ? subscriptionStore.fetchActiveSubscriptions(true).catch((error) => {
+        console.error('Failed to refresh subscriptions after redeem:', error)
+        appStore.showWarning(t('redeem.subscriptionRefreshFailed'))
+      })
+      : Promise.resolve()
+    // Keep the form single-flight through reconciliation. The success modal is
+    // already open and dismissible; no stale follow-up can overwrite a later redeem.
+    await Promise.all([refreshAccount, refreshSubscription, fetchHistory()])
   } finally {
     submitting.value = false
   }

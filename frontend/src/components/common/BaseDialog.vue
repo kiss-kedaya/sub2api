@@ -69,6 +69,7 @@ let previousActiveElement: HTMLElement | null = null
 // The layer is mounted while the dialog is open and while the panel plays its closing animation;
 // the panel (reka-ui Presence) reports the end of that animation through `after:leave`.
 const rendered = ref(false)
+const mounted = ref(false)
 let leaveFallbackTimer: ReturnType<typeof setTimeout> | null = null
 const clearLeaveFallback = () => {
   if (leaveFallbackTimer) clearTimeout(leaveFallbackTimer)
@@ -189,8 +190,11 @@ const handleEscape = (event: KeyboardEvent) => {
 
 // Prevent body scroll when modal is open and manage focus
 watch(
-  () => props.show,
-  async (isOpen) => {
+  [() => props.show, mounted],
+  async ([isOpen, isMounted]) => {
+    // The server and first hydration render both omit the browser-only portal.
+    // Initial show=true is replayed when mounted, including focus and scroll lock.
+    if (!isMounted) return
     if (isOpen) {
       clearLeaveFallback()
       rendered.value = true
@@ -232,6 +236,7 @@ watch(
 
 onMounted(() => {
   document.addEventListener('keydown', handleEscape)
+  mounted.value = true
 })
 
 onUnmounted(() => {

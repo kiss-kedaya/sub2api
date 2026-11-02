@@ -100,7 +100,7 @@ describe('failed and replayed logins', () => {
     expect(a?.csrf).not.toBe(b?.csrf)
   })
 
-  it('rejects a csrf token carried over from a previous session', async () => {
+  it('does not let a stale optional csrf header break a valid same-origin session', async () => {
     const oldSession = createSession({ accessToken: 'old', refreshToken: 'old-r', expiresIn: 60, uid: 1 })
     const newSession = createSession({ accessToken: 'new', refreshToken: 'new-r', expiresIn: 60, uid: 1 })
     const fetchImpl = (async () => json({ code: 0, message: 'success', data: {} })) as unknown as typeof fetch
@@ -115,7 +115,7 @@ describe('failed and replayed logins', () => {
         fetchImpl,
       })
     )
-    expect(result.status).toBe(403)
+    expect(result.status).toBe(200)
   })
 })
 

@@ -13,5 +13,9 @@ import ChannelStatusV3View from './ChannelStatusV3View.vue'
 
 const isV1 = computed(() => isChannelMonitorV1Mode())
 // Keep V2 available as a low-risk rollback/diagnostic view without another backend flag.
-const isLegacyV2 = computed(() => isChannelMonitorV2Mode() && new URLSearchParams(window.location.search).get('monitor_view') === 'v2')
+const isLegacyV2 = computed(() =>
+  isChannelMonitorV2Mode() &&
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('monitor_view') === 'v2'
+)
 </script>

@@ -265,6 +265,25 @@ jobs:
         run: |
           pnpm exec vitest run --config server/vitest.config.ts
           pnpm run build:ssr
+      - name: Verify actual authenticated SSR pages against an isolated backend
+        run: node deploy/nuxt/smoke-authenticated-ssr.mjs frontend/.output
+      - name: Stage portable frontend recovery artifact
+        run: |
+          node --input-type=module -e "import {copyTreeDereferenced} from './deploy/nuxt/release.mjs'; copyTreeDereferenced('frontend/.output', 'dist/frontend-recovery/.output')"
+          node deploy/nuxt/smoke-authenticated-ssr.mjs dist/frontend-recovery/.output
+          (cd dist/frontend-recovery && find . -type f -print0 | sort -z | xargs -0 sha256sum > ../frontend-recovery.SHA256SUMS)
+          cp dist/frontend-recovery.SHA256SUMS dist/frontend-recovery/SHA256SUMS
+          tar -C dist -czf dist/frontend-recovery.tar.gz frontend-recovery
+          (cd dist && sha256sum frontend-recovery.tar.gz > frontend-recovery.checksums.txt)
+      - name: Upload verified portable SSR bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-ssr-portable
+          path: |
+            dist/frontend-recovery.tar.gz
+            dist/frontend-recovery.checksums.txt
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload frontend for embedded build
         uses: actions/upload-artifact@v7
         with:
