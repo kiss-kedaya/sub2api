@@ -499,7 +499,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { testDatabase, testRedis, install, type InstallRequest } from '@/api/setup'
 import { buildGatewayUrl } from '@/api/client'
@@ -562,9 +562,13 @@ const formData = reactive<InstallRequest>({
   },
   server: {
     host: '0.0.0.0',
-    port: getCurrentPort(), // Use current port from browser
+    port: 80, // Stable SSR/hydration value; resolve the browser port after mount.
     mode: 'release'
   }
+})
+
+onMounted(() => {
+  formData.server.port = getCurrentPort()
 })
 
 const canProceed = computed(() => {
