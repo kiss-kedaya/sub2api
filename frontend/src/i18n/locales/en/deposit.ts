@@ -23,7 +23,7 @@ export default {
     pendingSummary: 'Deposits confirming: {n}',
     pendingMore: '{n} more in the list below',
     confirmProgress: 'Confirmations {done}/{required} · {remaining} blocks to go',
-    confirmProgressDone: 'Block confirmations complete. Crediting in progress.',
+    confirmProgressDone: 'Block depth reached. Awaiting final checks before credit.',
     creditedToast: 'Deposit credited +{amount}',
     noHistory: 'No deposits yet',
     noHistoryHint: 'Your transfer appears after the chain scanner detects it.',

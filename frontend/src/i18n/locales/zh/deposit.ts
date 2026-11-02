@@ -23,7 +23,7 @@ export default {
     pendingSummary: '{n} 笔充值正在确认中：',
     pendingMore: '另有 {n} 笔，见下方记录',
     confirmProgress: '确认 {done}/{required} · 还差 {remaining} 个区块',
-    confirmProgressDone: '区块确认完成，正在处理入账',
+    confirmProgressDone: '区块数已达标，等待最终校验后入账',
     creditedToast: '已到账 +{amount}',
     noHistory: '还没有充值记录',
     noHistoryHint: '向专属地址转账后，记录会在扫链识别后显示。',
