@@ -47,7 +47,6 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-list -n 1 "$TAG")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@v6
@@ -62,6 +61,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$TAG")"
+
+      - name: Resolve checked out tag commit
+        id: source-commit
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -85,10 +88,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_RUN_ID: ${{ inputs.source_run_id }}
           TAG: ${{ steps.ref.outputs.tag }}
+          COMMIT: ${{ steps.source-commit.outputs.commit }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          COMMIT="${{ steps.ref.outputs.commit }}"
           RELEASE_RUN="${INPUT_RUN_ID:-}"
           CANDIDATES="$RELEASE_RUN"
           if [ -z "$CANDIDATES" ]; then
