@@ -1,0 +1,105 @@
+/* Admin page helpers in the Nuxt UI manner (tokens, so Appearance applies). Legacy
+   status buttons (.btn-danger / -success / -warning) are flat fills in style.css. */
+/* Hand-rolled toolbar menus (column/filter pickers): the Nuxt UI menu look in light mode.
+   The night theme keeps each menu's own classes. */
+html:not(.dark) .admin-menu {
+  padding: 4px;
+  border: 1px solid var(--ui-border);
+  border-radius: calc(var(--ui-radius) * 1.5);
+  background: var(--ui-bg);
+  box-shadow: 0 10px 15px -3px rgba(10, 10, 10, 0.08), 0 4px 6px -4px rgba(10, 10, 10, 0.06);
+}
+
+html:not(.dark) .admin-menu .admin-menu-item {
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: var(--ui-radius);
+  color: var(--ui-text);
+  font-size: 14px;
+}
+
+html:not(.dark) .admin-menu .admin-menu-item:hover:not(:disabled) {
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text-highlighted);
+}
+
+html:not(.dark) .admin-menu .admin-menu-item:disabled {
+  color: var(--ui-text-dimmed);
+}
+
+/* Stat and shortcut icon chips: neutral with a hairline ring in light mode (Nuxt UI
+   dashboard stats). The night theme keeps each chip's tinted classes. */
+html:not(.dark) .admin-stat-icon {
+  border-radius: 9999px;
+  background: var(--ui-bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--ui-border);
+  color: var(--ui-text-highlighted);
+}
+
+html:not(.dark) .admin-stat-icon > svg {
+  color: var(--ui-text-highlighted);
+}
+
+/* Account modals: advanced options folded into a native <details> (the fields stay in the
+   DOM, closed by default). Summary in the Nuxt UI collapsible manner. */
+.account-advanced {
+  border-top: 1px solid var(--ui-border);
+  padding-top: 16px;
+}
+
+.dark .account-advanced {
+  border-top-color: #5e4651;
+}
+
+.account-advanced-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ui-text-highlighted);
+  font-size: 14px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.account-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-advanced-summary::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M7.21 14.77a.75.75 0 0 1 .02-1.06L11.17 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M7.21 14.77a.75.75 0 0 1 .02-1.06L11.17 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 150ms ease;
+}
+
+.account-advanced[open] > .account-advanced-summary::before {
+  transform: rotate(90deg);
+}
+
+.account-advanced-summary:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.account-advanced-body {
+  margin-top: 16px;
+}
+
+/* The first section inside already sits under the summary rule. */
+.account-advanced-body > :first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-advanced-summary::before {
+    transition: none;
+  }
+}

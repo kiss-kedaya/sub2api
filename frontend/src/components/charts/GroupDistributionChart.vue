@@ -1,119 +1,73 @@
 <template>
-  <div class="card p-4">
-    <div class="mb-4 flex items-center justify-between gap-3">
-      <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+  <UCard :ui="{ header: 'flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5', body: 'p-4 sm:p-5' }">
+    <template #header>
+      <h3 class="text-xs font-medium uppercase text-muted">
         {{ t('admin.dashboard.groupDistribution') }}
       </h3>
-      <div
+      <UTabs
         v-if="showMetricToggle"
-        class="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-dark-700 dark:bg-dark-800"
-      >
-        <button
-          type="button"
-          class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-          :class="metric === 'tokens'
-            ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-700 dark:text-white'
-            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
-          @click="emit('update:metric', 'tokens')"
-        >
-          {{ t('admin.dashboard.metricTokens') }}
-        </button>
-        <button
-          type="button"
-          class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-          :class="metric === 'actual_cost'
-            ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-700 dark:text-white'
-            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
-          @click="emit('update:metric', 'actual_cost')"
-        >
-          {{ t('admin.dashboard.metricActualCost') }}
-        </button>
-      </div>
-    </div>
+        :model-value="metric"
+        :items="metricItems"
+        :content="false"
+        color="neutral"
+        size="xs"
+        :ui="segmentedTabsUi"
+        @update:model-value="onMetricChange"
+      />
+    </template>
+
     <div v-if="loading" class="flex h-48 items-center justify-center">
       <LoadingSpinner />
     </div>
-    <div v-else-if="displayGroupStats.length > 0 && chartData" class="flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
-      <div class="h-48 w-48 shrink-0">
-        <Doughnut :data="chartData" :options="doughnutOptions" />
-      </div>
-      <div class="max-h-48 w-full min-w-0 flex-1 overflow-auto">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="text-gray-500 dark:text-gray-400">
-              <th class="pb-2 text-left">{{ t('admin.dashboard.group') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.requests') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.tokens') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.actual') }}</th>
-              <th v-if="showAccountCost" class="pb-2 text-right">{{ t('admin.dashboard.accountCost') }}</th>
-              <th class="pb-2 text-right">{{ t('admin.dashboard.standard') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template v-for="group in displayGroupStats" :key="group.group_id">
-              <tr
-                class="border-t border-gray-100 transition-colors dark:border-dark-700"
-                :class="enableBreakdown && group.group_id > 0 ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-700/40' : ''"
-                @click="enableBreakdown && group.group_id > 0 && toggleBreakdown('group', group.group_id)"
-              >
-                <td
-                  class="max-w-[100px] truncate py-1.5 font-medium"
-                  :class="enableBreakdown && group.group_id > 0 ? 'text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300' : 'text-gray-900 dark:text-white'"
-                  :title="group.group_name || String(group.group_id)"
-                >
-                  <span class="inline-flex items-center gap-1">
-                    <svg v-if="enableBreakdown && group.group_id > 0 && expandedKey === `group-${group.group_id}`" class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                    <svg v-else-if="enableBreakdown && group.group_id > 0" class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                    {{ group.group_name || t('admin.dashboard.noGroup') }}
-                  </span>
-                </td>
-                <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
-                  {{ formatNumber(group.requests) }}
-                </td>
-                <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
-                  {{ formatTokens(group.total_tokens) }}
-                </td>
-                <td class="py-1.5 text-right text-green-600 dark:text-green-400">
-                  ${{ formatCost(group.actual_cost) }}
-                </td>
-                <td v-if="showAccountCost" class="py-1.5 text-right text-orange-500 dark:text-orange-400">
-                  ${{ formatCost(group.account_cost) }}
-                </td>
-                <td class="py-1.5 text-right text-gray-400 dark:text-gray-500">
-                  ${{ formatCost(group.cost) }}
-                </td>
-              </tr>
-              <!-- User breakdown sub-rows -->
-              <tr v-if="expandedKey === `group-${group.group_id}`">
-                <td :colspan="distributionColspan" class="p-0">
-                  <UserBreakdownSubTable
-                    :items="breakdownItems"
-                    :loading="breakdownLoading"
-                    :show-account-cost="showAccountCost"
-                  />
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div
-      v-else
-      class="flex h-48 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
+    <DistributionPanel
+      v-else-if="displayGroupStats.length > 0 && chartData"
+      :chart-data="chartData"
+      :chart-options="doughnutOptions"
+      :rows="displayGroupStats"
+      :columns="columns"
+      :get-row-id="(group) => `group-${group.group_id}`"
+      :expanded-id="expandedKey"
+      :is-selectable="enableBreakdown ? (group) => group.group_id > 0 : undefined"
+      @select="(group) => toggleBreakdown('group', group.group_id)"
     >
+      <template #group-cell="{ row }">
+        <span
+          class="inline-flex max-w-[100px] items-center gap-1 truncate font-medium"
+          :class="enableBreakdown && row.original.group_id > 0 ? 'text-primary' : 'text-highlighted'"
+          :title="row.original.group_name || String(row.original.group_id)"
+        >
+          <UIcon
+            v-if="enableBreakdown && row.original.group_id > 0"
+            :name="expandedKey === `group-${row.original.group_id}` ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+            class="size-3 shrink-0"
+          />
+          <span class="truncate">{{ row.original.group_name || t('admin.dashboard.noGroup') }}</span>
+        </span>
+      </template>
+      <!-- User breakdown sub-rows -->
+      <template #expanded>
+        <UserBreakdownSubTable
+          :items="breakdownItems"
+          :loading="breakdownLoading"
+          :show-account-cost="showAccountCost"
+        />
+      </template>
+    </DistributionPanel>
+    <div v-else class="flex h-48 items-center justify-center text-sm text-muted">
       {{ t('admin.dashboard.noDataAvailable') }}
     </div>
-  </div>
+  </UCard>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, h, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js'
-import { Doughnut } from 'vue-chartjs'
+import type { TableColumn } from '@nuxt/ui'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import UserBreakdownSubTable from './UserBreakdownSubTable.vue'
+import DistributionPanel from './DistributionPanel.vue'
+import { chartTooltipStyle, doughnutDataset, segmentedTabsUi, useChartTheme } from './chartTheme'
 import type { GroupStat, UserBreakdownItem } from '@/types'
 import { getUserBreakdown } from '@/api/admin/dashboard'
 
@@ -150,7 +104,6 @@ const expandedKey = ref<string | null>(null)
 const breakdownItems = ref<UserBreakdownItem[]>([])
 const breakdownLoading = ref(false)
 const showAccountCost = computed(() => props.showAccountCost)
-const distributionColspan = computed(() => showAccountCost.value ? 6 : 5)
 
 const toggleBreakdown = async (type: string, id: number | string) => {
   const key = `${type}-${id}`
@@ -176,18 +129,27 @@ const toggleBreakdown = async (type: string, id: number | string) => {
   }
 }
 
-const chartColors = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#ec4899',
-  '#14b8a6',
-  '#f97316',
-  '#6366f1',
-  '#84cc16'
-]
+const theme = useChartTheme()
+const onMetricChange = (value: string | number) => emit('update:metric', value as DistributionMetric)
+
+const metricItems = computed(() => [
+  { label: t('admin.dashboard.metricTokens'), value: 'tokens' },
+  { label: t('admin.dashboard.metricActualCost'), value: 'actual_cost' }
+])
+
+const numberCell = (value: string, tone = 'text-muted') => h('span', { class: `block text-right tabular-nums ${tone}` }, value)
+const rightHeader = (label: string) => () => h('span', { class: 'block text-right' }, label)
+
+const columns = computed<TableColumn<GroupStat>[]>(() => [
+  { id: 'group', header: t('admin.dashboard.group') },
+  { id: 'requests', header: rightHeader(t('admin.dashboard.requests')), cell: ({ row }) => numberCell(formatNumber(row.original.requests)) },
+  { id: 'tokens', header: rightHeader(t('admin.dashboard.tokens')), cell: ({ row }) => numberCell(formatTokens(row.original.total_tokens)) },
+  { id: 'actual', header: rightHeader(t('admin.dashboard.actual')), cell: ({ row }) => numberCell(`$${formatCost(row.original.actual_cost)}`, 'text-success') },
+  ...(showAccountCost.value
+    ? [{ id: 'account', header: rightHeader(t('admin.dashboard.accountCost')), cell: ({ row }: { row: { original: GroupStat } }) => numberCell(`$${formatCost(row.original.account_cost)}`, 'text-warning') }]
+    : []),
+  { id: 'standard', header: rightHeader(t('admin.dashboard.standard')), cell: ({ row }) => numberCell(`$${formatCost(row.original.cost)}`, 'text-dimmed') }
+])
 
 const displayGroupStats = computed(() => {
   if (!props.groupStats?.length) return []
@@ -202,11 +164,11 @@ const chartData = computed(() => {
   return {
     labels: displayGroupStats.value.map((g) => g.group_name || String(g.group_id)),
     datasets: [
-      {
-        data: displayGroupStats.value.map((g) => toFiniteNumber(props.metric === 'actual_cost' ? g.actual_cost : g.total_tokens)),
-        backgroundColor: chartColors.slice(0, displayGroupStats.value.length),
-        borderWidth: 0
-      }
+      doughnutDataset(
+        theme.value,
+        displayGroupStats.value.map((g) => toFiniteNumber(props.metric === 'actual_cost' ? g.actual_cost : g.total_tokens)),
+        displayGroupStats.value.map((_, index) => theme.value.categorical[index % theme.value.categorical.length])
+      )
     ]
   }
 })
@@ -215,11 +177,13 @@ const doughnutOptions = computed(() => ({
   ...(props.animationDuration === undefined ? {} : { animation: { duration: props.animationDuration } }),
   responsive: true,
   maintainAspectRatio: false,
+  cutout: '62%',
   plugins: {
     legend: {
       display: false
     },
     tooltip: {
+      ...chartTooltipStyle(theme.value),
       callbacks: {
         label: (context: any) => {
           const value = context.raw as number

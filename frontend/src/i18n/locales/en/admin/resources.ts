@@ -98,6 +98,8 @@ export default {
 
     // Proxies
     proxies: {
+      displayColumns: 'Columns',
+      advancedOptions: 'Advanced options',
       title: 'Proxy Management',
       description: 'Manage proxy servers for accounts',
       createProxy: 'Create Proxy',
@@ -296,6 +298,7 @@ export default {
 
     // Redeem Codes
     redeem: {
+      displayColumns: 'Columns',
       title: 'Redeem Code Management',
       description: 'Generate and manage redeem codes',
       generateCodes: 'Generate Codes',
@@ -431,6 +434,7 @@ export default {
 
     // Announcements
     announcements: {
+      displayColumns: 'Columns',
       title: 'Announcements',
       description: 'Create announcements and target by conditions',
       createFirstAnnouncement: 'No announcements yet. Create your first one.',
@@ -507,6 +511,7 @@ export default {
 
     // Promo Codes
     promo: {
+      displayColumns: 'Columns',
       title: 'Promo Code Management',
       description: 'Create and manage registration promo codes',
       createCode: 'Create Promo Code',

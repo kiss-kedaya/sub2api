@@ -47,6 +47,8 @@ export default {
     tabAddresses: '地址',
     tabSweep: '归集',
     tabDeposits: '到账记录',
+    tabOverview: '概览',
+    overviewHint: '进入各子页面管理地址、归集、到账记录和配置。',
     depTotal: '记录总数',
     depCredited: '已入账',
     depPending: '待确认',
@@ -271,5 +273,13 @@ export default {
     mnemonicsCopiedPart: '已复制 {wallet} 助记词第 {part} 段。请立即从剪贴板清除。',
     mnemonicsClipboardFailed: '浏览器未能复制。可先单独显示本段，再手动记录到离线介质。',
     mnemonicsInvalidResponse: '钱包返回的数据不完整，助记词未显示。请检查服务端导出响应。',
+    saveTitle: '渠道配置',
+    walletStatusLabel: '钱包状态',
+    walletToolsLabel: '助记词',
+    columns: '显示列',
+    allStatuses: '全部状态',
+    pageSummary: '第 {page} / {pages} 页 · 共 {total} 条',
+    poolLow: '偏低',
+    gasInsufficient: '余额不足',
   }
 }

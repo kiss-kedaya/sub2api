@@ -101,7 +101,7 @@ describe('AccountStatusIndicator', () => {
       }
     })
 
-    expect(wrapper.find('.badge-warning').text()).toBe('admin.accounts.status.rateLimited')
+    expect(wrapper.find('[data-status="warning"]').text()).toBe('admin.accounts.status.rateLimited')
     expect(wrapper.text()).toContain('admin.accounts.status.rateLimitedAutoResume')
     expect(wrapper.text()).not.toContain('admin.accounts.status.tempUnschedulable')
   })

@@ -1,7 +1,7 @@
 <template>
   <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
     <div class="card p-4 flex items-center gap-3">
-      <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30 text-blue-600">
+      <div class="usage-stat-icon rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30 text-blue-600">
         <Icon name="document" size="md" />
       </div>
       <div>
@@ -11,7 +11,7 @@
       </div>
     </div>
     <div class="card p-4 flex items-center gap-3">
-      <div class="rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30 text-amber-600"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" /></svg></div>
+      <div class="usage-stat-icon rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30 text-amber-600"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" /></svg></div>
       <div>
         <p class="text-xs font-medium text-gray-500">{{ t('usage.totalTokens') }}</p>
         <p class="text-xl font-bold">{{ formatTokens(stats?.total_tokens || 0) }}</p>
@@ -59,7 +59,7 @@
       </div>
     </div>
     <div class="card p-4 flex items-center gap-3">
-      <div class="rounded-lg bg-green-100 p-2 dark:bg-green-900/30 text-green-600">
+      <div class="usage-stat-icon rounded-lg bg-green-100 p-2 dark:bg-green-900/30 text-green-600">
         <Icon name="dollar" size="md" />
       </div>
       <div class="min-w-0 flex-1">
@@ -80,7 +80,7 @@
       </div>
     </div>
     <div class="card p-4 flex items-center gap-3">
-      <div class="rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30 text-purple-600">
+      <div class="usage-stat-icon rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30 text-purple-600">
         <Icon name="clock" size="md" />
       </div>
       <div><p class="text-xs font-medium text-gray-500">{{ t('usage.avgDuration') }}</p><p class="text-xl font-bold">{{ formatDuration(stats?.average_duration_ms || 0) }}</p></div>
@@ -126,3 +126,13 @@ const formatTokens = (value: number) => {
 const cacheLabel = () => t('usage.cacheTotal')
 const cacheDetailLabel = () => t('usage.cacheBreakdown')
 </script>
+
+<style scoped>
+/* Light mode: neutral icon chips with a hairline ring (Nuxt UI dashboard stats). */
+html:not(.dark) .usage-stat-icon {
+  border-radius: 9999px;
+  background: #f4f4f4;
+  box-shadow: inset 0 0 0 1px #e5e5e5;
+  color: #171717;
+}
+</style>

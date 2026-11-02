@@ -688,6 +688,44 @@ type UsageLog struct {
 	APIKey       *APIKey           `json:"api_key,omitempty"`
 	Group        *Group            `json:"group,omitempty"`
 	Subscription *UserSubscription `json:"subscription,omitempty"`
+
+	// Compact association summaries. Admin list endpoints use these instead of
+	// embedding full User/APIKey/Group/Subscription objects in every row; the
+	// list only needs display names and keeps large pricing/credential payloads
+	// out of the response.
+	UserSummary         *UsageUserSummary         `json:"user_summary,omitempty"`
+	APIKeySummary       *UsageAPIKeySummary       `json:"api_key_summary,omitempty"`
+	GroupSummary        *UsageGroupSummary        `json:"group_summary,omitempty"`
+	SubscriptionSummary *UsageSubscriptionSummary `json:"subscription_summary,omitempty"`
+	AccountSummary      *AccountSummary           `json:"account_summary,omitempty"`
+}
+
+// UsageUserSummary is the minimum user identity needed by usage list rows.
+type UsageUserSummary struct {
+	ID        int64      `json:"id"`
+	Email     string     `json:"email"`
+	Username  string     `json:"username,omitempty"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+}
+
+// UsageAPIKeySummary is the minimum API key identity needed by usage list rows.
+type UsageAPIKeySummary struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// UsageGroupSummary is the minimum group identity needed by usage list rows.
+type UsageGroupSummary struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// UsageSubscriptionSummary is the minimum subscription identity needed by usage list rows.
+type UsageSubscriptionSummary struct {
+	ID      int64  `json:"id"`
+	UserID  int64  `json:"user_id"`
+	GroupID int64  `json:"group_id"`
+	Status  string `json:"status"`
 }
 
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。

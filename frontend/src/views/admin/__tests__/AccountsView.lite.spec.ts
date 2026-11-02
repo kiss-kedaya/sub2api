@@ -89,6 +89,11 @@ const AccountTestModalStub = defineComponent({
   template: '<div data-test="test-account">{{ show ? account?.name : "" }}</div>'
 })
 
+const AccountDetailStub = defineComponent({
+  props: { open: Boolean, account: { type: Object, default: null } },
+  template: '<div data-test="account-detail">{{ open ? account?.name : "" }}</div>'
+})
+
 const AccountStatsModalStub = defineComponent({
   props: { show: Boolean, account: { type: Object, default: null } },
   template: '<div data-test="stats-account">{{ show ? account?.name : "" }}</div>'
@@ -113,6 +118,7 @@ function mountView(stubActionMenu = true) {
         AccountTestModal: AccountTestModalStub,
         AccountBatchTestModal: true,
         AccountStatsModal: AccountStatsModalStub,
+        AccountDetailSlideover: AccountDetailStub,
         ScheduledTestsPanel: true,
         SyncFromCrsModal: true,
         TempUnschedStatusModal: true,
@@ -195,6 +201,18 @@ describe('admin AccountsView lite account list', () => {
     expect(wrapper.get('[data-test="account-name"]').text()).toBe('refreshed account')
     expect(showWarning).toHaveBeenCalledWith('Token refreshed; project ID will be retried automatically')
     expect(listAccounts).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('opens the account detail from the row and follows the live row', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-test="account-detail"]').text()).toBe('')
+    await wrapper.findAll('button').find(button => button.text() === 'admin.accounts.accountDetail.open')!.trigger('click')
+    expect(wrapper.get('[data-test="account-detail"]').text()).toBe('compact row')
+    wrapper.getComponent(AccountDetailStub).vm.$emit('close')
+    await flushPromises()
+    expect(wrapper.get('[data-test="account-detail"]').text()).toBe('')
     wrapper.unmount()
   })
 

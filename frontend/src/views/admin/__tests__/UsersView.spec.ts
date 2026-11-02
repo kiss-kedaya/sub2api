@@ -12,7 +12,8 @@ const {
   getAllGroups,
   getBatchUsersUsage,
   listEnabledDefinitions,
-  getBatchUserAttributes
+  getBatchUserAttributes,
+  getPlatformQuotas
 } = vi.hoisted(() => ({
   listUsers: vi.fn(),
   deleteUser: vi.fn(),
@@ -21,7 +22,8 @@ const {
   getAllGroups: vi.fn(),
   getBatchUsersUsage: vi.fn(),
   listEnabledDefinitions: vi.fn(),
-  getBatchUserAttributes: vi.fn()
+  getBatchUserAttributes: vi.fn(),
+  getPlatformQuotas: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -29,10 +31,14 @@ vi.mock('@/api/admin', () => ({
     users: {
       list: listUsers,
       toggleStatus: vi.fn(),
-      delete: deleteUser
+      delete: deleteUser,
+      getPlatformQuotas
     },
     groups: {
       getAll: getAllGroups
+    },
+    subscriptions: {
+      listByUser: vi.fn().mockResolvedValue([])
     },
     dashboard: {
       getBatchUsersUsage
@@ -177,6 +183,7 @@ describe('admin UsersView', () => {
     getBatchUsersUsage.mockReset()
     listEnabledDefinitions.mockReset()
     getBatchUserAttributes.mockReset()
+    getPlatformQuotas.mockReset()
 
     listUsers.mockResolvedValue({
       items: [createAdminUser()],
@@ -189,6 +196,7 @@ describe('admin UsersView', () => {
     getBatchUsersUsage.mockResolvedValue({ stats: {} })
     listEnabledDefinitions.mockResolvedValue([])
     getBatchUserAttributes.mockResolvedValue({ values: {} })
+    getPlatformQuotas.mockResolvedValue({ platform_quotas: [] })
   })
 
   afterEach(() => {
@@ -383,10 +391,11 @@ describe('admin UsersView', () => {
           UserBalanceModal: true,
           UserBalanceHistoryModal: true,
           GroupReplaceModal: true,
-          Icon: true,
-          Teleport: true
+          Icon: true
+          // No Teleport stub: the usage sort menu (Nuxt UI dropdown) must render into document.body.
         }
-      }
+      },
+      attachTo: document.body
     })
 
     await flushPromises()
@@ -395,9 +404,12 @@ describe('admin UsersView', () => {
 
     expect(wrapper.get('[data-test="row-order"]').text()).toBe('last-used-first@example.com,usage-first@example.com')
 
+    // The sort menu is a Nuxt UI dropdown: its items teleport to document.body.
     await wrapper.get('[data-test="usage-sort-trigger-usage"]').trigger('click')
     await flushPromises()
-    await wrapper.get('[data-test="usage-sort-usage-today"]').trigger('click')
+    const todayItem = document.body.querySelector<HTMLElement>('[data-test="usage-sort-usage-today"]')
+    expect(todayItem).not.toBeNull()
+    todayItem!.click()
     await flushPromises()
 
     expect(wrapper.get('[data-test="row-order"]').text()).toBe('usage-first@example.com,last-used-first@example.com')
@@ -493,5 +505,90 @@ describe('admin UsersView', () => {
     expect(wrapper.get('[data-test="row-order"]').text()).toBe('refreshed-page-two@example.com')
     expect(wrapper.find('[data-test="bulk-edit-limits"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="selected-keys"]').text()).toBe('')
+  })
+
+  it('inlines platform quotas in the list response instead of per-row requests', async () => {
+    // 显示配额列：从默认隐藏列表里去掉 balance_platform_quota
+    localStorage.setItem('user-column-settings-version', '3')
+    localStorage.setItem(
+      'user-hidden-columns',
+      JSON.stringify([
+        'notes',
+        'groups',
+        'subscriptions',
+        'usage',
+        'concurrency',
+        'usage_anthropic',
+        'usage_openai',
+        'usage_gemini',
+        'usage_antigravity'
+      ])
+    )
+    listUsers.mockResolvedValue({
+      items: [
+        createAdminUser({
+          id: 42,
+          platform_quotas: [
+            {
+              platform: 'anthropic',
+              daily_limit_usd: 5,
+              weekly_limit_usd: null,
+              monthly_limit_usd: null,
+              daily_usage_usd: 1,
+              weekly_usage_usd: 0,
+              monthly_usage_usd: 0
+            }
+          ]
+        })
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountBulkDeleteView()
+    await flushPromises()
+
+    expect(listUsers).toHaveBeenLastCalledWith(
+      1,
+      20,
+      expect.objectContaining({ include_platform_quotas: true }),
+      expect.any(Object)
+    )
+    // 列表页不再逐行打 /admin/users/:id/platform-quotas（100 行 = 100 次请求）
+    expect(getPlatformQuotas).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('does not request platform quotas when the column is hidden', async () => {
+    const wrapper = mountBulkDeleteView()
+    await flushPromises()
+
+    expect(listUsers).toHaveBeenLastCalledWith(
+      1,
+      20,
+      expect.objectContaining({ include_platform_quotas: false }),
+      expect.any(Object)
+    )
+    expect(getPlatformQuotas).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('loads the current page once and fetches attribute definitions only once', async () => {
+    const wrapper = mountBulkDeleteView()
+    await flushPromises()
+
+    // 首屏只发一次列表请求（不再串行等待属性定义后重复拉取）
+    expect(listUsers).toHaveBeenCalledTimes(1)
+    expect(listEnabledDefinitions).toHaveBeenCalledTimes(1)
+
+    await wrapper.get('[data-test="next-page"]').trigger('click')
+    await flushPromises()
+
+    expect(listUsers).toHaveBeenCalledTimes(2)
+    // 翻页不重复拉属性定义
+    expect(listEnabledDefinitions).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 })

@@ -17,8 +17,8 @@ describe('scheduled Chanshui configuration', () => {
     })
     expect((wrapper.get('[data-testid="chanshui-service-url"]').element as HTMLInputElement).value).toBe('https://chanshui.dev')
     expect(wrapper.find('input[type="password"]').exists()).toBe(false)
-    expect(wrapper.findAll('input[data-section]')).toHaveLength(9)
-    expect(wrapper.findAll('input[data-section]').filter(input => (input.element as HTMLInputElement).checked).map(input => input.attributes('data-section'))).toEqual(['fingerprint'])
+    expect(wrapper.findAll('[role="checkbox"][data-section]')).toHaveLength(9)
+    expect(wrapper.findAll('[role="checkbox"][data-section]').filter(box => box.attributes('aria-checked') === 'true').map(box => box.attributes('data-section'))).toEqual(['fingerprint'])
     await wrapper.get('[data-testid="chanshui-service-url"]').setValue('https://audit.example')
     expect(wrapper.emitted('update:config')?.[0]).toEqual([{ ...defaultChanshuiConfig(), base_url: 'https://audit.example' }])
     wrapper.unmount()
@@ -30,10 +30,10 @@ describe('scheduled Chanshui configuration', () => {
       props: { provider: 'chanshui', config, model: 'gpt-test' },
       global: { stubs: { Select: true } },
     })
-    await wrapper.get('input[data-section="tools"]').setValue(false)
+    await wrapper.get('[role="checkbox"][data-section="tools"]').trigger('click')
     expect(wrapper.emitted('update:config')?.[0]).toEqual([{ ...config, sections: ['fingerprint'] }])
     await wrapper.setProps({ config: { ...config, sections: ['thinking'] } })
-    expect(wrapper.get('input[data-section="thinking"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[role="checkbox"][data-section="thinking"]').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('admin.scheduledTests.thinkingOnlyClaude')
     wrapper.unmount()
   })

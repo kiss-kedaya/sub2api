@@ -26,6 +26,9 @@ func (f *fakeRepoForAdapter) GetByUserPlatform(_ context.Context, _ int64, _ str
 func (f *fakeRepoForAdapter) ListByUser(_ context.Context, _ int64) ([]UserPlatformQuotaRecord, error) {
 	return nil, nil
 }
+func (f *fakeRepoForAdapter) ListByUsers(_ context.Context, _ []int64) (map[int64][]UserPlatformQuotaRecord, error) {
+	return map[int64][]UserPlatformQuotaRecord{}, nil
+}
 func (f *fakeRepoForAdapter) IncrementUsageWithReset(_ context.Context, _ int64, _ string, _ float64, _ time.Time) error {
 	return nil
 }

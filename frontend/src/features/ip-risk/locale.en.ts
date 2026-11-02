@@ -88,6 +88,8 @@ export default {
   bans: 'Active automatic bans',
   bansHint: 'Shows up to 500 recent active bans per mode. Unbanning clears counters in both modes and the corresponding baseline login IP ban. Edit manual bans in the rule list.',
   refreshRecords: 'Refresh bans and records',
+  records: 'Bans and checks',
+  moreInfo: 'More information',
   expiresAt: 'Expires',
   unban: 'Unban and reset counters',
   unbanned: 'Automatic bans and related counters cleared.',

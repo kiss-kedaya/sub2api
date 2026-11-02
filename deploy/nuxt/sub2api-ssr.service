@@ -1,0 +1,26 @@
+# 模板：复制到 /etc/systemd/system/sub2api-ssr.service 后按实际路径修改。
+[Unit]
+Description=Sub2API Nuxt SSR (BFF frontend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sub2api
+WorkingDirectory=/opt/sub2api/ssr
+EnvironmentFile=/opt/sub2api/ssr/.env
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+ExecStart=/usr/bin/node /opt/sub2api/ssr/.output/server/index.mjs
+Restart=on-failure
+RestartSec=5
+# 只读根 + 私有 /tmp：SSR 进程不需要写业务目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

@@ -21,12 +21,12 @@
           <label class="input-label">{{ t('admin.accounts.balanceAlert.threshold') }}</label>
           <div class="flex items-center gap-2">
             <span class="text-gray-500">$</span>
-            <input
+            <UInput
               v-model.number="form.threshold"
               type="number"
               min="0"
               step="0.01"
-              class="input flex-1"
+              class="flex-1"
               :placeholder="t('admin.accounts.balanceAlert.thresholdPlaceholder')"
             />
           </div>
@@ -36,10 +36,10 @@
         <!-- Recharge URL -->
         <div>
           <label class="input-label">{{ t('admin.accounts.balanceAlert.rechargeUrl') }}</label>
-          <input
+          <UInput
             v-model="form.rechargeUrl"
             type="url"
-            class="input"
+            class="w-full"
             :placeholder="currentOrigin"
           />
         </div>
@@ -48,10 +48,8 @@
 
     <template #footer>
       <div class="flex justify-end gap-3">
-        <button class="btn btn-secondary" @click="emit('close')">{{ t('common.cancel') }}</button>
-        <button class="btn btn-primary" :disabled="saving" @click="handleSave">
-          {{ saving ? t('common.saving') : t('common.save') }}
-        </button>
+        <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="emit('close')" />
+        <UButton :disabled="saving" :label="saving ? t('common.saving') : t('common.save')" @click="handleSave" />
       </div>
     </template>
   </BaseDialog>

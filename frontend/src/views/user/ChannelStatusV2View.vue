@@ -1,59 +1,41 @@
 <template>
   <AppLayout>
     <div class="signal-channel-page signal-channel-v2 space-y-6 pb-12">
-      <!-- Ops-style elevated shell: title toolbar + filters (mirrors OpsDashboardHeader) -->
-      <section
-        class="card signal-channel-command sticky top-0 z-20 rounded-3xl p-0 ring-1 ring-gray-900/5"
-      >
-        <header class="page-header mb-0 flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
-          <div class="min-w-0">
-            <h1 class="page-title flex items-center gap-2 text-xl font-black text-gray-900 dark:text-white">
-              <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400">
-                <Icon name="chart" size="sm" />
-              </span>
-              {{ t('channelMonitorV2.title') }}
-            </h1>
-            <div class="page-description mt-1.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-              <span class="relative flex h-2 w-2 shrink-0">
-                <span
-                  class="relative inline-flex h-2 w-2 rounded-full"
-                  :class="loading || refreshing ? 'bg-gray-400' : 'bg-green-500'"
-                ></span>
-              </span>
-              <span v-if="refreshing" class="inline-flex items-center gap-1 text-primary-600 dark:text-primary-300">
-                <LoadingSpinner size="sm" />
-                {{ t('channelMonitorV2.updating') }}
-              </span>
-              <span v-else-if="snapshot?.coverage.data_through">
-                {{ t('channelMonitorV2.updatedTo', { time: formatTime(snapshot.coverage.data_through) }) }}
-              </span>
-              <span v-else class="text-gray-400">{{ t('common.loading') }}</span>
-              <span
-                v-if="snapshot && !snapshot.coverage.coverage_complete && !bootstrapActive"
-                class="badge badge-warning"
-              >
-                {{ t('channelMonitorV2.partialCoverage') }}
-              </span>
-              <span
-                v-if="bootstrapActive"
-                class="badge badge-primary inline-flex items-center gap-1"
-              >
-                <LoadingSpinner size="sm" />
-                {{ t('channelMonitorV2.bootstrap.progress', { percent: bootstrapPercent }) }}
-              </span>
-            </div>
-          </div>
-          <button
-            class="btn btn-secondary btn-icon flex h-8 w-8 items-center justify-center rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600"
-            type="button"
-            :title="t('common.refresh')"
+      <UserPageHeader flush :title="t('channelMonitorV2.title')">
+        <template #description>
+          <span class="inline-flex flex-wrap items-center gap-2">
+            <span class="size-2 shrink-0 rounded-full" :class="loading || refreshing ? 'bg-gray-400' : 'bg-green-500'"></span>
+            <span v-if="refreshing" class="inline-flex items-center gap-1 text-highlighted">
+              <LoadingSpinner size="sm" />
+              {{ t('channelMonitorV2.updating') }}
+            </span>
+            <span v-else-if="snapshot?.coverage.data_through">
+              {{ t('channelMonitorV2.updatedTo', { time: formatTime(snapshot.coverage.data_through) }) }}
+            </span>
+            <span v-else class="text-dimmed">{{ t('common.loading') }}</span>
+            <UBadge v-if="snapshot && !snapshot.coverage.coverage_complete && !bootstrapActive" color="warning" variant="subtle">
+              {{ t('channelMonitorV2.partialCoverage') }}
+            </UBadge>
+            <UBadge v-if="bootstrapActive" color="primary" variant="subtle">
+              {{ t('channelMonitorV2.bootstrap.progress', { percent: bootstrapPercent }) }}
+            </UBadge>
+          </span>
+        </template>
+        <template #actions>
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
             :disabled="loading"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
             @click="reload(false)"
-          >
-            <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
-          </button>
-        </header>
+          />
+        </template>
+      </UserPageHeader>
 
+      <section class="signal-channel-toolbar sticky top-0 z-20 overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
         <!-- First-upgrade silent backfill: show until 30d product window is covered -->
         <div
           v-if="bootstrapActive"
@@ -92,7 +74,7 @@
         <!-- Single compact toolbar row: range · filters · view controls -->
         <div class="monitor-toolbar flex flex-nowrap items-center gap-1.5 overflow-x-auto px-4 py-3 sm:gap-2 sm:px-5">
           <div
-            class="tabs inline-flex shrink-0"
+            class="channel-range-switch shrink-0"
             role="group"
             :aria-label="t('channelMonitorV2.timeRange')"
           >
@@ -100,15 +82,14 @@
               v-for="option in ranges"
               :key="option.value"
               type="button"
-              class="tab !px-2 !py-1 text-xs sm:!px-2.5"
-              :class="filter.range === option.value ? 'tab-active' : ''"
+              :aria-pressed="filter.range === option.value"
               @click="setRange(option.value)"
             >
               {{ option.label }}
             </button>
           </div>
 
-          <span class="mx-0.5 hidden h-5 w-px shrink-0 bg-gray-200 dark:bg-dark-700 sm:block" aria-hidden="true"></span>
+          <span class="mx-0.5 hidden h-5 w-px shrink-0 bg-border sm:block" aria-hidden="true"></span>
 
           <FilterMultiSelect
             v-model="filter.platforms"
@@ -131,42 +112,34 @@
             :all-label="t('channelMonitorV2.filters.allModels')"
             :options="modelOptions"
           />
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm shrink-0 !px-2 !py-1 text-xs"
-            :disabled="!hasDimensionFilter"
-            :class="!hasDimensionFilter ? 'opacity-40' : ''"
-            @click="clearDimensions"
-          >
+          <UButton color="neutral" variant="ghost" size="sm" class="shrink-0" :disabled="!hasDimensionFilter" @click="clearDimensions">
             {{ t('channelMonitorV2.clearFilters') }}
-          </button>
+          </UButton>
 
-          <span class="mx-0.5 hidden h-5 w-px shrink-0 bg-gray-200 dark:bg-dark-700 md:block" aria-hidden="true"></span>
+          <span class="mx-0.5 hidden h-5 w-px shrink-0 bg-border md:block" aria-hidden="true"></span>
 
           <Select
             v-model="matrixGroupBy"
             :options="matrixGroupOptions"
             :placeholder="t('channelMonitorV2.groupBy.label')"
-            class="monitor-toolbar-select w-[7.5rem] shrink-0 sm:w-[8.5rem]"
+            class="monitor-toolbar-select w-30 shrink-0 sm:w-34"
           />
 
           <div
-            class="tabs inline-flex shrink-0"
+            class="channel-range-switch shrink-0"
             role="group"
             :aria-label="t('channelMonitorV2.trendView.label')"
           >
             <button
               type="button"
-              class="tab !px-2 !py-1 text-xs"
-              :class="trendView === 'pulse' ? 'tab-active' : ''"
+              :aria-pressed="trendView === 'pulse'"
               @click="trendView = 'pulse'"
             >
               {{ t('channelMonitorV2.trendView.pulse') }}
             </button>
             <button
               type="button"
-              class="tab !px-2 !py-1 text-xs"
-              :class="trendView === 'line' ? 'tab-active' : ''"
+              :aria-pressed="trendView === 'line'"
               @click="trendView = 'line'"
             >
               {{ t('channelMonitorV2.trendView.line') }}
@@ -175,7 +148,7 @@
 
           <div
             v-if="trendView === 'pulse'"
-            class="tabs inline-flex shrink-0"
+            class="channel-range-switch shrink-0"
             role="group"
             :aria-label="t('channelMonitorV2.healthMode.label')"
           >
@@ -183,8 +156,7 @@
               v-for="option in healthModeOptions"
               :key="option.value"
               type="button"
-              class="tab !px-2 !py-1 text-xs"
-              :class="healthMode === option.value ? 'tab-active' : ''"
+              :aria-pressed="healthMode === option.value"
               @click="healthMode = option.value"
             >
               {{ option.label }}
@@ -248,7 +220,7 @@
         <div
           v-for="i in (showThroughput ? 5 : 4)"
           :key="i"
-          class="h-24 animate-pulse rounded-2xl bg-gray-50 dark:bg-dark-900/30"
+          class="h-24 animate-pulse rounded-lg bg-elevated dark:bg-dark-900/30"
         />
       </section>
 
@@ -277,16 +249,14 @@
       </div>
 
       <section class="card signal-channel-ledger flex min-h-0 flex-col overflow-hidden">
-        <div class="border-b border-gray-100 px-5 pt-4 dark:border-dark-700 sm:px-6">
-          <nav class="tabs w-full max-w-md sm:w-auto" role="tablist" :aria-label="t('channelMonitorV2.tabs.aria')">
+        <div class="border-b border-default px-4 py-3 sm:px-5">
+          <nav class="channel-range-switch" role="tablist" :aria-label="t('channelMonitorV2.tabs.aria')">
             <button
               v-for="item in tabs"
               :key="item.value"
               type="button"
               role="tab"
-              class="tab flex-1 sm:flex-none"
               :aria-selected="activeTab === item.value"
-              :class="activeTab === item.value ? 'tab-active' : ''"
               @click="activeTab = item.value"
             >
               {{ item.label }}
@@ -344,7 +314,7 @@
             <div
               v-for="row in errorRows"
               :key="row.category"
-              class="rounded-2xl bg-gray-50 p-4 text-sm dark:bg-dark-900/30"
+              class="rounded-lg bg-muted p-4 text-sm ring ring-default dark:bg-dark-900/30 dark:ring-0"
               :class="row.ignored ? 'opacity-60' : ''"
             >
               <button
@@ -354,12 +324,12 @@
               >
                 <span class="flex min-w-0 items-center gap-1.5 truncate text-gray-700 dark:text-gray-200">
                   <span class="truncate">{{ errorLabel(row.category) }}</span>
-                  <span v-if="row.ignored" class="badge badge-gray shrink-0 !px-1.5 !py-0 text-[10px]">{{ t('channelMonitorV2.ignored') }}</span>
+                  <span v-if="row.ignored" class="badge badge-gray shrink-0 px-1.5! py-0! text-[10px]">{{ t('channelMonitorV2.ignored') }}</span>
                 </span>
                 <span class="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
                   <i
                     class="block h-full rounded-full"
-                    :class="row.ignored ? 'bg-gray-400 dark:bg-gray-500' : 'bg-gradient-to-r from-red-400 to-red-500'"
+                    :class="row.ignored ? 'bg-gray-400 dark:bg-gray-500' : 'bg-linear-to-r/srgb from-red-400 to-red-500'"
                     :style="{ width: `${Math.max(2, row.rate * 100)}%` }"
                   ></i>
                 </span>
@@ -377,13 +347,13 @@
                     class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900/50 dark:text-dark-300"
                   >
                     <div class="mb-1 flex flex-wrap items-center gap-2">
-                      <span class="badge badge-gray !px-1.5 !py-0 text-[10px]">{{ detail.platform || '-' }}</span>
+                      <span class="badge badge-gray px-1.5! py-0! text-[10px]">{{ detail.platform || '-' }}</span>
                       <span class="truncate font-medium">{{ detail.model || '-' }}</span>
                       <span v-if="detail.status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.http', { code: detail.status_code }) }}</span>
                       <span v-if="detail.upstream_status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.upstream', { code: detail.upstream_status_code }) }}</span>
                       <span class="ml-auto text-gray-400">×{{ detail.count }}</span>
                     </div>
-                    <p class="break-words leading-relaxed">{{ detail.message || detail.error_type || t('channelMonitorV2.errorDetail.noMessage') }}</p>
+                    <p class="wrap-break-word leading-relaxed">{{ detail.message || detail.error_type || t('channelMonitorV2.errorDetail.noMessage') }}</p>
                   </div>
                 </template>
                 <p v-else class="text-xs text-gray-400">{{ t('channelMonitorV2.errorDetail.empty') }}</p>
@@ -421,7 +391,7 @@
                       {{ row.display_label }}
                       <span
                         v-if="row.is_self"
-                        class="badge badge-primary ml-2 !px-1.5 !py-0 text-[10px]"
+                        class="badge badge-primary ml-2 px-1.5! py-0! text-[10px]"
                       >{{ t('channelMonitorV2.currentUser') }}</span>
                     </strong>
                   </td>
@@ -470,6 +440,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import './channel-signal.css'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Select from '@/components/common/Select.vue'

@@ -207,6 +207,7 @@ export default {
     mySubscriptions: '我的订阅',
     buySubscription: '充值中心',
     docs: '文档',
+    language: '语言 / Language',
     myOrders: '我的订单',
     orderManagement: '订单管理',
     paymentDashboard: '支付概览',

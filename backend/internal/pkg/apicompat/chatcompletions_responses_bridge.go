@@ -21,6 +21,9 @@ type toolOutputMediaByCallID map[string][]ChatContentPart
 // ResponsesToChatCompletionsRequestWithOptions. All fields are optional; a nil
 // *ResponsesToChatOptions behaves exactly like ResponsesToChatCompletionsRequest.
 type ResponsesToChatOptions struct {
+	// PreserveThinkingSwitch translates Responses none into the DeepSeek Chat
+	// thinking toggle rather than an unsupported reasoning_effort=none.
+	PreserveThinkingSwitch bool
 	// ReasoningContentByID looks up the cached reasoning text for a reasoning
 	// item id. Codex histories may carry reasoning items with no plaintext
 	// summary (empty summary + opaque encrypted_content, e.g. after remote
@@ -64,6 +67,14 @@ func ResponsesToChatCompletionsRequestWithOptions(req *ResponsesRequest, opts *R
 	}
 	if req.Reasoning != nil {
 		out.ReasoningEffort = req.Reasoning.Effort
+		if opts != nil && opts.PreserveThinkingSwitch {
+			if req.Reasoning.Effort == "none" {
+				out.Thinking = &AnthropicThinking{Type: "disabled"}
+				out.ReasoningEffort = ""
+			} else if req.Reasoning.Effort != "" {
+				out.Thinking = &AnthropicThinking{Type: "enabled"}
+			}
+		}
 	}
 	effectiveTools, err := EffectiveResponsesTools(req)
 	if err != nil {
@@ -963,42 +974,18 @@ func isBlankChatContent(raw json.RawMessage) bool {
 	return chatMessageContentText(raw) == ""
 }
 
-// extractResponsesReasoningText pulls the reasoning text out of a Responses
-// reasoning item. The Chat→Responses bridge writes the upstream reasoning_content
-// verbatim into the summary_text parts (see closeChatReasoningItem), so codex
-// round-trips it there; prefer summary[].text and fall back to content.
+// extractResponsesReasoningText pulls only replayable reasoning_text content
+// out of a Responses reasoning item. summary_text is display-only and must not
+// be fabricated into request-side reasoning_content.
 func extractResponsesReasoningText(item map[string]json.RawMessage) string {
-	var parts []string
-	collect := func(raw json.RawMessage) {
-		raw = bytesTrimSpace(raw)
-		if len(raw) == 0 || string(raw) == "null" {
-			return
-		}
-		var arr []map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &arr); err == nil {
-			for _, p := range arr {
-				if t := rawString(p["text"]); t != "" {
-					parts = append(parts, t)
-				}
-			}
-			return
-		}
-		if t := rawString(raw); t != "" {
-			parts = append(parts, t)
-		}
-	}
-	collect(item["summary"])
-	if len(parts) == 0 {
-		collect(item["content"])
-	}
-	return strings.Join(parts, "\n")
+	return responsesInputReasoningContentText(item["content"])
 }
 
 // ExtractResponsesReasoningItem parses a raw Responses input item and, when it
-// is a reasoning item, returns its id and extractable plaintext (summary
-// preferred, content fallback). ok is false for non-reasoning items. It exists
-// for the gateway-side reasoning cache: items with plaintext get (re)cached so
-// later encrypted-only replicas of the same item id can be restored.
+// is a reasoning item, returns its id and extractable plaintext. ok is false for
+// non-reasoning items. It exists for the gateway-side reasoning cache: items
+// with plaintext get (re)cached so later encrypted-only replicas of the same
+// item id can be restored.
 func ExtractResponsesReasoningItem(raw json.RawMessage) (id string, text string, ok bool) {
 	raw = bytesTrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
@@ -1476,6 +1463,10 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 		outputs = append(outputs, ResponsesOutput{
 			Type: "reasoning",
 			ID:   generateItemID(),
+			Content: []ResponsesContentPart{{
+				Type: "reasoning_text",
+				Text: reasoning,
+			}},
 			Summary: []ResponsesSummary{{
 				Type: "summary_text",
 				Text: reasoning,
@@ -2118,6 +2109,7 @@ func closeChatReasoningItem(state *ChatCompletionsToResponsesStreamState) []Resp
 				Type:    "reasoning",
 				ID:      state.ReasoningItemID,
 				Status:  "completed",
+				Content: []ResponsesContentPart{{Type: "reasoning_text", Text: reasoning}},
 				Summary: []ResponsesSummary{{Type: "summary_text", Text: reasoning}},
 			},
 		}),
@@ -2382,6 +2374,10 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 		outputs = append(outputs, ResponsesOutput{
 			Type: "reasoning",
 			ID:   generateItemID(),
+			Content: []ResponsesContentPart{{
+				Type: "reasoning_text",
+				Text: state.Reasoning.String(),
+			}},
 			Summary: []ResponsesSummary{{
 				Type: "summary_text",
 				Text: state.Reasoning.String(),

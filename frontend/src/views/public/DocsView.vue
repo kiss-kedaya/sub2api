@@ -1,7 +1,7 @@
 <template>
   <div class="api-docs min-h-screen bg-white text-slate-900 dark:bg-dark-950 dark:text-slate-100">
-    <a href="#docs-content" class="sr-only z-[60] rounded-md bg-blue-600 px-4 py-3 text-sm text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">{{ t('docs.skipToContent') }}</a>
-    <header class="docs-header sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-dark-700 dark:bg-dark-950/95">
+    <a href="#docs-content" class="sr-only z-60 rounded-md bg-blue-600 px-4 py-3 text-sm text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">{{ t('docs.skipToContent') }}</a>
+    <header class="docs-header sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur-sm dark:border-dark-700 dark:bg-dark-950/95">
       <div class="flex h-14 items-center justify-between gap-4 px-5 sm:px-7">
         <router-link to="/home" class="flex min-w-0 items-center gap-2.5 font-semibold tracking-tight">
           <img :src="siteLogo || '/logo.svg'" alt="" class="h-7 w-7 shrink-0 object-contain" />
@@ -12,7 +12,7 @@
           <router-link v-if="showModels" to="/model-plaza" class="hidden text-slate-500 hover:text-slate-900 dark:hover:text-white sm:block">{{ t('docs.models') }}</router-link>
           <span class="hidden font-medium sm:block" aria-current="page">{{ t('nav.docs') }}</span>
           <LocaleSwitcher />
-          <button type="button" class="rounded-md p-2 text-slate-500 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800" :aria-label="t('docs.theme')" @click="toggleTheme">
+          <button type="button" class="rounded-md p-2 text-slate-500 hover:bg-slate-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800" :aria-label="t('docs.theme')" @click="toggleTheme">
             <Icon :name="isDark ? 'sun' : 'moon'" size="sm" />
           </button>
         </nav>
@@ -33,7 +33,7 @@
     <aside id="docs-sidebar" class="docs-sidebar fixed bottom-0 left-0 top-[105px] z-50 flex w-[260px] flex-col border-r border-slate-200 bg-white px-4 py-5 transition-transform dark:border-dark-700 dark:bg-dark-950 lg:z-30 lg:translate-x-0" :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'" :inert="!mobileOpen && !wideLayout" :aria-label="t('docs.navigation')">
       <label class="relative block">
         <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-2.5 text-slate-400" />
-        <input v-model="search" data-testid="docs-search" type="search" class="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-dark-700 dark:bg-dark-900 dark:focus:ring-blue-900/30" :placeholder="t('docs.search')" :aria-label="t('docs.search')" />
+        <input v-model="search" data-testid="docs-search" type="search" class="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-hidden transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-dark-700 dark:bg-dark-900 dark:focus:ring-blue-900/30" :placeholder="t('docs.search')" :aria-label="t('docs.search')" />
       </label>
       <nav class="mt-6 flex-1 space-y-7 overflow-y-auto pr-1">
         <div v-for="group in navigationGroups" :key="group.category">
@@ -74,8 +74,8 @@
                 <thead class="bg-slate-50 text-xs text-slate-500 dark:bg-dark-900"><tr><th class="w-1/4 px-4 py-3 font-medium">{{ t('docs.field') }}</th><th class="px-4 py-3 font-medium">{{ t('docs.description') }}</th></tr></thead>
                 <tbody>
                   <tr v-for="field in section.fields" :key="field.name" class="border-t border-slate-200 align-top dark:border-dark-700">
-                    <td class="px-4 py-4"><code class="rounded bg-slate-100 px-1.5 py-1 font-mono text-[12px] dark:bg-dark-800">{{ field.name }}</code><div class="mt-2 text-[11px] text-slate-400">{{ field.type }}<span v-if="field.required" class="ml-1.5 text-rose-500">{{ t('docs.required') }}</span></div></td>
-                    <td class="break-words px-4 py-4 leading-7 text-slate-600 dark:text-slate-300">{{ field.description }}</td>
+                    <td class="px-4 py-4"><code class="rounded-sm bg-slate-100 px-1.5 py-1 font-mono text-[12px] dark:bg-dark-800">{{ field.name }}</code><div class="mt-2 text-[11px] text-slate-400">{{ field.type }}<span v-if="field.required" class="ml-1.5 text-rose-500">{{ t('docs.required') }}</span></div></td>
+                    <td class="wrap-break-word px-4 py-4 leading-7 text-slate-600 dark:text-slate-300">{{ field.description }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -84,9 +84,9 @@
             <div v-if="section.examples" class="docs-code my-5 overflow-hidden rounded-xl border border-slate-200 bg-[#f8f9fb] dark:border-dark-700 dark:bg-dark-900">
               <div class="flex min-h-11 items-center justify-between gap-3 border-b border-slate-200 px-3 dark:border-dark-700">
                 <div class="flex min-w-0 gap-1 overflow-x-auto" role="group" :aria-label="section.title">
-                  <button v-for="language in languages(section)" :key="language" type="button" class="rounded-md px-2.5 py-1.5 font-mono text-[11px] transition" :class="selectedLanguage(section) === language ? 'bg-white font-medium text-blue-600 shadow-sm dark:bg-dark-800 dark:text-blue-400' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-pressed="selectedLanguage(section) === language" @click="selectedLanguages[section.id] = language">{{ languageLabels[language] }}</button>
+                  <button v-for="language in languages(section)" :key="language" type="button" class="rounded-md px-2.5 py-1.5 font-mono text-[11px] transition" :class="selectedLanguage(section) === language ? 'bg-white font-medium text-blue-600 shadow-xs dark:bg-dark-800 dark:text-blue-400' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-pressed="selectedLanguage(section) === language" @click="selectedLanguages[section.id] = language">{{ languageLabels[language] }}</button>
                 </div>
-                <button type="button" :data-testid="`docs-copy-${section.id}`" class="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800 dark:hover:text-white" :title="t('docs.copy')" :aria-label="t('docs.copy')" @click="copyExample(section)">
+                <button type="button" :data-testid="`docs-copy-${section.id}`" class="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800 dark:hover:text-white" :title="t('docs.copy')" :aria-label="t('docs.copy')" @click="copyExample(section)">
                   <Icon :name="copiedSection === section.id ? 'check' : 'copy'" size="sm" />
                   <span class="hidden sm:inline">{{ copiedSection === section.id ? t('docs.copied') : t('docs.copy') }}</span>
                 </button>

@@ -914,6 +914,7 @@ type ChatCompletionsRequest struct {
 	ParallelToolCalls   *bool                  `json:"parallel_tool_calls,omitempty"`
 	ToolChoice          json.RawMessage        `json:"tool_choice,omitempty"`
 	ReasoningEffort     string                 `json:"reasoning_effort,omitempty"` // "low" | "medium" | "high" | "xhigh"
+	Thinking            *AnthropicThinking     `json:"thinking,omitempty"`         // DeepSeek native thinking toggle; converted only with provider opt-in
 	ServiceTier         string                 `json:"service_tier,omitempty"`
 	PromptCacheOptions  json.RawMessage        `json:"prompt_cache_options,omitempty"`
 	Stop                json.RawMessage        `json:"stop,omitempty"` // string or []string

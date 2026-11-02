@@ -389,6 +389,7 @@ export default {
     },
 
     affiliates: {
+      displayColumns: '显示列',
       invitesDescription: '查看全站邀请关系和被邀请用户累计返利',
       rebatesDescription: '查看每一笔产生返利的充值订单',
       transfersDescription: '查看返利额度转入账户余额的提取流水',
@@ -433,6 +434,8 @@ export default {
 
     // Users Management
     users: {
+      displayColumns: '显示列',
+      advancedOptions: '高级选项',
       title: '用户管理',
       description: '管理用户账户和权限',
       createUser: '创建用户',
@@ -444,6 +447,7 @@ export default {
         failed: '{count} 个用户删除失败，已保留选中，可重试。'
       },
       bulkLimits: {
+        short: '设置限制',
         action: '批量设置限制（{count}）',
         title: '批量设置用户限制',
         selectedCount: '已选择 {count} 个用户',
@@ -796,6 +800,15 @@ export default {
       duplicateFailed: '复制分组失败',
       sortOrder: '排序',
       columnSettings: '列设置',
+      displayColumns: '显示列',
+      formSections: {
+        basic: '基本信息',
+        billing: '计费与访问',
+        models: '模型',
+        pricing: '定价',
+        dispatch: '调度',
+        advanced: '高级选项',
+      },
       sortOrderHint: '拖拽分组调整显示顺序，排在前面的分组会优先显示',
       sortOrderUpdated: '排序已更新',
       failedToUpdateSortOrder: '更新排序失败',
@@ -937,6 +950,8 @@ export default {
       rateAndAccounts: '{rate}x 费率 · {count} 个账号',
       accountsCount: '{count} 个账号',
       rateLabel: '倍率',
+      capacityRuntimeHint: '账号侧实时负载：并发槽位 / 会话 / RPM；不是当前使用该分组的用户数。',
+      capacityUnknownHint: '实时计数暂不可用；— 表示读取失败或未配置，不代表 0。',
       accountFilters: {
         title: '账号过滤控制',
         oauthOnly: '仅允许 OAuth 账号',

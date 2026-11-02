@@ -45,7 +45,7 @@ jobs:
   # events, where actions/checkout's implicit ref can be the default branch.
   resolve_release_ref:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
-    runs-on: [self-hosted, release-builder]
+    runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.resolve.outputs.commit_sha }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
@@ -94,7 +94,7 @@ jobs:
     needs: [resolve_release_ref]
     permissions:
       contents: read
-    runs-on: [self-hosted, release-builder]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -124,7 +124,7 @@ jobs:
     needs: [resolve_release_ref]
     permissions:
       contents: read
-    runs-on: [self-hosted, release-builder]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -140,7 +140,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          # Nuxt 4.6.3 requires ^22.22.3 or ^24.15. 24.22 also builds the legacy Vite SPA.
+          node-version: '24.22'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -150,6 +151,14 @@ jobs:
 
       - name: Build frontend
         run: pnpm run build
+        working-directory: frontend
+
+      - name: Verify frontend manifest
+        run: >-
+          node scripts/build-manifest.mjs verify
+          --dir ../backend/internal/web/dist
+          --mode spa
+          --expect-commit ${{ needs.resolve_release_ref.outputs.commit_sha }}
         working-directory: frontend
 
       - name: Upload frontend artifact
@@ -166,7 +175,7 @@ jobs:
       # GoReleaser creates the GitHub release and publishes GHCR images.
       contents: write
       packages: write
-    runs-on: [self-hosted, release-builder]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -186,6 +195,21 @@ jobs:
         with:
           name: frontend-dist
           path: backend/internal/web/dist/
+
+      - name: Setup Node.js for manifest check
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.22'
+
+      # Anti-stale gate: the Go binary embeds exactly this directory. If the
+      # artifact was built from another commit (cached/partial upload), fail
+      # before GoReleaser produces a release whose UI does not match the API.
+      - name: Verify embedded frontend matches the release commit
+        run: >-
+          node frontend/scripts/build-manifest.mjs verify
+          --dir backend/internal/web/dist
+          --mode spa
+          --expect-commit ${{ needs.resolve_release_ref.outputs.commit_sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -304,6 +328,14 @@ jobs:
           GITHUB_REPO_NAME: ${{ github.event.repository.name }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || 'skip' }}
 
+      - name: Trigger Nuxt SSR artifact build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve_release_ref.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run ssr-release.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f tag="$RELEASE_TAG"
+
       # Update DockerHub description
       - name: Update DockerHub description
         if: ${{ env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_USERNAME != '' }}
@@ -396,7 +428,7 @@ jobs:
     permissions:
       # This maintenance job commits the released VERSION to the default branch.
       contents: write
-    runs-on: [self-hosted, release-builder]
+    runs-on: ubuntu-latest
     steps:
       # This maintenance job intentionally targets the default branch; it does
       # not contribute files to the release artifacts produced above.

@@ -6,26 +6,48 @@ import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
 import { resolveRouteDocumentTitle } from '@/router/title'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
+import ConfirmHost from '@/components/common/ConfirmHost.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
+import { useTicketNotificationStore } from '@/stores/ticketNotifications'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
+import { applyPlatformProfile } from '@/utils/platform'
+import { useNuxtUiLocale } from '@/plugins/nuxtUiLocale'
+import { applySiteTheme, normalizeSiteTheme, useSiteTheme } from '@/composables/useSiteTheme'
 
 const router = useRouter()
+const nuxtUiLocale = useNuxtUiLocale()
 const route = useRoute()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
+const ticketStore = useTicketNotificationStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 
 function updateDocumentTitle() {
+  if (typeof document === 'undefined') return
   const customMenuItems = [
     ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
     ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
   ]
   document.title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems)
 }
+
+// main.ts applies the site theme before mounting. Apply it again when the public
+// settings bring a different one (first fetch without injected config, or a save).
+// An unchanged theme is left alone so an admin's live preview is not overwritten;
+// the light/dark class is only reset when the site default mode itself changed.
+const { theme: appliedSiteTheme } = useSiteTheme()
+watch(
+  () => JSON.stringify(normalizeSiteTheme(appStore.cachedPublicSettings)),
+  (next) => {
+    if (next === JSON.stringify(appliedSiteTheme.value)) return
+    const theme = normalizeSiteTheme(appStore.cachedPublicSettings)
+    applySiteTheme(theme, { colorMode: theme.theme_default_mode !== appliedSiteTheme.value.theme_default_mode })
+  }
+)
 
 // Watch for site settings changes and update favicon/title
 watch(
@@ -52,10 +74,18 @@ watch(
   { deep: true }
 )
 
+// Badge counts only. Announcement bodies, the announcement timeline and the
+// ticket lists stay lazy and are fetched by the panel that shows them.
+function refreshBadges(force = false) {
+  if (!authStore.isAuthenticated) return
+  void announcementStore.fetchSummary(force)
+  void ticketStore.fetchAll(authStore.isAdmin && !authStore.isAdminObserver, force)
+}
+
 // Watch for authentication state and manage subscription data + announcements
 function onVisibilityChange() {
   if (document.visibilityState === 'visible' && authStore.isAuthenticated) {
-    announcementStore.fetchAnnouncements()
+    refreshBadges()
   }
 }
 
@@ -68,6 +98,7 @@ function onAdminComplianceRequired(event: Event) {
 watch(
   () => authStore.isAuthenticated,
   (isAuthenticated, oldValue) => {
+    if (typeof document === 'undefined') return
     if (isAuthenticated) {
       if (authStore.isAdmin && !authStore.isAdminObserver) {
         adminComplianceStore.fetchStatus().catch((error) => {
@@ -81,13 +112,17 @@ watch(
       })
       subscriptionStore.startPolling()
 
-      // Announcements: new login vs page refresh restore
+      // Announcements: new login vs page refresh restore.
+      // The summary carries the bell count; the popup bootstrap is the only
+      // first-paint call that carries bodies, and the server bounds it.
       if (oldValue === false) {
-        // New login: delay 3s then force fetch
-        setTimeout(() => announcementStore.fetchAnnouncements(true), 3000)
+        // New login: delay 3s so the session settles, then refetch counts.
+        setTimeout(() => refreshBadges(true), 3000)
+        setTimeout(() => void announcementStore.fetchPopups(true), 3000)
       } else {
         // Page refresh restore (oldValue was undefined)
-        announcementStore.fetchAnnouncements()
+        refreshBadges()
+        void announcementStore.fetchPopups()
       }
 
       // Register visibility change listener
@@ -96,6 +131,7 @@ watch(
       // User logged out: clear data and stop polling
       subscriptionStore.clear()
       announcementStore.reset()
+      ticketStore.reset()
       adminComplianceStore.reset()
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
@@ -103,19 +139,20 @@ watch(
   { immediate: true }
 )
 
-// Route change trigger (throttled by store)
+// Route change trigger (throttled by the stores). Counts only: navigating must
+// never pull the announcement timeline or a ticket list.
 router.afterEach(() => {
-  if (authStore.isAuthenticated) {
-    announcementStore.fetchAnnouncements()
-  }
+  refreshBadges()
 })
 
 onBeforeUnmount(() => {
+  if (typeof document === 'undefined') return
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
 })
 
 onMounted(async () => {
+  applyPlatformProfile()
   window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
 
   // Check if setup is needed
@@ -138,9 +175,16 @@ onMounted(async () => {
 </script>
 
 <template>
-  <NavigationProgress />
-  <RouterView />
-  <Toast />
-  <AnnouncementPopup />
-  <AdminComplianceDialog />
+  <!-- UApp provides Nuxt UI's tooltip/toast/overlay context; it renders no wrapper element.
+       The app's own Toast and dialogs keep working alongside it. -->
+  <UApp :locale="nuxtUiLocale">
+    <NavigationProgress />
+    <Transition name="page" mode="out-in">
+      <slot><RouterView /></slot>
+    </Transition>
+    <Toast />
+    <AnnouncementPopup />
+    <AdminComplianceDialog />
+    <ConfirmHost />
+  </UApp>
 </template>

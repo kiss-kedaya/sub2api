@@ -389,6 +389,7 @@ export default {
     },
 
     affiliates: {
+      displayColumns: 'Columns',
       invitesDescription: 'View site-wide inviter and invitee relationships',
       rebatesDescription: 'View recharge orders that generated affiliate rebates',
       transfersDescription: 'View affiliate quota transfers into account balance',
@@ -433,6 +434,8 @@ export default {
 
     // Users
     users: {
+      displayColumns: 'Columns',
+      advancedOptions: 'Advanced options',
       title: 'User Management',
       description: 'Manage users and their permissions',
       createUser: 'Create User',
@@ -444,6 +447,7 @@ export default {
         failed: 'Failed to delete {count} users. They remain selected for retry.'
       },
       bulkLimits: {
+        short: 'Set limits',
         action: 'Set limits ({count})',
         title: 'Set user limits',
         selectedCount: '{count} users selected',
@@ -799,6 +803,15 @@ export default {
       duplicateFailed: 'Failed to duplicate group',
       sortOrder: 'Sort',
       columnSettings: 'Column Settings',
+      displayColumns: 'Display',
+      formSections: {
+        basic: 'Basics',
+        billing: 'Billing and access',
+        models: 'Models',
+        pricing: 'Pricing',
+        dispatch: 'Dispatch',
+        advanced: 'Advanced options',
+      },
       sortOrderHint: 'Drag groups to adjust display order, groups at the top will be displayed first',
       sortOrderUpdated: 'Sort order updated',
       failedToUpdateSortOrder: 'Failed to update sort order',
@@ -843,6 +856,8 @@ export default {
       rateAndAccounts: '{rate}x rate · {count} accounts',
       accountsCount: '{count} accounts',
       rateLabel: 'rate',
+      capacityRuntimeHint: 'Live account-side load: concurrency slots / sessions / RPM. This is not the number of users using this group.',
+      capacityUnknownHint: 'Live counters are unavailable. — means missing or failed, not zero.',
       accountFilters: {
         title: 'Account Filter Controls',
         oauthOnly: 'Only allow OAuth accounts',

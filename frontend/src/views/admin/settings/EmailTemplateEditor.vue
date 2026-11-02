@@ -1,232 +1,124 @@
 <template>
-  <div class="card">
-    <div
-      class="flex flex-col gap-3 border-b border-gray-100 px-6 py-4 dark:border-dark-700 lg:flex-row lg:items-start lg:justify-between"
-    >
-      <div>
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-          {{ t("admin.settings.emailTemplates.title") }}
-        </h2>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          {{ t("admin.settings.emailTemplates.description") }}
-        </p>
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <button
-          type="button"
-          class="btn btn-secondary btn-sm"
-          :disabled="loadingTemplate || previewing || !canPreview"
-          @click="refreshPreview"
-        >
-          {{ previewing ? t("admin.settings.emailTemplates.previewing") : t("admin.settings.emailTemplates.preview") }}
-        </button>
-        <button
-          type="button"
-          class="btn btn-secondary btn-sm"
-          :disabled="loadingTemplate || restoring || !selectedEvent || !selectedLocale"
-          @click="restoreOfficial"
-        >
-          {{ restoring ? t("admin.settings.emailTemplates.restoring") : t("admin.settings.emailTemplates.restoreOfficial") }}
-        </button>
-        <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          :disabled="loadingTemplate || saving || !canSave"
-          @click="saveTemplate"
-        >
-          {{ saving ? t("admin.settings.emailTemplates.saving") : t("admin.settings.emailTemplates.save") }}
-        </button>
-      </div>
-    </div>
-
-    <div class="space-y-6 p-6">
-      <div
-        v-if="loadingList"
-        class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400"
+  <SettingsSection
+    :title="t('admin.settings.emailTemplates.title')"
+    :description="t('admin.settings.emailTemplates.description')"
+    :loading="loadingList"
+  >
+    <template #actions>
+      <UButton
+        color="neutral"
+        variant="outline"
+        :loading="previewing"
+        :disabled="loadingTemplate || previewing || !canPreview"
+        @click="refreshPreview"
       >
-        <span
-          class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"
-        ></span>
-        {{ t("common.loading") }}
-      </div>
+        {{ previewing ? t("admin.settings.emailTemplates.previewing") : t("admin.settings.emailTemplates.preview") }}
+      </UButton>
+      <UButton
+        color="neutral"
+        variant="outline"
+        :loading="restoring"
+        :disabled="loadingTemplate || restoring || !selectedEvent || !selectedLocale"
+        @click="restoreOfficial"
+      >
+        {{ restoring ? t("admin.settings.emailTemplates.restoring") : t("admin.settings.emailTemplates.restoreOfficial") }}
+      </UButton>
+      <UButton :loading="saving" :disabled="loadingTemplate || saving || !canSave" @click="saveTemplate">
+        {{ saving ? t("admin.settings.emailTemplates.saving") : t("admin.settings.emailTemplates.save") }}
+      </UButton>
+    </template>
 
-      <template v-else>
-        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div>
-            <label class="input-label" for="email-template-event">
-              {{ t("admin.settings.emailTemplates.event") }}
-            </label>
-            <select
-              id="email-template-event"
-              v-model="selectedEvent"
-              class="input"
-              :disabled="loadingTemplate || eventOptions.length === 0"
-            >
-              <option
-                v-for="option in eventOptions"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ formatEventOptionLabel(option) }}
-              </option>
-            </select>
-          </div>
-          <div>
-            <label class="input-label" for="email-template-locale">
-              {{ t("admin.settings.emailTemplates.locale") }}
-            </label>
-            <select
-              id="email-template-locale"
-              v-model="selectedLocale"
-              class="input"
-              :disabled="loadingTemplate || localeOptions.length === 0"
-            >
-              <option
-                v-for="localeOption in localeOptions"
-                :key="localeOption"
-                :value="localeOption"
-              >
-                {{ formatLocale(localeOption) }}
-              </option>
-            </select>
-          </div>
-        </div>
-
-        <div
-          v-if="selectedEventMeta"
-          class="rounded-lg border border-primary-100 bg-primary-50/70 p-4 dark:border-primary-900/50 dark:bg-primary-950/20"
-        >
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="text-sm font-semibold text-gray-900 dark:text-white">
-              {{ selectedEventMeta.label }}
-            </div>
-            <span
-              class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-600 shadow-sm ring-1 ring-gray-200 dark:bg-dark-800 dark:text-gray-300 dark:ring-dark-600"
-            >
-              {{ selectedEventMeta.categoryLabel }}
-            </span>
-            <span
-              class="rounded-full px-2.5 py-1 text-xs font-medium"
-              :class="
-                selectedEventMeta.optional
-                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
-              "
-            >
-              {{ selectedEventMeta.optional ? localText("可退订通知", "Optional") : localText("事务邮件", "Transactional") }}
-            </span>
-          </div>
-          <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
-            {{ selectedEventMeta.timing }}
-          </p>
-          <p
-            v-if="selectedEventDescription"
-            class="mt-1 text-xs text-gray-500 dark:text-gray-400"
-          >
-            {{ selectedEventDescription }}
-          </p>
-        </div>
-
-        <div
-          v-if="!eventOptions.length || !localeOptions.length"
-          class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
-        >
-          {{ t("admin.settings.emailTemplates.empty") }}
-        </div>
-
-        <div v-else class="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <div class="space-y-4">
-            <div>
-              <label class="input-label" for="email-template-subject">
-                {{ t("admin.settings.emailTemplates.subject") }}
-              </label>
-              <input
-                id="email-template-subject"
-                v-model="subject"
-                type="text"
-                class="input"
-                :disabled="loadingTemplate"
-                :placeholder="t('admin.settings.emailTemplates.subjectPlaceholder')"
-              />
-            </div>
-
-            <div>
-              <label class="input-label" for="email-template-html">
-                {{ t("admin.settings.emailTemplates.html") }}
-              </label>
-              <textarea
-                id="email-template-html"
-                v-model="html"
-                rows="18"
-                class="input min-h-[28rem] resize-y font-mono text-sm leading-6"
-                :disabled="loadingTemplate"
-                :placeholder="t('admin.settings.emailTemplates.htmlPlaceholder')"
-              ></textarea>
-            </div>
-
-            <div
-              class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800/60"
-            >
-              <div class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ t("admin.settings.emailTemplates.placeholders") }}
-              </div>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t("admin.settings.emailTemplates.placeholdersHelp") }}
-              </p>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <button
-                  v-for="placeholder in placeholderList"
-                  :key="placeholder"
-                  type="button"
-                  class="rounded-full border border-gray-200 bg-white px-3 py-1 font-mono text-xs text-gray-700 transition-colors hover:border-primary-300 hover:text-primary-600 dark:border-dark-600 dark:bg-dark-700 dark:text-gray-200 dark:hover:border-primary-500 dark:hover:text-primary-300"
-                  @click="copyPlaceholder(placeholder)"
-                >
-                  {{ placeholder }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="space-y-4">
-            <div
-              class="rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800"
-            >
-              <div
-                class="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-dark-700"
-              >
-                <div>
-                  <div class="text-sm font-medium text-gray-900 dark:text-white">
-                    {{ t("admin.settings.emailTemplates.livePreview") }}
-                  </div>
-                  <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ previewSubject || t("admin.settings.emailTemplates.noPreview") }}
-                  </div>
-                </div>
-                <span
-                  v-if="isCustomTemplate"
-                  class="rounded-full bg-primary-50 px-2.5 py-1 text-xs font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
-                >
-                  {{ t("admin.settings.emailTemplates.customized") }}
-                </span>
-              </div>
-              <div class="bg-gray-100 p-3 dark:bg-dark-900">
-                <iframe
-                  class="h-[36rem] w-full rounded-md border border-gray-200 bg-white dark:border-dark-700"
-                  sandbox=""
-                  :srcdoc="previewHtml"
-                  :title="t('admin.settings.emailTemplates.livePreview')"
-                ></iframe>
-              </div>
-            </div>
-
-            <p class="text-xs text-gray-500 dark:text-gray-400">
-              {{ t("admin.settings.emailTemplates.previewSecurityHint") }}
-            </p>
-          </div>
-        </div>
-      </template>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <UFormField :label="t('admin.settings.emailTemplates.event')">
+        <Select
+          id="email-template-event"
+          v-model="selectedEvent"
+          :options="eventSelectOptions"
+          :disabled="loadingTemplate || eventOptions.length === 0"
+          class="w-full"
+        />
+      </UFormField>
+      <UFormField :label="t('admin.settings.emailTemplates.locale')">
+        <Select
+          id="email-template-locale"
+          v-model="selectedLocale"
+          :options="localeSelectOptions"
+          :disabled="loadingTemplate || localeOptions.length === 0"
+          class="w-full"
+        />
+      </UFormField>
     </div>
-  </div>
+
+    <div v-if="selectedEventMeta" class="space-y-1">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-sm font-medium text-highlighted">{{ selectedEventMeta.label }}</span>
+        <UBadge color="neutral" variant="subtle" size="sm">{{ selectedEventMeta.categoryLabel }}</UBadge>
+        <UBadge :color="selectedEventMeta.optional ? 'warning' : 'success'" variant="subtle" size="sm">
+          {{ selectedEventMeta.optional ? localText("可退订通知", "Optional") : localText("事务邮件", "Transactional") }}
+        </UBadge>
+      </div>
+      <p class="text-sm text-toned">{{ selectedEventMeta.timing }}</p>
+      <p v-if="selectedEventDescription" class="text-xs text-muted">{{ selectedEventDescription }}</p>
+    </div>
+
+    <UAlert
+      v-if="!eventOptions.length || !localeOptions.length"
+      color="warning"
+      variant="subtle"
+      icon="i-lucide-triangle-alert"
+      :description="t('admin.settings.emailTemplates.empty')"
+    />
+    <template v-else>
+      <UFormField :label="t('admin.settings.emailTemplates.subject')">
+        <UInput
+          id="email-template-subject"
+          v-model="subject"
+          type="text"
+          :disabled="loadingTemplate"
+          :placeholder="t('admin.settings.emailTemplates.subjectPlaceholder')"
+          class="w-full"
+        />
+      </UFormField>
+      <UFormField :label="t('admin.settings.emailTemplates.html')" :description="t('admin.settings.emailTemplates.placeholdersHelp')">
+        <div class="mb-2 flex flex-wrap gap-1.5" :aria-label="t('admin.settings.emailTemplates.placeholders')">
+          <UButton
+            v-for="placeholder in placeholderList"
+            :key="placeholder"
+            color="neutral"
+            variant="subtle"
+            size="xs"
+            class="font-mono"
+            @click="copyPlaceholder(placeholder)"
+          >
+            {{ placeholder }}
+          </UButton>
+        </div>
+        <UTextarea
+          id="email-template-html"
+          v-model="html"
+          :rows="14"
+          :disabled="loadingTemplate"
+          :placeholder="t('admin.settings.emailTemplates.htmlPlaceholder')"
+          class="w-full font-mono"
+        />
+      </UFormField>
+      <UFormField :help="t('admin.settings.emailTemplates.previewSecurityHint')">
+        <template #label>
+          <span class="flex items-center gap-2">
+            {{ t("admin.settings.emailTemplates.livePreview") }}
+            <UBadge v-if="isCustomTemplate" color="primary" variant="subtle" size="sm">{{ t("admin.settings.emailTemplates.customized") }}</UBadge>
+          </span>
+        </template>
+        <template #description>{{ previewSubject || t("admin.settings.emailTemplates.noPreview") }}</template>
+        <iframe
+          class="h-120 w-full rounded-md bg-white ring ring-default"
+          sandbox=""
+          :srcdoc="previewHtml"
+          :title="t('admin.settings.emailTemplates.livePreview')"
+        />
+      </UFormField>
+    </template>
+  </SettingsSection>
 </template>
 
 <script setup lang="ts">
@@ -239,6 +131,9 @@ import type {
 } from "@/api/admin/settings";
 import { useAppStore } from "@/stores";
 import { extractApiErrorMessage } from "@/utils/apiError";
+import Select from "@/components/common/Select.vue";
+import SettingsSection from "./SettingsSection.vue";
+import { confirm } from '@/composables/useConfirmation'
 
 const { t, locale } = useI18n();
 const appStore = useAppStore();
@@ -531,6 +426,13 @@ const selectedEventOption = computed(() => {
 
 const selectedEventMeta = computed(() => eventMetaFor(selectedEventOption.value));
 
+const eventSelectOptions = computed(() =>
+  eventOptions.value.map((option) => ({ value: option.value, label: formatEventOptionLabel(option) })),
+);
+const localeSelectOptions = computed(() =>
+  localeOptions.value.map((value) => ({ value, label: formatLocale(value) })),
+);
+
 const selectedEventDescription = computed(() => {
   return (
     selectedEventOption.value?.description || ""
@@ -694,7 +596,7 @@ async function refreshPreview() {
 
 async function restoreOfficial() {
   if (!selectedEvent.value || !selectedLocale.value) return;
-  if (!window.confirm(t("admin.settings.emailTemplates.restoreConfirm"))) return;
+  if (!(await confirm(t("admin.settings.emailTemplates.restoreConfirm")))) return;
 
   restoring.value = true;
   try {

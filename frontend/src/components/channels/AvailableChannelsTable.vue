@@ -4,7 +4,7 @@
   <div class="table-wrapper">
     <table
       data-testid="desktop-channels"
-      class="!hidden w-full table-fixed border-collapse text-sm lg:!table"
+      class="hidden! w-full table-fixed border-collapse text-sm lg:table!"
     >
       <thead>
         <tr class="border-b border-gray-100 bg-gray-50/50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:border-dark-700 dark:bg-dark-800/50 dark:text-gray-400">
@@ -187,10 +187,10 @@
         class="border-b-2 border-gray-200 px-4 py-4 last:border-b-0 dark:border-dark-600"
       >
         <header class="mb-3 min-w-0">
-          <h3 class="break-words text-sm font-semibold text-gray-900 dark:text-white">
+          <h3 class="wrap-break-word text-sm font-semibold text-gray-900 dark:text-white">
             {{ channel.name }}
           </h3>
-          <p class="mt-1 break-words text-xs leading-5 text-gray-500 dark:text-gray-400">
+          <p class="mt-1 wrap-break-word text-xs leading-5 text-gray-500 dark:text-gray-400">
             {{ channel.description || '-' }}
           </p>
         </header>

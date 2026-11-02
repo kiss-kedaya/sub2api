@@ -1,7 +1,7 @@
 <template>
-  <span v-if="remaining > 0" class="crypto-grant-status" role="status">
+  <UBadge v-if="remaining > 0" class="crypto-grant-status whitespace-nowrap" role="status" color="neutral" variant="subtle" icon="i-lucide-timer">
     {{ t('admin.crypto.securityGrantActive', { minutes: Math.ceil(remaining / 60) }) }}
-  </span>
+  </UBadge>
 </template>
 
 <script setup lang="ts">
@@ -18,7 +18,3 @@ function tick() {
 onMounted(() => { tick(); timer = setInterval(tick, 1000) })
 onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
-
-<style scoped>
-.crypto-grant-status { font-size: .75rem; color: var(--signal-muted, #64748b); white-space: nowrap; }
-</style>

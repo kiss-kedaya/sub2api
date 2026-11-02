@@ -7,7 +7,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestDeepSeekRealCall_DuplicateCallID(t *testing.T) {
+func TestDeepSeekRealCall_PreservesNativeRequestAndLegacyResponseBehavior(t *testing.T) {
 	callID := "call_00_gEGoDdh7olwRXAaeGk7k6101"
 	body := []byte(`{"model":"deepseek-v4.1-flash","input":[` +
 		`{"type":"function_call","id":"` + callID + `","call_id":"` + callID + `","name":"shell","arguments":"{}"},` +
@@ -15,25 +15,29 @@ func TestDeepSeekRealCall_DuplicateCallID(t *testing.T) {
 		`{"type":"function_call_output","call_id":"` + callID + `","output":"/tmp"},` +
 		`{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}]}`)
 
-	inbound := RewriteInboundDeepSeekCallIDs(PlatformDeepseek, "deepseek-v4.1-flash", body)
-	outbound := normalizeDeepSeekResponsesRequestBody(&Account{Platform: PlatformDeepseek}, body)
+	for _, protocol := range []string{APIProtocolResponses, APIProtocolAdaptive} {
+		t.Run(protocol, func(t *testing.T) {
+			account := &Account{
+				Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"api_protocol": protocol},
+			}
+			inbound := RewriteInboundDeepSeekCallIDs(PlatformDeepseek, "deepseek-v4.1-flash", body)
+			outbound := normalizeDeepSeekResponsesRequestBody(account, inbound)
+			require.Equal(t, string(body), string(inbound), "native ingress must preserve duplicate IDs for upstream validation")
+			require.Equal(t, string(body), string(outbound), "native egress must preserve the same request")
+			require.Len(t, gjson.GetBytes(outbound, "input").Array(), 4)
+			require.Equal(t, callID, gjson.GetBytes(outbound, "input.0.id").String())
+			require.Equal(t, callID, gjson.GetBytes(outbound, "input.0.call_id").String())
+			require.Equal(t, callID, gjson.GetBytes(outbound, "input.1.id").String())
+			require.Equal(t, callID, gjson.GetBytes(outbound, "input.1.call_id").String())
+			require.Equal(t, "{}", gjson.GetBytes(outbound, "input.0.arguments").String())
+			require.Equal(t, `{"cmd":"pwd"}`, gjson.GetBytes(outbound, "input.1.arguments").String())
+			require.Equal(t, "/tmp", gjson.GetBytes(outbound, "input.2.output").String())
+			require.Equal(t, "next", gjson.GetBytes(outbound, "input.3.content.0.text").String())
+		})
+	}
 
-	t.Logf("INBOUND_COUNT=%d", len(gjson.GetBytes(inbound, "input").Array()))
-	t.Logf("INBOUND_ID=%s", gjson.GetBytes(inbound, "input.0.id").String())
-	t.Logf("INBOUND_CALL=%s", gjson.GetBytes(inbound, "input.0.call_id").String())
-	t.Logf("INBOUND_ARGS=%s", gjson.GetBytes(inbound, "input.0.arguments").String())
-	t.Logf("INBOUND_OUTPUT=%s", gjson.GetBytes(inbound, "input.1.output").String())
-	t.Logf("INBOUND_JSON=%s", string(inbound))
-	t.Logf("OUTBOUND_JSON=%s", string(outbound))
-
-	require.Equal(t, 3, len(gjson.GetBytes(inbound, "input").Array()))
-	require.Equal(t, "fc_00_gEGoDdh7olwRXAaeGk7k6101", gjson.GetBytes(inbound, "input.0.id").String())
-	require.Equal(t, callID, gjson.GetBytes(inbound, "input.0.call_id").String())
-	require.Contains(t, gjson.GetBytes(inbound, "input.0.arguments").String(), "pwd")
-	require.Equal(t, "/tmp", gjson.GetBytes(inbound, "input.1.output").String())
-	require.Equal(t, "next", gjson.GetBytes(inbound, "input.2.content.0.text").String())
-	require.Equal(t, string(inbound), string(outbound))
-
+	// The opt-in legacy response helper retains its existing assertions.
 	var st deepSeekPassthrough
 	added := []byte(`{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"` + callID + `","call_id":"` + callID + `","name":"shell","arguments":""}}`)
 	_, _, next, drop := st.rewrite(nil, "response.output_item.added", added)

@@ -71,13 +71,19 @@ function button(wrapper: VueWrapper, key: string) {
   if (!found) throw new Error(`Missing button: ${key}`)
   return found
 }
+const tabKeys = { config: 'admin.crypto.tabConfig', addresses: 'admin.crypto.tabAddresses', sweep: 'admin.crypto.tabSweep', deposits: 'admin.crypto.tabDeposits' } as const
+function tab(wrapper: VueWrapper, id: keyof typeof tabKeys) {
+  const found = wrapper.findAll('[role="tab"]').find(item => item.text() === tabKeys[id])
+  if (!found) throw new Error(`Missing tab: ${id}`)
+  return found.trigger('mousedown', { button: 0 })
+}
 async function render() {
   const wrapper = mount(CryptoView, { global: { stubs: { teleport: true } } })
   await flushPromises()
   return wrapper
 }
 async function configTab(wrapper: VueWrapper) {
-  await wrapper.get('#crypto-tab-config').trigger('click')
+  await tab(wrapper, 'config')
   await flushPromises()
 }
 async function verify(wrapper: VueWrapper, code = '123456') {
@@ -101,7 +107,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
       ? Promise.resolve({ data: { data: { Entries: [{ Chain: 'bsc', Address: '0xDEPOSIT', Token: 'USDT', AmountDecimal: amount }], TotalUSD: amount, DryRun: true } } })
       : normalGet(path, ...args))
     const wrapper = await render()
-    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await tab(wrapper, 'sweep')
     await flushPromises()
     await button(wrapper, 'admin.crypto.loadPlan').trigger('click')
     await flushPromises()
@@ -117,7 +123,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
   it('keeps a confirmation and Bark intent for every sweep even while verification is cached', async () => {
     walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     const wrapper = await render()
-    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await tab(wrapper, 'sweep')
     await flushPromises()
     await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
     await verify(wrapper)
@@ -164,8 +170,8 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await configTab(wrapper)
     for (const chain of ['ethereum', 'polygon', 'plasma', 'base', 'xlayer']) {
       const option = wrapper.get(`[data-testid="crypto-chain-${chain}"]`)
-      expect((option.element as HTMLInputElement).checked).toBe(false)
-      await option.setValue(true)
+      expect(option.attributes('aria-checked')).toBe('false')
+      await option.trigger('click')
     }
     expect(wrapper.find('[data-testid="crypto-chain-solana"]').exists()).toBe(false)
     expect(wrapper.findAll('[data-testid^="rpc-configured-"]')).toHaveLength(6)
@@ -208,7 +214,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await button(wrapper, 'admin.crypto.rpcManage').trigger('click')
     await flushPromises()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(true)
-    await wrapper.get('.crypto-security__actions .btn-secondary').trigger('click')
+    await wrapper.get('[data-testid="crypto-security-cancel"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
     expect(mocks.get.mock.calls.filter(([path]) => path.endsWith('/security/status'))).toHaveLength(1)
@@ -259,7 +265,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     const wrapper = await render()
     await configTab(wrapper)
     await wrapper.get('[data-testid="crypto-credit-min"]').setValue(2)
-    await wrapper.get('[data-testid="crypto-chain-base"]').setValue(true)
+    await wrapper.get('[data-testid="crypto-chain-base"]').trigger('click')
     await wrapper.get('.crypto-view__save-bar button').trigger('click')
     await flushPromises()
     expect(mocks.put).not.toHaveBeenCalled()
@@ -329,8 +335,9 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     // Funding information loads on entry instead of hiding behind Health.
     expect(mocks.get.mock.calls.some(([path]) => path === hotPath)).toBe(true)
     expect(wrapper.find('[data-testid="crypto-gas-wallet"]').exists()).toBe(true)
-    const health = wrapper.findAll('details').find(item => item.text().includes('admin.crypto.healthTitle'))!
-    const refresh = health.findAll('.btn-secondary').find(btn => btn.text() === 'common.refresh')!
+    const health = wrapper.get('[data-testid="crypto-health"]')
+    expect(health.text()).toContain('admin.crypto.healthTitle')
+    const refresh = health.findAll('button').find(btn => btn.text() === 'common.refresh')!
     expect(refresh.attributes('disabled')).toBeUndefined()
     await refresh.trigger('click')
     await flushPromises()
@@ -413,7 +420,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
 
   it('protects CSV GET downloads and only downloads after confirmation', async () => {
     const wrapper = await render()
-    await wrapper.get('#crypto-tab-deposits').trigger('click')
+    await tab(wrapper, 'deposits')
     await flushPromises()
     await button(wrapper, 'admin.crypto.exportCsv').trigger('click')
     await flushPromises()
@@ -428,7 +435,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     const wrapper = await render()
     await configTab(wrapper)
     await button(wrapper, 'admin.crypto.mnemonicsExportAction').trigger('click')
-    await wrapper.get('#crypto-mnemonics-form input[type="checkbox"]').setValue(true)
+    await wrapper.get('[data-testid="crypto-mnemonics-confirm"]').trigger('click')
     await wrapper.get('#crypto-mnemonics-form').trigger('submit')
     await flushPromises()
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/export-mnemonics'))).toHaveLength(0)
@@ -468,7 +475,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await wrapper.get('#crypto-hot-mnemonic').setValue('private words')
     await wrapper.get('#crypto-wallet-form').trigger('submit'); await flushPromises()
     expect(wrapper.find('#crypto-security-form').exists()).toBe(true)
-    await wrapper.get('#crypto-tab-addresses').trigger('click'); await flushPromises()
+    await tab(wrapper, 'addresses'); await flushPromises()
     expect(wrapper.find('#crypto-security-form').exists()).toBe(false)
     expect(mocks.post).not.toHaveBeenCalled()
   })
@@ -496,7 +503,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
       expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
       expect(wrapper.get('input[placeholder="0x…"]').element).toHaveProperty('value', '0xGAS')
     }
-    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await tab(wrapper, 'sweep')
     expect(button(wrapper, 'admin.crypto.sweepRun').attributes('disabled') !== undefined).toBe(!state.ok || !state.ready || !state.enabled)
   })
 
@@ -515,7 +522,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await verify(wrapper)
     expect(mocks.put).toHaveBeenLastCalledWith('/admin/crypto/config', { hot_wallet_evm: '0xGAS' }, expect.anything())
     expect(wrapper.get('.crypto-view__lockstate').text()).toContain('admin.crypto.walletReady')
-    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await tab(wrapper, 'sweep')
     expect(button(wrapper, 'admin.crypto.sweepRun').attributes('disabled')).toBeUndefined()
   })
 
@@ -559,7 +566,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await button(wrapper,'admin.crypto.hotImportAction').trigger('click')
     await wrapper.get('#crypto-hot-mnemonic').setValue('private gas words')
     await wrapper.get('#crypto-wallet-form').trigger('submit'); await flushPromises()
-    await wrapper.get('.crypto-security__actions .btn-secondary').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="crypto-security-cancel"]').trigger('click'); await flushPromises()
     expect(mocks.post).not.toHaveBeenCalled()
     await button(wrapper,'admin.crypto.hotImportAction').trigger('click')
     expect((wrapper.get('#crypto-hot-mnemonic').element as HTMLInputElement).value).toBe('')
@@ -581,7 +588,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
 
   it('protects even a dry-run POST', async () => {
     const wrapper = await render()
-    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await tab(wrapper, 'sweep')
     await flushPromises()
     await button(wrapper, 'admin.crypto.sweepDryRun').trigger('click')
     await verify(wrapper)
@@ -592,6 +599,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
   it('shows the shared private Bark configuration on the wallet page', async () => {
     const wrapper = await render()
     expect(wrapper.get('.crypto-view__notifications').attributes('open')).toBeUndefined()
+    expect(wrapper.get('.crypto-view__notifications').attributes('data-state')).toBe('closed')
     expect(wrapper.findComponent({ name: 'CryptoWalletSecurityPanel' }).element.closest('details')).toBeNull()
     expect(wrapper.get('.crypto-view__bark h2').text()).toBe('admin.crypto.walletBarkTitle')
     expect(wrapper.get('.crypto-view__bark').text()).toContain('admin.crypto.walletBarkDescription')
@@ -603,7 +611,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     const wrapper = await render()
     if (action === 'sweep') {
-      await wrapper.get('#crypto-tab-sweep').trigger('click')
+      await tab(wrapper, 'sweep')
       await flushPromises()
       await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
     } else {
@@ -633,7 +641,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
       ? Promise.reject(new Error('Notification unavailable')) : normalPost(path, ...args))
     const wrapper = await render()
     if (action === 'sweep') {
-      await wrapper.get('#crypto-tab-sweep').trigger('click')
+      await tab(wrapper, 'sweep')
       await flushPromises()
       await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
     } else {
@@ -656,11 +664,11 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     mocks.post.mockImplementation((path: string, ...args: unknown[]) => path.endsWith('/operation-intent')
       ? new Promise(resolve => { completeIntent = resolve }) : normalPost(path, ...args))
     const wrapper = await render()
-    await wrapper.get('#crypto-tab-sweep').trigger('click')
+    await tab(wrapper, 'sweep')
     await flushPromises()
     await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
     await flushPromises()
-    await wrapper.get('#crypto-tab-addresses').trigger('click')
+    await tab(wrapper, 'addresses')
     completeIntent({ data: { accepted: true } })
     await flushPromises()
     expect(wrapper.find('#crypto-security-code').exists()).toBe(false)

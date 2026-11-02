@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import type { PromptAuditConfig, PromptAuditRuntime } from '../types'
 import { SCANNER_CATALOG } from '../viewModel'
 import PromptAuditView from '../PromptAuditView.vue'
@@ -52,6 +52,16 @@ const FilterDeleteStub = defineComponent({
   template: '<div v-if="show" data-test="filter-delete-dialog"><button data-test="dialog-preview" @click="$emit(\'preview\', { ...initialFilters, start_at: \'2026-07-15T00:00\', end_at: \'2026-07-16T00:00\' })">run</button><button data-test="dialog-confirm" @click="$emit(\'confirm\', { ...initialFilters, start_at: \'2026-07-15T00:00\', end_at: \'2026-07-16T00:00\' })">confirm</button><span data-test="dialog-preview-state">{{ preview ? preview.matched_count : \'none\' }}</span></div>',
 })
 
+// UTabs triggers are role=tab buttons (no per-item attrs); they activate on mousedown (reka-ui).
+function tab(wrapper: VueWrapper, id: 'events' | 'config') {
+  const found = wrapper.findAll('[role="tab"]').find((item) => item.text().includes(`admin.promptAudit.tabs.${id}`))
+  if (!found) throw new Error(`tab ${id} not found`)
+  return found
+}
+async function openTab(wrapper: VueWrapper, id: 'events' | 'config') {
+  await tab(wrapper, id).trigger('mousedown', { button: 0 })
+}
+
 function mountView() {
   return mount(PromptAuditView, {
     global: { stubs: { AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, EventWorkspace: EventsStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub } },
@@ -90,30 +100,30 @@ describe('PromptAuditView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.get('[data-test="tab-events"]').attributes('aria-selected')).toBe('true')
-    expect(wrapper.get('[data-test="tab-config"]').attributes('aria-selected')).toBe('false')
+    expect(tab(wrapper, 'events').attributes('aria-selected')).toBe('true')
+    expect(tab(wrapper, 'config').attributes('aria-selected')).toBe('false')
     expect(wrapper.get('[data-test="tab-panel-events"]').attributes('style') || '').not.toContain('display: none')
     expect(wrapper.get('[data-test="tab-panel-config"]').attributes('style') || '').toContain('display: none')
     expect(wrapper.find('[data-test="save-config"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="events"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="pass-events-disabled-notice"]').exists()).toBe(true)
-    expect(wrapper.get('[data-test="tab-events"]').text()).toContain('admin.promptAudit.tabs.events')
-    expect(wrapper.get('[data-test="tab-config"]').text()).toContain('admin.promptAudit.tabs.config')
+    expect(tab(wrapper, 'events').text()).toContain('admin.promptAudit.tabs.events')
+    expect(tab(wrapper, 'config').text()).toContain('admin.promptAudit.tabs.config')
 
-    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await openTab(wrapper, 'config')
     await flushPromises()
-    expect(wrapper.get('[data-test="tab-config"]').attributes('aria-selected')).toBe('true')
+    expect(tab(wrapper, 'config').attributes('aria-selected')).toBe('true')
     expect(wrapper.get('[data-test="tab-panel-config"]').attributes('style') || '').not.toContain('display: none')
     expect(wrapper.get('[data-test="tab-panel-events"]').attributes('style') || '').toContain('display: none')
     expect(wrapper.find('[data-test="save-config"]').exists()).toBe(true)
 
-    await wrapper.get('[data-test="tab-events"]').trigger('click')
+    await openTab(wrapper, 'events')
     await flushPromises()
-    expect(wrapper.get('[data-test="tab-events"]').attributes('aria-selected')).toBe('true')
+    expect(tab(wrapper, 'events').attributes('aria-selected')).toBe('true')
     expect(wrapper.find('[data-test="save-config"]').exists()).toBe(false)
 
     await wrapper.get('[data-test="pass-events-disabled-notice"] button').trigger('click')
-    expect(wrapper.get('[data-test="tab-config"]').attributes('aria-selected')).toBe('true')
+    expect(tab(wrapper, 'config').attributes('aria-selected')).toBe('true')
     expect(wrapper.find('[data-test="save-config"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="tab-panel-config"]').attributes('style') || '').not.toContain('display: none')
   })
@@ -121,7 +131,7 @@ describe('PromptAuditView', () => {
   it('requires confirmation for blocking and disables it when audit is turned off', async () => {
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await openTab(wrapper, 'config')
     await wrapper.get('[data-test="blocking-toggle"]').trigger('click')
     expect(wrapper.find('[data-test="confirm"]').exists()).toBe(true)
     await wrapper.get('[data-test="confirm-action"]').trigger('click')
@@ -138,7 +148,7 @@ describe('PromptAuditView', () => {
   it('clears plaintext token state after a successful save', async () => {
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await openTab(wrapper, 'config')
     await wrapper.get('[data-test="inject-secret"]').trigger('click')
     expect(wrapper.text()).toContain('admin.promptAudit.saveBar.dirty')
     await wrapper.get('[data-test="save-config"]').trigger('click')
@@ -152,13 +162,13 @@ describe('PromptAuditView', () => {
   it('reports real probe progress/results and invalidates filter confirmation when filters change', async () => {
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await openTab(wrapper, 'config')
     await wrapper.get('[data-test="probe"]').trigger('click')
     await flushPromises()
     expect(mocks.probeEndpoint).toHaveBeenCalledOnce()
     expect((wrapper.getComponent(EndpointStub).props('probeResults') as Record<string, unknown>)).toHaveProperty('guard-1')
 
-    await wrapper.get('[data-test="tab-events"]').trigger('click')
+    await openTab(wrapper, 'events')
     await wrapper.get('[data-test="preview"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(true)
@@ -176,11 +186,12 @@ describe('PromptAuditView', () => {
   it('uses native labeled switches and a responsive fixed save surface', async () => {
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await openTab(wrapper, 'config')
     const switches = wrapper.findAll('[role="switch"]')
     expect(switches).toHaveLength(4)
     expect(switches.every((item) => Boolean(item.attributes('aria-label')))).toBe(true)
-    expect(wrapper.html()).toContain('fixed inset-x-0 bottom-0')
+    // The save surface is pinned to the bottom of the scroll area (sticky), so it lines up with any sidebar width.
+    expect(wrapper.html()).toContain('sticky bottom-0')
     expect(wrapper.html()).toContain('flex-wrap')
   })
 

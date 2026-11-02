@@ -15,6 +15,10 @@ import (
 // Anthropic Messages response. Reasoning output items are mapped to thinking
 // blocks; function_call items become tool_use blocks.
 func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicResponse {
+	return ResponsesToAnthropicWithOptions(resp, model, false)
+}
+
+func ResponsesToAnthropicWithOptions(resp *ResponsesResponse, model string, requireReasoningContent bool) *AnthropicResponse {
 	out := &AnthropicResponse{
 		ID:    resp.ID,
 		Type:  "message",
@@ -27,19 +31,17 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 	for _, item := range resp.Output {
 		switch item.Type {
 		case "reasoning":
-			summaryText := ""
-			for _, s := range item.Summary {
-				if s.Type == "summary_text" && s.Text != "" {
-					summaryText += s.Text
-				}
+			thinkingText := responsesReasoningText(item.Content, item.Summary)
+			if requireReasoningContent {
+				thinkingText = responsesReasoningContentText(item.Content)
 			}
 			// Always surface encrypted_content as thinking.signature so Claude
 			// Code / multi-turn clients can send it back. Signature-only
-			// thinking blocks are valid when the model omits a visible summary.
-			if summaryText != "" || strings.TrimSpace(item.EncryptedContent) != "" {
+			// thinking blocks are valid when the model omits visible content.
+			if thinkingText != "" || strings.TrimSpace(item.EncryptedContent) != "" {
 				blocks = append(blocks, AnthropicContentBlock{
 					Type:      "thinking",
-					Thinking:  summaryText,
+					Thinking:  thinkingText,
 					Signature: item.EncryptedContent,
 				})
 			}
@@ -202,6 +204,9 @@ type ResponsesEventToAnthropicState struct {
 	// PendingThinkingSignature is filled from reasoning.encrypted_content and
 	// emitted as signature_delta before the thinking block is closed.
 	PendingThinkingSignature string
+	CurrentThinkingHadDelta  bool
+	RequireReasoningContent  bool
+	ReasoningPartsSeen       map[string]bool
 	HasToolCall              bool
 
 	// OutputIndexToBlockIdx maps Responses output_index → Anthropic content block index.
@@ -252,11 +257,9 @@ func ResponsesEventToAnthropicEvents(
 		// 原始推理文本增量，与 reasoning summary 一样映射为 thinking。
 		"response.reasoning_text.delta":
 		return resToAnthHandleReasoningDelta(evt, state)
-	case "response.reasoning_summary_text.done":
-		// Keep the thinking block open until response.output_item.done.
-		// Grok/Codex attach encrypted_content on the finished reasoning item;
-		// closing early would drop signature_delta and break multi-turn cache.
-		return nil
+	case "response.reasoning_summary_text.done",
+		"response.reasoning_text.done":
+		return resToAnthHandleReasoningDone(evt, state)
 	// response.done 是 Realtime/WS 与项目透传路径使用的终止别名；
 	// 普通 Responses HTTP SSE 的公开终止事件仍以 response.completed 为主。
 	case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
@@ -392,6 +395,7 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 		state.ContentBlockOpen = true
 		state.CurrentBlockType = "thinking"
 		state.PendingThinkingSignature = strings.TrimSpace(evt.Item.EncryptedContent)
+		state.CurrentThinkingHadDelta = false
 
 		events = append(events, AnthropicStreamEvent{
 			Type:  "content_block_start",
@@ -543,11 +547,16 @@ func resToAnthHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 	if evt.Delta == "" {
 		return nil
 	}
+	if state.RequireReasoningContent && strings.Contains(evt.Type, "reasoning_summary") {
+		return nil
+	}
 
 	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
 	if !ok {
 		return nil
 	}
+	state.markReasoningPart(evt)
+	state.CurrentThinkingHadDelta = true
 
 	return []AnthropicStreamEvent{{
 		Type:  "content_block_delta",
@@ -555,6 +564,29 @@ func resToAnthHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 		Delta: &AnthropicDelta{
 			Type:     "thinking_delta",
 			Thinking: evt.Delta,
+		},
+	}}
+}
+
+// resToAnthHandleReasoningDone covers providers that send only a reasoning
+// done/text event without incremental deltas. It preserves the real
+// reasoning_text on the same thinking block as the delta path.
+func resToAnthHandleReasoningDone(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
+	if evt.Text == "" || (state.RequireReasoningContent && strings.Contains(evt.Type, "reasoning_summary")) || state.reasoningPartSeen(evt) {
+		return nil
+	}
+	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
+	if !ok {
+		return nil
+	}
+	state.markReasoningPart(evt)
+	state.CurrentThinkingHadDelta = true
+	return []AnthropicStreamEvent{{
+		Type:  "content_block_delta",
+		Index: &blockIdx,
+		Delta: &AnthropicDelta{
+			Type:     "thinking_delta",
+			Thinking: evt.Text,
 		},
 	}}
 }
@@ -579,17 +611,64 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 		return resToAnthFinishLocalShell(evt, state)
 	}
 
-	// Capture encrypted_content on reasoning item done (often only present here).
 	if evt.Item.Type == "reasoning" {
+		var events []AnthropicStreamEvent
+		if _, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]; !ok {
+			events = append(events, resToAnthHandleOutputItemAdded(evt, state)...)
+		}
+		if state.RequireReasoningContent {
+			for index, part := range evt.Item.Content {
+				if part.Type != "reasoning_text" || part.Text == "" {
+					continue
+				}
+				events = append(events, resToAnthHandleReasoningDone(&ResponsesStreamEvent{
+					Type: "response.reasoning_text.done", OutputIndex: evt.OutputIndex, ContentIndex: index, Text: part.Text,
+				}, state)...)
+			}
+		} else if !state.CurrentThinkingHadDelta {
+			if text := responsesReasoningText(evt.Item.Content, evt.Item.Summary); text != "" {
+				if blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]; ok {
+					events = append(events, AnthropicStreamEvent{
+						Type:  "content_block_delta",
+						Index: &blockIdx,
+						Delta: &AnthropicDelta{Type: "thinking_delta", Thinking: text},
+					})
+					state.CurrentThinkingHadDelta = true
+				}
+			}
+		}
 		if sig := strings.TrimSpace(evt.Item.EncryptedContent); sig != "" {
 			state.PendingThinkingSignature = sig
 		}
+		if state.ContentBlockOpen {
+			events = append(events, closeCurrentBlock(state)...)
+		}
+		return events
 	}
 
 	if state.ContentBlockOpen {
 		return closeCurrentBlock(state)
 	}
 	return nil
+}
+
+func (state *ResponsesEventToAnthropicState) reasoningPartKey(evt *ResponsesStreamEvent) string {
+	kind, index := "content", evt.ContentIndex
+	if strings.Contains(evt.Type, "reasoning_summary") {
+		kind, index = "summary", evt.SummaryIndex
+	}
+	return fmt.Sprintf("%d:%s:%d", evt.OutputIndex, kind, index)
+}
+
+func (state *ResponsesEventToAnthropicState) reasoningPartSeen(evt *ResponsesStreamEvent) bool {
+	return state.ReasoningPartsSeen[state.reasoningPartKey(evt)]
+}
+
+func (state *ResponsesEventToAnthropicState) markReasoningPart(evt *ResponsesStreamEvent) {
+	if state.ReasoningPartsSeen == nil {
+		state.ReasoningPartsSeen = make(map[string]bool)
+	}
+	state.ReasoningPartsSeen[state.reasoningPartKey(evt)] = true
 }
 
 // resToAnthFinishLocalShell emits the shell action on output_item.done.

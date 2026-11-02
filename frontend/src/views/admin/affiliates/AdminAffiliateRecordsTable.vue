@@ -2,22 +2,28 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
-        <div class="flex flex-wrap items-center gap-3">
-          <div class="relative w-full md:w-80">
-            <Icon name="search" size="md" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input v-model="filters.search" type="text" class="input pl-10" :placeholder="t('admin.affiliates.records.searchPlaceholder')" @input="debounceLoad" />
-          </div>
-          <input v-model="filters.start_at" type="date" class="input w-full sm:w-44" :title="t('admin.affiliates.records.startAt')" @change="reloadFromFirstPage" />
-          <input v-model="filters.end_at" type="date" class="input w-full sm:w-44" :title="t('admin.affiliates.records.endAt')" @change="reloadFromFirstPage" />
-          <button class="btn btn-secondary px-2 md:px-3" :disabled="loading" :title="t('common.refresh')" @click="loadRecords">
-            <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-          </button>
-        </div>
+        <AdminPageHeader class="mb-4" :title="t(pageHeaderKeys.title)" :description="t(pageHeaderKeys.description)" />
+        <!-- Toolbar row (template customers page) -->
+        <PageToolbar>
+          <template #left>
+            <UInput v-model="filters.search" icon="i-lucide-search" class="w-56 sm:w-64" :placeholder="t('admin.affiliates.records.searchPlaceholder')" @update:model-value="debounceLoad" />
+            <UInput v-model="filters.start_at" type="date" class="w-40" :title="t('admin.affiliates.records.startAt')" :aria-label="t('admin.affiliates.records.startAt')" @change="reloadFromFirstPage" />
+            <UInput v-model="filters.end_at" type="date" class="w-40" :title="t('admin.affiliates.records.endAt')" :aria-label="t('admin.affiliates.records.endAt')" @change="reloadFromFirstPage" />
+          </template>
+          <template #right>
+            <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" square :disabled="loading" :ui="{ leadingIcon: loading ? 'animate-spin' : '' }" :title="t('common.refresh')" :aria-label="t('common.refresh')" @click="loadRecords" />
+            <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }">
+              <UButton color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" :aria-label="t('admin.affiliates.displayColumns')">
+                <span class="hidden sm:inline">{{ t('admin.affiliates.displayColumns') }}</span>
+              </UButton>
+            </UDropdownMenu>
+          </template>
+        </PageToolbar>
       </template>
 
       <template #table>
         <DataTable
-          :columns="columns"
+          :columns="visibleColumns"
           :data="records"
           :loading="loading"
           :server-side-sort="true"
@@ -54,12 +60,12 @@
             />
           </template>
           <template #cell-aff_code="{ row }">
-            <span class="font-mono text-sm text-gray-700 dark:text-gray-300">{{ row.aff_code || '-' }}</span>
+            <span class="font-mono text-default">{{ row.aff_code || '-' }}</span>
           </template>
           <template #cell-order="{ row }">
             <div class="space-y-0.5">
-              <div class="font-mono text-sm text-gray-900 dark:text-white">#{{ row.order_id }}</div>
-              <div class="max-w-56 truncate text-sm text-gray-500 dark:text-dark-400">{{ row.out_trade_no }}</div>
+              <div class="font-mono text-highlighted">#{{ row.order_id }}</div>
+              <div class="max-w-56 truncate text-muted">{{ row.out_trade_no }}</div>
             </div>
           </template>
           <template #cell-payment_type="{ row }">
@@ -75,7 +81,7 @@
             <AmountText :value="row.order_amount" />
           </template>
           <template #cell-pay_amount="{ row }">
-            <span class="text-sm text-gray-900 dark:text-white">¥{{ formatAmount(row.pay_amount) }}</span>
+            <span class="tabular-nums text-highlighted">¥{{ formatAmount(row.pay_amount) }}</span>
           </template>
           <template #cell-rebate_amount="{ row }">
             <AmountText :value="row.rebate_amount" strong />
@@ -96,7 +102,7 @@
             <NullableAmountText :value="row.history_quota_after" />
           </template>
           <template #cell-created_at="{ row }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(row.created_at) }}</span>
+            <span class="text-muted">{{ formatDateTime(row.created_at) }}</span>
           </template>
         </DataTable>
       </template>
@@ -120,36 +126,41 @@
       @close="overviewDialog = false"
     >
       <div v-if="overviewLoading" class="flex justify-center py-8">
-        <div class="h-6 w-6 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
+        <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-dimmed" />
       </div>
       <div v-else-if="selectedOverview" class="space-y-4">
-        <div class="rounded-lg border border-gray-100 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-800">
-          <div class="font-mono text-sm text-gray-900 dark:text-white">#{{ selectedOverview.user_id }}</div>
-          <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white">{{ selectedOverview.email || '-' }}</div>
-          <div class="mt-0.5 text-sm text-gray-500 dark:text-dark-400">{{ selectedOverview.username || '-' }}</div>
+        <div class="flex items-center gap-3">
+          <UAvatar :alt="selectedOverview.email || String(selectedOverview.user_id)" :text="(selectedOverview.email || String(selectedOverview.user_id)).charAt(0).toUpperCase()" size="md" />
+          <div class="min-w-0">
+            <p class="truncate text-sm font-medium text-highlighted">{{ selectedOverview.email || '-' }}</p>
+            <p class="text-xs text-muted">#{{ selectedOverview.user_id }} · {{ selectedOverview.username || '-' }}</p>
+          </div>
         </div>
-        <div class="grid gap-3 sm:grid-cols-2">
+        <USeparator />
+        <dl class="grid gap-x-6 gap-y-3 sm:grid-cols-2">
           <OverviewStat :label="t('admin.affiliates.overview.affCode')" :value="selectedOverview.aff_code || '-'" mono />
           <OverviewStat :label="t('admin.affiliates.overview.rebateRate')" :value="formatPercent(selectedOverview.rebate_rate_percent)" />
           <OverviewStat :label="t('admin.affiliates.overview.invitedCount')" :value="String(selectedOverview.invited_count)" />
           <OverviewStat :label="t('admin.affiliates.overview.rebatedInviteeCount')" :value="String(selectedOverview.rebated_invitee_count)" />
           <OverviewStat :label="t('admin.affiliates.overview.availableQuota')" :value="'$' + formatAmount(selectedOverview.available_quota)" />
           <OverviewStat :label="t('admin.affiliates.overview.historyQuota')" :value="'$' + formatAmount(selectedOverview.history_quota)" />
-        </div>
+        </dl>
       </div>
     </BaseDialog>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref, type PropType } from 'vue'
+import { computed, defineComponent, h, onMounted, reactive, ref, resolveComponent, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import PageToolbar from '@/components/layout/PageToolbar.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import Icon from '@/components/icons/Icon.vue'
+import { useListColumnMenu } from '../useListColumnMenu'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
 import type { Column } from '@/components/common/types'
 import { useAppStore } from '@/stores/app'
@@ -210,7 +221,21 @@ const columns = computed<Column[]>(() => {
   ]
 })
 
+// "显示列": the identity column of each record type is fixed
+const { visibleColumns, menuItems: columnMenuItems } = useListColumnMenu({
+  storageKey: `admin-affiliate-${props.type}-hidden-columns`,
+  columns,
+  fixed: ['inviter', 'order', 'user'],
+  defaultHidden: props.type === 'transfers' ? ['available_quota_after', 'frozen_quota_after'] : []
+})
+
 const sortStorageKey = computed(() => `admin-affiliate-${props.type}-table-sort`)
+// Same title and description keys as the route meta of each records page.
+const pageHeaderKeys = computed(() => ({
+  invites: { title: 'nav.affiliateInviteRecords', description: 'admin.affiliates.invitesDescription' },
+  rebates: { title: 'nav.affiliateRebateRecords', description: 'admin.affiliates.rebatesDescription' },
+  transfers: { title: 'nav.affiliateTransferRecords', description: 'admin.affiliates.transfersDescription' },
+}[props.type]))
 
 function loadInitialSortState(): { sort_by: string; sort_order: 'asc' | 'desc' } {
   const fallback = { sort_by: 'created_at', sort_order: 'desc' as 'asc' | 'desc' }
@@ -332,6 +357,8 @@ async function openUserOverview(userId: number) {
   }
 }
 
+const UButton = resolveComponent('UButton')
+
 const UserCell = defineComponent({
   props: {
     id: { type: Number, required: true },
@@ -342,15 +369,18 @@ const UserCell = defineComponent({
   emits: ['open'],
   setup(cellProps, { emit }) {
     return () => h('div', { class: 'space-y-0.5' }, [
-      h('div', { class: 'font-mono text-sm text-gray-900 dark:text-white' }, `#${cellProps.id}`),
-      h(cellProps.clickable ? 'button' : 'div', {
-        class: cellProps.clickable
-          ? 'max-w-56 truncate text-left text-sm font-medium text-primary-600 hover:text-primary-700 hover:underline dark:text-primary-400 dark:hover:text-primary-300'
-          : 'max-w-56 truncate text-sm text-gray-700 dark:text-gray-300',
-        type: cellProps.clickable ? 'button' : undefined,
-        onClick: cellProps.clickable ? () => emit('open', cellProps.id) : undefined,
-      }, cellProps.email || '-'),
-      h('div', { class: 'max-w-56 truncate text-sm text-gray-500 dark:text-dark-400' }, cellProps.username || '-'),
+      h('div', { class: 'font-mono text-xs text-muted' }, `#${cellProps.id}`),
+      cellProps.clickable
+        ? h(UButton, {
+            color: 'primary',
+            variant: 'link',
+            size: 'sm',
+            class: 'max-w-56 truncate p-0 font-medium',
+            label: cellProps.email || '-',
+            onClick: () => emit('open', cellProps.id),
+          })
+        : h('div', { class: 'max-w-56 truncate text-default' }, cellProps.email || '-'),
+      h('div', { class: 'max-w-56 truncate text-muted' }, cellProps.username || '-'),
     ])
   },
 })
@@ -363,8 +393,8 @@ const AmountText = defineComponent({
   setup(amountProps) {
     return () => h('span', {
       class: amountProps.strong
-        ? 'text-sm font-semibold text-emerald-600 dark:text-emerald-400'
-        : 'text-sm text-gray-900 dark:text-white',
+        ? 'font-semibold tabular-nums text-success'
+        : 'tabular-nums text-highlighted',
     }, `$${formatAmount(amountProps.value)}`)
   },
 })
@@ -377,7 +407,7 @@ const NullableAmountText = defineComponent({
     return () => {
       const value = amountProps.value
       if (value === null || value === undefined) {
-        return h('span', { class: 'text-sm text-gray-400 dark:text-dark-500' }, '-')
+        return h('span', { class: 'text-dimmed' }, '-')
       }
       return h(AmountText, { value })
     }
@@ -391,12 +421,12 @@ const OverviewStat = defineComponent({
     mono: { type: Boolean, default: false },
   },
   setup(statProps) {
-    return () => h('div', { class: 'rounded-lg border border-gray-100 bg-white p-3 dark:border-dark-700 dark:bg-dark-900' }, [
-      h('div', { class: 'text-sm text-gray-500 dark:text-dark-400' }, statProps.label),
-      h('div', {
+    return () => h('div', [
+      h('dt', { class: 'text-xs text-muted' }, statProps.label),
+      h('dd', {
         class: statProps.mono
-          ? 'mt-1 font-mono text-base font-semibold text-gray-900 dark:text-white'
-          : 'mt-1 text-base font-semibold text-gray-900 dark:text-white',
+          ? 'mt-0.5 font-mono text-base font-semibold text-highlighted'
+          : 'mt-0.5 text-base font-semibold tabular-nums text-highlighted',
       }, statProps.value),
     ])
   },

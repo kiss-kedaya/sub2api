@@ -11,33 +11,33 @@
       <div v-if="loading" class="space-y-1.5">
         <!-- OAuth: 3 rows, Setup Token: 1 row -->
         <div class="flex items-center gap-1">
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <USkeleton class="h-3 w-[32px]" />
+          <USkeleton class="h-1.5 w-8 rounded-full" />
+          <USkeleton class="h-3 w-[32px]" />
         </div>
         <template v-if="account.type === 'oauth'">
           <div class="flex items-center gap-1">
-            <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-            <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-            <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+            <USkeleton class="h-3 w-[32px]" />
+            <USkeleton class="h-1.5 w-8 rounded-full" />
+            <USkeleton class="h-3 w-[32px]" />
           </div>
           <div class="flex items-center gap-1">
-            <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-            <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-            <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+            <USkeleton class="h-3 w-[32px]" />
+            <USkeleton class="h-1.5 w-8 rounded-full" />
+            <USkeleton class="h-3 w-[32px]" />
           </div>
         </template>
       </div>
 
       <!-- Error state -->
-      <div v-else-if="error" class="text-xs text-red-500">
+      <div v-else-if="error" class="text-xs text-error">
         {{ error }}
       </div>
 
       <!-- Usage data -->
       <div v-else-if="usageInfo" class="space-y-1">
         <!-- API error (degraded response) -->
-        <div v-if="usageInfo.error" class="text-xs text-amber-600 dark:text-amber-400 truncate max-w-[200px]" :title="usageInfo.error">
+        <div v-if="usageInfo.error" class="max-w-[200px] truncate text-xs text-warning" :title="usageInfo.error">
           {{ usageInfo.error }}
         </div>
         <!-- 5h Window -->
@@ -81,7 +81,7 @@
 
       <!-- No data yet -->
       <div v-else class="space-y-1">
-        <div class="text-xs text-gray-400">-</div>
+        <div class="text-xs text-dimmed">-</div>
       </div>
       <!--
         One stable instance for every usage state, so a reset-credit query started
@@ -92,32 +92,11 @@
         <template v-if="usageInfo" #pre-actions>
           <span
             v-if="usageInfo.source === 'passive'"
-            class="text-[9px] text-gray-400 dark:text-gray-500 italic"
+            class="text-xs text-dimmed"
           >
             {{ t('admin.accounts.usageWindow.passiveSampled') }}
           </span>
-          <button
-            type="button"
-            class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="activeQueryLoading"
-            @click="loadActiveUsage"
-          >
-            <svg
-              class="h-2.5 w-2.5"
-              :class="{ 'animate-spin': activeQueryLoading }"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-            {{ t('admin.accounts.usageWindow.activeQuery') }}
-          </button>
+          <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-refresh-cw" class="px-1.5" :loading="activeQueryLoading" :disabled="activeQueryLoading" :label="t('admin.accounts.usageWindow.activeQuery')" @click="loadActiveUsage" />
         </template>
       </ClaudeResetCreditsCell>
     </template>
@@ -128,12 +107,12 @@
         <div
           v-for="ticket in codexTurnTickets"
           :key="ticket.model"
-          class="flex items-center gap-1 text-[10px] leading-4"
+          class="flex items-center gap-1 text-xs leading-4"
         >
-          <span class="truncate font-medium text-gray-500 dark:text-gray-400" :title="ticket.model">{{ shortCodexTicketModel(ticket.model) }}</span>
-          <span v-if="ticket.ready" class="text-emerald-600 dark:text-emerald-400">{{ formatCodexTicketRemaining(ticket.remaining_seconds) }}</span>
-          <span v-else-if="ticket.blocked" class="text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.codexTurnTicketPaused') }}</span>
-          <span v-else class="text-gray-500">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
+          <span class="truncate font-medium text-muted" :title="ticket.model">{{ shortCodexTicketModel(ticket.model) }}</span>
+          <span v-if="ticket.ready" class="text-success">{{ formatCodexTicketRemaining(ticket.remaining_seconds) }}</span>
+          <span v-else-if="ticket.blocked" class="text-warning">{{ t('admin.accounts.openai.codexTurnTicketPaused') }}</span>
+          <span v-else class="text-muted">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
         </div>
       </div>
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
@@ -163,45 +142,24 @@
         -->
         <OpenAIQuotaResetCell :account="account" @account-updated="handleQuotaResetAccountUpdated">
           <template #pre-actions>
-            <button
-              type="button"
-              class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="activeQueryLoading"
-              @click="loadActiveUsage"
-            >
-              <svg
-                class="h-2.5 w-2.5"
-                :class="{ 'animate-spin': activeQueryLoading }"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-              {{ t('admin.accounts.usageWindow.activeQuery') }}
-            </button>
+            <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-refresh-cw" class="px-1.5" :loading="activeQueryLoading" :disabled="activeQueryLoading" :label="t('admin.accounts.usageWindow.activeQuery')" @click="loadActiveUsage" />
           </template>
         </OpenAIQuotaResetCell>
       </div>
       <div v-else-if="loading" class="space-y-1.5">
         <div class="flex items-center gap-1">
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <USkeleton class="h-3 w-[32px]" />
+          <USkeleton class="h-1.5 w-8 rounded-full" />
+          <USkeleton class="h-3 w-[32px]" />
         </div>
         <div class="flex items-center gap-1">
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <USkeleton class="h-3 w-[32px]" />
+          <USkeleton class="h-1.5 w-8 rounded-full" />
+          <USkeleton class="h-3 w-[32px]" />
         </div>
       </div>
       <div v-else>
-        <div class="text-xs text-gray-400">-</div>
+        <div class="text-xs text-dimmed">-</div>
         <!-- Always allow on-demand upstream quota query, even before local data exists. -->
         <OpenAIQuotaResetCell
           v-if="account.type === 'oauth'"
@@ -216,94 +174,56 @@
     <template v-else-if="account.platform === 'antigravity' && account.type === 'oauth'">
       <!-- 账户类型徽章 -->
       <div v-if="antigravityTierLabel" class="mb-1 flex items-center gap-1">
-        <span
-          :class="[
-            'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
-            antigravityTierClass
-          ]"
-        >
-          {{ antigravityTierLabel }}
-        </span>
+        <UBadge :color="antigravityTierColor" variant="subtle" size="sm">{{ antigravityTierLabel }}</UBadge>
         <!-- 不合格账户警告图标 -->
-        <span
-          v-if="hasIneligibleTiers"
-          class="group relative cursor-help"
-        >
-          <svg
-            class="h-3.5 w-3.5 text-red-500"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fill-rule="evenodd"
-              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-              clip-rule="evenodd"
-            />
-          </svg>
-          <span
-            class="pointer-events-none absolute left-0 top-full z-50 mt-1 w-80 whitespace-normal break-words rounded bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:bg-gray-700"
-          >
-            {{ t('admin.accounts.ineligibleWarning') }}
+        <UPopover v-if="hasIneligibleTiers" mode="hover" :content="{ side: 'bottom', align: 'start' }">
+          <span tabindex="0" class="inline-flex cursor-help text-error" :aria-label="t('admin.accounts.ineligibleWarning')">
+            <UIcon name="i-lucide-circle-alert" class="size-3.5" />
           </span>
-        </span>
+          <template #content>
+            <p class="w-80 px-3 py-2 text-xs leading-relaxed text-default">{{ t('admin.accounts.ineligibleWarning') }}</p>
+          </template>
+        </UPopover>
       </div>
 
       <!-- Forbidden state (403) -->
       <div v-if="isForbidden" class="space-y-1">
-        <span
-          :class="[
-            'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
-            forbiddenBadgeClass
-          ]"
-        >
-          {{ forbiddenLabel }}
-        </span>
+        <UBadge :color="forbiddenBadgeColor" variant="subtle" size="sm">{{ forbiddenLabel }}</UBadge>
         <div v-if="validationURL" class="flex items-center gap-1">
           <a
             :href="validationURL"
             target="_blank"
             rel="noopener noreferrer"
-            class="text-[10px] text-blue-600 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+            class="text-xs text-primary hover:underline"
             :title="t('admin.accounts.openVerification')"
           >
             {{ t('admin.accounts.openVerification') }}
           </a>
-          <button
-            type="button"
-            class="text-[10px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            :title="t('admin.accounts.copyLink')"
-            @click="copyValidationURL"
-          >
-            {{ linkCopied ? t('admin.accounts.linkCopied') : t('admin.accounts.copyLink') }}
-          </button>
+          <UButton color="neutral" variant="link" size="xs" class="p-0" :title="t('admin.accounts.copyLink')" :label="linkCopied ? t('admin.accounts.linkCopied') : t('admin.accounts.copyLink')" @click="copyValidationURL" />
         </div>
       </div>
 
       <!-- Needs reauth (401) -->
       <div v-else-if="needsReauth" class="space-y-1">
-        <span class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300">
-          {{ t('admin.accounts.needsReauth') }}
-        </span>
+        <UBadge color="warning" variant="subtle" size="sm">{{ t('admin.accounts.needsReauth') }}</UBadge>
       </div>
 
       <!-- Degraded error (non-403, non-401) -->
       <div v-else-if="usageInfo?.error" class="space-y-1">
-        <span class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-          {{ usageErrorLabel }}
-        </span>
+        <UBadge color="warning" variant="subtle" size="sm">{{ usageErrorLabel }}</UBadge>
       </div>
 
       <!-- Loading state -->
       <div v-else-if="loading" class="space-y-1.5">
         <div class="flex items-center gap-1">
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <USkeleton class="h-3 w-[32px]" />
+          <USkeleton class="h-1.5 w-8 rounded-full" />
+          <USkeleton class="h-3 w-[32px]" />
         </div>
       </div>
 
       <!-- Error state -->
-      <div v-else-if="error" class="text-xs text-red-500">
+      <div v-else-if="error" class="text-xs text-error">
         {{ error }}
       </div>
 
@@ -345,37 +265,33 @@
           color="amber"
         />
 
-        <div v-if="aiCreditsDisplay" class="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
-          💳 {{ t('admin.accounts.aiCreditsBalance') }}: {{ aiCreditsDisplay }}
+        <div v-if="aiCreditsDisplay" class="mt-1 text-xs text-muted">
+          <UIcon name="i-lucide-credit-card" class="me-1 inline size-3 align-[-2px] text-dimmed" />{{ t('admin.accounts.aiCreditsBalance') }}: {{ aiCreditsDisplay }}
         </div>
       </div>
-      <div v-else-if="aiCreditsDisplay" class="text-[10px] text-gray-500 dark:text-gray-400">
-        💳 {{ t('admin.accounts.aiCreditsBalance') }}: {{ aiCreditsDisplay }}
+      <div v-else-if="aiCreditsDisplay" class="text-xs text-muted">
+        <UIcon name="i-lucide-credit-card" class="me-1 inline size-3 align-[-2px] text-dimmed" />{{ t('admin.accounts.aiCreditsBalance') }}: {{ aiCreditsDisplay }}
       </div>
-      <div v-else class="text-xs text-gray-400">-</div>
+      <div v-else class="text-xs text-dimmed">-</div>
     </template>
 
     <!-- Grok OAuth accounts: passive xAI quota headers + local Sub2API usage -->
     <template v-else-if="account.platform === 'grok' && account.type === 'oauth'">
       <div v-if="loading" class="space-y-1.5">
         <div class="flex items-center gap-1">
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <USkeleton class="h-3 w-[32px]" />
+          <USkeleton class="h-1.5 w-8 rounded-full" />
+          <USkeleton class="h-3 w-[32px]" />
         </div>
       </div>
-      <div v-else-if="error" class="text-xs text-red-500">
+      <div v-else-if="error" class="text-xs text-error">
         {{ error }}
       </div>
       <div v-else-if="needsReauth" class="space-y-1">
-        <span class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300">
-          {{ t('admin.accounts.needsReauth') }}
-        </span>
+        <UBadge color="warning" variant="subtle" size="sm">{{ t('admin.accounts.needsReauth') }}</UBadge>
       </div>
       <div v-else-if="isForbidden" class="space-y-1">
-        <span class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">
-          {{ usageInfo?.grok_entitlement_status || t('admin.accounts.forbidden') }}
-        </span>
+        <UBadge color="error" variant="subtle" size="sm">{{ usageInfo?.grok_entitlement_status || t('admin.accounts.forbidden') }}</UBadge>
       </div>
       <div v-else-if="usageInfo" class="space-y-1">
         <!-- Free: only rolling 24h soft-gate bar. Paid: 7d + 30d + prepaid money. -->
@@ -389,7 +305,7 @@
             :show-now-when-idle="true"
             color="emerald"
           />
-          <div v-else-if="grokQuotaUnknown" class="text-[10px] text-gray-500 dark:text-gray-400">
+          <div v-else-if="grokQuotaUnknown" class="text-xs text-muted">
             {{ grokQuotaUnknownLabel }}
           </div>
         </template>
@@ -414,11 +330,11 @@
           />
           <div
             v-if="grokPrepaidMoneyLine"
-            class="flex flex-wrap items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400"
+            class="flex flex-wrap items-center gap-1 text-xs text-muted"
           >
             <span
               v-if="grokPrepaidMoneyLine.showPrepaid"
-              class="rounded bg-emerald-50 px-1 py-0.5 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+              class="text-success"
               :title="t('admin.accounts.usageWindow.grokPrepaid')"
             >
               {{ t('admin.accounts.usageWindow.grokPrepaid') }} ${{ grokPrepaidMoneyLine.prepaid }}
@@ -431,20 +347,20 @@
               {{ grokPrepaidMoneyLine.used }}/{{ grokPrepaidMoneyLine.limit }}
             </span>
           </div>
-          <div v-if="grokQuotaUnknown" class="text-[10px] text-gray-500 dark:text-gray-400">
+          <div v-if="grokQuotaUnknown" class="text-xs text-muted">
             {{ grokQuotaUnknownLabel }}
           </div>
         </template>
-        <div v-if="usageInfo.error" class="truncate text-xs text-amber-600 dark:text-amber-400 max-w-[200px]" :title="usageInfo.error">
+        <div v-if="usageInfo.error" class="max-w-[200px] truncate text-xs text-warning" :title="usageInfo.error">
           {{ usageErrorLabel }}
         </div>
-        <div v-if="grokRetryAfterLabel" class="text-[10px] text-amber-600 dark:text-amber-400">
+        <div v-if="grokRetryAfterLabel" class="text-xs text-warning">
           {{ t('admin.accounts.usageWindow.grokRetryAfter', { time: grokRetryAfterLabel }) }}
         </div>
         <GrokQuotaProbeCell :account="account" compact @probed="handleGrokProbed" />
       </div>
       <div v-else class="space-y-1">
-        <div class="text-xs text-gray-400">-</div>
+        <div class="text-xs text-dimmed">-</div>
         <GrokQuotaProbeCell :account="account" compact @probed="handleGrokProbed" />
       </div>
     </template>
@@ -465,7 +381,7 @@
              余额端点、coding 探测也不适用）才回落到占位符。 -->
         <div
           v-if="!cnQuotaCellVisible && !cnBalanceCellVisible"
-          class="text-xs text-gray-400"
+          class="text-xs text-dimmed"
           :title="t('admin.accounts.cnProviders.noBalanceEndpoint')"
         >-</div>
         <CNProviderQuotaCell :account="account" />
@@ -477,45 +393,24 @@
     <template v-else-if="account.platform === 'gemini'">
       <!-- Auth Type + Tier Badge (first line) -->
       <div v-if="geminiAuthTypeLabel" class="mb-1 flex items-center gap-1">
-        <span
-          :class="[
-            'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
-            geminiTierClass
-          ]"
-        >
-          {{ geminiAuthTypeLabel }}
-        </span>
-        <!-- Help icon -->
-        <span
-          class="group relative cursor-help"
-        >
-          <svg
-            class="h-3.5 w-3.5 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fill-rule="evenodd"
-              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
-              clip-rule="evenodd"
-            />
-          </svg>
-          <span
-            class="pointer-events-none absolute left-0 top-full z-50 mt-1 w-80 whitespace-normal break-words rounded bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:bg-gray-700"
-          >
-            <div class="font-semibold mb-1">{{ t('admin.accounts.gemini.quotaPolicy.title') }}</div>
-            <div class="mb-2 text-gray-300">{{ t('admin.accounts.gemini.quotaPolicy.note') }}</div>
-            <div class="space-y-1">
-              <div><strong>{{ geminiQuotaPolicyChannel }}:</strong></div>
-              <div class="pl-2">• {{ geminiQuotaPolicyLimits }}</div>
-              <div class="mt-2">
-                <a :href="geminiQuotaPolicyDocsUrl" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline">
-                  {{ t('admin.accounts.gemini.quotaPolicy.columns.docs') }} →
-                </a>
-              </div>
-            </div>
+        <UBadge :color="geminiTierColor" variant="subtle" size="sm">{{ geminiAuthTypeLabel }}</UBadge>
+        <!-- Quota policy on hover / focus -->
+        <UPopover mode="hover" :content="{ side: 'bottom', align: 'start' }">
+          <span tabindex="0" class="inline-flex cursor-help text-dimmed hover:text-muted" :aria-label="t('admin.accounts.gemini.quotaPolicy.title')">
+            <UIcon name="i-lucide-circle-help" class="size-3.5" />
           </span>
-        </span>
+          <template #content>
+            <div class="w-80 space-y-1 px-3 py-2 text-xs leading-relaxed text-default">
+              <div class="font-medium text-highlighted">{{ t('admin.accounts.gemini.quotaPolicy.title') }}</div>
+              <div class="text-muted">{{ t('admin.accounts.gemini.quotaPolicy.note') }}</div>
+              <div class="pt-1 font-medium">{{ geminiQuotaPolicyChannel }}:</div>
+              <div class="pl-2">• {{ geminiQuotaPolicyLimits }}</div>
+              <a :href="geminiQuotaPolicyDocsUrl" target="_blank" rel="noopener noreferrer" class="inline-block pt-1 text-primary hover:underline">
+                {{ t('admin.accounts.gemini.quotaPolicy.columns.docs') }} →
+              </a>
+            </div>
+          </template>
+        </UPopover>
       </div>
 
       <!-- Usage data or unlimited flow -->
@@ -524,19 +419,18 @@
           v-if="showGeminiTodayStats && todayStats"
           class="mb-0.5 flex items-center"
         >
-          <div class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400">
-            <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+          <div class="flex flex-wrap items-center gap-x-2 text-xs tabular-nums text-muted">
+            <span>
               {{ formatKeyRequests }} req
             </span>
-            <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+            <span>
               {{ formatKeyTokens }}
             </span>
-            <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800" :title="t('usage.accountBilled')">
+            <span :title="t('usage.accountBilled')">
               A ${{ formatKeyCost }}
             </span>
             <span
               v-if="todayStats.user_cost != null"
-              class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
               :title="t('usage.userBilled')"
             >
               U ${{ formatKeyUserCost }}
@@ -547,18 +441,18 @@
           v-else-if="showGeminiTodayStats && todayStatsLoading"
           class="mb-0.5 flex items-center gap-1"
         >
-          <div class="h-3 w-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-8 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-3 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+          <USkeleton class="h-3 w-10" />
+          <USkeleton class="h-3 w-8" />
+          <USkeleton class="h-3 w-12" />
         </div>
         <div v-if="loading" class="space-y-1">
           <div class="flex items-center gap-1">
-            <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-            <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-            <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+            <USkeleton class="h-3 w-[32px]" />
+            <USkeleton class="h-1.5 w-8 rounded-full" />
+            <USkeleton class="h-3 w-[32px]" />
           </div>
         </div>
-        <div v-else-if="error" class="text-xs text-red-500">
+        <div v-else-if="error" class="text-xs text-error">
           {{ error }}
         </div>
         <!-- Gemini: show daily usage bars when available -->
@@ -572,12 +466,12 @@
             :window-stats="bar.windowStats"
             :color="bar.color"
           />
-          <p class="mt-1 text-[9px] leading-tight text-gray-400 dark:text-gray-500 italic">
+          <p class="mt-1 text-xs text-dimmed">
             * {{ t('admin.accounts.gemini.quotaPolicy.simulatedNote') || 'Simulated quota' }}
           </p>
         </div>
         <!-- AI Studio Client OAuth: show unlimited flow (no usage tracking) -->
-        <div v-else class="text-xs text-gray-400">
+        <div v-else class="text-xs text-dimmed">
           {{ t('admin.accounts.gemini.rateLimit.unlimited') }}
         </div>
       </div>
@@ -585,7 +479,7 @@
 
     <!-- Other accounts: no usage window -->
     <template v-else>
-      <div class="text-xs text-gray-400">-</div>
+      <div class="text-xs text-dimmed">-</div>
     </template>
   </div>
 
@@ -605,19 +499,18 @@
         v-if="todayStats"
         class="mb-0.5 flex items-center"
       >
-        <div class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400">
-          <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+        <div class="flex flex-wrap items-center gap-x-2 text-xs tabular-nums text-muted">
+          <span>
             {{ formatKeyRequests }} req
           </span>
-          <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+          <span>
             {{ formatKeyTokens }}
           </span>
-          <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800" :title="t('usage.accountBilled')">
+          <span :title="t('usage.accountBilled')">
             A ${{ formatKeyCost }}
           </span>
           <span
             v-if="todayStats.user_cost != null"
-            class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
             :title="t('usage.userBilled')"
           >
             U ${{ formatKeyUserCost }}
@@ -629,9 +522,9 @@
         v-else-if="todayStatsLoading"
         class="mb-0.5 flex items-center gap-1"
       >
-        <div class="h-3 w-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-        <div class="h-3 w-8 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-        <div class="h-3 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+        <USkeleton class="h-3 w-10" />
+        <USkeleton class="h-3 w-8" />
+        <USkeleton class="h-3 w-12" />
       </div>
 
       <!-- API Key accounts with quota limits: show progress bars -->
@@ -659,7 +552,7 @@
       <!-- No data at all -->
       <div
         v-if="!todayStats && !todayStatsLoading && !hasApiKeyQuota && !account.ollama_cloud_usage?.eligible"
-        class="text-xs text-gray-400"
+        class="text-xs text-dimmed"
       >-</div>
     </div>
   </div>
@@ -667,6 +560,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'vue'
+import type { BadgeProps } from '@nuxt/ui'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
@@ -715,6 +609,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+type BadgeColor = NonNullable<BadgeProps['color']>
 const desktopViewportQuery = '(min-width: 768px)'
 
 const unmounted = ref(false)
@@ -1042,28 +938,26 @@ const geminiAuthTypeLabel = computed(() => {
   return geminiUserLevel.value ? `${geminiChannelShort.value} ${geminiUserLevel.value}` : geminiChannelShort.value
 })
 
-// Gemini 账户类型徽章样式（统一样式）
-const geminiTierClass = computed(() => {
+// Gemini 账户类型徽章颜色（UBadge subtle）
+const geminiTierColor = computed<BadgeColor>(() => {
   // Use channel+level to choose a stable color without depending on raw tier_id variants.
   const channel = geminiChannelShort.value
   const level = geminiUserLevel.value
 
-  if (channel === 'client' || channel === 'ai studio') {
-    return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
-  }
+  if (channel === 'client' || channel === 'ai studio') return 'info'
 
   if (channel === 'google one') {
-    if (level === 'ultra') return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
-    if (level === 'pro') return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
-    return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+    if (level === 'ultra') return 'primary'
+    if (level === 'pro') return 'info'
+    return 'neutral'
   }
 
   if (channel === 'gcp') {
-    if (level === 'enterprise') return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
-    return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
+    if (level === 'enterprise') return 'primary'
+    return 'info'
   }
 
-  return ''
+  return 'neutral'
 })
 
 // Gemini 配额政策信息
@@ -1331,17 +1225,15 @@ const antigravityTierLabel = computed(() => {
   }
 })
 
-// 账户类型徽章样式
-const antigravityTierClass = computed(() => {
+// 账户类型徽章颜色（UBadge subtle）
+const antigravityTierColor = computed<BadgeColor>(() => {
   switch (antigravityTier.value) {
-    case 'free-tier':
-      return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
     case 'g1-pro-tier':
-      return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
+      return 'info'
     case 'g1-ultra-tier':
-      return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
+      return 'primary'
     default:
-      return ''
+      return 'neutral'
   }
 })
 
@@ -1383,12 +1275,7 @@ const forbiddenLabel = computed(() => {
   }
 })
 
-const forbiddenBadgeClass = computed(() => {
-  if (forbiddenType.value === 'validation') {
-    return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300'
-  }
-  return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-})
+const forbiddenBadgeColor = computed<BadgeColor>(() => (forbiddenType.value === 'validation' ? 'warning' : 'error'))
 
 const linkCopied = ref(false)
 const copyValidationURL = async () => {

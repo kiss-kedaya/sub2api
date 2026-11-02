@@ -14,9 +14,7 @@
     />
     <template #footer>
       <div class="batch-test-footer">
-        <button type="button" class="btn btn-secondary" @click="handleClose">
-          {{ t('common.close') }}
-        </button>
+        <UButton color="neutral" variant="subtle" :label="t('common.close')" @click="handleClose" />
       </div>
     </template>
   </BaseDialog>

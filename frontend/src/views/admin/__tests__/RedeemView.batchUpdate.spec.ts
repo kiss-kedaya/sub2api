@@ -170,13 +170,16 @@ describe('admin RedeemView batch update', () => {
     })
 
     await flushPromises()
-    await wrapper.findAll('[data-test="select-code"]')[0].setValue(true)
+    // Checkboxes are Nuxt UI checkboxes (a button with role="checkbox"): clicking toggles them.
+    await wrapper.findAll('[data-test="select-code"]')[0].trigger('click')
     await wrapper.get('[data-test="batch-update-open"]').trigger('click')
     await flushPromises()
 
-    await wrapper.get('[data-test="batch-field-status"]').setValue(true)
+    await wrapper.get('[data-test="batch-field-status"]').trigger('click')
+    await flushPromises()
     await wrapper.get('[data-test="batch-status-select"]').setValue('disabled')
-    await wrapper.get('[data-test="batch-field-notes"]').setValue(true)
+    await wrapper.get('[data-test="batch-field-notes"]').trigger('click')
+    await flushPromises()
     await wrapper.get('[data-test="batch-notes-input"]').setValue('maintenance')
     await wrapper.get('[data-test="batch-update-form"]').trigger('submit')
     await flushPromises()

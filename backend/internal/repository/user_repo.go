@@ -644,13 +644,16 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 		}
 	}
 
-	allowedGroupsByUser, err := r.loadAllowedGroups(ctx, userIDs)
-	if err != nil {
-		return nil, nil, err
-	}
-	for id, u := range userMap {
-		if groups, ok := allowedGroupsByUser[id]; ok {
-			u.AllowedGroups = groups
+	shouldLoadAllowedGroups := filters.IncludeAllowedGroups == nil || *filters.IncludeAllowedGroups
+	if shouldLoadAllowedGroups {
+		allowedGroupsByUser, err := r.loadAllowedGroups(ctx, userIDs)
+		if err != nil {
+			return nil, nil, err
+		}
+		for id, u := range userMap {
+			if groups, ok := allowedGroupsByUser[id]; ok {
+				u.AllowedGroups = groups
+			}
 		}
 	}
 

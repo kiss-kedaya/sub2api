@@ -1,6 +1,6 @@
 import { nextTick } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
-import { shallowMount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 
 import Select from '@/components/common/Select.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
@@ -23,12 +23,17 @@ const filters = () => ({
   external_scope: 'retained'
 })
 
-const mountFilters = () => shallowMount(AccountTableFilters, {
+// Nuxt UI buttons render for real (the toggle and the tags are UButtons); the shared
+// SearchInput / Select wrappers are stubbed so their own internals stay out of this spec.
+const stubs = { SearchInput: true, Select: true }
+
+const mountFilters = () => mount(AccountTableFilters, {
   props: {
     searchQuery: 'retained search',
     filters: filters(),
     groups: [{ id: 12, name: 'Core pool' } as any]
-  }
+  },
+  global: { stubs }
 })
 
 describe('AccountTableFilters', () => {
@@ -43,7 +48,7 @@ describe('AccountTableFilters', () => {
   })
 
   it('keeps focus on a remaining tag or the filter toggle after removing conditions', async () => {
-    const wrapper = shallowMount(AccountTableFilters, { attachTo: document.body, props: {
+    const wrapper = mount(AccountTableFilters, { attachTo: document.body, global: { stubs }, props: {
       searchQuery: '', filters: filters(),
       'onUpdate:filters': value => wrapper.setProps({ filters: value }),
     } })

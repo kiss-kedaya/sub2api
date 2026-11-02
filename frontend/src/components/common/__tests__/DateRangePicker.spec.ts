@@ -1,8 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
 import DateRangePicker from '../DateRangePicker.vue'
+import { bodyFindAll, bodyGet } from './overlay-helpers'
+
+// The range panel is a Nuxt UI popover teleported to <body>.
+// after-hooks run last-registered-first: unmount the wrappers, then clear what is left in <body>.
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+enableAutoUnmount(afterEach)
+
+const presetButton = (label: string) => bodyFindAll('[data-test="date-range-preset"]').find((node) => node.text() === label)
+const applyButton = () => bodyGet('[data-test="date-range-apply"]')
+
+async function openPicker(wrapper: { find: (selector: string) => { trigger: (event: string) => Promise<void> } }) {
+  await wrapper.find('[data-test="date-range-trigger"]').trigger('click')
+  await flushPromises()
+}
 
 const messages: Record<string, string> = {
   'dates.today': 'Today',
@@ -58,6 +74,7 @@ describe('DateRangePicker', () => {
     const today = formatLocalDate(now)
 
     const wrapper = mount(DateRangePicker, {
+      attachTo: document.body,
       props: {
         startDate: today,
         endDate: today
@@ -69,14 +86,17 @@ describe('DateRangePicker', () => {
       }
     })
 
-    await wrapper.find('.date-picker-trigger').trigger('click')
-    const presetButton = wrapper.findAll('.date-picker-preset').find((node) =>
+    await openPicker(wrapper)
+    const last24 = bodyFindAll('[data-test="date-range-preset"]').find((node) =>
       node.text().includes('Last 24 Hours')
     )
-    expect(presetButton).toBeDefined()
+    expect(last24).toBeDefined()
+    // The calendar grid renders next to the presets.
+    expect(document.body.querySelector('[data-test="date-range-panel"] [data-slot="grid"]')).not.toBeNull()
 
-    await presetButton!.trigger('click')
-    await wrapper.find('.date-picker-apply').trigger('click')
+    await last24!.trigger('click')
+    expect(last24!.attributes('aria-pressed')).toBe('true')
+    await applyButton().trigger('click')
 
     const nowAfterClick = new Date()
     const yesterdayAfterClick = new Date(nowAfterClick.getTime() - 24 * 60 * 60 * 1000)
@@ -99,6 +119,7 @@ describe('DateRangePicker second precision', () => {
   afterEach(() => vi.useRealTimers())
 
   const mountSeconds = () => mount(DateRangePicker, {
+    attachTo: document.body,
     props: { startDate: '2026-10-03T04:43:28', endDate: '2026-10-03T05:02:08', includeTime: true },
     global: { stubs: { Icon: true } },
   })
@@ -108,12 +129,12 @@ describe('DateRangePicker second precision', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('04:43:28')
     expect(wrapper.text()).toContain('05:02:08')
-    await wrapper.find('.date-picker-trigger').trigger('click')
-    const inputs = wrapper.findAll('input[type="datetime-local"]')
+    await openPicker(wrapper)
+    const inputs = bodyFindAll<HTMLInputElement>('input[type="datetime-local"]')
     expect(inputs).toHaveLength(2)
     expect(inputs[0].attributes('step')).toBe('1')
     await inputs[1].setValue('2026-10-03T05:02:09')
-    await wrapper.find('.date-picker-apply').trigger('click')
+    await applyButton().trigger('click')
     expect(wrapper.emitted('change')?.[0]).toEqual([{
       startDate: '2026-10-03T04:43:28', endDate: '2026-10-03T05:02:09', preset: null,
     }])
@@ -122,15 +143,15 @@ describe('DateRangePicker second precision', () => {
 
   it('rejects reversed and empty ranges but allows a single second', async () => {
     const wrapper = mountSeconds()
-    await wrapper.find('.date-picker-trigger').trigger('click')
-    const inputs = wrapper.findAll('input')
+    await openPicker(wrapper)
+    const inputs = bodyFindAll<HTMLInputElement>('[data-test="date-range-panel"] input')
     await inputs[1].setValue('2026-10-03T04:43:27')
-    expect(wrapper.find('.date-picker-apply').attributes('disabled')).toBeDefined()
+    expect(applyButton().attributes('disabled')).toBeDefined()
     await inputs[1].setValue('')
-    expect(wrapper.find('.date-picker-apply').attributes('disabled')).toBeDefined()
+    expect(applyButton().attributes('disabled')).toBeDefined()
     await inputs[1].setValue('2026-10-03T04:43:28')
-    expect(wrapper.find('.date-picker-apply').attributes('disabled')).toBeUndefined()
-    await wrapper.find('.date-picker-apply').trigger('click')
+    expect(applyButton().attributes('disabled')).toBeUndefined()
+    await applyButton().trigger('click')
     expect(wrapper.emitted('change')?.[0]).toEqual([{
       startDate: '2026-10-03T04:43:28', endDate: '2026-10-03T04:43:28', preset: null,
     }])
@@ -141,9 +162,9 @@ describe('DateRangePicker second precision', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 9, 3, 15, 20, 37))
     const wrapper = mountSeconds()
-    await wrapper.find('.date-picker-trigger').trigger('click')
-    await wrapper.findAll('.date-picker-preset').find(node => node.text() === 'Last 24 Hours')!.trigger('click')
-    await wrapper.find('.date-picker-apply').trigger('click')
+    await openPicker(wrapper)
+    await presetButton('Last 24 Hours')!.trigger('click')
+    await applyButton().trigger('click')
     expect(wrapper.emitted('change')?.[0]).toEqual([{
       startDate: '2026-10-02T15:20:37', endDate: '2026-10-03T15:20:37', preset: 'last24Hours',
     }])

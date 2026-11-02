@@ -139,6 +139,31 @@ export async function deleteKey(id: number): Promise<{ message: string }> {
   return data
 }
 
+export interface BulkDeleteKeysResult {
+  succeeded: number[]
+  failed: number[]
+}
+
+/**
+ * Delete several API keys in one round trip.
+ *
+ * The backend only exposes a per-key DELETE, so this fans out and reports which
+ * ids failed. The caller removes rows optimistically and puts the failures back,
+ * which keeps a bulk delete from refetching the whole list.
+ */
+export async function deleteMany(ids: number[]): Promise<BulkDeleteKeysResult> {
+  const unique = [...new Set(ids)]
+  if (unique.length === 0) return { succeeded: [], failed: [] }
+  const results = await Promise.allSettled(unique.map((id) => deleteKey(id)))
+  const succeeded: number[] = []
+  const failed: number[] = []
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') succeeded.push(unique[index])
+    else failed.push(unique[index])
+  })
+  return { succeeded, failed }
+}
+
 /**
  * Toggle API key status (active/inactive)
  * @param id - API key ID
@@ -156,6 +181,7 @@ export const keysAPI = {
   create,
   update,
   delete: deleteKey,
+  deleteMany,
   toggleStatus
 }
 

@@ -121,7 +121,7 @@ describe('Single-address private key export UI contract', () => {
 
   it('cancels verification without exporting', async () => {
     const wrapper = await render()
-    await wrapper.get('.crypto-security__actions .btn-secondary').trigger('click')
+    await wrapper.get('[data-testid="crypto-security-cancel"]').trigger('click')
     await flushPromises()
     expect(exportCalls()).toHaveLength(0)
     expect(wrapper.emitted('close')).toHaveLength(1)

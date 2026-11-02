@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -90,6 +90,8 @@ describe('AnnouncementPopup', () => {
         preview: true,
       },
     })
+    // The modal portal mounts its content one tick after the component.
+    await flushPromises()
 
     expect(document.body.textContent).toContain('Preview announcement')
     expect(document.body.querySelector('.markdown-body h2')?.textContent).toBe('Preview heading')
@@ -106,6 +108,8 @@ describe('AnnouncementPopup', () => {
     expect(dismissPopup).not.toHaveBeenCalled()
 
     await wrapper.setProps({ announcement: null })
+    // The modal releases its body scroll lock once it has closed.
+    await flushPromises()
     expect(document.body.style.overflow).toBe('')
     wrapper.unmount()
   })
@@ -115,6 +119,7 @@ describe('AnnouncementPopup', () => {
     store.currentPopup = announcement
     const dismissPopup = vi.spyOn(store, 'dismissPopup').mockResolvedValue()
     const wrapper = mount(AnnouncementPopup)
+    await flushPromises()
 
     const dismissButton = document.body.querySelector<HTMLButtonElement>(
       '[data-testid="announcement-popup-dismiss"]',

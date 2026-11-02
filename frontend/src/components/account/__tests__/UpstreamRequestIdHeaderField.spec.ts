@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import UpstreamRequestIdHeaderField from '../UpstreamRequestIdHeaderField.vue'
 
 vi.mock('vue-i18n', async () => {
@@ -15,17 +15,32 @@ vi.mock('vue-i18n', async () => {
 
 function mountField(props: { platform?: string; type?: string; modelValue?: string }) {
   return mount(UpstreamRequestIdHeaderField, {
+    attachTo: document.body,
     props,
     global: {
-      stubs: { Teleport: true },
+      // The help popover teleports to <body>; a Teleport stub would swallow it.
+      stubs: {},
     },
   })
 }
 
+// HelpTooltip renders its help in a popover that mounts when opened (hover), in <body>.
+async function openHelp(wrapper: ReturnType<typeof mountField>) {
+  await wrapper.get('.group').trigger('mouseenter')
+  await flushPromises()
+  const tooltip = document.body.querySelector<HTMLElement>('[role="tooltip"]')
+  return { text: `${wrapper.text()} ${tooltip?.textContent ?? ''}`, tooltip }
+}
+
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+enableAutoUnmount(afterEach)
+
 describe('UpstreamRequestIdHeaderField', () => {
-  it('lists relay and official header examples for API key accounts', () => {
+  it('lists relay and official header examples for API key accounts', async () => {
     const wrapper = mountField({ platform: 'openai', type: 'apikey' })
-    const text = wrapper.text()
+    const { text } = await openHelp(wrapper)
 
     expect(text).toContain('admin.accounts.upstreamRequestIdHeaderHelp.intro')
     expect(text).toContain('admin.accounts.upstreamRequestIdHeaderHelp.examplesTitle')
@@ -36,9 +51,9 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(text).toContain('x-request-id')
   })
 
-  it('lists only the official header for accounts that connect to the platform directly', () => {
+  it('lists only the official header for accounts that connect to the platform directly', async () => {
     const wrapper = mountField({ platform: 'anthropic', type: 'oauth' })
-    const text = wrapper.text()
+    const { text } = await openHelp(wrapper)
 
     expect(text).toContain('admin.accounts.upstreamRequestIdHeaderHelp.official:Anthropic')
     expect(text).toContain('request-id')
@@ -46,13 +61,14 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(text).not.toContain('X-Oneapi-Request-Id')
   })
 
-  it('omits the examples section when no header is known for the platform', () => {
+  it('omits the examples section when no header is known for the platform', async () => {
     const wrapper = mountField({ platform: 'kimi', type: 'oauth' })
-    const text = wrapper.text()
+    const { text, tooltip } = await openHelp(wrapper)
 
     expect(text).toContain('admin.accounts.upstreamRequestIdHeaderHelp.intro')
     expect(text).not.toContain('admin.accounts.upstreamRequestIdHeaderHelp.examplesTitle')
     expect(wrapper.findAll('code')).toHaveLength(0)
+    expect(tooltip?.querySelectorAll('code') ?? []).toHaveLength(0)
   })
 
   it('binds the header name through v-model', async () => {

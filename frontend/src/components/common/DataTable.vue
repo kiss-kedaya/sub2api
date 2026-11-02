@@ -1,31 +1,25 @@
 <template>
   <div v-if="!isDesktopViewport" class="space-y-3">
     <template v-if="loading">
-      <div v-for="i in 5" :key="i" class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
+      <div v-for="i in 5" :key="i" class="rounded-lg bg-default p-4 ring ring-default">
         <div class="space-y-3">
           <div v-for="column in dataColumns" :key="column.key" class="flex justify-between">
-            <div class="h-4 w-20 animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
-            <div class="h-4 w-32 animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
+            <div class="h-4 w-20 animate-pulse rounded-sm bg-elevated"></div>
+            <div class="h-4 w-32 animate-pulse rounded-sm bg-elevated"></div>
           </div>
-          <div v-if="hasActionsColumn" class="border-t border-gray-200 pt-3 dark:border-dark-700">
-            <div class="h-8 w-full animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
+          <div v-if="hasActionsColumn" class="border-t border-default pt-3">
+            <div class="h-8 w-full animate-pulse rounded-sm bg-elevated"></div>
           </div>
         </div>
       </div>
     </template>
 
     <template v-else-if="!data || data.length === 0">
-      <div class="rounded-lg border border-gray-200 bg-white p-12 text-center dark:border-dark-700 dark:bg-dark-900">
+      <div class="rounded-lg bg-default px-4 py-12 text-center ring ring-default">
         <slot name="empty">
-          <div class="flex flex-col items-center">
-            <Icon
-              name="inbox"
-              size="xl"
-              class="mb-4 h-12 w-12 text-gray-400 dark:text-dark-500"
-            />
-            <p class="text-lg font-medium text-gray-900 dark:text-gray-100">
-              {{ t('empty.noData') }}
-            </p>
+          <div class="flex flex-col items-center gap-2">
+            <UIcon name="i-lucide-inbox" class="size-8 text-dimmed" />
+            <p class="text-sm text-muted">{{ t('empty.noData') }}</p>
           </div>
         </slot>
       </div>
@@ -39,7 +33,7 @@
       >
         <!-- 手机端卡片没有表头，补一个排序条：选字段 + 切升降序，和服务端/本地排序共用同一套状态 -->
         <div v-if="sortableColumns.length > 0" class="flex min-w-0 items-center gap-2" data-test="mobile-sort-bar">
-          <span class="shrink-0 text-xs font-medium text-gray-500 dark:text-dark-400">{{ t('common.sortBy') }}</span>
+          <span class="shrink-0 text-xs font-medium text-muted">{{ t('common.sortBy') }}</span>
           <Select
             class="w-40"
             :model-value="sortKey || ''"
@@ -47,65 +41,46 @@
             :placeholder="t('common.sortBy')"
             @change="onMobileSortSelect"
           />
-          <button
-            type="button"
-            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-400 dark:hover:bg-dark-700"
+          <UButton
+            color="neutral"
+            variant="outline"
+            square
+            class="shrink-0"
+            :icon="sortOrder === 'desc' ? 'i-lucide-arrow-down-wide-narrow' : 'i-lucide-arrow-up-narrow-wide'"
             :disabled="!sortKey"
             :title="sortOrder === 'asc' ? t('common.sortAscending') : t('common.sortDescending')"
             :aria-label="sortOrder === 'asc' ? t('common.sortAscending') : t('common.sortDescending')"
             data-test="mobile-sort-direction"
             @click="toggleMobileSortDirection"
-          >
-            <svg
-              class="h-4 w-4"
-              :class="{ 'rotate-180': sortOrder === 'desc' }"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-              aria-hidden="true"
-            >
-              <path
-                fill-rule="evenodd"
-                d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
-                clip-rule="evenodd"
-              />
-            </svg>
-          </button>
-        </div>
-        <label
-          v-if="selectable"
-          class="ml-auto flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-300"
-        >
-          <input
-            type="checkbox"
-            class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
-            :checked="allVisibleSelected"
-            :indeterminate="someVisibleSelected"
-            data-test="select-all-mobile"
-            @change="toggleAllVisible(($event.target as HTMLInputElement).checked)"
           />
-          <span>{{ t('common.selectAll') }}</span>
-        </label>
+        </div>
+        <UCheckbox
+          v-if="selectable"
+          class="ml-auto"
+          :label="t('common.selectAll')"
+          :model-value="headerCheckboxState"
+          data-test="select-all-mobile"
+          @update:model-value="toggleAllVisible(!!$event)"
+        />
       </div>
       <div
         v-for="(row, index) in sortedData"
         :key="resolveRowKey(row, index)"
-        class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900"
+        class="rounded-lg bg-default p-4 ring ring-default transition-colors"
         :class="{
           'cursor-pointer': clickableRows,
-          'border-primary-300 bg-primary-50/40 dark:border-primary-700 dark:bg-primary-900/10': selectable && isRowSelected(row, index)
+          'bg-elevated/50 ring-accented': selectable && isRowSelected(row, index)
         }"
         @click="clickableRows && emit('rowClick', row)"
       >
         <div class="space-y-3">
           <div v-if="selectable" class="flex justify-end">
-            <input
-              type="checkbox"
-              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
-              :checked="isRowSelected(row, index)"
+            <UCheckbox
+              :model-value="isRowSelected(row, index)"
               :aria-label="getRowSelectionLabel(row, index)"
               data-test="select-row"
               @click.stop
-              @change="toggleRowSelection(row, index, ($event.target as HTMLInputElement).checked)"
+              @update:model-value="toggleRowSelection(row, index, !!$event)"
             />
           </div>
           <div
@@ -114,202 +89,130 @@
             :data-field="column.key"
             class="flex min-w-0 items-start justify-between gap-4"
           >
-            <span class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400">
+            <span class="text-xs font-medium text-muted">
               {{ column.label }}
             </span>
-            <div class="min-w-0 max-w-full text-right text-sm text-gray-900 dark:text-gray-100">
+            <div class="min-w-0 max-w-full text-right text-sm text-default">
               <slot :name="`cell-${column.key}`" :row="row" :value="row[column.key]" :expanded="actionsExpanded">
                 {{ column.formatter ? column.formatter(row[column.key], row) : row[column.key] }}
               </slot>
             </div>
           </div>
-          <div v-if="hasActionsColumn" class="border-t border-gray-200 pt-3 dark:border-dark-700">
+          <div v-if="hasActionsColumn" class="border-t border-default pt-3">
             <slot name="cell-actions" :row="row" :value="row['actions']" :expanded="actionsExpanded"></slot>
           </div>
         </div>
       </div>
     </template>
   </div>
-
-  <div
+  <!-- Desktop: Nuxt UI table (TanStack). Sorting, selection and windowing stay in this component;
+       the table renders the rows it is given. -->
+  <UTable
     v-else
-    ref="tableWrapperRef"
-    class="table-wrapper"
-    :class="{
-      'actions-expanded': actionsExpanded,
-      'is-scrollable': isScrollable
-    }"
+    ref="tableRef"
+    :data="tableRows"
+    :columns="tableColumns"
+    :loading="loading"
+    :get-row-id="getTableRowId"
+    :row-selection="rowSelectionState"
+    :sorting="sortingState"
+    :sorting-options="{ manualSorting: true }"
+    :watch-options="{ deep: false }"
+    :meta="tableMeta"
+    :ui="tableUi"
+    data-data-table=""
+    :data-clickable="clickableRows || undefined"
+    :data-hidden-start="hiddenAtStart || undefined"
+    :data-hidden-end="hiddenAtEnd || undefined"
+    :style="pinOffsetStyle"
+    @click="onTableClick"
   >
-    <table class="w-full min-w-max divide-y divide-gray-200 dark:divide-dark-700">
-      <thead class="table-header bg-gray-50 dark:bg-dark-800">
-        <tr>
-          <th
-            v-if="selectable"
-            scope="col"
-            class="sticky-header-cell w-11 min-w-11 px-3 py-3 text-center"
-          >
-            <input
-              type="checkbox"
-              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
-              :checked="allVisibleSelected"
-              :indeterminate="someVisibleSelected"
-              :aria-label="t('common.selectAll')"
-              data-test="select-all"
-              @change="toggleAllVisible(($event.target as HTMLInputElement).checked)"
-            />
-          </th>
-          <th
-            v-for="(column, index) in columns"
-            :key="column.key"
-            scope="col"
-            :aria-sort="column.sortable ? getColumnAriaSort(column.key) : undefined"
-            :class="[
-              'sticky-header-cell py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
-              getAdaptivePaddingClass(),
-              { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable },
-              getStickyColumnClass(column, index),
-              column.class
-            ]"
-            @click="column.sortable && handleSort(column.key)"
-          >
-            <div :class="['flex items-center space-x-1', getHeaderContentAlignmentClass(column)]">
-              <slot
-                :name="`header-${column.key}`"
-                :column="column"
-                :sort-key="sortKey"
-                :sort-order="sortOrder"
-              >
-                <span>{{ column.label }}</span>
-              </slot>
-              <span
-                v-if="column.sortable"
-                class="inline-flex h-5 w-4 flex-col items-center justify-center"
-                aria-hidden="true"
-              >
-                <svg
-                  class="h-2.5 w-2.5"
-                  :class="getSortIndicatorClass(column.key, 'asc')"
-                  fill="currentColor"
-                  viewBox="0 0 10 10"
-                >
-                  <path d="M5 2L1.5 6.5h7L5 2z" />
-                </svg>
-                <svg
-                  class="-mt-0.5 h-2.5 w-2.5"
-                  :class="getSortIndicatorClass(column.key, 'desc')"
-                  fill="currentColor"
-                  viewBox="0 0 10 10"
-                >
-                  <path d="M5 8L1.5 3.5h7L5 8z" />
-                </svg>
-              </span>
-            </div>
-          </th>
-        </tr>
-      </thead>
-      <tbody class="table-body divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
-        <!-- Loading skeleton -->
-        <tr v-if="loading" v-for="i in 5" :key="i">
-          <td v-if="selectable" class="w-11 min-w-11 px-3 py-4">
-            <div class="mx-auto h-4 w-4 animate-pulse rounded bg-gray-200 dark:bg-dark-700"></div>
-          </td>
-          <td v-for="column in columns" :key="column.key" :class="['whitespace-nowrap py-4', getAdaptivePaddingClass()]">
-            <div class="animate-pulse">
-              <div class="h-4 w-3/4 rounded bg-gray-200 dark:bg-dark-700"></div>
-            </div>
-          </td>
-        </tr>
+    <template v-if="selectable" #__select-header>
+      <UCheckbox
+        :model-value="headerCheckboxState"
+        :aria-label="t('common.selectAll')"
+        data-test="select-all"
+        @update:model-value="toggleAllVisible(!!$event)"
+      />
+    </template>
+    <template v-if="selectable" #__select-cell="{ row }">
+      <div v-if="row.original.skeleton" class="size-4 animate-pulse rounded-sm bg-elevated"></div>
+      <UCheckbox
+        v-else
+        :model-value="isRowSelected(row.original.row, row.original.index)"
+        :aria-label="getRowSelectionLabel(row.original.row, row.original.index)"
+        data-test="select-row"
+        @click.stop
+        @update:model-value="toggleRowSelection(row.original.row, row.original.index, !!$event)"
+      />
+    </template>
+    <template v-for="column in columns" :key="`header-${column.key}`" #[`${column.key}-header`]>
+      <div :class="['flex items-center', getHeaderContentAlignmentClass(column)]">
+        <UButton
+          v-if="column.sortable"
+          color="neutral"
+          variant="ghost"
+          :icon="getSortIcon(column.key)"
+          :class="['data-table-sort font-semibold text-highlighted', getSortButtonClass(column)]"
+          :ui="{ leadingIcon: sortKey === column.key ? 'text-highlighted' : 'text-dimmed' }"
+          :data-sort="getColumnAriaSort(column.key)"
+          @click="handleSort(column.key)"
+        >
+          <slot :name="`header-${column.key}`" :column="column" :sort-key="sortKey" :sort-order="sortOrder">
+            {{ column.label }}
+          </slot>
+        </UButton>
+        <slot v-else :name="`header-${column.key}`" :column="column" :sort-key="sortKey" :sort-order="sortOrder">
+          <span>{{ column.label }}</span>
+        </slot>
+      </div>
+    </template>
 
-        <!-- Empty state -->
-        <tr v-else-if="!data || data.length === 0">
-          <td
-            :colspan="tableColumnCount"
-            :class="['py-12 text-center text-gray-500 dark:text-dark-400', getAdaptivePaddingClass()]"
-          >
-            <slot name="empty">
-              <div class="flex flex-col items-center">
-                <Icon
-                  name="inbox"
-                  size="xl"
-                  class="mb-4 h-12 w-12 text-gray-400 dark:text-dark-500"
-                />
-                <p class="text-lg font-medium text-gray-900 dark:text-gray-100">
-                  {{ t('empty.noData') }}
-                </p>
-              </div>
-            </slot>
-          </td>
-        </tr>
+    <template v-for="column in columns" :key="`cell-${column.key}`" #[`${column.key}-cell`]="{ row }">
+      <div v-if="row.original.skeleton" class="h-4 w-3/4 min-w-8 animate-pulse rounded-sm bg-elevated"></div>
+      <slot
+        v-else
+        :name="`cell-${column.key}`"
+        :row="row.original.row"
+        :value="row.original.row[column.key]"
+        :expanded="actionsExpanded"
+      >
+        {{ column.formatter
+          ? column.formatter(row.original.row[column.key], row.original.row)
+          : row.original.row[column.key] }}
+      </slot>
+    </template>
 
-        <!-- Data rows: windowed when large, fully rendered when small (shared row/cell template) -->
-        <template v-else>
-          <tr v-if="virtualPaddingTop > 0" aria-hidden="true">
-            <td :colspan="tableColumnCount"
-                :style="{ height: virtualPaddingTop + 'px', padding: 0, border: 'none' }">
-            </td>
-          </tr>
-          <tr
-            v-for="item in renderRows"
-            :key="resolveRowKey(item.row, item.index)"
-            :data-row-id="resolveRowKey(item.row, item.index)"
-            :data-index="item.index"
-            :ref="item.measure ? measureElement : undefined"
-            class="hover:bg-gray-50 dark:hover:bg-dark-800"
-            :class="{
-              'cursor-pointer': clickableRows,
-              'bg-primary-50/40 dark:bg-primary-900/10': selectable && isRowSelected(item.row, item.index)
-            }"
-            @click="clickableRows && emit('rowClick', item.row)"
-          >
-            <td v-if="selectable" class="w-11 min-w-11 px-3 py-4 text-center">
-              <input
-                type="checkbox"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
-                :checked="isRowSelected(item.row, item.index)"
-                :aria-label="getRowSelectionLabel(item.row, item.index)"
-                data-test="select-row"
-                @click.stop
-                @change="toggleRowSelection(item.row, item.index, ($event.target as HTMLInputElement).checked)"
-              />
-            </td>
-            <td
-              v-for="(column, colIndex) in columns"
-              :key="column.key"
-              :class="[
-                'whitespace-nowrap py-4 text-sm text-gray-900 dark:text-gray-100',
-                getAdaptivePaddingClass(),
-                getStickyColumnClass(column, colIndex),
-                column.class
-              ]"
-            >
-              <slot :name="`cell-${column.key}`"
-                    :row="item.row"
-                    :value="item.row[column.key]"
-                    :expanded="actionsExpanded">
-                {{ column.formatter
-                   ? column.formatter(item.row[column.key], item.row)
-                   : item.row[column.key] }}
-              </slot>
-            </td>
-          </tr>
-          <tr v-if="virtualPaddingBottom > 0" aria-hidden="true">
-            <td :colspan="tableColumnCount"
-                :style="{ height: virtualPaddingBottom + 'px', padding: 0, border: 'none' }">
-            </td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
-  </div>
+    <template #empty>
+      <slot name="empty">
+        <div class="flex flex-col items-center gap-2">
+          <UIcon name="i-lucide-inbox" class="size-8 text-dimmed" />
+          <p class="text-sm text-muted">{{ t('empty.noData') }}</p>
+        </div>
+      </slot>
+    </template>
+
+    <!-- Windowed rendering: spacer rows stand in for the rows outside the window. -->
+    <template v-if="virtualPaddingTop > 0 && !loading" #body-top>
+      <tr aria-hidden="true">
+        <td :colspan="tableColumnCount" :style="{ height: virtualPaddingTop + 'px', padding: 0, border: 'none' }"></td>
+      </tr>
+    </template>
+    <template v-if="virtualPaddingBottom > 0 && !loading" #body-bottom>
+      <tr aria-hidden="true">
+        <td :colspan="tableColumnCount" :style="{ height: virtualPaddingBottom + 'px', padding: 0, border: 'none' }"></td>
+      </tr>
+    </template>
+  </UTable>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted, onUpdated, watch, nextTick } from 'vue'
+import type { TableColumn } from '@nuxt/ui'
 import { useVirtualizer, observeElementRect as observeElementRectDefault } from '@tanstack/vue-virtual'
 import { useI18n } from 'vue-i18n'
 import type { Column } from './types'
 import Select, { type SelectOption } from './Select.vue'
-import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 
@@ -325,8 +228,9 @@ const emit = defineEmits<{
   selectionChange: [keys: Array<string | number>]
 }>()
 
-// 表格容器引用
-const tableWrapperRef = ref<HTMLElement | null>(null)
+// 表格实例与滚动容器（UTable 的根元素就是横向/纵向滚动容器）
+const tableRef = ref<{ $el?: HTMLElement } | null>(null)
+const tableWrapperRef = computed<HTMLElement | null>(() => tableRef.value?.$el ?? null)
 const isScrollable = ref(false)
 const actionsColumnNeedsExpanding = ref(false)
 
@@ -352,12 +256,23 @@ const observeElementRectNonZero = (
 })
 
 // 检查是否可滚动
+// Columns hidden under a pinned column (scrolled past at the start, or still ahead at the end)
+// get a hairline on that pinned column's inner edge.
+const hiddenAtStart = ref(false)
+const hiddenAtEnd = ref(false)
+const updateScrollEdges = () => {
+  const el = tableWrapperRef.value
+  if (!el) return
+  hiddenAtStart.value = el.scrollLeft > 0
+  hiddenAtEnd.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
 const checkScrollable = () => {
   if (tableWrapperRef.value) {
     isScrollable.value = tableWrapperRef.value.scrollWidth > tableWrapperRef.value.clientWidth
+    updateScrollEdges()
   }
 }
-
 // 检查操作列是否需要展开
 const checkActionsColumnWidth = () => {
   if (!props.expandableActions) {
@@ -408,12 +323,13 @@ const checkActionsColumnWidth = () => {
     actionsExpanded.value = wasExpanded
   })
 }
-
 // 监听尺寸变化
 let resizeObserver: ResizeObserver | null = null
 let resizeHandler: (() => void) | null = null
 let desktopViewportMediaQuery: MediaQueryList | null = null
 let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = null
+
+let scrollTrackedEl: HTMLElement | null = null
 
 const detachDesktopTableTracking = () => {
   resizeObserver?.disconnect()
@@ -422,11 +338,15 @@ const detachDesktopTableTracking = () => {
     window.removeEventListener('resize', resizeHandler)
     resizeHandler = null
   }
+  scrollTrackedEl?.removeEventListener('scroll', updateScrollEdges)
+  scrollTrackedEl = null
 }
 
 const attachDesktopTableTracking = () => {
   checkScrollable()
   checkActionsColumnWidth()
+  scrollTrackedEl = tableWrapperRef.value
+  scrollTrackedEl?.addEventListener('scroll', updateScrollEdges, { passive: true })
   if (tableWrapperRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
       checkScrollable()
@@ -470,7 +390,6 @@ onUnmounted(() => {
   }
   desktopViewportMediaQuery = null
 })
-
 interface Props {
   columns: Column[]
   data: any[]
@@ -557,7 +476,6 @@ const normalizeSortKey = (candidate: string) => {
 const normalizeSortOrder = (candidate: any): 'asc' | 'desc' => {
   return candidate === 'desc' ? 'desc' : 'asc'
 }
-
 const readPersistedSortState = (): PersistedSortState | null => {
   if (!props.sortStorageKey) return null
   try {
@@ -597,22 +515,37 @@ const applySortState = (state: PersistedSortState | null) => {
   sortOrder.value = state.order
 }
 
-const getSortIndicatorClass = (key: string, order: 'asc' | 'desc') => {
-  return sortKey.value === key && sortOrder.value === order
-    ? 'text-primary-600 dark:text-primary-400'
-    : 'text-gray-300 transition-colors dark:text-dark-500'
-}
-
 const getColumnAriaSort = (key: string) => {
   if (sortKey.value !== key) return 'none'
   return sortOrder.value === 'asc' ? 'ascending' : 'descending'
 }
 
-const getHeaderContentAlignmentClass = (column: Column) => {
+// Sortable headers are ghost buttons with one arrow icon, as in the Nuxt UI dashboard table.
+const getSortIcon = (key: string) => {
+  if (sortKey.value !== key) return 'i-lucide-arrow-up-down'
+  return sortOrder.value === 'asc' ? 'i-lucide-arrow-up-narrow-wide' : 'i-lucide-arrow-down-wide-narrow'
+}
+
+const getColumnAlignment = (column: Column): 'start' | 'center' | 'end' => {
   const className = column.class || ''
-  if (className.includes('text-center')) return 'justify-center'
-  if (className.includes('text-right')) return 'justify-end'
+  if (className.includes('text-center')) return 'center'
+  if (className.includes('text-right')) return 'end'
+  return 'start'
+}
+
+const getHeaderContentAlignmentClass = (column: Column) => {
+  const alignment = getColumnAlignment(column)
+  if (alignment === 'center') return 'justify-center'
+  if (alignment === 'end') return 'justify-end'
   return 'justify-start'
+}
+
+// The button's own padding is pulled back so its label lines up with the cells below.
+const getSortButtonClass = (column: Column) => {
+  const alignment = getColumnAlignment(column)
+  if (alignment === 'center') return '-mx-2.5'
+  if (alignment === 'end') return '-me-2.5'
+  return '-ms-2.5'
 }
 
 const isNullishOrEmpty = (value: any) => value === null || value === undefined || value === ''
@@ -628,7 +561,6 @@ const toFiniteNumberOrNull = (value: any): number | null => {
   }
   return null
 }
-
 const toSortableString = (value: any): string => {
   if (value === null || value === undefined) return ''
   if (typeof value === 'string') return value
@@ -709,7 +641,6 @@ watch(actionsExpanded, async () => {
   await nextTick()
   checkScrollable()
 })
-
 const handleSort = (key: string) => {
   let newOrder: 'asc' | 'desc' = 'asc'
   if (sortKey.value === key) {
@@ -776,7 +707,10 @@ const someVisibleSelected = computed(() => {
   if (allVisibleSelected.value) return false
   return visibleRowKeys.value.some((key) => selectedKeySet.value.has(key))
 })
-
+// UCheckbox model of the "select all" box: checked, partly checked or empty.
+const headerCheckboxState = computed<boolean | 'indeterminate'>(() =>
+  allVisibleSelected.value ? true : someVisibleSelected.value ? 'indeterminate' : false
+)
 const emitSelection = (next: Set<string | number>) => {
   const keys = Array.from(next)
   emit('update:selectedKeys', keys)
@@ -848,12 +782,6 @@ const virtualPaddingBottom = computed(() => {
   return rowVirtualizer.value.getTotalSize() - items[items.length - 1].end
 })
 
-const measureElement = (el: any) => {
-  if (el) {
-    rowVirtualizer.value.measureElement(el as Element)
-  }
-}
-
 type RowIdentityToken = string | number | object | symbol
 
 const rowIdentityKeys = computed<RowIdentityToken[]>(() =>
@@ -866,7 +794,6 @@ const rowIdentityKeys = computed<RowIdentityToken[]>(() =>
     return row !== null && typeof row === 'object' ? row : Symbol('unstable-row')
   })
 )
-
 const hasSameRowIdentitySet = (
   current: RowIdentityToken[],
   previous: RowIdentityToken[]
@@ -911,48 +838,174 @@ const hasSelectColumn = computed(() => {
   return props.columns.length > 0 && props.columns[0].key === 'select'
 })
 
-// 生成固定列的 CSS 类
-const getStickyColumnClass = (column: Column, index: number) => {
-  const classes: string[] = []
-
-  if (props.stickyFirstColumn) {
-    // 如果第一列是勾选列，固定前两列（勾选+名称）
-    if (hasSelectColumn.value) {
-      if (index === 0) {
-        classes.push('sticky-col sticky-col-left-first')
-      } else if (index === 1) {
-        classes.push('sticky-col sticky-col-left-second')
-      }
-    } else {
-      // 否则只固定第一列
-      if (index === 0) {
-        classes.push('sticky-col sticky-col-left')
-      }
-    }
-  }
-
-  // 操作列固定（最后一列）
-  if (props.stickyActionsColumn && column.key === 'actions') {
-    classes.push('sticky-col sticky-col-right')
-  }
-
-  return classes.join(' ')
+// --- Nuxt UI table wiring ---
+// Each table row carries the source row and its index in the sorted data. Skeleton rows stand in
+// while loading, so the header and the columns keep their place.
+interface TableRow {
+  index: number
+  row: any
+  measure: boolean
+  skeleton?: boolean
 }
 
-// 根据列数自适应调整内边距
-const getAdaptivePaddingClass = () => {
-  const columnCount = props.columns.length
+const skeletonRows: TableRow[] = Array.from({ length: 5 }, (_, index) => ({ index, row: {}, measure: false, skeleton: true }))
 
-  // 列数越多，内边距越小
-  if (columnCount >= 10) {
-    return 'px-2' // 8px
-  } else if (columnCount >= 7) {
-    return 'px-3' // 12px
-  } else if (columnCount >= 5) {
-    return 'px-4' // 16px
-  } else {
-    return 'px-6' // 24px (原始值)
+const tableRows = computed<TableRow[]>(() => (props.loading ? skeletonRows : renderRows.value))
+
+const getTableRowId = (item: TableRow) =>
+  item.skeleton ? `__skeleton-${item.index}` : String(resolveRowKey(item.row, item.index))
+
+const rowSelectionState = computed(() => {
+  const state: Record<string, boolean> = {}
+  if (!props.selectable || props.loading) return state
+  for (const item of renderRows.value) {
+    if (isRowSelected(item.row, item.index)) state[String(resolveRowKey(item.row, item.index))] = true
   }
+  return state
+})
+
+const sortingState = computed(() =>
+  sortKey.value ? [{ id: sortKey.value, desc: sortOrder.value === 'desc' }] : []
+)
+// 根据列数自适应调整内边距：列数越多，内边距越小。
+// Important (`!`) so the legacy table-page skin, which styles bare th/td, does not override it.
+const cellPaddingClass = computed(() => {
+  const columnCount = props.columns.length
+  if (columnCount >= 10) return 'px-2!'
+  if (columnCount >= 7) return 'px-3!'
+  if (columnCount >= 5) return 'px-4!'
+  return 'px-6!'
+})
+// The built-in checkbox column keeps the leading padding only.
+const selectCellPaddingClass = computed(() => {
+  const columnCount = props.columns.length
+  if (columnCount >= 10) return 'ps-2! pe-0!'
+  if (columnCount >= 7) return 'ps-3! pe-0!'
+  if (columnCount >= 5) return 'ps-4! pe-0!'
+  return 'ps-6! pe-0!'
+})
+
+// 固定列：第一列（有勾选列时为勾选列 + 第一数据列），以及操作列。
+// The second pinned column sits right after the first; its offset is measured after render.
+type PinSide = 'left-first' | 'left-second' | 'right' | null
+
+const pinFirstPair = computed(() => props.stickyFirstColumn && (props.selectable || hasSelectColumn.value))
+
+const getColumnPin = (column: Column, index: number): PinSide => {
+  if (props.stickyActionsColumn && column.key === 'actions') return 'right'
+  if (!props.stickyFirstColumn) return null
+  if (props.selectable) return index === 0 ? 'left-second' : null
+  if (hasSelectColumn.value) {
+    if (index === 0) return 'left-first'
+    if (index === 1) return 'left-second'
+    return null
+  }
+  return index === 0 ? 'left-first' : null
+}
+
+// `data-table-pin-start` / `-end` mark the pinned cell that borders the scrolling columns.
+const pinClass = (pin: PinSide) => {
+  if (pin === 'left-first') return pinFirstPair.value ? 'data-table-pin sticky left-0' : 'data-table-pin data-table-pin-start sticky left-0'
+  if (pin === 'left-second') return 'data-table-pin data-table-pin-start sticky left-(--data-table-pin-offset)'
+  if (pin === 'right') return 'data-table-pin data-table-pin-end sticky right-0'
+  return ''
+}
+
+const pinOffset = ref(0)
+const pinOffsetStyle = computed(() => ({ '--data-table-pin-offset': `${pinOffset.value}px` }))
+
+const tableColumns = computed<TableColumn<TableRow>[]>(() => {
+  const defs: TableColumn<TableRow>[] = []
+  if (props.selectable) {
+    const cls = ['w-px', selectCellPaddingClass.value, pinClass(props.stickyFirstColumn ? 'left-first' : null)].join(' ')
+    defs.push({ id: '__select', enableSorting: false, meta: { class: { th: cls, td: cls } } })
+  }
+  props.columns.forEach((column, index) => {
+    const cls = [cellPaddingClass.value, pinClass(getColumnPin(column, index)), column.class].filter(Boolean).join(' ')
+    defs.push({
+      id: column.key,
+      accessorFn: (item: TableRow) => item.row?.[column.key],
+      header: column.label,
+      enableSorting: !!column.sortable,
+      meta: { class: { th: column.sortable ? `${cls} cursor-pointer` : cls, td: cls } }
+    })
+  })
+  return defs
+})
+
+// Row-level classes; read when each row renders, so prop changes apply.
+const tableMeta = {
+  class: {
+    tr: () => (props.clickableRows ? 'cursor-pointer hover:bg-elevated/50' : '')
+  }
+}
+// The Nuxt UI dashboard table look (customers page): an elevated header row with rounded ends,
+// hairline row dividers, and a tint on selected rows. Important (`!`) marks the properties the
+// legacy table-page skin also sets on bare th/td.
+const tableUi = {
+  root: 'relative flex-1 min-h-0 overflow-auto isolate',
+  base: 'w-full min-w-max border-separate border-spacing-0',
+  thead: 'sticky top-0 z-2 [&>tr]:after:content-none',
+  tbody: '[&>tr]:last:[&>td]:border-b-0!',
+  th: 'py-2! text-sm! font-semibold! text-highlighted! border-y border-default! first:border-s last:border-e first:rounded-s-lg last:rounded-e-lg',
+  td: 'py-4! text-sm! text-muted! border-b border-default!',
+  separator: 'h-0',
+  empty: 'py-12! text-sm text-muted',
+  loading: 'py-12!'
+}
+
+// UTable owns the <tr> elements; keep the attributes the rest of the app relies on
+// (`data-row-id` / `data-index` for swipe selection and the virtualizer) and the row lookup
+// used by `rowClick`.
+const rowElementData = new WeakMap<Element, any>()
+
+const syncRenderedRows = () => {
+  const root = tableWrapperRef.value
+  if (!root || !isDesktopViewport.value) return
+  const table = root.querySelector('table')
+  if (!table) return
+  const rowEls = Array.from(table.tBodies[0]?.rows ?? []).filter((el) => el.dataset.slot === 'tr')
+  const rows = tableRows.value
+  rowEls.forEach((el, position) => {
+    const item = rows[position]
+    if (!item || item.skeleton) {
+      el.removeAttribute('data-row-id')
+      el.removeAttribute('data-index')
+      rowElementData.delete(el)
+      return
+    }
+    el.setAttribute('data-row-id', String(resolveRowKey(item.row, item.index)))
+    el.setAttribute('data-index', String(item.index))
+    rowElementData.set(el, item.row)
+    if (item.measure) rowVirtualizer.value.measureElement(el)
+  })
+  if (pinFirstPair.value) {
+    const firstHeader = table.tHead?.rows[0]?.cells[0]
+    const width = firstHeader?.offsetWidth ?? 0
+    if (width && width !== pinOffset.value) pinOffset.value = width
+  }
+}
+
+onMounted(syncRenderedRows)
+onUpdated(syncRenderedRows)
+watch(tableRows, () => nextTick(syncRenderedRows), { flush: 'post' })
+
+const onTableClick = (event: MouseEvent) => {
+  const target = event.target as Element | null
+  if (!target) return
+  // A click anywhere in a sortable header cell sorts, as before; the sort button handles its own.
+  const headerCell = target.closest('th')
+  if (headerCell?.parentElement?.parentElement?.tagName === 'THEAD') {
+    if (target.closest('.data-table-sort')) return
+    const columnId = tableColumns.value[headerCell.cellIndex]?.id
+    const column = props.columns.find((candidate) => candidate.key === columnId)
+    if (column?.sortable) handleSort(column.key)
+    return
+  }
+  if (!props.clickableRows) return
+  const rowEl = target.closest('tr[data-slot="tr"]')
+  if (!rowEl || !rowElementData.has(rowEl)) return
+  emit('rowClick', rowElementData.get(rowEl))
 }
 
 // Init + keep persisted sort state consistent with current columns
@@ -1009,218 +1062,48 @@ defineExpose({
 })
 </script>
 
-<style scoped>
-/* 表格横向滚动 */
-.table-wrapper {
-  --select-col-width: 52px; /* 勾选列宽度：px-6 (24px*2) + checkbox (16px) */
-  position: relative;
-  overflow-x: auto;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
-  isolation: isolate;
-}
-
-/* 表头容器，确保在滚动时覆盖表体内容 */
-.table-wrapper .table-header {
-  position: sticky;
-  top: 0;
-  z-index: 200;
-  background-color: rgb(249 250 251);
-}
-
-.dark .table-wrapper .table-header {
-  background-color: rgb(31 41 55);
-}
-
-/* 表体保持在表头下方 */
-.table-body {
-  position: relative;
-  z-index: 0;
-}
-
-/* 所有表头单元格固定在顶部 */
-.sticky-header-cell {
-  position: sticky;
-  top: 0;
-  z-index: 210; /* 必须高于所有表体内容 */
-  background-color: rgb(249 250 251);
-}
-
-.dark .sticky-header-cell {
-  background-color: rgb(31 41 55);
-}
-
-/* Sticky 列基础样式 */
-.sticky-col {
-  position: sticky;
-  z-index: 20; /* 表体固定列 */
-}
-
-/* 单列固定（无勾选列时） */
-.sticky-col-left {
-  left: 0;
-}
-
-/* 双列固定（有勾选列时）：第一列（勾选） */
-.sticky-col-left-first {
-  left: 0;
-}
-
-/* 双列固定（有勾选列时）：第二列（名称） */
-.sticky-col-left-second {
-  left: var(--select-col-width);
-}
-
-/* 操作列固定 */
-.sticky-col-right {
-  right: 0;
-}
-
-/* 表头 sticky 列 - 需要比普通表头单元格更高的 z-index */
-.sticky-header-cell.sticky-col {
-  z-index: 220; /* 高于普通表头单元格和表体固定列 */
-}
-
-/* 表体 sticky 列背景 */
-tbody .sticky-col {
-  background-color: white;
-}
-
-.dark tbody .sticky-col {
-  background-color: rgb(17 24 39);
-}
-
-/* hover 状态保持 */
-/* 行 hover：背景提亮 + 首列轻微内缩（纸张对齐感）。过渡集中在颜色，不干扰虚拟化测量。 */
-@media (prefers-reduced-motion: no-preference) {
-  .table-wrapper tbody tr:not([aria-hidden]) {
-    transition: background-color 140ms ease;
-  }
-  .table-wrapper tbody tr:not([aria-hidden]) :is(td, .sticky-col) {
-    transition: padding-left 160ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .table-wrapper tbody tr:not([aria-hidden]):hover :is(td:first-child, .sticky-col:first-of-type) {
-      padding-left: 2px;
-    }
-  }
-}
-
-tbody tr:hover .sticky-col {
-  background-color: rgb(249 250 251);
-}
-
-.dark tbody tr:hover .sticky-col {
-  background-color: rgb(31 41 55);
-}
-
-/* 阴影只在可滚动时显示 */
-/* 单列固定右侧阴影 */
-.is-scrollable .sticky-col-left::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 10px;
-  transform: translateX(100%);
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.08), transparent);
-  pointer-events: none;
-}
-
-/* 双列固定：只在第二列显示阴影 */
-.is-scrollable .sticky-col-left-second::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 10px;
-  transform: translateX(100%);
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.08), transparent);
-  pointer-events: none;
-}
-
-/* 操作列左侧阴影 */
-.is-scrollable .sticky-col-right::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 10px;
-  transform: translateX(-100%);
-  background: linear-gradient(to left, rgba(0, 0, 0, 0.08), transparent);
-  pointer-events: none;
-}
-
-/* 暗色模式阴影 */
-.dark .is-scrollable .sticky-col-left::after,
-.dark .is-scrollable .sticky-col-left-second::after {
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.2), transparent);
-}
-
-.dark .is-scrollable .sticky-col-right::before {
-  background: linear-gradient(to left, rgba(0, 0, 0, 0.2), transparent);
-}
-</style>
-
 <style>
-/* ==========================================================================
-   终极悬浮滚动条防丢器 (Sledgehammer Override)
-   绕过 style.css 中 `* { scrollbar-color: transparent }` 的全局悬停隐身诅咒！
-   ========================================================================== */
-
-/* 1. 废除全局针对所有元素的 scrollbar-width 设定，拿回 Chrome/Safari 下 Webkit 滚动条规则的控制权！ */
-.table-wrapper {
-  scrollbar-width: auto !important; /* 阻止 Chrome 121 退化到原生 Mac 闪隐滚动条 */
+/* Header cells are opaque: the header row stays fixed while rows scroll underneath it.
+   This is the elevated/50 tint of the Nuxt UI table, flattened onto the page colour. */
+[data-data-table] > table > thead > tr > th {
+  background-color: color-mix(in srgb, var(--ui-bg-elevated) 50%, var(--ui-bg));
 }
 
-/* 2. 重写 Webkit 滚动层，全部加上 !important 强制覆盖透明悬停陷阱 */
-.table-wrapper::-webkit-scrollbar {
-  height: 12px !important;
-  width: 12px !important;
-  display: block !important;
-  background-color: transparent !important;
+/* Pinned columns sit above the scrolled cells. Their background follows the row state. */
+[data-data-table] > table > thead > tr > th.data-table-pin {
+  z-index: 1;
 }
 
-.table-wrapper::-webkit-scrollbar-track {
-  background-color: rgba(0, 0, 0, 0.03) !important;
-  border-radius: 6px !important;
-  margin: 0 4px !important;
-}
-.dark .table-wrapper::-webkit-scrollbar-track {
-  background-color: rgba(255, 255, 255, 0.05) !important;
+[data-data-table] > table > tbody > tr > td.data-table-pin {
+  z-index: 1;
+  background-color: var(--ui-bg);
 }
 
-/* 常驻、不透明的滑块，无视鼠标是否 hover 都在那！ */
-.table-wrapper::-webkit-scrollbar-thumb {
-  background-color: rgba(107, 114, 128, 0.75) !important; 
-  border-radius: 6px !important;
-  border: 2px solid transparent !important;
-  background-clip: padding-box !important;
-  -webkit-appearance: none !important;
-}
-.table-wrapper::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(75, 85, 99, 0.9) !important;
+[data-data-table] > table > tbody > tr[data-selected='true'] > td.data-table-pin,
+[data-data-table][data-clickable] > table > tbody > tr:hover > td.data-table-pin {
+  background-color: color-mix(in srgb, var(--ui-bg-elevated) 50%, var(--ui-bg));
 }
 
-.dark .table-wrapper::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.75) !important;
-}
-.dark .table-wrapper::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(209, 213, 219, 0.9) !important;
+/* A hairline on a pinned column's inner edge, only while columns scroll underneath it. */
+[data-data-table][data-hidden-start] > table > * > tr > .data-table-pin-start {
+  box-shadow: inset -1px 0 0 var(--ui-border);
 }
 
-/* 3. 仅给真正的 Firefox 留的后路 */
-@supports (-moz-appearance:none) {
-  .table-wrapper {
-    scrollbar-width: thin !important;
-    scrollbar-color: rgba(156, 163, 175, 0.5) rgba(0, 0, 0, 0.03) !important;
-  }
-  .dark .table-wrapper {
-    scrollbar-color: rgba(75, 85, 99, 0.5) rgba(255, 255, 255, 0.05) !important;
-  }
+[data-data-table][data-hidden-end] > table > * > tr > .data-table-pin-end {
+  box-shadow: inset 1px 0 0 var(--ui-border);
+}
+
+/* Inside a card (the table page layout and other card wrappers) the card already draws the
+   outline, so the header row runs flush: no side borders or rounded ends of its own. */
+:is(.card, .table-scroll-container) [data-data-table] > table > thead > tr > th {
+  border-top-width: 0;
+  border-inline-width: 0;
+  border-radius: 0;
+}
+
+/* Keep the scrollbar visible: the global style hides scrollbars until hover. */
+[data-data-table] {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ui-text-dimmed) 60%, transparent) transparent;
 }
 </style>

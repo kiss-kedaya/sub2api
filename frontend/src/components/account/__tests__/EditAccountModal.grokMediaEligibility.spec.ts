@@ -56,11 +56,18 @@ const account = (platform = 'grok', type = 'oauth', extra: Record<string, unknow
   group_ids: [], expires_at: null, auto_pause_on_expired: false
 })
 
+// The mode picker is the shared Select; stub it as a native <select> so the value can be read and set.
+const SelectStub = {
+  props: ['modelValue', 'options'],
+  emits: ['update:modelValue'],
+  template: `<select v-bind="$attrs" :value="modelValue" @change="$emit('update:modelValue', $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>`
+}
+
 function mountModal(value = account()) {
   return mount(EditAccountModal, {
     props: { show: true, account: value, proxies: [], groups: [] },
     global: { stubs: {
-      BaseDialog: BaseDialogStub, Select: true, Icon: true, ProxySelector: true,
+      BaseDialog: BaseDialogStub, Select: SelectStub, Icon: true, ProxySelector: true,
       GroupSelector: true, ModelWhitelistSelector: true
     } }
   })

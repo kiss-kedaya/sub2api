@@ -62,7 +62,7 @@ func requireAnthropicMessagesAreSendable(t *testing.T, messages []AnthropicMessa
 
 // issue #5329：工具执行后的下一轮，Codex 会把 reasoning item 一起回放。
 // 该 item 带 content 数组时，reasoning_text 块以前会被原样塞进 Anthropic 请求体。
-func TestResponsesToAnthropic_ReasoningItemWithContentIsDropped(t *testing.T) {
+func TestResponsesToAnthropic_ReasoningItemWithContentIsDroppedByDefault(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"run a shell command"}]},
 		{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"let me think"}]}
@@ -74,8 +74,6 @@ func TestResponsesToAnthropic_ReasoningItemWithContentIsDropped(t *testing.T) {
 	require.NotContains(t, string(messages[0].Content), "let me think")
 }
 
-// Codex 的常见 reasoning 形态（只有 summary + encrypted_content）本来就会被丢弃，
-// 这条守卫确保行为没有被改变。
 func TestResponsesToAnthropic_ReasoningItemSummaryOnlyStillDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},

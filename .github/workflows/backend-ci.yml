@@ -74,7 +74,9 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Native DeepSeek reasoning replay and tenant isolation
         working-directory: backend
-        run: go test -race -p 1 -tags=unit ./internal/service -run '^TestDeepSeekNativeReasoningReplay' -count=1
+        run: |
+          go test -race -p 1 -tags=unit ./internal/service -run '^Test(DeepSeekNative|NormalizeDeepSeekResponsesRequestBody|RewriteInboundDeepSeekCallIDs|AdaptiveProtocolRoutesDeepSeek|ForwardResponses_ChatFallback)' -count=1
+          go test -race -p 1 ./internal/pkg/apicompat -count=1
 
   copilot-adapter:
     runs-on: ubuntu-latest
@@ -226,6 +228,8 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v6
       - name: Setup pnpm
@@ -235,7 +239,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24.22'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install frontend dependencies
@@ -249,6 +253,11 @@ jobs:
       - name: Verify production frontend build
         working-directory: frontend
         run: pnpm run build
+      - name: Verify Nuxt SSR build and server-side contract tests
+        working-directory: frontend
+        run: |
+          pnpm exec vitest run --config server/vitest.config.ts
+          pnpm run build:ssr
       - name: Upload frontend for embedded build
         uses: actions/upload-artifact@v7
         with:

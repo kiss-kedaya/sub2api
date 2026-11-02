@@ -42,7 +42,7 @@ describe('CustomUsageConfigModal', () => {
   })
   it('keeps blank secrets, supports explicit clearing and emits only nonsecret schedule data', async () => {
     await setup()
-    await wrapper.findAll('input[type="checkbox"]')[0].setValue(true)
+    await wrapper.findAll('[role="checkbox"]')[0].trigger('click')
     await wrapper.get('form').trigger('submit'); await flushPromises()
     const body = api.saveConfig.mock.calls[0][1]
     expect(body.clear_api_key).toBe(true)

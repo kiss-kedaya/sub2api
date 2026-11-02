@@ -225,6 +225,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 		StartTime:             startTime,
 		EndTime:               endTime,
 		ExactTotal:            exactTotal,
+		// The admin list only renders user email / key name / group name. Loading
+		// full nested objects for every row bloats the response and forces the
+		// frontend to proxy large pricing/credential payloads at page_size 50/100.
+		CompactAssociations: true,
+		AccountNameOnly:     true,
 	}
 
 	if adminInflightOnly(c) {

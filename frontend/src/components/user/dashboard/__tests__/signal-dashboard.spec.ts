@@ -19,7 +19,12 @@ const getMyPlatformQuotas = vi.fn()
 vi.mock('vue-i18n', async (original) => ({ ...await original<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@vueuse/core', async (original) => ({ ...await original<typeof import('@vueuse/core')>(), usePreferredReducedMotion: () => preferredMotion }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
+// UButton renders through Nuxt UI's router-aware ULink, which also reads useRoute/RouterLink.
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push }),
+  useRoute: () => ({ path: '/', query: {}, hash: '' }),
+  RouterLink: { name: 'RouterLink', props: ['to', 'custom'], template: '<a><slot /></a>' },
+}))
 vi.mock('@/composables/useBatchImageAccess', () => ({
   useBatchImageAccess: () => ({ canUseBatchImage, refreshBatchImageAccess }),
 }))
@@ -45,7 +50,7 @@ vi.mock('vue-chartjs', () => ({
 vi.mock('@/components/charts/TokenUsageTrend.vue', () => ({
   default: defineComponent({
     name: 'TokenUsageTrend',
-    props: ['trendData', 'loading', 'animationDuration', 'mode'],
+    props: ['trendData', 'loading', 'animationDuration', 'mode', 'color'],
     template: '<div />',
   }),
 }))
@@ -80,10 +85,6 @@ const log = (id = 1): UsageLog => ({
   input_tokens: 12, output_tokens: 34, cache_read_tokens: 99,
   actual_cost: 0.123456, total_cost: 0.234567,
 } as UsageLog)
-const chartStubs = {
-  DateRangePicker: { props: ['startDate', 'endDate'], template: '<div />' },
-  Select: { props: ['modelValue', 'options'], template: '<div />' },
-}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -158,6 +159,9 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     expect(wrapper.find('.signal-actual').text()).toBe('$0.1235')
     expect(wrapper.find('.signal-standard').text()).toBe('$0.2346')
     expect(wrapper.findComponent({ name: 'RouterLink' }).attributes('to')).toBe('/usage')
+    // One table row per log, with the five columns of the template's sales table.
+    expect(wrapper.findAll('tbody tr.signal-request')).toHaveLength(1)
+    expect(wrapper.findAll('thead th')).toHaveLength(5)
     wrapper.unmount()
   })
 
@@ -171,27 +175,39 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
   })
 
   it('keeps all destinations and the batch-image permission gate', async () => {
+    // Quick actions are link cards now (UPageCard `to`), so each one is a RouterLink.
     const wrapper = mount(Actions)
+    const destinations = () => wrapper.findAllComponents({ name: 'RouterLink' }).map(link => link.props('to'))
     expect(refreshBatchImageAccess).toHaveBeenCalledOnce()
-    expect(wrapper.findAll('button')).toHaveLength(4)
-    for (const button of wrapper.findAll('button')) await button.trigger('click')
-    expect(push.mock.calls.map(call => call[0])).toEqual(['/keys', '/infinite-canvas', '/usage', '/redeem'])
+    expect(destinations()).toEqual(['/keys', '/infinite-canvas', '/usage', '/redeem'])
     canUseBatchImage.value = true
     await flushPromises()
-    await wrapper.findAll('button')[3].trigger('click')
-    expect(push).toHaveBeenLastCalledWith('/batch-image')
+    expect(destinations()).toEqual(['/keys', '/infinite-canvas', '/usage', '/batch-image', '/redeem'])
     wrapper.unmount()
   })
 
   it('uses one total series by default and switches to token details without another request', async () => {
-    const wrapper = mount(Charts, { props: { loading: false, startDate: '2026-09-11', endDate: '2026-09-17', granularity: 'day', trend: [] },
-      global: { stubs: chartStubs } })
+    const trendPoints = [{ date: 'a', total_tokens: 1200 }, { date: 'b', total_tokens: 800 }] as any
+    const wrapper = mount(Charts, { props: { loading: false, trend: trendPoints } })
     const trend = wrapper.findComponent({ name: 'TokenUsageTrend' })
     expect(trend.props('mode')).toBe('total')
     expect(trend.props('animationDuration')).toBe(160)
-    await wrapper.findAll('.signal-chart-mode button')[1].trigger('click')
+    // The single series takes the theme primary; the header shows the range total.
+    expect(trend.props('color')).toMatch(/^#[0-9a-f]{6}$/)
+    expect(wrapper.text()).toContain('2.0K')
+    // The switch is a UTabs pill pair: role=tab with aria-selected (it replaces aria-pressed).
+    const tabs = wrapper.findAll('.signal-chart-mode [role="tab"]')
+    expect(tabs.map(tab => tab.text())).toEqual(['dashboard.totalUsage', 'dashboard.tokenDetails'])
+    expect(tabs.map(tab => tab.attributes('aria-selected'))).toEqual(['true', 'false'])
+    expect(wrapper.find('.signal-chart-mode button:not([role="tab"])').exists()).toBe(false)
+    // reka-ui activates a tab on left mousedown (and Enter / Space), not on click.
+    await tabs[1].trigger('mousedown', { button: 0 })
     expect(trend.props('mode')).toBe('breakdown')
+    expect(tabs.map(tab => tab.attributes('aria-selected'))).toEqual(['false', 'true'])
+    expect(trend.props('color')).toBeUndefined()
     expect(wrapper.emitted('dateRangeChange')).toBeUndefined()
+    await wrapper.setProps({ loading: true })
+    expect(wrapper.text()).not.toContain('2.0K')
     preferredMotion.value = 'reduce'
     await flushPromises()
     expect(trend.props('animationDuration')).toBe(0)
@@ -211,8 +227,12 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     const wrapper = mount(Models, { props: { models, startDate: '2026-09-11', endDate: '2026-09-17', loading: false } })
     const doughnut = wrapper.getComponent({ name: 'Doughnut' })
     expect(doughnut.props('data').datasets[0].data).toEqual([40, 30, 20, 10])
-    expect(wrapper.findAll('.signal-model-legend li')).toHaveLength(3)
-    expect(wrapper.findAll('.signal-model-legend li')[0].text()).toContain('40.0%')
+    // The legend is a table now and lists every model the doughnut shows.
+    const legendRows = wrapper.findAll('.signal-model-legend tbody tr')
+    expect(legendRows).toHaveLength(4)
+    expect(legendRows[0].text()).toContain('first')
+    expect(legendRows[0].text()).toContain('40.0%')
+    expect(legendRows[3].text()).toContain('10.0%')
     expect(wrapper.get('.signal-model-period').text()).toContain('2026-09-11')
     preferredMotion.value = 'reduce'
     await flushPromises()
@@ -238,25 +258,28 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
 function renderDashboard() {
   return mount(Dashboard, { global: { stubs: {
     AppLayout: { template: '<main><slot /></main>' },
+    DashboardToolbar: true,
     UserDashboardQuickActions: true, UserDashboardStats: true,
     UserDashboardCharts: true, UserDashboardModels: true, UserDashboardRecentUsage: true,
   } } })
 }
 
+// The folds are UCollapsibles: the trigger is a UButton with aria-expanded, and the content
+// (with its data request) only mounts while the fold is open.
 async function toggleDetail(wrapper: ReturnType<typeof renderDashboard>, name: string, open: boolean) {
-  const element = wrapper.get(`[data-detail="${name}"]`).element as HTMLDetailsElement
-  await new Promise<void>(resolve => {
-    element.addEventListener('toggle', () => resolve(), { once: true })
-    element.open = open
-  })
+  const trigger = () => wrapper.get(`[data-detail="${name}"] button[aria-expanded]`)
+  if ((trigger().attributes('aria-expanded') === 'true') !== open) await trigger().trigger('click')
   await flushPromises()
+  expect(trigger().attributes('aria-expanded')).toBe(String(open))
 }
 
 describe('User dashboard data loading', () => {
   it('loads one chart snapshot and defers quota and recent-log queries until expanded', async () => {
     const wrapper = renderDashboard()
     await flushPromises()
-    expect(wrapper.get('h1').text()).toBe('dashboard.overview')
+    // The page title lives in the top navbar; the body only names its region.
+    expect(wrapper.find('h1').exists()).toBe(false)
+    expect(wrapper.get('section.user-dashboard').attributes('aria-label')).toBe('dashboard.overview')
     expect(getDashboardStats).toHaveBeenCalledOnce()
     expect(getDashboardSnapshotV2).toHaveBeenCalledOnce()
     expect(getDashboardSnapshotV2.mock.calls[0][0]).toMatchObject({ include_trend: true, include_model_stats: true, include_group_stats: false })
@@ -264,11 +287,16 @@ describe('User dashboard data loading', () => {
     expect(getDashboardModels).not.toHaveBeenCalled()
     expect(queryUsage).not.toHaveBeenCalled()
     expect(getMyPlatformQuotas).not.toHaveBeenCalled()
+    // Closed folds render no panel at all, and no native details/summary is left.
+    expect(wrapper.find('details, summary').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'UserDashboardRecentUsage' }).exists()).toBe(false)
+    expect(wrapper.get('[data-detail="recent"] button[aria-expanded]').attributes('aria-expanded')).toBe('false')
     await toggleDetail(wrapper, 'recent', true)
     expect(queryUsage).toHaveBeenCalledOnce()
     expect(queryUsage.mock.calls[0][0]).toMatchObject({ page: 1, page_size: 5, sort_by: 'created_at', sort_order: 'desc' })
     expect(wrapper.getComponent({ name: 'UserDashboardRecentUsage' }).props('data')).toHaveLength(5)
     await toggleDetail(wrapper, 'recent', false)
+    expect(wrapper.findComponent({ name: 'UserDashboardRecentUsage' }).exists()).toBe(false)
     await toggleDetail(wrapper, 'recent', true)
     expect(queryUsage).toHaveBeenCalledOnce()
     await toggleDetail(wrapper, 'platforms', true)
@@ -312,9 +340,10 @@ describe('User dashboard data loading', () => {
     const wrapper = renderDashboard()
     await flushPromises()
     const charts = wrapper.getComponent({ name: 'UserDashboardCharts' })
+    const toolbar = wrapper.getComponent({ name: 'DashboardToolbar' })
     getDashboardSnapshotV2.mockResolvedValueOnce({ trend: [{ date: 'new' }], models: [] })
-    charts.vm.$emit('update:startDate', '2026-09-16')
-    charts.vm.$emit('dateRangeChange')
+    toolbar.vm.$emit('update:startDate', '2026-09-16')
+    toolbar.vm.$emit('dateRangeChange')
     await flushPromises()
     expect(getDashboardSnapshotV2.mock.calls[0][1].signal.aborted).toBe(true)
     resolveOld({ trend: [{ date: 'old' }], models: [] })
@@ -328,16 +357,17 @@ describe('User dashboard data loading', () => {
   it('refreshes recent logs only when open and follows the chosen dates', async () => {
     const wrapper = renderDashboard()
     await flushPromises()
-    const charts = wrapper.getComponent({ name: 'UserDashboardCharts' })
-    charts.vm.$emit('dateRangeChange')
+    const toolbar = wrapper.getComponent({ name: 'DashboardToolbar' })
+    toolbar.vm.$emit('dateRangeChange')
     await flushPromises()
     expect(queryUsage).not.toHaveBeenCalled()
     await toggleDetail(wrapper, 'recent', true)
-    charts.vm.$emit('update:startDate', '2026-09-15')
-    charts.vm.$emit('dateRangeChange')
+    toolbar.vm.$emit('update:startDate', '2026-09-15')
+    toolbar.vm.$emit('dateRangeChange')
     await flushPromises()
     expect(queryUsage.mock.calls.at(-1)?.[0].start_date).toBe('2026-09-15')
-    await wrapper.get('.signal-overview-refresh').trigger('click')
+    // The toolbar's refresh button (see DashboardToolbar.spec) reloads everything that is open.
+    toolbar.vm.$emit('refresh')
     await flushPromises()
     expect(getDashboardStats).toHaveBeenCalledTimes(2)
     expect(queryUsage).toHaveBeenCalledTimes(3)
@@ -370,9 +400,9 @@ describe('User dashboard data loading', () => {
     await flushPromises()
     await toggleDetail(wrapper, 'recent', true)
     await toggleDetail(wrapper, 'recent', false)
-    const charts = wrapper.getComponent({ name: 'UserDashboardCharts' })
-    charts.vm.$emit('update:startDate', '2026-09-15')
-    charts.vm.$emit('dateRangeChange')
+    const toolbar = wrapper.getComponent({ name: 'DashboardToolbar' })
+    toolbar.vm.$emit('update:startDate', '2026-09-15')
+    toolbar.vm.$emit('dateRangeChange')
     await flushPromises()
     expect(queryUsage.mock.calls[0][1].signal.aborted).toBe(true)
     resolveOld({ items: [log(99)] })

@@ -1,9 +1,41 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
-import UserCreateModal from '@/components/admin/user/UserCreateModal.vue'
+import { defineComponent, reactive } from 'vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpStepUpDialog from '../TotpStepUpDialog.vue'
 import TotpCodeInput from '@/components/common/TotpCodeInput.vue'
 import { useStepUp } from '@/composables/useStepUp'
+import { adminAPI } from '@/api/admin'
+
+/**
+ * An initiating dialog wired like the admin create-user dialog (BaseDialog + form +
+ * stepUp.run + TotpStepUpDialog), with native fields so the spec does not depend on how
+ * another area renders its form controls.
+ */
+const InitiatingDialog = defineComponent({
+  components: { BaseDialog, TotpStepUpDialog },
+  props: { show: { type: Boolean, default: false } },
+  emits: ['success'],
+  setup(_props, { emit }) {
+    const stepUp = useStepUp()
+    const form = reactive({ email: '', password: '', role: 'user' })
+    async function submit() {
+      await stepUp.run(() => adminAPI.users.create({ ...form } as never))
+      emit('success')
+    }
+    return { stepUp, form, submit }
+  },
+  template: `
+    <BaseDialog :show="show" title="Create user">
+      <form id="create-user-form" @submit.prevent="submit">
+        <input v-model="form.email" type="email" aria-label="Email" />
+        <input v-model="form.password" type="text" aria-label="Password" />
+        <select v-model="form.role" aria-label="Role"><option value="user">user</option><option value="admin">admin</option></select>
+      </form>
+    </BaseDialog>
+    <TotpStepUpDialog :controller="stepUp" />
+  `
+})
 
 const mocks = vi.hoisted(() => ({ create: vi.fn(), stepUp: vi.fn(), showError: vi.fn(), showSuccess: vi.fn() }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
@@ -19,7 +51,7 @@ describe('step-up above the initiating user dialog', () => {
   it('opens above user creation, retains the form, and retries only after verification', async () => {
     mocks.create.mockRejectedValueOnce({ reason: 'STEP_UP_REQUIRED' }).mockResolvedValueOnce({ id: 11 })
     mocks.stepUp.mockResolvedValue({ verified: true })
-    const wrapper = mount(UserCreateModal, { attachTo: document.body, props: { show: true } })
+    const wrapper = mount(InitiatingDialog, { attachTo: document.body, props: { show: true } })
     await flushPromises()
     const form = document.querySelector<HTMLFormElement>('#create-user-form')!
     const email = form.querySelector<HTMLInputElement>('input[type="email"]')!
@@ -44,6 +76,8 @@ describe('step-up above the initiating user dialog', () => {
     expect(mocks.stepUp).toHaveBeenCalledWith('012345')
     expect(mocks.create).toHaveBeenCalledTimes(2)
     expect(mocks.create.mock.calls[0][0]).toEqual(mocks.create.mock.calls[1][0])
+    // The retry carries the changed role, so the selection really switched and was kept.
+    expect(mocks.create.mock.calls[1][0]).toMatchObject({ email: 'fixture@example.test', role: 'admin' })
     expect(wrapper.emitted('success')).toHaveLength(1)
   })
 

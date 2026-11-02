@@ -74,6 +74,10 @@ export async function list(
     api_key_group_id?: number   // filter users by the group their API keys are bound to
     attributes?: Record<number, string>  // attributeId -> value
     include_subscriptions?: boolean
+    include_allowed_groups?: boolean
+    // 让后端把整页用户的平台配额一次性内联返回（1 条 IN 查询），
+    // 取代逐行请求 /admin/users/:id/platform-quotas 的 N+1。
+    include_platform_quotas?: boolean
     sort_by?: string
     sort_order?: 'asc' | 'desc'
   },
@@ -91,6 +95,8 @@ export async function list(
     group_name: filters?.group_name,
     api_key_group_id: filters?.api_key_group_id,
     include_subscriptions: filters?.include_subscriptions,
+    include_platform_quotas: filters?.include_platform_quotas,
+    include_allowed_groups: filters?.include_allowed_groups,
     sort_by: filters?.sort_by,
     sort_order: filters?.sort_order
   }
@@ -367,9 +373,13 @@ export interface PlatformQuotasResponse {
 /**
  * Get user's platform quotas
  */
-export async function getPlatformQuotas(id: number): Promise<PlatformQuotasResponse> {
+export async function getPlatformQuotas(
+  id: number,
+  options?: { signal?: AbortSignal }
+): Promise<PlatformQuotasResponse> {
   const { data } = await apiClient.get<PlatformQuotasResponse>(
-    `/admin/users/${id}/platform-quotas`
+    `/admin/users/${id}/platform-quotas`,
+    { signal: options?.signal }
   )
   return data
 }

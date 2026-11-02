@@ -1,224 +1,109 @@
 <template>
   <AppLayout>
     <TablePageLayout class="accounts-workspace">
+      <template #actions>
+        <AdminPageHeader :title="t('admin.accounts.title')" :description="t('admin.accounts.description')">
+          <template #actions>
+            <UButton icon="i-lucide-plus" :label="t('admin.accounts.createAccount')" @click="showCreate = true" />
+          </template>
+        </AdminPageHeader>
+      </template>
       <template #filters>
-        <div class="accounts-command-bar">
-          <AccountTableFilters
-            v-model:searchQuery="params.search"
-            :filters="params"
-            :groups="groups"
-            @update:filters="(newFilters) => Object.assign(params, newFilters)"
-            @change="debouncedReload"
-            @update:searchQuery="debouncedReload"
-          >
-            <template #actions>
-              <AccountTableActions
-                :loading="loading"
-                @refresh="handleManualRefresh"
-                @create="showCreate = true"
-              >
-                <template #after>
-              <!-- Auto Refresh Dropdown -->
-              <div class="relative" ref="autoRefreshDropdownRef">
-                <button
-                  type="button"
-                  @click="
-                    showAutoRefreshDropdown = !showAutoRefreshDropdown;
-                    showAccountToolsDropdown = false
-                  "
-                  class="btn btn-secondary accounts-compact-action"
-                  :title="t('admin.accounts.autoRefresh')"
-                  :aria-label="t('admin.accounts.autoRefresh')"
-                  aria-haspopup="menu"
-                  :aria-expanded="showAutoRefreshDropdown"
-                >
-                  <Icon name="refresh" size="sm" :class="[autoRefreshEnabled ? 'animate-spin' : '']" />
-                  <span class="hidden md:inline">
-                    {{
-                      autoRefreshEnabled
-                        ? t('admin.accounts.autoRefreshCountdown', { seconds: autoRefreshCountdown })
-                        : t('admin.accounts.autoRefresh')
-                    }}
-                  </span>
-                </button>
-                <div
-                  v-if="showAutoRefreshDropdown"
-                  class="account-popover absolute right-0 z-50 mt-2 w-56 origin-top-right"
-                  role="menu"
-                >
-                  <div class="account-popover-body">
-                    <button
-                      type="button"
-                      @click="setAutoRefreshEnabled(!autoRefreshEnabled)"
-                      class="account-popover-item"
-                      role="menuitemcheckbox"
-                      :aria-checked="autoRefreshEnabled"
-                    >
-                      <span>{{ t('admin.accounts.enableAutoRefresh') }}</span>
-                      <Icon v-if="autoRefreshEnabled" name="check" size="sm" class="text-primary-500" />
-                    </button>
-                    <div class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
-                    <button
-                      v-for="sec in autoRefreshIntervals"
-                      :key="sec"
-                      type="button"
-                      @click="setAutoRefreshInterval(sec)"
-                      class="account-popover-item"
-                      role="menuitemradio"
-                      :aria-checked="autoRefreshIntervalSeconds === sec"
-                    >
-                      <span>{{ autoRefreshIntervalLabel(sec) }}</span>
-                      <Icon v-if="autoRefreshIntervalSeconds === sec" name="check" size="sm" class="text-primary-500" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- More Tools Dropdown -->
-              <div class="relative" ref="accountToolsDropdownRef">
-                <button
-                  ref="accountToolsTriggerRef"
-                  type="button"
-                  @click="toggleAccountToolsDropdown"
-                  class="btn btn-secondary accounts-compact-action"
-                  :title="t('admin.accounts.moreActions')"
-                  :aria-label="t('admin.accounts.moreActions')"
-                  aria-haspopup="menu"
-                  :aria-expanded="showAccountToolsDropdown"
-                >
-                  <Icon name="more" size="sm" class="md:mr-1.5" />
-                  <span class="hidden md:inline">{{ t('admin.accounts.moreActions') }}</span>
-                  <Icon name="chevronDown" size="xs" class="ml-1 hidden md:inline" />
-                </button>
-                <Teleport to="body">
-                  <div
-                    v-if="showAccountToolsDropdown"
-                    class="account-popover fixed z-[9999] origin-top-right overflow-hidden"
-                    :style="accountToolsDropdownStyle"
-                    role="menu"
-                    @click.stop
-                  >
-                    <div class="account-tools-scroll" :style="{ maxHeight: `${accountToolsDropdownPosition.maxHeight}px` }">
-                      <div class="account-menu-heading">
-                        <div>
-                          {{ t('admin.accounts.dataActions') }}
-                        </div>
-                      </div>
-                      <button class="account-tools-menu-item" @click="openSyncFromCrs">
-                        <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
-                          <Icon name="sync" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.syncFromCrs') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" @click="openImportData">
-                        <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
-                          <Icon name="upload" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
-                        <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
-                          <Icon name="download" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">
-                          {{ selIds.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport') }}
-                        </span>
-                        <span
-                          v-if="selIds.length"
-                          class="rounded-full bg-primary-100 px-2 py-0.5 text-xs font-medium text-primary-700 dark:bg-primary-900/40 dark:text-primary-300"
-                        >
-                          {{ t('admin.accounts.selectedCount', { count: selIds.length }) }}
-                        </span>
-                      </button>
-
-                      <div class="account-menu-divider"></div>
-                      <div class="account-menu-heading">
-                        <div>
-                          {{ t('admin.accounts.toolActions') }}
-                        </div>
-                      </div>
-                      <button class="account-tools-menu-item" @click="openErrorPassthrough">
-                        <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
-                          <Icon name="shield" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.errorPassthrough.title') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
-                        <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
-                          <Icon name="lock" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" @click="openBalanceAlert">
-                        <span class="account-tools-menu-icon bg-yellow-50 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-300">
-                          <Icon name="bell" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.balanceAlert.title') }}</span>
-                      </button>
-
-                      <div class="account-menu-divider"></div>
-                      <div class="account-menu-heading">
-                        <div class="flex items-center justify-between gap-3">
-                          <span>
-                            {{ t('admin.accounts.viewColumns') }}
-                          </span>
-                          <Icon name="grid" size="sm" class="text-gray-400" />
-                        </div>
-                      </div>
-                      <div class="grid grid-cols-1 gap-1">
-                        <button
-                          v-for="col in toggleableColumns"
-                          :key="col.key"
-                          type="button"
-                          @click="toggleColumn(col.key)"
-                          class="account-popover-item"
-                          role="menuitemcheckbox"
-                          :aria-checked="isColumnVisible(col.key)"
-                        >
-                          <span class="truncate">{{ col.label }}</span>
-                          <Icon v-if="isColumnVisible(col.key)" name="check" size="sm" class="text-primary-500" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </Teleport>
-              </div>
-                </template>
-              </AccountTableActions>
-            </template>
-          </AccountTableFilters>
-        </div>
-        <div
-          v-if="hasPendingListSync"
-          class="accounts-sync-notice"
+        <AccountTableFilters
+          v-model:searchQuery="params.search"
+          :filters="params"
+          :groups="groups"
+          @update:filters="(newFilters) => Object.assign(params, newFilters)"
+          @change="debouncedReload"
+          @update:searchQuery="debouncedReload"
         >
-          <span>{{ t('admin.accounts.listPendingSyncHint') }}</span>
-          <button
-            class="btn btn-secondary px-2 py-1 text-xs"
-            @click="syncPendingListChanges"
-          >
-            {{ t('admin.accounts.listPendingSyncAction') }}
-          </button>
-        </div>
+          <template #actions>
+            <AccountBulkActionsBar
+              :selected-ids="selIds"
+              :total-results="pagination.total"
+              :selecting-all="selectingAllResults"
+              :all-results-selected="allResultsSelected"
+              v-on="bulkActionListeners"
+            />
+            <AccountTableActions
+              :loading="loading"
+              @refresh="handleManualRefresh"
+            >
+              <template #after>
+                <!-- Auto refresh -->
+                <UDropdownMenu
+                  v-model:open="showAutoRefreshDropdown"
+                  :items="autoRefreshMenuItems"
+                  :content="{ align: 'end' }"
+                  :ui="{ content: 'w-56' }"
+                >
+                  <UButton
+                    color="neutral"
+                    :variant="autoRefreshEnabled ? 'soft' : 'outline'"
+                    icon="i-lucide-timer"
+                    :square="!autoRefreshEnabled"
+                    :title="t('admin.accounts.autoRefresh')"
+                    :aria-label="t('admin.accounts.autoRefresh')"
+                  >
+                    <span v-if="autoRefreshEnabled" class="tabular-nums">
+                      {{ t('admin.accounts.autoRefreshCountdown', { seconds: autoRefreshCountdown }) }}
+                    </span>
+                  </UButton>
+                </UDropdownMenu>
+
+                <!-- Column visibility, like the template's "Display" menu -->
+                <UDropdownMenu
+                  v-model:open="showColumnsDropdown"
+                  :items="columnMenuItems"
+                  :content="{ align: 'end' }"
+                  :ui="{ content: 'w-52' }"
+                >
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    trailing-icon="i-lucide-settings-2"
+                    :label="t('admin.accounts.viewColumns')"
+                    data-test="account-columns-menu"
+                  />
+                </UDropdownMenu>
+
+                <!-- More tools -->
+                <UDropdownMenu
+                  v-model:open="showAccountToolsDropdown"
+                  :items="accountToolsMenuItems"
+                  :content="{ align: 'end' }"
+                  :ui="{ content: 'w-64' }"
+                >
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    icon="i-lucide-ellipsis"
+                    square
+                    :title="t('admin.accounts.moreActions')"
+                    :aria-label="t('admin.accounts.moreActions')"
+                  />
+                  <template #export-trailing>
+                    <UBadge v-if="selIds.length" color="neutral" variant="subtle" size="sm">
+                      {{ t('admin.accounts.selectedCount', { count: selIds.length }) }}
+                    </UBadge>
+                  </template>
+                </UDropdownMenu>
+              </template>
+            </AccountTableActions>
+          </template>
+        </AccountTableFilters>
+        <UAlert
+          v-if="hasPendingListSync"
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-refresh-ccw"
+          orientation="horizontal"
+          class="mt-2"
+          :description="t('admin.accounts.listPendingSyncHint')"
+          :actions="[{ label: t('admin.accounts.listPendingSyncAction'), color: 'warning', variant: 'outline', size: 'xs', onClick: syncPendingListChanges }]"
+        />
       </template>
       <template #table>
-        <AccountBulkActionsBar
-          :selected-ids="selIds"
-          :total-results="pagination.total"
-          :selecting-all="selectingAllResults"
-          :all-results-selected="allResultsSelected"
-          @delete="handleBulkDelete"
-          @reset-status="handleBulkResetStatus"
-          @refresh-token="handleBulkRefreshToken"
-          @probe-upstream-billing="handleBulkProbeUpstreamBilling"
-          @test-models="openBatchTestModal"
-          @edit-selected="openBulkEditSelected"
-          @edit-filtered="openBulkEditFiltered"
-          @clear="clearSelection"
-          @select-page="selectPage"
-          @select-all-results="handleSelectAllResults"
-          @toggle-schedulable="handleBulkToggleSchedulable"
-        />
         <div ref="accountTableRef" class="accounts-table-stage">
         <DataTable
           ref="dataTableRef"
@@ -236,22 +121,25 @@
           :virtualize-threshold="20"
         >
           <template #header-select>
-            <input
-              type="checkbox"
-              class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-              :checked="allVisibleSelected"
+            <UCheckbox
+              :model-value="headerSelectState"
+              :aria-label="t('common.selectAll')"
               @click.stop
-              @change="toggleSelectAllVisible($event)"
+              @update:model-value="toggleSelectAllVisible"
             />
           </template>
           <template #cell-select="{ row }">
-            <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+            <UCheckbox
+              :model-value="isSelected(row.id)"
+              :aria-label="row.name"
+              @update:model-value="toggleSel(row.id)"
+            />
           </template>
           <template #cell-id="{ value }">
-            <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
+            <span class="font-mono text-xs text-muted">#{{ value }}</span>
           </template>
           <template #cell-name="{ row, value }">
-            <div class="flex flex-col">
+            <div class="flex min-w-0 flex-col">
               <HelpTooltip
                 v-if="accountHomepageUrl(row)"
                 :content="accountHomepageUrl(row)"
@@ -263,25 +151,27 @@
                     :href="accountHomepageUrl(row)"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="border-b border-dotted border-gray-300 font-medium text-gray-900 dark:border-dark-600 dark:text-white"
+                    class="border-b border-dotted border-accented font-medium text-highlighted"
                   >
                     {{ value }}
                   </a>
                 </template>
               </HelpTooltip>
-              <span v-else class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <span v-else class="font-medium text-highlighted">{{ value }}</span>
               <span
-                v-if="accountDisplayEmail(row)"
-                class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
+                v-if="accountDisplayEmail(row) || hiddenColumns.has('id')"
+                class="max-w-[220px] truncate text-xs text-muted"
                 :title="accountDisplayEmail(row) + (row.parent_chatgpt_account_id ? ' · ' + row.parent_chatgpt_account_id : '')"
               >
+                <span v-if="hiddenColumns.has('id')" class="font-mono">#{{ row.id }}</span>
+                <template v-if="hiddenColumns.has('id') && accountDisplayEmail(row)"> · </template>
                 {{ accountDisplayEmail(row) }}
               </span>
             </div>
           </template>
           <template #cell-notes="{ value }">
-            <span v-if="value" :title="value" class="block max-w-xs truncate text-sm text-gray-600 dark:text-gray-300">{{ value }}</span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-if="value" :title="value" class="block max-w-xs truncate text-sm text-default">{{ value }}</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
           <template #cell-platform_type="{ row }">
             <div class="flex min-w-0 flex-col gap-1">
@@ -291,22 +181,21 @@
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
                   :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
-                <span
+                <UBadge
                   v-if="getAntigravityTierLabel(row)"
-                  :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
+                  :color="getAntigravityTierColor(row)"
+                  variant="subtle"
+                  size="sm"
                 >
                   {{ getAntigravityTierLabel(row) }}
-                </span>
+                </UBadge>
               </div>
               <div
                 v-if="getOpenAICompactMeta(row)"
-                :class="[
-                  'inline-flex items-center gap-1.5 pl-0.5 text-[11px] font-medium leading-4',
-                  getOpenAICompactMeta(row)?.className
-                ]"
+                :class="['inline-flex items-center gap-1.5 pl-0.5 text-xs leading-4', getOpenAICompactMeta(row)?.className]"
                 :title="getOpenAICompactTitle(row)"
               >
-                <span :class="['h-1.5 w-1.5 rounded-full', getOpenAICompactMeta(row)?.dotClass]" />
+                <span :class="['size-1.5 rounded-full', getOpenAICompactMeta(row)?.dotClass]" />
                 <span>{{ getOpenAICompactMeta(row)?.label }}</span>
               </div>
             </div>
@@ -315,20 +204,25 @@
             <AccountCapacityCell :account="row" />
           </template>
           <template #cell-status="{ row }">
-            <div class="flex items-center gap-1.5">
-              <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
-            </div>
+            <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
           </template>
           <template #cell-schedulable="{ row }">
-            <SchedulableTimerControl
-              v-if="authStore.isAdmin && !authStore.isAdminObserver"
-              :account-id="row.id"
-              :refresh-key="timerRefreshKey"
-              @executed="handleTimerExecuted"
-            />
-            <button @click="handleToggleSchedulable(row)" :disabled="togglingSchedulable === row.id" class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-dark-800" :class="[row.schedulable ? 'bg-primary-500 hover:bg-primary-600' : 'bg-gray-200 hover:bg-gray-300 dark:bg-dark-600 dark:hover:bg-dark-500']" :title="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')">
-              <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="[row.schedulable ? 'translate-x-4' : 'translate-x-0']" />
-            </button>
+            <div class="flex min-w-24 flex-wrap items-center gap-x-1 gap-y-1">
+              <USwitch
+                :model-value="row.schedulable"
+                :disabled="togglingSchedulable === row.id"
+                size="sm"
+                :title="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')"
+                :aria-label="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')"
+                @update:model-value="handleToggleSchedulable(row)"
+              />
+              <SchedulableTimerControl
+                v-if="authStore.isAdmin && !authStore.isAdminObserver"
+                :account-id="row.id"
+                :refresh-key="timerRefreshKey"
+                @executed="handleTimerExecuted"
+              />
+            </div>
           </template>
           <template #cell-today_stats="{ row }">
             <AccountTodayStatsCell
@@ -347,6 +241,9 @@
             </div>
           </template>
           <template #cell-usage="{ row }">
+            <!-- A fixed width lets the window stats and action row wrap instead of
+                 stretching the column under the sticky actions column. -->
+            <div class="w-60 max-w-60 whitespace-normal">
             <AccountUsageCell
               :account="row"
               :today-stats="todayStatsByAccountId[String(row.id)] ?? null"
@@ -359,6 +256,7 @@
               @account-updated="handleAccountUpdated"
               @usage-loaded="handleAccountUsageLoaded(row.id, $event)"
             />
+            </div>
           </template>
           <template #cell-custom_usage="{ row }">
             <CustomUsageCell
@@ -372,36 +270,37 @@
           </template>
           <template #cell-proxy="{ row }">
             <div class="flex flex-col gap-1">
-              <div v-if="row.proxy" class="flex items-center gap-2">
-                <span class="text-sm text-gray-700 dark:text-gray-300">{{ row.proxy.name }}</span>
-                <span v-if="row.proxy.country_code" class="text-xs text-gray-500 dark:text-gray-400">
-                  ({{ row.proxy.country_code }})
-                </span>
+              <div v-if="row.proxy" class="flex items-center gap-1.5 text-sm">
+                <span class="text-default">{{ row.proxy.name }}</span>
+                <span v-if="row.proxy.country_code" class="text-xs text-muted">({{ row.proxy.country_code }})</span>
               </div>
-              <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
-              <div v-if="row.proxy && row.proxy.expires_at" class="flex items-center gap-2 text-xs">
-                <span class="text-gray-600 dark:text-gray-300">{{ formatDateTime(row.proxy.expires_at) }}</span>
-                <span :class="proxyExpiryBadge(row.proxy)">{{ proxyExpiryText(row.proxy) }}</span>
+              <span v-else class="text-sm text-dimmed">-</span>
+              <div v-if="row.proxy && row.proxy.expires_at" class="flex items-center gap-1.5 text-xs">
+                <span class="text-muted">{{ formatDateTime(row.proxy.expires_at) }}</span>
+                <UBadge v-if="proxyExpiryColor(row.proxy) !== 'neutral'" :color="proxyExpiryColor(row.proxy)" variant="subtle" size="sm">
+                  {{ proxyExpiryText(row.proxy) }}
+                </UBadge>
+                <span v-else class="text-muted">{{ proxyExpiryText(row.proxy) }}</span>
               </div>
               <div v-if="row.proxy_fallback_origin_id" class="flex items-center gap-1">
-                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" :title="t('admin.accounts.fallbackActiveTip', { origin: row.proxy_fallback_origin_name })">
+                <UBadge color="warning" variant="subtle" size="sm" :title="t('admin.accounts.fallbackActiveTip', { origin: row.proxy_fallback_origin_name })">
                   {{ t('admin.accounts.fallbackActive') }}
-                </span>
-                <button class="text-xs px-1.5 py-0.5 rounded border border-gray-300 dark:border-dark-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-dark-700" @click="onRevertFallback(row)">{{ t('admin.accounts.revertProxy') }}</button>
+                </UBadge>
+                <UButton color="neutral" variant="outline" size="xs" :label="t('admin.accounts.revertProxy')" @click="onRevertFallback(row)" />
               </div>
             </div>
           </template>
           <template #cell-rate_multiplier="{ row }">
-            <span class="inline-flex items-center gap-1 text-sm font-mono text-gray-700 dark:text-gray-300">
+            <span class="inline-flex items-center gap-1 font-mono text-sm tabular-nums text-default">
               <span>{{ formatMultiplier(row.rate_multiplier ?? 1) }}x</span>
               <span
                 v-if="row.extra?.upstream_billing_rate_sync_enabled === true"
-                class="inline-flex cursor-help text-emerald-600 dark:text-emerald-400"
+                class="inline-flex cursor-help text-success"
                 :aria-label="t('admin.accounts.upstreamBilling.syncedRateTooltip')"
                 :title="t('admin.accounts.upstreamBilling.syncedRateTooltip')"
                 data-testid="account-rate-sync-indicator"
               >
-                <Icon name="sync" size="xs" />
+                <UIcon name="i-lucide-refresh-cw" class="size-3" />
               </span>
             </span>
           </template>
@@ -423,7 +322,7 @@
             />
           </template>
           <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+            <span class="text-sm tabular-nums text-default">{{ value }}</span>
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -432,67 +331,64 @@
             </div>
           </template>
           <template #cell-scheduler_score="{ row }">
-            <div v-if="getSchedulerScoreRows(row).length" class="flex min-w-[7rem] flex-col gap-0.5 font-mono text-[11px] leading-4">
+            <div v-if="getSchedulerScoreRows(row).length" class="flex min-w-28 flex-col gap-0.5 font-mono text-xs leading-4">
               <div
                 v-for="score in getSchedulerScoreRows(row)"
                 :key="String(score.group_id)"
-                class="flex items-center gap-1 whitespace-nowrap text-gray-700 dark:text-gray-300"
+                class="flex items-center gap-1 whitespace-nowrap text-default"
                 :title="`${formatSchedulerScoreGroup(score)} / ${formatSchedulerScore(score.base_score)} / ${formatStickySchedulerScore(score)}`"
               >
-                <span class="max-w-[4.75rem] truncate text-gray-500 dark:text-dark-400">{{ formatSchedulerScoreGroup(score) }}</span>
-                <span class="text-gray-300 dark:text-gray-600">/</span>
+                <span class="max-w-19 truncate text-muted">{{ formatSchedulerScoreGroup(score) }}</span>
+                <span class="text-dimmed">/</span>
                 <span>{{ formatSchedulerScore(score.base_score) }}</span>
-                <span class="text-gray-300 dark:text-gray-600">/</span>
-                <span class="text-primary-700 dark:text-primary-300">{{ formatStickySchedulerScore(score) }}</span>
+                <span class="text-dimmed">/</span>
+                <span class="text-highlighted">{{ formatStickySchedulerScore(score) }}</span>
               </div>
             </div>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
           <template #cell-last_used_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatRelativeTime(value) }}</span>
+            <span class="text-sm text-muted">{{ formatRelativeTime(value) }}</span>
           </template>
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-sm tabular-nums text-muted">{{ formatDateTime(value) }}</span>
           </template>
           <template #cell-expires_at="{ row, value }">
             <div class="flex flex-col items-start gap-1">
-              <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatExpiresAt(value) }}</span>
+              <span class="text-sm tabular-nums text-muted">{{ formatExpiresAt(value) }}</span>
               <div v-if="isExpired(value) || (row.auto_pause_on_expired && value)" class="flex items-center gap-1">
-                <span
-                  v-if="isExpired(value)"
-                  class="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                >
+                <UBadge v-if="isExpired(value)" color="warning" variant="subtle" size="sm">
                   {{ t('admin.accounts.expired') }}
-                </span>
-                <span
-                  v-if="row.auto_pause_on_expired && value"
-                  class="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-                >
+                </UBadge>
+                <UBadge v-if="row.auto_pause_on_expired && value" color="neutral" variant="subtle" size="sm">
                   {{ t('admin.accounts.autoPauseOnExpired') }}
-                </span>
+                </UBadge>
               </div>
             </div>
           </template>
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
-              <button @click="handleEdit(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
-                <span class="text-xs">{{ t('common.edit') }}</span>
-              </button>
-              <button @click="handleDelete(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-                <span class="text-xs">{{ t('common.delete') }}</span>
-              </button>
-              <button @click="openMenu(row, $event)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
-                <span class="text-xs">{{ t('common.more') }}</span>
-              </button>
+            <div class="flex items-center justify-end gap-0.5">
+              <AdminRowAction :label="t('admin.accounts.accountDetail.open')" icon="eye" data-test="open-account-detail" @click="openDetail(row)" />
+              <AdminRowAction :label="t('common.edit')" icon="edit" @click="handleEdit(row)" />
+              <AdminRowAction :label="t('common.more')" icon="more" @click="openMenu(row, $event)" />
             </div>
           </template>
         </DataTable>
         </div>
       </template>
-      <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
+      <template #pagination>
+        <div v-if="pagination.total > 0" class="accounts-footer">
+          <AccountBulkActionsBar
+            placement="footer"
+            :selected-ids="selIds"
+            :total-results="pagination.total"
+            :selecting-all="selectingAllResults"
+            :all-results-selected="allResultsSelected"
+            v-on="bulkActionListeners"
+          />
+          <Pagination :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
+        </div>
+      </template>
     </TablePageLayout>
       <CreateAccountModal v-if="showCreate" :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
       <EditAccountModal v-if="showEdit" :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
@@ -508,7 +404,27 @@
       @close="customUsageAccount = null"
       @saved="handleCustomUsageSaved"
     />
-    <AccountActionMenu @custom-usage="customUsageAccount = $event" :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountDetailSlideover
+      :open="detailAccount !== null"
+      :account="detailAccount"
+      :groups="detailAccount ? accountGroupsForRow(detailAccount) : []"
+      :today-stats="detailAccount ? (todayStatsByAccountId[String(detailAccount.id)] ?? null) : null"
+      :show-timer="authStore.isAdmin && !authStore.isAdminObserver"
+      :timer-refresh-key="timerRefreshKey"
+      :usage-refresh-key="usageManualRefreshToken"
+      :global-probe-enabled="upstreamBillingProbeGloballyEnabled"
+      :now="upstreamBillingNow"
+      @close="detailAccountId = null"
+      @edit="handleEdit"
+      @test="handleTest"
+      @stats="handleViewStats"
+      @schedule="handleSchedule"
+      @timer-executed="handleTimerExecuted"
+      @show-temp-unsched="handleShowTempUnsched"
+      @account-updated="handleAccountUpdated"
+      @probe-upstream-billing="handleProbeUpstreamBilling"
+    />
+    <AccountActionMenu @custom-usage="customUsageAccount = $event" :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" @delete="handleDelete" />
       <SyncFromCrsModal v-if="showSync" :show="showSync" @close="showSync = false" @synced="reload" />
       <ImportDataModal v-if="showImportData" :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -527,10 +443,7 @@
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <ConfirmDialog :show="showCreateShadowDialog" :title="t('admin.accounts.createSparkShadow')" :message="t('admin.accounts.createSparkShadowConfirm', { name: creatingShadowAcc?.name })" @confirm="confirmCreateSparkShadow" @cancel="showCreateShadowDialog = false" />
     <ConfirmDialog :show="showExportDataDialog" :title="t('admin.accounts.dataExport')" :message="t('admin.accounts.dataExportConfirmMessage')" :confirm-text="t('admin.accounts.dataExportConfirm')" :cancel-text="t('common.cancel')" @confirm="handleExportData" @cancel="showExportDataDialog = false">
-      <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-        <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" v-model="includeProxyOnExport" />
-        <span>{{ t('admin.accounts.dataExportIncludeProxies') }}</span>
-      </label>
+      <UCheckbox v-model="includeProxyOnExport" :label="t('admin.accounts.dataExportIncludeProxies')" />
     </ConfirmDialog>
       <ErrorPassthroughRulesModal v-if="showErrorPassthrough" :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
       <TLSFingerprintProfilesModal v-if="showTLSFingerprintProfiles" :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
@@ -572,6 +485,7 @@ import AccountTableActions from '@/components/admin/account/AccountTableActions.
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
+import AccountDetailSlideover from '@/components/admin/account/AccountDetailSlideover.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
@@ -583,7 +497,9 @@ import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
-import Icon from '@/components/icons/Icon.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
 
 // 弹窗只在点开时才需要：异步组件 + 模板里的 v-if 一起用，才能既拆出
@@ -607,11 +523,12 @@ import { resolveBatchTestAccounts } from '@/utils/accountModelTest'
 import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
+import type { BadgeProps } from '@nuxt/ui'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { sanitizeUrl } from '@/utils/url'
-import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
+import { confirm } from '@/composables/useConfirmation'
 
 const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const appStore = useAppStore()
@@ -706,25 +623,17 @@ const upstreamBillingRateRefreshing = ref(false)
 let upstreamBillingRateAbortController: AbortController | null = null
 useIntervalFn(() => { upstreamBillingNow.value = Date.now() }, 60_000)
 
-// Account tools dropdown
+// Account tools and column dropdowns (UDropdownMenu places, closes and scrolls them)
 const showAccountToolsDropdown = ref(false)
-const accountToolsDropdownRef = ref<HTMLElement | null>(null)
-const accountToolsTriggerRef = ref<HTMLElement | null>(null)
-const accountToolsDropdownPosition = reactive({
-  top: null as number | null,
-  bottom: null as number | null,
-  left: 16,
-  width: 320,
-  maxHeight: 0
-})
-const accountToolsDropdownStyle = computed(() => ({
-  top: accountToolsDropdownPosition.top == null ? 'auto' : `${accountToolsDropdownPosition.top}px`,
-  bottom: accountToolsDropdownPosition.bottom == null ? 'auto' : `${accountToolsDropdownPosition.bottom}px`,
-  left: `${accountToolsDropdownPosition.left}px`,
-  width: `${accountToolsDropdownPosition.width}px`
-}))
+const showColumnsDropdown = ref(false)
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
+// Fresh layouts start with the most used columns; the rest are one click away in "列显示".
+// The account id also shows under the name while its own column is hidden.
+// Saved layouts keep their own choice; only a fresh layout starts with this set.
+const DEFAULT_HIDDEN_COLUMNS = [
+  'id', 'today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier', 'expires_at',
+  'priority', 'created_at', 'custom_usage', 'upstream_billing_rate'
+]
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
@@ -769,7 +678,6 @@ const sortState = reactive<AccountSortState>(loadInitialAccountSortState())
 
 // Auto refresh settings
 const showAutoRefreshDropdown = ref(false)
-const autoRefreshDropdownRef = ref<HTMLElement | null>(null)
 const AUTO_REFRESH_STORAGE_KEY = 'account-auto-refresh'
 const autoRefreshIntervals = [5, 10, 15, 30] as const
 const autoRefreshEnabled = ref(false)
@@ -1346,6 +1254,7 @@ const refreshUpstreamBillingRates = async (force = false) => {
     isAnyModalOpen.value ||
     menu.show ||
     showAccountToolsDropdown.value ||
+    showColumnsDropdown.value ||
     showAutoRefreshDropdown.value ||
     (typeof document !== 'undefined' && document.hidden)
   )) return
@@ -1594,25 +1503,6 @@ const closeAccountToolsDropdown = () => {
   showAccountToolsDropdown.value = false
 }
 
-const updateAccountToolsDropdownPosition = () => {
-  const trigger = accountToolsTriggerRef.value
-  if (!trigger) return
-
-  const position = getFloatingPanelPosition(
-    trigger.getBoundingClientRect(),
-    document.documentElement.clientWidth || window.innerWidth,
-    window.innerHeight
-  )
-  Object.assign(accountToolsDropdownPosition, position)
-}
-
-const toggleAccountToolsDropdown = () => {
-  const nextVisible = !showAccountToolsDropdown.value
-  showAutoRefreshDropdown.value = false
-  if (nextVisible) updateAccountToolsDropdownPosition()
-  showAccountToolsDropdown.value = nextVisible
-}
-
 const openSyncFromCrs = () => {
   closeAccountToolsDropdown()
   showSync.value = true
@@ -1670,7 +1560,7 @@ const { pause: pauseAutoRefresh, resume: resumeAutoRefresh } = useIntervalFn(
     if (document.hidden) return
     if (loading.value || autoRefreshFetching.value) return
     if (isAnyModalOpen.value) return
-    if (menu.show || showAccountToolsDropdown.value || showAutoRefreshDropdown.value) return
+    if (menu.show || showAccountToolsDropdown.value || showColumnsDropdown.value || showAutoRefreshDropdown.value) return
     if (inAutoRefreshSilentWindow()) {
       autoRefreshCountdown.value = Math.max(
         0,
@@ -1885,13 +1775,12 @@ function getOpenAICompactTitle(row: any): string {
   return `${label} | ${t('admin.accounts.openai.compactLastChecked')}: ${formatDateTime(new Date(checkedAt))}`
 }
 
-function getAntigravityTierClass(row: any): string {
+function getAntigravityTierColor(row: any): BadgeProps['color'] {
   const tier = getAntigravityTierFromRow(row)
   switch (tier) {
-    case 'free-tier': return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
-    case 'g1-pro-tier': return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
-    case 'g1-ultra-tier': return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
-    default: return ''
+    case 'g1-pro-tier': return 'info'
+    case 'g1-ultra-tier': return 'primary'
+    default: return 'neutral'
   }
 }
 
@@ -1932,6 +1821,55 @@ const toggleableColumns = computed(() =>
   allColumns.value.filter(col => col.key !== 'select' && col.key !== 'name' && col.key !== 'actions')
 )
 
+// Toolbar menus: the same actions as before, as Nuxt UI dropdown items.
+// Toggles keep the menu open (the old popovers did too); actions close it.
+const keepMenuOpen = (event: Event) => event.preventDefault()
+const autoRefreshMenuItems = computed<DropdownMenuItem[][]>(() => [
+  [{
+    type: 'checkbox',
+    label: t('admin.accounts.enableAutoRefresh'),
+    checked: autoRefreshEnabled.value,
+    onUpdateChecked: () => setAutoRefreshEnabled(!autoRefreshEnabled.value),
+    onSelect: keepMenuOpen
+  }],
+  autoRefreshIntervals.map((sec) => ({
+    type: 'checkbox' as const,
+    label: autoRefreshIntervalLabel(sec),
+    checked: autoRefreshIntervalSeconds.value === sec,
+    onUpdateChecked: () => setAutoRefreshInterval(sec),
+    onSelect: keepMenuOpen
+  }))
+])
+const accountToolsMenuItems = computed<DropdownMenuItem[][]>(() => [
+  [
+    { type: 'label', label: t('admin.accounts.dataActions') },
+    { label: t('admin.accounts.syncFromCrs'), icon: 'i-lucide-refresh-cw', onSelect: openSyncFromCrs },
+    { label: t('admin.accounts.dataImport'), icon: 'i-lucide-upload', onSelect: openImportData },
+    {
+      label: selIds.value.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport'),
+      icon: 'i-lucide-download',
+      slot: 'export',
+      onSelect: openExportDataDialogFromMenu
+    }
+  ],
+  [
+    { type: 'label', label: t('admin.accounts.toolActions') },
+    { label: t('admin.errorPassthrough.title'), icon: 'i-lucide-shield', onSelect: openErrorPassthrough },
+    { label: t('admin.tlsFingerprintProfiles.title'), icon: 'i-lucide-lock', onSelect: openTLSFingerprintProfiles },
+    { label: t('admin.accounts.balanceAlert.title'), icon: 'i-lucide-bell', onSelect: openBalanceAlert }
+  ]
+])
+// "列显示" menu: one checkbox per optional column (persisted in localStorage).
+const columnMenuItems = computed<DropdownMenuItem[]>(() =>
+  toggleableColumns.value.map((col) => ({
+    type: 'checkbox' as const,
+    label: col.label,
+    checked: isColumnVisible(col.key),
+    onUpdateChecked: () => toggleColumn(col.key),
+    onSelect: keepMenuOpen
+  }))
+)
+
 // Filtered columns based on visibility
 const cols = computed(() =>
   allColumns.value.filter(col =>
@@ -1954,6 +1892,11 @@ const loadAccountDetails = async (account: Pick<AccountListItem, 'id'>): Promise
   }
 }
 
+// Account detail (slideover): follows the live row, so auto refresh keeps it current.
+const detailAccountId = ref<number | null>(null)
+const detailAccount = computed(() => accounts.value.find(account => account.id === detailAccountId.value) ?? null)
+const openDetail = (a: AccountListItem) => { detailAccountId.value = a.id }
+
 const handleEdit = async (a: AccountListItem) => {
   const account = await loadAccountDetails(a)
   if (!account) return
@@ -1966,13 +1909,17 @@ const openMenu = (a: Account, e: MouseEvent) => {
   menu.anchorRect = target.getBoundingClientRect()
   menu.show = true
 }
-const toggleSelectAllVisible = (event: Event) => {
-  const target = event.target as HTMLInputElement
-  toggleVisible(target.checked)
+// Header checkbox: checked when every visible row is selected, indeterminate when only some are.
+const headerSelectState = computed<boolean | 'indeterminate'>(() => {
+  if (allVisibleSelected.value) return true
+  return accounts.value.some(account => isSelected(account.id)) ? 'indeterminate' : false
+})
+const toggleSelectAllVisible = (value: boolean | 'indeterminate') => {
+  toggleVisible(value === true)
 }
 const handleBulkDelete = async () => {
   const accountIds = [...selIds.value]
-  if (!confirm(t('admin.accounts.bulkActions.confirmDelete', { count: accountIds.length }))) return
+  if (!(await confirm(t('admin.accounts.bulkActions.confirmDelete', { count: accountIds.length })))) return
   try {
     const result = await adminAPI.accounts.batchDelete(accountIds)
     if (result.failed > 0) {
@@ -1992,7 +1939,7 @@ const handleBulkDelete = async () => {
   }
 }
 const handleBulkResetStatus = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!(await confirm(t('common.confirm')))) return
   try {
     const result = await adminAPI.accounts.batchClearError(selIds.value)
     if (result.failed > 0) {
@@ -2008,7 +1955,7 @@ const handleBulkResetStatus = async () => {
   }
 }
 const handleBulkRefreshToken = async () => {
-  if (!confirm(t('common.confirm'))) return
+  if (!(await confirm(t('common.confirm')))) return
   const accountIds = [...selIds.value]
   try {
     const result = await adminAPI.accounts.batchRefresh(accountIds)
@@ -2136,7 +2083,8 @@ const handleTimerExecuted = () => {
 }
 const handleBulkToggleSchedulable = async (schedulable: boolean) => {
   const accountIds = [...selIds.value]
-  if (!accountIds.length || !confirm(t('admin.accounts.timer.bulkOverrideConfirm'))) return
+  if (!accountIds.length) return
+  if (!(await confirm(t('admin.accounts.timer.bulkOverrideConfirm')))) return
   try {
     const result = await adminAPI.accounts.bulkUpdate(accountIds, { schedulable })
     timerRefreshKey.value++
@@ -2585,7 +2533,7 @@ const confirmCreateSparkShadow = async () => {
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
 const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
 const handleToggleSchedulable = async (a: Account) => {
-  if (!confirm(t('admin.accounts.timer.manualOverrideConfirm'))) return
+  if (!(await confirm(t('admin.accounts.timer.manualOverrideConfirm')))) return
   const nextSchedulable = !a.schedulable
   togglingSchedulable.value = a.id
   try {
@@ -2626,33 +2574,37 @@ const isExpired = (value: number | null) => {
   if (!value) return false
   return value * 1000 <= Date.now()
 }
-// 所绑定代理的有效期(逻辑同 /admin/proxies,见 utils/proxyExpiry)
-const proxyExpiryBadge = (p: AccountProxy): string => proxyExpiryBadgeClass(p.expires_at, p.status)
+// 所绑定代理的有效期(逻辑同 /admin/proxies,见 utils/proxyExpiry):危险红、临近黄,其余为普通文字。
+const proxyExpiryColor = (p: AccountProxy): 'error' | 'warning' | 'neutral' => {
+  const level = proxyExpiryBadgeClass(p.expires_at, p.status)
+  if (level.includes('badge-danger')) return 'error'
+  if (level.includes('badge-warning')) return 'warning'
+  return 'neutral'
+}
 const proxyExpiryText = (p: AccountProxy): string => {
   const { key, params } = proxyExpiryLabelKey(p.expires_at, p.status)
   return params ? t(key, params) : t(key)
 }
 
-// 表格滚动时关闭行操作菜单，并让顶部工具菜单继续贴紧触发按钮。
+// 表格滚动时关闭行操作菜单（顶部工具菜单由 UDropdownMenu 自己定位和关闭）。
 const handleScroll = (event: Event) => {
   if (event.target instanceof Element && event.target.closest('.action-menu-content')) return
   menu.show = false
-  if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
 }
 
-const handleViewportResize = () => {
-  if (showAccountToolsDropdown.value) updateAccountToolsDropdownPosition()
-}
-
-// 点击外部关闭顶部下拉菜单
-const handleClickOutside = (event: MouseEvent) => {
-  const target = event.target as HTMLElement
-  if (accountToolsDropdownRef.value && !accountToolsDropdownRef.value.contains(target)) {
-    showAccountToolsDropdown.value = false
-  }
-  if (autoRefreshDropdownRef.value && !autoRefreshDropdownRef.value.contains(target)) {
-    showAutoRefreshDropdown.value = false
-  }
+// The bulk bar renders twice (toolbar actions, footer selection helpers); both share these handlers.
+const bulkActionListeners = {
+  delete: handleBulkDelete,
+  'reset-status': handleBulkResetStatus,
+  'refresh-token': handleBulkRefreshToken,
+  'probe-upstream-billing': handleBulkProbeUpstreamBilling,
+  'test-models': openBatchTestModal,
+  'edit-selected': openBulkEditSelected,
+  'edit-filtered': openBulkEditFiltered,
+  clear: clearSelection,
+  'select-page': selectPage,
+  'select-all-results': handleSelectAllResults,
+  'toggle-schedulable': handleBulkToggleSchedulable
 }
 
 onMounted(async () => {
@@ -2686,8 +2638,6 @@ onMounted(async () => {
     console.error('Failed to load groups:', groupsResult.reason)
   }
   window.addEventListener('scroll', handleScroll, true)
-  window.addEventListener('resize', handleViewportResize)
-  document.addEventListener('click', handleClickOutside)
 
   if (autoRefreshEnabled.value) {
     autoRefreshCountdown.value = autoRefreshIntervalSeconds.value
@@ -2706,8 +2656,6 @@ onUnmounted(() => {
   }
   pendingUsageBatchIds.clear()
   window.removeEventListener('scroll', handleScroll, true)
-  window.removeEventListener('resize', handleViewportResize)
-  document.removeEventListener('click', handleClickOutside)
   if (desktopViewportMediaQuery && desktopViewportListener) {
     if (typeof desktopViewportMediaQuery.removeEventListener === 'function') {
       desktopViewportMediaQuery.removeEventListener('change', desktopViewportListener)
@@ -2746,15 +2694,6 @@ onUnmounted(() => {
   overflow-x: auto;
 }
 
-.accounts-command-bar {
-  padding-block: 1px;
-}
-
-.accounts-compact-action {
-  min-width: 40px;
-  padding-inline: 10px;
-}
-
 .accounts-table-stage {
   display: flex;
   width: 100%;
@@ -2766,108 +2705,22 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.accounts-sync-notice {
+/* Footer: selected count + selection helpers above the pager, like the template's
+   "n of m row(s) selected" line. */
+.accounts-footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 8px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--signal-amber) 42%, var(--signal-line));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--signal-amber) 9%, var(--signal-surface));
-  color: var(--signal-amber);
-  font-size: 13px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.account-popover {
-  border: 1px solid var(--signal-line);
-  border-radius: 8px;
-  background: var(--signal-surface, #ffffff);
-  color: var(--signal-text);
-  box-shadow: var(--signal-popover-shadow, var(--signal-shadow)), inset 0 1px 0 color-mix(in srgb, var(--signal-text) 7%, transparent);
-}
-
-.account-popover-body,
-.account-tools-scroll {
-  padding: 6px;
-}
-
-.account-tools-scroll {
-  overflow-y: auto;
-}
-
-.account-popover-item,
-.account-tools-menu-item {
-  display: flex;
-  width: 100%;
-  min-height: 38px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 7px 9px;
-  border-radius: 6px;
-  color: var(--signal-text);
-  font-size: 13px;
-  text-align: left;
-  transition: color 140ms ease, background-color 140ms ease;
-}
-
-.account-popover-item:hover,
-.account-tools-menu-item:hover {
-  background: var(--signal-hover);
-  color: var(--signal-accent);
-}
-
-.account-menu-heading {
-  padding: 7px 9px 5px;
-  color: var(--signal-muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.account-menu-divider {
-  height: 1px;
-  margin: 5px 8px;
-  background: var(--signal-line);
-}
-
-.account-tools-menu-icon {
-  display: flex;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
+.accounts-footer > :first-child {
+  padding-inline: 4px;
 }
 
 @media (max-width: 767px) {
   .accounts-workspace {
     gap: 10px;
-  }
-
-  .accounts-compact-action {
-    width: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    padding-inline: 0;
-  }
-
-  .accounts-sync-notice {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .account-popover {
-    max-width: calc(100dvw - 16px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .account-popover-item,
-  .account-tools-menu-item {
-    transition: none;
   }
 }
 </style>

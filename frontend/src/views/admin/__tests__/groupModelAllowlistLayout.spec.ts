@@ -20,7 +20,7 @@ describe("groups model allowlist layout", () => {
   it("uses a wide dialog and keeps model pricing controls responsive", () => {
     expect(groupsViewSource).toContain('width="wide"');
     expect(groupsViewSource).toContain(
-      "btn btn-secondary shrink-0 whitespace-nowrap",
+      'class="shrink-0 whitespace-nowrap"',
     );
   });
 });

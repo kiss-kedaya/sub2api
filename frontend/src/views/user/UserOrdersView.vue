@@ -1,24 +1,20 @@
 <template>
   <AppLayout>
     <div class="signal-orders">
-      <header class="signal-orders-heading">
-        <div>
-          <p aria-hidden="true">05 / ORDERS</p>
-          <h1>{{ t('nav.myOrders') }} <span>{{ pagination.total }}</span></h1>
-        </div>
-        <button class="btn btn-primary" @click="router.push('/purchase')">
-          <Icon name="creditCard" size="sm" />
-          {{ t('payment.result.backToRecharge') }}
-        </button>
-      </header>
+      <UserPageHeader flush :title="t('nav.myOrders')">
+        <template #badge>
+          <UBadge color="neutral" variant="subtle" class="tabular-nums">{{ pagination.total }}</UBadge>
+        </template>
+        <template #actions>
+          <UButton icon="i-lucide-credit-card" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</UButton>
+        </template>
+      </UserPageHeader>
       <!-- Filters -->
       <div class="signal-orders-toolbar">
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
           <Select v-model="currentFilter" :options="statusFilters" class="w-36" @change="handlePageChange(1)" />
         </div>
-        <button @click="fetchOrders" :disabled="loading" class="btn btn-secondary btn-icon" :title="t('common.refresh')" :aria-label="t('common.refresh')">
-          <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-        </button>
+        <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" class="size-[42px] justify-center" :ui="{ leadingIcon: loading ? 'animate-spin' : '' }" :disabled="loading" :title="t('common.refresh')" :aria-label="t('common.refresh')" @click="fetchOrders" />
       </div>
 
       <!-- Table -->
@@ -96,6 +92,7 @@ import { paymentAPI } from '@/api/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import type { PaymentOrder } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -199,10 +196,10 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
 <style scoped>
 .signal-orders {
   --orders-bg: var(--signal-bg, #f5f6f5);
-  --orders-surface: var(--signal-surface, #ffffff);
-  --orders-line: var(--signal-line, #dce2df);
-  --orders-text: var(--signal-text, #202423);
-  --orders-muted: var(--signal-muted, #65716a);
+  --orders-surface: var(--ui-bg);
+  --orders-line: var(--ui-border);
+  --orders-text: var(--ui-text-highlighted);
+  --orders-muted: var(--ui-text-muted);
   --orders-accent: var(--signal-accent, #087f68);
   --orders-accent-soft: var(--signal-accent-soft, #e5f3ee);
   --orders-amber: var(--signal-amber, #a86610);
@@ -213,53 +210,6 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
   letter-spacing: 0;
 }
 
-.signal-orders-heading {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--orders-line);
-}
-
-.signal-orders-heading p {
-  margin: 0 0 3px;
-  color: var(--orders-muted);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.signal-orders-heading h1 {
-  margin: 0;
-  color: var(--orders-text);
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.signal-orders-heading h1 span {
-  display: inline-flex;
-  min-width: 24px;
-  min-height: 24px;
-  align-items: center;
-  justify-content: center;
-  margin-left: 7px;
-  padding: 2px 6px;
-  border: 1px solid var(--orders-line);
-  border-radius: 4px;
-  color: var(--orders-muted);
-  background: var(--orders-surface);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  vertical-align: 3px;
-}
-
-.signal-orders-heading .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
 .signal-orders-toolbar {
   display: flex;
   align-items: center;
@@ -268,7 +218,10 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
   border: 1px solid var(--orders-line);
   border-radius: 8px;
   background: var(--orders-surface);
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
 }
+
+.dark .signal-orders-toolbar { box-shadow: none; }
 
 .signal-order-action {
   display: inline-flex;
@@ -277,7 +230,7 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
   gap: 5px;
   padding: 5px 8px;
   border: 1px solid var(--orders-line);
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--orders-accent);
   background: transparent;
   font-size: 12px;
@@ -303,7 +256,10 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
   border: 1px solid var(--orders-line);
   border-radius: 8px;
   background: var(--orders-surface);
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
 }
+
+.dark .signal-orders :deep(.payment-order-table) { box-shadow: none; }
 
 .signal-orders :deep(.payment-order-table .table-wrapper) {
   min-height: 240px;
@@ -327,15 +283,6 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
 }
 
 @media (max-width: 639px) {
-  .signal-orders-heading {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .signal-orders-heading .btn {
-    justify-content: center;
-  }
-
   .signal-orders-toolbar :deep(.select-trigger) {
     min-height: 42px;
   }
@@ -348,10 +295,6 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
 }
 
 @media (max-width: 374px) {
-  .signal-orders-heading h1 {
-    font-size: 21px;
-  }
-
   .signal-orders-toolbar {
     align-items: stretch;
   }

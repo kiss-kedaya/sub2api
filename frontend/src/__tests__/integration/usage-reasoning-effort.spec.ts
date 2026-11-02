@@ -128,6 +128,14 @@ vi.mock('@/stores/app', () => ({
   }),
 }))
 
+// Admin UsageView reads authStore.isAdminObserver (secondary admins get an
+// anonymized view). These cases cover the full admin page, so not an observer.
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    isAdminObserver: false,
+  }),
+}))
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {

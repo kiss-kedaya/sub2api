@@ -1,17 +1,14 @@
 <template>
   <AppLayout>
     <div class="model-comparison space-y-5">
-      <header class="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div class="flex flex-wrap items-center gap-2">
-            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ text('模型比价', 'Model price comparison') }}</h1>
+      <AdminPageHeader :description="text('同一模型在各分组的实付价、价差和最稳渠道；价格已乘分组倍率，按 1M token 展示。', 'Effective prices per group for the same model, with spread and the most stable option. Prices already include the group ratio, shown per 1M tokens.')">
+        <template #title>
+          <span class="inline-flex flex-wrap items-center gap-2">
+            {{ text('模型比价', 'Model price comparison') }}
             <span class="badge badge-primary">{{ text('L2 渠道运营', 'L2 channel operations') }}</span>
-          </div>
-          <p class="mt-1 text-sm text-gray-500">
-            {{ text('同一模型在各分组的实付价、价差和最稳渠道；价格已乘分组倍率，按 1M token 展示。', 'Effective prices per group for the same model, with spread and the most stable option. Prices already include the group ratio, shown per 1M tokens.') }}
-          </p>
-        </div>
-        <div class="flex flex-wrap gap-2">
+          </span>
+        </template>
+        <template #actions>
           <RouterLink to="/admin/groups" class="btn btn-secondary">{{ text('分组与倍率', 'Groups and ratios') }}</RouterLink>
           <RouterLink to="/model-plaza?embedded=1" class="btn btn-secondary">{{ text('模型广场', 'Model plaza') }}</RouterLink>
           <button type="button" class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="load">
@@ -19,8 +16,8 @@
             {{ text('刷新', 'Refresh') }}
           </button>
           <button type="button" class="btn btn-primary" :disabled="!offers.length" @click="exportCsv">{{ text('导出 CSV', 'Export CSV') }}</button>
-        </div>
-      </header>
+        </template>
+      </AdminPageHeader>
 
       <p v-if="error" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ error }}</p>
       <p v-if="usingPublicFallback" class="rounded-lg bg-primary-50 p-3 text-sm text-primary-800 dark:bg-dark-800 dark:text-primary-300">
@@ -270,6 +267,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
   getAdminModelPlaza,

@@ -1,5 +1,8 @@
 export default {
     settings: {
+      search: {
+        emailOAuth: 'Email OAuth sign-in',
+      },
       gatewayIPNotice: {
         title: 'IP notices and rate limits',
         description: 'Add conversation notices and independent request limits only for the listed source IPs.',
@@ -19,6 +22,7 @@ export default {
       description: 'Manage registration, email verification, default values, and SMTP settings',
       tabs: {
         general: 'General',
+        appearance: 'Appearance',
         agreement: 'Agreement',
         features: 'Feature Switches',
         security: 'Security',
@@ -28,6 +32,7 @@ export default {
         backup: 'Backup',
         payment: 'Payment',
       },
+      advancedOptions: 'Advanced options',
       features: {
         channelMonitor: {
           title: 'Channel Monitor',
@@ -872,6 +877,8 @@ export default {
         field_cid: 'Channel ID',
         field_cidAlipay: 'Alipay Channel ID',
         field_cidWxpay: 'WeChat Channel ID',
+        field_token: 'Token',
+        field_network: 'Network',
         easypayCustomMethods: 'Custom EasyPay methods',
         easypayCustomMethodsHint: 'Add provider-specific methods supported by this EasyPay endpoint. The payment type is stored on Sub2API orders; the upstream type is sent as EasyPay type.',
         addCustomMethod: 'Add method',

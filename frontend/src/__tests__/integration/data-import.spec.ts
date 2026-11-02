@@ -205,8 +205,8 @@ describe('ImportDataModal', () => {
     expect(showError).toHaveBeenCalledWith('admin.accounts.dataImportCompletedWithErrors')
     expect(wrapper.emitted('imported')).toBeUndefined()
 
-    // 第二个 btn-secondary 是 footer 的取消按钮(第一个是选择文件)
-    await wrapper.findAll('button.btn-secondary')[1]!.trigger('click')
+    // footer 的取消按钮(选择文件按钮在表单里)
+    await wrapper.findAll('button').find(button => button.text() === 'common.cancel')!.trigger('click')
 
     expect(wrapper.emitted('imported')).toHaveLength(1)
     expect(wrapper.emitted('close')).toHaveLength(1)

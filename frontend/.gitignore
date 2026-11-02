@@ -1,0 +1,4 @@
+# Generated Nuxt/Nitro output, never source or a release by itself.
+/.nuxt/
+/.output/
+/.data/

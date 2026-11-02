@@ -1,37 +1,48 @@
 <template>
   <BaseDialog :show="show" :title="t('accountOps.accountGroups')" width="wide" @close="close">
     <div class="space-y-4">
-      <p class="text-sm leading-6 text-gray-500">{{ t('accountOps.accountGroupsHint') }}</p>
-      <div v-if="!draftGroups.length" class="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-600">
+      <p class="text-sm leading-6 text-muted">{{ t('accountOps.accountGroupsHint') }}</p>
+      <p v-if="!draftGroups.length" class="py-6 text-center text-sm text-muted">
         {{ t('accountOps.noAccountGroups') }}
-      </div>
-      <div v-for="group in draftGroups" :key="group.id" class="rounded-xl border border-gray-200 p-4 dark:border-dark-700">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <label class="min-w-0 flex-1 space-y-1">
-            <span class="text-xs font-medium text-gray-500">{{ t('accountOps.groupName') }}</span>
-            <input v-model="group.name" class="input w-full" :placeholder="group.default_name" :data-testid="`account-group-name-${group.id}`" />
-          </label>
-          <div class="flex items-start gap-3 pt-5 text-right text-xs text-gray-500">
-            <div>
-              <p>{{ t('accountOps.manualGroup') }}</p>
-              <p class="mt-1 max-w-56 truncate" :title="group.site || group.id">{{ group.site || group.id }}</p>
+      </p>
+      <div class="divide-y divide-default">
+        <div v-for="group in draftGroups" :key="group.id" class="space-y-3 py-4 first:pt-0">
+          <div class="flex flex-wrap items-end justify-between gap-3">
+            <UFormField :label="t('accountOps.groupName')" class="min-w-0 flex-1">
+              <UInput v-model="group.name" class="w-full" :placeholder="group.default_name" :data-testid="`account-group-name-${group.id}`" />
+            </UFormField>
+            <div class="flex items-center gap-3 text-right text-xs text-muted">
+              <div>
+                <p>{{ t('accountOps.manualGroup') }}</p>
+                <p class="mt-1 max-w-56 truncate" :title="group.site || group.id">{{ group.site || group.id }}</p>
+              </div>
+              <UButton color="error" variant="ghost" size="xs" icon="i-lucide-trash-2" :disabled="busy" :data-testid="`delete-account-group-${group.id}`" :label="t('accountOps.deleteAccountGroup')" @click="removeGroup(group.id)" />
             </div>
-            <button type="button" class="text-red-600 hover:underline disabled:opacity-40" :disabled="busy" :data-testid="`delete-account-group-${group.id}`" @click="removeGroup(group.id)">{{ t('accountOps.deleteAccountGroup') }}</button>
+          </div>
+          <div class="grid max-h-48 gap-2 overflow-y-auto sm:grid-cols-2">
+            <UCheckbox
+              v-for="account in accounts"
+              :key="account.account_id"
+              :model-value="group.account_ids.includes(account.account_id)"
+              :data-testid="`account-group-member-${group.id}-${account.account_id}`"
+              class="rounded-md px-2 py-1.5 hover:bg-elevated"
+              @update:model-value="toggleMember(group.id, account.account_id, $event === true)"
+            >
+              <template #label>
+                <span class="min-w-0 truncate">{{ account.account_name }} <span class="text-xs text-muted">#{{ account.account_id }}</span></span>
+              </template>
+            </UCheckbox>
           </div>
         </div>
-        <div class="mt-4 grid max-h-48 gap-2 overflow-y-auto sm:grid-cols-2">
-          <label v-for="account in accounts" :key="account.account_id" class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-dark-800">
-            <input type="checkbox" :checked="group.account_ids.includes(account.account_id)" :data-testid="`account-group-member-${group.id}-${account.account_id}`" @change="toggleMember(group.id, account.account_id, ($event.target as HTMLInputElement).checked)" />
-            <span class="min-w-0 truncate">{{ account.account_name }} <span class="text-xs text-gray-500">#{{ account.account_id }}</span></span>
-          </label>
-        </div>
       </div>
-      <button type="button" class="btn btn-secondary" data-testid="add-account-group" @click="addGroup">{{ t('accountOps.addAccountGroup') }}</button>
-      <p v-if="error" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
+      <UButton color="neutral" variant="outline" icon="i-lucide-plus" data-testid="add-account-group" :label="t('accountOps.addAccountGroup')" @click="addGroup" />
+      <p v-if="error" role="alert" class="text-sm text-error">{{ error }}</p>
     </div>
     <template #footer>
-      <button type="button" class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
-      <button type="button" class="btn btn-primary" data-testid="save-account-groups" :disabled="busy" @click="save">{{ busy ? t('common.loading') : t('accountOps.saveAccountGroups') }}</button>
+      <div class="flex justify-end gap-2">
+        <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="close" />
+        <UButton data-testid="save-account-groups" :disabled="busy" :label="busy ? t('common.loading') : t('accountOps.saveAccountGroups')" @click="save" />
+      </div>
     </template>
   </BaseDialog>
 </template>

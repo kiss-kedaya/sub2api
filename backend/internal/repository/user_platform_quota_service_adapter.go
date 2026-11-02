@@ -64,6 +64,15 @@ func (a *userPlatformQuotaServiceAdapter) ListByUser(ctx context.Context, userID
 	return out, nil
 }
 
+// ListByUsers 批量查询（单次 IN 查询），供后台列表页避免 N+1。
+func (a *userPlatformQuotaServiceAdapter) ListByUsers(ctx context.Context, userIDs []int64) (map[int64][]service.UserPlatformQuotaRecord, error) {
+	grouped, err := a.inner.ListByUsers(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	return toServiceRecordMap(grouped), nil
+}
+
 // BulkInsertInitial 将 service.UserPlatformQuotaRecord 切片转换后调用底层 repo。
 func (a *userPlatformQuotaServiceAdapter) BulkInsertInitial(ctx context.Context, records []service.UserPlatformQuotaRecord) error {
 	repoRecords := make([]UserPlatformQuotaRecord, len(records))
@@ -160,6 +169,15 @@ func (a *genericUserPlatformQuotaAdapter) ListByUser(ctx context.Context, userID
 	return out, nil
 }
 
+// ListByUsers 批量查询（通用 adapter 实现）。
+func (a *genericUserPlatformQuotaAdapter) ListByUsers(ctx context.Context, userIDs []int64) (map[int64][]service.UserPlatformQuotaRecord, error) {
+	grouped, err := a.inner.ListByUsers(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	return toServiceRecordMap(grouped), nil
+}
+
 // BulkInsertInitial 将 service.UserPlatformQuotaRecord 切片转换后调用底层 generic repo。
 func (a *genericUserPlatformQuotaAdapter) BulkInsertInitial(ctx context.Context, records []service.UserPlatformQuotaRecord) error {
 	repoRecords := make([]UserPlatformQuotaRecord, len(records))
@@ -211,6 +229,19 @@ func (a *genericUserPlatformQuotaAdapter) BatchSnapshotUsage(ctx context.Context
 		return fmt.Errorf("%w: %v", service.ErrUserPlatformQuotaFKViolation, err)
 	}
 	return err
+}
+
+// toServiceRecordMap 将 repository 层按用户分组的结果整体转换为 service 层结构。
+func toServiceRecordMap(grouped map[int64][]UserPlatformQuotaRecord) map[int64][]service.UserPlatformQuotaRecord {
+	out := make(map[int64][]service.UserPlatformQuotaRecord, len(grouped))
+	for userID, rows := range grouped {
+		converted := make([]service.UserPlatformQuotaRecord, len(rows))
+		for i := range rows {
+			converted[i] = *toServiceRecord(&rows[i])
+		}
+		out[userID] = converted
+	}
+	return out
 }
 
 // toServiceRecord 将 repository.UserPlatformQuotaRecord 转换为 service.UserPlatformQuotaRecord。

@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountsView from '../AccountsView.vue'
+const confirmMock = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useConfirmation', () => ({ confirm: confirmMock }))
+
 
 const {
   listAccounts,
@@ -175,7 +178,7 @@ describe('admin AccountsView select all filtered results', () => {
   ])('$name after a batch token refresh and table reload', async ({ result, expectedIds }) => {
     listAccounts.mockResolvedValue({ items: makeAccounts(3), total: 3, page: 1, page_size: 20, pages: 1 })
     batchRefresh.mockResolvedValue(result)
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    confirmMock.mockResolvedValue(true)
     const wrapper = mountView()
     await flushPromises()
     await wrapper.get('[data-test="select-page"]').trigger('click')
@@ -185,7 +188,7 @@ describe('admin AccountsView select all filtered results', () => {
     expect(batchRefresh).toHaveBeenCalledWith([1, 2, 3])
     expect(listAccounts).toHaveBeenCalledTimes(2)
     expect(wrapper.getComponent(AccountBulkActionsBarStub).props('selectedIds')).toEqual(expectedIds)
-    expect(wrapper.findAll<HTMLInputElement>('[data-test="data-table"] input').map(input => input.element.checked))
+    expect(wrapper.findAll('[data-test="data-table"] [role="checkbox"]').map(box => box.attributes('aria-checked') === 'true'))
       .toEqual([1, 2, 3].map(id => expectedIds.includes(id)))
     if (result.failed > 0) {
       expect(showError).toHaveBeenCalledWith('admin.accounts.bulkActions.partialSuccess')

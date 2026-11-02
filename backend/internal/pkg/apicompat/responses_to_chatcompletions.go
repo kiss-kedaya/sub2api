@@ -17,6 +17,12 @@ import (
 // Completions response. Text output items are concatenated into
 // choices[0].message.content; function_call items become tool_calls.
 func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatCompletionsResponse {
+	return ResponsesToChatCompletionsWithOptions(resp, model, false)
+}
+
+// requireReasoningContent keeps display summaries out of replayable provider
+// reasoning_content on passback-required targets such as DeepSeek.
+func ResponsesToChatCompletionsWithOptions(resp *ResponsesResponse, model string, requireReasoningContent bool) *ChatCompletionsResponse {
 	id := resp.ID
 	if id == "" {
 		id = generateChatCmplID()
@@ -56,10 +62,10 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 				},
 			})
 		case "reasoning":
-			for _, s := range item.Summary {
-				if s.Type == "summary_text" && s.Text != "" {
-					reasoningText += s.Text
-				}
+			if requireReasoningContent {
+				reasoningText += responsesReasoningContentText(item.Content)
+			} else {
+				reasoningText += responsesReasoningText(item.Content, item.Summary)
 			}
 		case "web_search_call":
 			// silently consumed — results already incorporated into text output
@@ -120,30 +126,34 @@ func responsesStatusToChatFinishReason(status string, details *ResponsesIncomple
 // ResponsesEventToChatState tracks state for converting a sequence of Responses
 // SSE events into Chat Completions SSE chunks.
 type ResponsesEventToChatState struct {
-	ID                      string
-	Model                   string
-	Created                 int64
-	ServiceTier             string // upstream tier observed on response events; echoed on chunks
-	SentRole                bool
-	SawToolCall             bool
-	SawText                 bool
-	Finalized               bool        // true after finish chunk has been emitted
-	NextToolCallIndex       int         // next sequential tool_call index to assign
-	OutputIndexToToolIndex  map[int]int // Responses output_index → Chat tool_calls index
-	OutputIndexToArguments  map[int]string
-	ToolCallIDToOutputIndex map[string]int
-	IncludeUsage            bool
-	Usage                   *ChatUsage
+	ID                        string
+	Model                     string
+	Created                   int64
+	ServiceTier               string // upstream tier observed on response events; echoed on chunks
+	SentRole                  bool
+	SawToolCall               bool
+	SawText                   bool
+	SawReasoningByOutputIndex map[int]bool
+	RequireReasoningContent   bool
+	ReasoningPartsSeen        map[string]bool
+	Finalized                 bool        // true after finish chunk has been emitted
+	NextToolCallIndex         int         // next sequential tool_call index to assign
+	OutputIndexToToolIndex    map[int]int // Responses output_index → Chat tool_calls index
+	OutputIndexToArguments    map[int]string
+	ToolCallIDToOutputIndex   map[string]int
+	IncludeUsage              bool
+	Usage                     *ChatUsage
 }
 
 // NewResponsesEventToChatState returns an initialised stream state.
 func NewResponsesEventToChatState() *ResponsesEventToChatState {
 	return &ResponsesEventToChatState{
-		ID:                      generateChatCmplID(),
-		Created:                 time.Now().Unix(),
-		OutputIndexToToolIndex:  make(map[int]int),
-		OutputIndexToArguments:  make(map[int]string),
-		ToolCallIDToOutputIndex: make(map[string]int),
+		ID:                        generateChatCmplID(),
+		Created:                   time.Now().Unix(),
+		OutputIndexToToolIndex:    make(map[int]int),
+		OutputIndexToArguments:    make(map[int]string),
+		ToolCallIDToOutputIndex:   make(map[string]int),
+		SawReasoningByOutputIndex: make(map[int]bool),
 	}
 }
 
@@ -163,7 +173,8 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 	case "response.output_item.added":
 		return resToChatHandleOutputItemAdded(evt, state)
 	case "response.output_item.done":
-		return resToChatHandleToolSnapshot(evt, state)
+		chunks := resToChatHandleReasoningSnapshot(evt, state)
+		return append(chunks, resToChatHandleToolSnapshot(evt, state)...)
 	case "response.function_call_arguments.delta",
 		// custom/freeform 工具（如新版 apply_patch）的输入增量与 function_call 参数增量同形，
 		// 均按 OutputIndex 累加到对应工具调用。
@@ -176,8 +187,9 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 		// 与 reasoning summary 一样映射为 reasoning_content。
 		"response.reasoning_text.delta":
 		return resToChatHandleReasoningDelta(evt, state)
-	case "response.reasoning_summary_text.done":
-		return nil
+	case "response.reasoning_summary_text.done",
+		"response.reasoning_text.done":
+		return resToChatHandleReasoningDone(evt, state)
 	// response.done 是 Realtime/WS 与项目透传路径使用的终止别名；
 	// 普通 Responses HTTP SSE 的公开终止事件仍以 response.completed 为主。
 	case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
@@ -381,8 +393,72 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 	if evt.Delta == "" {
 		return nil
 	}
+	if state.RequireReasoningContent && strings.Contains(evt.Type, "reasoning_summary") {
+		return nil
+	}
+	state.markReasoningPart(evt)
+	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
 	reasoning := evt.Delta
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
+}
+
+func resToChatHandleReasoningDone(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if evt.Text == "" || (state.RequireReasoningContent && strings.Contains(evt.Type, "reasoning_summary")) || state.reasoningPartSeen(evt) {
+		return nil
+	}
+	state.markReasoningPart(evt)
+	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
+	reasoning := evt.Text
+	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
+}
+
+func resToChatHandleReasoningSnapshot(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if evt.Item == nil || evt.Item.Type != "reasoning" {
+		return nil
+	}
+	if state.RequireReasoningContent {
+		var chunks []ChatCompletionsChunk
+		for index, part := range evt.Item.Content {
+			if part.Type != "reasoning_text" || part.Text == "" {
+				continue
+			}
+			chunks = append(chunks, resToChatHandleReasoningDone(&ResponsesStreamEvent{
+				Type: "response.reasoning_text.done", OutputIndex: evt.OutputIndex, ContentIndex: index, Text: part.Text,
+			}, state)...)
+		}
+		return chunks
+	}
+	if state.SawReasoningByOutputIndex[evt.OutputIndex] {
+		return nil
+	}
+	text := responsesReasoningText(evt.Item.Content, evt.Item.Summary)
+	if text == "" {
+		return nil
+	}
+	state.SawReasoningByOutputIndex[evt.OutputIndex] = true
+	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &text})}
+}
+
+func (state *ResponsesEventToChatState) reasoningPartKey(evt *ResponsesStreamEvent) string {
+	kind, index := "content", evt.ContentIndex
+	if strings.Contains(evt.Type, "reasoning_summary") {
+		kind, index = "summary", evt.SummaryIndex
+	}
+	return fmt.Sprintf("%d:%s:%d", evt.OutputIndex, kind, index)
+}
+
+func (state *ResponsesEventToChatState) reasoningPartSeen(evt *ResponsesStreamEvent) bool {
+	return state.ReasoningPartsSeen[state.reasoningPartKey(evt)]
+}
+
+func (state *ResponsesEventToChatState) markReasoningPart(evt *ResponsesStreamEvent) {
+	if state.ReasoningPartsSeen == nil {
+		state.ReasoningPartsSeen = make(map[string]bool)
+	}
+	if state.SawReasoningByOutputIndex == nil {
+		state.SawReasoningByOutputIndex = make(map[int]bool)
+	}
+	state.ReasoningPartsSeen[state.reasoningPartKey(evt)] = true
 }
 
 func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {

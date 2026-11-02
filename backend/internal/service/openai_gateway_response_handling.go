@@ -410,7 +410,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 	needModelReplace := originalModel != mappedModel
 	var deepSeekPass deepSeekPassthrough
-	rewriteDeepSeek := account != nil && account.Platform == PlatformDeepseek
+	rewriteDeepSeek := account != nil && account.Platform == PlatformDeepseek && s.deepSeekResponseCompatEnabled()
 	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
 	streamDoneItems := newResponsesStreamOutputItems()
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
@@ -1898,7 +1898,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	if originalModel != mappedModel {
 		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 	}
-	if account != nil && account.Platform == PlatformDeepseek {
+	if account != nil && account.Platform == PlatformDeepseek && s.deepSeekResponseCompatEnabled() {
 		body = rewriteDeepSeekResponseBody(c, body)
 	}
 	body, err = restoreGrokResponsesClientToolPayload(c, body)

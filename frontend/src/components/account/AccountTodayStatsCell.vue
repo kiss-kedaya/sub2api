@@ -1,55 +1,39 @@
 <template>
   <div>
     <!-- Loading state -->
-    <div v-if="props.loading && !props.stats" class="space-y-0.5">
-      <div class="h-3 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-      <div class="h-3 w-16 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-      <div class="h-3 w-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+    <div v-if="props.loading && !props.stats" class="space-y-1">
+      <USkeleton class="h-3 w-12" />
+      <USkeleton class="h-3 w-16" />
+      <USkeleton class="h-3 w-10" />
     </div>
 
     <!-- Error state -->
-    <div v-else-if="props.error && !props.stats" class="text-xs text-red-500">
+    <div v-else-if="props.error && !props.stats" class="text-xs text-error">
       {{ props.error }}
     </div>
 
-    <!-- Stats data -->
-    <div v-else-if="props.stats" class="space-y-0.5 text-xs">
-      <!-- Requests -->
+    <!-- Stats data: plain label / value lines -->
+    <div v-else-if="props.stats" class="space-y-0.5 text-xs tabular-nums">
       <div class="flex items-center gap-1">
-        <span class="text-gray-500 dark:text-gray-400"
-          >{{ t('admin.accounts.stats.requests') }}:</span
-        >
-        <span class="font-medium text-gray-700 dark:text-gray-300">{{
-          formatNumber(props.stats.requests)
-        }}</span>
+        <span class="text-muted">{{ t('admin.accounts.stats.requests') }}:</span>
+        <span class="text-highlighted">{{ formatNumber(props.stats.requests) }}</span>
       </div>
-      <!-- Tokens -->
       <div class="flex items-center gap-1">
-        <span class="text-gray-500 dark:text-gray-400"
-          >{{ t('admin.accounts.stats.tokens') }}:</span
-        >
-        <span class="font-medium text-gray-700 dark:text-gray-300">{{
-          formatTokens(props.stats.tokens)
-        }}</span>
+        <span class="text-muted">{{ t('admin.accounts.stats.tokens') }}:</span>
+        <span class="text-highlighted">{{ formatTokens(props.stats.tokens) }}</span>
       </div>
-      <!-- Cost (Account) -->
       <div class="flex items-center gap-1">
-        <span class="text-gray-500 dark:text-gray-400">{{ t('usage.accountBilled') }}:</span>
-        <span class="font-medium text-emerald-600 dark:text-emerald-400">{{
-          formatCurrency(props.stats.cost)
-        }}</span>
+        <span class="text-muted">{{ t('usage.accountBilled') }}:</span>
+        <span class="text-highlighted">{{ formatCurrency(props.stats.cost) }}</span>
       </div>
-      <!-- Cost (User/API Key) -->
       <div v-if="props.stats.user_cost != null" class="flex items-center gap-1">
-        <span class="text-gray-500 dark:text-gray-400">{{ t('usage.userBilled') }}:</span>
-        <span class="font-medium text-gray-700 dark:text-gray-300">{{
-          formatCurrency(props.stats.user_cost)
-        }}</span>
+        <span class="text-muted">{{ t('usage.userBilled') }}:</span>
+        <span class="text-highlighted">{{ formatCurrency(props.stats.user_cost) }}</span>
       </div>
     </div>
 
     <!-- No data -->
-    <div v-else class="text-xs text-gray-400">-</div>
+    <div v-else class="text-xs text-dimmed">-</div>
   </div>
 </template>
 

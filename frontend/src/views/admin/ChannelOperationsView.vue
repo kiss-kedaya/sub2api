@@ -1,8 +1,10 @@
 <template>
   <AppLayout>
     <div class="space-y-5 min-w-0">
-      <header class="flex flex-wrap items-start justify-between gap-3"><div><h1 class="text-2xl font-semibold">{{ t('channelOps.title') }}</h1><p class="mt-2 text-sm text-gray-500">{{ t('channelOps.description') }}</p></div><button class="btn btn-secondary" :disabled="loading || busy" @click="refresh">{{ t('channelOps.refresh') }}</button></header>
-      <details class="rounded-xl bg-primary-50 p-3 text-sm dark:bg-dark-800"><summary class="cursor-pointer font-medium">{{ t('channelOps.scopeTitle') }}</summary><p class="mt-2 leading-6">{{ t('channelOps.scope') }}</p></details>
+      <AdminPageHeader :title="t('channelOps.title')" :description="t('channelOps.description')">
+        <template #actions><button class="btn btn-secondary" :disabled="loading || busy" @click="refresh">{{ t('channelOps.refresh') }}</button></template>
+      </AdminPageHeader>
+      <details class="rounded-lg bg-primary-50 p-3 text-sm dark:bg-dark-800"><summary class="cursor-pointer font-medium">{{ t('channelOps.scopeTitle') }}</summary><p class="mt-2 leading-6">{{ t('channelOps.scope') }}</p></details>
       <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
       <p v-if="notice" role="status" class="text-emerald-600">{{ notice }}</p>
       <p v-if="loading" role="status">{{ t('channelOps.loading') }}</p>
@@ -64,6 +66,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import { channelOpsMessages } from '@/components/admin/operations/channelOpsMessages'
 import { keepSuccessfulSections } from '@/components/admin/operations/channelOperationsState'
 import ChannelOperationsMetrics from '@/components/admin/operations/ChannelOperationsMetrics.vue'

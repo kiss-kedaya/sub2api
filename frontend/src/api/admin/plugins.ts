@@ -101,10 +101,7 @@ export async function list(): Promise<PluginInstallation[]> {
 export async function upload(file: File): Promise<PluginInstallation> {
   const form = new FormData()
   form.append('plugin', file)
-  const { data } = await apiClient.post<PluginInstallation>('/admin/plugins/upload', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120000
-  })
+  const { data } = await apiClient.post<PluginInstallation>('/admin/plugins/upload', form, { timeout: 120000 })
   return data
 }
 

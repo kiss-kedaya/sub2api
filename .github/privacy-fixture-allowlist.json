@@ -118,11 +118,6 @@
       "reason": "Audited synthetic privacy regression fixtures; fake Bearer strings and incomplete PEM markers contain no usable credentials."
     },
     {
-      "path": "frontend/src/components/account/__tests__/EditAccountModal.spec.ts",
-      "sha256": "c68cddd2c97f91f021c4b0649f59932ccbbcc14e3de357bf7729c1888ecff6e8",
-      "reason": "Audited incomplete PEM text for mocked account-form parsing."
-    },
-    {
       "path": "openspec/changes/add-openai-compatible-prompt-audit/source-freeze/aicodex-prompt-audit-tracked.patch",
       "sha256": "f751a13cce3f3a73cd60cae3aececcef6e1e76dcec8c551a7a4747f032234d2b",
       "reason": "Audited archived patch containing synthetic HTTP request fixtures."

@@ -1,12 +1,23 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'path'
 import vue from '@vitejs/plugin-vue'
+import ui from '@nuxt/ui/vite'
 import { searchForWorkspaceRoot } from 'vite'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    // Same Nuxt UI options as vite.config.ts, so specs can mount U* components and composables.
+    ui({
+      colorMode: false,
+      ui: { colors: { primary: 'neutral', neutral: 'neutral' } },
+      icon: { clientBundle: { scan: true } },
+      components: { globs: [] }
+    })
+  ],
   resolve: {
     alias: {
+      '@runtime/context': resolve(__dirname, 'src/runtime/context.ts'),
       '@': resolve(__dirname, 'src'),
       'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js'
     }

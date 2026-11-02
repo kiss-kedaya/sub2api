@@ -1,26 +1,24 @@
 <template>
-  <div class="card p-4">
-    <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
-      {{ t('admin.dashboard.tokenUsageTrend') }}
-    </h3>
+  <UCard :ui="{ header: 'px-4 py-3 sm:px-5', body: 'p-4 sm:p-5' }">
+    <template #header>
+      <h3 class="text-xs font-medium uppercase text-muted">
+        {{ t('admin.dashboard.tokenUsageTrend') }}
+      </h3>
+    </template>
     <div v-if="loading" class="flex h-48 items-center justify-center">
       <LoadingSpinner />
     </div>
     <div v-else-if="trendData.length > 0 && chartData" class="h-48">
       <Line :data="chartData" :options="lineOptions" />
     </div>
-    <div
-      v-else
-      class="flex h-48 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
-    >
+    <div v-else class="flex h-48 items-center justify-center text-sm text-muted">
       {{ t('admin.dashboard.noDataAvailable') }}
     </div>
-  </div>
+  </UCard>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useMutationObserver } from '@vueuse/core'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Chart as ChartJS,
@@ -35,6 +33,7 @@ import {
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import { chartTooltipStyle, useChartTheme } from './chartTheme'
 import type { TrendDataPoint } from '@/types'
 
 ChartJS.register(
@@ -55,26 +54,28 @@ const props = defineProps<{
   loading?: boolean
   animationDuration?: number
   mode?: 'total' | 'breakdown'
+  /** Hex color of the single series in total mode (e.g. the theme primary); default stays text gray. */
+  color?: string
 }>()
 
-const isDarkMode = ref(document.documentElement.classList.contains('dark'))
-useMutationObserver(document.documentElement, () => {
-  isDarkMode.value = document.documentElement.classList.contains('dark')
-}, { attributes: true, attributeFilter: ['class'] })
-
+// Token colours (dark mode and Appearance follow automatically).
+const theme = useChartTheme()
 const chartColors = computed(() => ({
-  text: isDarkMode.value ? '#e5e7eb' : '#374151',
-  grid: props.mode === 'total' ? (isDarkMode.value ? '#29292c' : '#e8e8ec') : (isDarkMode.value ? '#374151' : '#e5e7eb'),
-  input: '#3b82f6',
-  output: '#10b981',
-  cacheCreation: '#f59e0b',
-  cacheRead: '#06b6d4',
-  cacheHitRate: '#8b5cf6'
+  text: theme.value.text,
+  grid: theme.value.grid,
+  input: theme.value.input,
+  output: theme.value.output,
+  cacheCreation: theme.value.cacheCreation,
+  cacheRead: theme.value.cacheRead,
+  cacheHitRate: theme.value.cacheHitRate
 }))
 
+const totalColor = computed(() => props.color || chartColors.value.text)
+
 // 纵向渐变：峰顶约 18% 透明度，往下淡出到 2%，谷底透明。宽 1px 足够采样。
-const gradientCache = new WeakMap<object, CanvasGradient>()
+// 每种颜色单独缓存：明暗切换只换颜色、不换 chartArea 时也不会沿用旧颜色的渐变。
 function makeAreaGradient(color: string) {
+  const gradientCache = new WeakMap<object, CanvasGradient>()
   return (context: { chart: { chartArea?: { top: number; bottom: number; left: number; right: number }; canvas: HTMLCanvasElement } }) => {
     const { chartArea, canvas } = context.chart
     if (!chartArea || !canvas) return `${color}0c`
@@ -99,13 +100,13 @@ const chartData = computed(() => {
     datasets: props.mode === 'total' ? [{
       label: t('dashboard.totalUsage'),
       data: props.trendData.map(d => d.total_tokens),
-      borderColor: chartColors.value.text,
+      borderColor: totalColor.value,
       // 纵向渐变填充：峰顶浓、谷底透明，比平铺低透明度更有深度
-      backgroundColor: makeAreaGradient(chartColors.value.text),
+      backgroundColor: makeAreaGradient(totalColor.value),
       borderWidth: 2,
       pointRadius: 2,
       pointHoverRadius: 4,
-      pointBackgroundColor: chartColors.value.text,
+      pointBackgroundColor: totalColor.value,
       fill: true,
       tension: 0.25,
     }] : [
@@ -174,6 +175,8 @@ const lineOptions = computed(() => ({
         color: chartColors.value.text,
         usePointStyle: true,
         pointStyle: 'circle',
+        boxWidth: 8,
+        boxHeight: 8,
         padding: 15,
         font: {
           size: 11
@@ -181,6 +184,7 @@ const lineOptions = computed(() => ({
       }
     },
     tooltip: {
+      ...chartTooltipStyle(theme.value),
       callbacks: {
         label: (context: any) => {
           if (context.dataset.yAxisID === 'yPercent') {
@@ -201,6 +205,7 @@ const lineOptions = computed(() => ({
   },
   scales: {
     x: {
+      border: { display: false },
       grid: {
         display: props.mode !== 'total',
         color: chartColors.value.grid
@@ -213,6 +218,7 @@ const lineOptions = computed(() => ({
       }
     },
     y: {
+      border: { display: false },
       grid: {
         color: chartColors.value.grid
       },

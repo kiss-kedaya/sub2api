@@ -1,7 +1,9 @@
 package dto
 
 import (
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -26,9 +28,12 @@ type Announcement struct {
 }
 
 type UserAnnouncement struct {
-	ID         int64  `json:"id"`
-	Title      string `json:"title"`
-	Content    string `json:"content"`
+	ID      int64  `json:"id"`
+	Title   string `json:"title"`
+	Content string `json:"content,omitempty"`
+	// Excerpt is the one-line preview used by the timeline; the body is only
+	// sent by the detail endpoint.
+	Excerpt    string `json:"excerpt,omitempty"`
 	NotifyMode string `json:"notify_mode"`
 
 	StartsAt *time.Time `json:"starts_at,omitempty"`
@@ -58,6 +63,27 @@ func AnnouncementFromService(a *service.Announcement) *Announcement {
 		CreatedAt:  a.CreatedAt,
 		UpdatedAt:  a.UpdatedAt,
 	}
+}
+
+// UserAnnouncementListFromService drops the body so the timeline stays small.
+func UserAnnouncementListFromService(a *service.UserAnnouncement) *UserAnnouncement {
+	out := UserAnnouncementFromService(a)
+	if out == nil {
+		return nil
+	}
+	out.Excerpt = announcementExcerpt(a.Announcement.Content)
+	out.Content = ""
+	return out
+}
+
+const announcementExcerptRunes = 140
+
+func announcementExcerpt(content string) string {
+	text := strings.Join(strings.Fields(content), " ")
+	if utf8.RuneCountInString(text) <= announcementExcerptRunes {
+		return text
+	}
+	return string([]rune(text)[:announcementExcerptRunes])
 }
 
 func UserAnnouncementFromService(a *service.UserAnnouncement) *UserAnnouncement {

@@ -4,6 +4,34 @@
  */
 import { config } from '@vue/test-utils'
 import { vi } from 'vitest'
+import { _api as iconifyApi } from '@iconify/vue'
+import { defineComponent, h, type ConcreteComponent } from 'vue'
+
+// Nuxt UI icons (UIcon) load through @iconify/vue. Specs do not install the bundled icon set,
+// so a missing icon would be fetched from api.iconify.design. Keep specs offline, as the app
+// does (src/plugins/nuxtUi.ts): an unbundled icon renders empty instead.
+iconifyApi.setFetch((async () => {
+  throw new Error('Iconify API disabled in tests')
+}) as typeof fetch)
+
+// Portal wrapper components named "Teleport" (reka-ui's, used by every Nuxt UI overlay, and
+// BaseDialog's) are matched by a spec's `stubs: { teleport: true }`, and the default stub would drop
+// their content. Render them in place instead, through one stable component: Vue Test Utils rebuilds
+// its own teleport stub on every render, which would remount (and can loop) an overlay that
+// re-renders, such as a menu while the user types or a dialog whose props change.
+const isTeleportWrapper = (component: ConcreteComponent) => {
+  const name = (component as { __name?: string; name?: string }).__name ?? component.name
+  return name === 'Teleport' && !(component as { __isTeleport?: boolean }).__isTeleport
+}
+const InlineOverlayPortal = defineComponent({
+  name: 'InlineOverlayPortal',
+  props: { to: null, disabled: Boolean, defer: Boolean, forceMount: Boolean },
+  setup(_props, { slots }) {
+    return () => h('teleport-stub', null, slots.default?.())
+  }
+})
+config.plugins.createStubs = (({ component }) =>
+  isTeleportWrapper(component) ? InlineOverlayPortal : undefined) as unknown as typeof config.plugins.createStubs
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -69,6 +97,16 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
   })) as unknown as typeof window.matchMedia
+}
+
+// Mock Element.scrollIntoView (jsdom 未实现;TimeWheelPicker 等组件打开时滚动到选中项)
+// configurable,单个 spec 仍可用 Object.defineProperty 换成自己的 vi.fn() 做断言
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !== 'function') {
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    writable: true,
+    value: vi.fn(),
+  })
 }
 
 // Mock IntersectionObserver

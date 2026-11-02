@@ -6,12 +6,26 @@ import (
 	"strings"
 )
 
+// ResponsesToAnthropicOptions gates provider-specific reasoning replay.
+// Callers must set PreserveReasoningText only after resolving the concrete target
+// platform (for example DeepSeek), not from a client model alias.
+type ResponsesToAnthropicOptions struct {
+	PreserveReasoningText bool
+}
+
 // ResponsesToAnthropicRequest converts a Responses API request into an
 // Anthropic Messages request. This is the reverse of AnthropicToResponses and
 // enables Anthropic platform groups to accept OpenAI Responses API requests
 // by converting them to the native /v1/messages format before forwarding upstream.
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
-	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input)
+	return ResponsesToAnthropicRequestWithOptions(req, nil)
+}
+
+// ResponsesToAnthropicRequestWithOptions is ResponsesToAnthropicRequest with
+// provider-specific replay gates. The default path keeps legacy behavior.
+func ResponsesToAnthropicRequestWithOptions(req *ResponsesRequest, opts *ResponsesToAnthropicOptions) (*AnthropicRequest, error) {
+	preserveReasoningText := opts != nil && opts.PreserveReasoningText
+	system, messages, err := convertResponsesInputToAnthropicWithThinking(req.Instructions, req.Input, preserveReasoningText)
 	if err != nil {
 		return nil, err
 	}
@@ -55,9 +69,14 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 	// reasoning.effort → output_config.effort + thinking
 	if req.Reasoning != nil && req.Reasoning.Effort != "" {
 		effort := mapResponsesEffortToAnthropic(req.Reasoning.Effort)
-		out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
-		// Enable thinking for non-low efforts
-		if effort != "low" {
+		switch effort {
+		case "none", "off", "disabled":
+			// Do not send output_config.effort=none: Anthropic does not accept it.
+			out.Thinking = &AnthropicThinking{Type: "disabled"}
+		case "low":
+			out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
+		default:
+			out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
 			out.Thinking = &AnthropicThinking{
 				Type:         "enabled",
 				BudgetTokens: defaultThinkingBudget(effort),
@@ -102,6 +121,10 @@ func mapResponsesEffortToAnthropic(effort string) string {
 // a Responses API instructions + input array. Returns the system as raw JSON
 // (for Anthropic's polymorphic system field) and a list of Anthropic messages.
 func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMessage) (json.RawMessage, []AnthropicMessage, error) {
+	return convertResponsesInputToAnthropicWithThinking(instructions, inputRaw, false)
+}
+
+func convertResponsesInputToAnthropicWithThinking(instructions string, inputRaw json.RawMessage, preserveReasoningText bool) (json.RawMessage, []AnthropicMessage, error) {
 	var systemParts []AnthropicContentBlock
 	preserveSystemBlocks := false
 	if strings.TrimSpace(instructions) != "" {
@@ -193,11 +216,20 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 			})
 
 		case item.Type == "reasoning":
-			// Anthropic 无法摄入 OpenAI 的 reasoning：encrypted_content 是不透明的，
-			// 而 thinking 块的重放需要 Anthropic 自己签发的 signature，无法伪造。
-			// Codex 常见形态（只带 summary + encrypted_content）本来就会被丢弃，
-			// 这里让带 content 数组的形态保持同样行为——否则 reasoning_text 块会被
-			// 原样塞进 Anthropic 请求体，上游直接回 400。
+			if preserveReasoningText {
+				// Only the caller that resolved a DeepSeek target may replay
+				// reasoning_text as an unsigned thinking block. Keep the legacy drop
+				// path for Anthropic and every other provider.
+				thinkingText := responsesInputReasoningContentText(item.Content)
+				if thinkingText != "" {
+					block := AnthropicContentBlock{Type: "thinking", Thinking: thinkingText}
+					blockJSON, _ := json.Marshal([]AnthropicContentBlock{block})
+					messages = append(messages, AnthropicMessage{
+						Role:    "assistant",
+						Content: blockJSON,
+					})
+				}
+			}
 
 		case item.Role == "user":
 			content, err := convertResponsesUserToAnthropicContent(item.Content)

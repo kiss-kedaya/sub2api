@@ -5,6 +5,13 @@ import BulkEditAccountModal from '../BulkEditAccountModal.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import { adminAPI } from '@/api/admin'
 
+// UCheckbox renders a role="checkbox" button: click only when the state has to change.
+async function setChecked(el: { attributes: (name: string) => string | undefined; trigger: (event: string) => Promise<unknown> }, value: boolean) {
+  if ((el.attributes('aria-checked') === 'true') !== value) await el.trigger('click')
+}
+const isChecked = (el: { attributes: (name: string) => string | undefined }) => el.attributes('aria-checked') === 'true'
+
+
 const { showError, showSuccess, translate } = vi.hoisted(() => ({
   showError: vi.fn(),
   showSuccess: vi.fn(),
@@ -100,7 +107,7 @@ describe('BulkEditAccountModal', () => {
 
   it('sends zero priority in bulk updates and rejects invalid numeric input', async () => {
     const wrapper = mountModal()
-    await wrapper.get('#bulk-edit-priority-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-priority-enabled'), true)
     const priority = wrapper.get<HTMLInputElement>('#bulk-edit-priority')
     expect(priority.attributes('min')).toBe('0')
     expect(priority.attributes('step')).toBe('1')
@@ -122,7 +129,7 @@ describe('BulkEditAccountModal', () => {
     const wrapper = mountModal()
 
     expect(wrapper.find('[data-testid="bulk-rate-sync-warning"]').exists()).toBe(false)
-    await wrapper.get('#bulk-edit-rate-multiplier-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-rate-multiplier-enabled'), true)
 
     expect(wrapper.get('[data-testid="bulk-rate-sync-warning"]').text()).toContain(
       'admin.accounts.bulkEdit.rateSyncWarning'
@@ -138,7 +145,7 @@ describe('BulkEditAccountModal', () => {
     })
     const wrapper = mountModal()
 
-    await wrapper.get('#bulk-edit-rate-multiplier-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-rate-multiplier-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -175,7 +182,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-model-restriction-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-model-restriction-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -193,7 +200,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-base-url-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-base-url-enabled'), true)
     await wrapper.get('#bulk-edit-base-url').setValue('https://api.x.ai/v1')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -261,7 +268,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-base-url-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-base-url-enabled'), true)
     await wrapper.get('#bulk-edit-base-url').setValue('https://relay.example.com/v1')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -280,7 +287,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey', 'oauth']
     })
 
-    await wrapper.get('#bulk-edit-base-url-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-base-url-enabled'), true)
     await wrapper.get('#bulk-edit-base-url').setValue('https://api.x.ai/v1')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -299,7 +306,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-passthrough-enabled'), true)
     await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -318,7 +325,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-flatten-namespaces-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-flatten-namespaces-enabled'), true)
     await wrapper.get('#bulk-edit-openai-flatten-namespaces-toggle').trigger('click')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -346,7 +353,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-ws-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-ws-mode-enabled'), true)
     await wrapper.get('[data-testid="bulk-edit-openai-ws-mode-select"]').setValue('http_bridge')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -375,7 +382,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-codex-cli-only-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-codex-cli-only-enabled'), true)
     await wrapper.get('#bulk-edit-openai-codex-cli-only-toggle').trigger('click')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -395,9 +402,9 @@ describe('BulkEditAccountModal', () => {
     })
 
     // 子开关从属于 codex_cli_only：必须同时批量开启父开关才写入
-    await wrapper.get('#bulk-edit-openai-codex-cli-only-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-codex-cli-only-enabled'), true)
     await wrapper.get('#bulk-edit-openai-codex-cli-only-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-openai-codex-app-server-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-codex-app-server-enabled'), true)
     await wrapper.get('#bulk-edit-openai-codex-app-server-toggle').trigger('click')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -418,7 +425,7 @@ describe('BulkEditAccountModal', () => {
     })
 
     // 仅开启子开关、不批量设置父开关 codex_cli_only：不应写入孤立字段，也不应调用接口
-    await wrapper.get('#bulk-edit-openai-codex-app-server-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-codex-app-server-enabled'), true)
     await wrapper.get('#bulk-edit-openai-codex-app-server-toggle').trigger('click')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -432,7 +439,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-openai-apikey-ws-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-apikey-ws-mode-enabled'), true)
     await wrapper.get('[data-testid="bulk-edit-openai-apikey-ws-mode-select"]').setValue('ctx_pool')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -488,7 +495,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await enabledWrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await setChecked(enabledWrapper.get('#bulk-edit-openai-long-context-billing-enabled'), true)
     await enabledWrapper.get('[data-testid="bulk-edit-openai-long-context-billing-toggle"]').trigger('click')
     await enabledWrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -503,7 +510,7 @@ describe('BulkEditAccountModal', () => {
       selectedPlatforms: ['openai'],
       selectedTypes: ['setup-token']
     })
-    await disabledWrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await setChecked(disabledWrapper.get('#bulk-edit-openai-long-context-billing-enabled'), true)
     await disabledWrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -518,7 +525,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -532,7 +539,7 @@ describe('BulkEditAccountModal', () => {
       selectedPlatforms: ['openai'],
       selectedTypes: ['apikey']
     })
-    await autoWrapper.get('#bulk-edit-openai-responses-mode-enabled').setValue(true)
+    await setChecked(autoWrapper.get('#bulk-edit-openai-responses-mode-enabled'), true)
     await autoWrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
@@ -545,7 +552,7 @@ describe('BulkEditAccountModal', () => {
       selectedPlatforms: ['openai'],
       selectedTypes: ['apikey']
     })
-    await forcedWrapper.get('#bulk-edit-openai-responses-mode-enabled').setValue(true)
+    await setChecked(forcedWrapper.get('#bulk-edit-openai-responses-mode-enabled'), true)
     await forcedWrapper.get('[data-testid="bulk-edit-openai-responses-mode-select"]').setValue('force_responses')
     await forcedWrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -560,10 +567,10 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-responses-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled'), true)
+    await setChecked(wrapper.get('#bulk-edit-openai-responses-mode-enabled'), true)
     await wrapper.get('[data-testid="bulk-edit-openai-responses-mode-select"]').setValue('force_chat_completions')
-    await wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]').setValue(false)
+    await setChecked(wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]'), false)
 
     expect((wrapper.get('[data-testid="bulk-edit-openai-responses-mode-select"]').element as HTMLSelectElement).value)
       .toBe('auto')
@@ -583,10 +590,10 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').setValue(true)
-    await wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]').setValue(false)
-    await wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').setValue(false)
-    await wrapper.get('#bulk-edit-openai-responses-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled'), true)
+    await setChecked(wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]'), false)
+    await setChecked(wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled'), false)
+    await setChecked(wrapper.get('#bulk-edit-openai-responses-mode-enabled'), true)
 
     const select = wrapper.get('[data-testid="bulk-edit-openai-responses-mode-select"]')
     expect(select.attributes('disabled')).toBeUndefined()
@@ -605,11 +612,11 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-openai-responses-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-long-context-billing-enabled'), true)
+    await setChecked(wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled'), true)
+    await setChecked(wrapper.get('#bulk-edit-openai-responses-mode-enabled'), true)
     await wrapper.setProps({ selectedPlatforms: ['anthropic'], selectedTypes: ['apikey'] })
-    await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-status-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -623,11 +630,11 @@ describe('BulkEditAccountModal', () => {
       selectedPlatforms: ['openai'],
       selectedTypes: ['apikey']
     })
-    await wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').setValue(true)
-    await wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]').setValue(false)
-    await wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-embeddings"]').setValue(false)
+    await setChecked(wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled'), true)
+    await setChecked(wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]'), false)
+    await setChecked(wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-embeddings"]'), false)
 
-    expect((wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-embeddings"]').element as HTMLInputElement).checked)
+    expect(isChecked(wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-embeddings"]')))
       .toBe(true)
   })
 
@@ -636,19 +643,19 @@ describe('BulkEditAccountModal', () => {
       selectedPlatforms: ['openai'],
       selectedTypes: ['apikey']
     })
-    await wrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-long-context-billing-enabled'), true)
     await wrapper.get('[data-testid="bulk-edit-openai-long-context-billing-toggle"]').trigger('click')
-    await wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').setValue(true)
-    await wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]').setValue(false)
-    await wrapper.get('#bulk-edit-openai-responses-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled'), true)
+    await setChecked(wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]'), false)
+    await setChecked(wrapper.get('#bulk-edit-openai-responses-mode-enabled'), true)
 
     await wrapper.setProps({ show: false })
     await nextTick()
 
-    expect((wrapper.get('#bulk-edit-openai-long-context-billing-enabled').element as HTMLInputElement).checked).toBe(false)
+    expect(isChecked(wrapper.get('#bulk-edit-openai-long-context-billing-enabled'))).toBe(false)
     expect(wrapper.get('[data-testid="bulk-edit-openai-long-context-billing-toggle"]').attributes('aria-checked')).toBe('false')
-    expect((wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').element as HTMLInputElement).checked).toBe(false)
-    expect((wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]').element as HTMLInputElement).checked).toBe(true)
+    expect(isChecked(wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled'))).toBe(false)
+    expect(isChecked(wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]'))).toBe(true)
     expect((wrapper.get('[data-testid="bulk-edit-openai-responses-mode-select"]').element as HTMLSelectElement).value).toBe('auto')
   })
 
@@ -668,7 +675,7 @@ describe('BulkEditAccountModal', () => {
 
     expect(wrapper.get('[data-testid="bulk-edit-openai-long-context-shadow-hint"]').text())
       .toContain('admin.accounts.bulkEdit.longContextShadowHint')
-    await wrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-long-context-billing-enabled'), true)
     await wrapper.get('[data-testid="bulk-edit-openai-long-context-billing-toggle"]').trigger('click')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -690,7 +697,7 @@ describe('BulkEditAccountModal', () => {
       selectedPlatforms: ['openai'],
       selectedTypes: ['oauth']
     })
-    await wrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-long-context-billing-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -712,7 +719,7 @@ describe('BulkEditAccountModal', () => {
       selectedPlatforms: ['openai'],
       selectedTypes: ['oauth']
     })
-    await wrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-long-context-billing-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -734,7 +741,7 @@ describe('BulkEditAccountModal', () => {
       selectedPlatforms: ['openai'],
       selectedTypes: ['oauth']
     })
-    await wrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-long-context-billing-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -748,7 +755,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -765,7 +772,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -781,7 +788,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled'), true)
     await wrapper.get('[data-testid="bulk-edit-upstream-billing-auto-probe-select"]').setValue('disabled')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -815,7 +822,7 @@ describe('BulkEditAccountModal', () => {
       }
     })
 
-    await wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-upstream-billing-auto-probe-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -840,9 +847,9 @@ describe('BulkEditAccountModal', () => {
       }
     })
 
-    await wrapper.get('#bulk-edit-openai-compact-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-compact-mode-enabled'), true)
     await wrapper.get('[data-testid="bulk-edit-openai-compact-mode-select"]').setValue('force_on')
-    await wrapper.get('#bulk-edit-openai-compact-model-mapping-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-compact-model-mapping-enabled'), true)
     await wrapper.get('[data-testid="bulk-edit-openai-compact-model-mapping-add"]').trigger('click')
     const inputs = wrapper.findAll('[data-testid="bulk-edit-openai-compact-model-mapping-input"]')
     await inputs[0].setValue('gpt-5.4')
@@ -870,7 +877,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['apikey']
     })
 
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-passthrough-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -889,9 +896,9 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-passthrough-enabled'), true)
     await wrapper.get('#bulk-edit-openai-passthrough-toggle').trigger('click')
-    await wrapper.get('#bulk-edit-model-restriction-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-model-restriction-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -923,7 +930,7 @@ describe('BulkEditAccountModal', () => {
       }
     })
 
-    await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-status-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -954,7 +961,7 @@ describe('BulkEditAccountModal', () => {
     })
 
     // 下拉框默认就是 off，用户只勾选「编辑该项」即提交——正是 issue 描述的操作路径。
-    await wrapper.get('#bulk-edit-openai-codex-fingerprint-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-codex-fingerprint-mode-enabled'), true)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
@@ -979,7 +986,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-codex-fingerprint-mode-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-codex-fingerprint-mode-enabled'), true)
     await wrapper
       .get('[data-testid="bulk-codex-fingerprint-mode-select"]')
       .setValue('session')
@@ -1000,7 +1007,7 @@ describe('BulkEditAccountModal', () => {
       selectedTypes: ['oauth']
     })
 
-    await wrapper.get('#bulk-edit-openai-codex-cli-only-enabled').setValue(true)
+    await setChecked(wrapper.get('#bulk-edit-openai-codex-cli-only-enabled'), true)
     await wrapper.get('#bulk-edit-openai-codex-cli-only-toggle').trigger('click')
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, useTemplateRef, nextTick } from 'vue'
+import { onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
 
 const props = withDefaults(defineProps<{
   content?: string
@@ -13,11 +13,9 @@ const props = withDefaults(defineProps<{
 const show = ref(false)
 const triggerRef = useTemplateRef<HTMLElement>('trigger')
 const tooltipRef = useTemplateRef<HTMLElement>('tooltip')
-const tooltipStyle = ref({ top: '0px', left: '0px' })
 
 function openTooltip() {
   show.value = true
-  nextTick(updatePosition)
 }
 
 function closeTooltip() {
@@ -71,33 +69,31 @@ function onDocumentKeydown(event: KeyboardEvent) {
   }
 }
 
-function onViewportChange() {
-  if (!show.value) return
-  updatePosition()
+// The popover closes itself on outside pointerdown / Escape; the trigger toggles on its own click.
+function onOpenChange(open: boolean) {
+  if (!open) closeTooltip()
 }
 
-function updatePosition() {
-  const el = triggerRef.value
-  if (!el) return
-  const rect = el.getBoundingClientRect()
-  tooltipStyle.value = {
-    top: `${rect.top + window.scrollY}px`,
-    left: `${rect.left + rect.width / 2 + window.scrollX}px`,
-  }
+const popoverContent = {
+  side: 'top' as const,
+  align: 'center' as const,
+  sideOffset: 8,
+  // A help bubble must not steal focus from the field the user is typing in.
+  onOpenAutoFocus: (event: Event) => event.preventDefault(),
+  onCloseAutoFocus: (event: Event) => event.preventDefault(),
+  onPointerDownOutside: (event: CustomEvent<{ originalEvent: PointerEvent }>) => {
+    if (isInside(triggerRef.value, event.detail?.originalEvent?.target ?? null)) event.preventDefault()
+  },
 }
 
 onMounted(() => {
   document.addEventListener('click', onDocumentClick, true)
   document.addEventListener('keydown', onDocumentKeydown)
-  window.addEventListener('resize', onViewportChange)
-  window.addEventListener('scroll', onViewportChange, true)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick, true)
   document.removeEventListener('keydown', onDocumentKeydown)
-  window.removeEventListener('resize', onViewportChange)
-  window.removeEventListener('scroll', onViewportChange, true)
 })
 </script>
 
@@ -109,51 +105,49 @@ onBeforeUnmount(() => {
     @mouseleave="onLeave"
     @click="onClick"
   >
-    <!-- Trigger Icon -->
-    <slot name="trigger">
-      <svg
-        class="h-4 w-4 cursor-help text-gray-400 transition-colors hover:text-primary-600 dark:text-gray-500 dark:hover:text-primary-400"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        stroke-width="2"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
-      </svg>
-    </slot>
+    <UPopover
+      :open="show"
+      :content="popoverContent"
+      :ui="{ content: 'z-[99999] max-w-[calc(100vw-1rem)]' }"
+      @update:open="onOpenChange"
+    >
+      <template #anchor>
+        <span class="inline-flex items-center">
+          <!-- Trigger Icon -->
+          <slot name="trigger">
+            <UIcon
+              name="i-lucide-info"
+              class="size-4 cursor-help text-dimmed transition-colors hover:text-highlighted"
+            />
+          </slot>
+        </span>
+      </template>
 
-    <!-- Teleport to body to escape modal overflow clipping -->
-    <Teleport to="body">
-      <!-- before: 伪元素向下延伸一段透明区域，盖住提示框与触发图标之间的空隙，让指针能连续移入提示框。 -->
-      <div
-        ref="tooltip"
-        v-show="show"
-        role="tooltip"
-        :class="[
-          'fixed z-[99999] -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:top-full before:h-3 dark:bg-gray-800 dark:selection:bg-primary-200 dark:selection:text-gray-900',
-          props.widthClass,
-        ]"
-        :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left }"
-        @mouseleave="onTooltipLeave"
-      >
-        <button
-          v-if="props.trigger === 'click'"
-          type="button"
-          class="absolute right-1.5 top-1.5 rounded p-1 text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
-          aria-label="Close"
-          @click.stop="closeTooltip"
+      <template #content>
+        <!-- before: 向下延伸一段透明区域，盖住提示框与触发图标之间的空隙，让指针能连续移入提示框。 -->
+        <div
+          ref="tooltip"
+          role="tooltip"
+          :class="[
+            'relative p-3 text-xs leading-relaxed text-default before:absolute before:inset-x-0 before:top-full before:h-3',
+            props.trigger === 'click' && 'pr-8',
+            props.widthClass,
+          ]"
+          @mouseleave="onTooltipLeave"
         >
-          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-        <slot>{{ content }}</slot>
-        <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
-      </div>
-    </Teleport>
+          <UButton
+            v-if="props.trigger === 'click'"
+            icon="i-lucide-x"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            class="absolute right-1 top-1"
+            aria-label="Close"
+            @click.stop="closeTooltip"
+          />
+          <slot>{{ content }}</slot>
+        </div>
+      </template>
+    </UPopover>
   </div>
 </template>

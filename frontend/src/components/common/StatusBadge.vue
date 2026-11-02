@@ -1,15 +1,8 @@
 <template>
-  <div class="flex items-center gap-1.5">
-    <span
-      :class="[
-        'inline-block h-2 w-2 rounded-full',
-        variantClass
-      ]"
-    ></span>
-    <span class="text-sm text-gray-700 dark:text-gray-300">
-      {{ label }}
-    </span>
-  </div>
+  <UBadge :color="color" variant="subtle" class="gap-1.5">
+    <span class="inline-block size-1.5 rounded-full bg-current" aria-hidden="true"></span>
+    {{ label }}
+  </UBadge>
 </template>
 
 <script setup lang="ts">
@@ -20,20 +13,20 @@ const props = defineProps<{
   label: string
 }>()
 
-const variantClass = computed(() => {
+const color = computed<'success' | 'warning' | 'error' | 'neutral'>(() => {
   switch (props.status) {
     case 'active':
     case 'success':
-      return 'bg-green-500'
+      return 'success'
     case 'disabled':
     case 'inactive':
     case 'warning':
-      return 'bg-yellow-500'
+      return 'warning'
     case 'error':
     case 'danger':
-      return 'bg-red-500'
+      return 'error'
     default:
-      return 'bg-gray-400'
+      return 'neutral'
   }
 })
 </script>

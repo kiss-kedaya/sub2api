@@ -151,8 +151,13 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 	if err != nil {
 		return nil, nil, err
 	}
+	if filters.AccountNameOnly {
+		for i := range logs {
+			logs[i].AccountNameOnly = true
+		}
+	}
 
-	if err := r.hydrateUsageLogAssociations(ctx, logs); err != nil {
+	if err := r.hydrateUsageLogAssociations(ctx, logs, filters.CompactAssociations); err != nil {
 		return nil, nil, err
 	}
 	return logs, page, nil
@@ -293,32 +298,42 @@ func (r *usageLogRepository) queryUsageLogs(ctx context.Context, query string, a
 	return logs, nil
 }
 
-func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, logs []service.UsageLog) error {
+func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, logs []service.UsageLog, compact bool) error {
 	// 关联数据使用 Ent 批量加载，避免把复杂 SQL 继续膨胀。
 	if len(logs) == 0 {
 		return nil
 	}
 
 	ids := collectUsageLogIDs(logs)
-	users, err := r.loadUsers(ctx, ids.userIDs)
+	users, err := r.loadUsers(ctx, ids.userIDs, compact)
 	if err != nil {
 		return err
 	}
-	apiKeys, err := r.loadAPIKeys(ctx, ids.apiKeyIDs)
+	apiKeys, err := r.loadAPIKeys(ctx, ids.apiKeyIDs, compact)
 	if err != nil {
 		return err
 	}
-	accounts, err := r.loadAccounts(ctx, ids.accountIDs)
+	accountNameOnly := compact
+	for i := range logs {
+		if logs[i].AccountNameOnly {
+			accountNameOnly = true
+			break
+		}
+	}
+	accounts, err := r.loadAccounts(ctx, ids.accountIDs, accountNameOnly)
 	if err != nil {
 		return err
 	}
-	groups, err := r.loadGroups(ctx, ids.groupIDs)
+	groups, err := r.loadGroups(ctx, ids.groupIDs, compact)
 	if err != nil {
 		return err
 	}
-	subs, err := r.loadSubscriptions(ctx, ids.subscriptionIDs)
-	if err != nil {
-		return err
+	var subs map[int64]*service.UserSubscription
+	if !compact {
+		subs, err = r.loadSubscriptions(ctx, ids.subscriptionIDs)
+		if err != nil {
+			return err
+		}
 	}
 
 	for i := range logs {
@@ -336,11 +351,12 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 				logs[i].Group = group
 			}
 		}
-		if logs[i].SubscriptionID != nil {
+		if !compact && logs[i].SubscriptionID != nil {
 			if sub, ok := subs[*logs[i].SubscriptionID]; ok {
 				logs[i].Subscription = sub
 			}
 		}
+		logs[i].AssociationsCompact = compact
 	}
 	return nil
 }
@@ -383,12 +399,25 @@ func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
 	}
 }
 
-func (r *usageLogRepository) loadUsers(ctx context.Context, ids []int64) (map[int64]*service.User, error) {
+func (r *usageLogRepository) loadUsers(ctx context.Context, ids []int64, compact bool) (map[int64]*service.User, error) {
 	out := make(map[int64]*service.User)
 	if len(ids) == 0 {
 		return out, nil
 	}
 	// 无条件穿透软删除：ids 来自调用方已按 user_id 筛选的日志行；普通用户路径强制 UserID=本人（本人必为活跃用户），不会借此解析他人已删身份；仅 admin 路径可借此显示已删用户。
+	if compact {
+		models, err := r.client.User.Query().
+			Where(dbuser.IDIn(ids...)).
+			Select(dbuser.FieldID, dbuser.FieldEmail, dbuser.FieldUsername, dbuser.FieldDeletedAt).
+			All(mixins.SkipSoftDelete(ctx))
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range models {
+			out[m.ID] = userEntityToService(m)
+		}
+		return out, nil
+	}
 	models, err := r.client.User.Query().Where(dbuser.IDIn(ids...)).All(mixins.SkipSoftDelete(ctx))
 	if err != nil {
 		return nil, err
@@ -399,9 +428,22 @@ func (r *usageLogRepository) loadUsers(ctx context.Context, ids []int64) (map[in
 	return out, nil
 }
 
-func (r *usageLogRepository) loadAPIKeys(ctx context.Context, ids []int64) (map[int64]*service.APIKey, error) {
+func (r *usageLogRepository) loadAPIKeys(ctx context.Context, ids []int64, compact bool) (map[int64]*service.APIKey, error) {
 	out := make(map[int64]*service.APIKey)
 	if len(ids) == 0 {
+		return out, nil
+	}
+	if compact {
+		models, err := r.client.APIKey.Query().
+			Where(dbapikey.IDIn(ids...)).
+			Select(dbapikey.FieldID, dbapikey.FieldName).
+			All(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range models {
+			out[m.ID] = apiKeyEntityToService(m)
+		}
 		return out, nil
 	}
 	models, err := r.client.APIKey.Query().Where(dbapikey.IDIn(ids...)).All(ctx)
@@ -414,9 +456,22 @@ func (r *usageLogRepository) loadAPIKeys(ctx context.Context, ids []int64) (map[
 	return out, nil
 }
 
-func (r *usageLogRepository) loadAccounts(ctx context.Context, ids []int64) (map[int64]*service.Account, error) {
+func (r *usageLogRepository) loadAccounts(ctx context.Context, ids []int64, compact bool) (map[int64]*service.Account, error) {
 	out := make(map[int64]*service.Account)
 	if len(ids) == 0 {
+		return out, nil
+	}
+	if compact {
+		models, err := r.client.Account.Query().
+			Where(dbaccount.IDIn(ids...)).
+			Select(dbaccount.FieldID, dbaccount.FieldName).
+			All(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range models {
+			out[m.ID] = accountEntityToService(m)
+		}
 		return out, nil
 	}
 	models, err := r.client.Account.Query().Where(dbaccount.IDIn(ids...)).All(ctx)
@@ -429,9 +484,22 @@ func (r *usageLogRepository) loadAccounts(ctx context.Context, ids []int64) (map
 	return out, nil
 }
 
-func (r *usageLogRepository) loadGroups(ctx context.Context, ids []int64) (map[int64]*service.Group, error) {
+func (r *usageLogRepository) loadGroups(ctx context.Context, ids []int64, compact bool) (map[int64]*service.Group, error) {
 	out := make(map[int64]*service.Group)
 	if len(ids) == 0 {
+		return out, nil
+	}
+	if compact {
+		models, err := r.client.Group.Query().
+			Where(dbgroup.IDIn(ids...)).
+			Select(dbgroup.FieldID, dbgroup.FieldName).
+			All(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range models {
+			out[m.ID] = groupEntityToService(m)
+		}
 		return out, nil
 	}
 	models, err := r.client.Group.Query().Where(dbgroup.IDIn(ids...)).All(ctx)

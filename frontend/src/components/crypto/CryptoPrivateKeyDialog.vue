@@ -1,37 +1,38 @@
 <template>
   <BaseDialog :show="showResult" :title="t('admin.crypto.privateKeyExportTitle')" @close="close">
-    <div class="crypto-private-key">
-      <div class="crypto-private-key__field">
-        <span class="crypto-private-key__label">{{ t('admin.crypto.address') }}</span>
-        <code data-testid="private-key-address">{{ displayedAddress?.address }}</code>
+    <div class="crypto-private-key space-y-4 text-sm">
+      <div class="space-y-1.5">
+        <span class="font-medium text-default">{{ t('admin.crypto.address') }}</span>
+        <code data-testid="private-key-address" class="block rounded-md bg-elevated px-3 py-2 font-mono text-xs break-all text-default">{{ displayedAddress?.address }}</code>
       </div>
       <template v-if="privateKey">
-        <div class="crypto-private-key__field">
-          <span id="crypto-private-key-label" class="crypto-private-key__label">{{ t('admin.crypto.privateKey') }}</span>
-          <pre id="crypto-private-key-value" ref="privateKeyElement" data-testid="private-key-value" aria-labelledby="crypto-private-key-label">{{ visible ? privateKey : '••••••••••••••••••••••••••••••••' }}</pre>
+        <div class="space-y-1.5">
+          <span id="crypto-private-key-label" class="font-medium text-default">{{ t('admin.crypto.privateKey') }}</span>
+          <pre id="crypto-private-key-value" ref="privateKeyElement" data-testid="private-key-value" aria-labelledby="crypto-private-key-label" class="m-0 rounded-md bg-elevated px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all text-default">{{ visible ? privateKey : '••••••••••••••••••••••••••••••••' }}</pre>
         </div>
-        <div class="crypto-private-key__actions">
-          <button type="button" class="btn btn-secondary btn-sm" :aria-pressed="visible" aria-controls="crypto-private-key-value" @click="visible = !visible">
+        <div class="flex flex-wrap gap-2">
+          <UButton color="neutral" variant="outline" size="sm" :icon="visible ? 'i-lucide-eye-off' : 'i-lucide-eye'" :aria-pressed="visible" aria-controls="crypto-private-key-value" @click="visible = !visible">
             {{ t(visible ? 'admin.crypto.privateKeyHide' : 'admin.crypto.privateKeyShow') }}
-          </button>
-          <button type="button" class="btn btn-secondary btn-sm" data-testid="private-key-copy" @click="copyPrivateKey">
+          </UButton>
+          <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-copy" data-testid="private-key-copy" @click="copyPrivateKey">
             {{ t('admin.crypto.privateKeyCopy') }}
-          </button>
+          </UButton>
         </div>
-        <p role="timer" class="crypto-private-key__hint">{{ t('admin.crypto.privateKeyAutoClear', { seconds: remainingSeconds }) }}</p>
+        <p role="timer" class="text-xs text-muted">{{ t('admin.crypto.privateKeyAutoClear', { seconds: remainingSeconds }) }}</p>
       </template>
-      <p v-else role="status">{{ t('admin.crypto.privateKeyExpired') }}</p>
-      <p v-if="displayedAddress?.family === 'evm'" class="crypto-private-key__hint">{{ t('admin.crypto.privateKeyEvmShared') }}</p>
-      <p class="crypto-private-key__hint">{{ t('admin.crypto.privateKeyExternalTransferHint') }}</p>
-      <p v-if="copyNotice" role="status">{{ copyNotice }}</p>
+      <p v-else role="status" class="text-muted">{{ t('admin.crypto.privateKeyExpired') }}</p>
+      <p v-if="displayedAddress?.family === 'evm'" class="text-xs text-muted">{{ t('admin.crypto.privateKeyEvmShared') }}</p>
+      <p class="text-xs text-muted">{{ t('admin.crypto.privateKeyExternalTransferHint') }}</p>
+      <p v-if="copyNotice" role="status" class="text-toned">{{ copyNotice }}</p>
     </div>
     <template #footer>
-      <button type="button" class="btn btn-primary" data-testid="private-key-close" @click="close">{{ t('common.close') }}</button>
+      <div class="flex justify-end">
+        <UButton data-testid="private-key-close" @click="close">{{ t('common.close') }}</UButton>
+      </div>
     </template>
   </BaseDialog>
   <CryptoSecurityDialog ref="securityDialog" />
 </template>
-
 <script setup lang="ts">
 import { inject, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { matchedRouteKey, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
@@ -187,11 +188,3 @@ onBeforeUnmount(reset)
 onDeactivated(close)
 </script>
 
-<style scoped>
-.crypto-private-key { display: grid; gap: 1rem; font-size: .875rem; line-height: 1.7; }
-.crypto-private-key__field { display: grid; gap: .5rem; }
-.crypto-private-key__label { font-weight: 600; }
-.crypto-private-key code, .crypto-private-key pre { margin: 0; border: 1px solid var(--signal-line, #cbd5d1); border-radius: .5rem; padding: .75rem; background: var(--signal-surface, #fff); color: var(--signal-text, #172522); font-family: ui-monospace, monospace; font-size: .8125rem; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; }
-.crypto-private-key__actions { display: flex; flex-wrap: wrap; gap: .75rem; }
-.crypto-private-key__hint { color: var(--signal-muted, #6b7280); font-size: .8125rem; }
-</style>

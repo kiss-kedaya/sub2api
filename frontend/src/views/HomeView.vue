@@ -74,8 +74,8 @@
           alt="Logo"
           class="mx-auto mb-6 h-20 w-20 rounded-2xl object-contain"
         />
-        <h1 class="[overflow-wrap:anywhere] text-3xl font-bold md:text-4xl">{{ siteName }}</h1>
-        <p class="mt-4 whitespace-pre-wrap [overflow-wrap:anywhere] text-base text-gray-600 dark:text-dark-300">{{ siteSubtitle }}</p>
+        <h1 class="wrap-anywhere text-3xl font-bold md:text-4xl">{{ siteName }}</h1>
+        <p class="mt-4 whitespace-pre-wrap wrap-anywhere text-base text-gray-600 dark:text-dark-300">{{ siteSubtitle }}</p>
         <router-link
           :to="isAuthenticated ? dashboardPath : '/login'"
           class="mt-8 inline-flex min-h-10 items-center justify-center rounded-lg bg-primary-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
@@ -85,7 +85,7 @@
       </div>
     </main>
 
-    <footer class="min-w-0 border-t border-gray-200 px-4 py-5 text-center text-sm text-gray-500 [overflow-wrap:anywhere] sm:px-6 dark:border-dark-800 dark:text-dark-400">
+    <footer class="min-w-0 border-t border-gray-200 px-4 py-5 text-center text-sm text-gray-500 wrap-anywhere sm:px-6 dark:border-dark-800 dark:text-dark-400">
       <p class="mx-auto max-w-3xl text-xs leading-6">{{ t('home.footer.riskStrip') }}</p>
       <p class="mt-3">&copy; {{ currentYear }} {{ siteName }}</p>
       <div class="mt-3">
@@ -257,7 +257,7 @@
         <!-- Feature Tags - Centered -->
         <div class="mb-12 flex flex-wrap items-center justify-center gap-4 md:gap-6">
           <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
+            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-xs backdrop-blur-xs dark:border-dark-700/50 dark:bg-dark-800/80"
           >
             <Icon name="swap" size="sm" class="text-primary-500" />
             <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
@@ -265,7 +265,7 @@
             }}</span>
           </div>
           <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
+            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-xs backdrop-blur-xs dark:border-dark-700/50 dark:bg-dark-800/80"
           >
             <Icon name="shield" size="sm" class="text-primary-500" />
             <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
@@ -273,7 +273,7 @@
             }}</span>
           </div>
           <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-sm backdrop-blur-sm dark:border-dark-700/50 dark:bg-dark-800/80"
+            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-xs backdrop-blur-xs dark:border-dark-700/50 dark:bg-dark-800/80"
           >
             <Icon name="chart" size="sm" class="text-primary-500" />
             <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
@@ -485,7 +485,7 @@ const isHomeContentUrl = computed(() => {
 })
 
 // Theme
-const isDark = ref(document.documentElement.classList.contains('dark'))
+const isDark = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 
 // GitHub URL
 const githubUrl = 'https://github.com/Wei-Shaw/sub2api'

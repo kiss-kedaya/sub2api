@@ -98,7 +98,7 @@ func TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement(t *tes
 		Model: "deepseek-v4-flash",
 		Input: json.RawMessage(`[
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"what's the weather?"}]},
-			{"type":"reasoning","summary":[{"type":"summary_text","text":"call the tool"}]},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"call the tool"}],"content":[{"type":"reasoning_text","text":"call the tool"}]},
 			{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"SF\"}"},
 			{"type":"function_call_output","call_id":"call_1","output":"sunny"}
 		]`),

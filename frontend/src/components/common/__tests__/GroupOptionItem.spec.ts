@@ -37,7 +37,7 @@ describe('GroupOptionItem description layout', () => {
 
     expect(descriptionElement).toBeDefined()
     expect(descriptionElement?.classes()).toContain('whitespace-pre-line')
-    expect(descriptionElement?.classes()).toContain('[overflow-wrap:anywhere]')
+    expect(descriptionElement?.classes()).toContain('wrap-anywhere')
     expect(descriptionElement?.classes()).toContain('line-clamp-3')
     expect(wrapper.find('[title]').attributes('title')).toBe(description)
   })

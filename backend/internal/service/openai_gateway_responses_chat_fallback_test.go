@@ -519,8 +519,8 @@ func TestForwardResponses_ChatFallbackCachesStreamedReasoning(t *testing.T) {
 	}
 }
 
-// 请求侧：encrypted-only reasoning item（无明文 summary）经缓存回查补回
-// reasoning_content；带明文 summary 的 item 顺手回写缓存（自愈）。
+// 请求侧：encrypted-only reasoning item 经缓存回查补回 reasoning_content；
+// 只有真正 reasoning_text 可以回写，展示 summary 不能冒充完整思考。
 func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -528,7 +528,7 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 		"model":"deepseek-reasoner",
 		"stream":false,
 		"input":[
-			{"type":"reasoning","id":"item_plain","summary":[{"type":"summary_text","text":"plain thinking"}]},
+			{"type":"reasoning","id":"item_plain","summary":[{"type":"summary_text","text":"display summary, not full reasoning"}],"content":[{"type":"reasoning_text","text":"plain thinking"}]},
 			{"type":"function_call","call_id":"call_0","name":"get_value","arguments":"{}"},
 			{"type":"function_call_output","call_id":"call_0","output":"ok"},
 			{"type":"reasoning","id":"item_enc1","summary":[],"encrypted_content":"opaque"},
@@ -562,7 +562,7 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// 明文 summary 的 assistant 工具调用消息：reasoning_content 来自 summary 本身。
+	// assistant 工具调用消息只使用真实 reasoning_text，不使用展示摘要。
 	require.Equal(t, "plain thinking", gjson.GetBytes(upstream.lastBody, "messages.0.reasoning_content").String())
 	require.Equal(t, "call_0", gjson.GetBytes(upstream.lastBody, "messages.0.tool_calls.0.id").String())
 	require.Equal(t, "tool", gjson.GetBytes(upstream.lastBody, "messages.1.role").String())
@@ -571,6 +571,7 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 	require.Equal(t, "call_1", gjson.GetBytes(upstream.lastBody, "messages.2.tool_calls.0.id").String())
 	require.Equal(t, "tool", gjson.GetBytes(upstream.lastBody, "messages.3.role").String())
 
-	// 明文 summary 的 item 被回写进缓存（自愈）。
+	// 真实 reasoning_text 被回写进缓存；展示摘要不应进入缓存。
 	require.Equal(t, "plain thinking", cache.snapshotSets()["item_plain"])
+	require.NotContains(t, cache.snapshotSets()["item_plain"], "display summary")
 }

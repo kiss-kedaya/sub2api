@@ -300,10 +300,15 @@ export interface BatchUsersUsageResponse {
  * @param userIds - Array of user IDs
  * @returns Usage stats map keyed by user ID
  */
-export async function getBatchUsersUsage(userIds: number[]): Promise<BatchUsersUsageResponse> {
-  const { data } = await apiClient.post<BatchUsersUsageResponse>('/admin/dashboard/users-usage', {
-    user_ids: userIds
-  })
+export async function getBatchUsersUsage(
+  userIds: number[],
+  options?: { signal?: AbortSignal }
+): Promise<BatchUsersUsageResponse> {
+  const { data } = await apiClient.post<BatchUsersUsageResponse>(
+    '/admin/dashboard/users-usage',
+    { user_ids: userIds },
+    { signal: options?.signal }
+  )
   return data
 }
 
