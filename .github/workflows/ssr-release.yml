@@ -12,9 +12,14 @@ on:
         description: 'Release tag (vX.Y.Z)'
         required: true
         type: string
+      source_run_id:
+        description: 'Optional Go Release run ID that uploaded frontend-dist for this exact tag commit'
+        required: false
+        type: string
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: ssr-release-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
@@ -42,6 +47,7 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-list -n 1 "$TAG")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@v6
@@ -73,9 +79,50 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: frontend
 
-      - name: Build the Nuxt SSR bundle
+      - name: Download the exact embedded SPA artifact from the Go Release run
+        id: embedded-spa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_RUN_ID: ${{ inputs.source_run_id }}
+          TAG: ${{ steps.ref.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          pnpm run build
+          set -euo pipefail
+          COMMIT="${{ steps.ref.outputs.commit }}"
+          RELEASE_RUN="${INPUT_RUN_ID:-}"
+          CANDIDATES="$RELEASE_RUN"
+          if [ -z "$CANDIDATES" ]; then
+            CANDIDATES="$(gh run list --repo "$REPOSITORY" --workflow release.yml --commit "$COMMIT" --limit 20 --json databaseId --jq '.[].databaseId')"
+          fi
+          for candidate in $CANDIDATES; do
+            RUN_COMMIT="$(gh run view "$candidate" --repo "$REPOSITORY" --json headSha --jq .headSha)"
+            [ "$RUN_COMMIT" = "$COMMIT" ] || continue
+            FRONTEND_RESULT="$(gh api "repos/$REPOSITORY/actions/runs/$candidate/jobs" --jq '.jobs[] | select(.name == "build-frontend") | .conclusion' | head -n 1)"
+            [ "$FRONTEND_RESULT" = success ] || continue
+            ARTIFACT="$(gh api "repos/$REPOSITORY/actions/runs/$candidate/artifacts" --jq '.artifacts[] | select(.name == "frontend-dist" and .expired == false) | .id' | head -n 1)"
+            [ -n "$ARTIFACT" ] || continue
+            RELEASE_RUN="$candidate"
+            break
+          done
+          if [ -z "$RELEASE_RUN" ]; then
+            echo "::error::no completed Go Release run with frontend-dist found for $TAG ($COMMIT)"
+            exit 1
+          fi
+          rm -rf backend/internal/web/dist
+          mkdir -p backend/internal/web/dist
+          gh run download "$RELEASE_RUN" --repo "$REPOSITORY" --name frontend-dist --dir backend/internal/web/dist
+          node frontend/scripts/build-manifest.mjs verify \
+            --dir backend/internal/web/dist \
+            --mode spa \
+            --expect-commit "$COMMIT"
+          FRONTEND_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('backend/internal/web/dist/frontend-build.json','utf8')).version")"
+          echo "version=$FRONTEND_VERSION" >> "$GITHUB_OUTPUT"
+          echo "run_id=$RELEASE_RUN" >> "$GITHUB_OUTPUT"
+
+      - name: Build the Nuxt SSR bundle
+        env:
+          FRONTEND_BUILD_VERSION: ${{ steps.ref.outputs.version }}
+        run: |
           pnpm run build:ssr
         working-directory: frontend
 
@@ -154,6 +201,7 @@ jobs:
           --ssr frontend/.output
           --binary dist/backend/sub2api
           --spa-dist backend/internal/web/dist
+          --release-version ${{ steps.ref.outputs.version }}
           --out dist/release.json
 
       - name: Verify the release contract

@@ -200,6 +200,7 @@ function seal(args) {
   if (!existsSync(binary)) fail(`Go binary not found: ${binary}`)
 
   const ssrManifest = ssrCheck.manifest
+  const releaseVersion = args['release-version'] ? String(args['release-version']).replace(/^v/, '') : ssrManifest.version
   let embeddedFrontend = null
   if (spaDist) {
     const spaCheck = verifyManifest(spaDist, {
@@ -208,9 +209,6 @@ function seal(args) {
       allowCommitDrift: Boolean(args['allow-commit-drift']),
     })
     if (spaCheck.errors.length > 0) fail('embedded SPA fallback does not match the Go binary', spaCheck.errors)
-    if (spaCheck.manifest.version !== ssrManifest.version) {
-      fail(`SPA version ${spaCheck.manifest.version} != SSR version ${ssrManifest.version}`)
-    }
     if (spaCheck.manifest.commit !== ssrManifest.commit) {
       fail(`SPA commit ${spaCheck.manifest.commit} != SSR commit ${ssrManifest.commit}`)
     }
@@ -226,7 +224,7 @@ function seal(args) {
   const release = {
     schema: 1,
     product: 'sub2api',
-    version: ssrManifest.version,
+    version: releaseVersion,
     commit: ssrManifest.commit,
     builtAt: new Date().toISOString(),
     frontend: {
@@ -240,6 +238,7 @@ function seal(args) {
     },
     backend: {
       path: basename(binary),
+      version: releaseVersion,
       sha256: sha256File(binary),
       size: binaryInfo.size,
       embeddedFrontend,
@@ -261,6 +260,9 @@ function verify(args) {
 
   if (release.schema !== 1) errors.push(`schema ${release.schema} != 1`)
   if (release.product !== 'sub2api') errors.push(`product "${release.product}" != "sub2api"`)
+  if (release.backend?.version && release.version !== release.backend.version) {
+    errors.push(`release version ${release.version} != backend version ${release.backend.version}`)
+  }
 
   const ssrDir = resolve(args.ssr || join(REPO_ROOT, 'frontend/.output'))
   const manifestDir = resolveSsrManifestDir(ssrDir)
@@ -273,8 +275,8 @@ function verify(args) {
     if (ssrCheck.manifest.commit !== release.commit) {
       errors.push(`SSR commit ${ssrCheck.manifest.commit} != release commit ${release.commit}`)
     }
-    if (ssrCheck.manifest.version !== release.version) {
-      errors.push(`SSR version ${ssrCheck.manifest.version} != release version ${release.version}`)
+    if (release.frontend?.version !== ssrCheck.manifest.version) {
+      errors.push(`SSR version ${ssrCheck.manifest.version} != sealed frontend version ${release.frontend?.version}`)
     }
   }
 
@@ -307,7 +309,9 @@ function verify(args) {
     })
     errors.push(...spaCheck.errors)
     if (spaCheck.manifest) {
-      if (spaCheck.manifest.version !== release.version) errors.push(`SPA version ${spaCheck.manifest.version} != release version ${release.version}`)
+      if (spaCheck.manifest.version !== release.backend?.embeddedFrontend?.version) {
+        errors.push(`SPA version ${spaCheck.manifest.version} != sealed embedded version ${release.backend?.embeddedFrontend?.version}`)
+      }
       if (spaCheck.manifest.commit !== release.commit) errors.push(`SPA commit ${spaCheck.manifest.commit} != release commit ${release.commit}`)
       if (spaCheck.manifest.manifestHash !== release.backend?.embeddedFrontend?.manifestHash) {
         errors.push(`SPA manifestHash ${spaCheck.manifest.manifestHash} != sealed embedded hash ${release.backend?.embeddedFrontend?.manifestHash}`)
