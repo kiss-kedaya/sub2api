@@ -97,6 +97,51 @@ func ValidateModelWhitelistAutoSyncExtra(extra map[string]any) error {
 	return nil
 }
 
+// ModelWhitelistAutoSyncConfigView is the read-only projection returned by the
+// admin endpoint. Field names match what the batch-edit UI writes.
+type ModelWhitelistAutoSyncConfigView struct {
+	Enabled       bool   `json:"enabled"`
+	IntervalHours int    `json:"interval_hours"`
+	Mode          string `json:"mode"`
+}
+
+// ModelWhitelistAutoSyncConfigFromExtra returns the stored configuration with
+// defaults applied. ok=false means the account has no auto-sync object.
+func ModelWhitelistAutoSyncConfigFromExtra(extra map[string]any) (ModelWhitelistAutoSyncConfigView, bool) {
+	view := ModelWhitelistAutoSyncConfigView{
+		IntervalHours: modelWhitelistAutoSyncDefaultIntervalHours,
+		Mode:          ModelWhitelistAutoSyncModeWhitelist,
+	}
+	if extra == nil {
+		return view, false
+	}
+	raw, exists := extra[ModelWhitelistAutoSyncExtraKey]
+	if !exists || raw == nil {
+		return view, false
+	}
+	config, ok := raw.(map[string]any)
+	if !ok {
+		return view, false
+	}
+	if value, ok := config["enabled"].(bool); ok {
+		view.Enabled = value
+	}
+	if value, ok := config["interval_hours"]; ok && value != nil {
+		if parsed, valid := modelWhitelistAutoSyncHours(value); valid {
+			view.IntervalHours = parsed
+		}
+	}
+	if value, ok := config["mode"].(string); ok && value != "" {
+		view.Mode = value
+	}
+	return view, true
+}
+
+// ModelWhitelistAutoSyncStateFromExtra exposes the runner state to the admin
+// endpoint. Nil means the account never ran.
+func ModelWhitelistAutoSyncStateFromExtra(extra map[string]any) *ModelWhitelistAutoSyncState {
+	return decodeModelWhitelistAutoSyncState(extra)
+}
 func modelWhitelistAutoSyncHours(value any) (int, bool) {
 	switch typed := value.(type) {
 	case int:

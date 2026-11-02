@@ -959,6 +959,12 @@ func parseGroupIDsQuery(c *gin.Context) ([]int64, bool) {
 // suppressed instead of reporting noise. New groups (groups.created_at inside
 // the window) should be rendered as NEW by the client; this endpoint does not
 // distinguish new groups from changed ones.
+//
+// Semantics: this is an OBSERVATION, not a configuration audit. changed_at is
+// the first request billed at the new multiplier, which can be later than the
+// admin edit. The response therefore carries source=usage_observation and
+// changed_at_kind=first_request_at_new_rate; configuration change times are
+// only available from /admin/audit-logs/group-rate-changes (audit trail).
 func (h *UsageHandler) ListMyGroupRateChanges(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -997,10 +1003,12 @@ func (h *UsageHandler) ListMyGroupRateChanges(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"window_hours": hours,
-		"start_time":   startTime.UTC().Format(time.RFC3339),
-		"end_time":     now.UTC().Format(time.RFC3339),
-		"items":        changes,
+		"window_hours":    hours,
+		"start_time":      startTime.UTC().Format(time.RFC3339),
+		"end_time":        now.UTC().Format(time.RFC3339),
+		"source":          usagestats.RateChangeSourceUsageObservation,
+		"changed_at_kind": usagestats.RateChangeKindFirstRequest,
+		"items":           changes,
 	})
 }
 func queryInflightOnly(c *gin.Context) bool {

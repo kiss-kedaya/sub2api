@@ -622,6 +622,8 @@ func SelectGroupRateChanges(
 			Direction:              direction,
 			ChangedAt:              current.FirstSeenAt.UTC(),
 			Requests:               current.Requests,
+			Source:                 usagestats.RateChangeSourceUsageObservation,
+			ChangedAtKind:          usagestats.RateChangeKindFirstRequest,
 		})
 	}
 	return changes

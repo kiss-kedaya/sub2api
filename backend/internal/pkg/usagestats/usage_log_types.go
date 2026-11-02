@@ -266,7 +266,23 @@ type GroupRateChange struct {
 	Direction              string    `json:"direction"` // RateDirectionUp | RateDirectionDown
 	ChangedAt              time.Time `json:"changed_at"`
 	Requests               int64     `json:"requests"`
+	// Source/ChangedAtKind keep the contract honest: this row is derived from
+	// the multiplier actually charged on requests, so ChangedAt is the first
+	// request billed at the new value (an observation), not the moment an
+	// administrator saved the setting. Configuration change times live in the
+	// admin audit endpoint, never here.
+	Source        string `json:"source"`          // always RateChangeSourceUsageObservation
+	ChangedAtKind string `json:"changed_at_kind"` // always RateChangeKindFirstRequest
 }
+
+const (
+	// RateChangeSourceUsageObservation marks a multiplier move inferred from
+	// billed requests.
+	RateChangeSourceUsageObservation = "usage_observation"
+	// RateChangeKindFirstRequest marks ChangedAt as the first request observed
+	// at the new multiplier.
+	RateChangeKindFirstRequest = "first_request_at_new_rate"
+)
 
 // UserDashboardStats 用户仪表盘统计
 type UserDashboardStats struct {
