@@ -671,6 +671,7 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 		return nil
 	}
 	var head uint64
+	var err error
 	if snapshot != nil {
 		pool = snapshot.pool
 		head, err = pool.BlockNumber(ctx)
