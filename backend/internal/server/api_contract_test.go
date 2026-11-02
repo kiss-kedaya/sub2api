@@ -2742,6 +2742,14 @@ func (r *stubUsageLogRepo) GetAPIKeyStatsAggregated(ctx context.Context, apiKeyI
 	return nil, errors.New("not implemented")
 }
 
+func (r *stubUsageLogRepo) GetGroupActiveUserCounts(ctx context.Context, groupIDs []int64, since time.Time) (map[int64]int, error) {
+	return map[int64]int{}, nil
+}
+
+func (r *stubUsageLogRepo) GetGroupRateBuckets(ctx context.Context, userID int64, groupIDs []int64, startTime, endTime time.Time) ([]usagestats.GroupRateBucket, error) {
+	return []usagestats.GroupRateBucket{}, nil
+}
+
 func (r *stubUsageLogRepo) GetAccountStatsAggregated(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	return nil, errors.New("not implemented")
 }

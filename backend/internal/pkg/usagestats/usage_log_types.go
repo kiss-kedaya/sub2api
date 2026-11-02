@@ -219,6 +219,55 @@ type APIKeyDailyUsagePoint struct {
 	ActualCost       float64 `json:"actual_cost"` // 实际扣除
 }
 
+// RateDirectionUp / RateDirectionDown describe an observed multiplier move.
+const (
+	RateDirectionUp   = "up"
+	RateDirectionDown = "down"
+)
+
+// APIKeyUsageSummary is the sanitized aggregate a user may see for one of their
+// own API keys.
+//
+// Contract: this struct is deliberately narrow. It is built from counters in
+// usage_logs and never carries account cost, upstream/endpoint breakdowns,
+// model names, request ids or IP addresses. HTTP handlers must marshal this
+// type directly instead of returning the wider UsageStats struct.
+type APIKeyUsageSummary struct {
+	// Date is set only for the "today" block; the range block leaves it empty.
+	Date             string  `json:"date,omitempty"`
+	Requests         int64   `json:"requests"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	TotalTokens      int64   `json:"total_tokens"`
+	Cost             float64 `json:"cost"`        // 标准计费
+	ActualCost       float64 `json:"actual_cost"` // 实际扣除
+}
+
+// GroupRateBucket is one (group, rate_multiplier) aggregate observed in
+// usage_logs for a single user inside a time window. It is the raw input used
+// to derive GroupRateChange; it never leaves the backend.
+type GroupRateBucket struct {
+	GroupID        int64
+	RateMultiplier float64
+	Requests       int64
+	FirstSeenAt    time.Time
+	LastSeenAt     time.Time
+}
+
+// GroupRateChange is the user-facing description of a multiplier move that
+// happened inside the recent window. It lets the channel-status card render a
+// "rate changed" hint without exposing usage rows.
+type GroupRateChange struct {
+	GroupID                int64     `json:"group_id"`
+	CurrentRateMultiplier  float64   `json:"current_rate_multiplier"`
+	PreviousRateMultiplier float64   `json:"previous_rate_multiplier"`
+	Direction              string    `json:"direction"` // RateDirectionUp | RateDirectionDown
+	ChangedAt              time.Time `json:"changed_at"`
+	Requests               int64     `json:"requests"`
+}
+
 // UserDashboardStats 用户仪表盘统计
 type UserDashboardStats struct {
 	// API Key 统计

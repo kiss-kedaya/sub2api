@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -484,6 +485,163 @@ func (s *UsageService) GetAPIKeyDailyUsage(ctx context.Context, userID, apiKeyID
 		})
 	}
 	return points, nil
+}
+
+// GetAPIKeyUsageSummary returns the sanitized aggregate counters for one API
+// key inside [startTime, endTime).
+//
+// Callers must verify the API key belongs to the requesting user first; the
+// repository query is keyed by api_key_id only (idx_usage_logs_api_key_created_at)
+// and deliberately avoids the wider endpoint-breakdown aggregate.
+func (s *UsageService) GetAPIKeyUsageSummary(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.APIKeyUsageSummary, error) {
+	stats, err := s.usageRepo.GetAPIKeyStatsAggregated(ctx, apiKeyID, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("get api key usage summary: %w", err)
+	}
+	return &usagestats.APIKeyUsageSummary{
+		Requests:         stats.TotalRequests,
+		InputTokens:      stats.TotalInputTokens,
+		OutputTokens:     stats.TotalOutputTokens,
+		CacheReadTokens:  stats.TotalCacheReadTokens,
+		CacheWriteTokens: stats.TotalCacheCreationTokens,
+		TotalTokens:      stats.TotalTokens,
+		Cost:             stats.TotalCost,
+		ActualCost:       stats.TotalActualCost,
+	}, nil
+}
+
+// RateChangeFlapWindow is how recently a superseded multiplier must have been
+// observed for us to treat the move as noise (image/token mix, peak windows,
+// retries) instead of a real price change.
+const RateChangeFlapWindow = 30 * time.Minute
+
+// GetGroupRateChanges derives at most one multiplier move per group for a user
+// inside [startTime, endTime).
+//
+// The window is normally the last 24h. groupIDs is capped by the caller; this
+// method only folds the aggregates returned by GetGroupRateBuckets and never
+// touches usage rows itself.
+func (s *UsageService) GetGroupRateChanges(
+	ctx context.Context,
+	userID int64,
+	groupIDs []int64,
+	startTime, endTime time.Time,
+	now time.Time,
+) ([]usagestats.GroupRateChange, error) {
+	if userID <= 0 || len(groupIDs) == 0 {
+		return []usagestats.GroupRateChange{}, nil
+	}
+	buckets, err := s.usageRepo.GetGroupRateBuckets(ctx, userID, groupIDs, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("get group rate buckets: %w", err)
+	}
+	return SelectGroupRateChanges(buckets, now, RateChangeFlapWindow), nil
+}
+
+// SelectGroupRateChanges folds per-(group, rate) buckets into at most one
+// user-facing change per group.
+//
+// Rules, in order:
+//  1. current = the bucket seen most recently.
+//  2. previous = the most recent bucket with a different value whose last
+//     observation predates the current bucket's first observation. Overlapping
+//     ranges mean we cannot tell which value is "old", so the group is skipped.
+//  3. If any other multiplier was still observed within flapWindow of now the
+//     values are oscillating (mixed billing modes, peak windows) and no change
+//     is reported.
+//  4. changed_at = first observation of the current value.
+//
+// Groups without a distinguishable previous value are omitted; the frontend
+// simply renders no arrow for them.
+func SelectGroupRateChanges(
+	buckets []usagestats.GroupRateBucket,
+	now time.Time,
+	flapWindow time.Duration,
+) []usagestats.GroupRateChange {
+	if len(buckets) == 0 {
+		return []usagestats.GroupRateChange{}
+	}
+
+	byGroup := make(map[int64][]usagestats.GroupRateBucket, len(buckets))
+	for _, bucket := range buckets {
+		if bucket.GroupID <= 0 || bucket.RateMultiplier <= 0 {
+			continue
+		}
+		byGroup[bucket.GroupID] = append(byGroup[bucket.GroupID], bucket)
+	}
+
+	groupIDs := make([]int64, 0, len(byGroup))
+	for groupID := range byGroup {
+		groupIDs = append(groupIDs, groupID)
+	}
+	sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i] < groupIDs[j] })
+
+	changes := make([]usagestats.GroupRateChange, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		groupBuckets := byGroup[groupID]
+		if len(groupBuckets) < 2 {
+			continue
+		}
+		current := groupBuckets[0]
+		for _, bucket := range groupBuckets[1:] {
+			if bucket.LastSeenAt.After(current.LastSeenAt) {
+				current = bucket
+			}
+		}
+
+		var previous *usagestats.GroupRateBucket
+		flapping := false
+		for i := range groupBuckets {
+			bucket := groupBuckets[i]
+			if bucket.RateMultiplier == current.RateMultiplier {
+				continue
+			}
+			if !flapWindowExpired(bucket.LastSeenAt, now, flapWindow) {
+				flapping = true
+				break
+			}
+			if !bucket.LastSeenAt.Before(current.FirstSeenAt) {
+				continue
+			}
+			if previous == nil || bucket.LastSeenAt.After(previous.LastSeenAt) {
+				previous = &groupBuckets[i]
+			}
+		}
+		if flapping || previous == nil {
+			continue
+		}
+
+		direction := usagestats.RateDirectionDown
+		if current.RateMultiplier > previous.RateMultiplier {
+			direction = usagestats.RateDirectionUp
+		}
+		changes = append(changes, usagestats.GroupRateChange{
+			GroupID:                groupID,
+			CurrentRateMultiplier:  current.RateMultiplier,
+			PreviousRateMultiplier: previous.RateMultiplier,
+			Direction:              direction,
+			ChangedAt:              current.FirstSeenAt.UTC(),
+			Requests:               current.Requests,
+		})
+	}
+	return changes
+}
+
+// GetGroupActiveUserCounts implements GroupActiveUsersProbe. It is used by the
+// capacity summary for groups whose accounts do not enable session limits,
+// where session counters are structurally absent rather than zero.
+func (s *UsageService) GetGroupActiveUserCounts(ctx context.Context, groupIDs []int64, since time.Time) (map[int64]int, error) {
+	counts, err := s.usageRepo.GetGroupActiveUserCounts(ctx, groupIDs, since)
+	if err != nil {
+		return nil, fmt.Errorf("get group active users: %w", err)
+	}
+	return counts, nil
+}
+func flapWindowExpired(lastSeen, now time.Time, flapWindow time.Duration) bool {
+	if flapWindow <= 0 || lastSeen.IsZero() {
+		return true
+	}
+	return now.Sub(lastSeen) >= flapWindow
 }
 
 // GetBatchAPIKeyUsageStats returns today/total actual_cost for given api keys.

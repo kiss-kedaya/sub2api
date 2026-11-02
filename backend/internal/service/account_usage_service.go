@@ -75,6 +75,11 @@ type UsageLogRepository interface {
 	// Aggregated stats (optimized)
 	GetUserStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
+	GetGroupRateBuckets(ctx context.Context, userID int64, groupIDs []int64, startTime, endTime time.Time) ([]usagestats.GroupRateBucket, error)
+	// GetGroupActiveUserCounts returns COUNT(DISTINCT user_id) per group since the
+	// given instant. Used for capacity display where session tracking does not
+	// exist (accounts without max_sessions).
+	GetGroupActiveUserCounts(ctx context.Context, groupIDs []int64, since time.Time) (map[int64]int, error)
 	GetAccountStatsAggregated(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetModelStatsAggregated(ctx context.Context, modelName string, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetDailyStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) ([]map[string]any, error)

@@ -2,19 +2,62 @@ package service
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
+// GroupActiveUsersWindow is the rolling window used to count distinct users that
+// actually produced traffic. Five minutes matches the shortest RPM window and
+// keeps the aggregate bounded to a tiny slice of usage_logs.
+const GroupActiveUsersWindow = 5 * time.Minute
+
+// groupActiveUsersCacheTTL deduplicates repeated capacity polls; the underlying
+// query is index bounded but still hits PostgreSQL.
+const groupActiveUsersCacheTTL = 30 * time.Second
+
 // GroupCapacitySummary holds aggregated capacity for a single group.
+//
+// Truthfulness contract: SessionsUsed is only meaningful when SessionsTracked is
+// true. Session counters are written exclusively for accounts with
+// max_sessions > 0, so a group without such accounts has no session data at all;
+// clients must not render SessionsUsed as "0 users" in that case. ActiveUsers is
+// the honest substitute: distinct users with a request inside
+// ActiveUsersWindowSeconds, or ActiveUsersKnown=false when the probe is
+// unavailable.
 type GroupCapacitySummary struct {
 	GroupID         int64 `json:"group_id"`
 	ConcurrencyUsed int   `json:"concurrency_used"`
 	ConcurrencyMax  int   `json:"concurrency_max"`
 	SessionsUsed    int   `json:"sessions_used"`
 	SessionsMax     int   `json:"sessions_max"`
+	SessionsTracked bool  `json:"sessions_tracked"`
 	RPMUsed         int   `json:"rpm_used"`
 	RPMMax          int   `json:"rpm_max"`
-	RuntimeKnown    bool  `json:"runtime_known"`
+	// ActiveUsers counts distinct users with a billed request inside the window.
+	ActiveUsers              int  `json:"active_users"`
+	ActiveUsersWindowSeconds int  `json:"active_users_window_seconds"`
+	ActiveUsersKnown         bool `json:"active_users_known"`
+	RuntimeKnown             bool `json:"runtime_known"`
+}
+
+// GroupActiveUsersProbe reports distinct active users per group. It is optional:
+// when absent the summary reports ActiveUsersKnown=false instead of zero.
+type GroupActiveUsersProbe interface {
+	GetGroupActiveUserCounts(ctx context.Context, groupIDs []int64, since time.Time) (map[int64]int, error)
+}
+
+// GroupCapacityOption customises GroupCapacityService without breaking the
+// existing provider signature.
+type GroupCapacityOption func(*GroupCapacityService)
+
+// WithGroupActiveUsersProbe wires the distinct-active-user probe.
+func WithGroupActiveUsersProbe(probe GroupActiveUsersProbe) GroupCapacityOption {
+	return func(s *GroupCapacityService) { s.activeUsersProbe = probe }
+}
+
+type groupActiveUsersCacheEntry struct {
+	counts    map[int64]int
+	expiresAt time.Time
 }
 
 // GroupAccountCapacityRow is the lightweight account projection needed for
@@ -44,6 +87,10 @@ type GroupCapacityService struct {
 	concurrencyService *ConcurrencyService
 	sessionLimitCache  SessionLimitCache
 	rpmCache           RPMCache
+
+	activeUsersProbe GroupActiveUsersProbe
+	activeUsersMu    sync.Mutex
+	activeUsersCache *groupActiveUsersCacheEntry
 }
 
 // NewGroupCapacityService creates a new GroupCapacityService.
@@ -53,14 +100,88 @@ func NewGroupCapacityService(
 	concurrencyService *ConcurrencyService,
 	sessionLimitCache SessionLimitCache,
 	rpmCache RPMCache,
+	options ...GroupCapacityOption,
 ) *GroupCapacityService {
-	return &GroupCapacityService{
+	s := &GroupCapacityService{
 		accountRepo:        accountRepo,
 		groupRepo:          groupRepo,
 		concurrencyService: concurrencyService,
 		sessionLimitCache:  sessionLimitCache,
 		rpmCache:           rpmCache,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(s)
+		}
+	}
+	return s
+}
+
+// ProvideGroupCapacityService is the wire provider. It keeps the extra optional
+// active-user probe out of NewGroupCapacityService so tests and other callers
+// are unaffected, while wire regeneration still wires the probe.
+func ProvideGroupCapacityService(
+	accountRepo AccountRepository,
+	groupRepo GroupRepository,
+	concurrencyService *ConcurrencyService,
+	sessionLimitCache SessionLimitCache,
+	rpmCache RPMCache,
+	activeUsersService *UsageService,
+) *GroupCapacityService {
+	return NewGroupCapacityService(
+		accountRepo,
+		groupRepo,
+		concurrencyService,
+		sessionLimitCache,
+		rpmCache,
+		WithGroupActiveUsersProbe(activeUsersService),
+	)
+}
+
+// loadActiveUsers returns distinct active users per requested group, or
+// known=false when the probe is missing or failing. Results are cached for
+// groupActiveUsersCacheTTL so a polling admin page does not re-hit the database.
+func (s *GroupCapacityService) loadActiveUsers(ctx context.Context, groupIDs []int64, now time.Time) (map[int64]int, bool) {
+	if s.activeUsersProbe == nil || len(groupIDs) == 0 {
+		return nil, false
+	}
+
+	s.activeUsersMu.Lock()
+	cached := s.activeUsersCache
+	if cached != nil && now.Before(cached.expiresAt) && coversAllGroupIDs(cached.counts, groupIDs) {
+		s.activeUsersMu.Unlock()
+		return cached.counts, true
+	}
+	s.activeUsersMu.Unlock()
+
+	counts, err := s.activeUsersProbe.GetGroupActiveUserCounts(ctx, groupIDs, now.Add(-GroupActiveUsersWindow))
+	if err != nil {
+		return nil, false
+	}
+	normalized := make(map[int64]int, len(groupIDs))
+	for _, groupID := range groupIDs {
+		normalized[groupID] = counts[groupID]
+	}
+
+	s.activeUsersMu.Lock()
+	s.activeUsersCache = &groupActiveUsersCacheEntry{
+		counts:    normalized,
+		expiresAt: now.Add(groupActiveUsersCacheTTL),
+	}
+	s.activeUsersMu.Unlock()
+	return normalized, true
+}
+
+func coversAllGroupIDs(counts map[int64]int, groupIDs []int64) bool {
+	if counts == nil {
+		return false
+	}
+	for _, groupID := range groupIDs {
+		if _, ok := counts[groupID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // GetAllGroupCapacity returns capacity summary for all active groups.
@@ -103,6 +224,19 @@ func (s *GroupCapacityService) getGroupCapacitiesSequential(ctx context.Context,
 		}
 		cap.GroupID = groupID
 		results = append(results, cap)
+	}
+	if len(results) > 0 {
+		activeGroupIDs := make([]int64, 0, len(results))
+		for i := range results {
+			activeGroupIDs = append(activeGroupIDs, results[i].GroupID)
+		}
+		if counts, known := s.loadActiveUsers(ctx, activeGroupIDs, time.Now()); known {
+			for i := range results {
+				results[i].ActiveUsers = counts[results[i].GroupID]
+				results[i].ActiveUsersWindowSeconds = int(GroupActiveUsersWindow.Seconds())
+				results[i].ActiveUsersKnown = true
+			}
+		}
 	}
 	return results
 }
@@ -236,6 +370,14 @@ func (s *GroupCapacityService) getGroupCapacitiesBatch(ctx context.Context, grou
 	}
 	for i := range results {
 		results[i].RuntimeKnown = !groupHasAccounts[results[i].GroupID] || runtimeKnown
+		results[i].SessionsTracked = results[i].SessionsMax > 0
+	}
+	if counts, known := s.loadActiveUsers(ctx, groupIDs, time.Now()); known {
+		for i := range results {
+			results[i].ActiveUsers = counts[results[i].GroupID]
+			results[i].ActiveUsersWindowSeconds = int(GroupActiveUsersWindow.Seconds())
+			results[i].ActiveUsersKnown = true
+		}
 	}
 	return results, nil
 }
@@ -334,6 +476,7 @@ func (s *GroupCapacityService) getGroupCapacity(ctx context.Context, groupID int
 		ConcurrencyMax:  concurrencyMax,
 		SessionsUsed:    sessionsUsed,
 		SessionsMax:     sessionsMax,
+		SessionsTracked: sessionsMax > 0,
 		RPMUsed:         rpmUsed,
 		RPMMax:          rpmMax,
 		RuntimeKnown:    runtimeKnown,
