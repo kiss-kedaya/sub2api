@@ -260,14 +260,24 @@ export default {
       subscriptionExpires: '到期',
       // 容量状态提示
       capacity: {
+        labels: {
+          users: '使用人数',
+          concurrency: '并发',
+          windowCost: '5h 费用',
+          rpm: 'RPM'
+        },
+        concurrency: {
+          hint: '当前并发请求数 / 该账号的并发容量；达到上限时新请求会排队或换号。使用人数只在启用会话数限制的账号上单独统计。',
+          full: '已达并发上限。'
+        },
         windowCost: {
           blocked: '5h窗口费用超限，账号暂停调度',
           stickyOnly: '5h窗口费用达阈值，仅允许粘性会话',
           normal: '5h窗口费用正常'
         },
         sessions: {
-          full: '活跃会话已满，新会话需等待（空闲超时：{idle}分钟）',
-          normal: '活跃会话正常（空闲超时：{idle}分钟）'
+          full: '使用人数（活跃会话）已达上限，新会话需等待（空闲超时：{idle}分钟）',
+          normal: '当前使用人数（活跃会话）/ 该账号会话上限；空闲 {idle} 分钟后会话自动释放'
         },
         rpm: {
           full: '已达 RPM 上限',

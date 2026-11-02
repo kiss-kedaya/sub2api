@@ -366,14 +366,24 @@ export default {
       subscriptionExpires: 'Expires',
       // Capacity status tooltips
       capacity: {
+        labels: {
+          users: 'Users',
+          concurrency: 'Concurrency',
+          windowCost: '5h cost',
+          rpm: 'RPM'
+        },
+        concurrency: {
+          hint: 'Live concurrent requests / this account concurrency capacity. At the limit, new requests queue or move to another account. Users are counted separately only on accounts with a session limit.',
+          full: 'Concurrency limit reached.'
+        },
         windowCost: {
           blocked: '5h window cost exceeded, account scheduling paused',
           stickyOnly: '5h window cost at threshold, only sticky sessions allowed',
           normal: '5h window cost normal'
         },
         sessions: {
-          full: 'Active sessions full, new sessions must wait (idle timeout: {idle} min)',
-          normal: 'Active sessions normal (idle timeout: {idle} min)'
+          full: 'Users (active sessions) at the limit, new sessions must wait (idle timeout: {idle} min)',
+          normal: 'Live users (active sessions) / session limit for this account; a session is released after {idle} min idle'
         },
         rpm: {
           full: 'RPM limit reached',

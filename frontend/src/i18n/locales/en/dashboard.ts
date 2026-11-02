@@ -103,6 +103,8 @@ export default {
     apiKey: 'API Key',
     group: 'Group',
     currentConcurrency: 'Current Concurrency',
+    currentConcurrencyHint: 'Live concurrent requests / this key concurrency limit. Above the limit, new requests queue.',
+    currentConcurrencyNoLimitHint: 'Live concurrent requests; this key has no concurrency limit set.',
     noGroup: 'No group',
     searchGroup: 'Search groups...',
     noGroupFound: 'No groups found',
