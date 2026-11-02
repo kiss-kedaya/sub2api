@@ -51,10 +51,17 @@ const REQUEST_HEADER_ALLOWLIST = new Set([
   'content-language',
   'content-type',
   'idempotency-key',
+  'origin',
+  // Same-origin return_url checks in the Go API read the browser's referer.
+  'referer',
   'range',
   'user-agent',
   'x-admin-ui-request',
   'x-client-request-id',
+  // Node's fetch cannot override Host, so the backend would see the loopback
+  // address. These carry the real public origin for same-origin checks.
+  'x-forwarded-host',
+  'x-forwarded-proto',
   'x-request-id',
   'x-user-ui-request',
 ])

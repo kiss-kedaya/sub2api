@@ -133,7 +133,7 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const { t, locale } = useI18n()
 const { copyToClipboard } = useClipboard()
-const origin = resolveDocsOrigin(window.location.origin)
+const origin = resolveDocsOrigin(typeof window !== 'undefined' ? window.location.origin : '')
 const pages = computed(() => getApiDocs(locale.value, origin))
 const page = computed(() => resolveDocsPage(pages.value, route.query.page))
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
@@ -143,9 +143,9 @@ const consolePath = computed(() => !authStore.isAuthenticated ? '/login' : authS
 const categories: DocsCategory[] = ['start', 'guides', 'integrations', 'reference']
 const search = ref('')
 const mobileOpen = ref(false)
-const wideQuery = window.matchMedia('(min-width: 1024px)')
-const wideLayout = ref(wideQuery.matches)
-const isDark = ref(document.documentElement.classList.contains('dark'))
+const wideQuery = typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)') : null
+const wideLayout = ref(wideQuery?.matches ?? true)
+const isDark = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 const selectedLanguages = reactive<Record<string, DocsLanguage>>({})
 const copiedSection = ref('')
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
@@ -191,16 +191,16 @@ watch(() => route.query.page, async () => {
   await nextTick()
   if (route.hash) document.getElementById(route.hash.slice(1))?.scrollIntoView({ block: 'start' })
 })
-watch([() => page.value.title, siteName], () => { document.title = `${page.value.title} · ${t('docs.title')} - ${siteName.value}` }, { immediate: true })
+watch([() => page.value.title, siteName], () => { if (typeof document !== 'undefined') document.title = `${page.value.title} · ${t('docs.title')} - ${siteName.value}` }, { immediate: true })
 onMounted(() => {
-  wideQuery.addEventListener?.('change', syncWideLayout)
+  wideQuery?.addEventListener?.('change', syncWideLayout)
   document.addEventListener('keydown', closeOnEscape)
   if (!appStore.publicSettingsLoaded) void appStore.fetchPublicSettings().catch(() => {})
   if (route.hash) document.getElementById(route.hash.slice(1))?.scrollIntoView({ block: 'start' })
 })
 onBeforeUnmount(() => {
   if (copiedTimer) clearTimeout(copiedTimer)
-  wideQuery.removeEventListener?.('change', syncWideLayout)
+  wideQuery?.removeEventListener?.('change', syncWideLayout)
   document.removeEventListener('keydown', closeOnEscape)
 })
 </script>
