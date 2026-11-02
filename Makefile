@@ -1,6 +1,7 @@
 .PHONY: build build-backend build-frontend build-ssr verify-embed verify-ssr release-ssr test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/composables/__tests__/useSiteTheme.spec.ts \
 	src/data/__tests__/apiDocs.spec.ts \
 	src/utils/__tests__/docsUrl.spec.ts \
 	src/views/public/__tests__/DocsView.spec.ts \
