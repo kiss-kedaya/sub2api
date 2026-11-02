@@ -64,6 +64,11 @@ export default defineEventHandler(async (event) => {
       ? null
       : ((await readRawBody(event, false)) as Buffer | undefined) ?? null
 
+  // Overwrite, never trust: the browser must not be able to spoof the public
+  // origin the Go API uses for same-origin return_url validation.
+  headers['x-forwarded-host'] = host
+  headers['x-forwarded-proto'] = protocol
+
   const result = await handleBffRequest({
     method,
     path: decision.path,
