@@ -67,6 +67,35 @@ describe('useSiteTheme', () => {
     expectNoFontDownload(out)
   })
 
+  it('keeps night text readable across distinct raised surfaces without overriding custom accents', () => {
+    const stylesheet = readFileSync(resolve(process.cwd(), 'src/styles/nuxt-ui-theme.css'), 'utf8')
+    const dark = block(stylesheet, '.dark {')
+    const hex = (name: string) => {
+      const value = dark.match(new RegExp(`${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1]
+      if (!value) throw new Error(`missing dark token ${name}`)
+      return value
+    }
+    const luminance = (value: string) => {
+      const channels = [1, 3, 5].map(index => {
+        const channel = Number.parseInt(value.slice(index, index + 2), 16) / 255
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+      })
+      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+    }
+    const surfaces = ['--ui-bg', '--ui-bg-muted', '--ui-bg-elevated', '--ui-bg-accented'].map(hex)
+    for (let index = 1; index < surfaces.length; index += 1) {
+      expect(luminance(surfaces[index])).toBeGreaterThan(luminance(surfaces[index - 1]))
+    }
+    for (const foreground of ['--ui-text-dimmed', '--ui-text-muted', '--ui-text-toned', '--ui-text', '--ui-text-highlighted']) {
+      for (const background of [...surfaces, hex('--app-page-bg'), hex('--app-sidebar-bg')]) {
+        expect((luminance(hex(foreground)) + 0.05) / (luminance(background) + 0.05), `${foreground} on ${background}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+    expect(luminance(hex('--app-sidebar-bg'))).toBeGreaterThan(0.01)
+    expect(hex('--ui-primary')).toBe('#f2b6c6')
+    expect(buildSiteThemeCss({ ...DEFAULT_SITE_THEME, theme_primary: 'green' })).toContain(`--ui-color-primary-400:${paletteColor('green', 400)};`)
+  })
+
   it('applies a chromatic primary to both modes: Nuxt UI, the legacy --c-primary scale and the console tokens', () => {
     const out = buildSiteThemeCss({ ...DEFAULT_SITE_THEME, theme_primary: 'sakura', theme_neutral: 'zinc' })
     const light = block(out, 'html:root:not(.dark){')
