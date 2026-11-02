@@ -15,9 +15,9 @@ func (s *TotpService) VerifyFreshCode(ctx context.Context, userID int64, code st
 	if s == nil || s.cryptoSecurity == nil || !s.cryptoSecurity.ready() {
 		return ErrTotpUnavailable
 	}
-	u, err := s.verifyCode(ctx, userID, code, func(counter int64) error {
+	u, _, err := s.verifyCode(ctx, userID, code, func(counter int64) error {
 		return s.cryptoSecurity.consume(ctx, userID, counter, code)
-	})
+	}, false)
 	if errors.Is(err, ErrCryptoTotpReplayed) {
 		return ErrTotpCodeReplayed
 	}

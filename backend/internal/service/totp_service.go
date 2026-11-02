@@ -446,14 +446,14 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, _, _ string, to
 		} else {
 			// Sites without payment verification still support ordinary TOTP.
 			var verifyErr error
-			verifiedUser, verifyErr = s.verifyCode(ctx, userID, totpCodes[0], nil)
+			verifiedUser, _, verifyErr = s.verifyCode(ctx, userID, totpCodes[0], nil, true)
 			if verifyErr != nil {
 				return cryptoTotpError(verifyErr)
 			}
 		}
 	} else {
 		var verifyErr error
-		verifiedUser, verifyErr = s.verifyCode(ctx, userID, totpCodes[0], nil)
+		verifiedUser, _, verifyErr = s.verifyCode(ctx, userID, totpCodes[0], nil, true)
 		if verifyErr != nil {
 			return verifyErr
 		}
@@ -503,8 +503,26 @@ func (s *TotpService) DisableWithServerAuthorization(ctx context.Context, userID
 
 // VerifyCode verifies a code using the existing encrypted user secret.
 func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string) error {
-	_, err := s.verifyCode(ctx, userID, code, nil)
+	_, _, err := s.verifyCode(ctx, userID, code, nil, true)
 	return err
+}
+
+// VerifyLoginCode validates a login code without consuming the shared
+// payment/security replay marker. Login handlers consume it only after all
+// downstream account and session checks pass.
+func (s *TotpService) VerifyLoginCode(ctx context.Context, userID int64, code string) (int64, error) {
+	_, counter, err := s.verifyCode(ctx, userID, code, nil, false)
+	return counter, err
+}
+
+// ConsumeLoginCode consumes the shared replay marker after a login request
+// has passed all checks. Sites without the payment/security key retain the
+// legacy login behavior and do not require a replay marker.
+func (s *TotpService) ConsumeLoginCode(ctx context.Context, userID, counter int64, code string) error {
+	if s.cryptoSecurity == nil || !s.cryptoSecurity.ready() {
+		return nil
+	}
+	return s.cryptoSecurity.consume(ctx, userID, counter, code)
 }
 
 // VerifyCodeOnce adds an atomic, shared consumption step to ordinary verification.
@@ -514,7 +532,7 @@ func (s *TotpService) VerifyCodeOnce(ctx context.Context, userID int64, code str
 	if consume == nil {
 		return ErrTotpUnavailable
 	}
-	_, err := s.verifyCode(ctx, userID, code, consume)
+	_, _, err := s.verifyCode(ctx, userID, code, consume, false)
 	return err
 }
 
@@ -542,42 +560,42 @@ func (s *TotpService) reserveVerifyAttempt(ctx context.Context, userID int64) er
 
 // Return the exact account snapshot whose secret was verified so security
 // mutations can use it as an atomic write precondition.
-func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string, consume func(int64) error) (*User, error) {
+func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string, consume func(int64) error, consumeAdminCode bool) (*User, int64, error) {
 	if err := s.reserveVerifyAttempt(ctx, userID); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil || user == nil {
-		return nil, ErrTotpUnavailable
+		return nil, 0, ErrTotpUnavailable
 	}
 	if !user.TotpEnabled || user.TotpSecretEncrypted == nil {
-		return nil, ErrTotpNotSetup
+		return nil, 0, ErrTotpNotSetup
 	}
 	if s.encryptor == nil {
-		return nil, ErrTotpUnavailable
+		return nil, 0, ErrTotpUnavailable
 	}
 	secret, err := s.encryptor.Decrypt(*user.TotpSecretEncrypted)
 	if err != nil {
-		return nil, ErrTotpUnavailable
+		return nil, 0, ErrTotpUnavailable
 	}
 	counter, valid := validateTotpCode(code, secret, time.Now())
 	if !valid {
-		return nil, ErrTotpInvalidCode
+		return nil, 0, ErrTotpInvalidCode
 	}
 	// Login and step-up must not provide reusable codes for payment operations,
 	// or reset the failure budget by replaying an already-consumed code.
-	if consume == nil && user.IsAdmin() && s.cryptoSecurity != nil && s.cryptoSecurity.ready() {
+	if consume == nil && consumeAdminCode && user.IsAdmin() && s.cryptoSecurity != nil && s.cryptoSecurity.ready() {
 		consume = func(counter int64) error { return s.cryptoSecurity.consume(ctx, userID, counter, code) }
 	}
 	if consume != nil {
 		if err := consume(counter); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	if err := s.cache.ClearVerifyAttempts(ctx, userID); err != nil {
-		return nil, ErrTotpUnavailable
+		return nil, 0, ErrTotpUnavailable
 	}
-	return user, nil
+	return user, counter, nil
 }
 
 func isSixDigitTotp(code string) bool {

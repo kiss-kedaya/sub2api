@@ -328,8 +328,11 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		"user_id", session.UserID,
 		"email", session.Email)
 
-	// Verify the TOTP code
-	if err := h.totpService.VerifyCode(c.Request.Context(), session.UserID, req.TotpCode); err != nil {
+	// Verify without consuming the shared replay marker yet. The login flow
+	// still has account-mode and OAuth binding checks that can fail after code
+	// validation; consuming here would make a valid retry report "already used".
+	counter, err := h.totpService.VerifyLoginCode(c.Request.Context(), session.UserID, req.TotpCode)
+	if err != nil {
 		slog.Debug("login_2fa_verify_failed",
 			"user_id", session.UserID,
 			"error", err)
@@ -408,6 +411,12 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 			response.ErrorFrom(c, err)
 			return
 		}
+	}
+
+	// Consume only after every login/binding check has passed.
+	if err := h.totpService.ConsumeLoginCode(c.Request.Context(), session.UserID, counter, req.TotpCode); err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 
 	// Delete the login session (only after all checks pass)
