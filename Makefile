@@ -28,6 +28,11 @@ FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/redeem.spec.ts \
 	src/api/__tests__/keys.deepseek-tools.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
+	src/views/auth/__tests__/OAuthCallbackView.spec.ts \
+	src/views/auth/__tests__/OidcCallbackView.spec.ts \
+	src/stores/__tests__/auth.spec.ts \
+	src/api/__tests__/auth-oauth-adoption.spec.ts \
+	src/api/__tests__/auth-captcha-oauth-start.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \
 	src/views/user/__tests__/PaymentResultView.spec.ts \

@@ -260,6 +260,7 @@ import {
   loadOAuthAffiliateCode,
   oauthAffiliatePayload
 } from '@/utils/oauthAffiliate'
+import { consumeOAuthFragment } from '@/utils/oauthCallback'
 
 const route = useRoute()
 const router = useRouter()
@@ -350,19 +351,19 @@ function clearPendingAuthSession() {
 }
 
 function parseFragmentParams(): URLSearchParams {
-  const raw = typeof window !== 'undefined' ? window.location.hash : ''
-  const hash = raw.startsWith('#') ? raw.slice(1) : raw
-  return new URLSearchParams(hash)
+  return consumeOAuthFragment()
 }
 
 function readLegacyFragmentLogin(params: URLSearchParams): OAuthTokenResponse | null {
   const accessToken = params.get('access_token')?.trim() || ''
-  if (!accessToken) {
+  const sessionManaged = params.get('session_managed') === '1'
+  if (!accessToken && !sessionManaged) {
     return null
   }
 
   const completion: OAuthTokenResponse = {
-    access_token: accessToken
+    access_token: accessToken,
+    ...(sessionManaged ? { session_managed: true } : {})
   }
   const refreshToken = params.get('refresh_token')?.trim() || ''
   if (refreshToken) {

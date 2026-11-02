@@ -266,6 +266,180 @@ describe('proxying', () => {
     expect(result.headers.location).toBe('https://site.example/oauth/done')
   })
 
+  it('forwards only OAuth cookie names, public origin headers, and retains Go cookie clears', async () => {
+    let sent: Record<string, string> = {}
+    const { fetchImpl } = recorder((_url, init) => {
+      sent = init.headers as Record<string, string>
+      const headers = new Headers({ location: 'https://site.example/auth/linuxdo/callback#error=invalid_state' })
+      headers.append('set-cookie', 'linuxdo_oauth_state=; Path=/api/v1/auth/oauth/linuxdo; Max-Age=0; HttpOnly; Secure; SameSite=Lax')
+      headers.append('set-cookie', 'sub2_session=unrelated; Path=/; HttpOnly')
+      return new Response(null, { status: 302, headers })
+    })
+
+    const result = await handleBffRequest(ctx({
+      path: '/api/v1/auth/oauth/linuxdo/callback',
+      query: 'code=provider-code&state=provider-state',
+      headers: {
+        host: HOST,
+        origin: PUBLIC,
+        referer: `${PUBLIC}/login`,
+        cookie: 'linuxdo_oauth_state=state-cookie; oauth_pending_browser_session=pending-browser; sub2_session=must-not-forward; other=ignored',
+        'x-forwarded-host': 'evil.example',
+        'x-forwarded-proto': 'http',
+      },
+      fetchImpl,
+    }))
+
+    expect(sent.cookie).toBe('linuxdo_oauth_state=state-cookie; oauth_pending_browser_session=pending-browser')
+    expect(sent['x-forwarded-host']).toBe(HOST)
+    expect(sent['x-forwarded-proto']).toBe('https')
+    expect(sent.origin).toBe(PUBLIC)
+    expect(sent.referer).toBe(`${PUBLIC}/login`)
+    expect(result.setCookies).toEqual([
+      'linuxdo_oauth_state=; Path=/api/v1/auth/oauth/linuxdo; Max-Age=0; HttpOnly; Secure; SameSite=Lax',
+    ])
+    expect(result.headers.location).toContain('error=invalid_state')
+  })
+
+  it('forwards a same-origin payment referer and server-derived forwarded origin for return_url checks', async () => {
+    let sent: Record<string, string> = {}
+    const { fetchImpl } = recorder((_url, init) => {
+      sent = init.headers as Record<string, string>
+      return json({ code: 0, data: { order_id: 9 } })
+    })
+    await handleBffRequest(ctx({
+      method: 'POST',
+      path: '/api/v1/payment/orders',
+      headers: { host: HOST, referer: `${PUBLIC}/purchase`, 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'http' },
+      body: Buffer.from(JSON.stringify({ return_url: `${PUBLIC}/payment/result` })),
+      fetchImpl,
+    }))
+    expect(sent['x-forwarded-host']).toBe(HOST)
+    expect(sent['x-forwarded-proto']).toBe('https')
+    expect(sent.referer).toBe(`${PUBLIC}/purchase`)
+    expect(sent['x-forwarded-host']).not.toBe('evil.example')
+  })
+
+  it.each([['github', 'GET'], ['github', 'POST'], ['google', 'GET'], ['google', 'POST']] as const)('%s OAuth %s start preserves its state cookies through callback', async (provider, method) => {
+    const stateCookie = Buffer.from(`${provider}-state`).toString('base64url')
+    const providerCookie = Buffer.from(provider).toString('base64url')
+    let callbackCookie = ''
+    const { fetchImpl } = recorder((url, init) => {
+      if (url.includes(`/auth/oauth/${provider}/start?`)) {
+        const headers = new Headers({ 'content-type': 'application/json' })
+        headers.append('set-cookie', `email_oauth_state=${stateCookie}; Path=/api/v1/auth/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`)
+        headers.append('set-cookie', `email_oauth_provider=${providerCookie}; Path=/api/v1/auth/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`)
+        if (init.method === 'GET') {
+          headers.set('location', `https://identity.example/${provider}`)
+          return new Response(null, { status: 302, headers })
+        }
+        return new Response(JSON.stringify({ code: 0, data: { authorize_url: `https://identity.example/${provider}` } }), { status: 200, headers })
+      }
+      if (url.includes(`/auth/oauth/${provider}/callback?code=code-${provider}&state=${provider}-state`)) {
+        callbackCookie = (init?.headers as Record<string, string>).cookie || ''
+        if (!callbackCookie.includes(`email_oauth_state=${stateCookie}`) || !callbackCookie.includes(`email_oauth_provider=${providerCookie}`)) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: `https://site.example/auth/oauth/callback#error=invalid_state&error_message=invalid+oauth+state` },
+          })
+        }
+        const headers = new Headers({
+          location: `https://site.example/auth/oauth/callback#access_token=${provider}-access&refresh_token=${provider}-refresh&expires_in=1800`,
+        })
+        headers.append('set-cookie', `email_oauth_state=; Path=/api/v1/auth/oauth; Max-Age=0; HttpOnly; Secure; SameSite=Lax`)
+        headers.append('set-cookie', `email_oauth_provider=; Path=/api/v1/auth/oauth; Max-Age=0; HttpOnly; Secure; SameSite=Lax`)
+        return new Response(null, { status: 302, headers })
+      }
+      throw new Error('unexpected upstream request')
+    })
+
+    const start = await handleBffRequest(ctx({
+      method,
+      path: `/api/v1/auth/oauth/${provider}/start`,
+      query: `redirect=%2Fdashboard`,
+      fetchImpl,
+    }))
+    expect(start.status).toBe(method === 'GET' ? 302 : 200)
+    if (method === 'POST') expect(await new Response(start.body as ReadableStream<Uint8Array>).json()).toMatchObject({ code: 0 })
+    expect(start.setCookies).toHaveLength(2)
+    const browserCookie = (start.setCookies || []).map((line) => line.split(';', 1)[0]).join('; ')
+
+    const callback = await handleBffRequest(ctx({
+      method: 'GET',
+      path: `/api/v1/auth/oauth/${provider}/callback`,
+      query: `code=code-${provider}&state=${provider}-state`,
+      headers: { host: HOST, origin: PUBLIC, cookie: `${browserCookie}; sub2_session=never-forward` },
+      fetchImpl,
+    }))
+
+    expect(callbackCookie).toContain(`email_oauth_state=${stateCookie}`)
+    expect(callbackCookie).toContain(`email_oauth_provider=${providerCookie}`)
+    expect(callbackCookie).not.toContain('sub2_session')
+    expect(callback.session.action).toBe('set')
+    expect(String(callback.headers.location)).toBe('/auth/oauth/callback#session_managed=1')
+    expect(callback.setCookies).toHaveLength(2)
+  })
+
+  it.each(['github', 'google'] as const)('does not bypass Go state validation for %s when its cookie is missing', async (provider) => {
+    const { fetchImpl } = recorder((_url, init) => {
+      const cookie = (init?.headers as Record<string, string>).cookie || ''
+      const stateMatches = cookie.includes(`email_oauth_state=${provider}-state`)
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: stateMatches
+            ? 'https://site.example/auth/oauth/callback#access_token=valid&refresh_token=valid-refresh'
+            : 'https://site.example/auth/oauth/callback#error=invalid_state&error_message=invalid+oauth+state',
+        },
+      })
+    })
+
+    const result = await handleBffRequest(ctx({
+      path: `/api/v1/auth/oauth/${provider}/callback`,
+      query: `code=code-${provider}&state=${provider}-state`,
+      headers: { host: HOST, cookie: 'sub2_session=unrelated; email_oauth_provider=wrong' },
+      fetchImpl,
+    }))
+
+    expect(result.session.action).toBe('keep')
+    expect(result.headers.location).toContain('error=invalid_state')
+    expect(String(result.headers.location)).not.toContain('access_token')
+  })
+
+  it('seals OAuth fragment tokens server-side and strips every token field before redirecting', async () => {
+    const { calls, fetchImpl } = recorder(() => new Response(null, {
+      status: 302,
+      headers: { location: 'https://site.example/auth/linuxdo/callback#access_token=access-secret&refresh_token=refresh-secret&expires_in=3600&token_type=Bearer&redirect=%2Fdashboard' },
+    }))
+
+    const result = await handleBffRequest(ctx({
+      path: '/api/v1/auth/oauth/linuxdo/callback',
+      query: 'code=provider-code&state=state',
+      fetchImpl,
+    }))
+
+    expect(result.status).toBe(302)
+    expect(String(result.headers.location)).toBe('/auth/linuxdo/callback#redirect=%2Fdashboard&session_managed=1')
+    expect(result.session.action).toBe('set')
+    if (result.session.action !== 'set') throw new Error('expected sealed session')
+    expect(result.session.value.accessToken).toBe('access-secret')
+    expect(result.session.value.refreshToken).toBe('refresh-secret')
+    expect(result.session.value.uid).toBe(0)
+    expect(calls).toHaveLength(1)
+    expect(result.body).toBeNull()
+  })
+
+  it('does not seal a fragment token returned to a different origin', async () => {
+    const { fetchImpl } = recorder(() => new Response(null, {
+      status: 302,
+      headers: { location: 'https://attacker.example/callback#access_token=access-secret' },
+    }))
+    const result = await handleBffRequest(ctx({ path: '/api/v1/auth/oauth/oidc/callback', fetchImpl }))
+    expect(result.status).toBe(502)
+    expect(result.session.action).toBe('keep')
+    expect(Buffer.from(result.body as Buffer).toString()).not.toContain('access-secret')
+  })
+
   it('gives up on a silent upstream instead of hanging the SSR request', async () => {
     const fetchImpl = ((_url: string | URL | Request, init?: RequestInit) =>
       new Promise((_resolve, reject) => {
@@ -329,6 +503,39 @@ describe('proxying', () => {
 })
 
 describe('csrf enforcement', () => {
+  it.each(['github', 'google'] as const)('captures %s complete-registration tokens and forwards pending cookie deletion', async (provider) => {
+    const deletion = 'oauth_pending_session=; Path=/api/v1/auth/oauth; Max-Age=0; HttpOnly; Secure; SameSite=Lax'
+    const { calls, fetchImpl } = recorder(() => json({ code: 0, data: { access_token: 'fixture-access', refresh_token: 'fixture-refresh', expires_in: 3600, user: { id: 8 } } }, 200, { 'set-cookie': deletion }))
+    const result = await handleBffRequest(ctx({ method: 'POST', path: `/api/v1/auth/oauth/${provider}/complete-registration`, headers: { host: HOST, origin: PUBLIC, cookie: 'oauth_pending_session=pending; oauth_pending_browser_session=browser; sub2_session=private' }, body: Buffer.from('{}'), fetchImpl }))
+    expect((calls[0].init.headers as Record<string, string>).cookie).toBe('oauth_pending_session=pending; oauth_pending_browser_session=browser')
+    expect(result.setCookies).toEqual([deletion])
+    expect(result.session.action).toBe('set')
+    expect(payloadOf(result.body).data).toMatchObject({ access_token: '', refresh_token: '', session_managed: true })
+  })
+
+  it('keeps a pending 2FA challenge without establishing a login', async () => {
+    const { fetchImpl } = recorder(() => json({ code: 0, data: { requires_2fa: true, temp_token: 'challenge', user_email_masked: 'x***@example.com' } }))
+    const result = await handleBffRequest(ctx({ method: 'POST', path: '/api/v1/auth/oauth/pending/bind-login', fetchImpl }))
+    expect(result.session.action).toBe('keep')
+    expect(payloadOf(result.body).data).toMatchObject({ requires_2fa: true, temp_token: 'challenge', session_managed: false })
+  })
+
+  it.each(['refresh_token', 'id_token', 'access_token'])('rejects an external callback carrying only %s', async (key) => {
+    const { fetchImpl } = recorder(() => new Response('private redirect body', { status: 302, headers: { location: `https://other.example/callback#${key}=sensitive` } }))
+    const result = await handleBffRequest(ctx({ path: '/api/v1/auth/oauth/google/callback', fetchImpl }))
+    expect(result.status).toBe(502)
+    expect(JSON.stringify(result.headers)).not.toContain('sensitive')
+    expect(result.session.action).toBe('keep')
+    expect(Buffer.from(result.body as Buffer).toString()).not.toContain('private redirect body')
+  })
+
+  it('does not echo malformed authentication response bodies', async () => {
+    const { fetchImpl } = recorder(() => new Response('<html>access_token=private</html>'))
+    const result = await handleBffRequest(ctx({ method: 'POST', path: '/api/v1/auth/oauth/pending/exchange', fetchImpl }))
+    expect(result.status).toBe(502)
+    expect(Buffer.from(result.body as Buffer).toString()).not.toContain('private')
+  })
+
   it('blocks a cookie-authenticated mutation without the csrf header', async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch
     const result = await handleBffRequest(

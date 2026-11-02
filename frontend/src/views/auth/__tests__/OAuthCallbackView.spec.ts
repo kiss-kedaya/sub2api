@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OAuthCallbackView from '@/views/auth/OAuthCallbackView.vue'
 
 const {
@@ -9,6 +9,7 @@ const {
   showErrorMock,
   showSuccessMock,
   setTokenMock,
+  adoptCookieSessionMock,
   copyToClipboardMock,
   exchangePendingOAuthCompletionMock,
   apiPostMock,
@@ -27,6 +28,7 @@ const {
   showErrorMock: vi.fn(),
   showSuccessMock: vi.fn(),
   setTokenMock: vi.fn(),
+  adoptCookieSessionMock: vi.fn(),
   copyToClipboardMock: vi.fn(),
   exchangePendingOAuthCompletionMock: vi.fn(),
   apiPostMock: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock('vue-i18n', () => ({
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({
     setToken: (...args: any[]) => setTokenMock(...args),
+    adoptCookieSession: (...args: any[]) => adoptCookieSessionMock(...args),
   }),
   useAppStore: () => ({
     showError: (...args: any[]) => showErrorMock(...args),
@@ -92,11 +95,14 @@ describe('OAuthCallbackView', () => {
     showErrorMock.mockReset()
     showSuccessMock.mockReset()
     setTokenMock.mockReset()
+    adoptCookieSessionMock.mockReset()
     copyToClipboardMock.mockReset()
     exchangePendingOAuthCompletionMock.mockReset()
     apiPostMock.mockReset()
     window.sessionStorage.clear()
+    vi.spyOn(window.history, 'replaceState').mockImplementation(() => {})
   })
+  afterEach(() => vi.restoreAllMocks())
 
   it('renders localized callback copy actions', () => {
     routeState.query = {
@@ -113,16 +119,48 @@ describe('OAuthCallbackView', () => {
     expect(wrapper.find('input[value="oauth-state"]').exists()).toBe(true)
   })
 
-  it('sends callback errors to toast instead of rendering inline red text', () => {
+  it('shows query errors with a return to login instead of manual code fields', () => {
     routeState.query = {
       error: 'oauth failed',
     }
 
     const wrapper = mount(OAuthCallbackView)
 
-    expect(showErrorMock).toHaveBeenCalledWith('oauth failed')
-    expect(wrapper.text()).not.toContain('oauth failed')
+    expect(wrapper.text()).toContain('oauth failed')
+    expect(wrapper.text()).toContain('auth.backToLogin')
+    expect(wrapper.find('input[readonly]').exists()).toBe(false)
     expect(wrapper.find('.bg-red-50').exists()).toBe(false)
+  })
+
+  it.each(['github', 'google'] as const)('shows a recoverable error for a %s state rejection without the legacy copy form', async () => {
+    routeState.path = '/auth/oauth/callback'
+    locationState.current.hash = '#error=invalid_state&error_message=invalid+oauth+state'
+    const wrapper = mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+
+    expect(wrapper.text()).toContain('auth.oauth.invalidCallbackTitle')
+    expect(wrapper.text()).toContain('invalid oauth state')
+    expect(wrapper.text()).toContain('auth.backToLogin')
+    expect(wrapper.find('input[readonly]').exists()).toBe(false)
+    expect(exchangePendingOAuthCompletionMock).not.toHaveBeenCalled()
+  })
+
+  it('adopts the BFF cookie session after the callback marker and strips the fragment first', async () => {
+    Object.assign(locationState.current, {
+      href: 'http://localhost/auth/oauth/callback?source=oauth',
+      hash: '#session_managed=1&redirect=%2Fsettings',
+      pathname: '/auth/oauth/callback',
+      search: '?source=oauth',
+    })
+    adoptCookieSessionMock.mockResolvedValue({ id: 7 })
+
+    mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+
+    expect(window.history.replaceState).toHaveBeenCalledWith(window.history.state, '', '/auth/oauth/callback?source=oauth')
+    expect(adoptCookieSessionMock).toHaveBeenCalledTimes(1)
+    expect(setTokenMock).not.toHaveBeenCalled()
+    expect(routerReplaceMock).toHaveBeenCalledWith('/settings')
   })
 
   it('does not render manual copy fields for direct email oauth callback visits', async () => {
@@ -136,6 +174,19 @@ describe('OAuthCallbackView', () => {
     expect(wrapper.text()).toContain('auth.oauth.invalidCallbackTitle')
     expect(wrapper.text()).toContain('auth.oauth.invalidCallbackHint')
     expect(wrapper.find('input[readonly]').exists()).toBe(false)
+  })
+
+  it.each(['github', 'google'])('adopts a %s pending completion owned by the BFF', async (provider) => {
+    routeState.path = '/auth/oauth/callback'
+    window.sessionStorage.setItem('email_oauth_pending_provider', provider)
+    exchangePendingOAuthCompletionMock.mockResolvedValue({ access_token: '', session_managed: true, redirect: '/settings' })
+    adoptCookieSessionMock.mockResolvedValue({ id: 7 })
+    mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+    expect(adoptCookieSessionMock).toHaveBeenCalledTimes(1)
+    expect(setTokenMock).not.toHaveBeenCalled()
+    expect(window.sessionStorage.getItem('email_oauth_pending_provider')).toBeNull()
+    expect(routerReplaceMock).toHaveBeenCalledWith('/settings')
   })
 
   it('forwards frontend email oauth provider callbacks back to the backend callback endpoint', async () => {

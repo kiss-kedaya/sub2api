@@ -3,8 +3,12 @@ import {
   API_PREFIX,
   applySessionContract,
   checkCsrf,
+  filterOAuthRequestCookie,
+  filterOAuthSetCookieHeaders,
   filterRequestHeaders,
   filterResponseHeaders,
+  isOAuthCallbackRoute,
+  isOAuthCompletionRoute,
   isAllowedMethod,
   isBffOnlyRoute,
   isLogoutRoute,
@@ -139,6 +143,27 @@ describe('session-managed auth payload', () => {
 })
 
 describe('header hygiene', () => {
+  it.each(['/api/v1/auth/oauth/start', '/api/v1/auth/oauth/email/start', '/api/v1/auth/oauth/google/bind/start', '/api/v1/auth/oauth/github/payment/start', '/api/v1/auth/oauth/oidc', '/api/v1/auth/oauth/google/create-account'])('never forwards cookies on nonexistent OAuth endpoint %s', (path) => {
+    expect(filterOAuthRequestCookie(path, 'email_oauth_state=secret; oauth_pending_session=pending')).toBeUndefined()
+    expect(filterOAuthSetCookieHeaders(path, ['email_oauth_state=secret; Path=/api/v1/auth/oauth; HttpOnly; SameSite=Lax'])).toEqual([])
+  })
+  it('forwards only provider OAuth cookies on exact OAuth routes and allowlisted response cookie names', () => {
+    expect(filterOAuthRequestCookie('/api/v1/auth/oauth/linuxdo/callback', 'linuxdo_oauth_state=state; oauth_pending_browser_session=browser; sub2_session=secret; other=value'))
+      .toBe('linuxdo_oauth_state=state; oauth_pending_browser_session=browser')
+    expect(filterOAuthRequestCookie('/api/v1/auth/me', 'linuxdo_oauth_state=state; sub2_session=secret')).toBeUndefined()
+    expect(filterOAuthRequestCookie('/api/v1/auth/oauth/oidc/callback', 'oidc_oauth_state=state; linuxdo_oauth_state=wrong'))
+      .toBe('oidc_oauth_state=state')
+    expect(filterOAuthSetCookieHeaders('/api/v1/auth/oauth/linuxdo/callback', [
+      'linuxdo_oauth_state=; Path=/api/v1/auth/oauth/linuxdo; Max-Age=0; HttpOnly; SameSite=Lax',
+      'sub2_session=attacker; Path=/; HttpOnly',
+      'linuxdo_oauth_state=x; Path=/; Domain=evil.example',
+      'evil=1; Path=/api/v1/auth/oauth/linuxdo',
+    ])).toEqual(['linuxdo_oauth_state=; Path=/api/v1/auth/oauth/linuxdo; Max-Age=0; HttpOnly; SameSite=Lax'])
+    expect(isOAuthCallbackRoute('/api/v1/auth/oauth/linuxdo/callback')).toBe(true)
+    expect(isOAuthCompletionRoute('/api/v1/auth/oauth/oidc/complete-registration')).toBe(true)
+    expect(isOAuthCallbackRoute('/api/v1/auth/oauth/oidc/callback/extra')).toBe(false)
+  })
+
   it('drops credentials, cookies and hop-by-hop headers', () => {
     const headers = filterRequestHeaders({
       accept: 'application/json',
@@ -162,6 +187,8 @@ describe('header hygiene', () => {
   it('forces no-store and never relays set-cookie', () => {
     const headers = new Headers()
     headers.set('content-type', 'application/json')
+    headers.set('content-encoding', 'gzip')
+    headers.set('content-length', '73')
     headers.set('set-cookie', 'a=b')
     headers.set('access-control-allow-origin', '*')
     headers.set('location', '/login')
@@ -169,6 +196,8 @@ describe('header hygiene', () => {
     expect(out['cache-control']).toContain('no-store')
     expect(out.vary).toBe('cookie')
     expect(out['content-type']).toBe('application/json')
+    expect(out['content-encoding']).toBeUndefined()
+    expect(out['content-length']).toBeUndefined()
     expect(out.location).toBe('/login')
     expect(out['set-cookie']).toBeUndefined()
     expect(out['access-control-allow-origin']).toBeUndefined()

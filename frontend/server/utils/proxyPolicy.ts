@@ -66,11 +66,137 @@ const REQUEST_HEADER_ALLOWLIST = new Set([
   'x-user-ui-request',
 ])
 
-/** Response headers worth forwarding. Set-Cookie and CORS headers never are. */
+const OAUTH_COOKIE_NAMES = new Set([
+  'dingtalk_oauth_state', 'dingtalk_oauth_redirect', 'dingtalk_oauth_intent', 'dingtalk_oauth_bind_user',
+  'email_oauth_state', 'email_oauth_redirect', 'email_oauth_provider', 'email_oauth_affiliate',
+  'linuxdo_oauth_state', 'linuxdo_oauth_verifier', 'linuxdo_oauth_redirect', 'linuxdo_oauth_intent', 'linuxdo_oauth_bind_user',
+  'oauth_bind_access_token', 'oauth_pending_browser_session', 'oauth_pending_session', 'oauth_promo_code',
+  'oidc_oauth_state', 'oidc_oauth_verifier', 'oidc_oauth_redirect', 'oidc_oauth_nonce', 'oidc_oauth_intent', 'oidc_oauth_bind_user',
+  'wechat_oauth_state', 'wechat_oauth_redirect', 'wechat_oauth_intent', 'wechat_oauth_mode', 'wechat_oauth_bind_user',
+  'wechat_payment_oauth_state', 'wechat_payment_oauth_redirect', 'wechat_payment_oauth_context', 'wechat_payment_oauth_scope',
+])
+
+const OAUTH_PROVIDER_COOKIE_NAMES: Record<string, ReadonlySet<string>> = {
+  dingtalk: new Set(['dingtalk_oauth_state', 'dingtalk_oauth_redirect', 'dingtalk_oauth_intent', 'dingtalk_oauth_bind_user']),
+  github: new Set(),
+  google: new Set(),
+  linuxdo: new Set(['linuxdo_oauth_state', 'linuxdo_oauth_verifier', 'linuxdo_oauth_redirect', 'linuxdo_oauth_intent', 'linuxdo_oauth_bind_user']),
+  oidc: new Set(['oidc_oauth_state', 'oidc_oauth_verifier', 'oidc_oauth_redirect', 'oidc_oauth_nonce', 'oidc_oauth_intent', 'oidc_oauth_bind_user']),
+  wechat: new Set(['wechat_oauth_state', 'wechat_oauth_redirect', 'wechat_oauth_intent', 'wechat_oauth_mode', 'wechat_oauth_bind_user']),
+}
+
+const OAUTH_SHARED_COOKIE_NAMES = new Set([
+  'oauth_bind_access_token', 'oauth_pending_browser_session', 'oauth_pending_session', 'oauth_promo_code',
+])
+const OAUTH_SHARED_COOKIE_PATHS = new Set([
+  ...OAUTH_SHARED_COOKIE_NAMES,
+  'email_oauth_state', 'email_oauth_redirect', 'email_oauth_provider', 'email_oauth_affiliate',
+])
+
+const EMAIL_OAUTH_COOKIE_NAMES = new Set(['email_oauth_state', 'email_oauth_redirect', 'email_oauth_provider', 'email_oauth_affiliate'])
+const WECHAT_PAYMENT_COOKIE_NAMES = new Set([
+  'wechat_payment_oauth_state', 'wechat_payment_oauth_redirect', 'wechat_payment_oauth_context', 'wechat_payment_oauth_scope',
+])
+
+/** OAuth cookies are forwarded only on known OAuth endpoints and by exact name. */
+export function oauthCookieNamesForPath(path: string): ReadonlySet<string> | null {
+  const providerMatch = /^\/api\/v1\/auth\/oauth\/(dingtalk|github|google|linuxdo|oidc|wechat)\/(start|callback|bind\/start|complete-registration|bind-login|create-account)$/.exec(path)
+  if (providerMatch) {
+    const [, provider, action] = providerMatch
+    if ((provider === 'github' || provider === 'google') &&
+      !['start', 'callback', 'complete-registration'].includes(action)) return null
+    return new Set([
+      ...OAUTH_SHARED_COOKIE_NAMES,
+      ...(OAUTH_PROVIDER_COOKIE_NAMES[provider] ?? []),
+      ...(provider === 'github' || provider === 'google' ? EMAIL_OAUTH_COOKIE_NAMES : []),
+    ])
+  }
+  if (path === `${API_PREFIX}/auth/oauth/bind-token`) return new Set(['oauth_bind_access_token'])
+  if (/^\/api\/v1\/auth\/oauth\/wechat\/payment\/(?:start|callback)$/.test(path)) {
+    return WECHAT_PAYMENT_COOKIE_NAMES
+  }
+  if (/^\/api\/v1\/auth\/oauth\/pending\/(?:exchange|send-verify-code|create-account|bind-login)$/.test(path)) {
+    return OAUTH_SHARED_COOKIE_NAMES
+  }
+  return null
+}
+
+const OAUTH_COMPLETION_ROUTES = new Set([
+  `${API_PREFIX}/auth/oauth/pending/exchange`,
+  `${API_PREFIX}/auth/oauth/pending/create-account`,
+  `${API_PREFIX}/auth/oauth/pending/bind-login`,
+  ...['github', 'google'].map((provider) => `${API_PREFIX}/auth/oauth/${provider}/complete-registration`),
+  ...['dingtalk', 'linuxdo', 'oidc', 'wechat'].flatMap((provider) =>
+    ['complete-registration', 'bind-login', 'create-account'].map((action) => `${API_PREFIX}/auth/oauth/${provider}/${action}`)
+  ),
+])
+
+export function isOAuthCompletionRoute(path: string): boolean {
+  return OAUTH_COMPLETION_ROUTES.has(path)
+}
+
+export function isOAuthCallbackRoute(path: string): boolean {
+  return /^\/api\/v1\/auth\/oauth\/(?:dingtalk|github|google|linuxdo|oidc|wechat)\/callback$/.test(path)
+}
+
+export function isOAuthCookieRoute(path: string): boolean {
+  return oauthCookieNamesForPath(path) !== null
+}
+
+export function isOAuthLoginStartRoute(path: string): boolean {
+  return /^\/api\/v1\/auth\/oauth\/(?:github|google|linuxdo|oidc|dingtalk|wechat)\/start$/.test(path)
+}
+
+export function filterOAuthRequestCookie(path: string, rawCookie: string | undefined): string | undefined {
+  const allowed = oauthCookieNamesForPath(path)
+  if (!allowed || !rawCookie) return undefined
+  const kept: string[] = []
+  for (const part of rawCookie.split(';')) {
+    const separator = part.indexOf('=')
+    if (separator < 1) continue
+    const name = part.slice(0, separator).trim()
+    if (allowed.has(name) && OAUTH_COOKIE_NAMES.has(name)) kept.push(`${name}=${part.slice(separator + 1).trim()}`)
+  }
+  return kept.length ? kept.join('; ') : undefined
+}
+
+/** Returns only Go-issued OAuth Set-Cookie lines whose exact names belong to this endpoint. */
+export function filterOAuthSetCookieHeaders(path: string, values: readonly string[]): string[] {
+  const allowed = oauthCookieNamesForPath(path)
+  if (!allowed) return []
+  return values.filter((line) => {
+    const separator = line.indexOf('=')
+    if (separator < 1) return false
+    const name = line.slice(0, separator).trim().replace(/^Set-Cookie:\s*/i, '')
+    if (!allowed.has(name) || !OAUTH_COOKIE_NAMES.has(name) || /[\r\n]/.test(line)) return false
+    const attributes = line.slice(separator + 1).split(';').slice(1).map((part) => part.trim())
+    if (attributes.some((attribute) => /^domain\s*=/i.test(attribute))) return false
+    const cookiePath = attributes.find((attribute) => /^path\s*=/i.test(attribute))?.split('=', 2)[1]?.trim()
+    const expectedPath = OAUTH_SHARED_COOKIE_PATHS.has(name)
+      ? `${API_PREFIX}/auth/oauth`
+      : name.startsWith('wechat_payment_oauth_')
+        ? `${API_PREFIX}/auth/oauth/wechat/payment`
+        : name.startsWith('wechat_oauth_')
+          ? `${API_PREFIX}/auth/oauth/wechat`
+          : name.startsWith('oidc_oauth_')
+            ? `${API_PREFIX}/auth/oauth/oidc`
+            : name.startsWith('linuxdo_oauth_')
+              ? `${API_PREFIX}/auth/oauth/linuxdo`
+              : name.startsWith('dingtalk_oauth_')
+                ? `${API_PREFIX}/auth/oauth/dingtalk`
+                : ''
+    return Boolean(
+      expectedPath &&
+      cookiePath === expectedPath &&
+      attributes.some((attribute) => /^httponly$/i.test(attribute)) &&
+      attributes.some((attribute) => /^samesite=lax$/i.test(attribute))
+    )
+  })
+}
+
+/** Wire framing, Set-Cookie and CORS headers must not be generically forwarded. */
 const RESPONSE_HEADER_ALLOWLIST = new Set([
   'content-disposition',
-  'content-length',
-  'content-encoding',
   'content-type',
   'etag',
   'last-modified',
@@ -173,6 +299,8 @@ export function filterRequestHeaders(
 
 export function filterResponseHeaders(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {}
+  // Node fetch decompresses the body while retaining the upstream wire headers.
+  // Neither the compressed byte length nor its encoding describes our body.
   headers.forEach((value, name) => {
     if (RESPONSE_HEADER_ALLOWLIST.has(name.toLowerCase())) out[name.toLowerCase()] = value
   })
