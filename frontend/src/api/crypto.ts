@@ -25,6 +25,8 @@ export interface DepositRecord {
   reason?: string
   created_at: string
   credited: number
+  // False means the backend could not resolve the original settlement amount.
+  credited_known?: boolean
   // Confirmation progress. Older backends omit these fields; the page then
   // shows the plain status without a progress line.
   confirmations?: number
