@@ -66,8 +66,9 @@ func TestResponsesToChat_ReasoningCacheLookup_MissKeepsOriginalBehavior(t *testi
 	require.Equal(t, out.Messages, legacy.Messages)
 }
 
-// Plaintext summary wins and the cache lookup is not consulted.
-func TestResponsesToChat_ReasoningCacheLookup_PlaintextPreferred(t *testing.T) {
+// summary_text is display-only and must not be fabricated into request-side
+// reasoning_content. A summary-only item falls through to the cache lookup.
+func TestResponsesToChat_SummaryOnlyDoesNotFabricateReasoningContent(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "deepseek-reasoner",
 		Input: json.RawMessage(`[
@@ -82,13 +83,13 @@ func TestResponsesToChat_ReasoningCacheLookup_PlaintextPreferred(t *testing.T) {
 	out, err := ResponsesToChatCompletionsRequestWithOptions(req, &ResponsesToChatOptions{
 		ReasoningContentByID: func(string) string {
 			lookupCalled = true
-			return "cached thinking"
+			return ""
 		},
 	})
 	require.NoError(t, err)
 	require.Len(t, out.Messages, 3)
-	require.Equal(t, "plain thinking", out.Messages[0].ReasoningContent)
-	require.False(t, lookupCalled, "plaintext summary present → cache lookup must not run")
+	require.Empty(t, out.Messages[0].ReasoningContent)
+	require.True(t, lookupCalled, "summary-only item should consult cache instead of treating summary as CoT")
 }
 
 // DeepSeek emits reasoning only once per turn; chained tool calls
@@ -100,14 +101,14 @@ func TestResponsesToChat_ChainedToolCallsReplayTurnReasoning(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "deepseek-reasoner",
 		Input: json.RawMessage(`[
-			{"type":"reasoning","id":"item_r1","summary":[{"type":"summary_text","text":"turn thinking"}]},
+			{"type":"reasoning","id":"item_r1","summary":[{"type":"summary_text","text":"turn thinking"}],"content":[{"type":"reasoning_text","text":"turn thinking"}]},
 			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"\n\n"}]},
 			{"type":"function_call","call_id":"call_a","name":"exec_command","arguments":"{}"},
 			{"type":"function_call_output","call_id":"call_a","output":"ok"},
 			{"type":"function_call","call_id":"call_b","name":"exec_command","arguments":"{}"},
 			{"type":"function_call_output","call_id":"call_b","output":"ok"},
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]},
-			{"type":"reasoning","id":"item_r2","summary":[{"type":"summary_text","text":"second turn"}]},
+			{"type":"reasoning","id":"item_r2","summary":[{"type":"summary_text","text":"second turn"}],"content":[{"type":"reasoning_text","text":"second turn"}]},
 			{"type":"function_call","call_id":"call_c","name":"exec_command","arguments":"{}"},
 			{"type":"function_call_output","call_id":"call_c","output":"ok"}
 		]`),
@@ -139,10 +140,17 @@ func TestResponsesToChat_ChainedToolCallsReplayTurnReasoning(t *testing.T) {
 
 func TestExtractResponsesReasoningItem(t *testing.T) {
 	id, text, ok := ExtractResponsesReasoningItem(json.RawMessage(
-		`{"type":"reasoning","id":"item_a","summary":[{"type":"summary_text","text":"think"}]}`))
+		`{"type":"reasoning","id":"item_a","summary":[{"type":"summary_text","text":"display only"}],"content":[{"type":"reasoning_text","text":"think"}]}`))
 	require.True(t, ok)
 	require.Equal(t, "item_a", id)
 	require.Equal(t, "think", text)
+
+	// summary-only item: ok with id, but summary must not be treated as CoT.
+	id, text, ok = ExtractResponsesReasoningItem(json.RawMessage(
+		`{"type":"reasoning","id":"item_summary","summary":[{"type":"summary_text","text":"display only"}]}`))
+	require.True(t, ok)
+	require.Equal(t, "item_summary", id)
+	require.Empty(t, text)
 
 	// Encrypted-only item: ok with id but empty text.
 	id, text, ok = ExtractResponsesReasoningItem(json.RawMessage(
@@ -150,6 +158,13 @@ func TestExtractResponsesReasoningItem(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "item_b", id)
 	require.Empty(t, text)
+
+	// Real reasoning_text content is extractable for replay.
+	id, text, ok = ExtractResponsesReasoningItem(json.RawMessage(
+		`{"type":"reasoning","id":"item_c","summary":[{"type":"summary_text","text":"display only"}],"content":[{"type":"reasoning_text","text":"real cot"}]}`))
+	require.True(t, ok)
+	require.Equal(t, "item_c", id)
+	require.Equal(t, "real cot", text)
 
 	// Non-reasoning items are skipped.
 	_, _, ok = ExtractResponsesReasoningItem(json.RawMessage(

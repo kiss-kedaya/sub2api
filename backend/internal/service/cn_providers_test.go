@@ -805,40 +805,43 @@ func TestBuildOpenAIResponsesURLForPlatform(t *testing.T) {
 	require.Equal(t, "https://api.kimi.com/coding/v1/responses", buildOpenAIResponsesURLForPlatform(PlatformKimi, "https://api.kimi.com/coding/v1"))
 }
 
-// TestNormalizeDeepSeekResponsesRequestBody 无状态适配：强制 store=false、
-// 清除 previous_response_id；非原生 CN Responses 协议原样返回。
-func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
+// Native DeepSeek accepts stateful Responses parameters. Preserve the request
+// exactly and let the native upstream validate unsupported or invalid values.
+func TestNormalizeDeepSeekResponsesRequestBodyPreservesNativeDeepSeek(t *testing.T) {
+	t.Parallel()
+	for _, protocol := range []string{APIProtocolResponses, APIProtocolAdaptive} {
+		t.Run(protocol, func(t *testing.T) {
+			account := &Account{
+				Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"api_protocol": protocol},
+			}
+			for _, tc := range []struct {
+				name string
+				body string
+			}{
+				{"stateful-json", `{"model":"deepseek-v4-pro","stream":false,"store":true,"previous_response_id":"resp_123","reasoning":{"effort":"medium","summary":"auto"},"input":"hi"}`},
+				{"stateful-stream", `{"model":"deepseek-v4-pro","stream":true,"store":true,"previous_response_id":"resp_123","reasoning":{"effort":"medium","summary":"auto"},"input":"hi"}`},
+				{"omitted-options", `{"model":"deepseek-v4-pro","input":"hi"}`},
+				{"explicit-store-false", `{"model":"deepseek-v4-pro","store":false,"previous_response_id":"resp_123","input":"hi"}`},
+				{"structured-tool-media", `{"model":"alias-without-prefix","store":true,"input":[{"type":"function_call","id":"fc_image","call_id":"call_image","name":"view_image","arguments":"{}"},{"type":"function_call_output","call_id":"call_image","output":[{"type":"input_text","text":"image result"},{"type":"input_image","image_url":"data:image/png;base64,AQID"}]}],"opaque":9007199254740993}`},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					body := []byte(tc.body)
+					normalized := normalizeDeepSeekResponsesRequestBody(account, body)
+					require.Equal(t, tc.body, string(normalized), "native parameters and structured tool outputs must remain byte-for-byte intact")
+					require.Equal(t, tc.body, string(body), "normalization must not mutate the caller's input buffer")
+				})
+			}
+		})
+	}
+}
+
+func TestNormalizeDeepSeekResponsesRequestBodyKeepsOtherProtocolBehavior(t *testing.T) {
 	t.Parallel()
 
-	deepseekResponses := &Account{
-		Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
-		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
-	}
 	body := []byte(`{"model":"deepseek-v4-pro","store":true,"previous_response_id":"resp_123","input":"hi"}`)
-	normalized := normalizeDeepSeekResponsesRequestBody(deepseekResponses, body)
-	require.False(t, gjson.GetBytes(normalized, "store").Bool())
-	require.False(t, gjson.GetBytes(normalized, "previous_response_id").Exists())
-	require.Equal(t, "deepseek-v4-pro", gjson.GetBytes(normalized, "model").String())
 
-	deepseekAdaptive := &Account{
-		Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
-		Credentials: map[string]any{"api_protocol": APIProtocolAdaptive},
-	}
-	adaptiveNormalized := normalizeDeepSeekResponsesRequestBody(deepseekAdaptive, body)
-	require.False(t, gjson.GetBytes(adaptiveNormalized, "store").Bool())
-	require.False(t, gjson.GetBytes(adaptiveNormalized, "previous_response_id").Exists())
-
-	mediaBody := []byte(`{"model":"deepseek-v4.1-flash","store":true,"input":[{"type":"function_call","call_id":"call_image","name":"view_image","arguments":"{}"},{"type":"function_call_output","call_id":"call_image","output":[{"type":"input_image","image_url":"data:image/png;base64,AQID"}]}]}`)
-	mediaNormalized := normalizeDeepSeekResponsesRequestBody(deepseekResponses, mediaBody)
-	require.False(t, gjson.GetBytes(mediaNormalized, "store").Bool())
-	require.Equal(t, gjson.String, gjson.GetBytes(mediaNormalized, "input.1.output").Type)
-	require.NotContains(t, gjson.GetBytes(mediaNormalized, "input.1.output").String(), "data:image/png")
-	require.Equal(t, "message", gjson.GetBytes(mediaNormalized, "input.2.type").String())
-	require.Equal(t, "user", gjson.GetBytes(mediaNormalized, "input.2.role").String())
-	require.Equal(t, "input_image", gjson.GetBytes(mediaNormalized, "input.2.content.1.type").String())
-	require.Equal(t, "data:image/png;base64,AQID", gjson.GetBytes(mediaNormalized, "input.2.content.1.image_url").String())
-
-	// 非 responses 协议（deepseek CC 账号）原样返回
+	// The native guard must not change the existing Chat account behavior.
 	deepseekCC := &Account{Platform: PlatformDeepseek, Type: AccountTypeAPIKey}
 	require.Equal(t, string(body), string(normalizeDeepSeekResponsesRequestBody(deepseekCC, body)))
 
@@ -863,19 +866,26 @@ func TestNormalizeDeepSeekResponsesRequestBody(t *testing.T) {
 	require.Equal(t, string(body), string(normalizeDeepSeekResponsesRequestBody(openai, body)))
 }
 
-func TestNormalizeDeepSeekResponsesRequestBodyDropsDuplicateCallID(t *testing.T) {
+func TestNormalizeDeepSeekResponsesRequestBodyPreservesNativeDeepSeekDuplicateCallIDs(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"model":"alias-without-prefix","store":true,"input":[{"type":"custom_tool_call","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","name":"apply_patch"},{"type":"custom_tool_call","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","name":"apply_patch"},{"type":"custom_tool_call_output","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","output":"ok"},{"type":"custom_tool_call_output","call_id":"call_00_Q5acE0gqo6rWTzjZrAce4855","output":"fail"}]}`)
-	account := &Account{
-		Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
-		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
+	for _, protocol := range []string{APIProtocolResponses, APIProtocolAdaptive} {
+		t.Run(protocol, func(t *testing.T) {
+			account := &Account{
+				Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"api_protocol": protocol},
+			}
+			normalized := normalizeDeepSeekResponsesRequestBody(account, body)
+			require.Equal(t, string(body), string(normalized), "duplicate calls and their outputs belong to native upstream validation")
+			require.Len(t, gjson.GetBytes(normalized, "input").Array(), 4)
+			require.Equal(t, "ok", gjson.GetBytes(normalized, "input.2.output").String())
+			require.Equal(t, "fail", gjson.GetBytes(normalized, "input.3.output").String())
+		})
 	}
-	normalized := normalizeDeepSeekResponsesRequestBody(account, body)
-	require.Equal(t, 2, len(gjson.GetBytes(normalized, "input").Array()))
-	require.Equal(t, "call_00_Q5acE0gqo6rWTzjZrAce4855", gjson.GetBytes(normalized, "input.0.call_id").String())
-	require.Equal(t, "custom_tool_call", gjson.GetBytes(normalized, "input.0.type").String())
-	require.Equal(t, "ok", gjson.GetBytes(normalized, "input.1.output").String())
-	require.False(t, gjson.GetBytes(normalized, "input.2").Exists())
+}
+
+func TestNormalizeDeepSeekResponsesRequestBodyKeepsOtherProviderCallIDDedupe(t *testing.T) {
+	t.Parallel()
 
 	byModel := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	modelBody := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call_output","call_id":"call_a","output":"1"}]}`)
@@ -899,41 +909,39 @@ func TestNormalizeDeepSeekResponsesRequestBodyDropsDuplicateCallID(t *testing.T)
 	require.Equal(t, "call_a", gjson.GetBytes(kimiNormalized, "input.0.call_id").String())
 }
 
-// TestNormalizeDeepSeekResponsesRequestBodyStripsReasoningSummary
-// DeepSeek 兼容中转（OpenCSG）的 /responses 端点启用严格 JSON 解码，顶层
-// reasoning.summary 会被 400 拒绝（json: unknown field "summary"）；
-// deepseek scope 的请求转发前剥掉该字段，其他平台保持原样。
-func TestNormalizeDeepSeekResponsesRequestBodyStripsReasoningSummary(t *testing.T) {
+// Native DeepSeek preserves summary switches, including otherwise invalid
+// combinations: validation errors must remain visible rather than be hidden.
+func TestNormalizeDeepSeekResponsesRequestBodyPreservesNativeDeepSeekReasoningOptions(t *testing.T) {
 	t.Parallel()
-	deepseekResponses := &Account{
-		Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
-		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
+	for _, protocol := range []string{APIProtocolResponses, APIProtocolAdaptive} {
+		t.Run(protocol, func(t *testing.T) {
+			account := &Account{
+				Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{"api_protocol": protocol},
+			}
+			for _, tc := range []struct {
+				name string
+				body string
+			}{
+				{"effort-and-summary", `{"model":"deepseek-v4.1-flash","store":true,"reasoning":{"effort":"medium","summary":"auto"},"input":"hi"}`},
+				{"summary-only", `{"model":"deepseek-v4.1-flash","reasoning":{"summary":"auto"},"input":"hi"}`},
+				{"generate-summary", `{"model":"deepseek-v4.1-flash","reasoning":{"effort":"high","generate_summary":"auto"},"input":"hi"}`},
+				{"both-switches", `{"model":"deepseek-v4.1-flash","reasoning":{"summary":"auto","generate_summary":"auto"},"input":"hi"}`},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					require.Equal(t, tc.body, string(normalizeDeepSeekResponsesRequestBody(account, []byte(tc.body))))
+				})
+			}
+		})
 	}
-	body := []byte(`{"model":"deepseek-v4.1-flash","store":true,"reasoning":{"effort":"medium","summary":"auto"},"input":"hi"}`)
-	normalized := normalizeDeepSeekResponsesRequestBody(deepseekResponses, body)
-	require.False(t, gjson.GetBytes(normalized, "reasoning.summary").Exists())
-	require.Equal(t, "medium", gjson.GetBytes(normalized, "reasoning.effort").String())
+}
 
-	// reasoning 里只剩 summary 时，连同空对象一起剥掉。
-	onlySummary := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"summary":"auto"},"input":"hi"}`)
-	normalized = normalizeDeepSeekResponsesRequestBody(deepseekResponses, onlySummary)
-	require.False(t, gjson.GetBytes(normalized, "reasoning").Exists())
-
-	// 已废弃的 generate_summary 同样被上游严格解码拒绝，一并剥掉。
-	deprecated := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"high","generate_summary":"auto"},"input":"hi"}`)
-	normalized = normalizeDeepSeekResponsesRequestBody(deepseekResponses, deprecated)
-	require.False(t, gjson.GetBytes(normalized, "reasoning.generate_summary").Exists())
-	require.Equal(t, "high", gjson.GetBytes(normalized, "reasoning.effort").String())
-
-	// 两个开关都在且没有其它内容时，整个 reasoning 对象去掉。
-	bothOnly := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"summary":"auto","generate_summary":"auto"},"input":"hi"}`)
-	normalized = normalizeDeepSeekResponsesRequestBody(deepseekResponses, bothOnly)
-	require.False(t, gjson.GetBytes(normalized, "reasoning").Exists())
-
-	// 按模型名命中的 deepseek scope（openai 平台账号 + deepseek 模型）同样剥掉。
+func TestNormalizeDeepSeekResponsesRequestBodyKeepsOtherProviderReasoningBehavior(t *testing.T) {
+	t.Parallel()
+	// The native DeepSeek guard does not alter OpenAI-platform relay behavior.
 	byModel := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	modelBody := []byte(`{"model":"deepseek-v4.1-flash","reasoning":{"effort":"low","summary":"auto"},"input":"hi"}`)
-	normalized = normalizeDeepSeekResponsesRequestBody(byModel, modelBody)
+	normalized := normalizeDeepSeekResponsesRequestBody(byModel, modelBody)
 	require.False(t, gjson.GetBytes(normalized, "reasoning.summary").Exists())
 	require.Equal(t, "low", gjson.GetBytes(normalized, "reasoning.effort").String())
 

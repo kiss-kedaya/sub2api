@@ -31,8 +31,8 @@ type deepSeekNativeReasoningSource struct {
 // DeepSeek requires the full reasoning_text of historical assistant turns when
 // tools are enabled. Responses clients such as Codex retain summary/encrypted
 // fields but may omit the provider-specific content array on replay. Preserve
-// only reasoning that this gateway actually received, in shared Redis, scoped
-// to the authenticated key, conversation and requested model. Never read the
+// only reasoning that this gateway actually received, in shared Redis, bound
+// to the authenticated key, opaque item id and encrypted digest. Never read the
 // older unscoped Chat fallback cache and never substitute a summary for CoT.
 func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Context, account *Account, body []byte) []byte {
 	if s == nil || c == nil || account == nil || account.Platform != PlatformDeepseek || !account.UsesNativeCNResponses() {
@@ -42,12 +42,6 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		}
 		return body
 	}
-	// Codex replays previous web search results as synthetic assistant messages
-	// ("[Previous web search] ..."). DeepSeek's native Responses endpoint rejects
-	// any assistant message without reasoning_text with HTTP 400, even though the
-	// message is client context rather than model output. Rewrite only these
-	// synthetic messages to the user role; real assistant turns keep their role.
-	body = sanitizeDeepSeekNativeResponsesInput(body)
 	if s.cache == nil {
 		c.Set(deepSeekNativeReasoningScopeKey, nil)
 		c.Set(deepSeekNativeReasoningSourceKey, nil)
@@ -92,7 +86,6 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 	defer cancel()
 	items := input.Array()
 	replacements := make(map[int][]byte)
-	removals := make(map[int]bool)
 	addedBytes := 0
 	lookups := 0
 	for i, item := range items {
@@ -104,15 +97,13 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		if content.Exists() && content.Type != gjson.Null && !content.IsArray() {
 			continue
 		}
-		// An array without reasoning_text cannot satisfy DeepSeek thinking
-		// replay; drop it rather than forwarding an invalid item.
+		// Non-empty client content is authoritative, even if the provider
+		// rejects it. Never erase history to turn an upstream error into 200.
 		if content.IsArray() && len(content.Array()) > 0 {
-			removals[i] = true
 			continue
 		}
 		id := item.Get("id").String()
 		if id == "" {
-			removals[i] = true
 			continue
 		}
 		lookups++
@@ -121,12 +112,10 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		}
 		cached, err := s.cache.GetReasoningContent(ctx, deepSeekNativeReasoningCacheKey(source.keyID, item.Get("id").String()))
 		if err != nil || len(cached) > deepSeekNativeReasoningMaxBytes {
-			removals[i] = true
 			continue
 		}
 		var entry deepSeekNativeReasoningEntry
 		if json.Unmarshal([]byte(cached), &entry) != nil || !hasDeepSeekNativeReasoningText(gjson.ParseBytes(entry.Content)) {
-			removals[i] = true
 			continue
 		}
 		encryptedDigest := ""
@@ -136,7 +125,6 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 		// Absence is part of the binding too: dropping the opaque value must
 		// not turn an encrypted item into an unbound item-id lookup.
 		if encryptedDigest != entry.EncryptedDigest {
-			removals[i] = true
 			continue
 		}
 		if len(entry.Content) > deepSeekNativeReasoningMaxBytes-addedBytes {
@@ -151,79 +139,21 @@ func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Conte
 			addedBytes += added
 		}
 	}
-	hasReasoning := false
-	for _, item := range items {
-		if item.Get("type").String() == "reasoning" {
-			hasReasoning = true
-			break
-		}
-	}
-	// DeepSeek's native Responses endpoint runs in thinking mode unless the
-	// caller explicitly disables it. Prefer the fail-safe default so a client
-	// that omits the reasoning block never forwards invalid assistant history.
-	thinkingMode := true
-	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
-		switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, path).String())) {
-		case "none", "minimal", "off", "disabled":
-			thinkingMode = false
-		}
-	}
-	requiresReplay := hasReasoning || thinkingMode
-	needsRewrite := len(replacements) > 0 || len(removals) > 0
-	if !needsRewrite && requiresReplay {
-		reasoningSinceUser := false
-		for _, item := range items {
-			kind := item.Get("type").String()
-			if kind == "reasoning" {
-				reasoningSinceUser = true
-			}
-			if kind == "message" && item.Get("role").String() == "user" {
-				reasoningSinceUser = false
-			}
-			if kind == "message" && item.Get("role").String() == "assistant" && !reasoningSinceUser &&
-				strings.TrimSpace(deepSeekNativeMessageText(item.Get("content"))) != "" {
-				needsRewrite = true
-				break
-			}
-		}
-	}
-	if !needsRewrite {
+	if len(replacements) == 0 {
 		return body
 	}
-	// Rebuild the input and request once. Rewriting the entire growing request
-	// once per restored item would multiply both allocations and copy time.
-	// Assistant messages without a preceding reasoning item are rewritten to
-	// the user role after empty reasoning items are dropped: DeepSeek rejects
-	// thinking-mode history when an assistant turn cannot carry reasoning_text,
-	// and inventing chain-of-thought is not acceptable.
+	// Restore only exact provider content; never delete history or change roles.
 	var restored bytes.Buffer
 	restored.Grow(len(input.Raw) + addedBytes)
 	_ = restored.WriteByte('[')
-	first := true
-	reasoningSinceUser := false
 	for i, item := range items {
-		if removals[i] {
-			continue
+		if i > 0 {
+			_ = restored.WriteByte(',')
 		}
 		raw := []byte(item.Raw)
 		if replacement, ok := replacements[i]; ok {
 			raw = replacement
 		}
-		kind := item.Get("type").String()
-		if kind == "reasoning" {
-			reasoningSinceUser = true
-		}
-		if kind == "message" && item.Get("role").String() == "user" {
-			reasoningSinceUser = false
-		}
-		if kind == "message" && item.Get("role").String() == "assistant" && requiresReplay && !reasoningSinceUser &&
-			strings.TrimSpace(deepSeekNativeMessageText(item.Get("content"))) != "" {
-			raw = deepSeekNativeAsUserMessage(raw)
-		}
-		if !first {
-			_ = restored.WriteByte(',')
-		}
-		first = false
 		_, _ = restored.Write(raw)
 	}
 	_ = restored.WriteByte(']')
@@ -257,112 +187,6 @@ func hasDeepSeekNativeReasoningText(content gjson.Result) bool {
 		}
 	}
 	return false
-}
-
-// sanitizeDeepSeekNativeResponsesInput rewrites synthetic assistant messages
-// that carry client-side context (normally "[Previous ...]" tool results) to
-// the user role. DeepSeek's native Responses API requires every assistant
-// message in thinking mode to carry reasoning_text; these messages never have
-// it because the client created them, not the model. Converting them preserves
-// the context and avoids inventing chain-of-thought.
-func sanitizeDeepSeekNativeResponsesInput(body []byte) []byte {
-	input := gjson.GetBytes(body, "input")
-	if !input.IsArray() {
-		return body
-	}
-	items := input.Array()
-	changed := false
-	for i, item := range items {
-		if item.Get("type").String() != "message" || item.Get("role").String() != "assistant" {
-			continue
-		}
-		text := strings.TrimSpace(deepSeekNativeMessageText(item.Get("content")))
-		if !strings.HasPrefix(text, "[Previous ") {
-			continue
-		}
-		updated := deepSeekNativeAsUserMessage([]byte(item.Raw))
-		if bytes.Equal(updated, []byte(item.Raw)) {
-			continue
-		}
-		items[i] = gjson.ParseBytes(updated)
-		changed = true
-	}
-	if !changed {
-		return body
-	}
-	var restored bytes.Buffer
-	restored.Grow(len(input.Raw))
-	_ = restored.WriteByte('[')
-	for i, item := range items {
-		if i > 0 {
-			_ = restored.WriteByte(',')
-		}
-		_, _ = restored.WriteString(item.Raw)
-	}
-	_ = restored.WriteByte(']')
-	if next, err := sjson.SetRawBytes(body, "input", restored.Bytes()); err == nil {
-		return next
-	}
-	return body
-}
-
-// deepSeekNativeAsUserMessage rewrites a message to the user role and converts
-// output_text blocks to input_text. DeepSeek only accepts input_* content for
-// user-role messages and rejects a downgraded assistant message with
-// "Invalid content type: output_text" otherwise.
-func deepSeekNativeAsUserMessage(raw []byte) []byte {
-	updated, err := sjson.SetBytes(raw, "role", "user")
-	if err != nil {
-		return raw
-	}
-	content := gjson.GetBytes(updated, "content")
-	if !content.IsArray() {
-		return updated
-	}
-	parts := content.Array()
-	out := make([]json.RawMessage, 0, len(parts))
-	changed := false
-	for _, part := range parts {
-		if part.Get("type").String() == "output_text" {
-			block, marshalErr := json.Marshal(map[string]string{
-				"type": "input_text",
-				"text": part.Get("text").String(),
-			})
-			if marshalErr == nil {
-				out = append(out, block)
-				changed = true
-				continue
-			}
-		}
-		out = append(out, json.RawMessage(part.Raw))
-	}
-	if !changed {
-		return updated
-	}
-	rawContent, marshalErr := json.Marshal(out)
-	if marshalErr != nil {
-		return updated
-	}
-	if next, setErr := sjson.SetRawBytes(updated, "content", rawContent); setErr == nil {
-		return next
-	}
-	return updated
-}
-
-func deepSeekNativeMessageText(content gjson.Result) string {
-	if content.Type == gjson.String {
-		return content.String()
-	}
-	if !content.IsArray() {
-		return ""
-	}
-	var builder strings.Builder
-	for _, part := range content.Array() {
-		if part.Get("text").Type == gjson.String {
-			_, _ = builder.WriteString(part.Get("text").String())
-		}
-	}
-	return builder.String()
 }
 
 type deepSeekNativeReasoningItem struct {

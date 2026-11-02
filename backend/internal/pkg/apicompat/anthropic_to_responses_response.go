@@ -41,6 +41,10 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 				outputs = append(outputs, ResponsesOutput{
 					Type: "reasoning",
 					ID:   generateItemID(),
+					Content: []ResponsesContentPart{{
+						Type: "reasoning_text",
+						Text: block.Thinking,
+					}},
 					Summary: []ResponsesSummary{{
 						Type: "summary_text",
 						Text: block.Thinking,
@@ -614,6 +618,7 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 		item.Action = &WebSearchAction{Query: state.CurrentSummary}
 	case "reasoning":
 		if state.CurrentSummary != "" {
+			item.Content = []ResponsesContentPart{{Type: "reasoning_text", Text: state.CurrentSummary}}
 			item.Summary = []ResponsesSummary{{Type: "summary_text", Text: state.CurrentSummary}}
 		}
 	}
