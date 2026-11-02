@@ -93,6 +93,13 @@
                 {{ billingModeLabel(m) }}
               </span>
               <span
+                v-if="m.official_pricing?.custom"
+                class="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                :title="t('modelPlaza.table.customReferenceHint')"
+              >
+                {{ t('modelPlaza.table.customReference') }}
+              </span>
+              <span
                 v-if="m.long_context_basis === 'marginal'"
                 class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-dark-700/70 dark:text-dark-300"
                 :title="t('modelPlaza.table.tierHintMarginal')"

@@ -761,6 +761,8 @@ export default {
       timePricingRateHint: 'Effective rate {rate} × period multiplier {multiplier}',
       paidPrice: 'Your Price (Discounted)',
       officialPrice: 'Official Price',
+      customReference: 'Custom',
+      customReferenceHint: 'This group has a custom price for this model; the reference column shows your custom base price, while long-context tiers still follow the official preset.',
       rate: 'Rate',
       unitPerMillion: '$ / 1M tokens',
       perUnitRequest: '/ request',
