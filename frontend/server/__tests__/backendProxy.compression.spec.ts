@@ -58,7 +58,14 @@ beforeEach(async () => {
   })
   const app = h3.createApp()
   app.use(route)
-  publicOrigin = await listen(h3.toNodeListener(app))
+  const listener = h3.toNodeListener(app)
+  publicOrigin = await listen((req, res) => {
+    // Model the trusted ingress explicitly. Native fetch may override a supplied
+    // Host header with its loopback connection URL; that is not our public host.
+    req.headers.host = 'site.example'
+    req.headers['x-forwarded-proto'] = 'https'
+    return listener(req, res)
+  })
 })
 
 afterEach(async () => {
