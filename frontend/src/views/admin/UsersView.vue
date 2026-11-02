@@ -362,7 +362,7 @@
           <template #cell-usage_antigravity="{ row }"><PlatformCostCell :usage="getPlatformUsage(row.id, 'antigravity')" /></template>
 
           <template #cell-concurrency="{ row }">
-            <UserConcurrencyCell :current="row.current_concurrency ?? 0" :max="row.concurrency" />
+            <UserConcurrencyCell :user-id="row.id" :current="row.current_concurrency ?? 0" :max="row.concurrency" />
           </template>
 
           <template #cell-status="{ value }">
@@ -1113,7 +1113,9 @@ const loadUsersSecondaryData = async (
     tasks.push(
       (async () => {
         try {
-          const usageResponse = await adminAPI.dashboard.getBatchUsersUsage(userIds, { signal })
+          const includePlatformBreakdown = ['usage_anthropic', 'usage_openai', 'usage_gemini', 'usage_antigravity']
+            .some(key => !hiddenColumns.has(key))
+          const usageResponse = await adminAPI.dashboard.getBatchUsersUsage(userIds, { signal, includePlatformBreakdown })
           if (isStaleSecondary(signal, expectedSeq)) return
           usageStats.value = keepOnly(usageResponse.stats, idSet)
         } catch (e) {
@@ -1269,6 +1271,9 @@ const loadUsers = async () => {
         include_allowed_groups: hasVisibleGroupsColumn.value,
         // 配额列可见时让后端一次批量内联，替代逐行 GET /admin/users/:id/platform-quotas
         include_platform_quotas: hasVisiblePlatformQuotaColumn.value,
+        // Hide-by-default column: skip the per-page MAX(usage_logs.created_at)
+        // query unless the column is visible or the user is sorting by it.
+        include_last_used_at: !hiddenColumns.has('last_used_at') || sortState.sort_by === 'last_used_at',
         sort_by: sortState.sort_by,
         sort_order: sortState.sort_order
       },

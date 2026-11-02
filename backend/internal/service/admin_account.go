@@ -630,6 +630,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err := ValidateUpstreamRequestIDHeaderExtra(normalizedExtra); err != nil {
 			return nil, err
 		}
+		if err := ValidateModelWhitelistAutoSyncExtra(normalizedExtra); err != nil {
+			return nil, err
+		}
 	}
 	previousProbeIdentity := upstreamBillingProbeIdentity(account)
 	previousOllamaUsageIdentity := ollamaCloudUsageIdentity(account)
@@ -710,26 +713,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
-		for _, key := range []string{
-			"quota_used",
-			"quota_daily_used",
-			"quota_daily_start",
-			"quota_weekly_used",
-			"quota_weekly_start",
-			grokBillingExtraKey,
-			UpstreamBillingProbeEnabledExtraKey,
-			UpstreamBillingRateSyncEnabledExtraKey,
-			CustomUsageExtraKey,
-			UpstreamBillingProbeExtraKey,
-			OllamaCloudUsageSessionExtraKey,
-			OllamaCloudUsageAutoRefreshExtraKey,
-			OllamaCloudUsageSnapshotExtraKey,
-			OpenAIAutoResetCreditStateExtraKey,
-		} {
-			if v, ok := account.Extra[key]; ok {
-				normalizedExtra[key] = v
-			}
-		}
+		preserveManagedAccountExtra(account, normalizedExtra)
 		normalizedExtra = MergeOpenAICodexTicketExtra(normalizedExtra, account.Extra)
 		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
 		account.Extra = normalizedExtra
@@ -961,6 +945,9 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 			return err
 		}
 	}
+	if err := ValidateModelWhitelistAutoSyncExtra(updates); err != nil {
+		return err
+	}
 	if len(updates) == 0 {
 		return nil
 	}
@@ -985,6 +972,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
+	if err := ValidateModelWhitelistAutoSyncExtra(input.Extra); err != nil {
+		return nil, err
+	}
 
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)

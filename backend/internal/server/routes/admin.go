@@ -203,6 +203,8 @@ func registerAuditLogRoutes(admin *gin.RouterGroup, h *handler.Handlers, _ middl
 	auditLogs := admin.Group("/audit-logs")
 	{
 		auditLogs.GET("", h.Admin.AuditLog.List)
+		// 倍率配置变更的真实修改时间（来自审计日志，不要用 usage_logs 推断）
+		auditLogs.GET("/group-rate-changes", h.Admin.AuditLog.GroupRateChanges)
 		auditLogs.GET("/:id", h.Admin.AuditLog.Get)
 		// 清空需现场 TOTP 校验（在 handler 内强制），不复用 step-up sudo 窗口
 		auditLogs.POST("/clear", h.Admin.AuditLog.Clear)
@@ -354,6 +356,7 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		users.GET("", h.Admin.User.List)
 		users.GET("/:id", h.Admin.User.GetByID)
+		users.GET("/:id/load", h.Admin.User.GetLoad)
 		users.POST("/:id/auth-identities", h.Admin.User.BindAuthIdentity)
 		users.POST("", h.Admin.User.Create)
 		users.PUT("/:id", h.Admin.User.Update)
@@ -444,6 +447,9 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/sync/crs", h.Admin.Account.SyncFromCRS)
 		accounts.POST("/sync/crs/preview", h.Admin.Account.PreviewFromCRS)
 		accounts.PUT("/:id", h.Admin.Account.Update)
+		accounts.GET("/:id/model-whitelist-auto-sync", h.Admin.Account.GetModelWhitelistAutoSync)
+		accounts.POST("/:id/model-whitelist-auto-sync/run", h.Admin.Account.RunModelWhitelistAutoSync)
+		accounts.POST("/model-whitelist-auto-sync/run", h.Admin.Account.RunModelWhitelistAutoSyncBatch)
 		accounts.GET("/:id/grok-media-eligibility", h.Admin.Account.GetGrokMediaEligibility)
 		accounts.PUT("/:id/grok-media-eligibility", h.Admin.Account.UpdateGrokMediaEligibility)
 		accounts.PUT("/:id/upstream-billing-probe", h.Admin.Account.SetUpstreamBillingProbeEnabled)

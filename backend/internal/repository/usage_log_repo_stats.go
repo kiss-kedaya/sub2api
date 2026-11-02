@@ -585,7 +585,18 @@ func normalizePositiveInt64IDs(ids []int64) []int64 {
 
 // GetBatchUserUsageStats gets today and total actual_cost for multiple users within a time range.
 // If startTime is zero, defaults to 30 days ago.
+// GetBatchUserUsageStats gets today and total actual_cost for multiple users within a time range.
+// If startTime is zero, defaults to 30 days ago.
 func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs []int64, startTime, endTime time.Time) (map[int64]*BatchUserUsageStats, error) {
+	return r.GetBatchUserUsageStatsWithOptions(ctx, userIDs, startTime, endTime, true)
+}
+
+// GetBatchUserUsageStatsWithOptions can skip the per-platform breakdown.
+//
+// The users list only needs ByPlatform when one of the platform usage columns is
+// visible. Without that column the extra two JOINs and the second GROUP BY key
+// only make a bounded 30-day slice more expensive for no visible benefit.
+func (r *usageLogRepository) GetBatchUserUsageStatsWithOptions(ctx context.Context, userIDs []int64, startTime, endTime time.Time, includePlatformBreakdown bool) (map[int64]*BatchUserUsageStats, error) {
 	result := make(map[int64]*BatchUserUsageStats)
 	normalizedUserIDs := normalizePositiveInt64IDs(userIDs)
 	if len(normalizedUserIDs) == 0 {
@@ -602,6 +613,45 @@ func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs
 
 	for _, id := range normalizedUserIDs {
 		result[id] = &BatchUserUsageStats{UserID: id}
+	}
+	today := timezone.Today()
+
+	if !includePlatformBreakdown {
+		query := `
+			SELECT
+				ul.user_id,
+				COALESCE(SUM(ul.actual_cost) FILTER (WHERE ul.created_at >= $2 AND ul.created_at < $3), 0) as total_cost,
+				COALESCE(SUM(ul.actual_cost) FILTER (WHERE ul.created_at >= $4), 0) as today_cost
+			FROM usage_logs ul
+			WHERE ul.user_id = ANY($1)
+			  AND ul.created_at >= LEAST($2, $4)
+			  AND ` + usageLogSuccessFilterUL + `
+			GROUP BY ul.user_id
+		`
+		rows, err := r.sql.QueryContext(ctx, query, pq.Array(normalizedUserIDs), startTime, endTime, today)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var userID int64
+			var total float64
+			var todayTotal float64
+			if err := rows.Scan(&userID, &total, &todayTotal); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			if stats, ok := result[userID]; ok {
+				stats.TotalActualCost += total
+				stats.TodayActualCost += todayTotal
+			}
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
 
 	// GROUP BY (user_id, effective_platform) 一次查询同时得到总值与按平台拆分。
@@ -620,7 +670,6 @@ func (r *usageLogRepository) GetBatchUserUsageStats(ctx context.Context, userIDs
 		  AND ` + usageLogSuccessFilterUL + `
 		GROUP BY ul.user_id, ` + usageLogEffectivePlatformExpr + `
 	`
-	today := timezone.Today()
 	rows, err := r.sql.QueryContext(ctx, query, pq.Array(normalizedUserIDs), startTime, endTime, today)
 	if err != nil {
 		return nil, err

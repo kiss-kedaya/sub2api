@@ -120,6 +120,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // channelMonitorV2Aggregator
 		nil, // quotaFlusher
 		nil, // upstreamBillingProbe
+		nil, // modelWhitelistAutoSync
 		nil, // ollamaCloudUsage
 		nil, // auditLog
 		nil, // openAIAutoReset

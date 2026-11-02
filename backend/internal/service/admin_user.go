@@ -25,7 +25,8 @@ func (s *adminServiceImpl) ListUsers(ctx context.Context, page, pageSize int, fi
 	if err != nil {
 		return nil, 0, err
 	}
-	if len(users) > 0 {
+	includeLastUsedAt := filters.IncludeLastUsedAt == nil || *filters.IncludeLastUsedAt
+	if includeLastUsedAt && len(users) > 0 {
 		userIDs := make([]int64, 0, len(users))
 		for i := range users {
 			userIDs = append(userIDs, users[i].ID)

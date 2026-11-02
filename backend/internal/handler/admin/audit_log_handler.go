@@ -167,3 +167,50 @@ func (h *AuditLogHandler) Clear(c *gin.Context) {
 	middleware.SkipAudit(c)
 	response.Success(c, gin.H{"deleted": deleted})
 }
+
+// GroupRateChanges reconstructs real configuration-level rate multiplier changes
+// for one group from the admin audit trail.
+//
+// GET /api/v1/admin/audit-logs/group-rate-changes?group_id=3&days=30
+//
+// Response: {"group_id":3,"days":30,"source":"audit_log","items":[
+//
+//	{"group_id":3,"changed_at":"2026-11-02T03:12:00Z",
+//	 "previous_rate_multiplier":0.12,"current_rate_multiplier":0.09,
+//	 "direction":"down","actor_email":"admin@example.com","source":"audit_log"}]}
+//
+// items are newest first. The first recorded value only establishes a baseline.
+// This is the only endpoint whose timestamp is the real edit time; the
+// user-facing /usage/groups/rate-changes endpoint reports observed request
+// multipliers instead.
+func (h *AuditLogHandler) GroupRateChanges(c *gin.Context) {
+	groupID, err := strconv.ParseInt(strings.TrimSpace(c.Query("group_id")), 10, 64)
+	if err != nil || groupID <= 0 {
+		response.BadRequest(c, "Invalid group_id")
+		return
+	}
+	days := 30
+	if raw := strings.TrimSpace(c.Query("days")); raw != "" {
+		parsed, convErr := strconv.Atoi(raw)
+		if convErr != nil || parsed <= 0 || parsed > 365 {
+			response.BadRequest(c, "Invalid days, allowed range is 1-365")
+			return
+		}
+		days = parsed
+	}
+	if h.auditService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Audit log service is unavailable")
+		return
+	}
+	changes, err := h.auditService.GroupRateHistory(c.Request.Context(), groupID, time.Now().AddDate(0, 0, -days), 200)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"group_id": groupID,
+		"days":     days,
+		"source":   "audit_log",
+		"items":    changes,
+	})
+}

@@ -219,6 +219,26 @@ type APIKeyDailyUsagePoint struct {
 	ActualCost       float64 `json:"actual_cost"` // 实际扣除
 }
 
+// APIKeyUsageSummary is the sanitized aggregate a user may see for one of their
+// own API keys.
+//
+// Contract: this struct is deliberately narrow. It is built from counters in
+// usage_logs and never carries account cost, upstream/endpoint breakdowns,
+// model names, request ids or IP addresses. HTTP handlers must marshal this
+// type directly instead of returning the wider UsageStats struct.
+type APIKeyUsageSummary struct {
+	// Date is set only for the "today" block; the range block leaves it empty.
+	Date             string  `json:"date,omitempty"`
+	Requests         int64   `json:"requests"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	TotalTokens      int64   `json:"total_tokens"`
+	Cost             float64 `json:"cost"`        // 标准计费
+	ActualCost       float64 `json:"actual_cost"` // 实际扣除
+}
+
 // UserDashboardStats 用户仪表盘统计
 type UserDashboardStats struct {
 	// API Key 统计

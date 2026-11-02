@@ -85,6 +85,9 @@ func (r *usageBatchLogRepoStub) GetUserSpendingRanking(context.Context, time.Tim
 func (r *usageBatchLogRepoStub) GetBatchUserUsageStats(context.Context, []int64, time.Time, time.Time) (map[int64]*usagestats.BatchUserUsageStats, error) {
 	return nil, nil
 }
+func (r *usageBatchLogRepoStub) GetBatchUserUsageStatsWithOptions(context.Context, []int64, time.Time, time.Time, bool) (map[int64]*usagestats.BatchUserUsageStats, error) {
+	return nil, nil
+}
 func (r *usageBatchLogRepoStub) GetBatchAPIKeyUsageStats(context.Context, []int64, time.Time, time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
 	return nil, nil
 }
@@ -116,6 +119,9 @@ func (r *usageBatchLogRepoStub) GetUserStatsAggregated(context.Context, int64, t
 	return nil, nil
 }
 func (r *usageBatchLogRepoStub) GetAPIKeyStatsAggregated(context.Context, int64, time.Time, time.Time) (*usagestats.UsageStats, error) {
+	return nil, nil
+}
+func (r *usageBatchLogRepoStub) GetGroupActiveUserCounts(context.Context, []int64, time.Time) (map[int64]int, error) {
 	return nil, nil
 }
 func (r *usageBatchLogRepoStub) GetAccountStatsAggregated(context.Context, int64, time.Time, time.Time) (*usagestats.UsageStats, error) {

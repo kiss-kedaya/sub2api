@@ -19,6 +19,7 @@ type userRepoStubForListUsers struct {
 	listWithFiltersParams pagination.PaginationParams
 	lastUsedByUserID      map[int64]*time.Time
 	lastUsedErr           error
+	lastUsedCalls         int
 }
 
 func (s *userRepoStubForListUsers) ListWithFilters(_ context.Context, params pagination.PaginationParams, _ UserListFilters) ([]User, *pagination.PaginationResult, error) {
@@ -36,6 +37,7 @@ func (s *userRepoStubForListUsers) ListWithFilters(_ context.Context, params pag
 }
 
 func (s *userRepoStubForListUsers) GetLatestUsedAtByUserIDs(_ context.Context, userIDs []int64) (map[int64]*time.Time, error) {
+	s.lastUsedCalls++
 	if s.lastUsedErr != nil {
 		return nil, s.lastUsedErr
 	}
@@ -182,4 +184,18 @@ func TestAdminService_ListUsers_PopulatesLastUsedAt(t *testing.T) {
 	require.Len(t, users, 1)
 	require.NotNil(t, users[0].LastUsedAt)
 	require.WithinDuration(t, lastUsed, *users[0].LastUsedAt, time.Second)
+}
+
+func TestAdminService_ListUsers_SkipsLastUsedAtWhenDisabled(t *testing.T) {
+	userRepo := &userRepoStubForListUsers{
+		users: []User{{ID: 101, Email: "u@example.com"}},
+	}
+	svc := &adminServiceImpl{userRepo: userRepo}
+	disabled := false
+
+	users, _, err := svc.ListUsers(context.Background(), 1, 20, UserListFilters{IncludeLastUsedAt: &disabled}, "", "")
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	require.Zero(t, userRepo.lastUsedCalls)
+	require.Nil(t, users[0].LastUsedAt)
 }

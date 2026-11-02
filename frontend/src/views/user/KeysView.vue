@@ -275,6 +275,15 @@
                   />
                 </div>
               </div>
+              <button
+                type="button"
+                class="mt-1.5 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/25"
+                data-test="key-usage-details"
+                @click="openUsageDialog(row)"
+              >
+                <UIcon name="i-lucide-chart-no-axes-column" class="size-3.5" />
+                {{ t('keys.usageDialog.open') }}
+              </button>
             </div>
           </template>
 
@@ -1005,6 +1014,12 @@
     />
 
     <!-- Use Key Modal -->
+    <KeyUsageDialog
+      :show="showUsageDialog"
+      :api-key="usageDialogKey"
+      @close="closeUsageDialog"
+    />
+
     <UseKeyModal
       :show="showUseKeyModal"
       :api-key="selectedKey?.key || ''"
@@ -1164,6 +1179,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import DataTable from '@/components/common/DataTable.vue'
 	import Pagination from '@/components/common/Pagination.vue'
 	import BaseDialog from '@/components/common/BaseDialog.vue'
+	import KeyUsageDialog from '@/components/user/KeyUsageDialog.vue'
 	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 	import EmptyState from '@/components/common/EmptyState.vue'
 	import Select from '@/components/common/Select.vue'
@@ -1328,6 +1344,16 @@ const submitting = ref(false)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
+const showUsageDialog = ref(false)
+const usageDialogKey = ref<ApiKey | null>(null)
+const openUsageDialog = (key: ApiKey) => {
+  usageDialogKey.value = key
+  showUsageDialog.value = true
+}
+const closeUsageDialog = () => {
+  showUsageDialog.value = false
+  usageDialogKey.value = null
+}
 const userGroupRates = ref<Record<number, number>>({})
 
 const pagination = ref({

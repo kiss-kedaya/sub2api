@@ -103,6 +103,39 @@ export interface ApiKeyDailyUsageResponse {
   end_date: string
 }
 
+export interface ApiKeyUsageSummary {
+  date?: string
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  total_tokens: number
+  cost: number
+  actual_cost: number
+}
+
+export interface ApiKeyUsageResponse {
+  api_key_id: number
+  start_date: string
+  end_date: string
+  timezone: string
+  today: ApiKeyUsageSummary
+  range: ApiKeyUsageSummary
+  items: ApiKeyDailyUsagePoint[]
+}
+
+export async function getMyApiKeyUsage(
+  apiKeyId: number,
+  params: { start_date?: string; end_date?: string; days?: number; timezone?: string } = {},
+  config: { signal?: AbortSignal } = {}
+): Promise<ApiKeyUsageResponse> {
+  const { data } = await apiClient.get<ApiKeyUsageResponse>(
+    `/user/api-keys/${apiKeyId}/usage`,
+    { ...config, params }
+  )
+  return data
+}
 export interface UsageDashboardSnapshotV2Params extends TrendParams {
   include_trend?: boolean
   include_model_stats?: boolean
@@ -388,6 +421,7 @@ export const usageAPI = {
   getDashboardTrend,
   getDashboardModels,
   getMyApiKeyDailyUsage,
+  getMyApiKeyUsage,
   getDashboardSnapshotV2,
   getDashboardApiKeysUsage,
   // Error requests

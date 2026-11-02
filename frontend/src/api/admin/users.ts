@@ -75,6 +75,7 @@ export async function list(
     attributes?: Record<number, string>  // attributeId -> value
     include_subscriptions?: boolean
     include_allowed_groups?: boolean
+    include_last_used_at?: boolean
     // 让后端把整页用户的平台配额一次性内联返回（1 条 IN 查询），
     // 取代逐行请求 /admin/users/:id/platform-quotas 的 N+1。
     include_platform_quotas?: boolean
@@ -97,6 +98,7 @@ export async function list(
     include_subscriptions: filters?.include_subscriptions,
     include_platform_quotas: filters?.include_platform_quotas,
     include_allowed_groups: filters?.include_allowed_groups,
+    include_last_used_at: filters?.include_last_used_at,
     sort_by: filters?.sort_by,
     sort_order: filters?.sort_order
   }
@@ -413,6 +415,30 @@ export async function resetPlatformQuotaWindow(
   return data
 }
 
+export interface UserGroupLoad {
+  group_id: number
+  group_name?: string
+  inflight: number
+  models?: string[]
+}
+
+export interface UserLoadResponse {
+  user_id: number
+  current_concurrency: number
+  waiting_count: number
+  load_rate: number
+  max_concurrency: number
+  groups: UserGroupLoad[]
+}
+
+/**
+ * Live concurrency + per-group in-flight split for one user.
+ * Fetched lazily when the admin opens the capacity hover.
+ */
+export async function getLoad(id: number): Promise<UserLoadResponse> {
+  const { data } = await apiClient.get<UserLoadResponse>(`/admin/users/${id}/load`)
+  return data
+}
 export const usersAPI = {
   list,
   getById,
@@ -425,6 +451,7 @@ export const usersAPI = {
   toggleStatus,
   getUserApiKeys,
   getUserUsageStats,
+  getLoad,
   getUserBalanceHistory,
   replaceGroup,
   bindUserAuthIdentity,
