@@ -118,6 +118,12 @@ func (r *usageBatchLogRepoStub) GetUserStatsAggregated(context.Context, int64, t
 func (r *usageBatchLogRepoStub) GetAPIKeyStatsAggregated(context.Context, int64, time.Time, time.Time) (*usagestats.UsageStats, error) {
 	return nil, nil
 }
+func (r *usageBatchLogRepoStub) GetGroupActiveUserCounts(context.Context, []int64, time.Time) (map[int64]int, error) {
+	return nil, nil
+}
+func (r *usageBatchLogRepoStub) GetGroupRateBuckets(context.Context, int64, []int64, time.Time, time.Time) ([]usagestats.GroupRateBucket, error) {
+	return nil, nil
+}
 func (r *usageBatchLogRepoStub) GetAccountStatsAggregated(context.Context, int64, time.Time, time.Time) (*usagestats.UsageStats, error) {
 	return nil, nil
 }
