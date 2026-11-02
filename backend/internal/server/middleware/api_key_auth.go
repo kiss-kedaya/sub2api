@@ -28,7 +28,7 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 //   - 鉴权（Authentication）：验证 Key 有效性、用户状态、IP 限制 —— 始终执行
 //   - 计费执行（Billing Enforcement）：过期/配额/订阅/余额检查 —— skipBilling 时整块跳过
 //
-// /v1/usage、/v1/sub2api/billing 端点与异步生图任务查询只需鉴权，不需要计费执行。
+// /v1/models、/v1/usage、/v1/sub2api/billing 端点与异步生图任务查询只需鉴权，不需要计费执行。
 // usage 允许过期/配额耗尽的 Key 查询自身用量，billing 用于读取当前 Key 的倍率配置，
 // 异步生图查询允许已耗尽额度的 Key 拉取自身任务结果。
 func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
@@ -180,7 +180,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		// Async image task polling only reads data that already belongs to the
 		// authenticated key and must remain available after the completed
 		// generation consumes the key's remaining balance.
-		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
+		skipBilling := isModelDiscoveryRequest(c.Request.Method, c.Request.URL.Path) || c.Request.URL.Path == "/v1/usage" || billingInfoRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
 
 		// ── 4. SimpleMode → early return ─────────────────────────────
 
@@ -362,6 +362,19 @@ func isOpenAIV1APIKeyRequest(c *gin.Context) bool {
 		return true
 	}
 	return path == "/openai/v1" || strings.HasPrefix(path, "/openai/v1/")
+}
+
+func isModelDiscoveryRequest(method, path string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	path = strings.TrimRight(path, "/")
+	switch path {
+	case "/v1/models", "/openai/v1/models", "/v1beta/models":
+		return true
+	default:
+		return strings.HasPrefix(path, "/v1/models/") || strings.HasPrefix(path, "/openai/v1/models/") || strings.HasPrefix(path, "/v1beta/models/")
+	}
 }
 
 func isAsyncImageTaskRead(method, path string) bool {
