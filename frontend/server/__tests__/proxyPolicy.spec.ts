@@ -281,5 +281,8 @@ describe('csrf policy', () => {
     expect(checkCsrf({ ...login, origin: 'https://evil.example' }).ok).toBe(false)
     // logout is not a credential route: it must echo the token.
     expect(checkCsrf({ ...base, path: '/api/v1/auth/logout', csrfHeader: undefined }).ok).toBe(false)
+    // Cookie refresh spends an ambient credential, not the caller's body token.
+    expect(checkCsrf({ ...base, path: '/api/v1/auth/refresh', csrfHeader: undefined }).ok).toBe(false)
+    expect(checkCsrf({ ...base, path: '/api/v1/auth/refresh' }).ok).toBe(true)
   })
 })

@@ -28,8 +28,9 @@ export default defineNuxtPlugin({
       }
       const headers: Record<string, string> = {}
       for (const [key, value] of Object.entries(AxiosHeaders.from(config.headers).toJSON())) {
-        if (value != null && !['authorization', 'cookie', 'host'].includes(key.toLowerCase())) headers[key] = String(value)
+        if (value != null && !['authorization', 'cookie', 'host', 'x-sub2api-auth-mode'].includes(key.toLowerCase())) headers[key] = String(value)
       }
+      headers['x-sub2api-auth-mode'] = 'cookie'
       if (csrfToken) headers['x-sub2api-csrf'] = csrfToken
       const isFormData = typeof FormData !== 'undefined' && config.data instanceof FormData
       if (isFormData) delete headers['content-type']

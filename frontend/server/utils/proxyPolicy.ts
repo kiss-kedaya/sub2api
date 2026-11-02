@@ -284,6 +284,49 @@ export function isLogoutRoute(path: string): boolean {
   return path === `${API_PREFIX}/auth/logout`
 }
 
+/** This selects a response contract, not authentication or permission.
+ * Go still verifies credentials, 2FA, refresh rotation and every Bearer request.
+ * Browser markers always win over a caller's bearer hint. Node fetch adds only
+ * sec-fetch-mode by default, so that header alone is not a browser credential.
+ */
+export function isMachineTokenRequest(
+  path: string,
+  headers: Record<string, string | string[] | undefined>,
+  hasSession: boolean
+): boolean {
+  if (!isTokenRoute(path) || hasSession) return false
+  const normalized = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]))
+  if (String(normalized['x-sub2api-auth-mode'] || '').toLowerCase().split(',').some((mode) => mode.trim() === 'cookie')) return false
+  for (const key of ['cookie', 'origin', 'referer', 'sec-fetch-site', 'sec-fetch-dest', 'sec-fetch-user']) {
+    if (normalized[key] !== undefined) return false
+  }
+  const fetchMode = String(normalized['sec-fetch-mode'] || '').toLowerCase()
+  if (fetchMode && fetchMode !== 'cors') return false
+  const contentType = String(normalized['content-type'] || '').split(';')[0].trim().toLowerCase()
+  return contentType === 'application/json'
+}
+
+/** Login CSRF matters before a cookie exists too. */
+export function checkSameOrigin(input: {
+  origin: string | undefined
+  referer: string | undefined
+  host: string | undefined
+  proto: string
+}): CsrfDecision {
+  const expectedHost = (input.host || '').toLowerCase()
+  if (!expectedHost) return { ok: false, reason: 'missing host' }
+  const source = input.origin || input.referer
+  if (!source) return { ok: false, reason: 'missing origin' }
+  try {
+    if (new URL(source).origin.toLowerCase() !== `${input.proto}://${expectedHost}`) {
+      return { ok: false, reason: 'cross-origin request' }
+    }
+  } catch {
+    return { ok: false, reason: 'malformed origin' }
+  }
+  return { ok: true }
+}
+
 export function filterRequestHeaders(
   headers: Record<string, string | string[] | undefined>
 ): Record<string, string> {
@@ -413,29 +456,17 @@ export function checkCsrf(input: {
   if (!isMutatingMethod(input.method)) return { ok: true }
   if (!input.usesCookieSession) return { ok: true }
 
-  // Login/2fa/register/refresh are authorised by credentials in the body, not by
-  // the ambient cookie, so they only need the same-origin check below. Logout
-  // and everything else must echo the session's CSRF token.
-  const credentialRoute = isTokenRoute(input.path) && !isLogoutRoute(input.path)
+  // Login/2fa/register use body credentials. Cookie refresh instead substitutes
+  // the sealed session's refresh token, so it MUST echo that session's CSRF.
+  const credentialRoute = isTokenRoute(input.path) && !isLogoutRoute(input.path) &&
+    input.path !== `${API_PREFIX}/auth/refresh`
   if (!credentialRoute) {
     if (!input.csrfHeader || !input.csrfToken || !safeTokenEquals(input.csrfHeader, input.csrfToken)) {
       return { ok: false, reason: 'csrf token missing or mismatched' }
     }
   }
 
-  const expectedHost = (input.host || '').toLowerCase()
-  if (!expectedHost) return { ok: false, reason: 'missing host' }
-  const expectedOrigin = `${input.proto}://${expectedHost}`
-  const source = input.origin || input.referer
-  if (!source) return { ok: false, reason: 'missing origin' }
-  let sourceOrigin: string
-  try {
-    sourceOrigin = new URL(source).origin.toLowerCase()
-  } catch {
-    return { ok: false, reason: 'malformed origin' }
-  }
-  if (sourceOrigin !== expectedOrigin) return { ok: false, reason: 'cross-origin request' }
-  return { ok: true }
+  return checkSameOrigin(input)
 }
 
 function safeTokenEquals(left: string, right: string): boolean {

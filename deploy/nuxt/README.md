@@ -20,20 +20,23 @@
 | 变量 | 说明 |
 | --- | --- |
 | `NUXT_BACKEND_ORIGIN` | Go API 固定 origin，例如 `http://127.0.0.1:8080`。只允许 http/https，禁止带账号密码。 |
-| `NUXT_SESSION_PASSWORD` | 会话密封密钥（≥32 字节随机串）。为空时 BFF 拒绝对外转发（503），会话探针返回匿名 `configured:false`。 |
+| `NUXT_SESSION_PASSWORD` | 会话密封密钥（≥32 字节随机串）。为空时浏览器登录拒绝建立会话（503），会话探针返回匿名 `configured:false`；公共接口与无 Cookie 的机器 Bearer 契约仍代理到 Go 验证。 |
 | `PORT` / `HOST` | 默认 `3000` / `127.0.0.1`，只给本机 nginx 用。联调 `4320`，预览 `4317`。 |
 | `NUXT_SESSION_COOKIE_SECURE` | `auto`（默认）/`true`/`false`。`auto` 只在直连对端是 loopback/私网且 `x-forwarded-proto=https` 时加 Secure。 |
 | `NUXT_BACKEND_TIMEOUT_MS` | 等到上游响应头的上限，默认 `180000`。只限首字节，之后的流不会被切断。 |
 
-> `NUXT_SESSION_PASSWORD` 为空时：**公共接口照常代理（匿名）**，页面可以正常 SSR；只有登录/2FA/注册/刷新这些"要发 token"的接口返回 503，避免把 token 发进 payload。**正式环境必须配置**，否则用户无法登录。
+> `NUXT_SESSION_PASSWORD` 为空时：公共接口仍可代理，机器登录仍由 Go 验证并签发 Bearer Token；浏览器登录、OAuth 无法建立 Cookie 会话并返回 503。正式环境必须配置该密钥，不能把未配置 Cookie 会话当作机器免鉴权入口。
 
 ## 会话契约
 
-- 登录 / 2FA / 注册 / 刷新成功后，BFF 把 Go 的 token 对封进 `sub2_session`（HttpOnly、SameSite=Lax、HTTPS 下 Secure），**响应体里不再出现可用 token**：
+- 浏览器登录 / 2FA / 注册 / 刷新成功后，BFF 把 Go 的 token 对封进 `sub2_session`（HttpOnly、SameSite=Lax、HTTPS 下 Secure），**浏览器响应体里不再出现可用 token**：
   - `access_token` / `refresh_token` 置为空字符串（不是删字段，旧客户端写进 localStorage 是 `''`，请求拦截器因此不发送 Authorization）；
   - `data.session_managed: true`；
   - `data.csrf_token`：本次会话的 CSRF 值（公开值，给前端塞进运行期上下文）；
   - `user` / `expires_in` / `token_type` / `requires_2fa` / `temp_token` 原样保留。
+- 服务端监控客户端兼容原有 JSON Bearer 契约：无会话、Cookie、Origin、Referer 和浏览器 Fetch Metadata 的 `application/json` 登录 / 2FA / 注册 / 刷新请求，保留 Go 返回的 `access_token`、`refresh_token`、有效期和错误。后续用 `Authorization: Bearer <access_token>` 请求 `/api/v1/auth/me` 查询自己的余额，刷新时提交自己的 `refresh_token`。不会为机器请求创建或清除浏览器会话。
+- Nuxt adapter 明确发送 `X-Sub2api-Auth-Mode: cookie`。这是响应格式提示，**不是鉴权凭据**；自定义 `bearer` 提示不能覆盖已有 Cookie、浏览器来源或 CSRF 保护，也不按 User-Agent 放行。OAuth 回调与完成注册仍只走 Cookie 契约。
+- 两种契约都由 Go 校验账号密码、已启用的二次验证、验证码/风控、Token 有效期与撤销状态及接口权限。监控客户端不支持二次验证时应补齐客户端支持，不能要求用户关闭二次验证。
 - CSRF 字段位置：**`data.csrf_token`**（登录 / 刷新响应 `data` 下，与 `session_managed` 同级）；`GET /api/v1/auth/session` 也返回同名字段。
 - 写操作请求头：**`X-Sub2api-Csrf`**（客户端 adapter 已用此名）；旧的 `X-CSRF-Token` 仍兼容。
 - `GET /api/v1/auth/session`（BFF 自有，不转发）：`{ authenticated, session_managed, configured, csrf_token, expires_at }`。未配置密码时返回 `configured:false` 的匿名结构而不是 503，公共页可正常渲染。
@@ -48,8 +51,9 @@
 - 方法：GET/HEAD/POST/PUT/PATCH/DELETE。
 - 只发往 `NUXT_BACKEND_ORIGIN`；请求头走白名单，会话 cookie 由 BFF 管理，无会话时保留 Bearer 兼容；`Host` / 转发头不进上游。
 - `X-Forwarded-For` / `X-Real-IP` 仅当直连对端是 loopback/私网时才采信上游链，防止客户端伪造 IP 绕过 Go 的限流。
-- cookie 会话下的写操作：必须带 `X-CSRF-Token`（等于会话里的 CSRF 值）且 `Origin`/`Referer` 与 `Host` 同源；登录/2FA/注册/刷新只需同源校验；Bearer 客户端不走 CSRF（无环境凭证）。
-- 上游 `Set-Cookie` 一律丢弃，BFF 只写自己的会话 cookie。
+- Cookie 会话下的写操作（包括刷新、退出）：必须带 `X-Sub2api-Csrf` 或兼容的 `X-CSRF-Token`，并与会话中的值匹配，且 `Origin`/`Referer` 与 `Host` 同源。登录/2FA/注册即使尚无会话，也必须同源；不会让跨站登录把浏览器绑定到攻击者账号。纯机器 Bearer 请求无环境凭证，仍由 Go 验证。
+- 上游通用 `Set-Cookie` 与 CORS 响应头丢弃；只在准确匹配的 OAuth 路径桥接允许的 HttpOnly OAuth Cookie。机器 Token 兼容不会放宽 CORS。
+- HttpOnly 只阻止脚本直接读取 Cookie，不等于防住 XSS 代操作、Cookie 被盗或服务端密钥泄漏；仍须保持 HTTPS、CSP、会话撤销与日志脱敏。
 
 ## 联调端口
 

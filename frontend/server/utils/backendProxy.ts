@@ -10,6 +10,7 @@ import {
   API_PREFIX,
   applySessionContract,
   checkCsrf,
+  checkSameOrigin,
   filterOAuthRequestCookie,
   filterOAuthSetCookieHeaders,
   filterRequestHeaders,
@@ -19,6 +20,8 @@ import {
   isOAuthCompletionRoute,
   isOAuthLoginStartRoute,
   isLogoutRoute,
+  isMachineTokenRequest,
+  isMutatingMethod,
   isTokenRoute,
   readCsrfHeader,
   sanitizeLocation,
@@ -80,7 +83,8 @@ function headerValue(
   headers: Record<string, string | string[] | undefined>,
   name: string
 ): string | undefined {
-  const raw = headers[name] ?? headers[name.toLowerCase()]
+  const raw = headers[name] ?? headers[name.toLowerCase()] ??
+    Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1]
   if (raw === undefined) return undefined
   return Array.isArray(raw) ? raw[0] : raw
 }
@@ -166,12 +170,14 @@ async function doRefreshSession(ctx: BffContext, session: ServerSession): Promis
 export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
   const fetchImpl = ctx.fetchImpl ?? fetch
   const now = ctx.now ?? Date.now
+  const machineTokens = isMachineTokenRequest(ctx.path, ctx.headers, Boolean(ctx.session))
 
   // Without a session secret the BFF cannot hold a login, but public endpoints
   // must still render: proxy them anonymously. Only the endpoints that would
-  // hand out tokens fail closed.
+  // establish a browser session fail closed. Machine auth needs no BFF cookie
+  // secret: it still goes through the exact same Go authentication handlers.
   const sessionConfigured = Boolean(ctx.sessionPassword)
-  if (!sessionConfigured && (isTokenRoute(ctx.path) || isOAuthCompletionRoute(ctx.path) || isOAuthCallbackRoute(ctx.path) || isOAuthLoginStartRoute(ctx.path)) && !isLogoutRoute(ctx.path)) {
+  if (!sessionConfigured && !machineTokens && (isTokenRoute(ctx.path) || isOAuthCompletionRoute(ctx.path) || isOAuthCallbackRoute(ctx.path) || isOAuthLoginStartRoute(ctx.path)) && !isLogoutRoute(ctx.path)) {
     return fail(503, 'SSR session is not configured')
   }
 
@@ -180,6 +186,16 @@ export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
   const origin = headerValue(ctx.headers, 'origin')
   const referer = headerValue(ctx.headers, 'referer')
   const host = headerValue(ctx.headers, 'host')
+
+  // Do not create an attacker-selected browser login through an anonymous
+  // cross-site POST. A forged auth-mode header never overrides browser markers.
+  if (!machineTokens && isMutatingMethod(ctx.method) &&
+    (isTokenRoute(ctx.path) || isOAuthCompletionRoute(ctx.path))) {
+    if (headerValue(ctx.headers, 'sec-fetch-site') === 'cross-site' ||
+      !checkSameOrigin({ origin, referer, host, proto: ctx.protocol }).ok) {
+      return fail(403, 'Request blocked by CSRF policy')
+    }
+  }
 
   const csrf = checkCsrf({
     method: ctx.method,
@@ -337,7 +353,7 @@ export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
         status: upstream.status,
         headers: { ...responseHeaders, ...JSON_HEADERS },
         body: envelope(upstream.ok ? 0 : upstream.status, upstream.ok ? 'success' : 'Logout failed'),
-        session: { action: 'clear' },
+        session: { action: machineTokens ? 'keep' : 'clear' },
       }
     }
     let payload: unknown
@@ -346,6 +362,16 @@ export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
     } catch {
       // Invalid auth responses may embed tokens or private backend errors.
       return { ...fail(502, 'Invalid authentication response'), ...cookieEffect }
+    }
+    if (machineTokens) {
+      // No cookies, no session capture, no CORS relaxation. Bearer callers see
+      // the original Go JSON, including its 2FA challenges and auth failures.
+      return {
+        status: upstream.status,
+        headers: { ...responseHeaders, ...JSON_HEADERS },
+        body: Buffer.from(JSON.stringify(payload), 'utf8'),
+        session: { action: 'keep' },
+      }
     }
     const { payload: clean, tokens } = applySessionContract(payload)
     const successful = upstream.ok && payload && typeof payload === 'object' &&

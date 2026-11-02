@@ -94,7 +94,7 @@ describe('BFF decoded representation and downstream framing', () => {
   })
 
   it.each(['/auth/login', '/auth/oauth/pending/exchange'])('rewrites compressed %s tokens and computes the final buffer length', async (path) => {
-    const response = await fetch(`${publicOrigin}/api/v1${path}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })
+    const response = await fetch(`${publicOrigin}/api/v1${path}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json', origin: 'https://site.example', 'x-sub2api-auth-mode': 'cookie' } })
     const text = await response.text()
     noWireHeaders(response)
     expect(response.status).toBe(200)
@@ -103,6 +103,17 @@ describe('BFF decoded representation and downstream framing', () => {
     expect(text).not.toContain(refresh)
     expect(JSON.parse(text).data).toMatchObject({ access_token: '', refresh_token: '', session_managed: true })
     expect(response.headers.getSetCookie().some((cookie) => cookie.startsWith('sub2_session=') && cookie.includes('HttpOnly'))).toBe(true)
+  })
+
+  it('keeps a compressed machine login token response without issuing session cookies', async () => {
+    const response = await fetch(`${publicOrigin}/api/v1/auth/login`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })
+    const text = await response.text()
+    noWireHeaders(response)
+    expect(response.status).toBe(200)
+    expect(Number(response.headers.get('content-length'))).toBe(Buffer.byteLength(text))
+    expect(JSON.parse(text).data).toMatchObject({ access_token: access, refresh_token: refresh })
+    expect(response.headers.getSetCookie()).toEqual([])
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
 
   it('removes the compressed token-bearing callback body as well as the fragment tokens', async () => {
