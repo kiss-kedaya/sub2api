@@ -75,7 +75,7 @@ jobs:
       - name: Native DeepSeek reasoning replay and tenant isolation
         working-directory: backend
         run: |
-          go test -race -p 1 -tags=unit ./internal/service -run '^Test(DeepSeekNative|NormalizeDeepSeekResponsesRequestBody|RewriteInboundDeepSeekCallIDs)' -count=1
+          go test -race -p 1 -tags=unit ./internal/service -run '^Test(DeepSeekNative|NormalizeDeepSeekResponsesRequestBody|RewriteInboundDeepSeekCallIDs|AdaptiveProtocolRoutesDeepSeek|ForwardResponses_ChatFallback)' -count=1
           go test -race -p 1 ./internal/pkg/apicompat -count=1
 
   copilot-adapter:
