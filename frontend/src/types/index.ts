@@ -671,6 +671,10 @@ export interface Group {
   require_privacy_set: boolean
   created_at: string
   updated_at: string
+  // 渠道状态卡片信号：生效倍率最近一次变动的时间与变动前的倍率。
+  // 后端为可选增量字段；缺失时前端不渲染倍率箭头（不用 updated_at 反推，避免误报）。
+  rate_multiplier_changed_at?: string | null
+  previous_rate_multiplier?: number | null
 }
 
 export interface AdminGroup extends Group {

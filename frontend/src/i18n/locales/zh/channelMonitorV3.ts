@@ -17,6 +17,8 @@ export default {
     unknown: '样本不足',
     allModels: '全部模型',
     userRate: '用户倍率',
+    newGroupTip: '该分组在最近 24 小时内上线',
+    rateChangeTip: '用户倍率在最近 24 小时内由 {previous} 变为 {current}（{time}）',
     unknownGroup: '未知分组',
     timelineTooltip: '{time} · 可用率 {availability} · 缓存率 {cache} · 首 Token {ttft}',
     emptyTitle: '暂无渠道数据',
