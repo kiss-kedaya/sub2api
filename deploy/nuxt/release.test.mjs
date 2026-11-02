@@ -158,8 +158,18 @@ test('ssr-release reuses the exact SPA artifact that was embedded in the Go rele
   assert.match(yaml, /--expect-commit \"\$COMMIT\"/)
   assert.match(yaml, /pnpm run build:ssr/)
   assert.doesNotMatch(yaml, /pnpm run build\s+pnpm run build:ssr/)
-  assert.ok(yaml.includes('FRONTEND_BUILD_VERSION: ${{ steps.embedded-spa.outputs.version }}'))
+  assert.ok(yaml.includes('FRONTEND_BUILD_VERSION: ${{ steps.ref.outputs.version }}'))
   assert.ok(yaml.includes('--release-version ${{ steps.ref.outputs.version }}'))
+})
+
+test('versioned SSR and Go release can differ from the embedded fallback manifest only by version metadata', () => {
+  const source = readFileSync(resolve(HERE, 'release.mjs'), 'utf8')
+  assert.match(source, /const releaseVersion = args\['release-version'\]/)
+  assert.match(source, /version: releaseVersion/)
+  assert.match(source, /release\.backend\?\.version[\s\S]*release\.version !== release\.backend\.version/)
+  assert.match(source, /SPA version \$\{spaCheck\.manifest\.version\} != sealed embedded version/)
+  assert.match(source, /SPA commit \$\{spaCheck\.manifest\.commit\} != release commit/)
+  assert.match(source, /readFileSync\(binary\)\.includes\(Buffer\.from\(embedded\.manifestHash\)\)/)
 })
 
 test('Release frontend and Go binary use the same VERSION artifact before embedding', () => {

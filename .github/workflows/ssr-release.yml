@@ -121,7 +121,7 @@ jobs:
 
       - name: Build the Nuxt SSR bundle
         env:
-          FRONTEND_BUILD_VERSION: ${{ steps.embedded-spa.outputs.version }}
+          FRONTEND_BUILD_VERSION: ${{ steps.ref.outputs.version }}
         run: |
           pnpm run build:ssr
         working-directory: frontend
