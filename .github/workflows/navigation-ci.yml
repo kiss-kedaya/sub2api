@@ -1,0 +1,55 @@
+name: Navigation CI
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/src/App.vue'
+      - 'frontend/app/app.vue'
+      - 'frontend/src/components/layout/**'
+      - 'frontend/src/composables/useClientAnchorNavigation.ts'
+      - 'frontend/src/views/TicketsView.vue'
+      - 'frontend/src/composables/useTicketWorkspace.ts'
+      - '.github/workflows/navigation-ci.yml'
+  push:
+    branches:
+      - fix/nuxt-client-navigation-20261102
+    paths:
+      - 'frontend/src/App.vue'
+      - 'frontend/app/app.vue'
+      - 'frontend/src/components/layout/**'
+      - 'frontend/src/composables/useClientAnchorNavigation.ts'
+      - 'frontend/src/views/TicketsView.vue'
+      - 'frontend/src/composables/useTicketWorkspace.ts'
+      - '.github/workflows/navigation-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  navigation:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.22'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Navigation regression specs
+        run: >-
+          pnpm exec vitest run
+          src/components/layout/__tests__/consoleShell.spec.ts
+          src/components/layout/__tests__/navigationLinks.spec.ts
+          src/components/layout/__tests__/useClientAnchorNavigation.spec.ts
+          src/components/layout/__tests__/navigationContract.spec.ts
