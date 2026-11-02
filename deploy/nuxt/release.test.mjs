@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { collectNuxtAssets, fetchRenderedPage, scanWorkspacePaths } from './smoke-ssr.mjs'
@@ -174,7 +174,7 @@ test('versioned SSR and Go release can differ from the embedded fallback manifes
 })
 
 test('Release frontend and Go binary use the same VERSION artifact before embedding', () => {
-  const releaseWorkflow = resolve(HERE, '../../.github/workflows/release.yml')
+  const releaseWorkflow = resolve(dirname(WORKFLOW), '..', '..', '.github', 'workflows', 'release.yml')
   const yaml = readFileSync(releaseWorkflow, 'utf8')
   const build = yaml.indexOf('  build-frontend:')
   const dependencies = yaml.indexOf('    needs: [resolve_release_ref, update-version]', build)
