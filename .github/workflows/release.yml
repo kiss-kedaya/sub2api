@@ -121,7 +121,7 @@ jobs:
 
   build-frontend:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
-    needs: [resolve_release_ref]
+    needs: [resolve_release_ref, update-version]
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -144,6 +144,12 @@ jobs:
           node-version: '24.22'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Download VERSION artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: version-file
+          path: backend/cmd/server/
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -175,6 +181,8 @@ jobs:
       # GoReleaser creates the GitHub release and publishes GHCR images.
       contents: write
       packages: write
+      actions: write
+      actions: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

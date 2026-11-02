@@ -150,6 +150,32 @@ test('ssr-release workflow packages with the immutable workflow commit, smokes t
   assert.match(yaml, /gh release upload[\s\S]*?--clobber/)
 })
 
+test('ssr-release reuses the exact SPA artifact that was embedded in the Go release', () => {
+  assert.match(WORKFLOW, /ssr-release\.yml$/)
+  const yaml = readFileSync(WORKFLOW, 'utf8')
+  assert.match(yaml, /gh run list[\s\S]*--workflow release\.yml/)
+  assert.match(yaml, /gh run download[\s\S]*--name frontend-dist/)
+  assert.match(yaml, /--expect-commit \"\$COMMIT\"/)
+  assert.match(yaml, /pnpm run build:ssr/)
+  assert.doesNotMatch(yaml, /pnpm run build\s+pnpm run build:ssr/)
+  assert.ok(yaml.includes('FRONTEND_BUILD_VERSION: ${{ steps.embedded-spa.outputs.version }}'))
+  assert.ok(yaml.includes('--release-version ${{ steps.ref.outputs.version }}'))
+})
+
+test('Release frontend and Go binary use the same VERSION artifact before embedding', () => {
+  const releaseWorkflow = resolve(HERE, '../../.github/workflows/release.yml')
+  const yaml = readFileSync(releaseWorkflow, 'utf8')
+  const build = yaml.indexOf('  build-frontend:')
+  const dependencies = yaml.indexOf('    needs: [resolve_release_ref, update-version]', build)
+  const version = yaml.indexOf('name: Download VERSION artifact', build)
+  const frontendBuild = yaml.indexOf('name: Build frontend', build)
+  const goBuild = yaml.indexOf('      - name: Download VERSION artifact', yaml.indexOf('  release:'))
+  assert.ok(build >= 0 && dependencies > build, 'frontend artifact build waits for release VERSION')
+  assert.ok(version > dependencies && frontendBuild > version, 'frontend version artifact downloads before SPA build')
+  assert.ok(goBuild > 0, 'Go release consumes the matching VERSION artifact')
+  assert.match(yaml, /packages: write[\s\S]*actions: write/)
+})
+
 test('smoke follows a same-origin login redirect and never accepts the 302 itself', async (t) => {
   const base = await serve(t, (req, res) => {
     if (req.url === '/') {
