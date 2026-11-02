@@ -17,6 +17,15 @@ export function useClientAnchorNavigation(router: Router): void {
     if (!anchor) return
     const path = resolveInternalNavigation(anchor, window.location)
     if (!path) return
+    // Only take over links that the SPA router actually owns. Same-origin exports,
+    // downloads and documents must keep their normal browser navigation.
+    let matched: number
+    try {
+      matched = router.resolve(path).matched.length
+    } catch {
+      return
+    }
+    if (matched === 0) return
     event.preventDefault()
     void router.push(path)
   }
