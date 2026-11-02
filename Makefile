@@ -41,6 +41,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/layout/__tests__/AppSidebar.spec.ts \
 	src/components/common/__tests__/ConsoleTabs.spec.ts \
 	src/components/common/__tests__/DataTable.spec.ts \
+	src/components/common/__tests__/DataTable.ssr.spec.ts \
 	src/components/payment/__tests__/AmountInput.spec.ts \
 	src/components/admin/account/__tests__/AccountTableFilters.spec.ts \
 	src/components/admin/account/__tests__/AccountBulkActionsBar.spec.ts \
