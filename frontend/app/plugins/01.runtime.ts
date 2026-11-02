@@ -5,6 +5,7 @@ import { createAppI18n, loadLocaleMessages } from '@/i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { applySiteTheme } from '@/composables/useSiteTheme'
+import { restoreClientRuntimeSession } from '../runtime/clientSession'
 import type { AppRuntimeContext } from '../../src/runtime/context'
 
 export default defineNuxtPlugin({
@@ -80,10 +81,10 @@ export default defineNuxtPlugin({
           }
         } catch { /* An absent or expired session renders public pages anonymously. */ }
       } else {
-        try {
-          const session = await $fetch<{ data?: { csrf_token?: string } }>('/api/v1/auth/session')
-          csrfToken = session.data?.csrf_token ?? null
-        } catch { /* API errors remain visible when the user submits a form. */ }
+        csrfToken = await restoreClientRuntimeSession({
+          app, auth,
+          probe: () => $fetch<{ data?: { authenticated?: boolean; csrf_token?: string } }>('/api/v1/auth/session'),
+        })
         applySiteTheme(app.cachedPublicSettings, { colorMode: true })
       }
       nuxtApp.hook('app:rendered', () => {
