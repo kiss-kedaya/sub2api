@@ -120,6 +120,7 @@ jobs:
           fi
           cp .pack-tools/deploy/nuxt/release.mjs deploy/nuxt/release.mjs
           cp .pack-tools/deploy/nuxt/smoke-ssr.mjs deploy/nuxt/smoke-ssr.mjs
+          cp .pack-tools/deploy/nuxt/smoke-authenticated-ssr.mjs deploy/nuxt/smoke-authenticated-ssr.mjs
           cp .pack-tools/deploy/nuxt/release.test.mjs deploy/nuxt/release.test.mjs
           # Fail loudly instead of silently repackaging with the old helper.
           grep -q 'copyTreeDereferenced' deploy/nuxt/release.mjs

@@ -16,7 +16,8 @@ const { isSupported, list, testDatabase, testRedis, install } = vi.hoisted(() =>
   testRedis: vi.fn(async () => {}),
   install: vi.fn(async () => { throw new Error('Stop before restart polling') })
 }))
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (original) => ({
+  ...(await original<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } })
 }))
 vi.mock('@/api', () => ({ passkeyAPI: { isSupported, list } }))
