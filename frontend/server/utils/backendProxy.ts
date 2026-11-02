@@ -138,6 +138,7 @@ async function doRefreshSession(ctx: BffContext, session: ServerSession): Promis
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        ...(headerValue(ctx.headers, 'user-agent') ? { 'user-agent': headerValue(ctx.headers, 'user-agent')! } : {}),
         ...(ctx.clientIp ? { 'x-forwarded-for': ctx.clientIp, 'x-real-ip': ctx.clientIp } : {}),
       },
       body: JSON.stringify({ refresh_token: session.refreshToken }),
@@ -170,14 +171,14 @@ async function doRefreshSession(ctx: BffContext, session: ServerSession): Promis
 export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
   const fetchImpl = ctx.fetchImpl ?? fetch
   const now = ctx.now ?? Date.now
-  const machineTokens = isMachineTokenRequest(ctx.path, ctx.headers, Boolean(ctx.session))
+  const machineTokens = isMachineTokenRequest(ctx.path, ctx.headers, Boolean(ctx.session), ctx.method)
 
   // Without a session secret the BFF cannot hold a login, but public endpoints
   // must still render: proxy them anonymously. Only the endpoints that would
-  // establish a browser session fail closed. Machine auth needs no BFF cookie
-  // secret: it still goes through the exact same Go authentication handlers.
+  // establish sessions fail closed, including machine auth. A missing cookie
+  // secret must never silently enable a different externally visible mode.
   const sessionConfigured = Boolean(ctx.sessionPassword)
-  if (!sessionConfigured && !machineTokens && (isTokenRoute(ctx.path) || isOAuthCompletionRoute(ctx.path) || isOAuthCallbackRoute(ctx.path) || isOAuthLoginStartRoute(ctx.path)) && !isLogoutRoute(ctx.path)) {
+  if (!sessionConfigured && (isTokenRoute(ctx.path) || isOAuthCompletionRoute(ctx.path) || isOAuthCallbackRoute(ctx.path) || isOAuthLoginStartRoute(ctx.path)) && !isLogoutRoute(ctx.path)) {
     return fail(503, 'SSR session is not configured')
   }
 
@@ -209,6 +210,9 @@ export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
     proto: ctx.protocol,
   })
   if (!csrf.ok) return fail(403, 'Request blocked by CSRF policy')
+  if (!machineTokens && ctx.path === `${API_PREFIX}/auth/refresh` && !session && isMutatingMethod(ctx.method)) {
+    return fail(401, 'A valid browser session is required')
+  }
 
   const headers = filterRequestHeaders(ctx.headers)
   const oauthCookie = filterOAuthRequestCookie(ctx.path, headerValue(ctx.headers, 'cookie'))
@@ -246,8 +250,9 @@ export async function handleBffRequest(ctx: BffContext): Promise<BffResult> {
   }
 
   let requestBody = ctx.body
-  if (session && isTokenRoute(ctx.path) && ctx.path.endsWith('/auth/refresh')) {
-    // Refresh uses the session's rotating token, never a client-supplied one.
+  if (session && (ctx.path === `${API_PREFIX}/auth/refresh` || isLogoutRoute(ctx.path))) {
+    // Refresh and logout use this session's token. Logout must revoke its
+    // refresh family even after the access token has expired.
     requestBody = Buffer.from(JSON.stringify({ refresh_token: session.refreshToken }), 'utf8')
     headers['content-type'] = 'application/json'
   }

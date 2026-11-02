@@ -6,6 +6,7 @@
  */
 
 import { timingSafeEqual } from 'node:crypto'
+import { isIP } from 'node:net'
 
 export const API_PREFIX = '/api/v1'
 
@@ -13,6 +14,7 @@ export const API_PREFIX = '/api/v1'
 export const TOKEN_ROUTES = new Set([
   `${API_PREFIX}/auth/login`,
   `${API_PREFIX}/auth/login/2fa`,
+  `${API_PREFIX}/auth/passkey/login/finish`,
   `${API_PREFIX}/auth/register`,
   `${API_PREFIX}/auth/refresh`,
   `${API_PREFIX}/auth/logout`,
@@ -292,9 +294,10 @@ export function isLogoutRoute(path: string): boolean {
 export function isMachineTokenRequest(
   path: string,
   headers: Record<string, string | string[] | undefined>,
-  hasSession: boolean
+  hasSession: boolean,
+  method: string
 ): boolean {
-  if (!isTokenRoute(path) || hasSession) return false
+  if (method.toUpperCase() !== 'POST' || !isTokenRoute(path) || hasSession) return false
   const normalized = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]))
   if (String(normalized['x-sub2api-auth-mode'] || '').toLowerCase().split(',').some((mode) => mode.trim() === 'cookie')) return false
   for (const key of ['cookie', 'origin', 'referer', 'sec-fetch-site', 'sec-fetch-dest', 'sec-fetch-user']) {
@@ -318,7 +321,7 @@ export function checkSameOrigin(input: {
   const source = input.origin || input.referer
   if (!source) return { ok: false, reason: 'missing origin' }
   try {
-    if (new URL(source).origin.toLowerCase() !== `${input.proto}://${expectedHost}`) {
+    if (new URL(source).origin.toLowerCase() !== `${input.proto.toLowerCase()}://${expectedHost}`) {
       return { ok: false, reason: 'cross-origin request' }
     }
   } catch {
@@ -409,8 +412,16 @@ export function resolveClientIp(
     .filter(Boolean)
   const peerIsTrusted = isTrustedPeer(remoteAddress)
   if (peerIsTrusted && chain.length > 0) {
-    const candidate = chain[0]
-    if (isIpLiteral(candidate)) return candidate
+    // The ingress appends its observed peer on the right. Never use an
+    // attacker-controlled leftmost XFF value to bypass Go's IP rate limits.
+    for (let index = chain.length - 1; index >= 0; index -= 1) {
+      const candidate = chain[index]
+      if (!isIpLiteral(candidate)) return isIpLiteral(remoteAddress) ? remoteAddress! : ''
+      const address = candidate.replace(/^::ffff:/, '').toLowerCase()
+      const linkLocal = /^169\.254\./.test(address) || /^fe[89ab][0-9a-f]:/.test(address)
+      const privateV6 = /^(?:fc|fd)[0-9a-f]{2}:/.test(address)
+      if (!isTrustedPeer(candidate) && !linkLocal && !privateV6) return candidate
+    }
   }
   return isIpLiteral(remoteAddress) ? remoteAddress! : ''
 }
@@ -426,11 +437,7 @@ export function isTrustedPeer(address: string | undefined): boolean {
 }
 
 function isIpLiteral(value: string | undefined): boolean {
-  if (!value) return false
-  const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/
-  const ipv6 = /^[0-9a-f:]+$/i
-  if (ipv4.test(value)) return value.split('.').every((part) => Number(part) <= 255)
-  return ipv6.test(value) && value.includes(':')
+  return Boolean(value && isIP(value))
 }
 
 export interface CsrfDecision {

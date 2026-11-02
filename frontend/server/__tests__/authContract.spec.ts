@@ -11,7 +11,7 @@ function context(overrides: Partial<BffContext> = {}): BffContext {
 }
 
 describe('machine Bearer and browser cookie contracts', () => {
-  it.each(['/api/v1/auth/login', '/api/v1/auth/login/2fa', '/api/v1/auth/register', '/api/v1/auth/refresh'])('retains the Go JSON contract on machine %s without creating cookies', async (path) => {
+  it.each(['/api/v1/auth/login', '/api/v1/auth/login/2fa', '/api/v1/auth/passkey/login/finish', '/api/v1/auth/register', '/api/v1/auth/refresh'])('retains the Go JSON contract on machine %s without creating cookies', async (path) => {
     const fetchImpl = vi.fn(async () => json(auth)) as unknown as typeof fetch
     const result = await handleBffRequest(context({ path, fetchImpl }))
     expect(result.status).toBe(200)
@@ -30,12 +30,12 @@ describe('machine Bearer and browser cookie contracts', () => {
     expect(result.session.action).toBe('keep')
   })
 
-  it('allows a machine login without a cookie secret but still delegates credentials to Go', async () => {
+  it('fails closed for machine login too when the cookie secret is not configured', async () => {
     const fetchImpl = vi.fn(async () => json(auth)) as unknown as typeof fetch
     const result = await handleBffRequest(context({ sessionPassword: '', fetchImpl }))
-    expect(bodyOf(result)).toEqual(auth)
+    expect(result.status).toBe(503)
     expect(result.session.action).toBe('keep')
-    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('keeps machine login, balance query and rotating refresh on the same identity', async () => {
@@ -132,5 +132,56 @@ describe('machine Bearer and browser cookie contracts', () => {
     const result = await handleBffRequest(context({ path: '/api/v1/auth/oauth/pending/exchange', headers: { host: 'site.example', origin: PUBLIC, 'content-type': 'application/json', 'x-sub2api-auth-mode': 'bearer' }, fetchImpl: (async () => json(auth)) as typeof fetch }))
     expect(bodyOf(result).data.access_token).toBe('')
     expect(result.session.action).toBe('set')
+  })
+
+  it('captures browser passkey login tokens into the managed session', async () => {
+    const result = await handleBffRequest(context({ path: '/api/v1/auth/passkey/login/finish', headers: { host: 'site.example', origin: PUBLIC, 'content-type': 'application/json' }, fetchImpl: (async () => json(auth)) as typeof fetch }))
+    expect(bodyOf(result).data).toMatchObject({ access_token: '', refresh_token: '', session_managed: true })
+    expect(result.session.action).toBe('set')
+  })
+
+  it('rejects browser refresh without a valid sealed session instead of adopting a body token', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const result = await handleBffRequest(context({ path: '/api/v1/auth/refresh', headers: { host: 'site.example', origin: PUBLIC, cookie: 'sub2_session=invalid', 'content-type': 'application/json' }, body: Buffer.from('{"refresh_token":"body-token"}'), fetchImpl }))
+    expect(result.status).toBe(401)
+    expect(result.session.action).toBe('keep')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('preserves the User-Agent and client IP during silent refresh for session binding', async () => {
+    const session = { ...createSession({ accessToken: 'expired', refreshToken: 'binding-refresh', expiresIn: 1, uid: 7 }), accessExp: 1 }
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      expect(headers.get('user-agent')).toBe('fixture-browser')
+      expect(headers.get('x-real-ip')).toBe('203.0.113.5')
+      if (String(url).endsWith('/auth/refresh')) return json(auth)
+      expect(headers.get('authorization')).toBe('Bearer fixture-access')
+      return json({ code: 0, data: { id: 7 } })
+    }) as unknown as typeof fetch
+    const result = await handleBffRequest(context({ method: 'GET', path: '/api/v1/auth/me', body: null, headers: { host: 'site.example', 'user-agent': 'fixture-browser' }, session, fetchImpl }))
+    expect(result.status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(result.session.action).toBe('set')
+  })
+
+  it('sends the sealed refresh token on logout even after access expiry, never a caller replacement', async () => {
+    const session = { ...createSession({ accessToken: 'expired', refreshToken: 'own-refresh-family', expiresIn: 1, uid: 7 }), accessExp: 1 }
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ refresh_token: 'own-refresh-family' })
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer expired')
+      return json({ code: 0, data: { message: 'Logged out successfully' } })
+    }) as unknown as typeof fetch
+    const result = await handleBffRequest(context({ path: '/api/v1/auth/logout', session, headers: { host: 'site.example', origin: PUBLIC, 'x-sub2api-csrf': session.csrf }, body: Buffer.from('{"refresh_token":"another-user"}'), fetchImpl }))
+    expect(result.status).toBe(200)
+    expect(result.session.action).toBe('clear')
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it.each([401, 403])('preserves expired/revoked Bearer and role denial %s without silently refreshing a machine', async (status) => {
+    const fetchImpl = vi.fn(async () => json({ code: status, message: 'fixture-denied' }, status)) as unknown as typeof fetch
+    const result = await handleBffRequest(context({ method: 'GET', path: '/api/v1/auth/me', headers: { host: 'site.example', authorization: 'Bearer invalid-or-revoked' }, body: null, fetchImpl }))
+    expect(result.status).toBe(status)
+    expect(result.session.action).toBe('keep')
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 })

@@ -231,6 +231,15 @@ describe('header hygiene', () => {
     expect(resolveClientIp('not-an-ip', '127.0.0.1')).toBe('127.0.0.1')
     expect(resolveClientIp(undefined, undefined)).toBe('')
   })
+
+  it('walks forwarded IPs from the trusted right edge, not the attacker-controlled left edge', () => {
+    expect(resolveClientIp('198.51.100.66, 203.0.113.9', '127.0.0.1')).toBe('203.0.113.9')
+    expect(resolveClientIp('198.51.100.66, 203.0.113.9, 10.0.0.2, 127.0.0.1', '127.0.0.1')).toBe('203.0.113.9')
+    expect(resolveClientIp('198.51.100.66, 2001:db8::123, fd00::2, fe80::1', '::1')).toBe('2001:db8::123')
+    expect(resolveClientIp('198.51.100.66, malformed', '127.0.0.1')).toBe('127.0.0.1')
+    expect(resolveClientIp('198.51.100.66, :::', '127.0.0.1')).toBe('127.0.0.1')
+    expect(resolveClientIp('198.51.100.66, 10.0.0.2', '203.0.113.9')).toBe('203.0.113.9')
+  })
 })
 
 describe('csrf policy', () => {

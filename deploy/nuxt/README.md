@@ -20,16 +20,16 @@
 | 变量 | 说明 |
 | --- | --- |
 | `NUXT_BACKEND_ORIGIN` | Go API 固定 origin，例如 `http://127.0.0.1:8080`。只允许 http/https，禁止带账号密码。 |
-| `NUXT_SESSION_PASSWORD` | 会话密封密钥（≥32 字节随机串）。为空时浏览器登录拒绝建立会话（503），会话探针返回匿名 `configured:false`；公共接口与无 Cookie 的机器 Bearer 契约仍代理到 Go 验证。 |
+| `NUXT_SESSION_PASSWORD` | 会话密封密钥（≥32 字节随机串）。为空时登录、注册、刷新和 OAuth 均失败关闭（503），机器登录也不例外；会话探针返回匿名 `configured:false`。 |
 | `PORT` / `HOST` | 默认 `3000` / `127.0.0.1`，只给本机 nginx 用。联调 `4320`，预览 `4317`。 |
 | `NUXT_SESSION_COOKIE_SECURE` | `auto`（默认）/`true`/`false`。`auto` 只在直连对端是 loopback/私网且 `x-forwarded-proto=https` 时加 Secure。 |
 | `NUXT_BACKEND_TIMEOUT_MS` | 等到上游响应头的上限，默认 `180000`。只限首字节，之后的流不会被切断。 |
 
-> `NUXT_SESSION_PASSWORD` 为空时：公共接口仍可代理，机器登录仍由 Go 验证并签发 Bearer Token；浏览器登录、OAuth 无法建立 Cookie 会话并返回 503。正式环境必须配置该密钥，不能把未配置 Cookie 会话当作机器免鉴权入口。
+> `NUXT_SESSION_PASSWORD` 为空时：公共接口仍可代理，但浏览器和机器均不能登录、注册或刷新。正式环境必须配置该密钥，不能把未配置 Cookie 会话当作机器免鉴权入口。
 
 ## 会话契约
 
-- 浏览器登录 / 2FA / 注册 / 刷新成功后，BFF 把 Go 的 token 对封进 `sub2_session`（HttpOnly、SameSite=Lax、HTTPS 下 Secure），**浏览器响应体里不再出现可用 token**：
+- 浏览器登录（包括通行密钥）/ 2FA / 注册 / 刷新成功后，BFF 把 Go 的 token 对封进 `sub2_session`（HttpOnly、SameSite=Lax、HTTPS 下 Secure），**浏览器响应体里不再出现可用 token**：
   - `access_token` / `refresh_token` 置为空字符串（不是删字段，旧客户端写进 localStorage 是 `''`，请求拦截器因此不发送 Authorization）；
   - `data.session_managed: true`；
   - `data.csrf_token`：本次会话的 CSRF 值（公开值，给前端塞进运行期上下文）；
@@ -50,10 +50,11 @@
 - 路径：只接受 `/api/v1/**`，拒绝 `..`、`%2f`、`%5c`、`//`、反斜杠、控制字符、绝对 URL、query 混进路径。
 - 方法：GET/HEAD/POST/PUT/PATCH/DELETE。
 - 只发往 `NUXT_BACKEND_ORIGIN`；请求头走白名单，会话 cookie 由 BFF 管理，无会话时保留 Bearer 兼容；`Host` / 转发头不进上游。
-- `X-Forwarded-For` / `X-Real-IP` 仅当直连对端是 loopback/私网时才采信上游链，防止客户端伪造 IP 绕过 Go 的限流。
+- 公网入口覆盖客户端自带的转发 IP；有 WAF/CDN 时先配置准确的可信代理。BFF 只在直连对端可信时从右往左剥离内部代理跳数，遇到首个外部 IP 即停止，避免采信客户端伪造的最左侧值。静默续期保留同一 IP 和 User-Agent，以兼容 Go 的会话绑定。
 - Cookie 会话下的写操作（包括刷新、退出）：必须带 `X-Sub2api-Csrf` 或兼容的 `X-CSRF-Token`，并与会话中的值匹配，且 `Origin`/`Referer` 与 `Host` 同源。登录/2FA/注册即使尚无会话，也必须同源；不会让跨站登录把浏览器绑定到攻击者账号。纯机器 Bearer 请求无环境凭证，仍由 Go 验证。
 - 上游通用 `Set-Cookie` 与 CORS 响应头丢弃；只在准确匹配的 OAuth 路径桥接允许的 HttpOnly OAuth Cookie。机器 Token 兼容不会放宽 CORS。
 - HttpOnly 只阻止脚本直接读取 Cookie，不等于防住 XSS 代操作、Cookie 被盗或服务端密钥泄漏；仍须保持 HTTPS、CSP、会话撤销与日志脱敏。
+- 浏览器显式刷新必须已有有效密封会话，不收养请求体传入的刷新凭证。退出时 BFF 向 Go 提交当前会话的刷新凭证，访问令牌过期也可撤销该刷新族；只有清除本机 Cookie 不等于服务端撤销成功，后端失败仍按错误返回。
 
 ## 联调端口
 
