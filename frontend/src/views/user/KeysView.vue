@@ -1968,8 +1968,15 @@ const backfillPageIfEmpty = async () => {
 
 const matchesActiveFilters = (key: ApiKey) => {
   if (filterStatus.value && key.status !== filterStatus.value) return false
-  if (filterGroupId.value !== '' && String(key.group_id ?? '') !== String(filterGroupId.value)) {
-    return false
+  if (filterGroupId.value !== '') {
+    const routeGroupIds = Array.isArray(key.group_ids) && key.group_ids.length > 0
+      ? key.group_ids
+      : key.group_id == null ? [] : [key.group_id]
+    if (String(filterGroupId.value) === '0') {
+      if (routeGroupIds.length > 0) return false
+    } else if (!routeGroupIds.some((groupId) => String(groupId) === String(filterGroupId.value))) {
+      return false
+    }
   }
   const query = filterSearch.value.trim().toLowerCase()
   if (query) {
