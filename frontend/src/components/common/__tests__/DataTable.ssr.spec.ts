@@ -4,7 +4,10 @@ import { renderToString } from 'vue/server-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import DataTable from '../DataTable.vue'
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (original) => ({
+  ...(await original<typeof import('vue-i18n')>()),
+  useI18n: () => ({ t: (key: string) => key }),
+}))
 
 const ServerTable = defineComponent({
   name: 'UTable',
