@@ -138,6 +138,54 @@ func TestGetLogsSplitHasRequestBudgetAndReturnsError(t *testing.T) {
 	}
 }
 
+func TestGetLogsDoesNotSplitRateLimitedQueriesAndKeepsSuccessfulBatches(t *testing.T) {
+	recipients := splitRecipients(batchSize + 1)
+	transfer := splitLog(0, 105, recipients[0])
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params []getLogsParams `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Params) != 1 {
+			t.Errorf("invalid getLogs request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		call := calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if call == 2 {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1,
+				"error": map[string]any{"code": 429, "message": "rate limited"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": []evmLog{transfer}})
+	}))
+	t.Cleanup(server.Close)
+
+	transfers, err := NewEVMScanner(rpc.NewPoolWithHTTPClient(server.URL, server.Client())).ScanRange(
+		t.Context(), "bsc", 100, 110, []string{splitToken}, recipients)
+	if err == nil || calls.Load() != 2 {
+		t.Fatalf("rate limit should fail once without splitting: calls=%d err=%v", calls.Load(), err)
+	}
+	if len(transfers) != 1 || transfers[0].TxHash != transfer.TxHash {
+		t.Fatalf("successful address batch was lost after another batch was rate limited: %+v", transfers)
+	}
+}
+
+func TestGetLogsDoesNotSplitHTTPRateLimits(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(server.Close)
+	_, err := NewEVMScanner(rpc.NewPoolWithHTTPClient(server.URL, server.Client())).ScanRange(
+		t.Context(), "bsc", 100, 110, []string{splitToken}, splitRecipients(1))
+	if err == nil || calls.Load() != 1 {
+		t.Fatalf("HTTP 429 should fail without splitting: calls=%d err=%v", calls.Load(), err)
+	}
+}
+
 func TestGetLogsDoesNotSplitAfterContextEnds(t *testing.T) {
 	pool, calls := splitLogsPool(t, 0, 200, nil)
 	ctx, cancel := context.WithCancel(t.Context())

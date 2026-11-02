@@ -93,6 +93,10 @@ type chainCoverage struct {
 	hasHead   bool
 }
 
+type chainHeadSnapshot struct {
+	pool *rpc.Pool
+}
+
 func (w *Worker) chainCoverageLocked(chain string) *chainCoverage {
 	if w.coverage == nil {
 		w.coverage = make(map[string]*chainCoverage)
@@ -161,13 +165,13 @@ func (w *Worker) securityCovered(chain string, block uint64) bool {
 	return false
 }
 
-// confirmationsAt is the user-facing counter: the inclusion block counts as
-// one, capped at the chain's requirement. A lagging head reads as zero.
+// confirmationsAt reports blocks built on top of the inclusion block. This
+// matches transactionIsFinalForChain, which credits after head-block >= depth.
 func confirmationsAt(head, block, required uint64) uint64 {
-	if head < block {
+	if head <= block {
 		return 0
 	}
-	return min(head-block+1, required)
+	return min(head-block, required)
 }
 
 // updatePendingConfirmations only touches a pending row and only when the
@@ -510,10 +514,25 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 	w.replayMu.Lock()
 	w.coverage = make(map[string]*chainCoverage)
 	w.replayMu.Unlock()
+	var bscHead *chainHeadSnapshot
+	if w.liveProgress && fromBlock == 0 && w.handler != nil {
+		for _, chain := range w.chains {
+			if chain.Chain == "bsc" {
+				bscHead = w.observeConfiguredHead(ctx, chain)
+				break
+			}
+		}
+	}
 	// Discover new payments before rotating historical receipt/reorg checks.
 	// Maintenance has its own bounded budget and must not delay fresh deposits.
 	for _, chain := range w.chains {
-		if scanErr := w.scanChainFrom(ctx, chain, fromBlock); scanErr != nil {
+		var scanErr error
+		if bscHead != nil && chain.Chain == "bsc" {
+			scanErr = w.scanChainFromSnapshot(ctx, chain, fromBlock, bscHead)
+		} else {
+			scanErr = w.scanChainFrom(ctx, chain, fromBlock)
+		}
+		if scanErr != nil {
 			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
 		}
 	}
@@ -609,6 +628,34 @@ func (w *Worker) scanChain(ctx context.Context, chain ChainConfig) error {
 }
 
 func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFromBlock uint64) (scanErr error) {
+	return w.scanChainFromSnapshot(ctx, chain, manualFromBlock, nil)
+}
+
+func (w *Worker) observeConfiguredHead(ctx context.Context, chain ChainConfig) *chainHeadSnapshot {
+	observeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	pool := w.pools[chain.Chain]
+	if pool == nil {
+		return nil
+	}
+	pool, err := verifiedChainPool(observeCtx, pool, chain.Chain)
+	if err != nil {
+		w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", err: err})
+		return nil
+	}
+	head, err := pool.BlockNumber(observeCtx)
+	if err != nil {
+		w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", err: err})
+		return nil
+	}
+	w.noteHead(chain.Chain, head)
+	if err := w.observeHead(observeCtx, pool, chain, head); err != nil {
+		w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err})
+	}
+	return &chainHeadSnapshot{pool: pool}
+}
+
+func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, manualFromBlock uint64, snapshot *chainHeadSnapshot) (scanErr error) {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
@@ -623,16 +670,32 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 		slog.Debug("[cryptopay] scan skipped: no pool", "chain", chain.Chain)
 		return nil
 	}
-	pool, err := verifiedChainPool(ctx, pool, chain.Chain)
-	if err != nil {
-		return stageErr(chain.Chain, "head", 0, 0, err)
-	}
-	head, err := pool.BlockNumber(ctx)
-	if err != nil {
-		return stageErr(chain.Chain, "head", 0, 0, err)
+	var head uint64
+	if snapshot != nil {
+		pool = snapshot.pool
+		head, err = pool.BlockNumber(ctx)
+		if err != nil {
+			return stageErr(chain.Chain, "head", 0, 0, err)
+		}
+	} else {
+		pool, err = verifiedChainPool(ctx, pool, chain.Chain)
+		if err != nil {
+			return stageErr(chain.Chain, "head", 0, 0, err)
+		}
+		head, err = pool.BlockNumber(ctx)
+		if err != nil {
+			return stageErr(chain.Chain, "head", 0, 0, err)
+		}
 	}
 	slog.Info("[cryptopay] scan tick", "chain", chain.Chain, "head", head, "confirmations", chain.Confirmations)
 	w.noteHead(chain.Chain, head)
+	if snapshot == nil && w.liveProgress && manualFromBlock == 0 && w.handler != nil {
+		// Recording pending deposits does not move the cursor or credit funds,
+		// so do this before the slower security sweep of the chain head.
+		if err := w.observeHead(ctx, pool, chain, head); err != nil {
+			w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err})
+		}
+	}
 	if w.securityRange != nil && head > 0 {
 		// Security incidents do not wait for deposit finality. Examine a
 		// bounded head window even when the credited-deposit cursor is caught
@@ -653,14 +716,6 @@ func (w *Worker) scanChainFrom(ctx context.Context, chain ChainConfig, manualFro
 			defer func() { scanErr = errors.Join(headErr, scanErr) }()
 		} else {
 			w.markSecurityCovered(chain.Chain, head-span+1, head)
-		}
-	}
-	if w.liveProgress && manualFromBlock == 0 && w.handler != nil {
-		// Show deposits as soon as they are mined. Only pending rows are
-		// recorded here; credit still needs finality and a security-scanned
-		// block in retryPending. A failure never blocks the cursor scan.
-		if err := w.observeHead(ctx, pool, chain, head); err != nil {
-			w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err})
 		}
 	}
 	if head <= chain.Confirmations {
@@ -924,12 +979,12 @@ func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainCon
 	}
 	observeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	transfers, err := NewEVMScanner(pool).ScanRange(observeCtx, chain.Chain, from, head, chain.Tokens, recipients)
-	if err != nil {
-		return err
-	}
+	transfers, scanErr := NewEVMScanner(pool).ScanRange(observeCtx, chain.Chain, from, head, chain.Tokens, recipients)
 	recorded, _ := w.handler.(recordedTransferHandler)
 	var errs []error
+	if scanErr != nil {
+		errs = append(errs, scanErr)
+	}
 	for _, transfer := range transfers {
 		if transfer.BlockNumber < from || transfer.BlockNumber > head || transfer.Amount == nil || transfer.Amount.Sign() <= 0 {
 			continue
