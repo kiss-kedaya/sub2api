@@ -4,6 +4,7 @@ import {
   buildUpstreamOpsDataPayload,
   buildUpstreamOpsPreview,
   describeUpstreamOpsAuthContract,
+  inspectUpstreamOpsUrl,
   normalizeUpstreamOpsBaseUrl,
   parseUpstreamOpsSnapshot,
   resolveUpstreamOpsPlatform
@@ -57,7 +58,7 @@ describe('parseUpstreamOpsSnapshot', () => {
       id: '7',
       name: 'kedaya',
       sourceType: 'sub2api',
-      siteUrl: 'https://Kedaya.AI/',
+      siteUrl: 'https://kedaya.ai',
       credentialMode: 'token',
       monitorEnabled: true,
       tags: ['prod', 'billing']
@@ -82,7 +83,7 @@ describe('parseUpstreamOpsSnapshot', () => {
       kind: 'providers',
       id: '11',
       name: 'deepseek-direct',
-      baseUrl: 'https://api.deepseek.com/',
+      baseUrl: 'https://api.deepseek.com',
       apiKeyHint: 'hint-...wxyz',
       upstreamProtocol: 'openai',
       enabled: true
@@ -246,6 +247,67 @@ describe('buildUpstreamOpsDataPayload', () => {
   })
 })
 
+describe('URL hardening', () => {
+  it('rejects non-http(s) schemes instead of normalizing them into an importable URL', () => {
+    expect(normalizeUpstreamOpsBaseUrl('javascript:alert(1)')).toBe('')
+    expect(normalizeUpstreamOpsBaseUrl('data:text/html,hello')).toBe('')
+    expect(normalizeUpstreamOpsBaseUrl('ftp://example.com')).toBe('')
+    expect(normalizeUpstreamOpsBaseUrl('api.example.com')).toBe('')
+    expect(inspectUpstreamOpsUrl('javascript:alert(1)')).toMatchObject({ url: '', invalidScheme: true })
+    expect(inspectUpstreamOpsUrl('api.example.com')).toMatchObject({ url: '', invalidScheme: true })
+  })
+
+  it('strips query and hash so embedded secrets never reach preview or payload', () => {
+    const inspected = inspectUpstreamOpsUrl('https://api.example.com/v1?key=SECRET_IN_QUERY#SECRET_FRAGMENT')
+    expect(inspected.url).toBe('https://api.example.com/v1')
+    expect(inspected.hadQueryOrHash).toBe(true)
+
+    const snapshot = parseUpstreamOpsSnapshot({
+      data: [
+        {
+          id: 31,
+          name: 'query-secret',
+          base_url: 'https://api.example.com/v1?key=SECRET_IN_QUERY',
+          api_key_hint: 'hint-...wxyz',
+          upstream_protocol: 'openai',
+          enabled: true
+        }
+      ]
+    })
+    const preview = buildUpstreamOpsPreview(snapshot)
+    expect(preview.rows[0].baseUrl).toBe('https://api.example.com/v1')
+    expect(preview.rows[0].reasons).toContain('url_query_stripped')
+
+    const { payload } = buildUpstreamOpsDataPayload(preview.rows, {
+      [preview.rows[0].key]: { apiKey: 'operator-typed-key-for-test' }
+    })
+    expect(payload.accounts[0].credentials.base_url).toBe('https://api.example.com/v1')
+    expect(JSON.stringify(preview)).not.toContain('SECRET_IN_QUERY')
+    expect(JSON.stringify(payload)).not.toContain('SECRET_IN_QUERY')
+  })
+
+  it('marks a non-http(s) provider invalid and keeps it out of the payload', () => {
+    const snapshot = parseUpstreamOpsSnapshot({
+      data: [
+        {
+          id: 32,
+          name: 'bad-scheme',
+          base_url: 'javascript:alert(1)',
+          api_key_hint: '',
+          upstream_protocol: 'openai',
+          enabled: true
+        }
+      ]
+    })
+    const preview = buildUpstreamOpsPreview(snapshot)
+    expect(preview.rows[0].status).toBe('invalid')
+    expect(preview.rows[0].reasons).toContain('url_scheme_required')
+
+    const credentials = Object.fromEntries(preview.rows.map((row) => [row.key, { apiKey: 'operator-typed-key-for-test' }]))
+    const { payload } = buildUpstreamOpsDataPayload(preview.rows, credentials)
+    expect(payload.accounts).toEqual([])
+  })
+})
 describe('described auth contract', () => {
   it('states the cookie / session_managed boundary explicitly', () => {
     expect(describeUpstreamOpsAuthContract()).toBe(UPSTREAM_OPS_AUTH_CONTRACT)

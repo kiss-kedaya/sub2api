@@ -598,6 +598,18 @@ export const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/accounts/upstream-ops',
+    name: 'AdminAccountsUpstreamOps',
+    component: () => import('@/views/admin/UpstreamOpsImportView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'UpstreamOps Import',
+      titleKey: 'admin.accounts.upstreamOpsImport',
+      descriptionKey: 'admin.accounts.upstreamOpsImportHint'
+    }
+  },
+  {
     path: '/admin/plugins',
     name: 'AdminPlugins',
     component: () => import('@/views/admin/PluginsView.vue'),

@@ -89,14 +89,21 @@
 - `frontend/src/components/admin/account/UpstreamOpsImportPanel.vue`（Nuxt UI；语义色 token；无硬编码深色）
 - `frontend/src/views/admin/UpstreamOpsImportView.vue`（懒加载面板的薄壳）
 
-主代理接入只需二选一（共享文件由主代理改，避免与 PR138 抢文件）：
+接线已在本 PR 完成（只动本功能小块）：
 
-1. 路由：在 `frontend/src/router/records.ts` 增加一条
+1. 路由：`frontend/src/router/records.ts` 新增 `/admin/accounts/upstream-ops`（`AdminAccountsUpstreamOps`），懒加载 `UpstreamOpsImportView`。
    `{ path: '/admin/upstream-ops', component: () => import('@/views/admin/UpstreamOpsImportView.vue'), meta: {...} }`；
-2. 或按钮：在账号页用 `defineAsyncComponent(() => import('@/components/admin/account/UpstreamOpsImportPanel.vue'))` 弹层挂载。
+2. 入口：账号页「数据操作」菜单新增 `admin.accounts.upstreamOpsImport`，跳转到该子路由。
 
 ## 8. CI 边界
 
 - 本地不跑应用 build / 测试（按既有约束）。
-- 推送后由 GitHub Actions 覆盖：`frontend` job 的 `make test-frontend`（`lint:check` + `vue-tsc` + 关键 vitest + dev vitest）与 `pnpm run build`；新 spec 位于 `src/utils/__tests__/`，会被 dev vitest 收集；如需进关键集，由主代理把它加进 `FRONTEND_CRITICAL_VITEST`。
+- 推送后由 GitHub Actions 覆盖：`frontend` job 的 `make test-frontend`（`lint:check` + `vue-tsc` + 关键 vitest + dev vitest）与 `pnpm run build`。新 spec 已加入 `FRONTEND_CRITICAL_VITEST`，会随关键集执行。
 - 不触碰 `release.yml` / tag / VERSION，不产生发布物件。
+
+## 9. 2026-11-02 接线更新
+
+- 导入改为面板内确认：直接调用 `adminAPI.accounts.importData`（`POST /api/v1/admin/accounts/data`），成功/失败逐条展示；**不再提供复制 JSON**，密钥只存在页面内存，导入后立即清空，不进剪贴板、不落 localStorage。
+- 去重账号按需分页加载：每页 100、最多 5 页（500 条上限），可随时取消，不再整站预加载。
+- URL 硬化：只接受 `http(s)`；`javascript:` / `data:` / `ftp:` / 裸域名一律判 `invalid`（`url_scheme_required`）；query/hash 直接剥掉并标记 `url_query_stripped`，避免 `?key=...` 进入预览、日志或导入载荷。
+- 上游源码未复制（项目无 license 声明），仅实现公开 HTTP/JSON 契约。

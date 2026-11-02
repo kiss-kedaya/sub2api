@@ -3,7 +3,10 @@ import type { AccountPlatform, AccountType, AdminDataAccount, AdminDataPayload }
 /**
  * Adapter for https://github.com/bejix/upstream-ops payloads.
  *
- * Contract sources (upstream-ops @ 821e613, verified 2026-11-02):
+ * Contract sources (upstream-ops @ 821e613, verified 2026-11-02). No upstream
+ * source code is copied; the project has no declared license, so only the
+ * published HTTP/JSON contract is implemented here.
+ *
  *  - GET /api/channels            -> { data: Channel[] } | { data: { items, total, page, page_size, pages } }
  *  - GET /api/gateway/providers   -> { data: Provider[] }
  *  - Provider rows only ever carry `api_key_hint`; the plaintext key is behind
@@ -27,6 +30,10 @@ export interface UpstreamOpsChannel {
   monitorEnabled: boolean
   tags: string[]
   notes: string
+  /** True when the source URL carried a query/hash that was dropped before use. */
+  urlQueryStripped: boolean
+  /** True when the source URL was non-empty but not an http(s) URL. */
+  urlSchemeInvalid: boolean
 }
 
 export interface UpstreamOpsProvider {
@@ -37,6 +44,10 @@ export interface UpstreamOpsProvider {
   apiKeyHint: string
   upstreamProtocol: string
   enabled: boolean
+  /** True when the source URL carried a query/hash that was dropped before use. */
+  urlQueryStripped: boolean
+  /** True when the source URL was non-empty but not an http(s) URL. */
+  urlSchemeInvalid: boolean
 }
 
 export type UpstreamOpsEntry = UpstreamOpsChannel | UpstreamOpsProvider
@@ -52,6 +63,8 @@ export type UpstreamOpsReasonCode =
   | 'channel_snapshot_has_no_credential'
   | 'missing_name'
   | 'missing_base_url'
+  | 'url_scheme_required'
+  | 'url_query_stripped'
   | 'unknown_upstream_protocol'
   | 'provider_disabled'
   | 'duplicate_existing'
@@ -69,7 +82,7 @@ export interface UpstreamOpsPreviewRow {
   kind: UpstreamOpsSnapshotKind
   id: string
   name: string
-  /** base_url for providers, site_url for channels (normalized, display only). */
+  /** base_url for providers, site_url for channels (normalized, sanitized, display only). */
   baseUrl: string
   sourceType: string
   credentialMode: string
@@ -187,33 +200,88 @@ function extractRows(input: unknown, issues: string[]): unknown[] {
   return []
 }
 
+export interface UpstreamOpsUrlInspection {
+  /** Sanitized URL; empty when the scheme is missing or not http(s). */
+  url: string
+  scheme: string
+  /** Query/hash present in the source; dropped so embedded secrets never travel. */
+  hadQueryOrHash: boolean
+  /** Source was non-empty but not a usable http(s) URL. */
+  invalidScheme: boolean
+}
+
+const UPSTREAM_OPS_ALLOWED_SCHEMES = new Set(['http:', 'https:'])
+
+/**
+ * Inspects an upstream-ops URL: only http(s) is accepted, trailing slashes are
+ * dropped, and query/hash are stripped so a token embedded in a base_url (for
+ * example `?key=...`) never reaches the preview, logs or the import payload.
+ */
+export function inspectUpstreamOpsUrl(value: unknown): UpstreamOpsUrlInspection {
+  if (typeof value !== 'string') {
+    return { url: '', scheme: '', hadQueryOrHash: false, invalidScheme: false }
+  }
+  const raw = value.trim()
+  if (!raw) {
+    return { url: '', scheme: '', hadQueryOrHash: false, invalidScheme: false }
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    return { url: '', scheme: '', hadQueryOrHash: false, invalidScheme: true }
+  }
+  const scheme = parsed.protocol.toLowerCase()
+  if (!UPSTREAM_OPS_ALLOWED_SCHEMES.has(scheme)) {
+    return { url: '', scheme, hadQueryOrHash: false, invalidScheme: true }
+  }
+  const path = parsed.pathname.replace(/\/+$/, '')
+  return {
+    url: `${scheme}//${parsed.host.toLowerCase()}${path}`,
+    scheme,
+    hadQueryOrHash: parsed.search !== '' || parsed.hash !== '',
+    invalidScheme: false
+  }
+}
+
+/** Lowercases scheme/host, drops trailing slashes and query/hash; non-http(s) becomes ''. */
+export function normalizeUpstreamOpsBaseUrl(value: unknown): string {
+  return inspectUpstreamOpsUrl(value).url
+}
+
 function toChannel(record: Record<string, unknown>, index: number): UpstreamOpsEntry {
   const rawMode = pickString(record, 'credential_mode').toLowerCase()
+  // Only the site URL is read. password / token_credential are deliberately ignored.
+  const site = inspectUpstreamOpsUrl(pickString(record, 'site_url'))
   return {
     kind: 'channels',
     id: pickId(record) || `channels-${index + 1}`,
     name: pickString(record, 'name'),
     sourceType: pickString(record, 'type').toLowerCase(),
-    // Only the site URL is read. password / token_credential are deliberately ignored.
-    siteUrl: pickString(record, 'site_url'),
+    siteUrl: site.url,
     username: pickString(record, 'username'),
     credentialMode: rawMode === 'password' || rawMode === 'token' ? rawMode : '',
     monitorEnabled: record.monitor_enabled !== false,
     tags: pickStringArray(record, 'tags'),
-    notes: pickString(record, 'notes')
+    notes: pickString(record, 'notes'),
+    urlQueryStripped: site.hadQueryOrHash,
+    urlSchemeInvalid: site.invalidScheme
   }
 }
 
 function toProvider(record: Record<string, unknown>, index: number): UpstreamOpsEntry {
+  // api_key_hint is a masked hint produced by upstream-ops; the key itself is never read.
+  const base = inspectUpstreamOpsUrl(pickString(record, 'base_url'))
   return {
     kind: 'providers',
     id: pickId(record) || `providers-${index + 1}`,
     name: pickString(record, 'name'),
-    // api_key_hint is a masked hint produced by upstream-ops; the key itself is never read.
-    baseUrl: pickString(record, 'base_url'),
+    baseUrl: base.url,
     apiKeyHint: pickString(record, 'api_key_hint'),
     upstreamProtocol: pickString(record, 'upstream_protocol').toLowerCase(),
-    enabled: record.enabled !== false
+    enabled: record.enabled !== false,
+    urlQueryStripped: base.hadQueryOrHash,
+    urlSchemeInvalid: base.invalidScheme
   }
 }
 
@@ -240,20 +308,6 @@ export function parseUpstreamOpsSnapshot(input: unknown): UpstreamOpsSnapshot {
   })
   const kind = entries.length > 0 ? entries[0].kind : null
   return { kind, entries, issues }
-}
-
-/** Lowercases scheme/host, drops trailing slashes, keeps the path. */
-export function normalizeUpstreamOpsBaseUrl(value: unknown): string {
-  if (typeof value !== 'string') return ''
-  const raw = value.trim()
-  if (!raw) return ''
-  try {
-    const url = new URL(raw)
-    const path = url.pathname.replace(/\/+$/, '')
-    return `${url.protocol.toLowerCase()}//${url.host.toLowerCase()}${path}`
-  } catch {
-    return raw.replace(/\/+$/, '').toLowerCase()
-  }
 }
 
 function normalizeName(value: string): string {
@@ -283,12 +337,13 @@ export function resolveUpstreamOpsPlatform(protocol: unknown): AccountPlatform |
 }
 
 function buildRowKey(entry: UpstreamOpsEntry, index: number): string {
-  const base = entry.kind === 'providers' ? normalizeUpstreamOpsBaseUrl(entry.baseUrl) : normalizeUpstreamOpsBaseUrl(entry.siteUrl)
+  const base = entry.kind === 'providers' ? entry.baseUrl : entry.siteUrl
   return `${entry.kind}:${entry.id || index}:${base || 'no-url'}`
 }
 
 function resolveStatus(reasons: UpstreamOpsReasonCode[], row: Pick<UpstreamOpsPreviewRow, 'kind' | 'platform'>): UpstreamOpsRowStatus {
   if (reasons.includes('missing_name') || reasons.includes('missing_base_url')) return 'invalid'
+  if (reasons.includes('url_scheme_required')) return 'invalid'
   if (reasons.includes('unknown_upstream_protocol')) return 'invalid'
   if (reasons.includes('channel_snapshot_has_no_credential')) return 'unsupported'
   if (reasons.includes('duplicate_existing') || reasons.includes('duplicate_batch')) return 'duplicate'
@@ -323,15 +378,16 @@ export function buildUpstreamOpsPreview(
     const key = buildRowKey(entry, index)
     const reasons: UpstreamOpsReasonCode[] = []
     const isProvider = entry.kind === 'providers'
-    const baseUrl = isProvider
-      ? normalizeUpstreamOpsBaseUrl(entry.baseUrl)
-      : normalizeUpstreamOpsBaseUrl(entry.siteUrl)
+    const baseUrl = isProvider ? entry.baseUrl : entry.siteUrl
     const name = entry.name.trim()
     const override = isProvider ? platformOverrides[key] : undefined
     const platform = isProvider ? override ?? resolveUpstreamOpsPlatform(entry.upstreamProtocol) : null
 
     if (!name) reasons.push('missing_name')
-    if (!baseUrl) reasons.push('missing_base_url')
+    if (!baseUrl) {
+      reasons.push(entry.urlSchemeInvalid ? 'url_scheme_required' : 'missing_base_url')
+    }
+    if (entry.urlQueryStripped) reasons.push('url_query_stripped')
     if (isProvider && !platform) reasons.push('unknown_upstream_protocol')
     if (!isProvider) reasons.push('channel_snapshot_has_no_credential')
     if (isProvider && !entry.enabled) reasons.push('provider_disabled')
@@ -356,7 +412,8 @@ export function buildUpstreamOpsPreview(
     if (dupName) batchNames.add(dupName)
 
     const status = resolveStatus(reasons, { kind: entry.kind, platform })
-    // provider_disabled is informational only; it must not push a row out of import.
+    // provider_disabled is informational only and stays out of the visible reasons;
+    // url_query_stripped must stay visible so the operator knows the URL was sanitized.
     const displayReasons = status === 'invalid' || status === 'unsupported'
       ? reasons
       : reasons.filter((reason) => reason !== 'provider_disabled')

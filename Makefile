@@ -18,6 +18,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/composables/__tests__/useCustomUsage.spec.ts \
 	src/utils/__tests__/customUsage.spec.ts \
 	src/utils/__tests__/accountModelTest.spec.ts \
+	src/utils/__tests__/upstreamOpsCompat.spec.ts \
 	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
 	src/__tests__/xlsxWriteOnly.spec.ts \
 	src/__tests__/xlsxExportRoundTrip.spec.ts \

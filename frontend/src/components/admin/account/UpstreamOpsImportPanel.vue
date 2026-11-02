@@ -39,8 +39,8 @@
           variant="outline"
           icon="i-lucide-users"
           :loading="loadingExisting"
-          :label="copy.loadExistingButton"
-          @click="loadExistingAccounts"
+          :label="loadingExisting ? copy.cancelLoad : copy.loadExistingButton"
+          @click="toggleExistingLoad"
         />
         <UButton
           color="neutral"
@@ -50,12 +50,29 @@
           :disabled="rawText === '' && !snapshot"
           @click="handleClear"
         />
+        <span v-if="existingLoadedCount > 0" class="text-xs text-muted">{{ copy.existingCap(existingLoadedCount, EXISTING_CAP) }}</span>
       </div>
 
       <UAlert v-if="issues.length > 0" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="copy.issuesTitle">
         <template #description>
           <ul class="list-inside list-disc space-y-1 text-xs">
             <li v-for="issue in issues" :key="issue">{{ issue }}</li>
+          </ul>
+        </template>
+      </UAlert>
+
+      <UAlert
+        v-if="importResult"
+        :color="importFailedCount > 0 ? 'warning' : 'success'"
+        variant="subtle"
+        icon="i-lucide-list-checks"
+        :title="copy.resultTitle"
+        :description="importSummaryText"
+      >
+        <template v-if="importErrors.length > 0" #description>
+          <p>{{ importSummaryText }}</p>
+          <ul class="mt-2 list-inside list-disc space-y-1 text-xs">
+            <li v-for="(item, index) in importErrors" :key="index">{{ item.name || '-' }} — {{ item.message }}</li>
           </ul>
         </template>
       </UAlert>
@@ -124,25 +141,42 @@
 
         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-3">
           <p class="text-xs leading-5 text-muted">{{ copy.footerHint }}</p>
-          <UButton
-            icon="i-lucide-clipboard-copy"
-            :disabled="importableCount === 0"
-            :label="copy.copyButton(importableCount)"
-            @click="copyPayload"
-          />
+          <div class="flex items-center gap-2">
+            <span v-if="importableCount === 0" class="text-xs text-muted">{{ copy.noImportable }}</span>
+            <UButton
+              icon="i-lucide-upload"
+              :disabled="importableCount === 0 || importing"
+              :label="copy.importButton(importableCount)"
+              @click="confirmOpen = true"
+            />
+          </div>
         </div>
       </template>
     </div>
+
+    <BaseDialog :show="confirmOpen" :title="copy.confirmTitle" width="narrow" @close="confirmOpen = false">
+      <p class="text-sm leading-6 text-default">{{ copy.confirmBody(importableCount) }}</p>
+      <ul class="mt-3 space-y-1 text-xs text-muted">
+        <li>type=upstream · concurrency=1 · priority=0</li>
+        <li>{{ copy.confirmNoClipboard }}</li>
+        <li>{{ copy.confirmNoSideEffects }}</li>
+      </ul>
+      <template #footer>
+        <UButton color="neutral" variant="subtle" :disabled="importing" :label="copy.cancel" @click="confirmOpen = false" />
+        <UButton :loading="importing" :label="copy.confirmAction" @click="runImport" />
+      </template>
+    </BaseDialog>
   </UCard>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TableColumn } from '@nuxt/ui'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
-import type { AccountPlatform } from '@/types'
+import type { AccountPlatform, AdminDataImportResult } from '@/types'
 import {
   buildUpstreamOpsDataPayload,
   buildUpstreamOpsPreview,
@@ -160,9 +194,15 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const emit = defineEmits<{ (e: 'imported'): void }>()
 
 const { locale } = useI18n()
 const appStore = useAppStore()
+
+/** Dedupe only needs a bounded window; never preload the whole account list. */
+const EXISTING_PAGE_SIZE = 100
+const EXISTING_PAGE_CAP = 5
+const EXISTING_CAP = EXISTING_PAGE_SIZE * EXISTING_PAGE_CAP
 
 interface PanelCopy {
   title: string
@@ -175,6 +215,8 @@ interface PanelCopy {
   inputHint: string
   previewButton: string
   loadExistingButton: string
+  cancelLoad: string
+  existingCap: (loaded: number, cap: number) => string
   clearButton: string
   issuesTitle: string
   sourceProvider: string
@@ -186,7 +228,16 @@ interface PanelCopy {
   hintPrefix: string
   notImportable: string
   footerHint: string
-  copyButton: (count: number) => string
+  importButton: (count: number) => string
+  noImportable: string
+  confirmTitle: string
+  confirmBody: (count: number) => string
+  confirmNoClipboard: string
+  confirmNoSideEffects: string
+  confirmAction: string
+  cancel: string
+  resultTitle: string
+  importSummary: (created: number, failed: number) => string
   summaryTotal: (count: number) => string
   summaryNeedsCredential: (count: number) => string
   summaryNeedsPlatform: (count: number) => string
@@ -201,15 +252,15 @@ interface PanelCopy {
   reasons: Record<UpstreamOpsReasonCode, string>
   parseFailed: string
   emptySnapshot: string
-  copied: string
-  copyFailed: string
   existingLoaded: (count: number) => string
   existingFailed: string
+  existingCancelled: string
+  importFailed: string
 }
 
 const COPY_ZH: PanelCopy = {
   title: 'UpstreamOps 导入',
-  subtitle: '粘贴 upstream-ops 的渠道或网关通道 JSON，先预览、校验、去重，再交给账号页现有「导入数据」流程。',
+  subtitle: '粘贴 upstream-ops 的渠道或网关通道 JSON，先预览、校验、去重，确认后直接走本站现有导入接口。',
   version: 'adapter v1',
   authTitle: '认证契约：本站浏览器会话是 session_managed Cookie',
   authBody:
@@ -217,9 +268,11 @@ const COPY_ZH: PanelCopy = {
   inputLabel: 'upstream-ops JSON 快照',
   inputPlaceholder: '{"data":[ ... ]}  —— 支持 /api/channels 或 /api/gateway/providers 的响应体',
   inputHint:
-    '只读取 name / base_url|site_url / upstream_protocol / api_key_hint 等非密字段；password、token_credential、api_key、cookie 一律丢弃。',
+    '只读取 name / base_url|site_url / upstream_protocol / api_key_hint 等非密字段；password、token_credential、api_key、cookie 一律丢弃。URL 只接受 http(s)，query/hash 会被剥掉，避免夹带密钥。',
   previewButton: '解析并预览',
-  loadExistingButton: '载入本站账号用于去重',
+  loadExistingButton: '按需载入本站账号（去重）',
+  cancelLoad: '取消加载',
+  existingCap: (loaded, cap) => `已载入 ${loaded} 个（上限 ${cap}）`,
   clearButton: '清空',
   issuesTitle: '快照里有无法解析的内容',
   sourceProvider: '网关通道',
@@ -230,9 +283,18 @@ const COPY_ZH: PanelCopy = {
   apiKeyPlaceholder: '手动填写 API Key',
   hintPrefix: '上游提示：',
   notImportable: '不导入',
-  footerHint:
-    '导出的 JSON 走现有「导入数据」流程（POST /api/v1/admin/accounts/data）。余额、倍率、支付与删除动作都不会被触发。',
-  copyButton: (count) => `复制导入 JSON（${count} 条）`,
+  footerHint: '确认导入会调用现有账号导入接口；不会迁移余额、倍率、支付，也不会删除任何数据。',
+  importButton: (count) => `确认导入（${count} 条）`,
+  noImportable: '没有可导入的行（需要网关通道 + 明确平台 + Key）',
+  confirmTitle: '确认导入',
+  confirmBody: (count) =>
+    `将创建 ${count} 个上游账号（type=upstream，concurrency=1，priority=0）。API Key 只随本次请求提交，不复制到剪贴板、不写入本地存储。`,
+  confirmNoClipboard: 'API Key 仅保存在当前页面内存，导入后立即清空。',
+  confirmNoSideEffects: '不触发余额、倍率、支付或删除操作。',
+  confirmAction: '确认导入',
+  cancel: '取消',
+  resultTitle: '导入结果',
+  importSummary: (created, failed) => `已创建 ${created} 个，失败 ${failed} 个`,
   summaryTotal: (count) => `共 ${count} 条`,
   summaryNeedsCredential: (count) => `待填 Key ${count}`,
   summaryNeedsPlatform: (count) => `待选平台 ${count}`,
@@ -254,6 +316,8 @@ const COPY_ZH: PanelCopy = {
     channel_snapshot_has_no_credential: '渠道快照不含凭据与模型平台',
     missing_name: '缺少名称',
     missing_base_url: '缺少地址',
+    url_scheme_required: '地址必须是 http(s)',
+    url_query_stripped: '已剥掉 query/hash',
     unknown_upstream_protocol: '协议为 auto/未知',
     provider_disabled: '上游已停用',
     duplicate_existing: '本站已存在',
@@ -261,26 +325,28 @@ const COPY_ZH: PanelCopy = {
   },
   parseFailed: 'JSON 解析失败',
   emptySnapshot: '没有可识别的行',
-  copied: '导入 JSON 已复制',
-  copyFailed: '复制失败',
   existingLoaded: (count) => `已载入 ${count} 个本站账号用于去重`,
-  existingFailed: '载入本站账号失败，去重只按本批次判断'
+  existingFailed: '载入本站账号失败，去重只按本批次判断',
+  existingCancelled: '已取消加载',
+  importFailed: '导入失败'
 }
 
 const COPY_EN: PanelCopy = {
   ...COPY_ZH,
   title: 'UpstreamOps import',
   subtitle:
-    'Paste an upstream-ops channel or gateway-provider snapshot, preview / validate / dedupe it, then hand the result to the existing account import flow.',
+    'Paste an upstream-ops channel or gateway-provider snapshot, preview / validate / dedupe it, then import through the existing account endpoint.',
   authTitle: 'Auth contract: this app is session_managed cookie',
   authBody:
     'Browser login responses never carry access_token / refresh_token; the session lives in an HttpOnly cookie. The upstream-ops sub2api connector is bearer-token only (no cookie jar, CSRF or session_managed support). This panel exports no credentials and never asks to disable 2FA.',
   inputLabel: 'upstream-ops JSON snapshot',
   inputPlaceholder: '{"data":[ ... ]}  — the /api/channels or /api/gateway/providers response body',
   inputHint:
-    'Only name / base_url|site_url / upstream_protocol / api_key_hint are read. password, token_credential, api_key and cookie are dropped.',
+    'Only name / base_url|site_url / upstream_protocol / api_key_hint are read. password, token_credential, api_key and cookie are dropped. URLs must be http(s); query/hash is stripped so embedded secrets never travel.',
   previewButton: 'Parse and preview',
-  loadExistingButton: 'Load existing accounts for dedupe',
+  loadExistingButton: 'Load existing accounts (dedupe)',
+  cancelLoad: 'Cancel loading',
+  existingCap: (loaded, cap) => `${loaded} loaded (cap ${cap})`,
   clearButton: 'Clear',
   issuesTitle: 'The snapshot contains unparseable rows',
   sourceProvider: 'Gateway provider',
@@ -291,9 +357,18 @@ const COPY_EN: PanelCopy = {
   apiKeyPlaceholder: 'Enter API key',
   hintPrefix: 'Upstream hint:',
   notImportable: 'Not imported',
-  footerHint:
-    'The JSON feeds the existing import flow (POST /api/v1/admin/accounts/data). No balance, rate, payment or delete action is triggered.',
-  copyButton: (count) => `Copy import JSON (${count})`,
+  footerHint: 'Confirming imports through the existing account endpoint; no balance, rate, payment or delete action is triggered.',
+  importButton: (count) => `Import ${count}`,
+  noImportable: 'Nothing to import (needs a gateway provider, a platform and a key)',
+  confirmTitle: 'Confirm import',
+  confirmBody: (count) =>
+    `Creates ${count} upstream accounts (type=upstream, concurrency=1, priority=0). The API key is sent with this request only; it is never copied to the clipboard or stored locally.`,
+  confirmNoClipboard: 'Keys stay in page memory and are cleared right after import.',
+  confirmNoSideEffects: 'No balance, rate, payment or delete action is triggered.',
+  confirmAction: 'Import',
+  cancel: 'Cancel',
+  resultTitle: 'Import result',
+  importSummary: (created, failed) => `${created} created, ${failed} failed`,
   summaryTotal: (count) => `${count} rows`,
   summaryNeedsCredential: (count) => `${count} need a key`,
   summaryNeedsPlatform: (count) => `${count} need a platform`,
@@ -315,6 +390,8 @@ const COPY_EN: PanelCopy = {
     channel_snapshot_has_no_credential: 'Channel snapshot has no credential or model platform',
     missing_name: 'Missing name',
     missing_base_url: 'Missing address',
+    url_scheme_required: 'Address must be http(s)',
+    url_query_stripped: 'Query/hash stripped',
     unknown_upstream_protocol: 'Protocol is auto/unknown',
     provider_disabled: 'Provider disabled upstream',
     duplicate_existing: 'Already exists here',
@@ -322,10 +399,10 @@ const COPY_EN: PanelCopy = {
   },
   parseFailed: 'Invalid JSON',
   emptySnapshot: 'No recognizable rows',
-  copied: 'Import JSON copied',
-  copyFailed: 'Copy failed',
   existingLoaded: (count) => `Loaded ${count} existing accounts for dedupe`,
-  existingFailed: 'Could not load existing accounts; dedupe is batch-only'
+  existingFailed: 'Could not load existing accounts; dedupe is batch-only',
+  existingCancelled: 'Loading cancelled',
+  importFailed: 'Import failed'
 }
 
 const copy = computed<PanelCopy>(() => (locale.value.startsWith('zh') ? COPY_ZH : COPY_EN))
@@ -337,10 +414,20 @@ const credentials = ref<Record<string, string>>({})
 const platformOverrides = ref<Record<string, AccountPlatform>>({})
 const loadedExisting = ref<UpstreamOpsExistingAccountKey[]>([])
 const loadingExisting = ref(false)
+const confirmOpen = ref(false)
+const importing = ref(false)
+const importResult = ref<AdminDataImportResult | null>(null)
+let existingAbort: AbortController | null = null
+let existingPagesLoaded = 0
+
+onBeforeUnmount(() => {
+  existingAbort?.abort()
+})
 
 const existingAccounts = computed<UpstreamOpsExistingAccountKey[]>(
   () => props.existingAccounts ?? loadedExisting.value
 )
+const existingLoadedCount = computed(() => loadedExisting.value.length)
 
 const preview = computed(() => {
   if (!snapshot.value) return null
@@ -360,6 +447,9 @@ const payloadResult = computed(() => {
 })
 
 const importableCount = computed(() => payloadResult.value?.payload.accounts.length ?? 0)
+const importErrors = computed(() => importResult.value?.errors ?? [])
+const importFailedCount = computed(() => importResult.value?.account_failed ?? 0)
+const importSummaryText = computed(() => (importResult.value ? copy.value.importSummary(importResult.value.account_created, importResult.value.account_failed) : ''))
 
 const platformItems = [
   'openai',
@@ -411,6 +501,7 @@ function handlePreview() {
   snapshot.value = null
   credentials.value = {}
   platformOverrides.value = {}
+  importResult.value = null
   try {
     const parsed = JSON.parse(rawText.value)
     const next = parseUpstreamOpsSnapshot(parsed)
@@ -431,6 +522,7 @@ function handleClear() {
   issues.value = []
   credentials.value = {}
   platformOverrides.value = {}
+  importResult.value = null
 }
 
 function setPlatform(key: string, value: unknown) {
@@ -438,30 +530,75 @@ function setPlatform(key: string, value: unknown) {
   platformOverrides.value = { ...platformOverrides.value, [key]: value as AccountPlatform }
 }
 
-async function loadExistingAccounts() {
-  loadingExisting.value = true
-  try {
-    const response = await adminAPI.accounts.list(1, 1000, { lite: '1' })
-    loadedExisting.value = (response.items ?? []).map((account) => ({
-      name: account.name,
-      custom_base_url: account.custom_base_url ?? null
-    }))
-    appStore.showSuccess(copy.value.existingLoaded(loadedExisting.value.length))
-  } catch {
-    appStore.showError(copy.value.existingFailed)
-  } finally {
-    loadingExisting.value = false
+function mergeExistingAccounts(items: UpstreamOpsExistingAccountKey[]) {
+  const seen = new Set(loadedExisting.value.map((item) => `${item.name ?? ''}|${item.custom_base_url ?? ''}`))
+  for (const item of items) {
+    const key = `${item.name ?? ''}|${item.custom_base_url ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    loadedExisting.value.push(item)
   }
 }
 
-async function copyPayload() {
+async function toggleExistingLoad() {
+  if (loadingExisting.value) {
+    existingAbort?.abort()
+    return
+  }
+  const controller = new AbortController()
+  existingAbort = controller
+  loadingExisting.value = true
+  try {
+    for (let page = existingPagesLoaded + 1; page <= EXISTING_PAGE_CAP; page += 1) {
+      if (controller.signal.aborted) break
+      const response = await adminAPI.accounts.list(page, EXISTING_PAGE_SIZE, { lite: '1' }, { signal: controller.signal })
+      existingPagesLoaded = page
+      mergeExistingAccounts(
+        (response.items ?? []).map((account) => ({
+          name: account.name,
+          custom_base_url: account.custom_base_url ?? null
+        }))
+      )
+      if (loadedExisting.value.length >= EXISTING_CAP) break
+      if (!response.items?.length || page >= (response.pages ?? page)) break
+    }
+    if (controller.signal.aborted) {
+      appStore.showWarning(copy.value.existingCancelled)
+    } else {
+      appStore.showSuccess(copy.value.existingLoaded(existingLoadedCount.value))
+    }
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      appStore.showError(copy.value.existingFailed)
+    }
+  } finally {
+    loadingExisting.value = false
+    existingAbort = null
+  }
+}
+
+async function runImport() {
   const payload = payloadResult.value?.payload
   if (!payload || payload.accounts.length === 0) return
+  importing.value = true
   try {
-    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
-    appStore.showSuccess(copy.value.copied)
-  } catch {
-    appStore.showError(copy.value.copyFailed)
+    const result = await adminAPI.accounts.importData({
+      data: payload,
+      skip_default_group_bind: true
+    })
+    importResult.value = result
+    confirmOpen.value = false
+    credentials.value = {}
+    if (result.account_failed > 0) {
+      appStore.showError(copy.value.importSummary(result.account_created, result.account_failed))
+    } else {
+      appStore.showSuccess(copy.value.importSummary(result.account_created, result.account_failed))
+    }
+    emit('imported')
+  } catch (error) {
+    appStore.showError(error instanceof Error && error.message ? error.message : copy.value.importFailed)
+  } finally {
+    importing.value = false
   }
 }
 </script>
