@@ -31,26 +31,27 @@
   --ui-warning: #e5c58b;
   --ui-error: #e3a0aa;
 
-  --ui-text-dimmed: #a994a3;
+  --ui-text-dimmed: #b7a8b4;
   --ui-text-muted: #c9b6c2;
   --ui-text-toned: #ddcbd5;
   --ui-text: #eadde5;
   --ui-text-highlighted: #fff4f8;
   --ui-text-inverted: #211820;
 
-  --ui-bg: #181719;
-  --ui-bg-muted: #201e21;
-  --ui-bg-elevated: #282529;
-  --ui-bg-accented: #353137;
+  /* Raised ink surfaces stay dark, without merging into a nearly black frame. */
+  --ui-bg: #211e25;
+  --ui-bg-muted: #29252e;
+  --ui-bg-elevated: #312c37;
+  --ui-bg-accented: #3a3441;
   --ui-bg-inverted: #fff4f8;
 
-  --ui-border: #3d383f;
-  --ui-border-muted: #2b282d;
-  --ui-border-accented: #554d58;
+  --ui-border: #4b424f;
+  --ui-border-muted: #38313d;
+  --ui-border-accented: #65596d;
   --ui-border-inverted: #fff4f8;
 
-  --app-page-bg: #111012;
-  --app-sidebar-bg: #0c0b0d;
+  --app-page-bg: #1b181f;
+  --app-sidebar-bg: #211d26;
   --app-shadow-card: 0 1px 2px rgb(0 0 0 / 0.12), 0 5px 14px -9px rgb(0 0 0 / 0.3);
   --app-shadow-popover: 0 4px 10px -5px rgb(0 0 0 / 0.25), 0 14px 32px -14px rgb(0 0 0 / 0.38);
   --app-shadow-dialog: 0 10px 24px -12px rgb(0 0 0 / 0.3), 0 28px 64px -24px rgb(0 0 0 / 0.45);
