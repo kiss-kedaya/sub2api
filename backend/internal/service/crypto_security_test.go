@@ -427,6 +427,23 @@ func TestCryptoSecurityAdminLoginAndStepUpCodesCannotReplayForPayment(t *testing
 	}
 }
 
+func TestCryptoSecurityLoginValidationConsumesOnlyAfterLoginChecksPass(t *testing.T) {
+	security, svc, _, cache := newCryptoSecurityTestServices(t, true)
+	ctx := context.Background()
+	code := cryptoSecurityTestCode(t, cryptoSecurityTestSecret)
+
+	counter, err := svc.VerifyLoginCode(ctx, 7, code)
+	require.NoError(t, err)
+	require.Empty(t, cache.values, "login validation must not consume the payment replay marker")
+
+	// A retry after a downstream login failure must be able to validate the
+	// same current-window code until the successful login consumes it.
+	counter, err = svc.VerifyLoginCode(ctx, 7, code)
+	require.NoError(t, err)
+	require.NoError(t, svc.ConsumeLoginCode(ctx, 7, counter, code))
+	require.ErrorIs(t, security.VerifyRisk(ctx, 7, code), ErrCryptoTotpReplayed)
+}
+
 func TestCryptoSecurityRiskIsAtomicAcrossInstances(t *testing.T) {
 	security, svc, repo, cache := newCryptoSecurityTestServices(t, true)
 	otherTotp := NewTotpService(repo, svc.encryptor, cache, svc.settingService, nil, nil)

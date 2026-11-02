@@ -221,9 +221,9 @@ func (s *CryptoSecurityService) verifyAdminRiskUser(ctx context.Context, userID 
 	if err := s.limit(ctx, userID, "verify", 30, time.Minute); err != nil {
 		return nil, err
 	}
-	verified, err := s.totp.verifyCode(ctx, userID, code, func(counter int64) error {
+	verified, _, err := s.totp.verifyCode(ctx, userID, code, func(counter int64) error {
 		return s.consume(ctx, userID, counter, code)
-	})
+	}, false)
 	if err != nil {
 		return nil, cryptoTotpError(err)
 	}
