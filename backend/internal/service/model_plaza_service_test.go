@@ -447,6 +447,54 @@ func TestListGroups_GroupTokenCardOverridesChannelPricing(t *testing.T) {
 	require.Empty(t, m.Pricing.Intervals)
 }
 
+func TestListGroups_GroupCustomCardReplacesOfficialReference(t *testing.T) {
+	// 分组逐模型价卡生效时，参考价列改用自定义起步价；价卡未配置的项回落目录价；
+	// 未配置价卡的其它分组仍显示官方价，且官方长上下文阶梯不受影响。
+	pricingSvc := newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+		"claude-sonnet": {
+			Mode:                        "chat",
+			InputCostPerToken:           3e-6,
+			OutputCostPerToken:          1.5e-5,
+			CacheCreationInputTokenCost: 3.75e-6,
+			CacheReadInputTokenCost:     3e-7,
+		},
+	})
+	channels := []Channel{plazaPricedChannel(1, "ch", []int64{10, 20}, PlatformAnthropic, "claude-sonnet")}
+	groups := []Group{
+		{
+			ID: 10, Name: "custom", Platform: PlatformAnthropic, RateMultiplier: 2, LongContextPricingEnabled: true,
+			ModelPricing: []ChannelModelPricing{{
+				Models: []string{"claude-sonnet"}, BillingMode: BillingModeToken,
+				InputPrice: testPtrFloat64(1e-6),
+			}},
+		},
+		{ID: 20, Name: "official", Platform: PlatformAnthropic, RateMultiplier: 1, LongContextPricingEnabled: true},
+	}
+	svc := newPlazaServiceWithBilling(channels, groups,
+		map[int64]string{10: PlatformAnthropic, 20: PlatformAnthropic}, pricingSvc)
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+
+	byGroup := map[int64]PlazaModel{}
+	for _, g := range out {
+		require.Len(t, g.Models, 1)
+		byGroup[g.ID] = g.Models[0]
+	}
+
+	custom := byGroup[10]
+	require.NotNil(t, custom.OfficialPricing)
+	require.True(t, custom.OfficialPricing.Custom, "价卡生效时参考价应标记为自定义")
+	require.InDelta(t, 1e-6, *custom.OfficialPricing.InputPrice, 1e-15)
+	require.InDelta(t, 1.5e-5, *custom.OfficialPricing.OutputPrice, 1e-15, "价卡未配置输出价时回落目录价")
+	require.InDelta(t, 3.75e-6, *custom.OfficialPricing.CacheWritePrice, 1e-15)
+
+	official := byGroup[20]
+	require.NotNil(t, official.OfficialPricing)
+	require.False(t, official.OfficialPricing.Custom, "未配置价卡的分组仍显示官方价")
+	require.InDelta(t, 3e-6, *official.OfficialPricing.InputPrice, 1e-15)
+}
+
 func TestListGroups_ImageModelKeepsTierSynthesisWithBilling(t *testing.T) {
 	channels := []Channel{{
 		ID: 1, Name: "ch", Status: StatusActive, GroupIDs: []int64{10},

@@ -765,6 +765,8 @@ export default {
       timePricingRateHint: '生效倍率 {rate} × 时段倍率 {multiplier}',
       paidPrice: '实付价格(折后)',
       officialPrice: '官方价格',
+      customReference: '自定义价',
+      customReferenceHint: '本分组为该模型配置了自定义价格；参考价列显示你的自定义起步价，长上下文阶梯仍沿用官方预设。',
       rate: '折扣倍率',
       unitPerMillion: '$ / 1M token',
       perUnitRequest: '/ 次',

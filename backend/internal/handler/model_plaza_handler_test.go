@@ -134,6 +134,8 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	require.False(t, has1h, "1h 缓存写价为 nil 时应 omitempty")
 	_, hasOfficialIntervals := official["intervals"]
 	require.False(t, hasOfficialIntervals, "官方无阶梯时 intervals 应 omitempty")
+	_, hasCustom := official["custom"]
+	require.False(t, hasCustom, "非自定义参考价不输出 custom")
 	_, hasBasis := model["long_context_basis"]
 	require.False(t, hasBasis, "单档模型不输出 long_context_basis")
 	_, hasTimePricing := model["time_pricing"]
@@ -151,6 +153,18 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 
 func TestToModelPlazaOfficialPricing_NilPassthrough(t *testing.T) {
 	require.Nil(t, toModelPlazaOfficialPricing(nil))
+}
+
+func TestToModelPlazaOfficialPricing_CustomFlag(t *testing.T) {
+	dto := toModelPlazaOfficialPricing(&service.PlazaOfficialPricing{
+		InputPrice: testPtr(1e-6),
+		Custom:     true,
+	})
+	raw, err := json.Marshal(dto)
+	require.NoError(t, err)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Equal(t, true, decoded["custom"])
 }
 
 func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
