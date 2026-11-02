@@ -145,6 +145,7 @@ test('ssr-release workflow packages with the immutable workflow commit, smokes t
   assert.match(yaml, /EXTRACT="\$\(mktemp -d\)"/)
   assert.match(yaml, /tar -xzf/)
   assert.match(yaml, /smoke-ssr\.mjs --dir "\$EXTRACT\/ssr"/)
+  assert.match(yaml, /smoke-authenticated-ssr\.mjs "\$EXTRACT\/ssr\/\.output"/)
   assert.match(yaml, /tar -tvzf[\s\S]*?\^l/, 'the tarball must be rejected when it contains symlink entries')
   assert.match(yaml, /gh release upload[\s\S]*?--clobber/)
 })
