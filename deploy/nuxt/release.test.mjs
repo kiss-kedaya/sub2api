@@ -154,6 +154,7 @@ test('ssr-release reuses the exact SPA artifact that was embedded in the Go rele
   assert.match(WORKFLOW, /ssr-release\.yml$/)
   const yaml = readFileSync(WORKFLOW, 'utf8')
   assert.match(yaml, /gh run list[\s\S]*--workflow release\.yml/)
+  assert.match(yaml, /Resolve checked out tag commit[\s\S]*git rev-parse HEAD[\s\S]*COMMIT: \$\{\{ steps\.source-commit\.outputs\.commit \}\}/)
   assert.match(yaml, /gh run download[\s\S]*--name frontend-dist/)
   assert.match(yaml, /--expect-commit \"\$COMMIT\"/)
   assert.match(yaml, /pnpm run build:ssr/)
