@@ -294,8 +294,12 @@
               :concurrency-max="capacityMap.get(row.id)!.concurrencyMax"
               :sessions-used="capacityMap.get(row.id)!.sessionsUsed"
               :sessions-max="capacityMap.get(row.id)!.sessionsMax"
+              :sessions-tracked="capacityMap.get(row.id)!.sessionsTracked"
               :rpm-used="capacityMap.get(row.id)!.rpmUsed"
               :rpm-max="capacityMap.get(row.id)!.rpmMax"
+              :active-users="capacityMap.get(row.id)!.activeUsers"
+              :active-users-known="capacityMap.get(row.id)!.activeUsersKnown"
+              :active-users-window-seconds="capacityMap.get(row.id)!.activeUsersWindowSeconds"
               :runtime-known="capacityMap.get(row.id)!.runtimeKnown"
             />
             <span v-else class="text-xs text-dimmed">—</span>
@@ -3976,8 +3980,12 @@ const capacityMap = ref<
       concurrencyMax: number;
       sessionsUsed: number;
       sessionsMax: number;
+      sessionsTracked: boolean;
       rpmUsed: number;
       rpmMax: number;
+      activeUsers: number;
+      activeUsersKnown: boolean;
+      activeUsersWindowSeconds: number;
       runtimeKnown: boolean;
     }
   >
@@ -4908,15 +4916,19 @@ const loadCapacitySummary = async () => {
     const data = await adminAPI.groups.getCapacitySummary();
     const map = new Map<
       number,
-      {
-        concurrencyUsed: number;
-        concurrencyMax: number;
-        sessionsUsed: number;
-        sessionsMax: number;
-        rpmUsed: number;
-        rpmMax: number;
-        runtimeKnown: boolean;
-      }
+    {
+      concurrencyUsed: number;
+      concurrencyMax: number;
+      sessionsUsed: number;
+      sessionsMax: number;
+      sessionsTracked: boolean;
+      rpmUsed: number;
+      rpmMax: number;
+      activeUsers: number;
+      activeUsersKnown: boolean;
+      activeUsersWindowSeconds: number;
+      runtimeKnown: boolean;
+    }
     >();
     for (const item of data) {
       map.set(item.group_id, {
@@ -4924,8 +4936,12 @@ const loadCapacitySummary = async () => {
         concurrencyMax: item.concurrency_max,
         sessionsUsed: item.sessions_used,
         sessionsMax: item.sessions_max,
+        sessionsTracked: item.sessions_tracked ?? (item.sessions_max > 0 || item.sessions_used > 0),
         rpmUsed: item.rpm_used,
         rpmMax: item.rpm_max,
+        activeUsers: item.active_users ?? 0,
+        activeUsersKnown: item.active_users_known === true,
+        activeUsersWindowSeconds: item.active_users_window_seconds ?? 300,
         runtimeKnown: item.runtime_known !== false,
       });
     }

@@ -83,6 +83,10 @@ type UserListFilters struct {
 	// IncludeAllowedGroups controls loading the user_allowed_groups association.
 	// Admin list pages that hide the group column can skip this per-page query.
 	IncludeAllowedGroups *bool
+	// IncludeLastUsedAt controls the per-page MAX(usage_logs.created_at) lookup.
+	// nil keeps the historical behaviour (load it); admin list pages hide the
+	// column by default and can skip this indexed-but-still-extra query.
+	IncludeLastUsedAt *bool
 	// IncludeDeleted 为 true 时绕过软删除过滤，返回含已删除（deleted_at 非空）的用户。
 	// 仅供 /admin/usage 的 SearchUsers 端点使用，其他列表调用方不要设置。
 	IncludeDeleted bool

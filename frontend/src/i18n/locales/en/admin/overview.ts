@@ -437,6 +437,14 @@ export default {
       displayColumns: 'Columns',
       concurrencyLabel: 'Concurrency',
       concurrencyHint: 'Live concurrent requests / this user concurrency limit. Above the limit, new requests queue.',
+      liveLoad: {
+        loading: 'Loading live group load…',
+        failed: 'Failed to load live load',
+        empty: 'No in-flight requests right now',
+        hint: 'Counts requests currently in flight. Per-group concurrency is this user\'s requests in that group.',
+        waiting: '{count} waiting',
+        unknownGroup: 'No group selected',
+      },
       advancedOptions: 'Advanced options',
       title: 'User Management',
       description: 'Manage users and their permissions',
@@ -862,11 +870,13 @@ export default {
       capacityUnknownHint: 'Live counters are unavailable. — means missing or failed, not zero.',
       capacityLabels: {
         concurrency: 'Concurrency',
+        activeUsers: 'Active users',
         sessions: 'Users',
         rpm: 'RPM'
       },
       capacityHints: {
         concurrency: 'Currently used concurrency / sum of the concurrency of every schedulable account in this group. At the limit, new requests queue or move to another account.',
+        activeUsers: 'Distinct users with a billed request in the last {minutes} minutes; 0 means no traffic in that window.',
         sessions: 'Active sessions (roughly the number of people using it) / sum of session limits in this group. Only accounts with a session limit are counted.',
         rpm: 'Requests in this minute / sum of per-minute limits for this group.',
         unknown: 'Live counters are unavailable: — means not configured or failed, not zero.'

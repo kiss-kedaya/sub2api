@@ -2761,6 +2761,9 @@ func (r *stubUsageLogRepo) GetDailyStatsAggregated(ctx context.Context, userID i
 func (r *stubUsageLogRepo) GetBatchUserUsageStats(ctx context.Context, userIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchUserUsageStats, error) {
 	return nil, errors.New("not implemented")
 }
+func (r *stubUsageLogRepo) GetBatchUserUsageStatsWithOptions(ctx context.Context, userIDs []int64, startTime, endTime time.Time, includePlatformBreakdown bool) (map[int64]*usagestats.BatchUserUsageStats, error) {
+	return nil, errors.New("not implemented")
+}
 
 func (r *stubUsageLogRepo) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
 	return nil, errors.New("not implemented")

@@ -518,6 +518,10 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 // BatchUsersUsageRequest represents the request body for batch user usage stats
 type BatchUsersUsageRequest struct {
 	UserIDs []int64 `json:"user_ids" binding:"required"`
+	// IncludePlatformBreakdown defaults to true for compatibility. The users
+	// list sends false when no platform usage column is visible, which lets the
+	// repository skip two joins and the platform GROUP BY key.
+	IncludePlatformBreakdown *bool `json:"include_platform_breakdown"`
 }
 
 var dashboardUsersRankingCache = newSnapshotCache(5 * time.Minute)
@@ -590,6 +594,7 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 	}
 
 	userIDs := normalizeInt64IDList(req.UserIDs)
+	includePlatformBreakdown := req.IncludePlatformBreakdown == nil || *req.IncludePlatformBreakdown
 	if len(userIDs) == 0 {
 		response.Success(c, gin.H{"stats": map[string]any{}})
 		return
@@ -600,10 +605,12 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 		V       int     `json:"v"`
 		Day     string  `json:"day"`
 		UserIDs []int64 `json:"user_ids"`
+		Platform bool   `json:"platform_breakdown"`
 	}{
-		V:       2, // bump 当响应结构变化（如加入 by_platform 时）
-		Day:     timezone.Today().Format("2006-01-02"),
-		UserIDs: userIDs,
+		V:        3, // bump 当响应结构或查询口径变化时
+		Day:      timezone.Today().Format("2006-01-02"),
+		UserIDs:  userIDs,
+		Platform: includePlatformBreakdown,
 	})
 	cacheKey := string(keyRaw)
 	if cached, ok := dashboardBatchUsersUsageCache.Get(cacheKey); ok {
@@ -612,7 +619,7 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.dashboardService.GetBatchUserUsageStats(c.Request.Context(), userIDs, time.Time{}, time.Time{})
+	stats, err := h.dashboardService.GetBatchUserUsageStats(c.Request.Context(), userIDs, time.Time{}, time.Time{}, includePlatformBreakdown)
 	if err != nil {
 		response.Error(c, 500, "Failed to get user usage stats")
 		return

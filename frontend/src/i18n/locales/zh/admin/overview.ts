@@ -437,6 +437,14 @@ export default {
       displayColumns: '显示列',
       concurrencyLabel: '并发',
       concurrencyHint: '当前并发请求数 / 该用户的并发上限；达到上限后新请求排队',
+      liveLoad: {
+        loading: '正在读取实时分组负载…',
+        failed: '实时负载读取失败',
+        empty: '当前没有在途请求',
+        hint: '按正在进行的请求统计；分组并发为当前用户在该分组的请求数',
+        waiting: '排队 {count}',
+        unknownGroup: '未选择分组',
+      },
       advancedOptions: '高级选项',
       title: '用户管理',
       description: '管理用户账户和权限',
@@ -956,11 +964,13 @@ export default {
       capacityUnknownHint: '实时计数暂不可用；— 表示读取失败或未配置，不代表 0。',
       capacityLabels: {
         concurrency: '并发',
+        activeUsers: '活跃用户',
         sessions: '使用人数',
         rpm: 'RPM'
       },
       capacityHints: {
         concurrency: '当前占用并发 / 该分组所有可调度账号并发之和；达到上限时新请求会排队或换号',
+        activeUsers: '最近 {minutes} 分钟内产生计费请求的独立用户数（去重）；0 表示该窗口内没有用户发请求',
         sessions: '当前活跃会话（约等于正在使用的人数） / 该分组会话上限之和；只统计启用了会话数限制的账号',
         rpm: '本分钟请求数 / 该分组每分钟请求上限之和',
         unknown: '实时计数暂不可用：— 表示未配置或读取失败，不代表 0。'

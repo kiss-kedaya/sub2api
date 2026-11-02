@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/handler/quotaview"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -163,6 +164,13 @@ func (h *UserHandler) List(c *gin.Context) {
 	if raw, ok := c.GetQuery("include_platform_quotas"); ok {
 		includePlatformQuotas = parseBoolQueryWithDefault(raw, false)
 	}
+	// include_last_used_at=false skips one MAX(created_at) lookup per user.
+	// The admin list hides this column by default; only ask for it when the
+	// column is visible (or when sorting by it).
+	if raw, ok := c.GetQuery("include_last_used_at"); ok {
+		includeLastUsedAt := parseBoolQueryWithDefault(raw, true)
+		filters.IncludeLastUsedAt = &includeLastUsedAt
+	}
 
 	users, total, err := h.adminService.ListUsers(c.Request.Context(), page, pageSize, filters, sortBy, sortOrder)
 	if err != nil {
@@ -278,6 +286,72 @@ func (h *UserHandler) GetByID(c *gin.Context) {
 	}
 
 	response.Success(c, dto.UserFromServiceAdmin(user))
+}
+
+// UserGroupLoad is one group row in the admin user load hover payload.
+type UserGroupLoad struct {
+	GroupID   int64    `json:"group_id"`
+	GroupName string   `json:"group_name,omitempty"`
+	Inflight  int      `json:"inflight"`
+	Models    []string `json:"models,omitempty"`
+}
+
+// UserLoadResponse is the lazy hover payload for /admin/users/:id/load.
+// It deliberately contains no usage-log history: the hover only needs the live
+// counters and which groups those in-flight requests belong to.
+type UserLoadResponse struct {
+	UserID             int64           `json:"user_id"`
+	CurrentConcurrency int             `json:"current_concurrency"`
+	WaitingCount       int             `json:"waiting_count"`
+	LoadRate           int             `json:"load_rate"`
+	MaxConcurrency     int             `json:"max_concurrency"`
+	Groups             []UserGroupLoad `json:"groups"`
+}
+
+// GetLoad returns the live concurrency of one user and the per-group split of
+// their in-flight requests. It is fetched only when an admin opens the capacity
+// hover, so it stays off the list first-screen path.
+// GET /api/v1/admin/users/:id/load
+func (h *UserHandler) GetLoad(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || userID <= 0 {
+		response.BadRequest(c, "Invalid user ID")
+		return
+	}
+
+	user, err := h.adminService.GetUser(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	out := UserLoadResponse{UserID: userID, MaxConcurrency: user.Concurrency, Groups: []UserGroupLoad{}}
+	if h.concurrencyService != nil {
+		loads, loadErr := h.concurrencyService.GetUsersLoadBatch(c.Request.Context(), []service.UserWithConcurrency{{
+			ID:             userID,
+			MaxConcurrency: user.Concurrency,
+		}})
+		if loadErr == nil {
+			if info := loads[userID]; info != nil {
+				out.CurrentConcurrency = info.CurrentConcurrency
+				out.WaitingCount = info.WaitingCount
+				out.LoadRate = info.LoadRate
+			}
+		}
+	}
+
+	rows := service.VisibleUsageInflight(c.Request.Context(), userID, usagestats.UsageLogFilters{UserID: userID}, nil)
+	groups := service.SummarizeUserGroupLoad(rows)
+	out.Groups = make([]UserGroupLoad, 0, len(groups))
+	for _, group := range groups {
+		out.Groups = append(out.Groups, UserGroupLoad{
+			GroupID:   group.GroupID,
+			GroupName: group.GroupName,
+			Inflight:  group.Inflight,
+			Models:    group.Models,
+		})
+	}
+	response.Success(c, out)
 }
 
 // BindAuthIdentity manually binds a canonical auth identity to a user.

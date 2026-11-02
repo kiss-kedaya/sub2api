@@ -302,11 +302,16 @@ export interface BatchUsersUsageResponse {
  */
 export async function getBatchUsersUsage(
   userIds: number[],
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; includePlatformBreakdown?: boolean }
 ): Promise<BatchUsersUsageResponse> {
   const { data } = await apiClient.post<BatchUsersUsageResponse>(
     '/admin/dashboard/users-usage',
-    { user_ids: userIds },
+    {
+      user_ids: userIds,
+      // The repository skips two joins and the platform GROUP BY key when no
+      // platform usage column is visible on the users list.
+      include_platform_breakdown: options?.includePlatformBreakdown !== false,
+    },
     { signal: options?.signal }
   )
   return data
