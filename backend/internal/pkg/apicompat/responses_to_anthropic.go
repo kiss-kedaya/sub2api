@@ -15,6 +15,10 @@ import (
 // Anthropic Messages response. Reasoning output items are mapped to thinking
 // blocks; function_call items become tool_use blocks.
 func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicResponse {
+	return ResponsesToAnthropicWithOptions(resp, model, false)
+}
+
+func ResponsesToAnthropicWithOptions(resp *ResponsesResponse, model string, requireReasoningContent bool) *AnthropicResponse {
 	out := &AnthropicResponse{
 		ID:    resp.ID,
 		Type:  "message",
@@ -28,6 +32,9 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 		switch item.Type {
 		case "reasoning":
 			thinkingText := responsesReasoningText(item.Content, item.Summary)
+			if requireReasoningContent {
+				thinkingText = responsesReasoningContentText(item.Content)
+			}
 			// Always surface encrypted_content as thinking.signature so Claude
 			// Code / multi-turn clients can send it back. Signature-only
 			// thinking blocks are valid when the model omits visible content.
@@ -198,6 +205,8 @@ type ResponsesEventToAnthropicState struct {
 	// emitted as signature_delta before the thinking block is closed.
 	PendingThinkingSignature string
 	CurrentThinkingHadDelta  bool
+	RequireReasoningContent  bool
+	ReasoningPartsSeen       map[string]bool
 	HasToolCall              bool
 
 	// OutputIndexToBlockIdx maps Responses output_index → Anthropic content block index.
@@ -538,11 +547,15 @@ func resToAnthHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 	if evt.Delta == "" {
 		return nil
 	}
+	if state.RequireReasoningContent && strings.Contains(evt.Type, "reasoning_summary") {
+		return nil
+	}
 
 	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
 	if !ok {
 		return nil
 	}
+	state.markReasoningPart(evt)
 	state.CurrentThinkingHadDelta = true
 
 	return []AnthropicStreamEvent{{
@@ -559,13 +572,14 @@ func resToAnthHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 // done/text event without incremental deltas. It preserves the real
 // reasoning_text on the same thinking block as the delta path.
 func resToAnthHandleReasoningDone(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
-	if evt.Text == "" || state.CurrentThinkingHadDelta {
+	if evt.Text == "" || (state.RequireReasoningContent && strings.Contains(evt.Type, "reasoning_summary")) || state.reasoningPartSeen(evt) {
 		return nil
 	}
 	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
 	if !ok {
 		return nil
 	}
+	state.markReasoningPart(evt)
 	state.CurrentThinkingHadDelta = true
 	return []AnthropicStreamEvent{{
 		Type:  "content_block_delta",
@@ -602,7 +616,16 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 		if _, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]; !ok {
 			events = append(events, resToAnthHandleOutputItemAdded(evt, state)...)
 		}
-		if !state.CurrentThinkingHadDelta {
+		if state.RequireReasoningContent {
+			for index, part := range evt.Item.Content {
+				if part.Type != "reasoning_text" || part.Text == "" {
+					continue
+				}
+				events = append(events, resToAnthHandleReasoningDone(&ResponsesStreamEvent{
+					Type: "response.reasoning_text.done", OutputIndex: evt.OutputIndex, ContentIndex: index, Text: part.Text,
+				}, state)...)
+			}
+		} else if !state.CurrentThinkingHadDelta {
 			if text := responsesReasoningText(evt.Item.Content, evt.Item.Summary); text != "" {
 				if blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]; ok {
 					events = append(events, AnthropicStreamEvent{
@@ -627,6 +650,25 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 		return closeCurrentBlock(state)
 	}
 	return nil
+}
+
+func (state *ResponsesEventToAnthropicState) reasoningPartKey(evt *ResponsesStreamEvent) string {
+	kind, index := "content", evt.ContentIndex
+	if strings.Contains(evt.Type, "reasoning_summary") {
+		kind, index = "summary", evt.SummaryIndex
+	}
+	return fmt.Sprintf("%d:%s:%d", evt.OutputIndex, kind, index)
+}
+
+func (state *ResponsesEventToAnthropicState) reasoningPartSeen(evt *ResponsesStreamEvent) bool {
+	return state.ReasoningPartsSeen[state.reasoningPartKey(evt)]
+}
+
+func (state *ResponsesEventToAnthropicState) markReasoningPart(evt *ResponsesStreamEvent) {
+	if state.ReasoningPartsSeen == nil {
+		state.ReasoningPartsSeen = make(map[string]bool)
+	}
+	state.ReasoningPartsSeen[state.reasoningPartKey(evt)] = true
 }
 
 // resToAnthFinishLocalShell emits the shell action on output_item.done.
