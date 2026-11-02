@@ -161,11 +161,11 @@ const { copyToClipboard } = useClipboard()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 
-// While a deposit is confirming, re-read history quickly so the confirmation
-// count moves and the credit lands without a manual refresh. Otherwise keep
-// the slower refresh so a brand-new transfer still shows up on its own.
-const PENDING_POLL_MS = 8000
-const IDLE_POLL_MS = 30000
+// A transfer can be mined between two reads, so the page keeps one cadence
+// whether or not anything is already confirming. Five seconds is short enough
+// that a fresh deposit appears without a manual refresh, while hidden tabs and
+// unmounted views schedule nothing.
+const HISTORY_POLL_MS = 5000
 const PENDING_SUMMARY_LIMIT = 3
 
 interface ConfirmationProgress {
@@ -336,17 +336,23 @@ function stopPolling() {
   pollTimer = null
 }
 
-// Re-armed after every read so the cadence follows the latest data: fast while
-// something is confirming, slow otherwise, and paused while the tab is hidden.
+// Re-armed after every read. One cadence while the page is visible; hidden
+// tabs and unmounted views schedule nothing.
 function schedulePoll() {
   stopPolling()
   if (disposed || !info.value?.enabled || loadError.value) return
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-  pollTimer = setTimeout(() => void refreshHistory(), pendingRows.value.length ? PENDING_POLL_MS : IDLE_POLL_MS)
+  pollTimer = setTimeout(() => void refreshHistory(), HISTORY_POLL_MS)
 }
 
 async function refreshHistory() {
-  if (refreshingHistory.value) return
+  if (refreshingHistory.value) {
+    // A timer or visibility change can fire while a read is still in flight.
+    // Skip the duplicate request but keep the poll chain armed; otherwise a
+    // single overlap would silently stop auto-refresh until the next mount.
+    schedulePoll()
+    return
+  }
   refreshingHistory.value = true
   try {
     const next = await getDepositHistory()
