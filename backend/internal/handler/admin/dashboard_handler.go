@@ -602,10 +602,10 @@ func (h *DashboardHandler) GetBatchUsersUsage(c *gin.Context) {
 
 	// cacheKey 必须包含当日日期，否则跨午夜后 30s 内会复用昨天的 "today_*" 结果。
 	keyRaw, _ := json.Marshal(struct {
-		V       int     `json:"v"`
-		Day     string  `json:"day"`
-		UserIDs []int64 `json:"user_ids"`
-		Platform bool   `json:"platform_breakdown"`
+		V        int     `json:"v"`
+		Day      string  `json:"day"`
+		UserIDs  []int64 `json:"user_ids"`
+		Platform bool    `json:"platform_breakdown"`
 	}{
 		V:        3, // bump 当响应结构或查询口径变化时
 		Day:      timezone.Today().Format("2006-01-02"),

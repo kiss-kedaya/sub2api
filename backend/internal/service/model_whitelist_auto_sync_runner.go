@@ -376,7 +376,7 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 	result := ModelWhitelistAutoSyncResult{AccountID: account.ID}
 	now := s.currentTime()
 
-	baseline, custom, err := modelWhitelistBaselineMapping(account)
+	_, custom, err := modelWhitelistBaselineMapping(account)
 	if err != nil {
 		return s.finishWithError(ctx, account, interval, now, result, fmt.Errorf("read model_mapping: %w", err))
 	}
@@ -414,7 +414,7 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 		result.SkippedReason = ModelWhitelistAutoSyncSkipConcurrent
 		return s.finishSkipped(ctx, account, interval, now, result)
 	}
-	baseline, custom, err = modelWhitelistBaselineMapping(current)
+	baseline, custom, err := modelWhitelistBaselineMapping(current)
 	if err != nil {
 		return s.finishWithError(ctx, current, interval, now, result, err)
 	}
@@ -544,15 +544,6 @@ func (s *ModelWhitelistAutoSyncService) currentTime() time.Time {
 		return s.now()
 	}
 	return time.Now()
-}
-
-func modelWhitelistAutoSyncAccountLockKey(accountID int64) string {
-	return fmt.Sprintf("%s:account:%d", modelWhitelistAutoSyncLeaderLockKey, accountID)
-}
-
-func modelWhitelistAutoSyncCycleLockKey(now time.Time) string {
-	bucket := now.Unix() / int64(modelWhitelistAutoSyncCycleInterval/time.Second)
-	return fmt.Sprintf("%s:cycle:%d", modelWhitelistAutoSyncLeaderLockKey, bucket)
 }
 
 func (s *ModelWhitelistAutoSyncService) tryAcquireLeaderLock(ctx context.Context, key string) (func(), bool, error) {

@@ -114,7 +114,7 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, ac
 
 	var tx *dbent.Tx
 	queryCtx := ctx
-	queryExec := sqlExecutor(r.sql)
+	var queryExec sqlExecutor
 	var outboxExec sqlExecutor
 	commit := false
 	if contextTx := dbent.TxFromContext(ctx); contextTx != nil {
