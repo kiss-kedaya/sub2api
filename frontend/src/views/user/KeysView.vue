@@ -540,10 +540,12 @@
 
         <UFormField :label="t('keys.groupLabel')" size="lg">
           <template #hint>
-            <label class="flex items-center gap-2 text-sm text-default">
-              <input v-model="formData.smart_routing" type="checkbox" class="size-4 rounded-sm border-accented accent-[var(--ui-primary)]" />
-              {{ t('keys.smartRouting') }}
-            </label>
+            <USwitch
+              v-model="formData.smart_routing"
+              :label="t('keys.smartRouting')"
+              size="sm"
+              data-test="key-smart-routing"
+            />
           </template>
           <p v-if="formData.smart_routing" class="mb-3 text-xs text-muted">
             {{ t('keys.smartRoutingHint') }}

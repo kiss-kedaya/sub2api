@@ -883,7 +883,11 @@ describe('user KeysView mutations', () => {
     await wrapper.get('input[name="key-provider"][value="openai"]').setValue()
     wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 2)
     await nextTick()
-    await wrapper.get('input[type="checkbox"]').setValue(true)
+    const smartRouting = wrapper.findAll('[role="switch"]').find(
+      (node) => node.attributes('data-test') === 'key-smart-routing' || node.text().includes('keys.smartRouting')
+    )
+    if (!smartRouting) throw new Error('smart routing switch not found')
+    await smartRouting.trigger('click')
     await nextTick()
     await wrapper.get('input[name="key-provider"][value="other"]').setValue()
     const addRoute = wrapper.findAllComponents({ name: 'Select' })
