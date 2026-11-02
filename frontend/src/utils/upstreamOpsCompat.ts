@@ -344,7 +344,6 @@ function buildRowKey(entry: UpstreamOpsEntry, index: number): string {
 function resolveStatus(reasons: UpstreamOpsReasonCode[], row: Pick<UpstreamOpsPreviewRow, 'kind' | 'platform'>): UpstreamOpsRowStatus {
   if (reasons.includes('missing_name') || reasons.includes('missing_base_url')) return 'invalid'
   if (reasons.includes('url_scheme_required')) return 'invalid'
-  if (reasons.includes('unknown_upstream_protocol')) return 'invalid'
   if (reasons.includes('channel_snapshot_has_no_credential')) return 'unsupported'
   if (reasons.includes('duplicate_existing') || reasons.includes('duplicate_batch')) return 'duplicate'
   if (row.kind === 'providers' && !row.platform) return 'needs-platform'
