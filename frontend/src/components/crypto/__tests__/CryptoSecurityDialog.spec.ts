@@ -294,3 +294,30 @@ describe('Crypto verification UI (server authorization is tested separately)', (
     expect(await result).toBe(false)
   })
 })
+
+// A grant can be rejected after this dialog already spent a code on it: the
+// five-minute capability lapses, or the session rotates. Before this fix the
+// dialog stayed on 'verify' with the old callback armed, so the next code
+// replayed an entire wallet operation the server had just refused — and every
+// replay re-sent the operator intent. The user saw a correct code "not work".
+it('drops the pending operation when the grant is rejected mid-execution', async () => {
+  const action = vi.fn().mockRejectedValue({ status: 403, reason: 'CRYPTO_GRANT_REQUIRED' })
+  const wrapper = render()
+  const result = wrapper.vm.verify('Export wallet', action)
+  await flushPromises()
+  await wrapper.get('#crypto-security-code').setValue('123456')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+
+  expect(action).toHaveBeenCalledTimes(1)
+  // Says the operation did not run, instead of implying the code was wrong.
+  expect(wrapper.get('[role="alert"]').text()).toBe('admin.crypto.securityGrantExpired')
+  // The dialog is terminal, so no second code can re-arm the same action.
+  expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+  expect(await result).toBe(false)
+
+  // Submitting again must not replay the operation.
+  await wrapper.vm.verify('Export wallet', action)
+  await flushPromises()
+  expect(action).toHaveBeenCalledTimes(1)
+})

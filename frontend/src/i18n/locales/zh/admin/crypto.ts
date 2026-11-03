@@ -223,6 +223,7 @@ export default {
     securityReplay: '此验证码已使用，请等待验证器生成下一枚新码。',
     securityRateLimit: '验证尝试过于频繁，请稍后等待新码再试。',
     securityInvalid: '验证码未通过服务器验证，请核对验证器和设备时间后输入新码。',
+    securityGrantExpired: '本次授权已过期，操作未执行。请等待验证器生成新码后重新提交。',
     rpcVerify: '测试 {chain} RPC 节点：{endpoint}。只验证这个节点；全部测试中的每个请求都需新码。',
     rpcAutoVerify: '探测并自动选择 {chain} RPC 节点。节点会填入当前表单，保存配置后生效。',
     csvVerify: '导出当前筛选条件下的充值 CSV，包含充值地址与账目，请妥善保管。',

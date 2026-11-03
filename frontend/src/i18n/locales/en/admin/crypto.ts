@@ -223,6 +223,7 @@ export default {
     securityReplay: 'This code has already been used. Wait for the next new authenticator code.',
     securityRateLimit: 'Too many verification attempts. Please wait before trying with a fresh code.',
     securityInvalid: 'The server rejected this code. Check your authenticator and device clock, then enter a fresh code.',
+    securityGrantExpired: 'This authorization expired and the operation did not run. Wait for the next authenticator code and submit again.',
     rpcVerify: 'Test {chain} RPC endpoint: {endpoint}. This verifies only this endpoint; every request in Test all needs a fresh code.',
     rpcAutoVerify: 'Probe and select {chain} RPC endpoints. Selected nodes fill the form and take effect after saving configuration.',
     csvVerify: 'Export the filtered deposit CSV, including deposit addresses and ledger information. Store it securely.',
