@@ -247,7 +247,7 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	// Last line of defence: never sign for a chain outside the operator scope.
 	if !e.allowsChain(entry.Chain) {
 		err := fmt.Errorf("chain %q is outside the requested sweep scope", entry.Chain)
-		out.Error = SafeError(err)
+		out.Error = rpc.SafeError(err)
 		return out, err
 	}
 	if entry.RawAmount != nil {
@@ -256,7 +256,7 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	}
 	_, _, err := e.validateEntry(entry)
 	if err != nil {
-		out.Error = SafeError(err)
+		out.Error = rpc.SafeError(err)
 		return out, err
 	}
 	if dryRun {
@@ -266,17 +266,17 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	if !common.IsHexAddress(e.config.HotWalletEVM) || isZeroAddress(e.config.HotWalletEVM) ||
 		strings.EqualFold(e.config.HotWalletEVM, entry.Address) {
 		err = fmt.Errorf("sweep refused: invalid receiving address")
-		out.Error = SafeError(err)
+		out.Error = rpc.SafeError(err)
 		return out, err
 	}
 	if e.config.Confirmations[entry.Chain] == 0 {
 		err = fmt.Errorf("sweep refused: confirmation depth is not configured for %s", entry.Chain)
-		out.Error = SafeError(err)
+		out.Error = rpc.SafeError(err)
 		return out, err
 	}
 	job, err := e.createJob(ctx, entry)
 	if err != nil {
-		out.Error = SafeError(err)
+		out.Error = rpc.SafeError(err)
 		return out, err
 	}
 	return e.resume(ctx, job)
@@ -426,11 +426,11 @@ func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (Sw
 	if errors.As(cause, &storage) {
 		return pendingError(job, cause)
 	}
-	job.Error = SafeError(cause)
+	job.Error = rpc.SafeError(cause)
 	if job.Revision >= maxSweepAttempts {
 		// Terminal: stop retrying and stop reserving the address.
 		job.Status = "failed"
-		job.Error = SafeError(fmt.Errorf("%s (gave up after %d attempts)", job.Error, job.Revision))
+		job.Error = rpc.SafeError(fmt.Errorf("%s (gave up after %d attempts)", job.Error, job.Revision))
 	}
 	err := e.saveJob(ctx, job)
 	return pendingError(job, joinErrors(cause, err))
@@ -441,7 +441,7 @@ func pendingError(job *sweepJob, err error) (SweepEntry, error) {
 	if out.Status == "swept" { // final persistence may have failed
 		out.Status = "pending"
 	}
-	out.Error = SafeError(err)
+	out.Error = rpc.SafeError(err)
 	return out, err
 }
 
