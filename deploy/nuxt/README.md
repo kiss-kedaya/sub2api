@@ -1,27 +1,37 @@
 # SSR 双服务模板（Nuxt BFF + Go API）
 
-新增文件，不改动现有生产部署配置（nginx / systemd / 雷池 / 端口）。
+模板/示例文件，不改动现有生产部署配置（nginx / systemd / 雷池 / 端口）。
 
 ## 拓扑
 
 ```
-浏览器 ──► nginx ──► 127.0.0.1:3000  Nuxt SSR (Node/Nitro)
-                          └─ /api/v1/** ──► 127.0.0.1:8080 Go API（固定 origin）
-浏览器 ──► 网关流量 /v1/messages、/v1/responses、/v1/chat/completions、WebSocket
-            仍按现状直连 Go，不经过 Node
+浏览器 ──► 外层 nginx ──► upstream sub2api_bff
+                              ├─ 127.0.0.1:3118  Nuxt SSR slot A
+                              └─ 127.0.0.1:3119  Nuxt SSR slot B（可选，同版）
+                                    │
+                                    └─ NUXT_BACKEND_ORIGIN=http://127.0.0.1:3187
+                                          │
+                                          3187 本地 dispatch
+                                          └─ upstream sub2api_go_bff
+                                                ├─ local Go primary（127.0.0.1:8080）
+                                                └─ peer Go backup（同版）
+浏览器 ──► /v1 网关流量 ──► 直接 Go，不经过 Node / 3187
 ```
 
-- Node 只承接**管理 API**（`/api/v1/**`）与页面渲染。
+- 本次 502 的根因是 **3187 dispatch 硬编码单个 Go 后端**；外层 Node 双 slot 不是根因修复。
+- 3187 dispatch 必须至少两个同版 Go 后端：local primary + peer backup；SSR 的 `NUXT_BACKEND_ORIGIN` 指向 `http://127.0.0.1:3187`，不要直接写 Go 端口。
+- 外层 Node BFF 也可以做双 slot，但它是附加可用性，不是这次故障的修复点。
 - 网关流量、SSE 长连接、WebSocket 升级不改语义，继续直连 Go。
-- `/api/v1/**` 一律 `Cache-Control: no-store`（BFF 强制，不依赖 routeRules）。
+- `/api/v1/**` 一律 `Cache-Control: no-store`。
+- `proxy_next_upstream` 只重试 error/timeout/502/503/504，不启用 `non_idempotent`：GET/HEAD 可切 slot，登录/提交 POST 不重放。
 
 ## 环境变量
 
 | 变量 | 说明 |
 | --- | --- |
-| `NUXT_BACKEND_ORIGIN` | Go API 固定 origin，例如 `http://127.0.0.1:8080`。只允许 http/https，禁止带账号密码。 |
+| `NUXT_BACKEND_ORIGIN` | 稳定的本地 3187 dispatch，例如 `http://127.0.0.1:3187`。禁止直接写单个 Go 后端端口。只允许 http/https，禁止带账号密码。 |
 | `NUXT_SESSION_PASSWORD` | 会话密封密钥（≥32 字节随机串）。为空时登录、注册、刷新和 OAuth 均失败关闭（503），机器登录也不例外；会话探针返回匿名 `configured:false`。 |
-| `PORT` / `HOST` | 默认 `3000` / `127.0.0.1`，只给本机 nginx 用。联调 `4320`，预览 `4317`。 |
+| `PORT` / `HOST` / `NITRO_PORT` | 默认 `3118` / `127.0.0.1`，只给本机 nginx 用。联调 `4320`，预览 `4317`。HA 两个实例用 `3118`/`3119`，同时设置 `PORT` 和 `NITRO_PORT`（Nitro 实际监听以 `NITRO_PORT` 为准）。 |
 | `NUXT_SESSION_COOKIE_SECURE` | `auto`（默认）/`true`/`false`。`auto` 只在直连对端是 loopback/私网且 `x-forwarded-proto=https` 时加 Secure。 |
 | `NUXT_BACKEND_TIMEOUT_MS` | 等到上游响应头的上限，默认 `180000`。只限首字节，之后的流不会被切断。 |
 
@@ -60,21 +70,50 @@
 
 - Nuxt dev / 联调：`PORT=4320`。
 - 纯 mock upstream 预览：`PORT=4317`，`NUXT_BACKEND_ORIGIN` 指向本地 mock，不接生产 Go。
-- 生产模板仍按 `3000` 写，接入时改 `PORT` 与 nginx upstream 即可。
+- 生产/示例：SSR `3118`（slot A）/ `3119`（slot B，可选）；两个实例共用同一 `.env`，只改 `PORT` 和 `NITRO_PORT`。
 
 ## systemd
 
-`sub2api-ssr.service` 为模板：复制到 `/etc/systemd/system/`，改 `WorkingDirectory` / `User`，环境变量放 `EnvironmentFile`（权限 0600）。启动：
+`sub2api-ssr.service` 为模板：复制到 `/etc/systemd/system/`，改 `WorkingDirectory` / `User`，环境变量放 `EnvironmentFile`（权限 0600）。模板已按 `3118` 写，并同时设置 `PORT` / `NITRO_PORT`。
+
+HA 需要两个 SSR 实例（可选）。复制两份 unit（或改成 `sub2api-ssr@.service` 模板），共用同一个 `EnvironmentFile`，只把端口改成 `3118` / `3119`；两个实例都起来后分别探活：
 
 ```
 sudo systemctl daemon-reload
-sudo systemctl enable --now sub2api-ssr
-curl -fsS http://127.0.0.1:3000/health/frontend
+# 分别启动两份 unit（slot A / slot B，按实际 unit 名）
+curl -fsS http://127.0.0.1:3118/health/frontend
+curl -fsS http://127.0.0.1:3119/health/frontend
 ```
 
-## nginx
+## nginx（3187 dispatch HA）
 
-`nginx-ssr.example.conf` 只是参考片段：静态资源走 Node，`/api/v1/` 走 Node（BFF），网关路径继续按现有方式直连 Go。它与现网 `sites-enabled` 不冲突，未接入前不要替换现有配置文件。
+`nginx-ssr.example.conf` 是示例模板，不是生产配置。它现在包含两个 upstream：
+
+- `upstream sub2api_bff`：外层 nginx -> Node SSR slot（示例 3118/3119）。这是外层可用性，**不是**本次 3187 dispatch 根因修复。
+- `upstream sub2api_go_bff`：3187 本地 dispatch -> Go。必须有至少两个同版 Go 后端，`local primary + peer backup`；示例 peer 用 `192.0.2.10:8080` 文档地址，生产必须换成真实 peer 内网 IP:端口。
+
+链路要求：
+
+1. `ssr.env.example` 的 `NUXT_BACKEND_ORIGIN=http://127.0.0.1:3187`，指向本地 dispatch，不指向 8080 等 Go 端口。
+2. 3187 dispatch 只监听 `127.0.0.1:3187`，只接 `/api/v1/**`；`/v1` 网关仍在外层 nginx 直连 Go。
+3. 两个 Go 后端必须同版（与 `NUXT_EXPECTED_BACKEND_VERSION` 一致）；两个 SSR slot 也必须同版。
+4. `proxy_next_upstream` 只重试 error/timeout/502/503/504，不带 `non_idempotent`；GET/HEAD 可切，登录/提交 POST 不重放。
+5. 3187 dispatch 必须透传 BFF 清洗后的 `Host` / `X-Forwarded-Host` / `X-Forwarded-Proto` / `X-Forwarded-For` / `X-Real-IP`；不要用 `$host` / `$scheme` / `$remote_addr` 覆盖，否则 Go 的同源校验和客户端 IP 限流会看到 `127.0.0.1` / `http`。
+
+接入/发布前：
+
+1. 两个 Go slot 分别探活（按实际健康接口）；两个 SSR slot 分别 `curl -fsS http://127.0.0.1:3118/health/frontend` / `3119`。
+2. `nginx -t` 校验语法。
+3. 校验 dispatch/Go HA + origin：
+   ```
+   node deploy/nuxt/check-bff-ha.mjs check deploy/nuxt/nginx-ssr.example.conf --env deploy/nuxt/ssr.env.example
+   sudo nginx -T > /tmp/nginx.conf
+   node deploy/nuxt/check-bff-ha.mjs check /tmp/nginx.conf --env deploy/nuxt/ssr.env.example
+   ```
+4. 滚动发布：先起新 Go/SSR slot 并探活，改 dispatch upstream 后 reload；旧 slot 留到连接清空。不要为了省事把 3187 upstream 删成单后端。
+5. 回滚：把 3187 dispatch upstream 指回旧 Go slot，仍保留两个 Go slot；不要改成单端口。
+
+检查器会拒绝：3187 dispatch 单 Go 后端、缺 peer backup、dispatch 里的字面量 Go `proxy_pass`、覆盖 BFF forwarded 头、`NUXT_BACKEND_ORIGIN` 指向 8080、网关路径指到 dispatch/BFF、缺 `proxy_next_upstream`/`tries`。外层 Node 单 slot 只告警，不会误报成这次根因。`non_idempotent` 只告警。
 
 ## 版本契约与发布打包
 
@@ -90,5 +129,5 @@ make release-ssr                       # seal → verify → stage
 
 ## 回滚
 
-- 停 `sub2api-ssr`，把 nginx 指回原来的静态入口即可；Go 未改动。
+- 把 3187 dispatch 的 `sub2api_go_bff` 指回旧 Go slot，保留两个 Go slot；不要改成单端口。外层 Node slot 按需保留。
 - 会话 cookie 只影响新前端：清 `sub2_session` 即可回到未登录态。
