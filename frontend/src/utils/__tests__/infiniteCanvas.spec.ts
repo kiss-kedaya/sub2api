@@ -58,6 +58,7 @@ describe('buildInfiniteCanvasImportUrl', () => {
     const url = new URL(href)
     expect(url.origin).toBe('https://kedaya.ai')
     expect(url.pathname).toBe('/canvas/')
+    expect(url.searchParams.get('bootstrap')).toBe('external-v1')
     expect(url.searchParams.get('apiKey')).toBe('sk-test')
     expect(url.searchParams.get('baseUrl')).toBe('https://kedaya.ai')
     expect(url.searchParams.get('theme')).toBe('dark')
