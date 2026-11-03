@@ -21,9 +21,12 @@ func diagnosticManager(t *testing.T) (*Manager, *memoryStore, *Task) {
 	m, err := New(store, t.TempDir(), Config{QuotaMiB: 32, RetentionDays: 7, ID1DiagnosticEnabled: true})
 	require.NoError(t, err)
 	t.Cleanup(m.Close)
-	tasks, err := m.Tasks(context.Background(), 20, 0)
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
+	var tasks []Task
+	require.Eventually(t, func() bool {
+		var taskErr error
+		tasks, taskErr = m.Tasks(context.Background(), 20, 0)
+		return taskErr == nil && len(tasks) == 1 && tasks[0].Status == "running"
+	}, time.Second, 10*time.Millisecond)
 	require.Equal(t, ID1DiagnosticMode, tasks[0].Mode)
 	require.True(t, tasks[0].SaveMedia)
 	return m, store, &tasks[0]
@@ -75,8 +78,10 @@ func TestID1DiagnosticCapturesSuccessFailureRetriesAndLargeBodiesOnlyForID1(t *t
 func TestID1DiagnosticRetainsPlainSuccessAndWebSocketMultipleTurns(t *testing.T) {
 	m, _, task := diagnosticManager(t)
 	s := m.Begin(Meta{UserID: 1, RequestID: "plain", Protocol: "http"})
+	require.NotNil(t, s)
 	s.ClientRequest([]byte(`{"input":"ok"}`), "application/json", nil)
 	s.Finish(200)
+	drain(t, m)
 	ws := m.Begin(Meta{UserID: 1, RequestID: "ws", Protocol: "websocket"})
 	require.NotNil(t, ws)
 	for i := 0; i < 2; i++ {
