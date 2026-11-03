@@ -252,6 +252,16 @@ func NewService(
 // startup and after every admin config save.
 func (s *Service) Reload(ctx context.Context) { s.reload(ctx) }
 
+// applyRPCThrottle publishes the configured pacing so every endpoint waits its
+// turn instead of firing together. Zero clears it.
+func applyRPCThrottle(cfg CryptoConfig) {
+	ms := cfg.RPCThrottleMs
+	if ms < 0 {
+		ms = 0
+	}
+	rpc.SetEndpointThrottleInterval(time.Duration(ms) * time.Millisecond)
+}
+
 func (s *Service) reload(ctx context.Context) {
 	cfg, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
 	if err != nil {
@@ -296,6 +306,7 @@ func (s *Service) reload(ctx context.Context) {
 	}
 	// Keep the selected chains' RPC pools available for the independent
 	// outflow guard even while new deposits and sweeps are disabled.
+	applyRPCThrottle(cfg)
 	s.pools = poolsForConfig(cfg, s.pools)
 	s.startRPCDiscoveryLocked()
 

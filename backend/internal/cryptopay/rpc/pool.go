@@ -130,6 +130,14 @@ type rpcResponse struct {
 }
 
 func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any) (json.RawMessage, error) {
+	// Pace per endpoint before building anything: a burst that the provider
+	// answers with 429 costs a full round-trip and, because Call rotates on
+	// failure, burns the next endpoint too.
+	if throttle := ThrottleFor(endpoint); throttle != nil {
+		if err := throttle.Wait(ctx); err != nil {
+			return nil, NewTransportFailure(err)
+		}
+	}
 	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: 1, Method: method, Params: params})
 	if err != nil {
 		return nil, &Failure{Kind: "request"}
