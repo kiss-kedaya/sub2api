@@ -515,6 +515,7 @@ import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
+import { shouldConfirmImmediateSchedulableToggle } from '@/utils/schedulableTimerState'
 
 // 弹窗只在点开时才需要：异步组件 + 模板里的 v-if 一起用，才能既拆出
 // AccountsView 的 829KB 主块，又不让它们在页面挂载时就预取。
@@ -2157,10 +2158,10 @@ const handleTimerExecuted = () => {
 const handleBulkToggleSchedulable = async (schedulable: boolean) => {
   const accountIds = [...selIds.value]
   if (!accountIds.length) return
-  // Only warn when at least one selected account has a recurring or pending
-  // one-shot timer. Accounts whose timer state is already known to be empty
-  // should switch immediately without an irrelevant destructive warning.
-  if (accountIds.some(id => timerScheduleState.get(id) === true)
+  // Only skip the warning when every selected account is known to have no
+  // recurring or pending one-shot timer. Unknown state must keep the warning:
+  // the timer lookup may still be loading or may have failed.
+  if (accountIds.some(id => shouldConfirmImmediateSchedulableToggle(timerScheduleState.get(id)))
     && !(await confirm(t('admin.accounts.timer.bulkOverrideConfirm')))) return
   try {
     const result = await adminAPI.accounts.bulkUpdate(accountIds, { schedulable })
@@ -2611,7 +2612,7 @@ const confirmCreateSparkShadow = async () => {
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
 const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
 const handleToggleSchedulable = async (a: Account) => {
-  if (timerScheduleState.get(a.id) === true
+  if (shouldConfirmImmediateSchedulableToggle(timerScheduleState.get(a.id))
     && !(await confirm(t('admin.accounts.timer.manualOverrideConfirm')))) return
   const nextSchedulable = !a.schedulable
   togglingSchedulable.value = a.id
