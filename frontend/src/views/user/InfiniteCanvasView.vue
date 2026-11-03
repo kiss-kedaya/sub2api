@@ -39,7 +39,6 @@
             :src="embedUrl"
             class="canvas-embed-frame"
             allow="clipboard-read; clipboard-write; fullscreen"
-            allowfullscreen
             :title="t('infiniteCanvas.title')"
           ></iframe>
         </div>

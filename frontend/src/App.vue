@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RouterView, useRouter, useRoute } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
 import NavigationProgress from '@/components/common/NavigationProgress.vue'
@@ -15,6 +15,7 @@ import { applyPlatformProfile } from '@/utils/platform'
 import { useNuxtUiLocale } from '@/plugins/nuxtUiLocale'
 import { applySiteTheme, normalizeSiteTheme, useSiteTheme } from '@/composables/useSiteTheme'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import RoutePageTransition from '@/components/layout/RoutePageTransition.vue'
 import { isConsoleLayoutRoute } from '@/components/layout/consoleShell'
 import { useClientAnchorNavigation } from '@/composables/useClientAnchorNavigation'
 
@@ -185,13 +186,9 @@ onMounted(async () => {
   <UApp :locale="nuxtUiLocale">
     <NavigationProgress />
     <AppLayout v-if="consoleShell">
-      <Transition name="page" mode="out-in">
-        <slot><RouterView /></slot>
-      </Transition>
+      <RoutePageTransition />
     </AppLayout>
-    <Transition v-else name="page" mode="out-in">
-      <slot><RouterView /></slot>
-    </Transition>
+    <RoutePageTransition v-else />
     <Toast />
     <AnnouncementPopup />
     <AdminComplianceDialog />

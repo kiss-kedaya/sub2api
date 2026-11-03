@@ -10,7 +10,7 @@ const read = (path: string) => readFileSync(resolve(here, path), 'utf8')
 
 describe('Prompt Audit integration surface', () => {
   it('registers an admin and risk-control guarded route', () => {
-    const router = read('../../../router/index.ts')
+    const router = read('../../../router/records.ts')
     expect(router).toContain("path: '/admin/prompt-audit'")
     const route = router.slice(router.indexOf("path: '/admin/prompt-audit'"), router.indexOf("path: '/admin/usage'"))
     expect(route).toContain('requiresAuth: true')
