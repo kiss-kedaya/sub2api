@@ -28,6 +28,12 @@ const authStore = useAuthStore()
 const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const ticketStore = useTicketNotificationStore()
+// Nuxt SSR exposes a `document` shim that has no event API; typeof checks are
+// not enough there. Both guards must test the method itself.
+function hasDomEvents(): boolean {
+  return typeof document !== 'undefined' && typeof document.addEventListener === 'function'
+}
+
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 
@@ -103,7 +109,7 @@ function onAdminComplianceRequired(event: Event) {
 watch(
   () => authStore.isAuthenticated,
   (isAuthenticated, oldValue) => {
-    if (typeof document === 'undefined') return
+    if (!hasDomEvents()) return
     if (isAuthenticated) {
       if (authStore.isAdmin && !authStore.isAdminObserver) {
         adminComplianceStore.fetchStatus().catch((error) => {
@@ -151,7 +157,7 @@ router.afterEach(() => {
 })
 
 onBeforeUnmount(() => {
-  if (typeof document === 'undefined') return
+  if (!hasDomEvents()) return
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
 })

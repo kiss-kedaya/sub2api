@@ -218,7 +218,9 @@ const { t } = useI18n()
 
 const desktopViewportQuery = '(min-width: 768px)'
 const isDesktopViewport = ref(
-  typeof window === 'undefined' ? true : window.matchMedia(desktopViewportQuery).matches
+  typeof window === 'undefined' || typeof window.matchMedia !== 'function'
+    ? true
+    : window.matchMedia(desktopViewportQuery).matches
 )
 
 const emit = defineEmits<{
@@ -377,7 +379,9 @@ const detachDesktopTableTracking = () => {
 }
 
 const attachDesktopTableTracking = () => {
-  if (typeof window === 'undefined') return
+  // Nuxt SSR installs a `window` shim without an event API, so a typeof check
+  // passes and the listener registration throws.
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
   checkScrollable()
   checkActionsColumnWidth()
   scrollTrackedEl = tableWrapperRef.value
@@ -651,9 +655,8 @@ const columnsSignature = computed(() =>
 watch(
   isDesktopViewport,
   async (isDesktop) => {
-    // Immediate watchers also run during SSR. No DOM listener may be attached
-    // until the component is running in a browser.
-    if (typeof window === 'undefined') return
+    // Immediate watchers also run during SSR. The shim has no event API.
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
     detachDesktopTableTracking()
     if (!isDesktop) return
     await nextTick()
