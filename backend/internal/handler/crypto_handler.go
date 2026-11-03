@@ -408,7 +408,10 @@ func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
 			return
 		}
 	}
-	summary, err := h.service.RunSweep(c.Request.Context(), dryRun)
+	// ?chain=bsc (repeatable, comma-separated) restricts the run to those chains.
+	// Absent means every configured chain, which is the historical behaviour.
+	chains := parseChainScope(c.QueryArray("chain"))
+	summary, err := h.service.RunSweepChains(c.Request.Context(), dryRun, chains)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -624,4 +627,27 @@ func (h *CryptoHandler) AdminAutoPickRPC(c *gin.Context) {
 	}
 	picked := cryptopay.ProbeBestRPCEndpoints(ctx, body.Chain, candidates, body.Exclude, body.Want)
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"picked": picked, "probed": len(candidates)}})
+}
+
+// parseChainScope flattens ?chain=a&chain=b and ?chain=a,b into a lowercase
+// allowlist. It never validates against a hard-coded set: the sweeper already
+// rejects chains it has no plan for, and an unknown name must not silently
+// widen scope to "all chains".
+func parseChainScope(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		for _, part := range strings.Split(raw, ",") {
+			chain := strings.ToLower(strings.TrimSpace(part))
+			if chain != "" {
+				out = append(out, chain)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

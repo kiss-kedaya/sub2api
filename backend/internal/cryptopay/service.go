@@ -478,7 +478,7 @@ func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
 				continue
 			}
 			maintCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-			summary, err := s.runSweep(maintCtx, false, false)
+			summary, err := s.runSweep(maintCtx, false, false, nil)
 			cancel()
 			if err != nil {
 				slog.Warn("[cryptopay] scheduled sweep failed", "error", err)
@@ -693,10 +693,16 @@ func (s *Service) InitializeWallet(ctx context.Context, depositMnemonic, hotMnem
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
 // Serialised by the caller via the admin route; sweeps are operator-driven.
 func (s *Service) RunSweep(ctx context.Context, dryRun bool) (summary *sweeper.Summary, err error) {
-	return s.runSweep(ctx, dryRun, true)
+	return s.runSweep(ctx, dryRun, true, nil)
 }
 
-func (s *Service) runSweep(ctx context.Context, dryRun, manual bool) (summary *sweeper.Summary, err error) {
+// RunSweepChains is RunSweep restricted to the named chains. An empty list
+// keeps the global behaviour, so existing callers are unaffected.
+func (s *Service) RunSweepChains(ctx context.Context, dryRun bool, chains []string) (summary *sweeper.Summary, err error) {
+	return s.runSweep(ctx, dryRun, true, chains)
+}
+
+func (s *Service) runSweep(ctx context.Context, dryRun, manual bool, chains []string) (summary *sweeper.Summary, err error) {
 	if !dryRun {
 		// Notify on the common result path: manual runs, scheduled sweeps and
 		// resumption of already-signed jobs must report the same failures.
@@ -730,6 +736,9 @@ func (s *Service) runSweep(ctx context.Context, dryRun, manual bool) (summary *s
 		}
 		defer revoke()
 		ctx = authorized
+	}
+	if len(chains) > 0 {
+		exec = exec.WithChains(chains)
 	}
 	if manual {
 		return exec.RunManualAndWait(ctx, dryRun)

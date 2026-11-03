@@ -1,7 +1,9 @@
 package sweeper
 
 import (
+	"context"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
@@ -92,5 +94,36 @@ func TestSweepEntrySkipsChainWithoutToken(t *testing.T) {
 	out, _ := exec.sweepOne(t.Context(), PlanEntry{Chain: "plasma", Address: "0x1", RawAmount: big.NewInt(1)}, false)
 	if out.Status != "failed" {
 		t.Fatalf("expected failed for tokenless chain, got %q", out.Status)
+	}
+}
+
+// The executor signs transactions, so it must refuse an entry for a chain the
+// operator did not name even if a (buggy) plan contains one.
+func TestExecutorRejectsEntryOutsideChainScope(t *testing.T) {
+	exec := &Executor{chains: normalizeChainScope([]string{"bsc"})}
+	out, err := exec.sweepOne(context.Background(), PlanEntry{
+		Chain:     "ethereum",
+		Address:   "0xaaa",
+		Token:     "0xusdt",
+		RawAmount: big.NewInt(1_000_000),
+		Decimals:  6,
+	}, true)
+	if err == nil {
+		t.Fatal("expected an error for an out-of-scope chain")
+	}
+	if out.Status != "failed" {
+		t.Fatalf("status = %q, want failed", out.Status)
+	}
+	// out.Error is the user-visible text and is deliberately sanitised by
+	// rpc.SafeError; assert on the returned error instead.
+	if !strings.Contains(err.Error(), "outside the requested sweep scope") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecutorEmptyScopeAllowsAnyChain(t *testing.T) {
+	exec := &Executor{}
+	if !exec.allowsChain("ethereum") {
+		t.Fatal("empty scope must not restrict chains")
 	}
 }

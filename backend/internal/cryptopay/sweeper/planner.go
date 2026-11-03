@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
@@ -77,6 +78,53 @@ type Planner struct {
 	reader BalanceReader
 	config Config
 	pools  map[string]nodeReader
+	// chains is an optional allowlist. Empty means every configured chain, so
+	// existing callers keep the global behaviour. An operator sweeping one chain
+	// sets it: a bug there must not be able to move funds on another chain.
+	chains []string
+}
+
+// WithChains restricts this planner to the given chains. Unknown or empty
+// entries are ignored; an empty result restores the global behaviour.
+func (p *Planner) WithChains(chains []string) *Planner {
+	scoped := *p
+	scoped.chains = normalizeChainScope(chains)
+	return &scoped
+}
+
+func normalizeChainScope(chains []string) []string {
+	if len(chains) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(chains))
+	out := make([]string, 0, len(chains))
+	for _, raw := range chains {
+		chain := strings.ToLower(strings.TrimSpace(raw))
+		if chain == "" {
+			continue
+		}
+		if _, dup := seen[chain]; dup {
+			continue
+		}
+		seen[chain] = struct{}{}
+		out = append(out, chain)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (p *Planner) allowsChain(chain string) bool {
+	if len(p.chains) == 0 {
+		return true
+	}
+	for _, allowed := range p.chains {
+		if allowed == chain {
+			return true
+		}
+	}
+	return false
 }
 
 func NewPlanner(db *sql.DB, reader BalanceReader, config Config, pools map[string]*rpc.Pool) *Planner {
@@ -100,6 +148,9 @@ func (p *Planner) BuildManualPlan(ctx context.Context) (*Plan, error) {
 func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 	plan := &Plan{DryRun: true}
 	for chain, minAmount := range p.config.MinPerAddress {
+		if !p.allowsChain(chain) {
+			continue
+		}
 		balances, err := p.reader.UnsweptBalances(ctx, chain)
 		if err != nil {
 			return nil, fmt.Errorf("unswept balances %s: %w", chain, err)

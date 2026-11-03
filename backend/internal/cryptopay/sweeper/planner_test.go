@@ -126,3 +126,63 @@ func TestPlannerEstimatesGasTopUp(t *testing.T) {
 		t.Fatalf("top-up = %s, want %s", plan.Entries[0].GasTopUpAmount, want)
 	}
 }
+
+// A chain-scoped plan must never contain an entry for another chain, even when
+// that chain has plenty of sweepable balance. This is the guarantee an operator
+// relies on when sweeping BSC while Ethereum has gas_pending jobs.
+func TestPlannerChainScopeExcludesOtherChains(t *testing.T) {
+	reader := &fakeReader{balances: map[string][]AddressBalance{
+		"bsc": {
+			{Chain: "bsc", Address: "0xaaa", Token: "0xusdt", Raw: big.NewInt(50_000_000), Decimals: 6},
+		},
+		"ethereum": {
+			{Chain: "ethereum", Address: "0xbbb", Token: "0xusdt", Raw: big.NewInt(50_000_000), Decimals: 6},
+		},
+		"polygon": {
+			{Chain: "polygon", Address: "0xccc", Token: "0xusdt", Raw: big.NewInt(50_000_000), Decimals: 6},
+		},
+	}}
+	planner := NewPlanner(nil, reader, Config{
+		MinPerAddress: map[string]float64{"bsc": 1, "ethereum": 1, "polygon": 1},
+	}, nil).WithChains([]string{"BSC"})
+
+	plan, err := planner.BuildPlan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Entries) != 1 {
+		t.Fatalf("expected exactly one entry, got %d", len(plan.Entries))
+	}
+	if plan.Entries[0].Chain != "bsc" {
+		t.Fatalf("entry chain = %q, want bsc", plan.Entries[0].Chain)
+	}
+}
+
+// An empty scope must keep the historical behaviour: every configured chain.
+func TestPlannerEmptyScopeKeepsGlobalBehaviour(t *testing.T) {
+	reader := &fakeReader{balances: map[string][]AddressBalance{
+		"bsc":      {{Chain: "bsc", Address: "0xaaa", Token: "0xusdt", Raw: big.NewInt(50_000_000), Decimals: 6}},
+		"ethereum": {{Chain: "ethereum", Address: "0xbbb", Token: "0xusdt", Raw: big.NewInt(50_000_000), Decimals: 6}},
+	}}
+	planner := NewPlanner(nil, reader, Config{
+		MinPerAddress: map[string]float64{"bsc": 1, "ethereum": 1},
+	}, nil).WithChains(nil)
+
+	plan, err := planner.BuildPlan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Entries) != 2 {
+		t.Fatalf("expected both chains, got %d entries", len(plan.Entries))
+	}
+}
+
+func TestNormalizeChainScope(t *testing.T) {
+	got := normalizeChainScope([]string{" BSC ", "bsc", "Ethereum", ""})
+	if len(got) != 2 || got[0] != "bsc" || got[1] != "ethereum" {
+		t.Fatalf("normalizeChainScope = %v", got)
+	}
+	if normalizeChainScope([]string{" ", ""}) != nil {
+		t.Fatal("blank input must collapse to nil (global behaviour)")
+	}
+}
