@@ -247,7 +247,7 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	// Last line of defence: never sign for a chain outside the operator scope.
 	if !e.allowsChain(entry.Chain) {
 		err := fmt.Errorf("chain %q is outside the requested sweep scope", entry.Chain)
-		out.Error = rpc.SafeError(err)
+		out.Error = SafeError(err)
 		return out, err
 	}
 	if entry.RawAmount != nil {
@@ -256,7 +256,7 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	}
 	_, _, err := e.validateEntry(entry)
 	if err != nil {
-		out.Error = rpc.SafeError(err)
+		out.Error = SafeError(err)
 		return out, err
 	}
 	if dryRun {
@@ -266,17 +266,17 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	if !common.IsHexAddress(e.config.HotWalletEVM) || isZeroAddress(e.config.HotWalletEVM) ||
 		strings.EqualFold(e.config.HotWalletEVM, entry.Address) {
 		err = fmt.Errorf("sweep refused: invalid receiving address")
-		out.Error = rpc.SafeError(err)
+		out.Error = SafeError(err)
 		return out, err
 	}
 	if e.config.Confirmations[entry.Chain] == 0 {
 		err = fmt.Errorf("sweep refused: confirmation depth is not configured for %s", entry.Chain)
-		out.Error = rpc.SafeError(err)
+		out.Error = SafeError(err)
 		return out, err
 	}
 	job, err := e.createJob(ctx, entry)
 	if err != nil {
-		out.Error = rpc.SafeError(err)
+		out.Error = SafeError(err)
 		return out, err
 	}
 	return e.resume(ctx, job)
@@ -367,9 +367,12 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		return e.jobError(ctx, job, err)
 	}
 	if native.Cmp(transferGasBudget(price)) < 0 {
-		if job.GasConfirmed {
-			return e.jobError(ctx, job, fmt.Errorf("confirmed gas top-up is insufficient; automatic repeat funding refused"))
-		}
+		// A confirmed top-up that no longer covers the budget is not a reason to
+		// stop. The previous top-up was sized against the gas price at that
+		// moment; the price moved. Refusing to fund again left the job retrying
+		// the same failing check forever — the record never advanced and the
+		// chain silently lost this address. Top up the difference like any other
+		// shortfall; prepareGas already caps the amount by the operator budget.
 		if err := e.prepareGas(ctx, pool, job, e.gasTopUpAmount(job.Chain, transferGasBudget(price), native), price); err != nil {
 			if errors.Is(err, errGasPayerPending) {
 				// Another job still owns the gas nonce. This is a deferral,
@@ -409,12 +412,26 @@ func (e *Executor) finishSweep(ctx context.Context, pool *rpc.Pool, job *sweepJo
 	return job.outcome(), nil
 }
 
+// maxSweepAttempts bounds how many times one job may fail and be retried. Every
+// saveJob bumps revision, so it doubles as an attempt counter without a schema
+// change. Without a bound a job whose failure is permanent — a token the chain
+// refuses, an RPC that always rejects the payload — retries on every pass
+// forever, and because reservedPredicate keeps it reserved it also blocks that
+// address from ever being planned again. Bounding it moves the row to `failed`
+// so it leaves the queue and an operator can see it.
+const maxSweepAttempts = 25
+
 func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (SweepEntry, error) {
 	var storage *persistenceError
 	if errors.As(cause, &storage) {
 		return pendingError(job, cause)
 	}
-	job.Error = rpc.SafeError(cause)
+	job.Error = SafeError(cause)
+	if job.Revision >= maxSweepAttempts {
+		// Terminal: stop retrying and stop reserving the address.
+		job.Status = "failed"
+		job.Error = SafeError(fmt.Errorf("%s (gave up after %d attempts)", job.Error, job.Revision))
+	}
 	err := e.saveJob(ctx, job)
 	return pendingError(job, joinErrors(cause, err))
 }
@@ -424,7 +441,7 @@ func pendingError(job *sweepJob, err error) (SweepEntry, error) {
 	if out.Status == "swept" { // final persistence may have failed
 		out.Status = "pending"
 	}
-	out.Error = rpc.SafeError(err)
+	out.Error = SafeError(err)
 	return out, err
 }
 
