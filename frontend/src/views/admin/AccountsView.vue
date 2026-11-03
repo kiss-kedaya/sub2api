@@ -221,6 +221,7 @@
                 :account-id="row.id"
                 :refresh-key="timerRefreshKey"
                 @executed="handleTimerExecuted"
+                @schedule-state="setTimerScheduleState(row.id, $event)"
               />
             </div>
           </template>
@@ -2141,6 +2142,10 @@ const normalizeBulkSchedulableResult = (
   }
 }
 const timerRefreshKey = ref(0)
+const timerScheduleState = reactive(new Map<number, boolean>())
+const setTimerScheduleState = (accountId: number, hasSchedule: boolean) => {
+  timerScheduleState.set(accountId, hasSchedule)
+}
 let timerListRefresh: ReturnType<typeof setTimeout> | undefined
 const handleTimerExecuted = () => {
   if (timerListRefresh !== undefined) return
@@ -2152,7 +2157,11 @@ const handleTimerExecuted = () => {
 const handleBulkToggleSchedulable = async (schedulable: boolean) => {
   const accountIds = [...selIds.value]
   if (!accountIds.length) return
-  if (!(await confirm(t('admin.accounts.timer.bulkOverrideConfirm')))) return
+  // Only warn when at least one selected account has a recurring or pending
+  // one-shot timer. Accounts whose timer state is already known to be empty
+  // should switch immediately without an irrelevant destructive warning.
+  if (accountIds.some(id => timerScheduleState.get(id) === true)
+    && !(await confirm(t('admin.accounts.timer.bulkOverrideConfirm')))) return
   try {
     const result = await adminAPI.accounts.bulkUpdate(accountIds, { schedulable })
     timerRefreshKey.value++
@@ -2602,7 +2611,8 @@ const confirmCreateSparkShadow = async () => {
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
 const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
 const handleToggleSchedulable = async (a: Account) => {
-  if (!(await confirm(t('admin.accounts.timer.manualOverrideConfirm')))) return
+  if (timerScheduleState.get(a.id) === true
+    && !(await confirm(t('admin.accounts.timer.manualOverrideConfirm')))) return
   const nextSchedulable = !a.schedulable
   togglingSchedulable.value = a.id
   try {

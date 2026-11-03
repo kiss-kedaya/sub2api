@@ -120,6 +120,17 @@ describe('one-shot schedulable timer', () => {
     expect(wrapper.get('[data-test="timer-form"]').classes()).toContain('max-w-full')
     expect(wrapper.get('[data-test="timer-zone"]').attributes('aria-label')).toBeTruthy()
   })
+  it('reports whether a pending or recurring schedule exists', async () => {
+    api.list.mockResolvedValueOnce(snapshot())
+    wrapper = mountTimer({ accountId: 7 })
+    await flushPromises()
+    expect(wrapper.emitted('schedule-state')).toEqual([[false]])
+
+    api.list.mockResolvedValueOnce({ ...snapshot(), tasks: [task] })
+    await wrapper.setProps({ refreshKey: 1 })
+    await flushPromises()
+    expect(wrapper.emitted('schedule-state')).toEqual([[false], [true]])
+  })
   it('requests account reconciliation after a persisted execution changes the switch', async () => {
     api.list.mockResolvedValueOnce({ ...snapshot(), tasks: [task] })
     wrapper = mountTimer({ accountId: 7 })

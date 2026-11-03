@@ -151,7 +151,10 @@ import { schedulableTimersAPI, type SchedulableTimer, type TimerAction, type Tim
 import { COMMON_TIMEZONES, formatTimezoneOffset } from '@/components/admin/channel/types'
 
 const props = defineProps<{ accountId: number; refreshKey?: number }>()
-const emit = defineEmits<{ executed: [] }>()
+const emit = defineEmits<{
+  executed: []
+  'schedule-state': [hasSchedule: boolean]
+}>()
 const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const app = useAppStore()
 const snapshot = ref<TimerSnapshot | null>(null)
@@ -235,6 +238,9 @@ async function load() {
     const recurringApplied = !!previousRecurring && !!data.recurring?.enabled &&
       previousRecurring.last_applied_at !== data.recurring.last_applied_at && !!data.recurring.last_applied_at
     snapshot.value = data
+    // The parent uses this lightweight signal to avoid showing the destructive
+    // "立即切换" confirmation when this account has no timer configuration.
+    emit('schedule-state', data.tasks.some(task => task.status === 'pending') || !!data.recurring?.enabled)
     if (executed || recurringApplied) emit('executed')
     epoch = Date.parse(data.server_now)
     received = performance.now()
