@@ -113,15 +113,17 @@ func (h *CryptoHandler) requireCryptoRisk(c *gin.Context) bool {
 	return true
 }
 
-// CryptoUserAccess leaves ordinary JWT access unchanged outside admin test mode.
+// CryptoUserAccess keeps customer crypto endpoints open on every instance that
+// can serve them. CRYPTO_INSTANCE_ENABLED only removes local scanning work; it
+// must not turn the deposit page into a 503 on a delegated frontend.
 func (h *CryptoHandler) CryptoUserAccess(c *gin.Context) {
-	if !service.CryptoInstanceEnabled() {
-		response.ErrorWithDetails(c, 503, "crypto is disabled on this instance", "CRYPTO_DISABLED", nil)
+	if service.CryptoAdminTestReadOnly() {
+		response.ErrorWithDetails(c, http.StatusForbidden, "customer crypto routes are disabled on this test instance", "CRYPTO_TEST_MODE_READ_ONLY", nil)
 		c.Abort()
 		return
 	}
-	if service.CryptoAdminTestReadOnly() {
-		response.ErrorWithDetails(c, http.StatusForbidden, "customer crypto routes are disabled on this test instance", "CRYPTO_TEST_MODE_READ_ONLY", nil)
+	if !service.CryptoUserAPIReady(h.securityConfig) {
+		response.ErrorWithDetails(c, 503, "crypto is disabled on this instance", "CRYPTO_DISABLED", nil)
 		c.Abort()
 		return
 	}
