@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
+	"log/slog"
 	"math"
 	"math/big"
 	"strings"
@@ -135,6 +136,24 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 		}
 	}
 	summary = &Summary{DryRun: dryRun}
+	// A sweep run is otherwise silent: an operator investigating "why did
+	// nothing happen" has no record of what was attempted, what was skipped and
+	// why. Log the run envelope and every decision that drops a job.
+	startedAt := time.Now()
+	scoped := e.chains
+	if len(scoped) == 0 {
+		scoped = []string{"all"}
+	}
+	slog.Info("[cryptopay] sweep run starting", "dry_run", dryRun, "chains", scoped)
+	defer func() {
+		slog.Info("[cryptopay] sweep run finished",
+			"dry_run", dryRun, "chains", scoped,
+			"planned", summary.Planned, "swept", summary.Swept,
+			"failed", summary.Failed, "pending", summary.Pending,
+			"gas_topups", summary.GasTopUp,
+			"elapsed_ms", time.Since(startedAt).Milliseconds(),
+			"error", rpc.SafeError(err))
+	}()
 	if !dryRun {
 		conn, release, lockErr := e.lock(ctx)
 		if lockErr != nil {
@@ -155,7 +174,11 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 	if !dryRun {
 		jobs, loadErr := e.loadUnfinished(ctx)
 		if loadErr != nil {
+			slog.Error("[cryptopay] sweep could not load unfinished jobs", "error", rpc.SafeError(loadErr))
 			return summary, loadErr
+		}
+		if len(jobs) > 0 {
+			slog.Info("[cryptopay] resuming unfinished sweep jobs", "count", len(jobs))
 		}
 		for _, job := range jobs {
 			key := addressKey(job.Chain, job.Address)
@@ -195,10 +218,22 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 		key := addressKey(entry.Chain, entry.Address)
 		pair := key + "|" + strings.ToLower(entry.Token)
 		if seen[pair] || blocked[key] {
+			// A silent skip is indistinguishable from a bug when the operator is
+			// asking why an address never got swept. Record which of the two it
+			// was and the amount involved.
+			slog.Info("[cryptopay] sweep entry skipped",
+				"chain", entry.Chain, "address", entry.Address,
+				"token", entry.Token, "amount", entry.AmountDecimal,
+				"reason", map[bool]string{true: "already handled this run", false: "address blocked by an earlier failure"}[seen[pair]])
 			continue
 		}
 		seen[pair] = true
 		out, sweepErr := e.sweepOne(ctx, entry, dryRun)
+		slog.Info("[cryptopay] sweep entry result",
+			"chain", out.Chain, "address", out.Address, "job_id", out.JobID,
+			"amount", out.Amount, "status", out.Status,
+			"gas_tx", out.GasTxHash, "sweep_tx", out.SweepTxHash,
+			"error", out.Error)
 		if !dryRun && out.Status != "swept" {
 			blocked[key] = true
 		}
@@ -409,11 +444,28 @@ func (e *Executor) finishSweep(ctx context.Context, pool *rpc.Pool, job *sweepJo
 	return job.outcome(), nil
 }
 
+// rawErrorText renders the complete error chain for the server log. Unlike
+// rpc.SafeError it does not redact, so an operator can see the provider's own
+// message. It is never returned over the API or stored in the database.
+func rawErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (SweepEntry, error) {
 	var storage *persistenceError
 	if errors.As(cause, &storage) {
 		return pendingError(job, cause)
 	}
+	// The stored/displayed error is sanitised, but the operator needs the raw
+	// cause to tell "RPC said 429" from "the wallet refused to sign". Log the
+	// unsanitised error here; it stays in the server log, never in the API.
+	slog.Error("[cryptopay] sweep job failed",
+		"job_id", job.ID, "chain", job.Chain, "address", job.Address,
+		"token", job.Token, "status", job.Status, "revision", job.Revision,
+		"raw_error", rawErrorText(cause), "safe_error", rpc.SafeError(cause))
 	job.Error = rpc.SafeError(cause)
 	err := e.saveJob(ctx, job)
 	return pendingError(job, joinErrors(cause, err))
