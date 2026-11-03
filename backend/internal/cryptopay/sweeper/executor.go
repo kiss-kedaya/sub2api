@@ -56,6 +56,30 @@ type Executor struct {
 	// polling. The nonblocking Run contract remains available to observers.
 	confirmationDeadline time.Time
 	confirmationInterval time.Duration
+	// chains is an optional allowlist mirrored from the planner. It is checked
+	// again per entry right before signing, so a planner bug can never move
+	// funds on a chain the operator did not name.
+	chains []string
+}
+
+// WithChains restricts this executor to the given chains. Empty keeps the
+// global behaviour so existing callers are unaffected.
+func (e *Executor) WithChains(chains []string) *Executor {
+	scoped := *e
+	scoped.chains = normalizeChainScope(chains)
+	return &scoped
+}
+
+func (e *Executor) allowsChain(chain string) bool {
+	if len(e.chains) == 0 {
+		return true
+	}
+	for _, allowed := range e.chains {
+		if allowed == chain {
+			return true
+		}
+	}
+	return false
 }
 
 func NewExecutor(db *sql.DB, pools map[string]*rpc.Pool, wallet TransactionWallet,
@@ -162,7 +186,7 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 			}
 		}
 	}
-	plan, err := NewPlanner(e.db, e.reader, e.config, e.pools).BuildPlan(ctx)
+	plan, err := NewPlanner(e.db, e.reader, e.config, e.pools).WithChains(e.chains).BuildPlan(ctx)
 	if err != nil {
 		return summary, joinErrors(runErrors, err)
 	}
@@ -220,6 +244,12 @@ func (e *Executor) validateEntry(entry PlanEntry) (TokenSpec, *rpc.Pool, error) 
 
 func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (SweepEntry, error) {
 	out := SweepEntry{Chain: entry.Chain, Token: entry.Token, Address: entry.Address, Status: "failed"}
+	// Last line of defence: never sign for a chain outside the operator scope.
+	if !e.allowsChain(entry.Chain) {
+		err := fmt.Errorf("chain %q is outside the requested sweep scope", entry.Chain)
+		out.Error = rpc.SafeError(err)
+		return out, err
+	}
 	if entry.RawAmount != nil {
 		entry.RawAmount = new(big.Int).Set(entry.RawAmount)
 		out.Amount = entry.RawAmount.String()
