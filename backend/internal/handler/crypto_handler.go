@@ -394,6 +394,11 @@ func (h *CryptoHandler) AdminSweepPlan(c *gin.Context) {
 // AdminRunSweep executes the sweep. ?dry_run=0 moves funds; the default is
 // a dry run so a stray click can never move money.
 // POST /api/v1/admin/crypto/sweep/run
+// manualSweepDeadline bounds an operator-triggered sweep. It is deliberately
+// generous: the run is bounded per chain anyway, and cutting it short leaves
+// jobs half-done rather than failed-and-retryable.
+const manualSweepDeadline = 30 * time.Minute
+
 func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
 	if h.service == nil {
 		response.BadRequest(c, "crypto channel unavailable")
@@ -411,7 +416,16 @@ func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
 	// ?chain=bsc (repeatable, comma-separated) restricts the run to those chains.
 	// Absent means every configured chain, which is the historical behaviour.
 	chains := parseChainScope(c.QueryArray("chain"))
-	summary, err := h.service.RunSweepChains(c.Request.Context(), dryRun, chains)
+	// A sweep outlives the HTTP request. Tying it to c.Request.Context() meant
+	// that as soon as the browser gave up — 60 addresses take minutes, far
+	// longer than a page waits — every in-flight job was cancelled with
+	// context.Canceled and the whole queue failed without a single transaction
+	// being sent. The run is already serialized by sweepMu and bounded by its
+	// own per-chain budget, so detaching it from the request is safe; the admin
+	// still gets the completed summary when it finishes within the deadline.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), manualSweepDeadline)
+	defer cancel()
+	summary, err := h.service.RunSweepChains(ctx, dryRun, chains)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -434,9 +448,10 @@ func (h *CryptoHandler) AdminSweepRecords(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": records})
 }
 
-// AdminReconcileSweep resolves one stuck sweep job against the chain.
+// AdminReconcileSweep checks one stuck sweep job against the chain without
+// releasing a reservation based only on a missing receipt.
 // POST /api/v1/admin/crypto/sweep/records/:id/reconcile
-// It never signs a transaction, so a blocked address can be cleared safely.
+// It never signs or broadcasts a transaction.
 func (h *CryptoHandler) AdminReconcileSweep(c *gin.Context) {
 	if h.service == nil {
 		response.BadRequest(c, "crypto channel unavailable")
