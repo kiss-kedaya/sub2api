@@ -269,9 +269,23 @@ async function submitCode() {
     }
   } catch (error) {
     if (current === generation) {
-      reportError(error)
-      if (isCryptoGrantRejected(error)) clearCryptoGrant()
-      else if (operationStarted) {
+      if (isCryptoGrantRejected(error)) {
+        // The grant was rejected after this dialog already spent a code on it.
+        // Clearing the grant alone left the dialog on 'verify' with the old
+        // callback armed, so the next code replayed a whole operation the
+        // server had just refused — and every replay also re-sent the operator
+        // intent. Drop the pending action and say plainly that nothing ran.
+        clearCryptoGrant()
+        errorMessage.value = t('admin.crypto.securityGrantExpired')
+        // 'unavailable' is terminal and does not offer the code form, so a
+        // second code cannot replay the operation. errorMessage renders above.
+        stage.value = 'unavailable'
+        code.value = ''
+        settle(false)
+      } else {
+        reportError(error)
+      }
+      if (!isCryptoGrantRejected(error) && operationStarted) {
         // A failed network response does not prove a transfer/config mutation
         // failed. End this attempt; never offer to replay it as a code retry.
         stage.value = 'unavailable'
