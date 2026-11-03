@@ -1536,7 +1536,9 @@ watch(
   () => {
     syncManagedUsageState()
   },
-  { immediate: true, deep: true }
+  // The parent replaces these objects instead of mutating them, so a deep traversal of
+  // the usage payload on every cell adds cost without catching anything extra.
+  { immediate: true }
 )
 
 watch(isBatchManaged, (managed, wasManaged) => {

@@ -4481,28 +4481,66 @@ const convertRoutingRulesToApiFormat = (
   return hasValidRules ? result : null;
 };
 
-// 将 API 格式的路由规则转换为 UI 格式（需要加载账号名称）
-const convertApiFormatToRoutingRules = async (
-  apiFormat: Record<string, number[]> | null,
-): Promise<ModelRoutingRule[]> => {
-  if (!apiFormat) return [];
+// 编辑弹窗里的账号名称只是展示用，不能挡在打开弹窗前面：旧实现逐个 await 账号详情，
+// 规则一多，点「编辑」就要等好几秒。这里先同步铺出 #id 占位，弹窗立刻打开，
+// 名称再按小并发补齐。
+const editAccountNameCache = new Map<number, string>();
 
-  const rules: ModelRoutingRule[] = [];
-  for (const [pattern, accountIds] of Object.entries(apiFormat)) {
-    // 加载账号信息
-    const accounts: SimpleAccount[] = [];
-    for (const id of accountIds) {
+const buildRoutingRulesFromApiFormat = (
+  apiFormat: Record<string, number[]> | null,
+): ModelRoutingRule[] => {
+  if (!apiFormat) return [];
+  return Object.entries(apiFormat).map(([pattern, accountIds]) => ({
+    pattern,
+    accounts: accountIds.map((id) => ({
+      id,
+      name: editAccountNameCache.get(id) ?? `#${id}`,
+    })),
+  }));
+};
+
+const resolveAccountNames = async (
+  ids: number[],
+  onName: (id: number, name: string) => void,
+) => {
+  const unique = [...new Set(ids)];
+  const pending: number[] = [];
+  for (const id of unique) {
+    const cached = editAccountNameCache.get(id);
+    if (cached) onName(id, cached);
+    else pending.push(id);
+  }
+  if (pending.length === 0) return;
+
+  const CONCURRENCY = 4;
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < pending.length) {
+      const id = pending[cursor];
+      cursor += 1;
       try {
         const account = await adminAPI.accounts.getById(id);
-        accounts.push({ id: account.id, name: account.name });
+        editAccountNameCache.set(id, account.name);
+        onName(id, account.name);
       } catch {
-        // 如果账号不存在，仍然显示 ID
-        accounts.push({ id, name: `#${id}` });
+        // 无法解析名称时仍显示 #<id>，提示管理员清理脏 ID。
       }
     }
-    rules.push({ pattern, accounts });
-  }
-  return rules;
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker),
+  );
+};
+
+const hydrateEditRoutingRuleNames = async (rules: ModelRoutingRule[]) => {
+  const ids = rules.flatMap((rule) => rule.accounts.map((account) => account.id));
+  if (ids.length === 0) return;
+  await resolveAccountNames(ids, (id, name) => {
+    for (const rule of editModelRoutingRules.value) {
+      const target = rule.accounts.find((account) => account.id === id);
+      if (target && target.name !== name) target.name = name;
+    }
+  });
 };
 
 const editForm = reactive({
@@ -5381,22 +5419,25 @@ const handleEdit = async (group: AdminGroup) => {
   };
   editCodexManifestAccountNames.value = {};
   for (const id of editCodexManifestConfig.value.account_ids) {
-    adminAPI.accounts
-      .getById(id)
-      .then((account) => {
-        editCodexManifestAccountNames.value = {
-          ...editCodexManifestAccountNames.value,
-          [id]: account.name,
-        };
-      })
-      .catch(() => {
-        // 无法解析名称时由组件回退展示 #<id>，提示管理员清理脏 ID。
-      });
+    const cachedName = editAccountNameCache.get(id);
+    if (cachedName) editCodexManifestAccountNames.value[id] = cachedName;
   }
-  // 加载模型路由规则（异步加载账号名称）
-  editModelRoutingRules.value = await convertApiFormatToRoutingRules(
-    group.model_routing,
+  const missingManifestIDs = editCodexManifestConfig.value.account_ids.filter(
+    (id) => !editAccountNameCache.has(id),
   );
+  if (missingManifestIDs.length > 0) {
+    void resolveAccountNames(missingManifestIDs, (id, name) => {
+      if (editingGroup.value?.id !== group.id) return;
+      editCodexManifestAccountNames.value = {
+        ...editCodexManifestAccountNames.value,
+        [id]: name,
+      };
+    });
+  }
+  // 模型路由规则先同步铺开（名称用 #id 占位），账号名称在弹窗打开后再补齐。
+  const routingRules = buildRoutingRulesFromApiFormat(group.model_routing);
+  editModelRoutingRules.value = routingRules;
+  if (routingRules.length > 0) void hydrateEditRoutingRuleNames(routingRules);
   loadModelAllowlistCandidates("edit", group.id, group.platform);
   // Open "advanced options" when the group already uses one of them, so nothing set stays hidden.
   editAdvancedOpen.value =

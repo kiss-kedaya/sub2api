@@ -523,4 +523,47 @@ describe('DataTable', () => {
 
     expect(wrapper.find('[data-test="mobile-sort-bar"]').exists()).toBe(false)
   })
+
+  it('re-stamps rendered rows when a new page replaces the row objects', async () => {
+    const firstPage = [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }]
+    const wrapper = mount(DataTable, {
+      props: { columns: [{ key: 'name', label: 'Name' }], data: firstPage, clickableRows: true }
+    })
+    await wrapper.vm.$nextTick()
+
+    const secondPage = [{ id: 9, name: 'Nine' }, { id: 10, name: 'Ten' }]
+    await wrapper.setProps({ data: secondPage })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.findAll('tbody tr[data-row-id]').map(row => row.attributes('data-row-id'))).toEqual(['9', '10'])
+
+    // rowClick must resolve to the new row object, not the row that used to sit there.
+    await wrapper.findAll('tbody tr[data-row-id]')[1].trigger('click')
+    expect(wrapper.emitted('rowClick')).toEqual([[secondPage[1]]])
+  })
+
+  it('does not re-measure rendered rows when an unrelated prop changes', async () => {
+    const data = Array.from({ length: 60 }, (_, index) => ({ id: index + 1, name: `Row ${index + 1}` }))
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [{ key: 'name', label: 'Name' }],
+        data,
+        rowKey: 'id',
+        virtualizeThreshold: 3,
+        estimateRowHeight: 40
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const exposed = (wrapper.vm as any).virtualizer
+    const instance = exposed?.value ?? exposed
+    const measureSpy = vi.spyOn(instance, 'measureElement')
+
+    await wrapper.setProps({ clickableRows: true })
+    await wrapper.vm.$nextTick()
+
+    // The window did not change, so the re-render must not walk the rows again and
+    // force a layout measurement on every one of them (the old onUpdated hook did).
+    expect(measureSpy).not.toHaveBeenCalled()
+  })
 })

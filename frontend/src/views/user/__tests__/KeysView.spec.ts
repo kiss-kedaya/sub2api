@@ -53,6 +53,13 @@ const messages: Record<string, string> = {
   'keys.group': 'Group',
   'keys.smartRouting': 'Smart routing',
   'keys.smartRoutingMore': '+{count}',
+  'keys.smartRoutingPrimaryRoute': 'Primary route',
+  'keys.smartRoutingOtherRoutes': 'Other routes ({count})',
+  'keys.smartRoutingMoveUp': 'Move up',
+  'keys.smartRoutingMoveDown': 'Move down',
+  'keys.smartRoutingRemove': 'Remove',
+  'keys.smartRoutingRoute': 'Route',
+  'keys.smartRoutingEmpty': 'No groups added yet',
   'keys.smartRoutingChangeInEditor': 'Edit smart-routing keys in the dialog',
   'keys.clickToChangeGroup': 'Click to change group',
   'keys.id': 'ID',
@@ -971,6 +978,64 @@ describe('user KeysView mutations', () => {
     expect(updateKey).toHaveBeenCalled()
     expect(listKeys).not.toHaveBeenCalled()
     expect(wrapper.getComponent({ name: 'DataTable' }).props('data')[0].name).toBe('renamed')
+    wrapper.unmount()
+  })
+
+
+  it('collapses secondary smart-routing groups behind a disclosure and keeps ordering actions', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'Claude', platform: 'anthropic' },
+      { id: 2, name: 'GPT', platform: 'openai' },
+      { id: 3, name: 'Grok', platform: 'grok' },
+    ])
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('Routed key')
+
+    await wrapper.get('[data-test="key-smart-routing"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-test="smart-routing-editor"]').exists()).toBe(true)
+
+    const addRoute = wrapper.getComponent('[data-test="smart-route-add"]')
+    addRoute.vm.$emit('update:modelValue', 1)
+    await nextTick()
+    addRoute.vm.$emit('update:modelValue', 2)
+    await nextTick()
+    addRoute.vm.$emit('update:modelValue', 3)
+    await nextTick()
+
+    // Only the primary route is on screen until the disclosure is opened.
+    expect(wrapper.get('[data-test="smart-route-primary"]').text()).toContain('Claude')
+    expect(wrapper.findAll('[data-test="smart-route-item"]')).toHaveLength(0)
+    expect(wrapper.get('[data-test="smart-routes-toggle"]').text()).toContain('Other routes (2)')
+
+    await wrapper.get('[data-test="smart-routes-toggle"]').trigger('click')
+    await flushPromises()
+    const items = wrapper.findAll('[data-test="smart-route-item"]')
+    expect(items).toHaveLength(2)
+    expect(items[0].text()).toContain('Route 2')
+    expect(items[0].text()).toContain('GPT')
+    expect(items[1].text()).toContain('Route 3')
+    expect(items[1].text()).toContain('Grok')
+
+    // Moving the first secondary route up promotes it to the primary slot.
+    await items[0].get('[data-test="smart-route-up"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="smart-route-primary"]').text()).toContain('GPT')
+    expect(wrapper.findAll('[data-test="smart-route-item"]')[0].text()).toContain('Claude')
+
+    // Removing a secondary route keeps the panel open and updates the count.
+    await wrapper.findAll('[data-test="smart-route-item"]')[0].get('[data-test="smart-route-remove"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-test="smart-route-item"]')).toHaveLength(1)
+    expect(wrapper.get('[data-test="smart-routes-toggle"]').text()).toContain('Other routes (1)')
+
+    // Adding a route back appends it to the ordered list without collapsing the panel.
+    wrapper.getComponent('[data-test="smart-route-add"]').vm.$emit('update:modelValue', 4)
+    await nextTick()
+    await flushPromises()
+    expect(wrapper.findAll('[data-test="smart-route-item"]')).toHaveLength(2)
+    expect(wrapper.find('[data-test="smart-routes-list"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })

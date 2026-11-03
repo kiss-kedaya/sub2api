@@ -369,8 +369,20 @@
           <template #cell-actions="{ row }">
             <div class="flex items-center justify-end gap-0.5">
               <AdminRowAction :label="t('admin.accounts.accountDetail.open')" icon="eye" data-test="open-account-detail" @click="openDetail(row)" />
-              <AdminRowAction :label="t('common.edit')" icon="edit" @click="handleEdit(row)" />
-              <AdminRowAction :label="t('common.more')" icon="more" @click="openMenu(row, $event)" />
+              <AdminRowAction
+                :label="t('common.edit')"
+                icon="edit"
+                @pointerenter="scheduleAccountDetailPrefetch(row)"
+                @focus="prefetchAccountDetail(row)"
+                @click="handleEdit(row)"
+              />
+              <AdminRowAction
+                :label="t('common.more')"
+                icon="more"
+                @pointerenter="scheduleAccountDetailPrefetch(row)"
+                @focus="prefetchAccountDetail(row)"
+                @click="openMenu(row, $event)"
+              />
             </div>
           </template>
         </DataTable>
@@ -506,7 +518,10 @@ import { fetchAllAccountIds } from '@/utils/accountSelection'
 // 弹窗只在点开时才需要：异步组件 + 模板里的 v-if 一起用，才能既拆出
 // AccountsView 的 829KB 主块，又不让它们在页面挂载时就预取。
 const CreateAccountModal = defineAsyncComponent(() => import('@/components/account/CreateAccountModal.vue'))
-const EditAccountModal = defineAsyncComponent(() => import('@/components/account/EditAccountModal.vue'))
+// 218KB / 4.7k lines: parsing it on the first click is what made 编辑 feel stuck.
+// The loader is kept separate so the chunk can be fetched while the list is idle.
+const loadEditAccountModal = () => import('@/components/account/EditAccountModal.vue')
+const EditAccountModal = defineAsyncComponent(loadEditAccountModal)
 const BulkEditAccountModal = defineAsyncComponent(() => import('@/components/account/BulkEditAccountModal.vue'))
 const SyncFromCrsModal = defineAsyncComponent(() => import('@/components/account/SyncFromCrsModal.vue'))
 const TempUnschedStatusModal = defineAsyncComponent(() => import('@/components/account/TempUnschedStatusModal.vue'))
@@ -850,9 +865,11 @@ const queueBatchedUsage = (account: Account, options?: { force?: boolean }) => {
   queuedUsageBatchForce = queuedUsageBatchForce || force
 
   if (usageBatchFlushTimer !== null) return
+  // Scrolling a virtualized table mounts a new window of usage cells every frame; a
+  // short debounce folds that burst into one batch request instead of several.
   usageBatchFlushTimer = setTimeout(() => {
     void flushQueuedUsageBatch()
-  }, 0)
+  }, 120)
 }
 
 const refreshTodayStatsBatch = async () => {
@@ -1885,18 +1902,61 @@ const cols = computed(() =>
   )
 )
 
-const accountDetailLoading = new Set<number>()
+// Hovering a row action fetches the full account once, so the click that opens the
+// modal (edit / test / stats) does not wait on a round trip. One-shot: the entry is
+// consumed by the action that uses it, and stale entries are dropped.
+const ACCOUNT_DETAIL_PREFETCH_TTL = 30_000
+const prefetchedAccountDetails = new Map<number, { at: number; account: Account }>()
+const accountDetailInflight = new Map<number, Promise<Account>>()
+
+const requestAccountDetail = (id: number): Promise<Account> => {
+  const inflight = accountDetailInflight.get(id)
+  if (inflight) return inflight
+  const request = adminAPI.accounts.getById(id).finally(() => {
+    accountDetailInflight.delete(id)
+  })
+  accountDetailInflight.set(id, request)
+  return request
+}
+
+const takePrefetchedAccountDetail = (id: number): Account | null => {
+  const entry = prefetchedAccountDetails.get(id)
+  if (!entry) return null
+  prefetchedAccountDetails.delete(id)
+  return Date.now() - entry.at <= ACCOUNT_DETAIL_PREFETCH_TTL ? entry.account : null
+}
+
+// 鼠标扫过整列操作按钮时不应该每个都去拉详情：停在同一行 120ms 才算真的要打开。
+let accountDetailPrefetchTimer: ReturnType<typeof setTimeout> | null = null
+const scheduleAccountDetailPrefetch = (account: Pick<AccountListItem, 'id'>) => {
+  if (typeof window === 'undefined') return
+  if (accountDetailPrefetchTimer !== null) clearTimeout(accountDetailPrefetchTimer)
+  accountDetailPrefetchTimer = setTimeout(() => {
+    accountDetailPrefetchTimer = null
+    prefetchAccountDetail(account)
+  }, 120)
+}
+
+const prefetchAccountDetail = (account: Pick<AccountListItem, 'id'>) => {
+  if (typeof window === 'undefined') return
+  const entry = prefetchedAccountDetails.get(account.id)
+  if (entry && Date.now() - entry.at <= ACCOUNT_DETAIL_PREFETCH_TTL) return
+  if (accountDetailInflight.has(account.id)) return
+  // A failed prefetch stays silent: the click path reports it.
+  requestAccountDetail(account.id)
+    .then(detail => { prefetchedAccountDetails.set(account.id, { at: Date.now(), account: detail }) })
+    .catch(() => {})
+}
+
 const loadAccountDetails = async (account: Pick<AccountListItem, 'id'>): Promise<Account | null> => {
-  if (accountDetailLoading.has(account.id)) return null
-  accountDetailLoading.add(account.id)
+  const prefetched = takePrefetchedAccountDetail(account.id)
+  if (prefetched) return prefetched
   try {
-    return await adminAPI.accounts.getById(account.id)
+    return await requestAccountDetail(account.id)
   } catch (error) {
     console.error('Failed to load account details:', error)
     appStore.showError(extractApiErrorMessage(error, t('common.error')))
     return null
-  } finally {
-    accountDetailLoading.delete(account.id)
   }
 }
 
@@ -2334,6 +2394,7 @@ const handleProbeUpstreamBilling = async (account: Account) => {
   }
 }
 const handleAccountUpdated = (updatedAccount: Account) => {
+  prefetchedAccountDetails.delete(updatedAccount.id)
   patchAccountInList(updatedAccount)
   enterAutoRefreshSilentWindow()
 }
@@ -2596,8 +2657,22 @@ const proxyExpiryText = (p: AccountProxy): string => {
 
 // 表格滚动时关闭行操作菜单（顶部工具菜单由 UDropdownMenu 自己定位和关闭）。
 const handleScroll = (event: Event) => {
+  // Capturing window scroll also sees the table's own scroll container, which fires on
+  // every frame while scrolling. Nothing to do unless the row menu is open.
+  if (!menu.show) return
   if (event.target instanceof Element && event.target.closest('.action-menu-content')) return
   menu.show = false
+}
+
+// The edit modal is the biggest lazily loaded chunk on this page. Fetch it while the
+// list is idle so the first 编辑 click only mounts it instead of parsing it too.
+let warmModalTimer: ReturnType<typeof setTimeout> | null = null
+const warmAccountModals = () => {
+  if (typeof window === 'undefined') return
+  const warm = () => { void loadEditAccountModal().catch(() => {}) }
+  const requestIdle = (window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number }).requestIdleCallback
+  if (requestIdle) requestIdle(warm, { timeout: 3000 })
+  else warmModalTimer = setTimeout(warm, 1500)
 }
 
 // The bulk bar renders twice (toolbar actions, footer selection helpers); both share these handlers.
@@ -2646,6 +2721,7 @@ onMounted(async () => {
     console.error('Failed to load groups:', groupsResult.reason)
   }
   window.addEventListener('scroll', handleScroll, true)
+  warmAccountModals()
 
   if (autoRefreshEnabled.value) {
     autoRefreshCountdown.value = autoRefreshIntervalSeconds.value
@@ -2657,6 +2733,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
   clearTimeout(timerListRefresh)
+  if (accountDetailPrefetchTimer !== null) {
+    clearTimeout(accountDetailPrefetchTimer)
+    accountDetailPrefetchTimer = null
+  }
+  if (warmModalTimer !== null) {
+    clearTimeout(warmModalTimer)
+    warmModalTimer = null
+  }
   upstreamBillingRateAbortController?.abort()
   if (usageBatchFlushTimer !== null) {
     clearTimeout(usageBatchFlushTimer)

@@ -5,6 +5,39 @@
 
 import { i18n, getLocale } from '@/i18n'
 
+// Intl constructors are expensive (tens of microseconds each on ICU) and tables call
+// these helpers for every visible cell on every render. Cache one formatter per
+// locale + option set so scrolling a table does not rebuild thousands of instances.
+const FORMATTER_CACHE_LIMIT = 64
+const numberFormatCache = new Map<string, Intl.NumberFormat>()
+const dateTimeFormatCache = new Map<string, Intl.DateTimeFormat>()
+
+function cachedNumberFormat(key: string, create: () => Intl.NumberFormat): Intl.NumberFormat {
+  const cached = numberFormatCache.get(key)
+  if (cached) return cached
+  if (numberFormatCache.size >= FORMATTER_CACHE_LIMIT) numberFormatCache.clear()
+  const formatter = create()
+  numberFormatCache.set(key, formatter)
+  return formatter
+}
+
+function stableDateFormatKey(options: Intl.DateTimeFormatOptions): string {
+  return Object.keys(options)
+    .sort()
+    .map(key => `${key}:${String((options as Record<string, unknown>)[key])}`)
+    .join(',')
+}
+
+function cachedDateTimeFormat(locale: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${locale}|${stableDateFormatKey(options)}`
+  const cached = dateTimeFormatCache.get(key)
+  if (cached) return cached
+  if (dateTimeFormatCache.size >= FORMATTER_CACHE_LIMIT) dateTimeFormatCache.clear()
+  const formatter = new Intl.DateTimeFormat(locale, options)
+  dateTimeFormatCache.set(key, formatter)
+  return formatter
+}
+
 /**
  * 格式化相对时间
  * @param date 日期字符串或 Date 对象
@@ -40,16 +73,13 @@ export function formatNumber(num: number | null | undefined): string {
   if (num === null || num === undefined) return '0'
 
   const locale = getLocale()
-  const absNum = Math.abs(num)
+  const notation = Math.abs(num) >= 10000 ? 'compact' : 'standard'
 
-  // Use Intl.NumberFormat for compact notation if supported and needed
-  // Note: Compact notation in 'zh' uses '万/亿', which is appropriate for Chinese
-  const formatter = new Intl.NumberFormat(locale, {
-    notation: absNum >= 10000 ? 'compact' : 'standard',
+  // Compact notation in 'zh' uses '万/亿', which is appropriate for Chinese.
+  return cachedNumberFormat(`${locale}|${notation}`, () => new Intl.NumberFormat(locale, {
+    notation,
     maximumFractionDigits: 1
-  })
-
-  return formatter.format(num)
+  })).format(num)
 }
 
 /**
@@ -66,12 +96,12 @@ export function formatCurrency(amount: number | null | undefined, currency: stri
   // For very small amounts, show more decimals
   const fractionDigits = amount > 0 && amount < 0.01 ? 6 : 2
 
-  return new Intl.NumberFormat(locale, {
+  return cachedNumberFormat(`${locale}|${currency}|${fractionDigits}`, () => new Intl.NumberFormat(locale, {
     style: 'currency',
     currency: currency,
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits
-  }).format(amount)
+  })).format(amount)
 }
 
 /**
@@ -118,7 +148,7 @@ export function formatDate(
   if (isNaN(d.getTime())) return ''
 
   const locale = localeOverride ?? getLocale()
-  return new Intl.DateTimeFormat(locale, options).format(d)
+  return cachedDateTimeFormat(locale, options).format(d)
 }
 
 /**
