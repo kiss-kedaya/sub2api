@@ -935,3 +935,59 @@ func BenchmarkFrontendServerServeIndexHTML(b *testing.B) {
 		server.serveIndexHTML(c)
 	}
 }
+
+// The SPA is the only frontend now. These three behaviours are what makes a
+// static bundle work behind a reverse proxy; breaking any of them produces a
+// page that loads but cannot talk to the API, or an API call that returns HTML.
+func TestSPADeployContract(t *testing.T) {
+	t.Run("api prefixes never fall back to index.html", func(t *testing.T) {
+		// An API 404 must stay JSON. Serving index.html here is the classic
+		// "e.value.filter is not a function" failure in the browser.
+		for _, path := range []string{
+			"/api/v1/settings/public",
+			"/api/v1/auth/login",
+			"/v1/chat/completions",
+			"/v1/responses",
+			"/v1beta/models",
+			"/health",
+			"/readyz",
+			"/setup/status",
+		} {
+			require.True(t, shouldBypassEmbeddedFrontend(path),
+				"API path must bypass the SPA fallback: %s", path)
+		}
+	})
+
+	t.Run("client routes fall back to index.html", func(t *testing.T) {
+		// Deep links and refreshes: the server has no file for these, so they
+		// must render the shell and let vue-router resolve them.
+		for _, path := range []string{
+			"/admin/accounts",
+			"/admin/redeem",
+			"/admin/crypto",
+			"/dashboard",
+			"/keys",
+			"/usage",
+			"/deposit",
+			"/login",
+		} {
+			require.False(t, shouldBypassEmbeddedFrontend(path),
+				"client route must reach the SPA fallback: %s", path)
+			require.False(t, isEmbeddedStaticAssetPath(strings.TrimPrefix(path, "/")),
+				"client route must not be treated as a hashed asset: %s", path)
+		}
+	})
+
+	t.Run("missing hashed assets 404 instead of returning html", func(t *testing.T) {
+		// Vue lazy-imports by hash. Returning index.html with 200 makes the
+		// dynamic import parse HTML as JS and fail opaquely.
+		for _, path := range []string{
+			"assets/index-DEADBEEF.js",
+			"assets/AccountsView-DEADBEEF.js",
+			"assets/index-DEADBEEF.css",
+		} {
+			require.True(t, isEmbeddedStaticAssetPath(path),
+				"hashed asset must 404 when absent: %s", path)
+		}
+	})
+}

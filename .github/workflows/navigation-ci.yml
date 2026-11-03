@@ -11,7 +11,7 @@ on:
       - '.github/workflows/navigation-ci.yml'
   push:
     branches:
-      - fix/nuxt-client-navigation-20261102
+      - main
     paths:
       - 'frontend/src/App.vue'
       - 'frontend/src/components/layout/**'
