@@ -14,6 +14,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"maps"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -61,6 +63,12 @@ type CryptoConfig struct {
 
 	// RPC endpoints per chain; comma-separated list for rotation.
 	RPC map[string]string `json:"rpc"`
+
+	// RPCLimits records what each endpoint accepts in one eth_getLogs.
+	// Keyed by endpoint URL. Without it the scanner can only discover a limit
+	// by being rejected, which costs a request per attempt and lets one strict
+	// provider in a rotation throttle the whole chain.
+	RPCLimits map[string]RPCEndpointLimits `json:"rpc_limits,omitempty"`
 
 	// Sweep settings.
 	SweepGlobalThreshold float64            `json:"sweep_global_threshold"`
@@ -133,6 +141,7 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	cfg.Chains = slices.Clone(cfg.Chains)
 	cfg.RPC = maps.Clone(cfg.RPC)
+	cfg.RPCLimits = maps.Clone(cfg.RPCLimits)
 	cfg.Confirmations = maps.Clone(cfg.Confirmations)
 	cfg.ScanRange = maps.Clone(cfg.ScanRange)
 	cfg.SweepMinPerAddress = maps.Clone(cfg.SweepMinPerAddress)
@@ -408,4 +417,64 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 		out.SweepAuto = *p.SweepAuto
 	}
 	return out
+}
+
+// configFingerprint renders the parts of a config that change runtime
+// behaviour into a stable string. It deliberately covers the fields an operator
+// edits to unblock a chain — endpoints, ranges, confirmations, chain list — and
+// ignores fields that only affect the next scheduled sweep, because reloading
+// for those would churn RPC pools for no reason.
+func configFingerprint(cfg CryptoConfig) string {
+	var b strings.Builder
+	b.WriteString("enabled=")
+	b.WriteString(strconv.FormatBool(cfg.Enabled))
+	b.WriteString("|chains=")
+	b.WriteString(strings.Join(cfg.Chains, ","))
+	for _, chain := range sortedKeys(cfg.RPC) {
+		b.WriteString("|rpc.")
+		b.WriteString(chain)
+		b.WriteString("=")
+		b.WriteString(cfg.RPC[chain])
+	}
+	for _, endpoint := range sortedKeys(cfg.RPCLimits) {
+		limit := cfg.RPCLimits[endpoint]
+		b.WriteString("|limit.")
+		b.WriteString(endpoint)
+		b.WriteString("=")
+		b.WriteString(strconv.FormatUint(limit.MaxBlocks, 10))
+		b.WriteString("/")
+		b.WriteString(strconv.Itoa(limit.MaxAddresses))
+	}
+	for _, chain := range sortedKeys(cfg.ScanRange) {
+		b.WriteString("|range.")
+		b.WriteString(chain)
+		b.WriteString("=")
+		b.WriteString(strconv.Itoa(cfg.ScanRange[chain]))
+	}
+	for _, chain := range sortedKeys(cfg.Confirmations) {
+		b.WriteString("|conf.")
+		b.WriteString(chain)
+		b.WriteString("=")
+		b.WriteString(strconv.Itoa(cfg.Confirmations[chain]))
+	}
+	return b.String()
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// RPCEndpointLimits is the per-endpoint eth_getLogs capability an operator can
+// declare so the scanner sizes each query correctly instead of discovering the
+// limit by rejection.
+type RPCEndpointLimits struct {
+	// MaxBlocks caps the block span of one eth_getLogs. 0 = unknown.
+	MaxBlocks uint64 `json:"max_blocks,omitempty"`
+	// MaxAddresses caps how many addresses may appear in the topic filter.
+	MaxAddresses int `json:"max_addresses,omitempty"`
 }
