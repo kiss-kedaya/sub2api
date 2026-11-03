@@ -13,18 +13,6 @@ docker run -d \
   ghcr.io/kiss-kedaya/sub2api:<version>
 ```
 
-## Nuxt SSR Frontend Image
-
-The Go image embeds the legacy Vite SPA for rollback. The Nuxt 4 SSR frontend runs as a separate Node image, built from the same commit:
-
-```bash
-pnpm --dir frontend install --frozen-lockfile
-pnpm --dir frontend run build
-pnpm --dir frontend run build:ssr
-docker build -f deploy/nuxt/Dockerfile -t <local-image-name> frontend
-```
-
-Point `NUXT_BACKEND_ORIGIN` at the Go container, then route page traffic and `/api/v1/**` to this container. Gateway paths (`/v1/**`, SSE, WebSocket) stay on Go. Session key and full contract: [nuxt/README.md](./nuxt/README.md).
 
 ## Docker Compose
 

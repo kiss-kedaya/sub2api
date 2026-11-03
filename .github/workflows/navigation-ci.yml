@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'frontend/src/App.vue'
-      - 'frontend/app/app.vue'
       - 'frontend/src/components/layout/**'
       - 'frontend/src/composables/useClientAnchorNavigation.ts'
       - 'frontend/src/views/TicketsView.vue'
@@ -15,7 +14,6 @@ on:
       - fix/nuxt-client-navigation-20261102
     paths:
       - 'frontend/src/App.vue'
-      - 'frontend/app/app.vue'
       - 'frontend/src/components/layout/**'
       - 'frontend/src/composables/useClientAnchorNavigation.ts'
       - 'frontend/src/views/TicketsView.vue'

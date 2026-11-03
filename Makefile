@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend build-ssr verify-embed verify-ssr release-ssr test test-backend test-frontend test-frontend-critical
+.PHONY: build build-backend build-frontend verify-embed verify-spa release-spa test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
 	src/composables/__tests__/useSiteTheme.spec.ts \
@@ -117,19 +117,12 @@ build-frontend:
 verify-embed:
 	@pnpm --dir frontend run verify:embed
 
-# Nuxt/Nitro SSR 产物。Nuxt 4.6.3 要求 Node ^22.22.3 或 ^24.15（CI 用 24.22.x）。
-build-ssr:
-	@pnpm --dir frontend run build:ssr
+# 唯一的发布形态：Vite SPA 静态产物嵌进 Go 二进制。
+# 契约由 deploy/spa/verify-spa-bundle.mjs 断言（index.html、assets、无 SSR 残留）。
+verify-spa:
+	@node deploy/spa/verify-spa-bundle.mjs frontend backend/internal/web/dist
 
-verify-ssr:
-	@pnpm --dir frontend run verify:ssr
-
-# 把 Go 二进制（-tags=embed，内含 SPA 回滚页）与 SSR 产物合成一个发布目录：
-# release.json 绑定同一 commit，dist/ssr/ 可直接打包上传。
-release-ssr: build-frontend build-ssr build-backend verify-embed verify-ssr
-	@node deploy/nuxt/release.mjs seal --ssr frontend/.output --binary backend/bin/server --spa-dist backend/internal/web/dist --out release.json
-	@node deploy/nuxt/release.mjs verify --release release.json --ssr frontend/.output --binary backend/bin/server --spa-dist backend/internal/web/dist
-	@node deploy/nuxt/release.mjs stage --release release.json --ssr frontend/.output --binary backend/bin/server --out dist/ssr
+release-spa: build-frontend build-backend verify-embed verify-spa
 
 # 运行测试（后端 + 前端）
 # Public repository guard. Run before every commit; CI runs the same script.
