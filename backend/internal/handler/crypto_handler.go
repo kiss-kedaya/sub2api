@@ -425,9 +425,9 @@ func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
 	// still gets the completed summary when it finishes within the deadline.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), manualSweepDeadline)
 	defer cancel()
-	// Asynchronous by default: the run takes minutes and must not hold a
-	// request open. ?async=0 keeps the blocking form for scripts.
-	if c.DefaultQuery("async", "1") != "0" {
+	// New clients explicitly opt into asynchronous execution. Preserve the
+	// summary response for existing clients and already-open browser tabs.
+	if c.Query("async") == "1" {
 		state, startErr := h.service.StartSweepAsync(dryRun, chains)
 		if startErr != nil {
 			response.ErrorFrom(c, startErr)

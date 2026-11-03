@@ -444,28 +444,17 @@ func (e *Executor) finishSweep(ctx context.Context, pool *rpc.Pool, job *sweepJo
 	return job.outcome(), nil
 }
 
-// rawErrorText renders the complete error chain for the server log. Unlike
-// rpc.SafeError it does not redact, so an operator can see the provider's own
-// message. It is never returned over the API or stored in the database.
-func rawErrorText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
 func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (SweepEntry, error) {
 	var storage *persistenceError
 	if errors.As(cause, &storage) {
 		return pendingError(job, cause)
 	}
-	// The stored/displayed error is sanitised, but the operator needs the raw
-	// cause to tell "RPC said 429" from "the wallet refused to sign". Log the
-	// unsanitised error here; it stays in the server log, never in the API.
+	// Transport errors may contain endpoint credentials. The same sanitized
+	// boundary applies to operator logs and persisted payment records.
 	slog.Error("[cryptopay] sweep job failed",
 		"job_id", job.ID, "chain", job.Chain, "address", job.Address,
 		"token", job.Token, "status", job.Status, "revision", job.Revision,
-		"raw_error", rawErrorText(cause), "safe_error", rpc.SafeError(cause))
+		"error", rpc.SafeError(cause))
 	job.Error = rpc.SafeError(cause)
 	err := e.saveJob(ctx, job)
 	return pendingError(job, joinErrors(cause, err))
