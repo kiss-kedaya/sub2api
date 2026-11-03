@@ -67,7 +67,7 @@ func (e *Executor) lock(ctx context.Context) (*sql.Conn, func() error, error) {
 
 type persistenceError struct{ cause error }
 
-func (e *persistenceError) Error() string { return "persist sweep job: " + SafeError(e.cause) }
+func (e *persistenceError) Error() string { return "persist sweep job: " + rpc.SafeError(e.cause) }
 func (e *persistenceError) Unwrap() error { return e.cause }
 
 func (e *Executor) queries() jobDB {
