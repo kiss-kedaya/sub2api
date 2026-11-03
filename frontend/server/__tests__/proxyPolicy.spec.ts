@@ -3,6 +3,8 @@ import {
   API_PREFIX,
   applySessionContract,
   checkCsrf,
+  CUSTOM_REQUEST_HEADERS,
+  SERVER_OVERWRITTEN_HEADERS,
   filterRequestHeaders,
   filterResponseHeaders,
   isAllowedMethod,
@@ -252,5 +254,33 @@ describe('csrf policy', () => {
     expect(checkCsrf({ ...login, origin: 'https://evil.example' }).ok).toBe(false)
     // logout is not a credential route: it must echo the token.
     expect(checkCsrf({ ...base, path: '/api/v1/auth/logout', csrfHeader: undefined }).ok).toBe(false)
+  })
+})
+
+describe('custom header registry', () => {
+  // Every registered custom header must survive the allowlist, otherwise the
+  // browser sends it and the backend silently never sees it. This is the exact
+  // bug that made crypto sweeps fail with CRYPTO_GRANT_REQUIRED after the
+  // backend had already accepted the authenticator code.
+  it.each(Object.keys(CUSTOM_REQUEST_HEADERS))('forwards %s', (name) => {
+    const out = filterRequestHeaders({ [name]: 'probe' })
+    expect(out[name]).toBe('probe')
+  })
+
+  it('never forwards cookie or authorization from the browser', () => {
+    const out = filterRequestHeaders({
+      cookie: 'sub2_session=secret',
+      authorization: 'Bearer stolen',
+      'x-crypto-grant': 'cpg1.payload.mac',
+    })
+    expect(out.cookie).toBeUndefined()
+    expect(out.authorization).toBeUndefined()
+    expect(out['x-crypto-grant']).toBe('cpg1.payload.mac')
+  })
+
+  it('marks the origin headers as server-overwritten', () => {
+    expect(SERVER_OVERWRITTEN_HEADERS).toEqual(
+      expect.arrayContaining(['x-forwarded-host', 'x-forwarded-proto'])
+    )
   })
 })

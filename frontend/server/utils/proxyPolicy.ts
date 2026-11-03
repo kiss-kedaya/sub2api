@@ -44,6 +44,35 @@ export function readCsrfHeader(
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
+/**
+ * Custom request headers the BFF forwards to the Go API.
+ *
+ * The proxy drops everything not listed here, so a missing entry fails silently:
+ * the browser sends the header, the backend never sees it, and the user gets a
+ * confusing authorization error. Register every custom header HERE with the
+ * reason it exists. `proxyPolicy.spec.ts` walks this registry and asserts each
+ * entry survives `filterRequestHeaders`, so adding a header without forwarding
+ * it (or removing the allowlist entry) fails CI instead of production.
+ *
+ * `serverOverwrites` marks headers the BFF sets itself: the client value is
+ * discarded so a browser cannot spoof its own origin.
+ */
+export const CUSTOM_REQUEST_HEADERS = {
+  'x-admin-ui-request': { reason: 'Marks admin console requests for audit.' },
+  'x-client-request-id': { reason: 'Correlates one browser action with its backend trace.' },
+  'x-crypto-grant': { reason: 'Short-lived 2FA payment grant; without it every sweep fails CRYPTO_GRANT_REQUIRED.' },
+  'x-crypto-totp': { reason: 'One-time authenticator code for wallet operations.' },
+  'x-forwarded-host': { reason: 'Real public host; Node fetch cannot set Host behind SSR.', serverOverwrites: true },
+  'x-forwarded-proto': { reason: 'Real public scheme for same-origin checks.', serverOverwrites: true },
+  'x-request-id': { reason: 'Client-supplied trace id echoed by the gateway.' },
+  'x-user-ui-request': { reason: 'Marks user console requests for audit.' },
+} as const satisfies Record<string, { reason: string; serverOverwrites?: boolean }>
+
+/** Headers the BFF always overwrites; never trust the incoming value. */
+export const SERVER_OVERWRITTEN_HEADERS: readonly string[] = Object.entries(CUSTOM_REQUEST_HEADERS)
+  .filter(([, meta]) => meta.serverOverwrites)
+  .map(([name]) => name)
+
 /** Request headers worth forwarding. Everything else is dropped. */
 const REQUEST_HEADER_ALLOWLIST = new Set([
   'accept',
@@ -56,14 +85,7 @@ const REQUEST_HEADER_ALLOWLIST = new Set([
   'referer',
   'range',
   'user-agent',
-  'x-admin-ui-request',
-  'x-client-request-id',
-  // Node's fetch cannot override Host, so the backend would see the loopback
-  // address. These carry the real public origin for same-origin checks.
-  'x-forwarded-host',
-  'x-forwarded-proto',
-  'x-request-id',
-  'x-user-ui-request',
+  ...Object.keys(CUSTOM_REQUEST_HEADERS),
 ])
 
 /** Response headers worth forwarding. Set-Cookie and CORS headers never are. */

@@ -5,6 +5,7 @@ import {
   resolveUpstreamPath,
   resolveClientIp,
   isTrustedPeer,
+  SERVER_OVERWRITTEN_HEADERS,
 } from '../../../utils/proxyPolicy'
 import {
   clearServerSession,
@@ -65,9 +66,11 @@ export default defineEventHandler(async (event) => {
       : ((await readRawBody(event, false)) as Buffer | undefined) ?? null
 
   // Overwrite, never trust: the browser must not be able to spoof the public
-  // origin the Go API uses for same-origin return_url validation.
-  headers['x-forwarded-host'] = host
-  headers['x-forwarded-proto'] = protocol
+  // origin the Go API uses for same-origin return_url validation. The names come
+  // from the registry so this stays in sync with the forward allowlist.
+  for (const name of SERVER_OVERWRITTEN_HEADERS) {
+    headers[name] = name === 'x-forwarded-host' ? host : protocol
+  }
 
   const result = await handleBffRequest({
     method,
