@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'frontend/src/App.vue'
-      - 'frontend/app/app.vue'
       - 'frontend/src/components/layout/**'
       - 'frontend/src/composables/useClientAnchorNavigation.ts'
       - 'frontend/src/views/TicketsView.vue'
@@ -12,10 +11,9 @@ on:
       - '.github/workflows/navigation-ci.yml'
   push:
     branches:
-      - fix/nuxt-client-navigation-20261102
+      - main
     paths:
       - 'frontend/src/App.vue'
-      - 'frontend/app/app.vue'
       - 'frontend/src/components/layout/**'
       - 'frontend/src/composables/useClientAnchorNavigation.ts'
       - 'frontend/src/views/TicketsView.vue'

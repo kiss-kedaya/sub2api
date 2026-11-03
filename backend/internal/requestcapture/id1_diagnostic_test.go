@@ -214,9 +214,18 @@ func TestDiagnosticUserAllowlistCapturesMultipleUsers(t *testing.T) {
 		tasks, taskErr := m.Tasks(context.Background(), 20, 0)
 		return taskErr == nil && len(tasks) == 1 && tasks[0].Status == "running"
 	}, time.Second, 10*time.Millisecond)
+	// Begin is deliberately non-blocking: when the manager lock is held (a
+	// background drain, another admission) it returns nil and counts an
+	// admission_busy skip. That is correct on the forwarding path, so a test
+	// asserting every call succeeds must retry rather than assume contention
+	// never happens — under parallel CI load the second call used to lose the
+	// race and fail with "Expected value not to be nil".
 	for _, userID := range []int64{1, 5279} {
-		s := m.Begin(Meta{UserID: userID, RequestID: uuid.NewString()})
-		require.NotNil(t, s)
+		var s *Session
+		require.Eventually(t, func() bool {
+			s = m.Begin(Meta{UserID: userID, RequestID: uuid.NewString()})
+			return s != nil
+		}, 5*time.Second, 5*time.Millisecond, "Begin kept returning nil for user %d", userID)
 		s.ClientRequest([]byte(`{"input":"diagnostic"}`), "application/json", nil)
 		s.Finish(200)
 	}

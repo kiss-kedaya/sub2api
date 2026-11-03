@@ -24,9 +24,10 @@ describe('navigation contract', () => {
   })
 
   it('mounts the console shell once and keys pages by route pattern', () => {
-    expect(read('../../../App.vue')).toContain('<AppLayout v-if="consoleShell">')
-    expect(read('../../../App.vue')).toContain('useClientAnchorNavigation(router)')
+    const app = read('../../../App.vue')
+    expect(app).toContain('<UApp :locale="nuxtUiLocale">')
+    expect(app).toContain('<AppLayout v-if="consoleShell">')
+    expect(app).toContain('useClientAnchorNavigation(router)')
     expect(read('../AppLayout.vue')).toContain('CONSOLE_SHELL_KEY')
-    expect(read('../../../../app/app.vue')).toContain(':page-key="pageKey"')
   })
 })

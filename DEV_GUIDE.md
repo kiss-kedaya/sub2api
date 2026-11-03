@@ -8,7 +8,7 @@
 |------|------|
 | **上游仓库** | Wei-Shaw/sub2api |
 | **Fork 仓库** | kiss-kedaya/sub2api（origin）；upstream 为 Wei-Shaw/sub2api |
-| **技术栈** | Go 后端 (Ent ORM + Gin) + Nuxt 4 SSR / Vue 3 前端 (pnpm) |
+| **技术栈** | Go 后端 (Ent ORM + Gin) + Vue 3 SPA 前端 (pnpm，产物嵌入二进制) |
 | **数据库** | PostgreSQL 16 + Redis |
 | **包管理** | 后端: go modules, 前端: **pnpm**（不是 npm） |
 
@@ -50,7 +50,6 @@ npm install -g pnpm
 | **backend-ci.yml** | push, pull_request | 单元测试 + 集成测试 + golangci-lint v2.13 |
 | **security-scan.yml** | push, pull_request, 每周一 | govulncheck + gosec + pnpm audit |
 | **release.yml** | tag `v*` | 构建 Go 二进制与内嵌 SPA（PR 不触发） |
-| **ssr-release.yml** | Release published / 手动 | 用同一个 tag 构建 Nuxt SSR，绑定 `release.json` 后上传 |
 
 ### CI 要求
 
@@ -76,9 +75,6 @@ cd frontend && pnpm install --frozen-lockfile
 pnpm run build
 pnpm run verify:embed
 
-# Nuxt SSR（Nitro node-server，正式页面用）
-pnpm run build:ssr
-pnpm run verify:ssr
 ```
 
 ## 四、常见坑点 & 解决方案
@@ -251,7 +247,7 @@ git add ent/       # 生成的文件也要提交
 - [ ] `pnpm-lock.yaml` 已同步（如果改了 package.json）
 - [ ] 所有 test stub 补全新接口方法（如果改了 interface）
 - [ ] Ent 生成的代码已提交（如果改了 schema）
-- [ ] 改了前端时，`pnpm run build` 与 `pnpm run build:ssr` 都能通过，`verify:embed` / `verify:ssr` 无报错
+- [ ] 改了前端时，`pnpm run build` 通过，`verify:embed` 与 `make verify-spa` 无报错
 
 ## 五、常用命令速查
 
@@ -298,16 +294,14 @@ pnpm install
 # 开发服务器
 pnpm dev
 
-# 旧版 SPA 构建（输出到 backend/internal/web/dist）
+# SPA 构建（输出到 backend/internal/web/dist，随后嵌入 Go 二进制）
 pnpm build
+pnpm run verify:embed
 
-# Nuxt SSR 构建（输出到 frontend/.output）
-pnpm build:ssr
-pnpm verify:ssr
-
-# 两套产物 + Go 二进制绑成一个发布
+# 契约校验 + Go 二进制
 cd ..
-make release-ssr
+make verify-spa
+make release-spa
 ```
 
 ### 后端操作
@@ -345,14 +339,12 @@ sub2api/
 │   └── config.yaml          # 配置文件
 ├── frontend/
 │   ├── app/                 # Nuxt 入口、页面、插件、运行期上下文
-│   ├── server/              # Nitro 路由：/api/v1 代理、会话、健康检查
 │   ├── src/
 │   │   ├── api/             # API 调用
 │   │   ├── components/      # Vue 组件
 │   │   ├── views/           # 页面视图
 │   │   ├── types/           # TypeScript 类型
 │   │   └── i18n/            # 国际化
-│   ├── .output/             # Nuxt SSR 构建产物（生成，不进 git）
 │   ├── package.json         # 依赖配置
 │   └── pnpm-lock.yaml       # pnpm 锁文件（必须提交）
 ```
