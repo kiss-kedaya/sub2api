@@ -30,4 +30,14 @@ describe('navigation contract', () => {
     expect(app).toContain('useClientAnchorNavigation(router)')
     expect(read('../AppLayout.vue')).toContain('CONSOLE_SHELL_KEY')
   })
+
+  it('wraps the resolved page, not <RouterView>, in the page transition', () => {
+    const app = read('../../../App.vue')
+    // vue-router 5 rejects <router-view> directly inside <transition> (R0060); that
+    // shape is what stranded pages at opacity 0 after a few sidebar jumps.
+    expect(app).not.toContain('<slot><RouterView /></slot>')
+    expect(app).toContain('<RoutePageTransition />')
+    expect(read('../RoutePageTransition.vue')).toContain('<RouterView v-slot="{ Component, route: current }">')
+    expect(read('../RoutePageTransition.vue')).toContain('mode="out-in"')
+  })
 })

@@ -39,6 +39,8 @@ export function buildInfiniteCanvasImportUrl(options: {
   lang?: string
 }): string {
   const url = new URL(options.canvasBaseUrl, `${options.pageOrigin || 'http://localhost'}/`)
+  // Invalidate old iframe HTML whose inline bootstrap is incompatible with CSP.
+  url.searchParams.set('bootstrap', 'external-v1')
   url.searchParams.set('apiKey', options.apiKey)
   url.searchParams.set('baseUrl', options.openaiBaseUrl)
   if (options.theme) {
