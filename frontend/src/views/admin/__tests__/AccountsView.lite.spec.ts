@@ -320,4 +320,30 @@ describe('admin AccountsView lite account list', () => {
     consoleError.mockRestore()
     wrapper.unmount()
   })
+
+  it('prefetches the full account on row-action hover so the edit click opens immediately', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find(button => button.text().includes('common.edit'))
+    expect(editButton).toBeTruthy()
+
+    // Sweeping the mouse across the action column must not fire a request per row.
+    vi.useFakeTimers()
+    await editButton!.trigger('pointerenter')
+    expect(getById).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(150)
+    vi.useRealTimers()
+    await flushPromises()
+    expect(getById).toHaveBeenCalledTimes(1)
+
+    await editButton!.trigger('click')
+    await flushPromises()
+
+    // The hover already fetched the detail; the click reuses that copy instead of
+    // blocking on a second round trip.
+    expect(getById).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[data-test="edit-account"]').text()).toBe('compact row')
+    wrapper.unmount()
+  })
 })

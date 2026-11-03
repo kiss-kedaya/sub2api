@@ -35,21 +35,61 @@ const rectOf = (element: Element): SakuraRect => {
   return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
 }
 
-function update() {
-  if (!document.documentElement.classList.contains('console-petals-ready')) return
-  if (window.matchMedia('(max-width: 639px), (prefers-reduced-motion: reduce)').matches) {
-    petals.value = []
-    return
-  }
+// Measuring every card, label, button and link on the page is a full-document layout.
+// It used to run again 240ms after each scroll tick, which is why long tables stuttered
+// while scrolling. The rects only move with scrolling, so they are measured once and
+// shifted by the scroll delta until the page layout actually changes.
+interface SakuraLayout {
+  scrollTop: number
+  /** Scroll height the rects were measured at; content growth invalidates them. */
+  contentHeight: number
+  surfaces: SakuraRect[]
+  blockers: SakuraRect[]
+  excluded: SakuraRect[]
+}
+
+let layout: SakuraLayout | null = null
+
+const shiftRect = (rect: SakuraRect, dy: number): SakuraRect => ({
+  left: rect.left,
+  top: rect.top - dy,
+  right: rect.right,
+  bottom: rect.bottom - dy,
+})
+
+function measureLayout(): SakuraLayout {
+  const visible = (element: HTMLElement) => element.offsetWidth > 0 && element.offsetHeight > 0
   const surfaces = [...document.querySelectorAll<HTMLElement>(
     '.signal-main [data-slot="root"].rounded-lg.ring.bg-default, .signal-main .settings-section > [data-slot="root"]'
-  )].filter(element => element.offsetWidth > 0 && element.offsetHeight > 0).map(rectOf)
+  )].filter(visible).map(rectOf)
   const blockers = [...document.querySelectorAll<HTMLElement>(
     '.signal-main :is(h1,h2,h3,h4,p,label,button,a,input,textarea,select,[role="button"],[role="switch"])'
-  )].filter(element => element.offsetWidth > 0 && element.offsetHeight > 0).map(rectOf)
+  )].filter(visible).map(rectOf)
   const tree = document.querySelector('.ink-sakura')
   const excluded = tree ? [rectOf(tree)] : []
-  const points = findSakuraPetalPlacements(surfaces, blockers, excluded, ++generation, 7)
+  return {
+    scrollTop: mainElement?.scrollTop ?? 0,
+    contentHeight: mainElement?.scrollHeight ?? 0,
+    surfaces,
+    blockers,
+    excluded,
+  }
+}
+
+function render(snapshot: SakuraLayout) {
+  const dy = (mainElement?.scrollTop ?? 0) - snapshot.scrollTop
+  const viewportHeight = window.innerHeight
+  // Only the cards that are on screen can host a petal; the rest would land off screen.
+  const surfaces = snapshot.surfaces
+    .map(rect => shiftRect(rect, dy))
+    .filter(rect => rect.bottom > 0 && rect.top < viewportHeight)
+  const points = findSakuraPetalPlacements(
+    surfaces,
+    snapshot.blockers.map(rect => shiftRect(rect, dy)),
+    snapshot.excluded.map(rect => shiftRect(rect, dy)),
+    ++generation,
+    7,
+  )
   petals.value = points.map((point, index) => ({
     id: index,
     style: {
@@ -60,17 +100,46 @@ function update() {
   }))
 }
 
+function update() {
+  if (!document.documentElement.classList.contains('console-petals-ready')) return
+  if (document.visibilityState === 'hidden') return
+  if (window.matchMedia('(max-width: 639px), (prefers-reduced-motion: reduce)').matches) {
+    petals.value = []
+    return
+  }
+  // One scrollHeight read per settled update is enough to notice that rows appeared
+  // or a card grew; the expensive rect pass only runs when that happened.
+  const contentHeight = mainElement?.scrollHeight ?? 0
+  if (!layout || layout.contentHeight !== contentHeight) layout = measureLayout()
+  render(layout)
+}
+
+/** Re-measure the page before the next placement (layout changed, not just scrolled). */
+function invalidateLayout() {
+  layout = null
+}
+
 function scheduleUpdate() {
   window.clearTimeout(updateTimer)
   updateTimer = window.setTimeout(update, 240)
 }
 
+function onWindowResize() {
+  invalidateLayout()
+  scheduleUpdate()
+}
+
 onMounted(() => {
   mainElement = document.querySelector<HTMLElement>('.signal-main')
   if (!mainElement) return
-  observer = new ResizeObserver(scheduleUpdate)
+  // The scroll container's size changes when a table re-renders its rows, so the cached
+  // rects are only valid until the next ResizeObserver callback.
+  observer = new ResizeObserver(() => {
+    invalidateLayout()
+    scheduleUpdate()
+  })
   observer.observe(mainElement)
-  window.addEventListener('resize', scheduleUpdate, { passive: true })
+  window.addEventListener('resize', onWindowResize, { passive: true })
   mainElement.addEventListener('scroll', scheduleUpdate, { passive: true })
   const requestIdle = (window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number }).requestIdleCallback
   if (requestIdle) idleId = requestIdle(update, { timeout: 1200 })
@@ -79,7 +148,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   observer?.disconnect()
-  window.removeEventListener('resize', scheduleUpdate)
+  window.removeEventListener('resize', onWindowResize)
   mainElement?.removeEventListener('scroll', scheduleUpdate)
   window.clearTimeout(updateTimer)
   const cancelIdle = (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback

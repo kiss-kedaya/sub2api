@@ -207,7 +207,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, onUpdated, watch, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
 import { useVirtualizer, observeElementRect as observeElementRectDefault } from '@tanstack/vue-virtual'
 import { useI18n } from 'vue-i18n'
@@ -275,9 +275,11 @@ const checkScrollable = () => {
 }
 // 检查操作列是否需要展开
 const checkActionsColumnWidth = () => {
-  if (!props.expandableActions) {
-    actionsColumnNeedsExpanding.value = false
-    actionsExpanded.value = false
+  // Without an actions column the last cell belongs to a data column; measuring its
+  // buttons would force a layout read for nothing on every resize.
+  if (!props.expandableActions || !props.columns.some(column => column.key === 'actions')) {
+    if (actionsColumnNeedsExpanding.value) actionsColumnNeedsExpanding.value = false
+    if (actionsExpanded.value) actionsExpanded.value = false
     return
   }
   if (!tableWrapperRef.value) return
@@ -331,6 +333,29 @@ let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = nul
 
 let scrollTrackedEl: HTMLElement | null = null
 
+// Scroll and resize arrive in bursts (a virtualized window changes height on every
+// frame), and both checks read layout. Coalescing them keeps a scroll from turning
+// into a reflow storm on /admin/accounts and /admin/usage.
+let scrollStateFrame = 0
+let actionsCheckTimer: ReturnType<typeof setTimeout> | null = null
+
+const refreshScrollState = () => {
+  if (typeof window === 'undefined' || scrollStateFrame) return
+  scrollStateFrame = requestAnimationFrame(() => {
+    scrollStateFrame = 0
+    checkScrollable()
+  })
+}
+
+const scheduleActionsColumnCheck = (delay = 140) => {
+  if (typeof window === 'undefined') return
+  if (actionsCheckTimer !== null) clearTimeout(actionsCheckTimer)
+  actionsCheckTimer = setTimeout(() => {
+    actionsCheckTimer = null
+    checkActionsColumnWidth()
+  }, delay)
+}
+
 const detachDesktopTableTracking = () => {
   if (typeof window === 'undefined') return
   resizeObserver?.disconnect()
@@ -341,6 +366,14 @@ const detachDesktopTableTracking = () => {
   }
   scrollTrackedEl?.removeEventListener('scroll', updateScrollEdges)
   scrollTrackedEl = null
+  if (scrollStateFrame) {
+    cancelAnimationFrame(scrollStateFrame)
+    scrollStateFrame = 0
+  }
+  if (actionsCheckTimer !== null) {
+    clearTimeout(actionsCheckTimer)
+    actionsCheckTimer = null
+  }
 }
 
 const attachDesktopTableTracking = () => {
@@ -351,15 +384,15 @@ const attachDesktopTableTracking = () => {
   scrollTrackedEl?.addEventListener('scroll', updateScrollEdges, { passive: true })
   if (tableWrapperRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
-      checkScrollable()
-      checkActionsColumnWidth()
+      refreshScrollState()
+      scheduleActionsColumnCheck()
     })
     resizeObserver.observe(tableWrapperRef.value)
   } else {
     // 降级方案：不支持 ResizeObserver 时使用 window resize
     resizeHandler = () => {
-      checkScrollable()
-      checkActionsColumnWidth()
+      refreshScrollState()
+      scheduleActionsColumnCheck()
     }
     window.addEventListener('resize', resizeHandler)
   }
@@ -635,8 +668,8 @@ watch(
   [() => props.data.length, columnsSignature],
   async () => {
     await nextTick()
-    checkScrollable()
-    checkActionsColumnWidth()
+    refreshScrollState()
+    scheduleActionsColumnCheck()
   },
   { flush: 'post' }
 )
@@ -863,9 +896,9 @@ const getTableRowId = (item: TableRow) =>
 const rowSelectionState = computed(() => {
   const state: Record<string, boolean> = {}
   if (!props.selectable || props.loading) return state
-  for (const item of renderRows.value) {
-    if (isRowSelected(item.row, item.index)) state[String(resolveRowKey(item.row, item.index))] = true
-  }
+  // Selected keys are already produced by resolveRowKey, so they can be mapped
+  // directly instead of walking every rendered row on each scroll frame.
+  for (const key of props.selectedKeys) state[String(key)] = true
   return state
 })
 
@@ -963,37 +996,76 @@ const tableUi = {
 // (`data-row-id` / `data-index` for swipe selection and the virtualizer) and the row lookup
 // used by `rowClick`.
 const rowElementData = new WeakMap<Element, any>()
+// Rows survive scroll ticks but their DOM nodes are reused; only new or replaced rows
+// need a measure. The virtualizer registers a ResizeObserver per measured row, so later
+// height changes (usage loading, expanded actions) are still picked up automatically.
+const measuredRowElements = new WeakSet<Element>()
+let cachedTableElement: HTMLTableElement | null = null
 
-const syncRenderedRows = () => {
+const syncRenderedRows = (measureAll = false) => {
   const root = tableWrapperRef.value
   if (!root || !isDesktopViewport.value) return
-  const table = root.querySelector('table')
+  const table = cachedTableElement && root.contains(cachedTableElement)
+    ? cachedTableElement
+    : root.querySelector<HTMLTableElement>('table')
   if (!table) return
-  const rowEls = Array.from(table.tBodies[0]?.rows ?? []).filter((el) => el.dataset.slot === 'tr')
+  cachedTableElement = table
+  const rowEls = table.tBodies[0]?.rows
+  if (!rowEls || rowEls.length === 0) return
   const rows = tableRows.value
-  rowEls.forEach((el, position) => {
+  let position = 0
+  for (let i = 0; i < rowEls.length; i += 1) {
+    const el = rowEls[i]
+    if (el.dataset.slot !== 'tr') continue
     const item = rows[position]
+    position += 1
     if (!item || item.skeleton) {
-      el.removeAttribute('data-row-id')
-      el.removeAttribute('data-index')
+      if (el.hasAttribute('data-row-id')) el.removeAttribute('data-row-id')
+      if (el.hasAttribute('data-index')) el.removeAttribute('data-index')
       rowElementData.delete(el)
-      return
+      measuredRowElements.delete(el)
+      continue
     }
-    el.setAttribute('data-row-id', String(resolveRowKey(item.row, item.index)))
-    el.setAttribute('data-index', String(item.index))
-    rowElementData.set(el, item.row)
-    if (item.measure) rowVirtualizer.value.measureElement(el)
-  })
-  if (pinFirstPair.value) {
+    const rowID = String(resolveRowKey(item.row, item.index))
+    if (el.getAttribute('data-row-id') !== rowID) el.setAttribute('data-row-id', rowID)
+    const rowIndex = String(item.index)
+    if (el.getAttribute('data-index') !== rowIndex) el.setAttribute('data-index', rowIndex)
+    if (rowElementData.get(el) !== item.row) {
+      rowElementData.set(el, item.row)
+      measuredRowElements.delete(el)
+    }
+    if (item.measure && (measureAll || !measuredRowElements.has(el))) {
+      measuredRowElements.add(el)
+      rowVirtualizer.value.measureElement(el)
+    }
+  }
+  // The pinned offset only changes with the column set or the container width.
+  if (pinFirstPair.value && (measureAll || pinOffset.value === 0)) {
     const firstHeader = table.tHead?.rows[0]?.cells[0]
     const width = firstHeader?.offsetWidth ?? 0
     if (width && width !== pinOffset.value) pinOffset.value = width
   }
 }
 
-onMounted(syncRenderedRows)
-onUpdated(syncRenderedRows)
-watch(tableRows, () => nextTick(syncRenderedRows), { flush: 'post' })
+onMounted(() => syncRenderedRows(true))
+
+// Re-sync when the rendered window changes, not on every unrelated component update.
+const renderedRowRefs = computed(() => renderRows.value.map(item => item.row))
+watch(
+  renderedRowRefs,
+  (current, previous) => {
+    if (
+      previous
+      && current.length === previous.length
+      && current.every((row, index) => row === previous[index])
+    ) return
+    syncRenderedRows()
+  },
+  { flush: 'post' }
+)
+
+// A new data array means new row objects, so their heights may have changed.
+watch(() => props.data, () => syncRenderedRows(true), { flush: 'post' })
 
 const onTableClick = (event: MouseEvent) => {
   const target = event.target as Element | null

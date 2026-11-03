@@ -559,38 +559,125 @@
           <p v-if="formData.smart_routing" class="mb-3 text-xs text-muted">
             {{ t('keys.smartRoutingHint') }}
           </p>
-          <div v-if="formData.smart_routing" class="space-y-2">
+          <div v-if="formData.smart_routing" class="space-y-3" data-test="smart-routing-editor">
+            <!-- 主路由始终可见，其余路由收进下面的 Disclosure，避免一开表单就铺满整屏。 -->
             <div
-              v-for="(groupId, index) in formData.group_ids"
-              :key="`${groupId}-${index}`"
-              class="flex items-center gap-2 rounded-lg px-3 py-2 ring ring-default"
+              v-if="formData.group_ids.length > 0"
+              class="flex items-center gap-2 rounded-lg bg-elevated/40 px-3 py-2 ring ring-default"
+              data-test="smart-route-primary"
             >
-              <span class="shrink-0 text-xs text-muted">{{ t('keys.smartRoutingRoute') }} {{ index + 1 }}</span>
+              <span class="shrink-0 text-xs font-medium text-muted">
+                {{ t('keys.smartRoutingPrimaryRoute') }}
+              </span>
               <div class="min-w-0 flex-1">
                 <GroupBadge
-                  v-if="groupOptionById(groupId)"
-                  :name="groupOptionById(groupId)!.label"
-                  :platform="groupOptionById(groupId)!.platform"
-                  :subscription-type="groupOptionById(groupId)!.subscriptionType"
-                  :rate-multiplier="groupOptionById(groupId)!.rate"
-                  :user-rate-multiplier="groupOptionById(groupId)!.userRate"
-                  :peak-rate-enabled="groupOptionById(groupId)!.peakRateEnabled"
-                  :peak-start="groupOptionById(groupId)!.peakStart"
-                  :peak-end="groupOptionById(groupId)!.peakEnd"
-                  :peak-rate-multiplier="groupOptionById(groupId)!.peakRateMultiplier"
+                  v-if="smartRouteBadgeProps(formData.group_ids[0])"
+                  v-bind="smartRouteBadgeProps(formData.group_ids[0])!"
                 />
-                <span v-else class="text-sm text-muted">#{{ groupId }}</span>
+                <span v-else class="text-sm text-muted">#{{ formData.group_ids[0] }}</span>
               </div>
-              <button type="button" class="key-route-action" @click="moveSmartRoute(index, -1)"><UIcon name="i-lucide-arrow-up" class="size-4" /></button>
-              <button type="button" class="key-route-action" @click="moveSmartRoute(index, 1)"><UIcon name="i-lucide-arrow-down" class="size-4" /></button>
-              <button type="button" class="key-route-action key-route-action--danger" @click="removeSmartRoute(index)"><UIcon name="i-lucide-x" class="size-4" /></button>
+              <UButton
+                icon="i-lucide-arrow-down"
+                type="button"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                square
+                :disabled="formData.group_ids.length < 2"
+                :aria-label="t('keys.smartRoutingMoveDown')"
+                data-test="smart-route-primary-down"
+                @click="moveSmartRoute(0, 1)"
+              />
+              <UButton
+                icon="i-lucide-x"
+                type="button"
+                color="error"
+                variant="ghost"
+                size="xs"
+                square
+                :aria-label="t('keys.smartRoutingRemove')"
+                data-test="smart-route-primary-remove"
+                @click="removeSmartRoute(0)"
+              />
             </div>
+
+            <!-- 其余分组：默认折叠，展开后按顺序显示完整候选路由。 -->
+            <UCollapsible
+              v-if="formData.group_ids.length > 1"
+              v-model:open="smartRoutesOpen"
+              data-test="smart-routes-collapsible"
+            >
+              <UButton
+                type="button"
+                color="neutral"
+                variant="outline"
+                block
+                trailing-icon="i-lucide-chevron-down"
+                :label="t('keys.smartRoutingOtherRoutes', { count: formData.group_ids.length - 1 })"
+                :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }"
+                data-test="smart-routes-toggle"
+              />
+              <template #content>
+                <div class="mt-2 space-y-2" data-test="smart-routes-list">
+                  <div
+                    v-for="(groupId, offset) in formData.group_ids.slice(1)"
+                    :key="`${groupId}-${offset + 1}`"
+                    class="flex items-center gap-2 rounded-lg px-3 py-2 ring ring-default"
+                    data-test="smart-route-item"
+                  >
+                    <span class="shrink-0 text-xs text-muted">{{ t('keys.smartRoutingRoute') }} {{ offset + 2 }}</span>
+                    <div class="min-w-0 flex-1">
+                      <GroupBadge
+                        v-if="smartRouteBadgeProps(groupId)"
+                        v-bind="smartRouteBadgeProps(groupId)!"
+                      />
+                      <span v-else class="text-sm text-muted">#{{ groupId }}</span>
+                    </div>
+                    <UButton
+                      icon="i-lucide-arrow-up"
+                      type="button"
+                      color="neutral"
+                      variant="ghost"
+                      size="xs"
+                      square
+                      :aria-label="t('keys.smartRoutingMoveUp')"
+                      data-test="smart-route-up"
+                      @click="moveSmartRoute(offset + 1, -1)"
+                    />
+                    <UButton
+                      icon="i-lucide-arrow-down"
+                      type="button"
+                      color="neutral"
+                      variant="ghost"
+                      size="xs"
+                      square
+                      :aria-label="t('keys.smartRoutingMoveDown')"
+                      data-test="smart-route-down"
+                      @click="moveSmartRoute(offset + 1, 1)"
+                    />
+                    <UButton
+                      icon="i-lucide-x"
+                      type="button"
+                      color="error"
+                      variant="ghost"
+                      size="xs"
+                      square
+                      :aria-label="t('keys.smartRoutingRemove')"
+                      data-test="smart-route-remove"
+                      @click="removeSmartRoute(offset + 1)"
+                    />
+                  </div>
+                </div>
+              </template>
+            </UCollapsible>
+
             <Select
               :model-value="null"
               :options="smartRoutingAddOptions"
               :placeholder="t('keys.smartRoutingAdd')"
               :searchable="true"
               :search-placeholder="t('keys.searchGroup')"
+              data-test="smart-route-add"
               @update:model-value="addSmartRoute"
             />
             <p v-if="formData.group_ids.length === 0" class="text-xs text-muted">{{ t('keys.smartRoutingEmpty') }}</p>
@@ -1621,6 +1708,25 @@ watch(
   }
 )
 
+// 折叠状态：默认收起，关闭弹窗或只剩一条路由时复位。
+const smartRoutesOpen = ref(false)
+
+const smartRouteBadgeProps = (groupId: number) => {
+  const option = groupOptionById(groupId)
+  if (!option) return null
+  return {
+    name: option.label,
+    platform: option.platform,
+    subscriptionType: option.subscriptionType,
+    rateMultiplier: option.rate,
+    userRateMultiplier: option.userRate,
+    peakRateEnabled: option.peakRateEnabled,
+    peakStart: option.peakStart,
+    peakEnd: option.peakEnd,
+    peakRateMultiplier: option.peakRateMultiplier,
+  }
+}
+
 const smartRoutingAddOptions = computed(() => {
   const selected = new Set(formData.value.group_ids)
   return providerGroupOptions.value.filter((opt) => !selected.has(opt.value))
@@ -1805,6 +1911,7 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 }
 
 const editKey = (key: ApiKey) => {
+  smartRoutesOpen.value = false
   selectedKeyProvider.value = null
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
@@ -2248,6 +2355,7 @@ const handleBulkDelete = async () => {
 }
 
 const closeModals = () => {
+  smartRoutesOpen.value = false
   selectedKeyProvider.value = null
   showCreateModal.value = false
   showEditModal.value = false
@@ -2496,8 +2604,5 @@ onUnmounted(() => {
 .key-row-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
 .key-row-action:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
 .key-row-action--danger:hover { background: color-mix(in srgb, var(--ui-error) 10%, transparent); color: var(--ui-error); }
-.key-route-action { display: inline-flex; padding: 4px; border-radius: 6px; color: var(--ui-text-dimmed); transition: background-color 150ms ease, color 150ms ease; }
-.key-route-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
-.key-route-action--danger:hover { color: var(--ui-error); }
-@media (prefers-reduced-motion: reduce) { .key-row-action, .key-route-action { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .key-row-action { transition: none; } }
 </style>
