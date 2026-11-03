@@ -24,7 +24,14 @@ const scanLockKey int64 = 0x43525950544f5343
 // instances get regular turns. Durable progress always ends at a completed
 // batch; the next pass starts at precisely the next unscanned block.
 const maxScanBatchesPerChain = 4
-const maxScanTimePerChain = 30 * time.Second
+
+// A fixed 30s pass could not finish the head security window plus four batches
+// on a chain that was far behind, so every pass timed out before the deposit
+// cursor advanced and the chain never caught up (BSC stayed frozen for hours
+// while ETH/Polygon, which were only tens of blocks behind, scanned normally).
+// The budget is per chain and the pass still yields between batches, so a
+// longer ceiling does not starve other chains or other instances.
+const maxScanTimePerChain = 90 * time.Second
 
 var ErrScanBusy = errors.New("another payment scan is running")
 
