@@ -66,9 +66,15 @@ See [APPLE_CONTAINER.md](./APPLE_CONTAINER.md) for configuration, upgrades, pers
 ## Frontend
 
 The frontend is a single Vite SPA bundle embedded into the Go binary with
-`-tags=embed`. There is no Node/Nitro runtime: one process serves the API and
-the static assets, so a deploy is one binary swap and there is nothing extra to
-supervise or keep in sync.
+`-tags=embed`, using Vue and `@nuxt/ui` components. There is no Node/Nitro
+runtime: the Go service can serve both the API and the complete static UI.
+
+If Nginx serves a separate UI directory, it must receive the matching complete
+frontend artifact too. Verify its `frontend-build.json`, stage a new immutable
+directory, and atomically switch the live pointer. Keep the previous directory
+and old hashed assets for open browser tabs and rollback. A new backend version
+does not prove that a disk-served UI was updated. The embedded UI in the same
+release binary remains the fallback source of static assets.
 
 ```
 browser -> reverse proxy -> Go (127.0.0.1:8080)
@@ -91,7 +97,8 @@ Build and verify:
 make build-frontend          # pnpm run build -> backend/internal/web/dist
 make verify-spa              # asserts index.html, assets, and no SSR leftovers
 make build-backend           # go build -tags=embed
-curl -fsS http://127.0.0.1:8080/ | head -1   # must be 200 text/html
+curl -fsS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:8080/
+# Expected: 200 text/html (optionally with charset)
 ```
 
 `deploy/spa/verify-spa-bundle.mjs` fails the build when the bundle has no
