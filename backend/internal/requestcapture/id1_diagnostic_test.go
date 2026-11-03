@@ -205,6 +205,10 @@ func TestDiagnosticUserAllowlistCapturesMultipleUsers(t *testing.T) {
 	m, err := New(store, t.TempDir(), Config{QuotaMiB: 8, RetentionDays: 7, ID1DiagnosticEnabled: true, DiagnosticUserIDs: []int64{1, 5279}})
 	require.NoError(t, err)
 	defer m.Close()
+	require.Eventually(t, func() bool {
+		tasks, taskErr := m.Tasks(context.Background(), 20, 0)
+		return taskErr == nil && len(tasks) == 1 && tasks[0].Status == "running"
+	}, time.Second, 10*time.Millisecond)
 	for _, userID := range []int64{1, 5279} {
 		s := m.Begin(Meta{UserID: userID, RequestID: uuid.NewString()})
 		require.NotNil(t, s)
