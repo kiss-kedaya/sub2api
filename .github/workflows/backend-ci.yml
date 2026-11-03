@@ -248,7 +248,9 @@ jobs:
       - name: SSR release packaging tooling tests
         env:
           SSR_WORKFLOW_PATH: .github/workflows/ssr-release.yml
-        run: node --test deploy/nuxt/release.test.mjs
+        run: |
+          node --test deploy/nuxt/release.test.mjs
+          node --test deploy/nuxt/bff-ha.test.mjs
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile

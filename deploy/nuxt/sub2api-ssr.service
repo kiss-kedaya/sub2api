@@ -11,7 +11,9 @@ WorkingDirectory=/opt/sub2api/ssr
 EnvironmentFile=/opt/sub2api/ssr/.env
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
-Environment=PORT=3000
+Environment=PORT=3118
+# Nuxt/Nitro 以 NITRO_PORT 为准；SSR 3118 与 3187 dispatch 配套。
+Environment=NITRO_PORT=3118
 ExecStart=/usr/bin/node /opt/sub2api/ssr/.output/server/index.mjs
 Restart=on-failure
 RestartSec=5
