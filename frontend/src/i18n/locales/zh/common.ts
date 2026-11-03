@@ -271,6 +271,7 @@ export default {
     errors: {
       USER_NOT_ACTIVE: '账号已被禁用',
       EMAIL_FORMAT_INVALID: '邮箱格式不正确，请检查长度或特殊字符。',
+      EMAIL_BLOCKED: '该邮箱不允许注册，请更换其他邮箱。',
     },
     registrationFailed: '注册失败，请重试。',
     emailDomainRegistrationLimit:

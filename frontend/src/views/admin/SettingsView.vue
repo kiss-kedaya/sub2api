@@ -945,6 +945,8 @@
                     </span>
                     <span class="block mt-1">
                       {{ t( "admin.settings.registration.emailSuffixWhitelistInputHint", ) }}
+              <!-- Exact Email Blacklist -->
+              <RegistrationEmailBlacklistEditor />
                     </span>
                   </template>
                   <template #fields>
@@ -7025,6 +7027,7 @@ import GitHubMark from "@/components/auth/GitHubMark.vue";
 import GoogleMark from "@/components/auth/GoogleMark.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import GatewayIPNoticeSettings from "@/views/admin/settings/GatewayIPNoticeSettings.vue";
+import RegistrationEmailBlacklistEditor from "@/components/admin/settings/RegistrationEmailBlacklistEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import {
