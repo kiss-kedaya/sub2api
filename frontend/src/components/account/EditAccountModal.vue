@@ -6,7 +6,7 @@
     @close="handleClose"
   >
     <form
-      v-if="account"
+      v-if="account && !loading"
       id="edit-account-form"
       ref="editFormRef"
       @submit.prevent="handleSubmit"
@@ -231,7 +231,7 @@
           <UFormField :label="t('admin.accounts.apiKey')">
             <UInput
               v-model="editApiKey"
-              type="password"
+              :type="apiKeyVisible ? 'text' : 'password'"
               autocomplete="new-password"
               data-1p-ignore
               data-lpignore="true"
@@ -250,7 +250,18 @@
                         : 'sk-ant-...'
               "
               class="w-full font-mono"
-            />
+            >
+              <template #trailing>
+                <ApiKeyFieldActions
+                  :visible="apiKeyVisible"
+                  :revealing="revealingApiKey"
+                  :copying="copyingApiKey"
+                  :disabled="!canRevealApiKey"
+                  @toggle="toggleApiKeyVisibility"
+                  @copy="copyApiKey"
+                />
+              </template>
+            </UInput>
             <template #help><span class="block">{{ t('admin.accounts.leaveEmptyToKeep') }}</span><span v-if="account.type === 'cloudflare'" class="block">{{ t('admin.accounts.openai.cloudflareApiTokenHint') }}</span></template>
           </UFormField>
         </div>
@@ -268,10 +279,21 @@
           <UFormField :label="t('admin.accounts.upstream.apiKey')" :help="t('admin.accounts.leaveEmptyToKeep')">
             <UInput
               v-model="editApiKey"
-              type="password"
+              :type="apiKeyVisible ? 'text' : 'password'"
               placeholder="sk-..."
               class="w-full font-mono"
-            />
+            >
+              <template #trailing>
+                <ApiKeyFieldActions
+                  :visible="apiKeyVisible"
+                  :revealing="revealingApiKey"
+                  :copying="copyingApiKey"
+                  :disabled="!canRevealApiKey"
+                  @toggle="toggleApiKeyVisibility"
+                  @copy="copyApiKey"
+                />
+              </template>
+            </UInput>
           </UFormField>
         </div>
 
@@ -2136,8 +2158,27 @@
 
     </form>
 
+    <div v-else-if="loading" data-testid="edit-account-skeleton" class="space-y-6">
+      <div class="flex items-center gap-3">
+        <USkeleton class="size-9 rounded-full" />
+        <div class="flex-1 space-y-2">
+          <USkeleton class="h-4 w-40" />
+          <USkeleton class="h-3 w-24" />
+        </div>
+      </div>
+      <div class="space-y-3">
+        <USkeleton class="h-3 w-20" />
+        <USkeleton class="h-9 w-full rounded-md" />
+        <USkeleton class="h-3 w-20" />
+        <USkeleton class="h-20 w-full rounded-md" />
+        <USkeleton class="h-3 w-28" />
+        <USkeleton class="h-9 w-full rounded-md" />
+      </div>
+      <p class="text-xs text-muted">{{ t('admin.accounts.editLoading') }}</p>
+    </div>
+
     <template #footer>
-      <div v-if="account" class="flex justify-end gap-3">
+      <div v-if="account && !loading" class="flex justify-end gap-3">
         <UButton color="neutral" variant="outline" @click="handleClose" type="button">
           {{ t('common.cancel') }}
         </UButton>
@@ -2154,6 +2195,8 @@
       </div>
     </template>
   </BaseDialog>
+
+  <TotpStepUpDialog :controller="stepUp" />
 
   <!-- Mixed Channel Warning Dialog -->
   <ConfirmDialog
@@ -2194,6 +2237,9 @@ import type {
   GrokMediaEligibilityState
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ApiKeyFieldActions from '@/components/account/ApiKeyFieldActions.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { useStepUp, isStepUpBlocked, isStepUpCancelled } from '@/composables/useStepUp'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
@@ -2273,6 +2319,12 @@ interface Props {
   account: Account | null
   proxies: Proxy[]
   groups: AdminGroup[]
+  /**
+   * The account editor is mounted before GET /admin/accounts/:id resolves so
+   * the dialog opens immediately. While loading, render a skeleton instead of
+   * a half-filled form.
+   */
+  loading?: boolean
 }
 
 const props = defineProps<Props>()
@@ -2347,6 +2399,111 @@ const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
 const editCloudflareAccountID = ref('')
+
+// ── API Key 明文回读（眼睛 / 复制）──
+// 明文只能由后端在 step-up 2FA 有效期内下发；这里不缓存到 store、不写日志。
+const stepUp = useStepUp()
+const apiKeyVisible = ref(false)
+const revealedApiKey = ref('')
+const revealingApiKey = ref(false)
+const copyingApiKey = ref(false)
+const API_KEY_VISIBLE_MS = 60_000
+let apiKeyHideTimer: number | null = null
+
+const clearApiKeyHideTimer = () => {
+  if (apiKeyHideTimer !== null) {
+    window.clearTimeout(apiKeyHideTimer)
+    apiKeyHideTimer = null
+  }
+}
+
+const resetApiKeyReveal = () => {
+  clearApiKeyHideTimer()
+  apiKeyVisible.value = false
+  revealedApiKey.value = ''
+  revealingApiKey.value = false
+  copyingApiKey.value = false
+}
+
+const canRevealApiKey = computed(() => {
+  const account = props.account
+  if (!account) return false
+  if (account.type !== 'apikey' && account.type !== 'cloudflare' && account.type !== 'upstream') return false
+  const status = account.credentials_status
+  if (status && Object.prototype.hasOwnProperty.call(status, 'has_api_key')) {
+    return status.has_api_key === true
+  }
+  return true
+})
+
+const scheduleApiKeyAutoHide = () => {
+  clearApiKeyHideTimer()
+  apiKeyHideTimer = window.setTimeout(() => {
+    apiKeyVisible.value = false
+    apiKeyHideTimer = null
+  }, API_KEY_VISIBLE_MS)
+}
+
+const fetchRevealedApiKey = async (): Promise<string> => {
+  if (!props.account || revealingApiKey.value) return ''
+  revealingApiKey.value = true
+  try {
+    const revealed = await stepUp.run(() => adminAPI.accounts.revealAPIKey(props.account!.id))
+    revealedApiKey.value = revealed.value
+    scheduleApiKeyAutoHide()
+    return revealed.value
+  } catch (error: any) {
+    if (isStepUpCancelled(error)) return ''
+    appStore.showError(
+      isStepUpBlocked(error)
+        ? t('admin.accounts.apiKeyRevealBlocked')
+        : error?.message || t('admin.accounts.apiKeyRevealFailed')
+    )
+    return ''
+  } finally {
+    revealingApiKey.value = false
+  }
+}
+
+const toggleApiKeyVisibility = async () => {
+  if (apiKeyVisible.value) {
+    apiKeyVisible.value = false
+    clearApiKeyHideTimer()
+    return
+  }
+  // A value the admin just typed is already in the input; no secret read needed.
+  if (editApiKey.value.trim()) {
+    apiKeyVisible.value = true
+    scheduleApiKeyAutoHide()
+    return
+  }
+  const value = revealedApiKey.value || (await fetchRevealedApiKey())
+  if (!value) return
+  editApiKey.value = value
+  apiKeyVisible.value = true
+  scheduleApiKeyAutoHide()
+}
+
+const copyApiKey = async () => {
+  const typed = editApiKey.value.trim()
+  const value = typed || revealedApiKey.value || (await fetchRevealedApiKey())
+  if (!value) return
+  copyingApiKey.value = true
+  try {
+    await navigator.clipboard.writeText(value)
+    appStore.showSuccess(t('admin.accounts.apiKeyCopied'))
+  } catch {
+    appStore.showError(t('admin.accounts.apiKeyCopyFailed'))
+  } finally {
+    copyingApiKey.value = false
+  }
+}
+
+// A revealed-but-untouched key must not be written back on save.
+const hasPendingApiKeyEdit = computed(() => {
+  const value = editApiKey.value.trim()
+  return Boolean(value) && value !== revealedApiKey.value
+})
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
 // account_mode 决定额度/余额监控路径，api_protocol 决定转发端点与格式；
@@ -3527,9 +3684,11 @@ watch(
   [() => props.show, () => props.account],
   ([show, newAccount], [wasShow, previousAccount]) => {
     if (!show || !newAccount) {
+      if (!show) resetApiKeyReveal()
       return
     }
     if (!wasShow || newAccount !== previousAccount) {
+      resetApiKeyReveal()
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
     }
@@ -4163,7 +4322,7 @@ const handleSubmit = async () => {
       // 两者都无才报错。
       const hasExistingApiKey =
         props.account.credentials_status?.has_api_key ?? Boolean(currentCredentials.api_key)
-      if (editApiKey.value.trim()) {
+      if (hasPendingApiKeyEdit.value) {
         newCredentials.api_key = editApiKey.value.trim()
       } else if (!hasExistingApiKey) {
         appStore.showError(t('admin.accounts.apiKeyIsRequired'))
@@ -4243,7 +4402,7 @@ const handleSubmit = async () => {
 
       newCredentials.base_url = editBaseUrl.value.trim()
 
-      if (editApiKey.value.trim()) {
+      if (hasPendingApiKeyEdit.value) {
         newCredentials.api_key = editApiKey.value.trim()
       }
 
