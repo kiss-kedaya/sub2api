@@ -127,13 +127,31 @@
     </div>
     </BaseDialog>
     <UCollapsible v-if="snapshot?.history.length" class="max-w-80 basis-full whitespace-normal">
-      <UButton color="neutral" variant="link" size="xs" class="p-0 text-dimmed" trailing-icon="i-lucide-chevron-down" :label="historySummary" />
+      <UButton data-test="timer-history-toggle" color="neutral" variant="link" size="xs" class="p-0 text-dimmed" trailing-icon="i-lucide-chevron-down" :label="historySummary" />
       <template #content>
-        <p v-for="(item, index) in snapshot.history" :key="index" class="mt-1 wrap-break-word text-muted">
-          {{ t(`admin.accounts.timer.${item.action}`) }} · {{ localTime(item.execute_at, item.timezone) }}<br />
-          {{ t('admin.accounts.timer.actual') }} {{ localTime(item.actual_at, item.timezone) }} · {{ t(`admin.accounts.timer.results.${item.result}`) }}
-          <span v-if="item.reason"> · {{ reasonText(item.reason) }}</span>
-        </p>
+        <!-- One line per record; the time zone is shown once instead of on every row. -->
+        <div data-test="timer-history" class="mt-1 text-muted">
+          <p v-if="historyZone" class="mb-0.5 text-dimmed">{{ historyZone }}</p>
+          <div data-test="timer-history-rows" :class="historyExpanded ? 'max-h-60 overflow-y-auto pe-1' : ''">
+            <div v-for="(item, index) in visibleHistory" :key="index" data-test="timer-history-row" class="py-0.5 leading-snug">
+              <div class="flex items-baseline gap-2">
+                <span class="shrink-0 tabular-nums text-dimmed">{{ historyWhen(item) }}</span>
+                <span class="min-w-0 truncate">{{ t(`admin.accounts.timer.${item.action}`) }}</span>
+                <span class="ms-auto shrink-0" :class="resultClass(item.result)">{{ t(`admin.accounts.timer.results.${item.result}`) }}</span>
+              </div>
+              <p v-if="historyNote(item)" class="wrap-break-word" :class="resultClass(item.result) || 'text-dimmed'">{{ historyNote(item) }}</p>
+            </div>
+          </div>
+          <UButton
+            v-if="(snapshot?.history.length ?? 0) > HISTORY_PREVIEW"
+            data-test="timer-history-more"
+            variant="link"
+            size="xs"
+            class="mt-0.5 p-0"
+            :label="historyExpanded ? t('admin.accounts.timer.historyLess') : t('admin.accounts.timer.historyMore', { count: snapshot?.history.length ?? 0 })"
+            @click="historyExpanded = !historyExpanded"
+          />
+        </div>
       </template>
     </UCollapsible>
   </div>
@@ -147,7 +165,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import timerZh from './schedulableTimer.zh'
 import timerEn from './schedulableTimer.en'
-import { schedulableTimersAPI, type SchedulableTimer, type TimerAction, type TimerInput, type TimerPreview, type TimerSnapshot } from '@/api/admin/schedulableTimers'
+import { schedulableTimersAPI, type SchedulableTimer, type TimerAction, type TimerAudit, type TimerInput, type TimerPreview, type TimerSnapshot } from '@/api/admin/schedulableTimers'
 import { COMMON_TIMEZONES, formatTimezoneOffset } from '@/components/admin/channel/types'
 
 const props = defineProps<{ accountId: number; refreshKey?: number }>()
@@ -193,6 +211,21 @@ const historySummary = computed(() => {
   const reason = latest.reason ? ` · ${reasonText(latest.reason)}` : ''
   return `${t('admin.accounts.timer.history')} · ${t(`admin.accounts.timer.results.${latest.result}`)}${reason}`
 })
+// History is one compact row per record, capped until the operator asks for all of it.
+const HISTORY_PREVIEW = 6
+const historyExpanded = ref(false)
+const visibleHistory = computed(() => {
+  const all = snapshot.value?.history ?? []
+  return historyExpanded.value ? all : all.slice(0, HISTORY_PREVIEW)
+})
+// When every record shares one zone it is named once above the list instead of on each row.
+const historyZone = computed(() => {
+  const zones = new Set((snapshot.value?.history ?? []).map(item => item.timezone))
+  if (zones.size !== 1) return ''
+  const [zone] = zones
+  const offset = formatTimezoneOffset(zone)
+  return offset ? `${zone} (${offset})` : zone
+})
 const modeOptions = computed<Array<{ value: TimerInput['mode']; label: string }>>(() => [
   { value: 'relative', label: t('admin.accounts.timer.relative') },
   { value: 'absolute', label: t('admin.accounts.timer.absolute') },
@@ -217,6 +250,7 @@ watch(() => props.accountId, () => {
   preview.value = null
   confirmed.value = false
   expanded.value = false
+  historyExpanded.value = false
   error.value = ''
   void load()
 })
@@ -261,6 +295,40 @@ function localParts(timestamp: string, timezone: string) {
 function localTime(timestamp: string, timezone: string) {
   try { const local = localParts(timestamp, timezone); return `${local.date} ${local.time} · ${timezone} · ${local.offset}` }
   catch { return `${timestamp} · ${timezone}` }
+}
+// Rows that only record a change of plan are timed by when the change was made; the rest by the slot they concern.
+const RECORD_ONLY_RESULTS = new Set(['scheduled', 'replaced', 'cancelled'])
+// A run is only worth a note when it happened clearly later than its slot.
+const LATE_NOTE_MINUTES = 2
+function compactTime(timestamp: string, timezone: string) {
+  try {
+    const local = localParts(timestamp, timezone)
+    const currentYear = localParts(new Date(now.value || Date.now()).toISOString(), timezone).date.slice(0, 4)
+    return local.date.slice(0, 4) === currentYear ? `${local.date.slice(5)} ${local.time}` : `${local.date} ${local.time}`
+  } catch { return timestamp }
+}
+function historyWhen(item: TimerAudit) {
+  const when = compactTime(RECORD_ONLY_RESULTS.has(item.result) ? item.actual_at : item.execute_at, item.timezone)
+  if (historyZone.value) return when
+  return `${when} ${formatTimezoneOffset(item.timezone) || item.timezone}`
+}
+function historyNote(item: TimerAudit) {
+  const parts: string[] = []
+  if (item.reason) parts.push(reasonText(item.reason))
+  if (RECORD_ONLY_RESULTS.has(item.result)) {
+    parts.push(`${t('admin.accounts.timer.plannedAt')} ${compactTime(item.execute_at, item.timezone)}`)
+  } else if (!item.reason) {
+    const lateMinutes = Math.round((Date.parse(item.actual_at) - Date.parse(item.execute_at)) / 60000)
+    if (lateMinutes >= LATE_NOTE_MINUTES) {
+      parts.push(t('admin.accounts.timer.lateBy', { time: compactTime(item.actual_at, item.timezone), minutes: lateMinutes }))
+    }
+  }
+  return parts.join(' · ')
+}
+function resultClass(result: string) {
+  if (result === 'failed') return 'text-error'
+  if (result === 'skipped' || result === 'pending') return 'text-warning'
+  return ''
 }
 function taskLocalTime(task: SchedulableTimer) {
   return task.local_date && task.local_time && task.offset
