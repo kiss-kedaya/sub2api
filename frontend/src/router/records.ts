@@ -723,6 +723,19 @@ export const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/crypto/chains',
+    name: 'AdminCryptoChains',
+    component: cryptoView,
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Crypto Deposits',
+      titleKey: 'admin.crypto.title',
+      descriptionKey: 'admin.crypto.description',
+      section: 'chains'
+    }
+  },
+  {
     path: '/admin/crypto/settings',
     name: 'AdminCryptoSettings',
     component: cryptoView,

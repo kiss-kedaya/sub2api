@@ -618,3 +618,64 @@ export function cryptoSecurityErrorKey(error: unknown): string | undefined {
   if (/totp|2fa|verification.code/.test(reason)) return 'securityInvalid'
   return undefined
 }
+
+// Node status page: GET /admin/crypto/chains/status. A null value means "unknown",
+// never zero; the page shows "calculating" for the ones that need history.
+export type ChainState = 'disabled' | 'no_rpc' | 'error' | 'stalled' | 'catching_up' | 'synced'
+export type ChainNodeState = 'ok' | 'slow' | 'behind' | 'error' | 'wrong_chain'
+export type ChainNodeErrorKind =
+  | 'timeout' | 'connection' | 'http_429' | 'http_5xx' | 'http_4xx' | 'rpc_error' | 'bad_response' | 'wrong_chain'
+
+export interface ChainNodeStatus {
+  label: string
+  host: string
+  status: ChainNodeState
+  latency_ms: number | null
+  head: number | null
+  behind: number | null
+  error_kind: ChainNodeErrorKind | null
+}
+
+export interface ChainStatus {
+  chain: string
+  enabled: boolean
+  state: ChainState
+  confirmations: number
+  scan_range: number
+  head: number | null
+  confirmed_head: number | null
+  cursor: number | null
+  unscanned: number | null
+  progress_pct: number | null
+  scan_speed_bpm: number | null
+  head_speed_bpm: number | null
+  eta_seconds: number | null
+  cursor_updated_at: string | null
+  stalled_seconds: number | null
+  pending_deposits: number | null
+  last_error: { kind: string; stage: string } | null
+  nodes: ChainNodeStatus[]
+}
+
+export interface ChainStatusReport {
+  generated_at: string
+  summary: { enabled: number; lagging: number; stalled: number; error: number }
+  chains: ChainStatus[]
+}
+
+// The server probes every node (cached 5 s, shared by all viewers), so allow a little
+// more than the slowest probe before the poller gives up on one request.
+export async function getChainStatus(): Promise<ChainStatusReport> {
+  const { data } = await apiClient.get('/admin/crypto/chains/status', { timeout: 12_000 })
+  const report = data?.data
+  return {
+    generated_at: typeof report?.generated_at === 'string' ? report.generated_at : '',
+    summary: {
+      enabled: report?.summary?.enabled ?? 0,
+      lagging: report?.summary?.lagging ?? 0,
+      stalled: report?.summary?.stalled ?? 0,
+      error: report?.summary?.error ?? 0
+    },
+    chains: Array.isArray(report?.chains) ? report.chains : []
+  }
+}
