@@ -426,6 +426,7 @@ import { buildGatewayUrl } from '@/api/client'
 import { formatDateLocalInput } from '@/utils/format'
 import { sanitizeUrl } from '@/utils/url'
 import { resolveDocsUrl } from '@/utils/docsUrl'
+import { PROJECT_GITHUB_URL } from '@/constants/project'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
@@ -435,7 +436,7 @@ const appStore = useAppStore()
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const docUrl = computed(() => resolveDocsUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl))
-const githubUrl = 'https://github.com/Wei-Shaw/sub2api'
+const githubUrl = PROJECT_GITHUB_URL
 
 // ==================== Theme (same as HomeView) ====================
 

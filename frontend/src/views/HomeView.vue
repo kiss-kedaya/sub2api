@@ -462,6 +462,7 @@ import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { resolveDocsUrl } from '@/utils/docsUrl'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
+import { PROJECT_GITHUB_URL } from '@/constants/project'
 
 const { t } = useI18n()
 
@@ -488,7 +489,7 @@ const isHomeContentUrl = computed(() => {
 const isDark = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 
 // GitHub URL
-const githubUrl = 'https://github.com/Wei-Shaw/sub2api'
+const githubUrl = PROJECT_GITHUB_URL
 
 // Auth state
 const isAuthenticated = computed(() => authStore.isAuthenticated)
