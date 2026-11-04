@@ -69,6 +69,33 @@ func TestPendingRefundRetainsReservedFundsUntilSuccess(t *testing.T) {
 	require.Zero(t, finalDeductionCalls)
 }
 
+func TestRollbackRefundRecordsSourceAndIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	user := newTransactionalBalanceUser(t, client, 10)
+	plan := &RefundPlan{
+		OrderID:      77,
+		Order:        &dbent.PaymentOrder{ID: 77, UserID: user.ID, UpdatedAt: time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)},
+		RefundAmount: 5, GatewayAmount: 5, Reason: "gateway rejected", Force: true,
+		DeductionType: payment.DeductionTypeBalance, BalanceToDeduct: 5,
+	}
+	svc := &PaymentService{entClient: client, userRepo: &transactionalBalanceUserRepo{client: client}}
+
+	require.True(t, svc.RollbackRefund(ctx, plan, fmt.Errorf("provider unavailable")))
+	require.True(t, svc.RollbackRefund(ctx, plan, fmt.Errorf("provider unavailable")))
+
+	updated, err := client.User.Get(ctx, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, 15.0, updated.Balance, "replaying the same refund rollback must not credit twice")
+	action := refundBalanceRollbackAction(plan)
+	audit, err := client.PaymentAuditLog.Query().
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(plan.OrderID, 10)), paymentauditlog.ActionEQ(action)).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Contains(t, audit.Detail, `"balanceReturned":5`)
+	require.Contains(t, audit.Detail, `"source":"refund_gateway_failure"`)
+}
+
 func TestPendingRefundFailureReleasesRetainedFundsOnce(t *testing.T) {
 	ctx := context.Background()
 	client := newPaymentConfigServiceTestClient(t)

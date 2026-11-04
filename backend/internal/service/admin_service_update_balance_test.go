@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,16 +45,124 @@ func (s *balanceUserRepoStub) apply(next func(current float64) float64) (Balance
 
 type balanceRedeemRepoStub struct {
 	*redeemRepoStub
-	created []*RedeemCode
+	created   []*RedeemCode
+	createErr error
 }
 
 func (s *balanceRedeemRepoStub) Create(ctx context.Context, code *RedeemCode) error {
+	if s.createErr != nil {
+		return s.createErr
+	}
 	if code == nil {
 		return nil
 	}
 	clone := *code
 	s.created = append(s.created, &clone)
 	return nil
+}
+
+type transactionalBalanceUserRepo struct {
+	*userRepoStub
+	client *dbent.Client
+}
+
+func (r *transactionalBalanceUserRepo) clientFor(ctx context.Context) *dbent.Client {
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		return tx.Client()
+	}
+	return r.client
+}
+
+func (r *transactionalBalanceUserRepo) GetByID(ctx context.Context, id int64) (*User, error) {
+	stored, err := r.clientFor(ctx).User.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &User{ID: stored.ID, Email: stored.Email, Username: stored.Username, Balance: stored.Balance}, nil
+}
+
+func (r *transactionalBalanceUserRepo) AdjustBalance(ctx context.Context, id int64, delta float64) (BalanceChange, error) {
+	client := r.clientFor(ctx)
+	current, err := client.User.Get(ctx, id)
+	if err != nil {
+		return BalanceChange{}, err
+	}
+	change := BalanceChange{Old: current.Balance, New: current.Balance + delta}
+	if change.New < 0 {
+		return change, ErrBalanceNegative
+	}
+	updated, err := client.User.UpdateOneID(id).AddBalance(delta).Save(ctx)
+	if err != nil {
+		return BalanceChange{}, err
+	}
+	change.New = updated.Balance
+	return change, nil
+}
+
+func (r *transactionalBalanceUserRepo) SetBalance(ctx context.Context, id int64, value float64) (BalanceChange, error) {
+	client := r.clientFor(ctx)
+	current, err := client.User.Get(ctx, id)
+	if err != nil {
+		return BalanceChange{}, err
+	}
+	change := BalanceChange{Old: current.Balance, New: value}
+	if value < 0 {
+		return change, ErrBalanceNegative
+	}
+	updated, err := client.User.UpdateOneID(id).SetBalance(value).Save(ctx)
+	if err != nil {
+		return BalanceChange{}, err
+	}
+	change.New = updated.Balance
+	return change, nil
+}
+
+func (r *transactionalBalanceUserRepo) UpdateBalance(ctx context.Context, id int64, amount float64) error {
+	_, err := r.clientFor(ctx).User.UpdateOneID(id).AddBalance(amount).Save(ctx)
+	return err
+}
+
+type transactionalBalanceRedeemRepo struct {
+	*redeemRepoStub
+	client *dbent.Client
+	fail   error
+}
+
+func (r *transactionalBalanceRedeemRepo) Create(ctx context.Context, code *RedeemCode) error {
+	if r.fail != nil {
+		return r.fail
+	}
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
+	_, err := client.RedeemCode.Create().
+		SetCode(code.Code).
+		SetType(code.Type).
+		SetValue(code.Value).
+		SetStatus(code.Status).
+		SetNotes(code.Notes).
+		SetValidityDays(code.ValidityDays).
+		SetNillableExpiresAt(code.ExpiresAt).
+		SetNillableUsedBy(code.UsedBy).
+		SetNillableUsedAt(code.UsedAt).
+		SetNillableGroupID(code.GroupID).
+		Save(ctx)
+	return err
+}
+
+func newTransactionalBalanceUser(t *testing.T, client *dbent.Client, balance float64) *User {
+	t.Helper()
+	stored, err := client.User.Create().
+		SetEmail("balance-provenance@example.test").
+		SetPasswordHash("test-hash").
+		SetRole(RoleUser).
+		SetStatus(StatusActive).
+		SetBalance(balance).
+		SetConcurrency(1).
+		Save(context.Background())
+	require.NoError(t, err)
+	return &User{ID: stored.ID, Email: stored.Email, Username: stored.Username, Balance: stored.Balance}
 }
 
 type authCacheInvalidatorStub struct {
@@ -119,6 +228,7 @@ func TestAdminService_UpdateUserBalance_UsesAtomicPrimitives(t *testing.T) {
 			svc := &adminServiceImpl{
 				userRepo:       repo,
 				redeemCodeRepo: &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}},
+				entClient:      newAdminServiceAuthIdentityBindingTestClient(t),
 			}
 
 			user, err := svc.UpdateUserBalance(context.Background(), 7, tt.amount, tt.operation, "")
@@ -134,6 +244,7 @@ func TestAdminService_UpdateUserBalance_RejectsNegativeResult(t *testing.T) {
 	svc := &adminServiceImpl{
 		userRepo:       repo,
 		redeemCodeRepo: &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}},
+		entClient:      newAdminServiceAuthIdentityBindingTestClient(t),
 	}
 
 	_, err := svc.UpdateUserBalance(context.Background(), 7, 4, "subtract", "")
@@ -148,6 +259,7 @@ func TestAdminService_UpdateUserBalance_RejectsUnknownOperation(t *testing.T) {
 	svc := &adminServiceImpl{
 		userRepo:       repo,
 		redeemCodeRepo: &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}},
+		entClient:      newAdminServiceAuthIdentityBindingTestClient(t),
 	}
 
 	_, err := svc.UpdateUserBalance(context.Background(), 7, 1, "multiply", "")
@@ -164,6 +276,7 @@ func TestAdminService_UpdateUserBalance_InvalidatesAuthCache(t *testing.T) {
 		userRepo:             repo,
 		redeemCodeRepo:       redeemRepo,
 		authCacheInvalidator: invalidator,
+		entClient:            newAdminServiceAuthIdentityBindingTestClient(t),
 	}
 
 	_, err := svc.UpdateUserBalance(context.Background(), 7, 5, "add", "")
@@ -181,6 +294,7 @@ func TestAdminService_UpdateUserBalance_NoChangeNoInvalidate(t *testing.T) {
 		userRepo:             repo,
 		redeemCodeRepo:       redeemRepo,
 		authCacheInvalidator: invalidator,
+		entClient:            newAdminServiceAuthIdentityBindingTestClient(t),
 	}
 
 	_, err := svc.UpdateUserBalance(context.Background(), 7, 10, "set", "")
@@ -234,6 +348,7 @@ func TestAdminService_UpdateUserBalance_AdminRechargeAffiliateRebate(t *testing.
 				redeemCodeRepo:   redeemRepo,
 				settingService:   adminRechargeSettingService(tt.enabled),
 				affiliateService: affiliate,
+				entClient:        newAdminServiceAuthIdentityBindingTestClient(t),
 			}
 
 			_, err := svc.UpdateUserBalance(context.Background(), 7, tt.amount, tt.operation, "")
@@ -253,6 +368,7 @@ func TestAdminService_UpdateUserBalance_AffiliateFailureDoesNotRollbackRecharge(
 		redeemCodeRepo:   redeemRepo,
 		settingService:   adminRechargeSettingService(true),
 		affiliateService: affiliate,
+		entClient:        newAdminServiceAuthIdentityBindingTestClient(t),
 	}
 
 	user, err := svc.UpdateUserBalance(context.Background(), 7, 5, "add", "")
@@ -260,4 +376,51 @@ func TestAdminService_UpdateUserBalance_AffiliateFailureDoesNotRollbackRecharge(
 	require.Equal(t, 15.0, user.Balance)
 	require.Equal(t, []adminRechargeAffiliateAccrual{{userID: 7, amount: 5}}, affiliate.calls)
 	require.Len(t, redeemRepo.created, 1)
+}
+
+func TestAdminService_UpdateUserBalance_SourceFailureRollsBackBalance(t *testing.T) {
+	client := newAdminServiceAuthIdentityBindingTestClient(t)
+	stored := newTransactionalBalanceUser(t, client, 10)
+	repo := &transactionalBalanceUserRepo{client: client}
+	svc := &adminServiceImpl{
+		userRepo:       repo,
+		redeemCodeRepo: &transactionalBalanceRedeemRepo{redeemRepoStub: &redeemRepoStub{}, client: client, fail: errors.New("source store unavailable")},
+		entClient:      client,
+	}
+
+	_, err := svc.UpdateUserBalance(context.Background(), stored.ID, 5, "add", "incident adjustment")
+	require.ErrorContains(t, err, "create balance adjustment source record")
+
+	current, err := client.User.Get(context.Background(), stored.ID)
+	require.NoError(t, err)
+	require.Equal(t, 10.0, current.Balance)
+	count, err := client.RedeemCode.Query().Count(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, count)
+}
+
+func TestAdminService_UpdateUserBalance_CommitsBalanceWithSource(t *testing.T) {
+	client := newAdminServiceAuthIdentityBindingTestClient(t)
+	stored := newTransactionalBalanceUser(t, client, 10)
+	svc := &adminServiceImpl{
+		userRepo:       &transactionalBalanceUserRepo{client: client},
+		redeemCodeRepo: &transactionalBalanceRedeemRepo{redeemRepoStub: &redeemRepoStub{}, client: client},
+		entClient:      client,
+	}
+
+	user, err := svc.UpdateUserBalance(context.Background(), stored.ID, 5, "add", "incident adjustment")
+	require.NoError(t, err)
+	require.Equal(t, 15.0, user.Balance)
+
+	current, err := client.User.Get(context.Background(), stored.ID)
+	require.NoError(t, err)
+	require.Equal(t, 15.0, current.Balance)
+	code, err := client.RedeemCode.Query().Only(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, AdjustmentTypeAdminBalance, code.Type)
+	require.Equal(t, 5.0, code.Value)
+	require.Equal(t, StatusUsed, code.Status)
+	require.Equal(t, stored.ID, *code.UsedBy)
+	require.NotNil(t, code.Notes)
+	require.Equal(t, "incident adjustment", *code.Notes)
 }

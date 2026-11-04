@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -756,7 +758,11 @@ func (s *PaymentService) getRefundProvider(ctx context.Context, o *dbent.Payment
 func (s *PaymentService) handleGwFail(ctx context.Context, p *RefundPlan, gErr error) (*RefundResult, error) {
 	if s.RollbackRefund(ctx, p, gErr) {
 		s.restoreStatus(ctx, p)
-		s.writeAuditLog(ctx, p.OrderID, "REFUND_GATEWAY_FAILED", "admin", map[string]any{"detail": psErrMsg(gErr)})
+		s.writeAuditLog(ctx, p.OrderID, "REFUND_GATEWAY_FAILED", "admin", map[string]any{
+			"detail":          psErrMsg(gErr),
+			"balanceReturned": p.BalanceToDeduct,
+			"subDaysReturned": p.SubDaysToDeduct,
+		})
 		return &RefundResult{Success: false, Warning: "gateway failed: " + psErrMsg(gErr) + ", rolled back"}, nil
 	}
 	now := time.Now()
@@ -863,7 +869,7 @@ func refundResponseID(resp *payment.RefundResponse) string {
 
 func (s *PaymentService) RollbackRefund(ctx context.Context, p *RefundPlan, gErr error) bool {
 	if p.DeductionType == payment.DeductionTypeBalance && p.BalanceToDeduct > 0 {
-		if err := s.userRepo.UpdateBalance(ctx, p.Order.UserID, p.BalanceToDeduct); err != nil {
+		if err := s.restoreRefundBalanceWithAudit(ctx, p); err != nil {
 			slog.Error("[CRITICAL] rollback failed", "orderID", p.OrderID, "amount", p.BalanceToDeduct, "error", err)
 			s.writeAuditLog(ctx, p.OrderID, "REFUND_ROLLBACK_FAILED", "admin", map[string]any{"gatewayError": psErrMsg(gErr), "rollbackError": psErrMsg(err), "balanceDeducted": p.BalanceToDeduct})
 			return false
@@ -883,6 +889,111 @@ func (s *PaymentService) RollbackRefund(ctx context.Context, p *RefundPlan, gErr
 		}
 	}
 	return true
+}
+
+func refundBalanceRollbackAction(p *RefundPlan) string {
+	updatedAt := ""
+	if p != nil && p.Order != nil {
+		updatedAt = p.Order.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	identity := fmt.Sprintf("%d|%s|%s|%s|%s|%t|%s",
+		p.OrderID,
+		updatedAt,
+		strconv.FormatFloat(p.RefundAmount, 'f', -1, 64),
+		strconv.FormatFloat(p.GatewayAmount, 'f', -1, 64),
+		strconv.FormatFloat(p.BalanceToDeduct, 'f', -1, 64),
+		p.Force,
+		p.Reason,
+	)
+	digest := sha256.Sum256([]byte(identity))
+	return "REFUND_BALANCE_ROLLBACK_" + hex.EncodeToString(digest[:8])
+}
+
+func (s *PaymentService) restoreRefundBalanceWithAudit(ctx context.Context, p *RefundPlan) error {
+	if s == nil || s.entClient == nil || s.userRepo == nil || p == nil || p.Order == nil {
+		return errors.New("refund balance rollback transaction is unavailable")
+	}
+	if p.BalanceToDeduct <= 0 || math.IsNaN(p.BalanceToDeduct) || math.IsInf(p.BalanceToDeduct, 0) {
+		return errors.New("refund balance rollback amount is invalid")
+	}
+	action := refundBalanceRollbackAction(p)
+	detail, err := json.Marshal(map[string]any{
+		"source":          "refund_gateway_failure",
+		"refundAmount":    p.RefundAmount,
+		"balanceReturned": p.BalanceToDeduct,
+		"reason":          p.Reason,
+		"force":           p.Force,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal refund balance rollback source: %w", err)
+	}
+	orderID := strconv.FormatInt(p.OrderID, 10)
+	if applied, err := s.refundBalanceRollbackRecorded(ctx, orderID, action, string(detail)); err != nil {
+		return err
+	} else if applied {
+		return nil
+	}
+	tx, err := s.entClient.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin refund balance rollback transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	txCtx := dbent.NewTxContext(ctx, tx)
+
+	if applied, err := s.refundBalanceRollbackRecorded(txCtx, orderID, action, string(detail)); err != nil {
+		return err
+	} else if applied {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit existing refund balance rollback: %w", err)
+		}
+		committed = true
+		return nil
+	}
+	if _, err := tx.PaymentAuditLog.Create().
+		SetOrderID(orderID).
+		SetAction(action).
+		SetDetail(string(detail)).
+		SetOperator("system").
+		Save(txCtx); err != nil {
+		rollbackErr := tx.Rollback()
+		committed = true
+		if applied, checkErr := s.refundBalanceRollbackRecorded(ctx, orderID, action, string(detail)); checkErr == nil && applied {
+			return nil
+		}
+		return errors.Join(fmt.Errorf("write refund balance rollback source: %w", err), rollbackErr)
+	}
+	if err := s.userRepo.UpdateBalance(txCtx, p.Order.UserID, p.BalanceToDeduct); err != nil {
+		return fmt.Errorf("restore refund balance: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		if applied, checkErr := s.refundBalanceRollbackRecorded(ctx, orderID, action, string(detail)); checkErr == nil && applied {
+			return nil
+		}
+		return fmt.Errorf("commit refund balance rollback: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+func (s *PaymentService) refundBalanceRollbackRecorded(ctx context.Context, orderID, action, expectedDetail string) (bool, error) {
+	entry, err := s.entClient.PaymentAuditLog.Query().
+		Where(paymentauditlog.OrderIDEQ(orderID), paymentauditlog.ActionEQ(action)).
+		Only(ctx)
+	if dbent.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read refund balance rollback source: %w", err)
+	}
+	if entry.Detail != expectedDetail {
+		return false, errors.New("refund balance rollback source identity conflict")
+	}
+	return true, nil
 }
 
 func (s *PaymentService) liveBalanceBillingCache() *BillingCacheService {
