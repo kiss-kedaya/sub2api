@@ -69,6 +69,14 @@ func RegisterAdminRoutes(
 		capture.GET("/:task/requests/:record/export", h.Admin.RequestCapture.Export)
 	}
 
+	if h.Admin.UpstreamMonitor != nil {
+		monitor := admin.Group("/upstream-monitor")
+		monitor.GET("/overview", h.Admin.UpstreamMonitor.Overview)
+		monitor.GET("/accounts", h.Admin.UpstreamMonitor.Accounts)
+		monitor.GET("/accounts/:id/history", h.Admin.UpstreamMonitor.AccountHistory)
+		monitor.GET("/rate-changes", h.Admin.UpstreamMonitor.RateChanges)
+		monitor.POST("/sample", h.Admin.UpstreamMonitor.Sample)
+	}
 	{
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)

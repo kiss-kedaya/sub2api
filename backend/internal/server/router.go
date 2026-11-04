@@ -25,6 +25,9 @@ import (
 
 const frameSrcRefreshTimeout = 5 * time.Second
 
+// upstreamMonitorStarted guards the sampler against repeated router setup in tests.
+var upstreamMonitorStarted atomic.Bool
+
 // SetupRouter 配置路由器中间件和路由
 func SetupRouter(
 	r *gin.Engine,
@@ -74,6 +77,18 @@ func SetupRouter(
 	handlers.Admin.IPRisk = adminhandler.NewIPRiskHandler(ipRisk, settingService, nil)
 	handlers.Admin.IPRisk.UseAuditHandler(handlers.Admin.AuditLog)
 	r.Use(ipRisk.Middleware())
+	if db != nil && handlers.Admin != nil && handlers.Admin.UpstreamMonitor == nil {
+		monitorService := service.NewUpstreamMonitorService(repository.NewUpstreamMonitorRepository(db))
+		if redisClient != nil {
+			monitorService.SetLeaderLock(repository.NewLeaderLockCache(redisClient), db)
+		} else {
+			monitorService.SetLeaderLock(nil, db)
+		}
+		handlers.Admin.UpstreamMonitor = adminhandler.NewUpstreamMonitorHandler(monitorService)
+		if gin.Mode() != gin.TestMode && !upstreamMonitorStarted.Swap(true) {
+			monitorService.Start(context.Background())
+		}
+	}
 	if handlers.Admin != nil && handlers.Admin.Usage != nil {
 		if _, err := handlers.Admin.Usage.ConfigureTrafficDelivery(func() string {
 			dir := os.Getenv("DATA_DIR")

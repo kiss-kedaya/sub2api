@@ -12,6 +12,7 @@ type AdminHandlers struct {
 	OpsAutomation          *admin.OpsAutomationHandler
 	CredentialGuard        *admin.CredentialGuardHandler
 	AccountOps             *admin.AccountOpsHandler
+	UpstreamMonitor        *admin.UpstreamMonitorHandler
 	Mihomo                 *admin.MihomoHandler
 	IPRisk                 *admin.IPRiskHandler
 	RequestCapture         *admin.RequestCaptureHandler
