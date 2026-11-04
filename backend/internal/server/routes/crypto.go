@@ -66,6 +66,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.GET("/sweep/blocked", cryptoHandler.AdminListBlockedSweeps)
 		crypto.POST("/sweep/records/:id/reconcile", cryptoHandler.AdminReconcileSweep)
 		crypto.GET("/deposits", cryptoHandler.AdminListDeposits)
+		crypto.POST("/deposits/confirm", cryptoHandler.AdminConfirmDeposits)
 		crypto.POST("/scan/run", cryptoHandler.AdminRunScan)
 		crypto.GET("/scan/runs", cryptoHandler.AdminScanRuns)
 		crypto.GET("/scan/runs/:id", cryptoHandler.AdminScanRunStatus)
