@@ -5,7 +5,7 @@
 # Sub2API
 
 [![Go](https://img.shields.io/badge/Go-1.26.10-00ADD8.svg)](https://go.dev/)
-[![Nuxt](https://img.shields.io/badge/Nuxt-4-00DC82.svg)](https://nuxt.com/)
+[![Nuxt UI](https://img.shields.io/badge/Nuxt_UI-4-00DC82.svg)](https://ui.nuxt.com/)
 [![Vue](https://img.shields.io/badge/Vue-3.5+-4FC08D.svg)](https://vuejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-7+-DC382D.svg)](https://redis.io/)
@@ -28,7 +28,7 @@ Compared with upstream, this tree is built around a production site that already
 - **Usage dashboard** — 30-day window with hourly rollup when data exists, otherwise a direct `usage_logs` fallback.
 - **Operator controls** — connection timelines, scoped payload capture, cache tests, traffic reports, notifications, channel drilldowns, and managed proxies, with opt-in automation and provider channels. See the [operator capability guide](docs/operator-capabilities.md).
 - **Gateway reliability** — WebSocket client-close is not treated as account failure; oversized passthrough can fall back to HTTP bridge; Spark 429 stays model-scoped; failed forwards release session slots immediately.
-- **Nuxt 4 SSR frontend** — server-rendered pages plus a small BFF that keeps access tokens out of the browser payload. The legacy Vite SPA stays embedded in the Go binary as a rollback path.
+- **Nuxt UI frontend** — Vue pages use `@nuxt/ui` inside a Vite SPA. The complete UI is embedded in the Go binary; no Node, Nitro or BFF service is required.
 - **Ops-safe upgrades** — production `DATABASE_MIGRATION_MODE=validate` on the live process; schema changes are applied out of band. Version is a single file: `backend/cmd/server/VERSION`. GitHub Releases fire only on semantic `v*` tags.
 
 Balance preauthorization stays **off** in this deployment (`BILLING_BALANCE_PREAUTHORIZATION_ENABLED=false`). Do not turn it on without a dedicated review.
@@ -47,8 +47,8 @@ Balance preauthorization stays **off** in this deployment (`BILLING_BALANCE_PREA
 | Layer | Tech |
 |-------|------|
 | Backend | Go 1.26.10, Gin, Ent |
-| Frontend | Nuxt 4 (SSR, Nitro `node-server`), Vue 3, @nuxt/ui, TailwindCSS, pnpm |
-| Frontend rollback | Legacy Vite SPA embedded in the Go binary (`-tags=embed`) |
+| Frontend | Vue 3, @nuxt/ui 4, Vite SPA, TailwindCSS, pnpm |
+| UI packaging | Complete SPA embedded in the Go binary (`-tags=embed`) |
 | Database | PostgreSQL 15+ |
 | Cache | Redis 7+ |
 
@@ -59,15 +59,13 @@ sub2api/
 ├── backend/                 # Go service
 │   ├── cmd/server/          # entry + VERSION
 │   ├── internal/            # handlers, services, repositories
-│   ├── internal/web/dist/   # legacy Vite SPA build output (embedded)
+│   ├── internal/web/dist/   # complete SPA build output and file manifest
 │   ├── migrations/          # numbered SQL
 │   └── Makefile
-├── frontend/                # Nuxt 4 app (SSR + BFF) and legacy SPA sources
-│   ├── app/                 # Nuxt pages, plugins, runtime context
-│   ├── server/              # Nitro routes: /api/v1 proxy, session, health
-│   ├── src/                 # shared Vue views, stores, API clients
-│   └── .output/             # Nuxt/Nitro build output (generated)
-├── deploy/                  # systemd, Docker, install scripts, nuxt SSR templates
+├── frontend/                # Vite SPA with Nuxt UI components
+│   ├── src/                 # Vue views, stores, router and API clients
+│   └── scripts/             # frontend manifest and verification tools
+├── deploy/                  # systemd, Docker, install and SPA proxy templates
 └── docs/                    # payment, composite groups, operators, plugins
 ```
 
@@ -81,9 +79,9 @@ cd sub2api
 pnpm --dir frontend install --frozen-lockfile
 ```
 
-There are two frontend artifacts. A full release ships both, and they must come from the same commit.
+The supported frontend is one SPA bundle. Nuxt UI is the component library; it does not require running a Nuxt server.
 
-### 1. Legacy SPA embedded in the Go binary
+### Embedded SPA
 
 ```bash
 pnpm --dir frontend run build        # writes backend/internal/web/dist
@@ -93,25 +91,15 @@ cd backend
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embed -o sub2api ./cmd/server
 ```
 
-`make build` at the repo root runs the SPA build and the backend build. This binary serves the API and the rollback UI on one port.
-
-### 2. Nuxt SSR bundle for Node
-
-```bash
-pnpm --dir frontend run build:ssr    # writes frontend/.output (Nitro node-server)
-pnpm --dir frontend run verify:ssr
-node frontend/.output/server/index.mjs
-```
-
-The SSR process needs `NUXT_BACKEND_ORIGIN` pointing at the Go API slot and a `NUXT_SESSION_PASSWORD` of at least 32 random bytes. See [deploy/nuxt/README.md](deploy/nuxt/README.md) for the full environment contract, session/CSRF behavior, and the systemd and nginx templates.
+`make build` at the repo root runs the SPA build and the backend build. This binary serves the API and UI on one port.
 
 ### Co-packaged release
 
 ```bash
-make release-ssr   # build SPA + SSR + Go, then seal → verify → stage
+make release-spa   # build SPA + Go, verify the manifest and static bundle
 ```
 
-`make release-ssr` writes `release.json`, which binds the Go binary, the embedded SPA manifest, and the SSR manifest to one commit. `verify` fails if any side was built from a different checkout or if a file was swapped. Details: [deploy/nuxt/RELEASE.md](deploy/nuxt/RELEASE.md).
+`frontend-build.json` records the source commit, build mode and every file hash. `make verify-embed` checks its provenance; `make verify-spa` checks the entry, hashed assets and absence of retired SSR output. See [deploy/README.md](deploy/README.md#frontend).
 
 Version string comes from `backend/cmd/server/VERSION` (or the `v*` tag when building a tagged checkout). Do not scatter version files elsewhere.
 
@@ -122,16 +110,10 @@ cd backend
 go run ./cmd/server
 ```
 
-Frontend dev server (Vite, legacy SPA sources):
+Frontend dev server:
 
 ```bash
 pnpm --dir frontend dev
-```
-
-Nuxt dev server (SSR + BFF):
-
-```bash
-pnpm --dir frontend exec nuxt dev
 ```
 
 Copy `deploy/config.example.yaml` to `backend/config.yaml` for binary deploys. First boot without a config file opens the setup wizard at `http://<host>:8080`.
@@ -140,12 +122,9 @@ Copy `deploy/config.example.yaml` to `backend/config.yaml` for binary deploys. F
 
 GitHub Actions [release.yml](.github/workflows/release.yml) publishes assets when a semantic `v*` tag is pushed. A branch push only runs CI.
 
-A release contains two artifacts from the same commit:
+Release archives contain the Go binary with the complete SPA embedded, together with `checksums.txt`. Use the official GitHub Actions artifacts and verify the archive checksum before deployment. The matching workflow run also uploads a `frontend-dist` Actions artifact for deployments that serve assets from disk; Actions artifacts have limited retention. The embedded UI remains part of the permanent release binary.
 
-1. the Go binary with the legacy SPA embedded;
-2. a Nuxt/Nitro SSR bundle, produced by [ssr-release.yml](.github/workflows/ssr-release.yml) and bound to the binary through `release.json`.
-
-Do not mix an SSR bundle from one release with a binary from another. The contract check in `deploy/nuxt/release.mjs` rejects that.
+When a reverse proxy serves a disk-based UI, deploy the complete matching static directory as well as the backend. Stage a new directory and atomically switch its pointer. Preserve the previous directory and old hashed assets until existing browser sessions and rollback no longer need them; replacing only `index.html` or the binary can leave clients loading incompatible assets.
 
 Linux install from a release:
 
@@ -166,24 +145,26 @@ Details: [deploy/README.md](deploy/README.md), [deploy/DOCKER.md](deploy/DOCKER.
 
 ## Deployment topology
 
-Recommended production layout with the SSR frontend:
+Production layout:
 
 ```
-browser ──► reverse proxy ──► 127.0.0.1:3000  Nuxt SSR (Node/Nitro)
-                                  └─ /api/v1/** ──► 127.0.0.1:8080  Go API
-browser ──► gateway paths (/v1/**, WebSocket) ──► 127.0.0.1:8080  Go API
+browser ──► reverse proxy ──► Go service
+                              /api/**       API handlers
+                              /v1/**        gateway, SSE and WebSocket
+                              /assets/**    complete hashed SPA assets
+                              page routes   SPA index.html
 ```
 
-- Node renders pages and proxies the admin API only. It seals access and refresh tokens into an HttpOnly session cookie, so the browser payload never carries a usable token.
-- Gateway traffic (`/v1/messages`, `/v1/responses`, `/v1/chat/completions`, SSE, WebSocket upgrades) stays on Go. Do not route it through Node.
-- The Go binary still contains the legacy SPA. Pointing the reverse proxy back at the Go port is the page-level rollback.
+- SPA pages call the Go API on the same origin; there is no BFF session layer.
+- API and gateway routes must be matched before the SPA fallback, so JSON requests never receive `index.html`.
+- A proxy may serve the static SPA directory directly. Its assets must match the deployed release and remain available across cutover.
 
-Templates: [deploy/nuxt/nginx-ssr.example.conf](deploy/nuxt/nginx-ssr.example.conf), [deploy/nuxt/sub2api-ssr.service](deploy/nuxt/sub2api-ssr.service), [deploy/nuxt/ssr.env.example](deploy/nuxt/ssr.env.example).
+Templates: [SPA server](deploy/nginx/sub2api-spa-server.conf), [API locations](deploy/nginx/sub2api-backend-locations.conf), [static SPA locations](deploy/nginx/sub2api-spa.conf).
 
 ## Production notes
 
 - Keep the Go process on `127.0.0.1:8080` and put Nginx (or another reverse proxy) in front. Enable `underscores_in_headers on;` so sticky-session headers survive.
-- Keep the Node SSR process on a loopback port (default `3000`) and let only the reverse proxy reach it.
+- Node.js and pnpm are build tools only; production serves the compiled SPA through Go or the reverse proxy.
 - Live traffic process: `DATABASE_MIGRATION_MODE=validate`. Do not let the primary 8080 process apply migrations.
 - Canary a new binary on another port (for example 8081), then switch Nginx. Never kill the primary while it still serves traffic.
 - WebSocket / SSE: if an egress proxy breaks OpenAI WS, `GATEWAY_OPENAI_WS_FORCE_HTTP=true` forces upstream HTTP/SSE without changing the client protocol.

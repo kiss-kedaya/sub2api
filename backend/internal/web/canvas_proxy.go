@@ -19,6 +19,14 @@ const (
 	defaultCanvasStaticDir   = "/opt/infinite-canvas/html/canvas"
 )
 
+// canvasBootstrapScriptHashes are CSP source expressions for the two verified
+// canvas bootstrap scripts. A hash only matches a byte-identical script body,
+// so no other inline script gains execution.
+var canvasBootstrapScriptHashes = []string{
+	"'sha256-m0aYpSd9MsHzKnbbFe87yH92kbeFQYFIknWKtzL4O/g='",
+	"'sha256-I6LPtG0ZaWWZjaqo01/h/CYOOBc9+Ljxd5XeZLu6aEI='",
+}
+
 // InfiniteCanvasHandler serves Infinite Canvas on the same origin as the
 // Sub2API UI so the sidebar page does not jump hosts and browser calls to
 // /v1 stay same-origin (no CORS). Prefer a local static dir; otherwise reverse
@@ -42,6 +50,9 @@ func InfiniteCanvasHandler() gin.HandlerFunc {
 			ModifyResponse: func(res *http.Response) error {
 				if res != nil {
 					middleware.AllowSameOriginEmbedHeaders(res.Header)
+					// Every CSP header is a separate policy, so extend each one
+					// instead of removing the upstream policy.
+					addCanvasScriptHashes(res.Header)
 				}
 				return nil
 			},
@@ -56,6 +67,7 @@ func InfiniteCanvasHandler() gin.HandlerFunc {
 			return
 		}
 		middleware.AllowSameOriginEmbedHeaders(c.Writer.Header())
+		addCanvasScriptHashes(c.Writer.Header())
 		if c.Request.URL.Path == infiniteCanvasPathPrefix {
 			c.Redirect(http.StatusTemporaryRedirect, infiniteCanvasPathPrefix+"/")
 			c.Abort()
@@ -135,4 +147,64 @@ func serveInfiniteCanvasFile(c *gin.Context, staticDir string, fileServer http.H
 	c.File(index)
 	c.Abort()
 	return true
+}
+
+// addCanvasScriptHashes extends every Content-Security-Policy value with the
+// verified canvas bootstrap hashes. Multiple CSP headers intersect, so each
+// policy is enhanced independently and none is removed. Both script-src and
+// script-src-elem are covered: when script-src-elem is present it governs
+// element scripts and needs its own hash sources.
+func addCanvasScriptHashes(header http.Header) {
+	if header == nil {
+		return
+	}
+	values := header.Values("Content-Security-Policy")
+	if len(values) == 0 {
+		return
+	}
+	header.Del("Content-Security-Policy")
+	for _, value := range values {
+		header.Add("Content-Security-Policy", addCanvasScriptHashesToPolicy(value))
+	}
+}
+
+func addCanvasScriptHashesToPolicy(policy string) string {
+	segments := strings.Split(policy, ";")
+	changed := false
+	for i, segment := range segments {
+		fields := strings.Fields(segment)
+		if len(fields) == 0 {
+			continue
+		}
+		switch strings.ToLower(fields[0]) {
+		case "script-src", "script-src-elem":
+		default:
+			continue
+		}
+		missing := make([]string, 0, len(canvasBootstrapScriptHashes))
+		for _, hash := range canvasBootstrapScriptHashes {
+			if !cspSourcesContain(fields[1:], hash) {
+				missing = append(missing, hash)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		trimmed := strings.TrimRight(segment, " \t")
+		segments[i] = trimmed + " " + strings.Join(missing, " ") + segment[len(trimmed):]
+		changed = true
+	}
+	if !changed {
+		return policy
+	}
+	return strings.Join(segments, ";")
+}
+
+func cspSourcesContain(sources []string, want string) bool {
+	for _, source := range sources {
+		if source == want {
+			return true
+		}
+	}
+	return false
 }
