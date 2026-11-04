@@ -31,6 +31,18 @@ func TestConfigFingerprintTracksReloadRelevantFields(t *testing.T) {
 		require.NotEqual(t, configFingerprint(base), configFingerprint(mutated))
 	})
 
+	t.Run("rpc limits changed", func(t *testing.T) {
+		mutated := base
+		mutated.RPCLimits = map[string]RPCEndpointLimits{"https://a": {MaxBlocks: 100, MaxAddresses: 20}}
+		require.NotEqual(t, configFingerprint(base), configFingerprint(mutated))
+	})
+
+	t.Run("rpc throttle changed", func(t *testing.T) {
+		mutated := base
+		mutated.RPCThrottleMs = 250
+		require.NotEqual(t, configFingerprint(base), configFingerprint(mutated))
+	})
+
 	t.Run("scan range changed", func(t *testing.T) {
 		mutated := base
 		mutated.ScanRange = map[string]int{"bsc": 250, "ethereum": 2000}
