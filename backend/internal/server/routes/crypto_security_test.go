@@ -798,32 +798,43 @@ func TestAdminTotpDisableHTTPRequiresOnlyFreshTotpAndRejectsApiKey(t *testing.T)
 	require.False(t, user.TotpEnabled)
 }
 
-func TestCryptoUserRoutesRespectInstanceAndAdminTestGates(t *testing.T) {
+func TestCryptoUserRoutesFollowAdminSwitchNotScanGate(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "false")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	user := &service.User{ID: 52, Email: "user@example.test", Role: service.RoleUser, Status: service.StatusActive}
 	h := newCryptoRouteHarness(t, user)
+	jwt := middleware.JWTAuthMiddleware(func(c *gin.Context) {
+		c.Set("auth_method", service.AuditAuthMethodJWT)
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: user.ID})
+		c.Set(string(middleware.ContextKeyUserRole), service.RoleUser)
+		c.Next()
+	})
 	userRouter := gin.New()
 	v1 := userRouter.Group("/api/v1")
-	RegisterCryptoRoutes(v1, handler.NewCryptoHandler(nil, h.settings, nil, nil, nil), nil,
-		middleware.JWTAuthMiddleware(func(c *gin.Context) {
-			c.Set("auth_method", service.AuditAuthMethodJWT)
-			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: user.ID})
-			c.Set(string(middleware.ContextKeyUserRole), service.RoleUser)
-			c.Next()
-		}), nil, nil)
-	response := cryptoRouteRequest(userRouter, http.MethodGet, "/api/v1/crypto/deposit-addresses", "", nil, "127.0.0.1:1", "localhost")
-	requireCryptoReason(t, response, http.StatusServiceUnavailable, "CRYPTO_DISABLED")
+	userCfg := &config.Config{Totp: config.TotpConfig{
+		EncryptionKey:           strings.Repeat("a", 64),
+		EncryptionKeyConfigured: true,
+	}}
+	RegisterCryptoRoutes(v1, handler.NewCryptoHandler(nil, h.settings, nil, nil, userCfg), nil, jwt, nil, nil)
 
-	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	// Delegating scans to another host must not 503 the customer endpoint; the
+	// handler's own channel switch decides the answer (no config row here).
+	response := cryptoRouteRequest(userRouter, http.MethodGet, "/api/v1/crypto/deposit-addresses", "", nil, "127.0.0.1:1", "localhost")
+	require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), "crypto is disabled on this instance")
+
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
 	response = cryptoRouteRequest(userRouter, http.MethodGet, "/api/v1/crypto/deposit-addresses", "", nil, "127.0.0.1:1", "localhost")
 	requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_TEST_MODE_READ_ONLY")
 
+	// A host without the persistent installation key cannot derive addresses:
+	// keep the customer API closed instead of advertising a fake channel.
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
-	response = cryptoRouteRequest(userRouter, http.MethodGet, "/api/v1/crypto/deposit-addresses", "", nil, "127.0.0.1:1", "localhost")
-	require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
-	require.NotContains(t, response.Body.String(), "CRYPTO_TEST_MODE_READ_ONLY")
+	noKeyRouter := gin.New()
+	noKeyV1 := noKeyRouter.Group("/api/v1")
+	RegisterCryptoRoutes(noKeyV1, handler.NewCryptoHandler(nil, h.settings, nil, nil, &config.Config{}), nil, jwt, nil, nil)
+	response = cryptoRouteRequest(noKeyRouter, http.MethodGet, "/api/v1/crypto/deposit-addresses", "", nil, "127.0.0.1:1", "localhost")
+	requireCryptoReason(t, response, http.StatusServiceUnavailable, "CRYPTO_DISABLED")
 }
 
 func TestRemovedWalletLockAndBackupEndpointsStayAbsent(t *testing.T) {

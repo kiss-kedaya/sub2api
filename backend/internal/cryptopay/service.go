@@ -269,17 +269,25 @@ func (s *Service) reload(ctx context.Context) {
 		slog.Warn("[cryptopay] config load failed", "error", err)
 		return
 	}
-	// A shared config must never start scans on an explicitly excluded host.
-	cfg.Enabled = cfg.Enabled && service.CryptoInstanceEnabled()
-	if cfg.Enabled && !mode.ReadOnly() {
+	// Two independent decisions share one stored row:
+	//   channelEnabled - the admin switch customers see and the user API serves.
+	//   scanEnabled    - whether THIS host runs the scanner, maintenance and
+	//                    sweep loops. CRYPTO_INSTANCE_ENABLED only removes that
+	//                    local work so a shared database is not scanned twice.
+	// A host that delegates scanning still answers deposit-address and history
+	// requests, so the deployment gate must not be folded into cfg.Enabled.
+	channelEnabled := cfg.Enabled
+	if channelEnabled && !mode.ReadOnly() {
 		guardCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		guardErr := s.checkWalletSecurity(guardCtx)
 		cancel()
 		if guardErr != nil {
-			cfg.Enabled = false
+			channelEnabled = false
 			slog.Warn("[cryptopay] channel paused by wallet security guard")
 		}
 	}
+	cfg.Enabled = channelEnabled
+	scanEnabled := channelEnabled && service.CryptoInstanceEnabled()
 
 	// A queued run must not retain an executor built from obsolete config.
 	s.sweepMu.Lock()
@@ -301,7 +309,7 @@ func (s *Service) reload(ctx context.Context) {
 	}
 	// Disabling proactive jobs must not disable an authenticated manual sweep.
 	// Read-only deployments still refuse both signing and wallet mutations.
-	s.wallet.SetEnabled(cfg.Enabled && !mode.ReadOnly())
+	s.wallet.SetEnabled(scanEnabled && !mode.ReadOnly())
 	if s.addresses != nil {
 		s.addresses.SetDeriver(s.wallet)
 	}
@@ -312,7 +320,7 @@ func (s *Service) reload(ctx context.Context) {
 	s.pools = poolsForConfig(cfg, s.pools)
 	s.startRPCDiscoveryLocked()
 
-	if !cfg.Enabled {
+	if !scanEnabled {
 		if s.worker != nil {
 			s.worker.Stop()
 			s.worker = nil

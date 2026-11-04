@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -259,4 +260,41 @@ func TestSettingService_GetPublicSettings_FallsBackToConfigForWeChatOAuthCapabil
 	require.True(t, settings.WeChatOAuthOpenEnabled)
 	require.False(t, settings.WeChatOAuthMPEnabled)
 	require.False(t, settings.WeChatOAuthMobileEnabled)
+}
+
+func TestSettingService_GetPublicSettings_CryptoEntryFollowsAdminSwitchNotScanGate(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "")
+	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "")
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "false")
+
+	ready := &config.Config{Totp: config.TotpConfig{
+		EncryptionKey:           strings.Repeat("a", 64),
+		EncryptionKeyConfigured: true,
+	}}
+	enabledRepo := &settingPublicRepoStub{values: map[string]string{
+		SettingKeyCryptoConfig: `{"enabled":true}`,
+	}}
+
+	settings, err := NewSettingService(enabledRepo, ready).GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.True(t, settings.CryptoEnabled,
+		"delegating scans to another host must not hide an enabled customer channel")
+
+	settings, err = NewSettingService(&settingPublicRepoStub{values: map[string]string{
+		SettingKeyCryptoConfig: `{"enabled":false}`,
+	}}, ready).GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, settings.CryptoEnabled, "the admin switch still turns the entry off")
+
+	settings, err = NewSettingService(enabledRepo, &config.Config{}).GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, settings.CryptoEnabled,
+		"a host without the persistent key cannot derive deposit addresses and must not advertise the channel")
+
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "false")
+	settings, err = NewSettingService(enabledRepo, ready).GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, settings.CryptoEnabled,
+		"a read-only review instance closes the customer routes and must hide the entry")
 }
