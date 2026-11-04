@@ -329,6 +329,13 @@ export async function listDepositsPaged(
   }
 }
 
+// Forward catch-up uses the existing idempotent scanner and ledger path. The
+// server still requires an administrator JWT session and HTTPS; no client
+// credential is accepted as a substitute for the session.
+export async function runCryptoScan(fromBlock = 0): Promise<void> {
+  await apiClient.post('/admin/crypto/scan/run', { from_block: fromBlock }, { timeout: 15 * 60 * 1000 })
+}
+
 export interface WalletStatus {
   ok: boolean
   configured: boolean

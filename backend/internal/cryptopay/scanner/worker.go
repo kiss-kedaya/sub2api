@@ -306,8 +306,11 @@ func collectScanFailures(err error, byChain map[string][]*scanStageError, other 
 	collectScanFailures(errors.Unwrap(err), byChain, other)
 }
 
-// Security hooks precede pending credit as well as every live/backfill range.
-// They return failures before a cursor can move past unchecked outflows.
+// Security hooks run before every live/backfill range. A wallet-security
+// incident still blocks the pass in RunOnce; a transient RPC failure in the
+// independent outflow scan must not make an inbound deposit disappear. In the
+// latter case the transfer is persisted as pending and only becomes credited
+// after the normal pending/recheck path observes the security window.
 func (w *Worker) SetSecurityGuards(before func(context.Context) error, scan func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error) {
 	w.beforePass, w.securityRange = before, scan
 }
@@ -859,11 +862,22 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 // and persistence check. Only the caller decides whether a successful range
 // is contiguous with the durable cursor and can advance it.
 func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool *rpc.Pool, chain ChainConfig, from, to uint64, recipients []string) error {
+	securityUnavailable := false
+	var securityFailure error
 	if w.securityRange != nil {
 		if err := w.securityRange(ctx, scanner, pool, chain, from, to); err != nil {
-			return stageErr(chain.Chain, "security", from, to, err)
+			var rpcFailure *rpc.Failure
+			if errors.As(err, &rpcFailure) || errors.Is(err, context.DeadlineExceeded) {
+				securityUnavailable = true
+				securityFailure = err
+				slog.Error("[cryptopay] outflow security scan unavailable; recording deposits as pending",
+					"chain", chain.Chain, "from", from, "to", to, "cause", rpc.SafeError(err))
+			} else {
+				return stageErr(chain.Chain, "security", from, to, err)
+			}
+		} else {
+			w.markSecurityCovered(chain.Chain, from, to)
 		}
-		w.markSecurityCovered(chain.Chain, from, to)
 	}
 	transfers, err := scanner.ScanRange(ctx, chain.Chain, from, to, chain.Tokens, recipients)
 	if err != nil {
@@ -882,9 +896,20 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 				"chain", transfer.Chain, "tx", transfer.TxHash, "token", transfer.Token)
 			continue
 		}
+		if securityUnavailable {
+			if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
+				return fmt.Errorf("persist pending %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err)
+			}
+			continue
+		}
 		if err := w.processTransfer(ctx, pool, chain, transfer, decimals); err != nil {
 			return err
 		}
+	}
+	if securityFailure != nil {
+		// Pending observations are durable, but this range is not safe to put
+		// behind the cursor until outflow verification succeeds.
+		return stageErr(chain.Chain, "security", from, to, securityFailure)
 	}
 	return nil
 }

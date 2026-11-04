@@ -481,12 +481,15 @@
               </UPageCard>
             </UPageGrid>
 
+            <UAlert v-if="scanningDeposits" color="info" variant="subtle" icon="i-lucide-loader-circle" :title="t('admin.crypto.scanDepositsRunning')" :description="t('admin.crypto.scanDepositsRunningHint')" />
+
             <div class="crypto-view__filters flex flex-wrap items-center justify-between gap-1.5">
               <div class="flex flex-wrap items-center gap-1.5">
                 <USelect :model-value="depositChain || ALL" :items="depositChainItems" class="min-w-36" :aria-label="t('admin.crypto.chain')" @update:model-value="setDepositChain" />
                 <USelect :model-value="depositStatus || ALL" :items="depositStatusItems" class="min-w-32" :aria-label="t('common.status')" @update:model-value="setDepositStatus" />
               </div>
               <div class="flex flex-wrap items-center gap-1.5">
+                <UButton color="neutral" variant="outline" icon="i-lucide-scan-search" :loading="scanningDeposits" :disabled="loadingDeposits || scanningDeposits" @click="runDepositCatchup">{{ t('admin.crypto.scanDeposits') }}</UButton>
                 <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :disabled="loadingDeposits" @click="loadDeposits">{{ t('common.refresh') }}</UButton>
                 <UButton color="neutral" variant="outline" icon="i-lucide-download" :disabled="exporting" @click="downloadCSV">{{ t('admin.crypto.exportCsv') }}</UButton>
                 <UDropdownMenu :items="columnMenu('deposit')" :content="{ align: 'end' }">
@@ -611,6 +614,7 @@ import {
   getSweepPlan,
   listAllAddresses,
   listDepositsPaged,
+  runCryptoScan,
   listSweepRecords,
   listBlockedSweeps,
   reconcileSweep,
@@ -877,6 +881,7 @@ const depositStatus = ref('')
 const depositPage = ref(1)
 const depositPageSize = 50
 const loadingDeposits = ref(false)
+const scanningDeposits = ref(false)
 
 const depositTotalPages = computed(() =>
   Math.max(1, Math.ceil(depositSummary.value.total / depositPageSize))
@@ -1682,6 +1687,21 @@ async function loadDeposits() {
     depositSummary.value = summary
   } finally {
     loadingDeposits.value = false
+  }
+}
+
+async function runDepositCatchup() {
+  if (scanningDeposits.value) return
+  scanningDeposits.value = true
+  try {
+    await runCryptoScan(0)
+    depositPage.value = 1
+    await loadDeposits()
+    appStore.showSuccess(t('admin.crypto.scanDepositsDone'))
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error) || t('admin.crypto.scanDepositsFailed'))
+  } finally {
+    scanningDeposits.value = false
   }
 }
 

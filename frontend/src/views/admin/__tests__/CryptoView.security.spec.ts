@@ -53,6 +53,7 @@ beforeEach(() => {
     if (path.endsWith('/security/verify')) return grantResponse()
     if (path.endsWith('/operation-intent')) return { data: { accepted: true }, status: 200 }
     if (path.endsWith('/sweep/run')) return { data: { data: { id: 'sweep-fixture', dry_run: false, chains: [], started_at: '', finished: true, summary: { planned: 0, swept: 0, failed: 0, pending: 0, gas_topups: 0, dry_run: false, entries: [] } } }, status: 202 }
+    if (path.endsWith('/scan/run')) return { data: { data: { completed: true } }, status: 200 }
     if (path.endsWith('/export-mnemonics')) return { data: { deposit_mnemonic: 'test deposit words', hot_mnemonic: 'test gas words' }, status: 200 }
     if (path.endsWith('/backup')) return { data: new Blob(['encrypted'], { type: 'application/json' }), status: 200 }
     if (path.endsWith('/hot-mnemonic')) {
@@ -100,6 +101,18 @@ async function manageRPC(wrapper: VueWrapper) {
 }
 
 describe('Crypto page operation wiring (mocked UI contract only)', () => {
+  it('provides a guarded-account forward scan action without consuming a TOTP code', async () => {
+    const wrapper = await render()
+    await tab(wrapper, 'deposits')
+    await flushPromises()
+    await button(wrapper, 'admin.crypto.scanDeposits').trigger('click')
+    await flushPromises()
+
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/scan/run', { from_block: 0 }, { timeout: 900000 })
+    expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/security/verify'))).toHaveLength(0)
+    expect(mocks.showSuccess).toHaveBeenCalledWith('admin.crypto.scanDepositsDone')
+  })
+
   it('refreshes an old sweep preview before asking for execution verification', async () => {
     walletStatus = { ok: true, configured: true, ready: true, enabled: true }
     let amount = 10
