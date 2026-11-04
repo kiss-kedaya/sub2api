@@ -54,14 +54,15 @@ const examples = computed<HeaderExample[]>(() => {
       <HelpTooltip width-class="w-80">
         <p>{{ t('admin.accounts.upstreamRequestIdHeaderHelp.intro') }}</p>
         <template v-if="examples.length">
-          <p class="mt-2 font-medium">{{ t('admin.accounts.upstreamRequestIdHeaderHelp.examplesTitle') }}</p>
-          <ul class="mt-1 space-y-1.5">
-            <li v-for="item in examples" :key="item.label">
+          <p class="mt-3 font-medium text-highlighted">{{ t('admin.accounts.upstreamRequestIdHeaderHelp.examplesTitle') }}</p>
+          <!-- The bubble follows the site theme (light or dark), so colours come from theme tokens. -->
+          <ul class="mt-1.5 space-y-2">
+            <li v-for="item in examples" :key="item.label" data-test="header-example">
               <div class="flex items-center justify-between gap-3">
-                <span class="text-gray-300">{{ item.label }}</span>
-                <code class="select-all rounded-sm bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-white">{{ item.header }}</code>
+                <span class="text-toned">{{ item.label }}</span>
+                <code class="select-all rounded-sm bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-highlighted ring ring-default">{{ item.header }}</code>
               </div>
-              <p v-if="item.note" class="mt-0.5 text-gray-400">{{ item.note }}</p>
+              <p v-if="item.note" class="mt-0.5 text-muted">{{ item.note }}</p>
             </li>
           </ul>
         </template>

@@ -71,6 +71,22 @@ describe('UpstreamRequestIdHeaderField', () => {
     expect(tooltip?.querySelectorAll('code') ?? []).toHaveLength(0)
   })
 
+  it('colours the examples with theme tokens, not the old dark-bubble palette', async () => {
+    // The bubble follows the site theme. Fixed light-on-dark colours (white chips,
+    // gray-300/400 text) are unreadable on a light bubble.
+    const wrapper = mountField({ platform: 'openai', type: 'apikey' })
+    const { tooltip } = await openHelp(wrapper)
+
+    const rows = tooltip?.querySelectorAll('[data-test="header-example"]') ?? []
+    expect(rows.length).toBeGreaterThan(0)
+    const markup = tooltip?.innerHTML ?? ''
+    expect(markup).not.toMatch(/text-white|bg-white\/10|text-gray-(300|400)/)
+    for (const row of rows) {
+      expect(row.querySelector('code')?.className).toContain('text-highlighted')
+      expect(row.querySelector('code')?.className).toContain('bg-elevated')
+    }
+  })
+
   it('binds the header name through v-model', async () => {
     const wrapper = mountField({ platform: 'openai', type: 'apikey', modelValue: 'X-Request-ID' })
     const input = wrapper.get('[data-testid="upstream-request-id-header"]')
