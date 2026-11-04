@@ -260,6 +260,88 @@ export async function waitForSweepRun(
   throw new DOMException('Polling stopped', 'AbortError')
 }
 
+export type ScanRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface ScanChainState {
+  chain: string
+  cursor: number
+  confirmed_head: number
+  remaining: number
+  head_known: boolean
+}
+
+// In-memory background catch-up scan. A restart of the server loses the record,
+// not the scan cursor, so a lost run is simply started again.
+export interface ScanRun {
+  id: string
+  status: ScanRunStatus
+  started_at: string
+  finished_at?: string
+  from_block: number
+  rounds: number
+  busy_retries: number
+  stalled_rounds: number
+  chains: ScanChainState[] | null
+  last_error?: string
+  stop_reason?: 'caught_up' | 'stalled' | 'deadline' | 'cancelled' | 'error' | 'internal' | string
+}
+
+// Starts a background catch-up that repeats scan passes until every chain's
+// cursor reaches its confirmed head. A server that predates async scanning
+// ignores the flag and answers after one synchronous pass; that comes back as
+// null: the scan already ran, there is nothing to follow.
+export async function startCryptoScan(fromBlock = 0, verification?: CryptoVerification): Promise<ScanRun | null> {
+  const { data } = await apiClient.post('/admin/crypto/scan/run', { from_block: fromBlock }, {
+    ...cryptoRequestOptions(verification),
+    timeout: 30000,
+    params: { async: '1' }
+  })
+  const run = data?.data
+  return run && typeof run.id === 'string' ? run : null
+}
+
+export async function getScanRun(id: string, signal?: AbortSignal): Promise<ScanRun> {
+  const { data } = await apiClient.get(`/admin/crypto/scan/runs/${encodeURIComponent(id)}`, { signal })
+  return data.data
+}
+
+export async function listScanRuns(): Promise<ScanRun[]> {
+  const { data } = await apiClient.get('/admin/crypto/scan/runs')
+  return Array.isArray(data?.data) ? data.data : []
+}
+
+// Cancelling is a payment operation: it needs the same fresh proof as a sweep.
+// Saved progress stays saved. The run reports "cancelled" on a later poll.
+export async function cancelScanRun(id: string, verification?: CryptoVerification): Promise<ScanRun> {
+  const { data } = await apiClient.post(`/admin/crypto/scan/runs/${encodeURIComponent(id)}/cancel`, null, {
+    ...cryptoRequestOptions(verification),
+    timeout: 30000
+  })
+  return data.data
+}
+
+// Polls until the run leaves "running". Leaving the page aborts only the
+// polling; it never cancels the scan.
+export async function waitForScanRun(
+  initial: ScanRun,
+  signal: AbortSignal,
+  update: (run: ScanRun) => void
+): Promise<ScanRun> {
+  let run = initial
+  while (!signal.aborted) {
+    update(run)
+    if (run.status !== 'running') return run
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(new DOMException('Polling stopped', 'AbortError')) }
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, 2000)
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) abort()
+    })
+    run = await getScanRun(initial.id, signal)
+  }
+  throw new DOMException('Polling stopped', 'AbortError')
+}
+
 
 
 export interface BlockedSweep {
@@ -334,6 +416,48 @@ export async function listDepositsPaged(
 // credential is accepted as a substitute for the session.
 export async function runCryptoScan(fromBlock = 0): Promise<void> {
   await apiClient.post('/admin/crypto/scan/run', { from_block: fromBlock }, { timeout: 15 * 60 * 1000 })
+}
+
+export type DepositConfirmStatus = 'credited' | 'already_credited' | 'rejected' | 'error'
+
+export interface DepositConfirmResult {
+  id: number
+  status: DepositConfirmStatus | string
+  order_id?: number
+  message?: string
+}
+
+export interface DepositConfirmOutcome {
+  results: DepositConfirmResult[]
+  credited: number
+  failed: number
+}
+
+// Manual credit for pending deposits. The server skips the confirmation-depth
+// and outflow-scan gates and only checks the on-chain receipt, then adds the
+// user's balance at once. It is a payment mutation, so the caller must pass a
+// fresh proof (X-Crypto-TOTP or X-Crypto-Grant), exactly like sweep.
+export async function confirmDeposits(
+  ids: number[],
+  verification: CryptoVerification,
+  note?: string
+): Promise<DepositConfirmOutcome> {
+  const trimmedNote = note?.trim()
+  const { data } = await apiClient.post('/admin/crypto/deposits/confirm', {
+    ids,
+    ...(trimmedNote ? { note: trimmedNote } : {})
+  }, {
+    ...cryptoRequestOptions(verification),
+    // The server reads one receipt per deposit before it credits.
+    timeout: 120_000
+  })
+  const body = data?.data ?? data
+  const results: DepositConfirmResult[] = Array.isArray(body?.results) ? body.results : []
+  return {
+    results,
+    credited: Number.isFinite(body?.credited) ? body.credited : results.filter(item => item.status === 'credited').length,
+    failed: Number.isFinite(body?.failed) ? body.failed : results.filter(item => item.status === 'rejected' || item.status === 'error').length
+  }
 }
 
 export interface WalletStatus {
@@ -617,4 +741,65 @@ export function cryptoSecurityErrorKey(error: unknown): string | undefined {
   if (/not.configur|not.enabled|not.bound|setup.required|2fa.required|totp.required/.test(reason)) return 'securityNotConfigured'
   if (/totp|2fa|verification.code/.test(reason)) return 'securityInvalid'
   return undefined
+}
+
+// Node status page: GET /admin/crypto/chains/status. A null value means "unknown",
+// never zero; the page shows "calculating" for the ones that need history.
+export type ChainState = 'disabled' | 'no_rpc' | 'error' | 'stalled' | 'catching_up' | 'synced'
+export type ChainNodeState = 'ok' | 'slow' | 'behind' | 'error' | 'wrong_chain'
+export type ChainNodeErrorKind =
+  | 'timeout' | 'connection' | 'http_429' | 'http_5xx' | 'http_4xx' | 'rpc_error' | 'bad_response' | 'wrong_chain'
+
+export interface ChainNodeStatus {
+  label: string
+  host: string
+  status: ChainNodeState
+  latency_ms: number | null
+  head: number | null
+  behind: number | null
+  error_kind: ChainNodeErrorKind | null
+}
+
+export interface ChainStatus {
+  chain: string
+  enabled: boolean
+  state: ChainState
+  confirmations: number
+  scan_range: number
+  head: number | null
+  confirmed_head: number | null
+  cursor: number | null
+  unscanned: number | null
+  progress_pct: number | null
+  scan_speed_bpm: number | null
+  head_speed_bpm: number | null
+  eta_seconds: number | null
+  cursor_updated_at: string | null
+  stalled_seconds: number | null
+  pending_deposits: number | null
+  last_error: { kind: string; stage: string } | null
+  nodes: ChainNodeStatus[]
+}
+
+export interface ChainStatusReport {
+  generated_at: string
+  summary: { enabled: number; lagging: number; stalled: number; error: number }
+  chains: ChainStatus[]
+}
+
+// The server probes every node (cached 5 s, shared by all viewers), so allow a little
+// more than the slowest probe before the poller gives up on one request.
+export async function getChainStatus(): Promise<ChainStatusReport> {
+  const { data } = await apiClient.get('/admin/crypto/chains/status', { timeout: 12_000 })
+  const report = data?.data
+  return {
+    generated_at: typeof report?.generated_at === 'string' ? report.generated_at : '',
+    summary: {
+      enabled: report?.summary?.enabled ?? 0,
+      lagging: report?.summary?.lagging ?? 0,
+      stalled: report?.summary?.stalled ?? 0,
+      error: report?.summary?.error ?? 0
+    },
+    chains: Array.isArray(report?.chains) ? report.chains : []
+  }
 }

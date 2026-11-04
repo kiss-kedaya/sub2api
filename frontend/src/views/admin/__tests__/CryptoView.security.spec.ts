@@ -108,7 +108,9 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await button(wrapper, 'admin.crypto.scanDeposits').trigger('click')
     await flushPromises()
 
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/scan/run', { from_block: 0 }, { timeout: 900000 })
+    // The mocked server answers like one that predates background scans (a plain
+    // 200 without a run), which the page must treat as an already finished pass.
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/scan/run', { from_block: 0 }, expect.objectContaining({ params: { async: '1' } }))
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/security/verify'))).toHaveLength(0)
     expect(mocks.showSuccess).toHaveBeenCalledWith('admin.crypto.scanDepositsDone')
   })

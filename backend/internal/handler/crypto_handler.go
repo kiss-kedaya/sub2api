@@ -39,14 +39,17 @@ type CryptoHandler struct {
 	mnemonicExporter   cryptoMnemonicExporter
 	privateKeyExporter cryptoAddressPrivateKeyExporter
 	operationNotifier  cryptoWalletOperationNotifier
+	depositConfirmer   cryptoDepositConfirmer
 }
 
 func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService, cryptoSvc *cryptopay.Service, totpService *service.TotpService, cfg *config.Config) *CryptoHandler {
 	var mnemonicExporter cryptoMnemonicExporter
 	var privateKeyExporter cryptoAddressPrivateKeyExporter
+	var depositConfirmer cryptoDepositConfirmer
 	if cryptoSvc != nil {
 		mnemonicExporter = cryptoSvc
 		privateKeyExporter = cryptoSvc
+		depositConfirmer = cryptoSvc
 	}
 	return &CryptoHandler{
 		addresses:          addressService,
@@ -57,6 +60,7 @@ func NewCryptoHandler(addressService *addresses.Service, settings *service.Setti
 		operationNotifier:  cryptoSvc,
 		mnemonicExporter:   mnemonicExporter,
 		privateKeyExporter: privateKeyExporter,
+		depositConfirmer:   depositConfirmer,
 	}
 }
 

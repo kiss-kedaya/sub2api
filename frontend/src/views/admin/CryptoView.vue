@@ -43,6 +43,13 @@
         :aria-label="t('admin.crypto.title')"
         @update:model-value="(value: string | number) => switchTab(String(value))"
       >
+        <!-- Node status: per-chain scan progress and RPC node health -->
+        <template #chains>
+          <div id="crypto-panel-chains" class="crypto-view__panel flex flex-col gap-4">
+            <CryptoChainStatusPanel :active="chainsActive" @open-config="openConfigTab" />
+          </div>
+        </template>
+
         <!-- Configuration -->
         <template #config>
           <div id="crypto-panel-config" class="crypto-view__panel flex w-full flex-col gap-4 sm:gap-6 lg:max-w-3xl mx-auto">
@@ -481,7 +488,19 @@
               </UPageCard>
             </UPageGrid>
 
-            <UAlert v-if="scanningDeposits" color="info" variant="subtle" icon="i-lucide-loader-circle" :title="t('admin.crypto.scanDepositsRunning')" :description="t('admin.crypto.scanDepositsRunningHint')" />
+            <UAlert v-if="scanningDeposits || activeScan" :color="scanAlertColor" variant="subtle" :icon="scanRunning ? 'i-lucide-loader-circle' : 'i-lucide-circle-alert'" :title="scanAlertTitle">
+              <template #description>
+                <div class="space-y-0.5">
+                  <p v-if="scanRunning">{{ t('admin.crypto.scanDepositsRunningHint') }}</p>
+                  <p v-if="scanProgressLine">{{ scanProgressLine }}</p>
+                  <p v-for="line in scanChainLines" :key="line">{{ line }}</p>
+                  <p v-if="activeScan?.last_error">{{ t('admin.crypto.scanRunLastError', { message: activeScan.last_error }) }}</p>
+                </div>
+              </template>
+              <template v-if="scanRunning && activeScan" #actions>
+                <UButton color="neutral" variant="outline" size="xs" :loading="cancellingScan" :disabled="cancellingScan" @click="cancelScan">{{ t('admin.crypto.scanRunCancel') }}</UButton>
+              </template>
+            </UAlert>
 
             <div class="crypto-view__filters flex flex-wrap items-center justify-between gap-1.5">
               <div class="flex flex-wrap items-center gap-1.5">
@@ -489,6 +508,15 @@
                 <USelect :model-value="depositStatus || ALL" :items="depositStatusItems" class="min-w-32" :aria-label="t('common.status')" @update:model-value="setDepositStatus" />
               </div>
               <div class="flex flex-wrap items-center gap-1.5">
+                <UButton
+                  v-if="selectedDeposits.length"
+                  color="warning"
+                  icon="i-lucide-circle-check-big"
+                  data-testid="deposit-confirm-open"
+                  :loading="confirmingDeposits"
+                  :disabled="confirmingDeposits || loadingDeposits"
+                  @click="openDepositConfirm"
+                >{{ t('admin.crypto.depositConfirmAction', { count: selectedDeposits.length, total: fmtAmount(selectedDepositsTotal) }) }}</UButton>
                 <UButton color="neutral" variant="outline" icon="i-lucide-scan-search" :loading="scanningDeposits" :disabled="loadingDeposits || scanningDeposits" @click="runDepositCatchup">{{ t('admin.crypto.scanDeposits') }}</UButton>
                 <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :disabled="loadingDeposits" @click="loadDeposits">{{ t('common.refresh') }}</UButton>
                 <UButton color="neutral" variant="outline" icon="i-lucide-download" :disabled="exporting" @click="downloadCSV">{{ t('admin.crypto.exportCsv') }}</UButton>
@@ -506,6 +534,23 @@
               :empty="t('common.noData')"
               :ui="tableUi"
             >
+              <template #select-header>
+                <UCheckbox
+                  :model-value="allPendingSelected ? true : somePendingSelected ? 'indeterminate' : false"
+                  :aria-label="t('admin.crypto.depositSelectAll')"
+                  data-testid="deposit-select-all"
+                  @update:model-value="toggleAllPendingDeposits($event === true)"
+                />
+              </template>
+              <template #select-cell="{ row }">
+                <UCheckbox
+                  v-if="row.original.status === 'pending'"
+                  :model-value="selectedDepositIds.includes(row.original.id)"
+                  :aria-label="t('admin.crypto.depositSelectRow', { id: row.original.id })"
+                  data-testid="deposit-select-row"
+                  @update:model-value="toggleDepositSelected(row.original.id, $event === true)"
+                />
+              </template>
               <template #from_address-cell="{ row }"><span class="font-mono" :title="row.original.from_address">{{ short(row.original.from_address) }}</span></template>
               <template #to_address-cell="{ row }"><span class="font-mono" :title="row.original.to_address">{{ short(row.original.to_address) }}</span></template>
               <template #token_symbol-cell="{ row }"><UBadge color="neutral" variant="outline">{{ row.original.token_symbol || 'USDT' }}</UBadge></template>
@@ -564,6 +609,14 @@
 
     <CryptoMnemonicsDialog :show="mnemonicsDialogOpen" @close="mnemonicsDialogOpen = false" />
     <CryptoPrivateKeyDialog :address="privateKeyAddress" @close="privateKeyAddress = null" />
+    <CryptoDepositConfirmDialog
+      :show="depositDialogOpen"
+      :rows="depositDialogRows"
+      :total="depositDialogTotal"
+      :outcome="depositOutcome"
+      @close="depositDialogOpen = false"
+      @confirm="submitDepositConfirm"
+    />
     <BaseDialog :show="walletDialog !== null" :title="t('admin.crypto.hotImportAction')" @close="closeWalletDialog">
       <form id="crypto-wallet-form" class="space-y-4" autocomplete="off" @submit.prevent="submitWallet">
         <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.crypto.hotImportWarning')" />
@@ -591,11 +644,13 @@ import { useSectionRoute } from './sysSectionRoute'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
+import CryptoDepositConfirmDialog from '@/components/crypto/CryptoDepositConfirmDialog.vue'
 import CryptoGrantStatus from '@/components/crypto/CryptoGrantStatus.vue'
 import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
 import CryptoPrivateKeyDialog from '@/components/crypto/CryptoPrivateKeyDialog.vue'
 import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
 import CryptoGasWalletPanel from '@/components/crypto/CryptoGasWalletPanel.vue'
+import CryptoChainStatusPanel from '@/components/crypto/CryptoChainStatusPanel.vue'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
@@ -614,13 +669,17 @@ import {
   getSweepPlan,
   listAllAddresses,
   listDepositsPaged,
-  runCryptoScan,
+  confirmDeposits,
   listSweepRecords,
   listBlockedSweeps,
   reconcileSweep,
   startSweep,
   listSweepRuns,
   waitForSweepRun,
+  startCryptoScan,
+  listScanRuns,
+  cancelScanRun,
+  waitForScanRun,
   setAddressStatus,
   exportDepositsCSV,
   initializeWallet,
@@ -633,6 +692,7 @@ import {
   type AdminAddressSummary,
   type CryptoConfig,
   type CryptoConfigPatch,
+  type DepositConfirmOutcome,
   type DepositRecord,
   type DepositSummary,
   type DepositAddress,
@@ -643,6 +703,7 @@ import {
   type SweepRecord,
   type SweepSummary,
   type SweepRun,
+  type ScanRun,
   type WalletSecurityStatus,
   type WalletOperationAction,
   type CryptoVerification
@@ -680,20 +741,29 @@ const tabs = computed(() => [
   { value: 'config', slot: 'config' as const, label: t('admin.crypto.tabConfig') },
   { value: 'addresses', slot: 'addresses' as const, label: t('admin.crypto.tabAddresses') },
   { value: 'sweep', slot: 'sweep' as const, label: t('admin.crypto.tabSweep') },
-  { value: 'deposits', slot: 'deposits' as const, label: t('admin.crypto.tabDeposits') }
+  { value: 'deposits', slot: 'deposits' as const, label: t('admin.crypto.tabDeposits') },
+  { value: 'chains', slot: 'chains' as const, label: t('admin.crypto.tabChains') }
 ])
 // Open on the address list: it is the operator's main view (the config tab
 // is a one-time setup step).
 const activeTab = ref('addresses')
-type CryptoSection = 'overview' | 'addresses' | 'sweep' | 'deposits' | 'config'
-const { section, routed, to: sectionTo } = useSectionRoute<CryptoSection>('overview', { overview: 'AdminCrypto', addresses: 'AdminCryptoAddresses', sweep: 'AdminCryptoSweeps', deposits: 'AdminCryptoDeposits', config: 'AdminCryptoSettings' })
+type CryptoSection = 'overview' | 'addresses' | 'sweep' | 'deposits' | 'chains' | 'config'
+const { section, routed, to: sectionTo } = useSectionRoute<CryptoSection>('overview', { overview: 'AdminCrypto', addresses: 'AdminCryptoAddresses', sweep: 'AdminCryptoSweeps', deposits: 'AdminCryptoDeposits', chains: 'AdminCryptoChains', config: 'AdminCryptoSettings' })
 const overviewEntries = computed(() => [
   { section: 'addresses' as const, label: t('admin.crypto.tabAddresses'), icon: 'i-lucide-wallet' },
   { section: 'sweep' as const, label: t('admin.crypto.tabSweep'), icon: 'i-lucide-arrow-up-from-line' },
   { section: 'deposits' as const, label: t('admin.crypto.tabDeposits'), icon: 'i-lucide-arrow-down-to-line' },
+  { section: 'chains' as const, label: t('admin.crypto.tabChains'), icon: 'i-lucide-activity' },
   { section: 'config' as const, label: t('admin.crypto.tabConfig'), icon: 'i-lucide-settings-2' },
 ])
 const navItems = computed(() => [{ label: t('admin.crypto.tabOverview'), icon: 'i-lucide-layout-dashboard', to: sectionTo('overview') }, ...overviewEntries.value.map(entry => ({ label: entry.label, icon: entry.icon, to: sectionTo(entry.section) }))])
+// The node-status panel polls only while its tab is the visible one. In routed mode the
+// overview keeps the last tab mounted behind v-show, so the route decides, not activeTab.
+const chainsActive = computed(() => routed ? section.value === 'chains' : activeTab.value === 'chains')
+function openConfigTab() {
+  if (routed) section.value = 'config'
+  else switchTab('config')
+}
 
 const config = ref<CryptoConfig | null>(null)
 // Snapshot of the last loaded/saved config: the save confirmation diffs
@@ -845,6 +915,8 @@ const recordColumns = computed<TableColumn<SweepRecord>[]>(() => [
   { accessorKey: 'sweep_tx_hash', header: 'TX' }
 ])
 const depositTableColumns = computed<TableColumn<DepositRecord>[]>(() => [
+  // Only pending rows can be confirmed by hand; a page with none keeps the table as it was.
+  ...(pendingDeposits.value.length ? [{ id: 'select', header: '', enableHiding: false }] : []),
   { accessorKey: 'chain', header: t('admin.crypto.chain') },
   { accessorKey: 'from_address', header: t('admin.crypto.from') },
   { accessorKey: 'to_address', header: t('admin.crypto.address') },
@@ -882,10 +954,29 @@ const depositPage = ref(1)
 const depositPageSize = 50
 const loadingDeposits = ref(false)
 const scanningDeposits = ref(false)
+const activeScan = ref<ScanRun | null>(null)
+const cancellingScan = ref(false)
+let scanPoll: AbortController | null = null
+onUnmounted(() => scanPoll?.abort())
 
 const depositTotalPages = computed(() =>
   Math.max(1, Math.ceil(depositSummary.value.total / depositPageSize))
 )
+
+// Manual confirmation of pending deposits. Selection is per page: loadDeposits
+// drops ids that are no longer pending rows, so a page or filter change starts clean.
+const selectedDepositIds = ref<number[]>([])
+const confirmingDeposits = ref(false)
+const depositDialogOpen = ref(false)
+const depositDialogRows = ref<DepositRecord[]>([])
+const depositDialogTotal = ref('')
+const depositOutcome = ref<DepositConfirmOutcome | null>(null)
+
+const pendingDeposits = computed(() => deposits.value.filter(item => item.status === 'pending'))
+const selectedDeposits = computed(() => pendingDeposits.value.filter(item => selectedDepositIds.value.includes(item.id)))
+const selectedDepositsTotal = computed(() => selectedDeposits.value.reduce((sum, item) => sum + (Number(item.amount) || 0), 0))
+const allPendingSelected = computed(() => pendingDeposits.value.length > 0 && selectedDeposits.value.length === pendingDeposits.value.length)
+const somePendingSelected = computed(() => selectedDeposits.value.length > 0 && !allPendingSelected.value)
 
 const poolStatus = ref<PoolStatus | null>(null)
 const hotWallets = ref<HotWalletStatus[]>([])
@@ -1149,6 +1240,7 @@ function switchTab(id: string) {
   }
   if (id === 'deposits') {
     void loadDeposits()
+    void resumeScanRun()
   }
 }
 
@@ -1685,25 +1777,180 @@ async function loadDeposits() {
     )
     deposits.value = items
     depositSummary.value = summary
+    const pending = new Set(items.filter(item => item.status === 'pending').map(item => item.id))
+    selectedDepositIds.value = selectedDepositIds.value.filter(id => pending.has(id))
   } finally {
     loadingDeposits.value = false
+  }
+}
+
+function toggleDepositSelected(id: number, selected: boolean) {
+  const rest = selectedDepositIds.value.filter(item => item !== id)
+  selectedDepositIds.value = selected ? [...rest, id] : rest
+}
+
+function toggleAllPendingDeposits(selected: boolean) {
+  selectedDepositIds.value = selected ? pendingDeposits.value.map(item => item.id) : []
+}
+
+// The dialog works on a snapshot, so a refresh behind it cannot change what the
+// operator agreed to credit.
+function openDepositConfirm() {
+  if (confirmingDeposits.value || !selectedDeposits.value.length) return
+  depositOutcome.value = null
+  depositDialogRows.value = [...selectedDeposits.value]
+  depositDialogTotal.value = fmtAmount(selectedDepositsTotal.value)
+  depositDialogOpen.value = true
+}
+
+// Same payment-proof path as sweep / address status: withCryptoVerification reuses
+// a live grant or asks for a fresh TOTP, and the proof rides on this one request.
+async function submitDepositConfirm(note: string) {
+  if (confirmingDeposits.value || !depositDialogRows.value.length) return
+  confirmingDeposits.value = true
+  const rows = depositDialogRows.value
+  const ids = rows.map(row => row.id)
+  const chains = [...new Set(rows.map(row => row.chain))].join(', ')
+  depositDialogOpen.value = false
+  depositOutcome.value = null
+  let attempted = false
+  try {
+    await withCryptoVerification(
+      t('admin.crypto.depositConfirmVerify', { count: ids.length, total: depositDialogTotal.value, chains }),
+      async (verification) => {
+        attempted = true
+        depositOutcome.value = await confirmDeposits(ids, verification, note)
+      }
+    )
+    // A request-level failure is shown by the verification dialog; per-deposit
+    // results (including rejected ones) are shown here.
+    if (depositOutcome.value) depositDialogOpen.value = true
+    // After any request that went out, the list is the only reliable record of
+    // what was credited. A cancelled verification leaves the selection alone.
+    if (attempted) {
+      selectedDepositIds.value = []
+      try {
+        await loadDeposits()
+      } catch (error) {
+        appStore.showError(extractApiErrorMessage(error, t('common.error')))
+      }
+    }
+  } finally {
+    confirmingDeposits.value = false
   }
 }
 
 async function runDepositCatchup() {
   if (scanningDeposits.value) return
   scanningDeposits.value = true
+  activeScan.value = null
   try {
-    await runCryptoScan(0)
-    depositPage.value = 1
-    await loadDeposits()
-    appStore.showSuccess(t('admin.crypto.scanDepositsDone'))
+    // Forward catch-up only: needs no second factor, runs in the background on
+    // the server and keeps going until the cursor reaches the confirmed head.
+    const run = await startCryptoScan(0)
+    if (!run) {
+      // A server that predates background scans has already finished one pass.
+      depositPage.value = 1
+      await loadDeposits()
+      appStore.showSuccess(t('admin.crypto.scanDepositsDone'))
+      return
+    }
+    activeScan.value = run
+    await followScanRun(run)
   } catch (error) {
-    appStore.showError(extractApiErrorMessage(error) || t('admin.crypto.scanDepositsFailed'))
+    // A scan that is already running (409) or one whose start response was lost
+    // is picked up instead of reported as a failure.
+    const running = await findRunningScan()
+    if (running) {
+      await followScanRun(running)
+    } else {
+      appStore.showError(extractApiErrorMessage(error, t('admin.crypto.scanDepositsFailed')))
+    }
   } finally {
-    scanningDeposits.value = false
+    if (!scanPoll) scanningDeposits.value = false
   }
 }
+
+async function findRunningScan(): Promise<ScanRun | null> {
+  try {
+    return (await listScanRuns()).find(run => run.status === 'running') ?? null
+  } catch {
+    return null
+  }
+}
+
+// Polls one run. Leaving the page aborts only this polling: the scan keeps
+// running on the server and is picked up again by resumeScanRun.
+async function followScanRun(run: ScanRun) {
+  scanPoll?.abort()
+  const controller = new AbortController()
+  scanPoll = controller
+  scanningDeposits.value = true
+  try {
+    const result = await waitForScanRun(run, controller.signal, next => { activeScan.value = next })
+    if (result.status === 'completed') {
+      activeScan.value = null
+      depositPage.value = 1
+    }
+    // A scan that stopped early may still have recorded deposits.
+    await loadDeposits()
+    if (result.status === 'completed') appStore.showSuccess(t('admin.crypto.scanDepositsDone'))
+    else if (result.status === 'failed') appStore.showError(scanStopTitle(result))
+  } catch (error) {
+    if (!controller.signal.aborted) appStore.showError(extractApiErrorMessage(error, t('admin.crypto.scanDepositsFailed')))
+  } finally {
+    if (scanPoll === controller) {
+      scanPoll = null
+      scanningDeposits.value = false
+    }
+  }
+}
+
+// The scan outlives the page, so entering the tab re-attaches to a running one.
+async function resumeScanRun() {
+  if (scanPoll || scanningDeposits.value) return
+  const running = await findRunningScan()
+  if (running) void followScanRun(running)
+}
+
+// Cancelling needs the same fresh proof as a sweep. Saved progress stays saved;
+// the polling already running reports the final "cancelled" state.
+async function cancelScan() {
+  const run = activeScan.value
+  if (!run || run.status !== 'running' || cancellingScan.value) return
+  cancellingScan.value = true
+  try {
+    await withCryptoVerification(t('admin.crypto.scanRunCancelVerify'), async (verification) => {
+      await cancelScanRun(run.id, verification)
+    })
+  } finally {
+    cancellingScan.value = false
+  }
+}
+
+function scanStopTitle(run: ScanRun | null): string {
+  if (run?.status === 'cancelled') return t('admin.crypto.scanRunCancelled')
+  if (run?.stop_reason === 'stalled') return t('admin.crypto.scanRunStalled')
+  if (run?.stop_reason === 'deadline') return t('admin.crypto.scanRunDeadline')
+  return t('admin.crypto.scanDepositsFailed')
+}
+
+const scanRunning = computed(() => scanningDeposits.value && (!activeScan.value || activeScan.value.status === 'running'))
+const scanAlertTitle = computed(() => scanRunning.value ? t('admin.crypto.scanDepositsRunning') : scanStopTitle(activeScan.value))
+const scanAlertColor = computed(() => {
+  if (scanRunning.value) return 'info'
+  return activeScan.value?.status === 'cancelled' ? 'warning' : 'error'
+})
+const scanProgressLine = computed(() => {
+  const run = activeScan.value
+  if (!run || (run.rounds === 0 && run.busy_retries === 0)) return ''
+  const parts = [t('admin.crypto.scanRunRounds', { count: run.rounds })]
+  if (run.busy_retries > 0) parts.push(t('admin.crypto.scanRunWaited', { count: run.busy_retries }))
+  return parts.join(' · ')
+})
+const scanChainLines = computed(() => (activeScan.value?.chains ?? []).map(chain => chain.head_known
+  ? t('admin.crypto.scanRunChain', { chain: chain.chain, cursor: chain.cursor, head: chain.confirmed_head, remaining: chain.remaining })
+  : t('admin.crypto.scanRunChainPending', { chain: chain.chain, cursor: chain.cursor })))
 
 // Sub-page routes drive the tab panels; the overview keeps the addresses panel ready behind it.
 watch(section, value => { if (routed && value !== 'overview' && value !== activeTab.value) switchTab(value) }, { immediate: true })

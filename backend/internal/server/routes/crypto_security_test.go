@@ -540,6 +540,7 @@ func testCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
 		{http.MethodPost, "/api/v1/admin/crypto/wallet/security/recover", `{}`},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/test", `{}`},
 		{http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick", `{}`},
+		{http.MethodPost, "/api/v1/admin/crypto/deposits/confirm", `{"ids":[1]}`},
 		{http.MethodGet, "/api/v1/admin/crypto/config/private", `{}`},
 		{http.MethodGet, "/api/v1/admin/crypto/deposits.csv", `{}`},
 	}
@@ -550,6 +551,37 @@ func testCryptoAdminEveryRiskRouteRejectsInvalidTotp(t *testing.T) {
 			requireCryptoReason(t, response, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
 		})
 	}
+}
+
+// Manual deposit confirmation credits balances, so it must sit behind the same
+// fresh second factor as the other risky routes, with no exemption.
+func TestCryptoManualDepositConfirmationNeedsAFreshValidCodeEveryTime(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	const path = "/api/v1/admin/crypto/deposits/confirm"
+	const body = `{"ids":[302,321]}`
+	h := newCryptoRouteHarness(t, activeCryptoAdmin())
+
+	missing := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, "", nil, "127.0.0.1:1234", "localhost")
+	requireCryptoReason(t, missing, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+	wrong := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, wrongCryptoRouteCode(t, 0), nil, "127.0.0.1:1234", "localhost")
+	requireCryptoReason(t, wrong, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+	forged := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, "", map[string]string{"X-Crypto-Grant": "not-a-grant"}, "127.0.0.1:1234", "localhost")
+	require.GreaterOrEqual(t, forged.Code, http.StatusBadRequest, forged.Body.String())
+	require.NotEqual(t, http.StatusServiceUnavailable, forged.Code, "a bogus grant must be stopped by the guard, not reach the handler")
+
+	code, err := totp.GenerateCode(cryptoRouteTotpSecret, time.Now())
+	require.NoError(t, err)
+	first := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, code, nil, "127.0.0.1:1234", "localhost")
+	// The test handler has no crypto service; reaching it proves the guard accepted one valid code.
+	require.Equal(t, http.StatusServiceUnavailable, first.Code, first.Body.String())
+	require.Contains(t, first.Body.String(), "Deposit confirmation unavailable")
+	second := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, code, nil, "127.0.0.1:1234", "localhost")
+	requireCryptoReason(t, second, http.StatusConflict, "CRYPTO_TOTP_REPLAYED")
+
+	// An insecure transport is refused before any code is even looked at.
+	insecure := cryptoRouteRequestBody(h.router, http.MethodPost, path, body, code, nil, "203.0.113.9:443", "kedaya.ai")
+	requireCryptoReason(t, insecure, http.StatusForbidden, "CRYPTO_HTTPS_REQUIRED")
 }
 
 func TestCryptoAdminRejectsForwardedSchemeAndClientIpSpoofing(t *testing.T) {
@@ -671,6 +703,7 @@ func TestCryptoAdminTestModeIsReadOnlyAndRequiresProductionTwoFactorEnrollment(t
 		{"hot mnemonic import", http.MethodPost, "/api/v1/admin/crypto/wallet/hot-mnemonic"},
 		{"rpc test", http.MethodPost, "/api/v1/admin/crypto/rpc/test"},
 		{"rpc auto-pick", http.MethodPost, "/api/v1/admin/crypto/rpc/auto-pick"},
+		{"manual deposit confirmation", http.MethodPost, "/api/v1/admin/crypto/deposits/confirm"},
 		{"sensitive csv", http.MethodGet, "/api/v1/admin/crypto/deposits.csv"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
