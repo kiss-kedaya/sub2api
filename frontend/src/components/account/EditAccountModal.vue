@@ -2217,7 +2217,7 @@ import CopilotSDKFields from '@/components/account/CopilotSDKFields.vue'
 import GeminiCacheAccountFields from '@/components/account/GeminiCacheAccountFields.vue'
 import { readGeminiCacheSettings, applyGeminiCacheSettings } from '@/components/account/geminiCacheSettings'
 
-import { ref, reactive, computed, watch, nextTick } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
@@ -2417,13 +2417,24 @@ const clearApiKeyHideTimer = () => {
   }
 }
 
+const clearRevealedApiKey = () => {
+  const revealed = revealedApiKey.value
+  if (revealed && editApiKey.value.trim() === revealed) {
+    editApiKey.value = ''
+  }
+  revealedApiKey.value = ''
+}
+
 const resetApiKeyReveal = () => {
   clearApiKeyHideTimer()
   apiKeyVisible.value = false
-  revealedApiKey.value = ''
+  clearRevealedApiKey()
+  editApiKey.value = ''
   revealingApiKey.value = false
   copyingApiKey.value = false
 }
+
+onBeforeUnmount(resetApiKeyReveal)
 
 const canRevealApiKey = computed(() => {
   const account = props.account
@@ -2441,6 +2452,7 @@ const scheduleApiKeyAutoHide = () => {
   apiKeyHideTimer = window.setTimeout(() => {
     apiKeyVisible.value = false
     apiKeyHideTimer = null
+    clearRevealedApiKey()
   }, API_KEY_VISIBLE_MS)
 }
 
@@ -2469,6 +2481,7 @@ const toggleApiKeyVisibility = async () => {
   if (apiKeyVisible.value) {
     apiKeyVisible.value = false
     clearApiKeyHideTimer()
+    clearRevealedApiKey()
     return
   }
   // A value the admin just typed is already in the input; no secret read needed.

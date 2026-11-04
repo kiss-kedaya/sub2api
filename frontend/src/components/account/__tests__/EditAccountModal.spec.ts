@@ -1776,6 +1776,35 @@ describe('EditAccountModal section nav', () => {
     wrapper.unmount()
   })
 
+  it('clears revealed key material after auto-hide and re-verifies before a later copy', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const account = buildAccount()
+    account.credentials = { base_url: 'https://api.openai.com' }
+    account.credentials_status = { has_api_key: true }
+    revealAPIKeyMock
+      .mockResolvedValueOnce({ credential_key: 'api_key', value: 'sk-first-secret' })
+      .mockResolvedValueOnce({ credential_key: 'api_key', value: 'sk-second-secret' })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+    const wrapper = mountModal(account)
+    const apiKeyInput = () => wrapper.get<HTMLInputElement>('input[autocomplete="new-password"]')
+    await wrapper.get('[data-testid="edit-api-key-visibility"]').trigger('click')
+    await flushPromises()
+    expect(apiKeyInput().element.value).toBe('sk-first-secret')
+
+    await vi.advanceTimersByTimeAsync(60_001)
+    await flushPromises()
+    expect(apiKeyInput().attributes('type')).toBe('password')
+    expect(apiKeyInput().element.value).toBe('')
+
+    await wrapper.get('[data-testid="edit-api-key-copy"]').trigger('click')
+    await flushPromises()
+    expect(revealAPIKeyMock).toHaveBeenCalledTimes(2)
+    expect(writeText).toHaveBeenCalledWith('sk-second-secret')
+    wrapper.unmount()
+  })
+
   it('does not offer API key reveal controls for OAuth accounts', async () => {
     const account = buildAccount()
     account.type = 'oauth'
