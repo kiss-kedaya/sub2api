@@ -16,7 +16,7 @@ import (
 func TestGasPayerBusyIgnoresManualReview(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	exec := &Executor{db: db}
 
@@ -36,7 +36,7 @@ func TestGasPayerBusyIgnoresManualReview(t *testing.T) {
 func TestGasPayerBusyQueryExcludesTerminalStates(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	exec := &Executor{db: db}
 	mock.ExpectQuery(`status NOT IN \('swept','failed','manual_review'\)`).

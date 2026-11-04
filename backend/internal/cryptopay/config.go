@@ -426,36 +426,36 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 // for those would churn RPC pools for no reason.
 func configFingerprint(cfg CryptoConfig) string {
 	var b strings.Builder
-	b.WriteString("enabled=")
-	b.WriteString(strconv.FormatBool(cfg.Enabled))
-	b.WriteString("|chains=")
-	b.WriteString(strings.Join(cfg.Chains, ","))
+	_, _ = b.WriteString("enabled=")
+	_, _ = b.WriteString(strconv.FormatBool(cfg.Enabled))
+	_, _ = b.WriteString("|chains=")
+	_, _ = b.WriteString(strings.Join(cfg.Chains, ","))
 	for _, chain := range sortedKeys(cfg.RPC) {
-		b.WriteString("|rpc.")
-		b.WriteString(chain)
-		b.WriteString("=")
-		b.WriteString(cfg.RPC[chain])
+		_, _ = b.WriteString("|rpc.")
+		_, _ = b.WriteString(chain)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(cfg.RPC[chain])
 	}
 	for _, endpoint := range sortedKeys(cfg.RPCLimits) {
 		limit := cfg.RPCLimits[endpoint]
-		b.WriteString("|limit.")
-		b.WriteString(endpoint)
-		b.WriteString("=")
-		b.WriteString(strconv.FormatUint(limit.MaxBlocks, 10))
-		b.WriteString("/")
-		b.WriteString(strconv.Itoa(limit.MaxAddresses))
+		_, _ = b.WriteString("|limit.")
+		_, _ = b.WriteString(endpoint)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(strconv.FormatUint(limit.MaxBlocks, 10))
+		_, _ = b.WriteString("/")
+		_, _ = b.WriteString(strconv.Itoa(limit.MaxAddresses))
 	}
 	for _, chain := range sortedKeys(cfg.ScanRange) {
-		b.WriteString("|range.")
-		b.WriteString(chain)
-		b.WriteString("=")
-		b.WriteString(strconv.Itoa(cfg.ScanRange[chain]))
+		_, _ = b.WriteString("|range.")
+		_, _ = b.WriteString(chain)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(strconv.Itoa(cfg.ScanRange[chain]))
 	}
 	for _, chain := range sortedKeys(cfg.Confirmations) {
-		b.WriteString("|conf.")
-		b.WriteString(chain)
-		b.WriteString("=")
-		b.WriteString(strconv.Itoa(cfg.Confirmations[chain]))
+		_, _ = b.WriteString("|conf.")
+		_, _ = b.WriteString(chain)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(strconv.Itoa(cfg.Confirmations[chain]))
 	}
 	return b.String()
 }
