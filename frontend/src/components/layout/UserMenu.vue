@@ -72,6 +72,7 @@ import { useLocale } from '@nuxt/ui/composables/useLocale'
 import { useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { THEME_MODE_OPTIONS, useSiteColorMode, type ThemeMode } from '@/composables/useSiteTheme'
 import { availableLocales, setLocale } from '@/i18n'
+import { PROJECT_GITHUB_URL } from '@/constants/project'
 
 // One menu for the signed-in user: the sidebar footer on desktop, the navbar on phones.
 const props = withDefaults(defineProps<{ variant?: 'sidebar' | 'header'; collapsed?: boolean }>(), {
@@ -158,7 +159,7 @@ const items = computed<DropdownMenuItem[][]>(() => {
 
   const extras: DropdownMenuItem[] = []
   if (authStore.isAdmin) {
-    extras.push({ label: t('nav.github'), icon: 'i-lucide-github', to: 'https://github.com/Wei-Shaw/sub2api', target: '_blank' })
+    extras.push({ label: t('nav.github'), icon: 'i-lucide-github', to: PROJECT_GITHUB_URL, target: '_blank' })
   }
   if (contactInfo.value) extras.push({ type: 'label', slot: 'contact' })
   if (showOnboardingButton.value) {
