@@ -116,6 +116,7 @@ var auditSensitiveReads = map[string]string{
 	"GET /api/v1/admin/crypto/config/private":                                 "admin.crypto.rpc_config.read",
 	"GET /api/v1/admin/crypto/deposits.csv":                                   "admin.crypto.deposits.export",
 	"GET /api/v1/admin/accounts/data":                                         "admin.accounts.export",
+	"GET /api/v1/admin/accounts/:id/credential":                               "admin.accounts.credential.read",
 	"GET /api/v1/admin/proxies/data":                                          "admin.proxies.export",
 	"GET /api/v1/admin/redeem-codes/export":                                   "admin.redeem_codes.export",
 	"GET /api/v1/admin/backups/:id/download-url":                              "admin.backups.download",

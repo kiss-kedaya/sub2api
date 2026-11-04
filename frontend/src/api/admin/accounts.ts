@@ -324,6 +324,26 @@ export async function refreshCredentials(id: number): Promise<AccountRefreshResu
 }
 
 /**
+ * Reveal the stored upstream API key for the account editor.
+ *
+ * The backend gates this endpoint behind the same step-up 2FA check as the
+ * installation export, so a STEP_UP_REQUIRED error must be resolved through
+ * useStepUp(). Only a plain `api_key` is ever returned; OAuth tokens, cookies
+ * and private keys stay write-only.
+ */
+export interface RevealedCredential {
+  credential_key: 'api_key'
+  value: string
+}
+
+export async function revealAPIKey(id: number): Promise<RevealedCredential> {
+  const { data } = await apiClient.get<RevealedCredential>(`/admin/accounts/${id}/credential`, {
+    headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+  })
+  return data
+}
+
+/**
  * Apply OAuth credentials after re-authorization.
  *
  * Unlike `update()`, this endpoint:
@@ -1097,6 +1117,7 @@ export const accountsAPI = {
   testAccount,
   refreshCredentials,
   applyOAuthCredentials,
+  revealAPIKey,
   getStats,
   clearError,
   getUsage,

@@ -27,6 +27,7 @@ func TestDeriveAuditAction(t *testing.T) {
 		{"POST", "/api/v1/admin/accounts", "admin.accounts.create"},
 		{"DELETE", "/api/v1/admin/backups/:id", "admin.backups.delete"},
 		{"GET", "/api/v1/admin/users/:id/api-keys", "admin.users.api_keys.read"},
+		{"GET", "/api/v1/admin/accounts/:id/credential", "admin.accounts.credential.read"},
 		{"POST", "/api/v1/admin/redeem-codes/batch", "admin.redeem_codes.batch.create"},
 	}
 	for _, tc := range cases {

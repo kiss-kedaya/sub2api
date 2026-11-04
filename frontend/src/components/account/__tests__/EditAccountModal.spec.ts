@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, revealAPIKeyMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
+  revealAPIKeyMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
 
@@ -28,7 +29,8 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
-      checkMixedChannelRisk: checkMixedChannelRiskMock
+      checkMixedChannelRisk: checkMixedChannelRiskMock,
+      revealAPIKey: revealAPIKeyMock
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -55,6 +57,20 @@ vi.mock('vue-i18n', async () => {
     })
   }
 })
+
+
+vi.mock('@/composables/useStepUp', () => ({
+  useStepUp: () => ({
+    visible: { value: false },
+    blockedReason: { value: '' },
+    run: (action: () => Promise<unknown>) => action(),
+    prompt: vi.fn(),
+    onVerified: vi.fn(),
+    onCancel: vi.fn()
+  }),
+  isStepUpBlocked: () => false,
+  isStepUpCancelled: () => false
+}))
 
 import EditAccountModal from '../EditAccountModal.vue'
 
@@ -323,6 +339,7 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
     global: {
       stubs: {
         BaseDialog: BaseDialogStub,
+        TotpStepUpDialog: true,
         Select: SelectStub,
         Icon: true,
         ProxySelector: true,
@@ -336,6 +353,7 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
 describe('EditAccountModal', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true
+    revealAPIKeyMock.mockReset()
   })
 
   afterEach(() => vi.useRealTimers())
@@ -1602,6 +1620,16 @@ describe('EditAccountModal', () => {
       'antigravity_project_id'
     )
   })
+
+  it('renders a skeleton instead of the form while account details are loading', () => {
+    const wrapper = mount(EditAccountModal, {
+      props: { show: true, account: null, proxies: [], groups: [], loading: true },
+      global: { stubs: { BaseDialog: BaseDialogStub, TotpStepUpDialog: true, Icon: true } }
+    })
+    expect(wrapper.find('[data-testid="edit-account-skeleton"]').exists()).toBe(true)
+    expect(wrapper.find('form#edit-account-form').exists()).toBe(false)
+    wrapper.unmount()
+  })
 })
 
 describe('EditAccountModal OpenAI 自动使用重置卡', () => {
@@ -1697,6 +1725,10 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
 })
 
 describe('EditAccountModal section nav', () => {
+  beforeEach(() => {
+    revealAPIKeyMock.mockReset()
+  })
+
   it('shows one section at a time and switches from the nav', async () => {
     const wrapper = mountModal(buildAccount())
     await flushPromises()
@@ -1712,4 +1744,76 @@ describe('EditAccountModal section nav', () => {
     // fields in hidden sections stay mounted, so the payload does not depend on the visible section
     expect(wrapper.find('[data-edit-section="basic"] [data-tour="edit-account-form-name"]').exists()).toBe(true)
   })
+  it('reveals the stored API key through the backend and keeps it out of the save payload', async () => {
+    const account = buildAccount()
+    account.credentials = { base_url: 'https://api.openai.com' }
+    account.credentials_status = { has_api_key: true }
+    revealAPIKeyMock.mockResolvedValue({ credential_key: 'api_key', value: 'sk-live-secret' })
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+    const wrapper = mountModal(account)
+    const apiKeyInput = () => wrapper.get<HTMLInputElement>('input[autocomplete="new-password"]')
+    expect(apiKeyInput().attributes('type')).toBe('password')
+
+    await wrapper.get('[data-testid="edit-api-key-visibility"]').trigger('click')
+    await flushPromises()
+
+    expect(revealAPIKeyMock).toHaveBeenCalledWith(1)
+    expect(apiKeyInput().attributes('type')).toBe('text')
+    expect(apiKeyInput().element.value).toBe('sk-live-secret')
+
+    await wrapper.get('[data-testid="edit-api-key-copy"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('sk-live-secret')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.api_key).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('clears revealed key material after auto-hide and re-verifies before a later copy', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const account = buildAccount()
+    account.credentials = { base_url: 'https://api.openai.com' }
+    account.credentials_status = { has_api_key: true }
+    revealAPIKeyMock
+      .mockResolvedValueOnce({ credential_key: 'api_key', value: 'sk-first-secret' })
+      .mockResolvedValueOnce({ credential_key: 'api_key', value: 'sk-second-secret' })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+    const wrapper = mountModal(account)
+    const apiKeyInput = () => wrapper.get<HTMLInputElement>('input[autocomplete="new-password"]')
+    await wrapper.get('[data-testid="edit-api-key-visibility"]').trigger('click')
+    await flushPromises()
+    expect(apiKeyInput().element.value).toBe('sk-first-secret')
+
+    await vi.advanceTimersByTimeAsync(60_001)
+    await flushPromises()
+    expect(apiKeyInput().attributes('type')).toBe('password')
+    expect(apiKeyInput().element.value).toBe('')
+
+    await wrapper.get('[data-testid="edit-api-key-copy"]').trigger('click')
+    await flushPromises()
+    expect(revealAPIKeyMock).toHaveBeenCalledTimes(2)
+    expect(writeText).toHaveBeenCalledWith('sk-second-secret')
+    wrapper.unmount()
+  })
+
+  it('does not offer API key reveal controls for OAuth accounts', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.credentials = { access_token: 'hidden' }
+    const wrapper = mountModal(account)
+    expect(wrapper.find('[data-testid="edit-api-key-visibility"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="edit-api-key-copy"]').exists()).toBe(false)
+    expect(revealAPIKeyMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
 })

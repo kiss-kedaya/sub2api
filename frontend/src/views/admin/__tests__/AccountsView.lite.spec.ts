@@ -80,8 +80,8 @@ const AccountGroupsCellStub = defineComponent({
 })
 
 const EditAccountModalStub = defineComponent({
-  props: { show: Boolean, account: { type: Object, default: null } },
-  template: '<div data-test="edit-account">{{ show ? account?.name : "" }}</div>'
+  props: { show: Boolean, account: { type: Object, default: null }, loading: Boolean },
+  template: `<div data-test="edit-account" :data-loading="show && loading ? '1' : '0'">{{ show ? account?.name ?? '' : '' }}</div>`
 })
 
 const AccountTestModalStub = defineComponent({
@@ -213,6 +213,30 @@ describe('admin AccountsView lite account list', () => {
     wrapper.getComponent(AccountDetailStub).vm.$emit('close')
     await flushPromises()
     expect(wrapper.get('[data-test="account-detail"]').text()).toBe('')
+    wrapper.unmount()
+  })
+
+
+  it('opens the edit dialog before the detail request resolves', async () => {
+    let resolveDetail: (value: unknown) => void = () => {}
+    getById.mockReset().mockImplementation(
+      () => new Promise(resolve => { resolveDetail = resolve })
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+
+    const modal = wrapper.get('[data-test="edit-account"]')
+    expect(modal.attributes('data-loading')).toBe('1')
+    expect(modal.text()).toBe('')
+
+    resolveDetail(fullAccount)
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="edit-account"]').attributes('data-loading')).toBe('0')
+    expect(wrapper.get('[data-test="edit-account"]').text()).toBe('compact row')
     wrapper.unmount()
   })
 

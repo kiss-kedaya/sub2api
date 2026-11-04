@@ -404,7 +404,16 @@
       </template>
     </TablePageLayout>
       <CreateAccountModal v-if="showCreate" :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
-      <EditAccountModal v-if="showEdit" :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
+      <EditAccountModal
+        v-if="showEdit"
+        :show="showEdit"
+        :account="edAcc"
+        :proxies="proxies"
+        :groups="groups"
+        :loading="edAccLoading"
+        @close="closeEditModal"
+        @updated="handleAccountUpdated"
+      />
       <ReAuthAccountModal v-if="showReAuth" :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
       <AccountTestModal v-if="showTest" :show="showTest" :account="testingAcc" @close="closeTestModal" />
       <AccountBatchTestModal v-if="showBatchTest" :show="showBatchTest" :accounts="batchTestAccounts" @close="closeBatchTestModal" />
@@ -495,6 +504,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EditAccountModalShell from '@/components/account/EditAccountModalShell.vue'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
@@ -523,7 +533,13 @@ const CreateAccountModal = defineAsyncComponent(() => import('@/components/accou
 // 218KB / 4.7k lines: parsing it on the first click is what made 编辑 feel stuck.
 // The loader is kept separate so the chunk can be fetched while the list is idle.
 const loadEditAccountModal = () => import('@/components/account/EditAccountModal.vue')
-const EditAccountModal = defineAsyncComponent(loadEditAccountModal)
+// The editor chunk is fetched on idle, but a cold click must still paint a
+// dialog immediately instead of waiting for 218KB to parse.
+const EditAccountModal = defineAsyncComponent({
+  loader: loadEditAccountModal,
+  loadingComponent: EditAccountModalShell,
+  delay: 0
+})
 const BulkEditAccountModal = defineAsyncComponent(() => import('@/components/account/BulkEditAccountModal.vue'))
 const SyncFromCrsModal = defineAsyncComponent(() => import('@/components/account/SyncFromCrsModal.vue'))
 const TempUnschedStatusModal = defineAsyncComponent(() => import('@/components/account/TempUnschedStatusModal.vue'))
@@ -604,6 +620,7 @@ const selTypes = computed<AccountType[]>(() => {
 })
 const showCreate = ref(false)
 const showEdit = ref(false)
+const edAccLoading = ref(false)
 const showSync = ref(false)
 const showImportData = ref(false)
 const showExportDataDialog = ref(false)
@@ -1967,11 +1984,37 @@ const detailAccountId = ref<number | null>(null)
 const detailAccount = computed(() => accounts.value.find(account => account.id === detailAccountId.value) ?? null)
 const openDetail = (a: AccountListItem) => { detailAccountId.value = a.id }
 
+// Open the dialog first, then resolve the detail payload. A slow GET must never
+// leave the click looking ignored; the modal renders its own skeleton.
+let editRequestSeq = 0
 const handleEdit = async (a: AccountListItem) => {
-  const account = await loadAccountDetails(a)
-  if (!account) return
-  edAcc.value = account
+  const seq = ++editRequestSeq
+  // A hover/focus prefetch is already in memory: open straight into the form.
+  const prefetched = takePrefetchedAccountDetail(a.id)
+  if (prefetched) {
+    edAcc.value = prefetched
+    edAccLoading.value = false
+    showEdit.value = true
+    return
+  }
+  edAcc.value = null
+  edAccLoading.value = true
   showEdit.value = true
+  const account = await loadAccountDetails(a)
+  if (seq !== editRequestSeq) return
+  edAccLoading.value = false
+  if (!account) {
+    showEdit.value = false
+    return
+  }
+  edAcc.value = account
+}
+
+const closeEditModal = () => {
+  editRequestSeq += 1
+  showEdit.value = false
+  edAccLoading.value = false
+  edAcc.value = null
 }
 const openMenu = (a: Account, e: MouseEvent) => {
   menu.acc = a
