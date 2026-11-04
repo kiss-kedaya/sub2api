@@ -474,8 +474,9 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 				PeakRateMultiplier: 3.0,
 			},
 		},
-		User:    &User{ID: 2004},
-		Account: &Account{ID: 3004},
+		User:      &User{ID: 2004},
+		Account:   &Account{ID: 3004},
+		PricingAt: time.Date(2026, time.August, 24, 12, 0, 0, 0, time.UTC),
 	})
 
 	require.NoError(t, err)

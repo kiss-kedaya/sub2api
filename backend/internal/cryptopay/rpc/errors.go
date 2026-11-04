@@ -132,7 +132,14 @@ func SafeRecordedError(message string) string {
 		"awaiting canonical receipt and required confirmations",
 		"awaiting gas payer transaction confirmation",
 		"confirmed transaction reverted; automatic replacement/funding refused",
+		"confirmed gas top-up reverted; automatic replacement/funding refused",
 		"legacy or ambiguous transaction; reconcile hashes manually before releasing address",
+		"sweep authorization expired or missing; no new broadcast was sent",
+		"wallet security lock is active; no new broadcast was sent",
+		"wallet signing is disabled; no new broadcast was sent",
+		"wallet vault is unavailable; no new broadcast was sent",
+		"wallet is not configured; no new broadcast was sent",
+		"sweep state persistence failed; reconcile the recorded transaction before retrying",
 		"Payment operation canceled; reconcile transaction status before retrying",
 		"Payment operation timed out; reconcile transaction status before retrying":
 		return message

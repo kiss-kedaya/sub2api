@@ -52,6 +52,7 @@ beforeEach(() => {
   mocks.post.mockImplementation(async (path: string) => {
     if (path.endsWith('/security/verify')) return grantResponse()
     if (path.endsWith('/operation-intent')) return { data: { accepted: true }, status: 200 }
+    if (path.endsWith('/sweep/run')) return { data: { data: { id: 'sweep-fixture', dry_run: false, chains: [], started_at: '', finished: true, summary: { planned: 0, swept: 0, failed: 0, pending: 0, gas_topups: 0, dry_run: false, entries: [] } } }, status: 202 }
     if (path.endsWith('/export-mnemonics')) return { data: { deposit_mnemonic: 'test deposit words', hot_mnemonic: 'test gas words' }, status: 200 }
     if (path.endsWith('/backup')) return { data: new Blob(['encrypted'], { type: 'application/json' }), status: 200 }
     if (path.endsWith('/hot-mnemonic')) {
@@ -117,7 +118,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(wrapper.text()).toContain('"total":"12.00"')
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(0)
     await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ params: { dry_run: '0' } }))
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ params: { dry_run: '0', async: '1' } }))
   })
 
   it('keeps a confirmation and Bark intent for every sweep even while verification is cached', async () => {
@@ -134,7 +135,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/operation-intent'))).toHaveLength(2)
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))).toHaveLength(2)
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/sweep/run'))[0][2]).toEqual(expect.objectContaining({
-      timeout: 180000, params: { dry_run: '0' }
+      timeout: 30000, params: { dry_run: '0', async: '1' }
     }))
   })
 
@@ -592,7 +593,7 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await flushPromises()
     await button(wrapper, 'admin.crypto.sweepDryRun').trigger('click')
     await verify(wrapper)
-    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ params: { dry_run: '1' }, headers: { 'X-Crypto-Grant': grantCredential } }))
+    expect(mocks.post).toHaveBeenCalledWith('/admin/crypto/sweep/run', null, expect.objectContaining({ params: { dry_run: '1', async: '1' }, headers: { 'X-Crypto-Grant': grantCredential } }))
     expect(mocks.post.mock.calls.filter(([path]) => path.endsWith('/operation-intent'))).toHaveLength(0)
   })
 

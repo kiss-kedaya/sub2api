@@ -70,6 +70,13 @@ type CryptoConfig struct {
 	// provider in a rotation throttle the whole chain.
 	RPCLimits map[string]RPCEndpointLimits `json:"rpc_limits,omitempty"`
 
+	// RPCThrottleMs paces calls to each endpoint. Public providers rate-limit
+	// per endpoint and the scanner is bursty: one pass fires several batches per
+	// chain across several chains. Without pacing a burst gets 429 and, because
+	// the pool rotates on failure, the next endpoint is burned too. Zero
+	// disables pacing and keeps the previous behaviour.
+	RPCThrottleMs int `json:"rpc_throttle_ms,omitempty"`
+
 	// Sweep settings.
 	SweepGlobalThreshold float64            `json:"sweep_global_threshold"`
 	SweepMinPerAddress   map[string]float64 `json:"sweep_min_per_address"`

@@ -210,6 +210,56 @@ export async function runSweep(dryRun: boolean, verification?: CryptoVerificatio
   return data.data
 }
 
+export interface SweepRun {
+  id: string
+  dry_run: boolean
+  chains: string[] | null
+  started_at: string
+  finished: boolean
+  error?: string
+  summary?: SweepSummary
+}
+
+// A 202 response means the run was accepted, not that the transfer finished.
+export async function startSweep(dryRun: boolean, verification?: CryptoVerification): Promise<SweepRun> {
+  const { data } = await apiClient.post('/admin/crypto/sweep/run', null, {
+    ...cryptoRequestOptions(verification),
+    timeout: 30000,
+    params: { dry_run: dryRun ? '1' : '0', async: '1' }
+  })
+  return data.data
+}
+
+export async function getSweepRun(id: string, signal?: AbortSignal): Promise<SweepRun> {
+  const { data } = await apiClient.get(`/admin/crypto/sweep/runs/${encodeURIComponent(id)}`, { signal })
+  return data.data
+}
+
+export async function listSweepRuns(): Promise<SweepRun[]> {
+  const { data } = await apiClient.get('/admin/crypto/sweep/runs')
+  return data.data
+}
+
+export async function waitForSweepRun(
+  initial: SweepRun,
+  signal: AbortSignal,
+  update: (run: SweepRun) => void
+): Promise<SweepRun> {
+  let run = initial
+  while (!signal.aborted) {
+    update(run)
+    if (run.finished) return run
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(new DOMException('Polling stopped', 'AbortError')) }
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, 2000)
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) abort()
+    })
+    run = await getSweepRun(initial.id, signal)
+  }
+  throw new DOMException('Polling stopped', 'AbortError')
+}
+
 
 
 export interface BlockedSweep {
@@ -237,8 +287,8 @@ export async function listBlockedSweeps(): Promise<BlockedSweep[]> {
   return data
 }
 
-// reconcileSweep resolves one stuck job against the chain without signing
-// anything new: confirmed -> advances, absent/reverted -> releases the address.
+// reconcileSweep observes the chain without signing or broadcasting. A missing
+// receipt retains the reservation and original signed bytes for safe resumption.
 export async function reconcileSweep(jobId: number, verification?: CryptoVerification): Promise<ReconcileResult> {
   const { data } = await apiClient.post(`/admin/crypto/sweep/records/${jobId}/reconcile`, null, cryptoRequestOptions(verification))
   return data
