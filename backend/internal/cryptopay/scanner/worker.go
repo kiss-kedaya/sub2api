@@ -594,6 +594,30 @@ func (w *Worker) tryScanLock(ctx context.Context) (func() error, error) {
 	}, nil
 }
 
+// effectiveMaxRange clamps the configured span to what the chain's RPC pool
+// will actually accept.
+//
+// Configured ranges come from crypto.config and describe what the chain *can*
+// be scanned at; a provider limit describes what one endpoint *will* accept.
+// Taking the minimum means a strict node in the rotation no longer forces every
+// request to be rejected and bisected: the split happens up front, which is the
+// difference between one request per chunk and repeatedly hitting the limit.
+func (w *Worker) effectiveMaxRange(chain ChainConfig) uint64 {
+	maxRange := w.maxRange
+	if chain.MaxRange > 0 {
+		maxRange = chain.MaxRange
+	}
+	if maxRange == 0 {
+		maxRange = 2000
+	}
+	if pool := w.pools[chain.Chain]; pool != nil {
+		if limits, ok := pool.TightestLimits(); ok && limits.MaxBlocks > 0 && limits.MaxBlocks < maxRange {
+			maxRange = limits.MaxBlocks
+		}
+	}
+	return maxRange
+}
+
 // ScanOnce runs one full pass; exposed for tests and manual triggering.
 func (w *Worker) ScanOnce(ctx context.Context) (err error) {
 	if w.beforePass != nil {
@@ -781,13 +805,7 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 	// Per-chain cap: public providers enforce very different getLogs spans
 	// (X Layer rejects anything over 100 blocks), so the chunk size must be
 	// configurable per chain instead of one global constant.
-	maxRange := w.maxRange
-	if chain.MaxRange > 0 {
-		maxRange = chain.MaxRange
-	}
-	if maxRange == 0 {
-		maxRange = 2000
-	}
+	maxRange := w.effectiveMaxRange(chain)
 	if w.recentReplay && manualFromBlock == 0 && hadCursor && w.handler != nil {
 		state, err := w.prepareRecentReplay(ctx, chain.Chain, min(last, confirmed), maxRange, recipients)
 		if err != nil {
@@ -960,13 +978,7 @@ func observeHeadCap(confirmations, maxRange uint64) uint64 {
 // moves the cursor and never credits. Rows already recorded only get their
 // confirmation counter refreshed.
 func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainConfig, head uint64) error {
-	maxRange := w.maxRange
-	if chain.MaxRange > 0 {
-		maxRange = chain.MaxRange
-	}
-	if maxRange == 0 {
-		maxRange = 2000
-	}
+	maxRange := w.effectiveMaxRange(chain)
 	limit := observeHeadCap(chain.Confirmations, maxRange)
 	if limit == 0 || head == 0 {
 		return nil

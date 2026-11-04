@@ -7,12 +7,14 @@ import "testing"
 // crashed the admin page on the next load.
 func TestCryptoConfigPatchKeepsOmittedFields(t *testing.T) {
 	base := CryptoConfig{
-		Enabled:      true,
-		Chains:       []string{ChainBSC, ChainPolygon},
-		RPC:          map[string]string{ChainBSC: "https://rpc.example"},
-		HotWalletEVM: "0x1111111111111111111111111111111111111111",
-		SweepAuto:    true,
-		HotIndex:     3,
+		Enabled:       true,
+		Chains:        []string{ChainBSC, ChainPolygon},
+		RPC:           map[string]string{ChainBSC: "https://rpc.example"},
+		RPCLimits:     map[string]RPCEndpointLimits{"https://rpc.example": {MaxBlocks: 100, MaxAddresses: 20}},
+		RPCThrottleMs: 250,
+		HotWalletEVM:  "0x1111111111111111111111111111111111111111",
+		SweepAuto:     true,
+		HotIndex:      3,
 	}
 	// Patch only the EVM hot wallet, as the console does when clearing it.
 	empty := ""
@@ -27,8 +29,32 @@ func TestCryptoConfigPatchKeepsOmittedFields(t *testing.T) {
 	if merged.RPC[ChainBSC] != "https://rpc.example" {
 		t.Fatalf("rpc = %v, want it preserved", merged.RPC)
 	}
+	if merged.RPCThrottleMs != 250 || merged.RPCLimits["https://rpc.example"].MaxBlocks != 100 {
+		t.Fatalf("rpc protection fields not preserved: %+v", merged)
+	}
 	if !merged.SweepAuto || merged.HotIndex != 3 {
 		t.Fatalf("sweep_auto/hot_index not preserved: %+v", merged)
+	}
+}
+
+func TestCryptoConfigPatchAppliesRPCProtectionFields(t *testing.T) {
+	base := CryptoConfig{RPC: map[string]string{ChainBSC: "https://rpc.example"}}
+	limits := map[string]RPCEndpointLimits{
+		"https://rpc.example": {MaxBlocks: 100, MaxAddresses: 20},
+	}
+	throttle := 250
+	merged := CryptoConfigPatch{RPCLimits: &limits, RPCThrottleMs: &throttle}.Apply(base)
+	if merged.RPCThrottleMs != 250 {
+		t.Fatalf("rpc_throttle_ms = %d, want 250", merged.RPCThrottleMs)
+	}
+	if got := merged.RPCLimits["https://rpc.example"]; got.MaxBlocks != 100 || got.MaxAddresses != 20 {
+		t.Fatalf("rpc_limits = %+v, want the patch value", got)
+	}
+
+	empty := map[string]RPCEndpointLimits{}
+	cleared := CryptoConfigPatch{RPCLimits: &empty}.Apply(merged)
+	if len(cleared.RPCLimits) != 0 {
+		t.Fatalf("rpc_limits = %+v, want cleared", cleared.RPCLimits)
 	}
 }
 

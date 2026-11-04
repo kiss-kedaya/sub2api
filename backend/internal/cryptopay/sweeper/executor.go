@@ -402,9 +402,12 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		return e.jobError(ctx, job, err)
 	}
 	if native.Cmp(transferGasBudget(price)) < 0 {
-		if job.GasConfirmed {
-			return e.jobError(ctx, job, fmt.Errorf("confirmed gas top-up is insufficient; automatic repeat funding refused"))
-		}
+		// A confirmed top-up that no longer covers the budget is not a reason to
+		// stop. The previous top-up was sized against the gas price at that
+		// moment; the price moved. Refusing to fund again left the job retrying
+		// the same failing check forever — the record never advanced and the
+		// chain silently lost this address. Top up the difference like any other
+		// shortfall; prepareGas already caps the amount by the operator budget.
 		if err := e.prepareGas(ctx, pool, job, e.gasTopUpAmount(job.Chain, transferGasBudget(price), native), price); err != nil {
 			if errors.Is(err, errGasPayerPending) {
 				// Another job still owns the gas nonce. This is a deferral,
@@ -444,6 +447,15 @@ func (e *Executor) finishSweep(ctx context.Context, pool *rpc.Pool, job *sweepJo
 	return job.outcome(), nil
 }
 
+// maxSweepAttempts bounds how many times one job may fail and be retried. Every
+// saveJob bumps revision, so it doubles as an attempt counter without a schema
+// change. Without a bound a job whose failure is permanent — a token the chain
+// refuses, an RPC that always rejects the payload — retries on every pass
+// forever, and because reservedPredicate keeps it reserved it also blocks that
+// address from ever being planned again. Bounding it moves the row to `failed`
+// so it leaves the queue and an operator can see it.
+const maxSweepAttempts = 25
+
 func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (SweepEntry, error) {
 	var storage *persistenceError
 	if errors.As(cause, &storage) {
@@ -456,6 +468,11 @@ func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (Sw
 		"token", job.Token, "status", job.Status, "revision", job.Revision,
 		"error", rpc.SafeError(cause))
 	job.Error = rpc.SafeError(cause)
+	if job.Revision >= maxSweepAttempts {
+		// Terminal: stop retrying and stop reserving the address.
+		job.Status = "failed"
+		job.Error = rpc.SafeError(fmt.Errorf("%s (gave up after %d attempts)", job.Error, job.Revision))
+	}
 	err := e.saveJob(ctx, job)
 	return pendingError(job, joinErrors(cause, err))
 }

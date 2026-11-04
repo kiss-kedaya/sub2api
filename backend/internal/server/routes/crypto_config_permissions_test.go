@@ -38,13 +38,18 @@ func TestCryptoConfigPublicAndPrivateRoutesSeparateSecretsAndConsumeCodeOnce(t *
 	owner.ID = 1
 	h := newCryptoRouteHarness(t, owner)
 	const secret = "https://fixture-user:fixture-password@rpc.example.test/private?key=fixture-key"
-	require.NoError(t, h.settings.SetRawSetting(t.Context(), cryptopay.SettingKeyCryptoConfig, `{"rpc":{"bsc":"`+secret+`"}}`))
+	const limitsSecret = "https://limits-user:limits-password@limits.example.test/private?key=limits-key"
+	require.NoError(t, h.settings.SetRawSetting(t.Context(), cryptopay.SettingKeyCryptoConfig,
+		`{"rpc":{"bsc":"`+secret+`"},"rpc_limits":{"`+limitsSecret+`":{"max_blocks":100,"max_addresses":20}}}`))
 	public := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config", "", nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, http.StatusOK, public.Code, public.Body.String())
 	require.Equal(t, "{}", gjson.Get(public.Body.String(), "data.rpc").Raw)
+	require.False(t, gjson.Get(public.Body.String(), "data.rpc_limits").Exists())
 	require.Equal(t, `["bsc"]`, gjson.Get(public.Body.String(), "data.rpc_configured").Raw)
 	require.NotContains(t, public.Body.String(), "https://")
 	require.NotContains(t, public.Body.String(), "fixture-password")
+	require.NotContains(t, public.Body.String(), "limits-password")
+	require.NotContains(t, public.Body.String(), "limits-key")
 	require.Equal(t, "no-store", public.Header().Get("Cache-Control"))
 	for _, code := range []string{"", wrongCryptoRouteCode(t, 0)} {
 		denied := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config/private", code, nil, "127.0.0.1:1234", "localhost")
@@ -56,6 +61,7 @@ func TestCryptoConfigPublicAndPrivateRoutesSeparateSecretsAndConsumeCodeOnce(t *
 	private := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config/private", code, nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, http.StatusOK, private.Code, private.Body.String())
 	require.Equal(t, secret, gjson.Get(private.Body.String(), "data.rpc.bsc").String())
+	require.Contains(t, private.Body.String(), limitsSecret, "the fresh-2FA private view must retain endpoint limits")
 	replay := cryptoRouteRequest(h.router, http.MethodGet, "/api/v1/admin/crypto/config/private", code, nil, "127.0.0.1:1234", "localhost")
 	requireCryptoReason(t, replay, http.StatusConflict, "CRYPTO_TOTP_REPLAYED")
 	require.NotContains(t, replay.Body.String(), secret)

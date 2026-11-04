@@ -13,7 +13,10 @@ import (
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"maps"
+	"net/url"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -54,6 +57,14 @@ func KnownChain(chain string) bool {
 	return IsEVMChain(chain) || chain == ChainSolana
 }
 
+// RPC protection bounds. These are deliberately conservative: a typo that
+// stalls every call or disables scanning must be rejected, not clamped.
+const (
+	maxRPCThrottleMs = 10_000
+	maxRPCBlocks     = 100_000
+	maxRPCAddresses  = 10_000
+)
+
 // CryptoConfig is the persisted configuration (JSON in settings).
 type CryptoConfig struct {
 	Enabled bool     `json:"enabled"`
@@ -61,6 +72,12 @@ type CryptoConfig struct {
 
 	// RPC endpoints per chain; comma-separated list for rotation.
 	RPC map[string]string `json:"rpc"`
+
+	// RPCLimits records what each endpoint accepts in one eth_getLogs.
+	// Keyed by endpoint URL. Without it the scanner can only discover a limit
+	// by being rejected, which costs a request per attempt and lets one strict
+	// provider in a rotation throttle the whole chain.
+	RPCLimits map[string]RPCEndpointLimits `json:"rpc_limits,omitempty"`
 
 	// RPCThrottleMs paces calls to each endpoint. Public providers rate-limit
 	// per endpoint and the scanner is bursty: one pass fires several batches per
@@ -133,6 +150,68 @@ func DefaultCryptoConfig() CryptoConfig {
 	}
 }
 
+// normalizeRPCLimits validates operator-declared eth_getLogs limits. The map
+// is keyed by the full endpoint URL, which may contain credentials, so callers
+// must never expose it without fresh 2FA. A key must either match an endpoint
+// currently in the rotation or be an absolute http(s) URL, which lets an
+// operator pre-declare a provider before adding it to rpc.
+func normalizeRPCLimits(cfg *CryptoConfig) error {
+	if len(cfg.RPCLimits) == 0 {
+		cfg.RPCLimits = nil
+		return nil
+	}
+	configured := configuredRPCEndpoints(cfg.RPC)
+	limits := make(map[string]RPCEndpointLimits, len(cfg.RPCLimits))
+	for endpoint, value := range cfg.RPCLimits {
+		key := strings.TrimSpace(endpoint)
+		if key == "" {
+			return fmt.Errorf("crypto config: rpc_limits endpoint must not be empty")
+		}
+		if value.MaxBlocks > maxRPCBlocks {
+			return fmt.Errorf("crypto config: rpc_limits max_blocks must be <= %d", maxRPCBlocks)
+		}
+		if value.MaxAddresses < 0 || value.MaxAddresses > maxRPCAddresses {
+			return fmt.Errorf("crypto config: rpc_limits max_addresses must be between 0 and %d", maxRPCAddresses)
+		}
+		if _, ok := configured[rpcEndpointKey(key)]; !ok && !validRPCURL(key) {
+			return fmt.Errorf("crypto config: rpc_limits endpoint must match a configured RPC endpoint or be an absolute http(s) URL")
+		}
+		limits[key] = value
+	}
+	cfg.RPCLimits = limits
+	return nil
+}
+
+func configuredRPCEndpoints(rpc map[string]string) map[string]struct{} {
+	out := make(map[string]struct{}, len(rpc))
+	for _, list := range rpc {
+		for _, endpoint := range strings.Split(list, ",") {
+			if key := rpcEndpointKey(endpoint); key != "" {
+				out[key] = struct{}{}
+			}
+		}
+	}
+	return out
+}
+
+// rpcEndpointKey matches the registry's URL normalisation so a trailing slash
+// or a case difference does not make an explicitly configured limit inert.
+func rpcEndpointKey(endpoint string) string {
+	trimmed := strings.TrimSpace(endpoint)
+	if trimmed == "" {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(trimmed), "/")
+}
+
+func validRPCURL(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
 // NormalizeConfig fills defaults for zero values and validates.
 func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	if cfg.HotIndex != 0 {
@@ -140,6 +219,7 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	cfg.Chains = slices.Clone(cfg.Chains)
 	cfg.RPC = maps.Clone(cfg.RPC)
+	cfg.RPCLimits = maps.Clone(cfg.RPCLimits)
 	cfg.Confirmations = maps.Clone(cfg.Confirmations)
 	cfg.ScanRange = maps.Clone(cfg.ScanRange)
 	cfg.SweepMinPerAddress = maps.Clone(cfg.SweepMinPerAddress)
@@ -152,6 +232,12 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	// admin console indexes it directly, so backfill an empty map.
 	if cfg.RPC == nil {
 		cfg.RPC = map[string]string{}
+	}
+	if cfg.RPCThrottleMs < 0 || cfg.RPCThrottleMs > maxRPCThrottleMs {
+		return cfg, fmt.Errorf("crypto config: rpc_throttle_ms must be between 0 and %d", maxRPCThrottleMs)
+	}
+	if err := normalizeRPCLimits(&cfg); err != nil {
+		return cfg, err
 	}
 	seen := make(map[string]bool, len(cfg.Chains))
 	chains := make([]string, 0, len(cfg.Chains))
@@ -349,21 +435,23 @@ func SaveConfig(ctx context.Context, store SettingStore, cfg CryptoConfig) error
 // sent" (keep the stored value) from "sent as empty" (clear it), so a client
 // that omits keys can never zero the configuration by accident.
 type CryptoConfigPatch struct {
-	Enabled              *bool               `json:"enabled"`
-	Chains               *[]string           `json:"chains"`
-	RPC                  *map[string]string  `json:"rpc"`
-	SweepGlobalThreshold *float64            `json:"sweep_global_threshold"`
-	SweepMinPerAddress   *map[string]float64 `json:"sweep_min_per_address"`
-	GasTopUp             *map[string]float64 `json:"gas_topup"`
-	HotWalletEVM         *string             `json:"hot_wallet_evm"`
-	HotWalletSolana      *string             `json:"hot_wallet_solana"`
-	Confirmations        *map[string]int     `json:"confirmations"`
-	ScanRange            *map[string]int     `json:"scan_range"`
-	CreditMinAmount      *float64            `json:"credit_min_amount"`
-	CreditMaxAmount      *float64            `json:"credit_max_amount"`
-	CreditMultiplier     *float64            `json:"credit_multiplier"`
-	HotIndex             *uint32             `json:"hot_index"`
-	SweepAuto            *bool               `json:"sweep_auto"`
+	Enabled              *bool                         `json:"enabled"`
+	Chains               *[]string                     `json:"chains"`
+	RPC                  *map[string]string            `json:"rpc"`
+	RPCLimits            *map[string]RPCEndpointLimits `json:"rpc_limits"`
+	RPCThrottleMs        *int                          `json:"rpc_throttle_ms"`
+	SweepGlobalThreshold *float64                      `json:"sweep_global_threshold"`
+	SweepMinPerAddress   *map[string]float64           `json:"sweep_min_per_address"`
+	GasTopUp             *map[string]float64           `json:"gas_topup"`
+	HotWalletEVM         *string                       `json:"hot_wallet_evm"`
+	HotWalletSolana      *string                       `json:"hot_wallet_solana"`
+	Confirmations        *map[string]int               `json:"confirmations"`
+	ScanRange            *map[string]int               `json:"scan_range"`
+	CreditMinAmount      *float64                      `json:"credit_min_amount"`
+	CreditMaxAmount      *float64                      `json:"credit_max_amount"`
+	CreditMultiplier     *float64                      `json:"credit_multiplier"`
+	HotIndex             *uint32                       `json:"hot_index"`
+	SweepAuto            *bool                         `json:"sweep_auto"`
 }
 
 // Apply overlays the patch onto base, leaving omitted fields untouched.
@@ -377,6 +465,12 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	}
 	if p.RPC != nil {
 		out.RPC = *p.RPC
+	}
+	if p.RPCLimits != nil {
+		out.RPCLimits = *p.RPCLimits
+	}
+	if p.RPCThrottleMs != nil {
+		out.RPCThrottleMs = *p.RPCThrottleMs
 	}
 	if p.SweepGlobalThreshold != nil {
 		out.SweepGlobalThreshold = *p.SweepGlobalThreshold
@@ -415,4 +509,66 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 		out.SweepAuto = *p.SweepAuto
 	}
 	return out
+}
+
+// configFingerprint renders the parts of a config that change runtime
+// behaviour into a stable string. It deliberately covers the fields an operator
+// edits to unblock a chain — endpoints, ranges, confirmations, chain list — and
+// ignores fields that only affect the next scheduled sweep, because reloading
+// for those would churn RPC pools for no reason.
+func configFingerprint(cfg CryptoConfig) string {
+	var b strings.Builder
+	_, _ = b.WriteString("enabled=")
+	_, _ = b.WriteString(strconv.FormatBool(cfg.Enabled))
+	_, _ = b.WriteString("|chains=")
+	_, _ = b.WriteString(strings.Join(cfg.Chains, ","))
+	_, _ = b.WriteString("|throttle_ms=")
+	_, _ = b.WriteString(strconv.Itoa(cfg.RPCThrottleMs))
+	for _, chain := range sortedKeys(cfg.RPC) {
+		_, _ = b.WriteString("|rpc.")
+		_, _ = b.WriteString(chain)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(cfg.RPC[chain])
+	}
+	for _, endpoint := range sortedKeys(cfg.RPCLimits) {
+		limit := cfg.RPCLimits[endpoint]
+		_, _ = b.WriteString("|limit.")
+		_, _ = b.WriteString(endpoint)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(strconv.FormatUint(limit.MaxBlocks, 10))
+		_, _ = b.WriteString("/")
+		_, _ = b.WriteString(strconv.Itoa(limit.MaxAddresses))
+	}
+	for _, chain := range sortedKeys(cfg.ScanRange) {
+		_, _ = b.WriteString("|range.")
+		_, _ = b.WriteString(chain)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(strconv.Itoa(cfg.ScanRange[chain]))
+	}
+	for _, chain := range sortedKeys(cfg.Confirmations) {
+		_, _ = b.WriteString("|conf.")
+		_, _ = b.WriteString(chain)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(strconv.Itoa(cfg.Confirmations[chain]))
+	}
+	return b.String()
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// RPCEndpointLimits is the per-endpoint eth_getLogs capability an operator can
+// declare so the scanner sizes each query correctly instead of discovering the
+// limit by rejection.
+type RPCEndpointLimits struct {
+	// MaxBlocks caps the block span of one eth_getLogs. 0 = unknown.
+	MaxBlocks uint64 `json:"max_blocks,omitempty"`
+	// MaxAddresses caps how many addresses may appear in the topic filter.
+	MaxAddresses int `json:"max_addresses,omitempty"`
 }

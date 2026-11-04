@@ -307,6 +307,7 @@ func (s *Service) reload(ctx context.Context) {
 	}
 	// Keep the selected chains' RPC pools available for the independent
 	// outflow guard even while new deposits and sweeps are disabled.
+	applyRPCLimits(cfg)
 	applyRPCThrottle(cfg)
 	s.pools = poolsForConfig(cfg, s.pools)
 	s.startRPCDiscoveryLocked()
@@ -474,6 +475,13 @@ func (s *Service) reload(ctx context.Context) {
 func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
 	poolTicker := time.NewTicker(10 * time.Minute)
 	defer poolTicker.Stop()
+	// The admin config lives in the database, but the running process only
+	// reads it at startup and on an authenticated save. Patching a row directly
+	// — which is what an operator does at 05:00 when a provider runs out of
+	// quota — therefore did nothing until the next restart, and a restart with
+	// long-lived streams can take many minutes. Poll the stored config on the
+	// same tick as the pool top-up and reload when it actually changed.
+	cfgFingerprint := configFingerprint(cfg)
 	// Sweeps move money: check rarely and only on the hour, so a fork that
 	// enables it never sees more than one automatic run per sweep cycle.
 	sweepTicker := time.NewTicker(time.Hour)
@@ -485,6 +493,11 @@ func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
 		case <-poolTicker.C:
 			if err := s.addresses.EnsurePool(ctx); err != nil {
 				slog.Warn("[cryptopay] pool top-up failed", "error", err)
+			}
+			if reloaded, err := s.reloadIfConfigChanged(ctx, &cfgFingerprint); err != nil {
+				slog.Warn("[cryptopay] config reload check failed", "error", err)
+			} else if reloaded {
+				slog.Info("[cryptopay] config changed in storage; reloaded")
 			}
 		case <-sweepTicker.C:
 			if !s.Config().SweepAuto {
@@ -875,8 +888,8 @@ type SweepRecord struct {
 	CreatedAt   string `json:"created_at"`
 }
 
-// ReconcileSweep resolves one stuck sweep job against the chain. It never
-// signs a new transaction, so an operator can safely clear a blocked address.
+// ReconcileSweep checks one stuck job against the chain without signing,
+// broadcasting, or releasing an address based only on a missing receipt.
 func (s *Service) ReconcileSweep(ctx context.Context, jobID int64) (*sweeper.ReconcileResult, error) {
 	if jobID <= 0 {
 		return nil, fmt.Errorf("invalid sweep job id")
@@ -1276,4 +1289,42 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		}
 	}
 	return out, nil
+}
+
+// applyRPCLimits publishes the operator-declared per-endpoint capabilities so
+// the scanner can size an eth_getLogs before sending it. Replacing the whole
+// registry means removing an entry takes effect on reload, and an empty map
+// restores the previous "learn the limit by rejection" behaviour.
+func applyRPCLimits(cfg CryptoConfig) {
+	limits := make(map[string]rpc.EndpointLimits, len(cfg.RPCLimits))
+	for endpoint, declared := range cfg.RPCLimits {
+		limits[endpoint] = rpc.EndpointLimits{
+			MaxBlocks:    declared.MaxBlocks,
+			MaxAddresses: declared.MaxAddresses,
+		}
+	}
+	rpc.ReplaceEndpointLimits(limits)
+}
+
+// reloadIfConfigChanged re-reads the stored config and rebuilds pools and the
+// worker when the operator edited it out-of-band. Returns whether it reloaded.
+//
+// The comparison is against the last fingerprint this process applied, so a
+// successful reload updates the caller's marker: a storage failure then retries
+// on the next tick instead of being masked by a stale marker.
+func (s *Service) reloadIfConfigChanged(ctx context.Context, last *string) (bool, error) {
+	stored, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
+	if err != nil {
+		return false, err
+	}
+	if configFingerprint(stored) == *last {
+		return false, nil
+	}
+	// Reload reads the config again itself; only the fingerprint matters here.
+	s.Reload(ctx)
+	s.mu.RLock()
+	applied := s.config
+	s.mu.RUnlock()
+	*last = configFingerprint(applied)
+	return true, nil
 }

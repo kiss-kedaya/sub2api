@@ -170,3 +170,57 @@ func TestConfigSnapshotsDoNotShareMutableMaps(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNormalizeConfigValidatesRPCProtectionBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  CryptoConfig
+	}{
+		{"negative throttle", CryptoConfig{RPCThrottleMs: -1}},
+		{"oversized throttle", CryptoConfig{RPCThrottleMs: maxRPCThrottleMs + 1}},
+		{"oversized blocks", CryptoConfig{RPCLimits: map[string]RPCEndpointLimits{
+			"https://rpc.example": {MaxBlocks: maxRPCBlocks + 1},
+		}}},
+		{"negative addresses", CryptoConfig{RPCLimits: map[string]RPCEndpointLimits{
+			"https://rpc.example": {MaxAddresses: -1},
+		}}},
+		{"oversized addresses", CryptoConfig{RPCLimits: map[string]RPCEndpointLimits{
+			"https://rpc.example": {MaxAddresses: maxRPCAddresses + 1},
+		}}},
+		{"empty key", CryptoConfig{RPCLimits: map[string]RPCEndpointLimits{
+			" ": {MaxBlocks: 100},
+		}}},
+		{"invalid key", CryptoConfig{RPCLimits: map[string]RPCEndpointLimits{
+			"not-a-url": {MaxBlocks: 100},
+		}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NormalizeConfig(tc.cfg); err == nil {
+				t.Fatal("unsafe RPC protection value was accepted")
+			}
+		})
+	}
+}
+
+func TestNormalizeConfigAcceptsConfiguredAndPredeclaredRPCLimits(t *testing.T) {
+	cfg, err := NormalizeConfig(CryptoConfig{
+		RPC: map[string]string{ChainBSC: "https://rpc.example, https://backup.example/"},
+		RPCLimits: map[string]RPCEndpointLimits{
+			"https://rpc.example":     {MaxBlocks: maxRPCBlocks, MaxAddresses: maxRPCAddresses},
+			"  https://new.example  ": {MaxBlocks: 100, MaxAddresses: 20},
+		},
+		RPCThrottleMs: maxRPCThrottleMs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RPCThrottleMs != maxRPCThrottleMs {
+		t.Fatalf("rpc_throttle_ms = %d, want %d", cfg.RPCThrottleMs, maxRPCThrottleMs)
+	}
+	if got := cfg.RPCLimits["https://rpc.example"]; got.MaxBlocks != maxRPCBlocks || got.MaxAddresses != maxRPCAddresses {
+		t.Fatalf("configured endpoint limits = %+v", got)
+	}
+	if _, ok := cfg.RPCLimits["https://new.example"]; !ok {
+		t.Fatalf("trimmed pre-declared key missing: %+v", cfg.RPCLimits)
+	}
+}

@@ -110,7 +110,14 @@ func (j *sweepJob) outcome() SweepEntry {
 
 // Legacy rows can contain duplicate attempts and inaccurate amounts. They
 // remain outside the new partial unique index and must never be auto-resigned.
+// Failed jobs with hashes stay reserved but are excluded from automatic resume
+// until an operator explicitly reconciles them.
 const unfinishedPredicate = `status NOT IN ('swept','failed') AND job_version = 1
+	OR job_version = 0 AND status <> 'swept' AND
+	(status IN ('manual_review','gas_sent') OR gas_tx_hash <> '' OR sweep_tx_hash <> '')`
+
+const reservedPredicate = `status NOT IN ('swept','failed') AND job_version = 1
+	OR job_version = 1 AND status = 'failed' AND (gas_tx_hash <> '' OR sweep_tx_hash <> '')
 	OR job_version = 0 AND status <> 'swept' AND
 	(status IN ('manual_review','gas_sent') OR gas_tx_hash <> '' OR sweep_tx_hash <> '')`
 
@@ -158,7 +165,7 @@ func (e *Executor) createJob(ctx context.Context, entry PlanEntry) (*sweepJob, e
 		 derivation_index, status, job_version, confirmations_required)
 		SELECT $1,$2,$3,$4,$5,$6,$7,$8,'planned',1,$9
 		WHERE NOT EXISTS (SELECT 1 FROM sweep_records WHERE chain=$1
-		 AND lower(from_address)=lower($2) AND (`+unfinishedPredicate+`)) RETURNING id`,
+		 AND lower(from_address)=lower($2) AND (`+reservedPredicate+`)) RETURNING id`,
 		entry.Chain, entry.Address, j.Destination, entry.Token, amountString(entry.RawAmount, entry.Decimals),
 		entry.RawAmount.String(), entry.Decimals, int64(entry.DerivationIndex),
 		strconv.FormatUint(j.Confirmations, 10)).Scan(&j.ID)
@@ -197,15 +204,29 @@ func (e *Executor) addressBusy(ctx context.Context, j *sweepJob) (bool, error) {
 	var busy bool
 	err := e.queries().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sweep_records
 		WHERE chain=$1 AND lower(from_address)=lower($2) AND id<>$3
-		AND (`+unfinishedPredicate+`) AND
+		AND (`+reservedPredicate+`) AND
 		(gas_tx_hash<>'' OR sweep_tx_hash<>'' OR status='manual_review'))`, j.Chain, j.Address, j.ID).Scan(&busy)
 	return busy, err
 }
 
+// gasPayerBusy reports whether another job on this chain is holding an
+// unconfirmed gas top-up from the same payer.
+//
+// It must NOT use reservedPredicate. That predicate also matches
+// `manual_review`, and a reverted gas top-up is parked there with
+// gas_confirmed=false forever (settle marks a reverted gas transaction
+// manual_review and never confirms it). Including it meant one reverted top-up
+// blocked every later gas top-up on the chain permanently — which is exactly
+// how Plasma reached a 0% sweep rate: a single bad top-up, then nothing.
+//
+// Only a gas transaction that is still expected to confirm should hold the
+// payer. manual_review and failed rows are waiting for a human, not for the
+// chain, so they must not serialize anything.
 func (e *Executor) gasPayerBusy(ctx context.Context, j *sweepJob, payer string) (bool, error) {
 	var busy bool
 	err := e.queries().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sweep_records
-		WHERE chain=$1 AND id<>$2 AND (`+unfinishedPredicate+`)
+		WHERE chain=$1 AND id<>$2
+		AND status NOT IN ('swept','failed','manual_review')
 		AND gas_tx_hash<>'' AND NOT gas_confirmed
 		AND (gas_payer='' OR lower(gas_payer)=lower($3)))`, j.Chain, j.ID, payer).Scan(&busy)
 	return busy, err

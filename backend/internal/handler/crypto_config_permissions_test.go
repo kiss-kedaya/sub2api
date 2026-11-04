@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -46,8 +47,9 @@ func cryptoConfigTestIdentity(c *gin.Context) {
 
 func TestCryptoConfigPublicViewNeverReturnsRPCURLsOrCredentialFragments(t *testing.T) {
 	const secretURL = "https://fixture-user:fixture-secret@rpc.example.test/v1/private?token=fixture-token"
+	const limitsURL = "https://limits-user:limits-secret@limits.example.test/v1/private?token=limits-token"
 	store := &cryptoConfigStore{values: map[string]string{
-		cryptopay.SettingKeyCryptoConfig: `{"chains":["bsc","ethereum"],"rpc":{"bsc":"` + secretURL + `","ethereum":"https://second.example.test","base":" ","https://unrecognized.example.test/private":"ignored"}}`,
+		cryptopay.SettingKeyCryptoConfig: `{"chains":["bsc","ethereum"],"rpc":{"bsc":"` + secretURL + `","ethereum":"https://second.example.test","base":" ","https://unrecognized.example.test/private":"ignored"},"rpc_limits":{"` + limitsURL + `":{"max_blocks":100,"max_addresses":20}}}`,
 	}}
 	router := gin.New()
 	router.GET("/config", (&CryptoHandler{store: store}).AdminGetConfig)
@@ -55,8 +57,9 @@ func TestCryptoConfigPublicViewNeverReturnsRPCURLsOrCredentialFragments(t *testi
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config", nil))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Equal(t, "{}", gjson.Get(w.Body.String(), "data.rpc").Raw)
+	require.False(t, gjson.Get(w.Body.String(), "data.rpc_limits").Exists())
 	require.Equal(t, `["bsc","ethereum"]`, gjson.Get(w.Body.String(), "data.rpc_configured").Raw)
-	for _, secret := range []string{"https://", "fixture-user", "fixture-secret", "fixture-token", "unrecognized.example.test"} {
+	for _, secret := range []string{"https://", "fixture-user", "fixture-secret", "fixture-token", "unrecognized.example.test", "limits-user", "limits-secret", "limits-token"} {
 		require.NotContains(t, w.Body.String(), secret)
 	}
 	require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
@@ -96,6 +99,8 @@ func TestCryptoConfigSensitiveChangesVerifyBeforeNotificationAndPersistence(t *t
 		`{"enabled":true}`,
 		`{"chains":["ethereum"]}`,
 		`{"rpc":{"bsc":"https://new.example.test"}}`,
+		`{"rpc_limits":{"https://rpc.example.test":{"max_blocks":100}}}`,
+		`{"rpc_throttle_ms":250}`,
 		`{"gas_topup":{"bsc":0.003}}`,
 		`{"hot_wallet_evm":"0x2222222222222222222222222222222222222222"}`,
 		`{"hot_wallet_solana":"So11111111111111111111111111111111111111112"}`,
@@ -168,4 +173,65 @@ func TestCryptoConfigSuccessfulDestinationNoticeFollowsFreshVerificationAndPrece
 	require.Equal(t, int32(1), security.calls.Load())
 	require.Equal(t, 1, notifications)
 	require.Equal(t, []string{cryptopay.SettingKeyCryptoConfig}, store.writes)
+}
+
+func TestCryptoConfigPatchPersistsRPCProtectionFields(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	store := &cryptoConfigStore{values: map[string]string{
+		cryptopay.SettingKeyCryptoConfig: `{"rpc":{"bsc":"https://rpc.example.test"}}`,
+	}}
+	security := &cryptoConfigTestSecurity{}
+	router := gin.New()
+	router.Use(cryptoConfigTestIdentity)
+	router.PUT("/config", (&CryptoHandler{store: store, security: security}).AdminUpdateConfig)
+
+	body := `{"rpc_limits":{"https://rpc.example.test":{"max_blocks":100,"max_addresses":20}},"rpc_throttle_ms":250}`
+	req := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(body))
+	req.Header.Set("X-Crypto-TOTP", "123456")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, int32(1), security.calls.Load())
+
+	var saved cryptopay.CryptoConfig
+	require.NoError(t, json.Unmarshal([]byte(store.values[cryptopay.SettingKeyCryptoConfig]), &saved))
+	require.Equal(t, 250, saved.RPCThrottleMs)
+	require.Equal(t, uint64(100), saved.RPCLimits["https://rpc.example.test"].MaxBlocks)
+	require.Equal(t, 20, saved.RPCLimits["https://rpc.example.test"].MaxAddresses)
+
+	// A safe patch that omits both fields must keep them.
+	safe := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(`{"scan_range":{"bsc":500}}`))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, safe)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, int32(1), security.calls.Load())
+	require.NoError(t, json.Unmarshal([]byte(store.values[cryptopay.SettingKeyCryptoConfig]), &saved))
+	require.Equal(t, 250, saved.RPCThrottleMs)
+	require.Equal(t, uint64(100), saved.RPCLimits["https://rpc.example.test"].MaxBlocks)
+}
+
+func TestCryptoConfigPatchRejectsUnsafeRPCProtectionValues(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	for _, body := range []string{
+		`{"rpc_throttle_ms":-1}`,
+		`{"rpc_throttle_ms":10001}`,
+		`{"rpc_limits":{"https://rpc.example.test":{"max_blocks":100001}}}`,
+		`{"rpc_limits":{"https://rpc.example.test":{"max_addresses":-1}}}`,
+		`{"rpc_limits":{"https://rpc.example.test":{"max_addresses":10001}}}`,
+		`{"rpc_limits":{"not-a-url":{"max_blocks":100}}}`,
+		`{"rpc_limits":{"":{"max_blocks":100}}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			store := &cryptoConfigStore{values: map[string]string{cryptopay.SettingKeyCryptoConfig: `{}`}}
+			security := &cryptoConfigTestSecurity{}
+			router := gin.New()
+			router.Use(cryptoConfigTestIdentity)
+			router.PUT("/config", (&CryptoHandler{store: store, security: security}).AdminUpdateConfig)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(body)))
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			require.Zero(t, security.calls.Load(), "invalid input must be rejected before verification")
+			require.Empty(t, store.writes)
+		})
+	}
 }

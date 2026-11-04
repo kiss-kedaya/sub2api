@@ -312,3 +312,32 @@ func (p *Pool) SendRawTransaction(ctx context.Context, rawTx string) (string, er
 	}
 	return hash, nil
 }
+
+// TightestLimits returns the most restrictive limits across the pool, so a
+// caller can size a query that every endpoint in the rotation will accept.
+// Unknown endpoints do not constrain: a pool with no configured limits keeps
+// the previous behaviour exactly.
+func (p *Pool) TightestLimits() (EndpointLimits, bool) {
+	p.mu.RLock()
+	endpoints := append([]string(nil), p.endpoints...)
+	p.mu.RUnlock()
+	var tight EndpointLimits
+	found := false
+	for _, endpoint := range endpoints {
+		limits, ok := EndpointLimitsFor(endpoint)
+		if !ok {
+			continue
+		}
+		found = true
+		if limits.MaxBlocks > 0 && (tight.MaxBlocks == 0 || limits.MaxBlocks < tight.MaxBlocks) {
+			tight.MaxBlocks = limits.MaxBlocks
+		}
+		if limits.MaxAddresses > 0 && (tight.MaxAddresses == 0 || limits.MaxAddresses < tight.MaxAddresses) {
+			tight.MaxAddresses = limits.MaxAddresses
+		}
+	}
+	if !found {
+		return EndpointLimits{}, false
+	}
+	return tight, true
+}

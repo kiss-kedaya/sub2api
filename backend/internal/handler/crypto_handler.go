@@ -117,6 +117,9 @@ func (h *CryptoHandler) AdminGetConfig(c *gin.Context) {
 	}
 	sort.Strings(configured)
 	cfg.RPC = map[string]string{}
+	// RPCLimits is keyed by the full endpoint URL, which may embed provider
+	// credentials. Only the fresh-2FA private view may return it.
+	cfg.RPCLimits = nil
 	cryptoNoStore(c)
 	c.JSON(http.StatusOK, gin.H{"data": struct {
 		cryptopay.CryptoConfig
