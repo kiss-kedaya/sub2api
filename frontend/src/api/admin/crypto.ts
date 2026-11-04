@@ -260,6 +260,88 @@ export async function waitForSweepRun(
   throw new DOMException('Polling stopped', 'AbortError')
 }
 
+export type ScanRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface ScanChainState {
+  chain: string
+  cursor: number
+  confirmed_head: number
+  remaining: number
+  head_known: boolean
+}
+
+// In-memory background catch-up scan. A restart of the server loses the record,
+// not the scan cursor, so a lost run is simply started again.
+export interface ScanRun {
+  id: string
+  status: ScanRunStatus
+  started_at: string
+  finished_at?: string
+  from_block: number
+  rounds: number
+  busy_retries: number
+  stalled_rounds: number
+  chains: ScanChainState[] | null
+  last_error?: string
+  stop_reason?: 'caught_up' | 'stalled' | 'deadline' | 'cancelled' | 'error' | 'internal' | string
+}
+
+// Starts a background catch-up that repeats scan passes until every chain's
+// cursor reaches its confirmed head. A server that predates async scanning
+// ignores the flag and answers after one synchronous pass; that comes back as
+// null: the scan already ran, there is nothing to follow.
+export async function startCryptoScan(fromBlock = 0, verification?: CryptoVerification): Promise<ScanRun | null> {
+  const { data } = await apiClient.post('/admin/crypto/scan/run', { from_block: fromBlock }, {
+    ...cryptoRequestOptions(verification),
+    timeout: 30000,
+    params: { async: '1' }
+  })
+  const run = data?.data
+  return run && typeof run.id === 'string' ? run : null
+}
+
+export async function getScanRun(id: string, signal?: AbortSignal): Promise<ScanRun> {
+  const { data } = await apiClient.get(`/admin/crypto/scan/runs/${encodeURIComponent(id)}`, { signal })
+  return data.data
+}
+
+export async function listScanRuns(): Promise<ScanRun[]> {
+  const { data } = await apiClient.get('/admin/crypto/scan/runs')
+  return Array.isArray(data?.data) ? data.data : []
+}
+
+// Cancelling is a payment operation: it needs the same fresh proof as a sweep.
+// Saved progress stays saved. The run reports "cancelled" on a later poll.
+export async function cancelScanRun(id: string, verification?: CryptoVerification): Promise<ScanRun> {
+  const { data } = await apiClient.post(`/admin/crypto/scan/runs/${encodeURIComponent(id)}/cancel`, null, {
+    ...cryptoRequestOptions(verification),
+    timeout: 30000
+  })
+  return data.data
+}
+
+// Polls until the run leaves "running". Leaving the page aborts only the
+// polling; it never cancels the scan.
+export async function waitForScanRun(
+  initial: ScanRun,
+  signal: AbortSignal,
+  update: (run: ScanRun) => void
+): Promise<ScanRun> {
+  let run = initial
+  while (!signal.aborted) {
+    update(run)
+    if (run.status !== 'running') return run
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(new DOMException('Polling stopped', 'AbortError')) }
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, 2000)
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) abort()
+    })
+    run = await getScanRun(initial.id, signal)
+  }
+  throw new DOMException('Polling stopped', 'AbortError')
+}
+
 
 
 export interface BlockedSweep {
