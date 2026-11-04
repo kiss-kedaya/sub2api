@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/big"
 	"strings"
@@ -253,6 +254,14 @@ func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, u
 		ToAddr:     t.To,
 		BlockNum:   t.BlockNumber,
 	}); err != nil {
+		// A credit failure leaves the row pending and retries on every pass, so
+		// without a log the operator only sees "deposit never arrived". Log the
+		// safe identifiers and the cause; amounts and hashes are already public
+		// on-chain, and nothing from the RPC layer (endpoints, credentials) is
+		// included because the creditor only returns its own error text.
+		slog.Error("[cryptopay] deposit credit failed; row stays pending",
+			"chain", t.Chain, "tx", t.TxHash, "log_index", t.LogIndex,
+			"user_id", userID, "credit_usdt", creditUSDT, "cause", err.Error())
 		return false, fmt.Errorf("credit deposit: %w", err)
 	}
 	result, err := l.db.ExecContext(ctx,
@@ -277,6 +286,9 @@ func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, u
 		}
 		// Fulfillment may already have moved the balance. Keep the reorg or
 		// reconciliation state; never overwrite it or automatically reverse.
+		slog.Error("[cryptopay] deposit status update did not apply; manual reconciliation required",
+			"chain", t.Chain, "tx", t.TxHash, "log_index", t.LogIndex,
+			"user_id", userID, "current_status", status)
 		return false, fmt.Errorf("fulfilled deposit is %q; manual reconciliation required", status)
 	}
 	return true, nil
