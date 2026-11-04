@@ -434,13 +434,13 @@ func cleanText(value string, limit int) string {
 	count := 0
 	for _, r := range strings.TrimSpace(value) {
 		if count >= limit {
-			b.WriteString("…")
+			_, _ = b.WriteString("…")
 			break
 		}
 		if !unicode.IsGraphic(r) {
 			r = '?'
 		}
-		b.WriteRune(r)
+		_, _ = b.WriteRune(r)
 		count++
 	}
 	return b.String()

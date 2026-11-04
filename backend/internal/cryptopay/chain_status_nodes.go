@@ -75,7 +75,7 @@ func providerLabel(host string) string {
 	var b strings.Builder
 	for _, r := range name {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		}
 		if b.Len() >= 24 {
 			break

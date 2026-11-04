@@ -82,22 +82,23 @@ func TestWindowSpeedsNeverGoNegative(t *testing.T) {
 }
 
 func TestProgressPct(t *testing.T) {
-	for name, tc := range map[string]struct {
+	for _, tc := range []struct {
+		name      string
 		lag       uint64
 		window    []uint64
 		threshold uint64
 		want      float64
 	}{
-		"inside the synced threshold is complete": {lag: 200, window: []uint64{5000}, threshold: 200, want: 100},
-		"zero lag": {lag: 0, threshold: 200, want: 100},
-		"no history: the current lag is its own peak": {lag: 201, threshold: 200, want: 0},
-		"half of the peak":                            {lag: 500, window: []uint64{1000, 800}, threshold: 200, want: 50},
-		"still at the peak":                           {lag: 1000, window: []uint64{1000, 500}, threshold: 200, want: 0},
-		"worse than anything in the window":           {lag: 1500, window: []uint64{1000}, threshold: 200, want: 0},
-		"a quarter of the peak left":                  {lag: 250, window: []uint64{1000}, threshold: 200, want: 75},
-		"rounds to one decimal":                       {lag: 333, window: []uint64{1000}, threshold: 200, want: 66.7},
+		{name: "inside the synced threshold is complete", lag: 200, window: []uint64{5000}, threshold: 200, want: 100},
+		{name: "zero lag", lag: 0, threshold: 200, want: 100},
+		{name: "no history: the current lag is its own peak", lag: 201, threshold: 200, want: 0},
+		{name: "half of the peak", lag: 500, window: []uint64{1000, 800}, threshold: 200, want: 50},
+		{name: "still at the peak", lag: 1000, window: []uint64{1000, 500}, threshold: 200, want: 0},
+		{name: "worse than anything in the window", lag: 1500, window: []uint64{1000}, threshold: 200, want: 0},
+		{name: "a quarter of the peak left", lag: 250, window: []uint64{1000}, threshold: 200, want: 75},
+		{name: "rounds to one decimal", lag: 333, window: []uint64{1000}, threshold: 200, want: 66.7},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			require.InDelta(t, tc.want, progressPct(tc.lag, tc.window, tc.threshold), 1e-9)
 		})
 	}
