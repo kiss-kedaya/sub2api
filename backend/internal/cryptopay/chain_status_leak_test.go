@@ -17,18 +17,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type lockedBuffer struct {
+type leakLogBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
 }
 
-func (l *lockedBuffer) Write(p []byte) (int, error) {
+func (l *leakLogBuffer) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.b.Write(p)
 }
 
-func (l *lockedBuffer) String() string {
+func (l *leakLogBuffer) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.b.String()
@@ -39,7 +39,7 @@ func (l *lockedBuffer) String() string {
 // puts a connection string in its error. Neither the response nor the logs may
 // contain any of it.
 func TestChainStatusNeverExposesNodeURLsKeysOrDriverErrors(t *testing.T) {
-	logs := &lockedBuffer{}
+	logs := &leakLogBuffer{}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
