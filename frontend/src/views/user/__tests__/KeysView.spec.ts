@@ -910,12 +910,13 @@ describe('user KeysView mutations', () => {
 
     expect(listKeys).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('filtered route key')
+    // The table condenses the routes, so the secondary group only proves the row is still listed.
     expect(wrapper.findAll('[data-test="key-bound-group"]').map((node) => node.attributes('data-group-id')))
-      .toEqual(['2', '3'])
+      .toEqual(['2'])
     wrapper.unmount()
   })
 
-  it('renders every server-returned smart-routing group mapping immediately without refetching', async () => {
+  it('shows the server-returned smart-routing first group and count immediately without refetching', async () => {
     getAvailableGroups.mockResolvedValue([
       { id: 1, name: 'Claude', platform: 'anthropic' },
       { id: 2, name: 'OpenAI', platform: 'openai' },
@@ -951,9 +952,33 @@ describe('user KeysView mutations', () => {
       { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, [2, 3], 'inherit',
       { deepseekToolInjectionEnabled: true })
     expect(listKeys).not.toHaveBeenCalled()
-    expect(wrapper.findAll('[data-test="key-bound-group"]').map((node) => node.attributes('data-group-id'))).toEqual(['2', '3'])
+    // The first returned route renders immediately; the rest collapse into the count.
+    expect(wrapper.findAll('[data-test="key-bound-group"]').map((node) => node.attributes('data-group-id'))).toEqual(['2'])
+    expect(wrapper.get('[data-test="key-smart-routing-count"]').text()).toBe('Smart routing +1')
     expect(wrapper.text()).toContain('OpenAI')
-    expect(wrapper.text()).toContain('Grok')
+    expect(wrapper.text()).not.toContain('Grok')
+    wrapper.unmount()
+  })
+
+  it('condenses many smart-routing groups into the first group and the remaining count', async () => {
+    getAvailableGroups.mockResolvedValue([
+      { id: 1, name: 'Claude', platform: 'anthropic' },
+      { id: 2, name: 'OpenAI', platform: 'openai' },
+      { id: 3, name: 'Grok', platform: 'grok' },
+      { id: 4, name: 'DeepSeek', platform: 'deepseek' },
+      { id: 5, name: 'Kimi', platform: 'kimi' },
+    ])
+    listKeys.mockResolvedValue({
+      items: [{ ...createApiKey(), group_id: 1, group_ids: [1, 2, 3, 4, 5] }],
+      total: 1,
+    })
+    const wrapper = await mountView()
+
+    expect(wrapper.findAll('[data-test="key-bound-group"]').map((node) => node.attributes('data-group-id'))).toEqual(['1'])
+    expect(wrapper.get('[data-test="key-smart-routing-count"]').text()).toBe('Smart routing +4')
+    expect(wrapper.text()).toContain('Claude')
+    expect(wrapper.text()).not.toContain('OpenAI')
+    expect(wrapper.text()).not.toContain('Kimi')
     wrapper.unmount()
   })
 
