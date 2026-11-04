@@ -553,53 +553,58 @@ func (s *adminServiceImpl) BatchUpdateLimits(ctx context.Context, userIDs []int6
 	return affected, nil
 }
 
-func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error) {
+func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (result *User, retErr error) {
+	if operation != "set" && operation != "add" && operation != "subtract" {
+		return nil, fmt.Errorf("unsupported balance operation: %q", operation)
+	}
+	if s.entClient == nil {
+		return nil, errors.New("balance adjustment transaction is unavailable")
+	}
+	tx, err := s.entClient.Tx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin balance adjustment transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			retErr = errors.Join(retErr, fmt.Errorf("rollback balance adjustment: %w", rollbackErr))
+		}
+	}()
+	txCtx := dbent.NewTxContext(ctx, tx)
+	user, err := s.userRepo.GetByID(txCtx, userID)
+	if err != nil {
+		return nil, err
+	}
+
 	// 余额调整必须走原子接口：先读后整行写回会把并发的计费扣款覆盖掉。
 	var (
-		change BalanceChange
-		err    error
+		change    BalanceChange
+		adjustErr error
 	)
 	switch operation {
 	case "set":
-		change, err = s.userRepo.SetBalance(ctx, userID, balance)
+		change, adjustErr = s.userRepo.SetBalance(txCtx, userID, balance)
 	case "add":
-		change, err = s.userRepo.AdjustBalance(ctx, userID, balance)
+		change, adjustErr = s.userRepo.AdjustBalance(txCtx, userID, balance)
 	case "subtract":
-		change, err = s.userRepo.AdjustBalance(ctx, userID, -balance)
-	default:
-		return nil, fmt.Errorf("unsupported balance operation: %q", operation)
+		change, adjustErr = s.userRepo.AdjustBalance(txCtx, userID, -balance)
 	}
-	if errors.Is(err, ErrBalanceNegative) {
+	if errors.Is(adjustErr, ErrBalanceNegative) {
 		return nil, fmt.Errorf("balance cannot be negative, current balance: %.2f, requested operation would result in: %.2f", change.Old, change.New)
 	}
-	if err != nil {
-		return nil, err
+	if adjustErr != nil {
+		return nil, adjustErr
 	}
 	balanceDiff := change.New - change.Old
-	if balanceDiff != 0 {
-		syncCommittedLiveBalanceAdjustment(
-			s.billingCacheService,
-			userID,
-			newLiveBalanceAdjustmentEventID("admin-balance"),
-			balanceDiff,
-		)
-	}
-
-	user, err := s.userRepo.GetByID(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	if s.authCacheInvalidator != nil && balanceDiff != 0 {
-		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
-	}
-	s.tryAccrueAffiliateRebateForAdminRecharge(ctx, userID, operation, balance)
+	user.Balance = change.New
 
 	if balanceDiff != 0 {
 		code, err := GenerateRedeemCode()
 		if err != nil {
-			logger.LegacyPrintf("service.admin", "failed to generate adjustment redeem code: %v", err)
-			return user, nil
+			return nil, fmt.Errorf("generate balance adjustment source record: %w", err)
 		}
 
 		adjustmentRecord := &RedeemCode{
@@ -613,10 +618,30 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 		now := time.Now()
 		adjustmentRecord.UsedAt = &now
 
-		if err := s.redeemCodeRepo.Create(ctx, adjustmentRecord); err != nil {
-			logger.LegacyPrintf("service.admin", "failed to create balance adjustment redeem code: %v", err)
+		if s.redeemCodeRepo == nil {
+			return nil, errors.New("balance adjustment source repository is unavailable")
+		}
+		if err := s.redeemCodeRepo.Create(txCtx, adjustmentRecord); err != nil {
+			return nil, fmt.Errorf("create balance adjustment source record: %w", err)
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit balance adjustment and source record: %w", err)
+	}
+	committed = true
+
+	if balanceDiff != 0 {
+		syncCommittedLiveBalanceAdjustment(
+			s.billingCacheService,
+			userID,
+			newLiveBalanceAdjustmentEventID("admin-balance"),
+			balanceDiff,
+		)
+		if s.authCacheInvalidator != nil {
+			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+		}
+	}
+	s.tryAccrueAffiliateRebateForAdminRecharge(ctx, userID, operation, balance)
 
 	return user, nil
 }
