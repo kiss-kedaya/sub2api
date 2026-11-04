@@ -23,6 +23,6 @@ export default {
     theme: '切换明暗主题',
     localSite: '当前站点',
     sidebarNote: '从第一条请求，到完整的工具工作流。',
-    category: { start: '开始使用', guides: 'API 指南', integrations: '模型接入', reference: 'API 参考' },
+    category: { start: '开始使用', guides: 'API 指南', media: '图像与视频', integrations: '模型接入', reference: 'API 参考' },
   },
 }

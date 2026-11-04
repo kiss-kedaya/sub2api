@@ -23,6 +23,6 @@ export default {
     theme: 'Toggle color theme',
     localSite: 'Current site',
     sidebarNote: 'From your first request to a complete tool workflow.',
-    category: { start: 'Get started', guides: 'API guides', integrations: 'Client setup', reference: 'API reference' },
+    category: { start: 'Get started', guides: 'API guides', media: 'Image & video', integrations: 'Client setup', reference: 'API reference' },
   },
 }

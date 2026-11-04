@@ -94,7 +94,12 @@
               <pre class="overflow-x-auto p-5 text-[12px] leading-7 text-slate-700 dark:text-slate-200"><code>{{ example(section) }}</code></pre>
             </div>
 
-            <a v-for="link in section.links" :key="link.href" :href="link.href" target="_blank" rel="noopener noreferrer" class="mt-3 inline-flex items-center gap-1.5 text-sm text-blue-600 underline decoration-blue-200 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400">{{ link.label }}<Icon name="externalLink" size="xs" /></a>
+            <div v-if="section.links?.length" class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+              <template v-for="(link, index) in section.links" :key="link.page || link.href || index">
+                <router-link v-if="link.page" :to="docLocation(link.page)" class="inline-flex items-center gap-1.5 text-sm text-blue-600 underline decoration-blue-200 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400">{{ link.label }}<Icon name="arrowRight" size="xs" /></router-link>
+                <a v-else-if="link.href" :href="link.href" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 text-sm text-blue-600 underline decoration-blue-200 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400">{{ link.label }}<Icon name="externalLink" size="xs" /></a>
+              </template>
+            </div>
           </section>
 
           <nav class="mt-12 grid grid-cols-2 gap-4 border-t border-slate-200 pt-6 dark:border-dark-700" :aria-label="t('docs.navigation')">
@@ -107,7 +112,7 @@
         <aside class="hidden xl:block">
           <nav class="sticky top-36 text-xs" :aria-label="t('docs.onThisPage')">
             <p class="mb-4 font-medium text-slate-500">{{ t('docs.onThisPage') }}</p>
-            <div class="space-y-3 border-l border-slate-200 py-1 pl-4 dark:border-dark-700"><a v-for="section in page.sections" :key="section.id" :href="`#${section.id}`" class="block leading-5 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400" @click.prevent="jumpTo(section.id)">{{ section.title }}</a></div>
+            <div class="space-y-3 border-l border-slate-200 py-1 pl-4 dark:border-dark-700"><a v-for="section in page.sections" :key="section.id" :href="`#${section.id}`" class="block leading-5" :class="activeSection === section.id ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400'" :aria-current="activeSection === section.id ? 'location' : undefined" @click.prevent="jumpTo(section.id)">{{ section.title }}</a></div>
           </nav>
         </aside>
       </main>
@@ -125,7 +130,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useClipboard } from '@/composables/useClipboard'
 import { sanitizeUrl } from '@/utils/url'
-import { getApiDocs, resolveDocsOrigin, resolveDocsPage, type DocsCategory, type DocsLanguage, type DocsSection } from '@/data/apiDocs'
+import { getApiDocs, resolveDocsOrigin, resolveDocsPage, type DocsCategory, type DocsLanguage, type DocsPage, type DocsSection } from '@/data/apiDocs'
 
 const route = useRoute()
 const router = useRouter()
@@ -140,8 +145,9 @@ const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appS
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const showModels = computed(() => appStore.cachedPublicSettings?.model_plaza_enabled === true)
 const consolePath = computed(() => !authStore.isAuthenticated ? '/login' : authStore.isAdminObserver ? '/admin/usage' : authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-const categories: DocsCategory[] = ['start', 'guides', 'integrations', 'reference']
+const categories: DocsCategory[] = ['start', 'guides', 'media', 'integrations', 'reference']
 const search = ref('')
+const activeSection = ref('')
 const mobileOpen = ref(false)
 const wideQuery = typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)') : null
 const wideLayout = ref(wideQuery?.matches ?? true)
@@ -149,12 +155,33 @@ const isDark = ref(typeof document !== 'undefined' && document.documentElement.c
 const selectedLanguages = reactive<Record<string, DocsLanguage>>({})
 const copiedSection = ref('')
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
+let sectionObserver: IntersectionObserver | undefined
+const visibleSectionIds = new Set<string>()
 const languageLabels: Record<DocsLanguage, string> = { curl: 'cURL', python: 'Python', node: 'Node.js', json: 'JSON', toml: 'TOML', shell: 'Shell' }
 
-const navigationGroups = computed(() => categories.map(category => ({
-  category,
-  pages: pages.value.filter(entry => entry.category === category && (!search.value.trim() || [entry.title, entry.description, ...entry.sections.flatMap(section => [section.title, ...(section.paragraphs || [])])].join(' ').toLowerCase().includes(search.value.trim().toLowerCase()))),
-})).filter(group => group.pages.length))
+function matchesSearch(entry: DocsPage, query: string): boolean {
+  if (!query) return true
+  const searchable = [
+    entry.title,
+    entry.description,
+    ...entry.sections.flatMap(section => [
+      section.title,
+      ...(section.paragraphs || []),
+      section.note || '',
+      ...(section.fields || []).flatMap(field => [field.name, field.type, field.description]),
+      ...(section.links || []).map(link => link.label),
+    ]),
+  ]
+  return searchable.join(' ').toLowerCase().includes(query)
+}
+
+const navigationGroups = computed(() => {
+  const query = search.value.trim().toLowerCase()
+  return categories.map(category => ({
+    category,
+    pages: pages.value.filter(entry => entry.category === category && matchesSearch(entry, query)),
+  })).filter(group => group.pages.length)
+})
 const pageIndex = computed(() => pages.value.findIndex(entry => entry.id === page.value.id))
 const previousPage = computed(() => pages.value[pageIndex.value - 1])
 const nextPage = computed(() => pages.value[pageIndex.value + 1])
@@ -185,6 +212,37 @@ async function jumpTo(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
 }
 
+function disconnectSectionObserver() {
+  sectionObserver?.disconnect()
+  sectionObserver = undefined
+  visibleSectionIds.clear()
+}
+
+// Highlights the section currently inside the reading band of the viewport.
+// Environments without IntersectionObserver simply keep the TOC unhighlighted.
+function observeSections() {
+  disconnectSectionObserver()
+  activeSection.value = ''
+  if (typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') return
+  const elements = page.value.sections.map(section => document.getElementById(section.id)).filter((element): element is HTMLElement => element !== null)
+  if (!elements.length) return
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) visibleSectionIds.add(entry.target.id)
+      else visibleSectionIds.delete(entry.target.id)
+    }
+    const current = page.value.sections.find(section => visibleSectionIds.has(section.id))
+    if (current) activeSection.value = current.id
+    else if (!visibleSectionIds.size) activeSection.value = ''
+  }, { rootMargin: '-96px 0px -60% 0px', threshold: 0 })
+  elements.forEach(element => observer.observe(element))
+  sectionObserver = observer
+}
+
+watch(() => page.value.id, async () => {
+  await nextTick()
+  observeSections()
+})
 watch(() => route.query.page, async () => {
   mobileOpen.value = false
   copiedSection.value = ''
@@ -195,11 +253,13 @@ watch([() => page.value.title, siteName], () => { if (typeof document !== 'undef
 onMounted(() => {
   wideQuery?.addEventListener?.('change', syncWideLayout)
   document.addEventListener('keydown', closeOnEscape)
+  observeSections()
   if (!appStore.publicSettingsLoaded) void appStore.fetchPublicSettings().catch(() => {})
   if (route.hash) document.getElementById(route.hash.slice(1))?.scrollIntoView({ block: 'start' })
 })
 onBeforeUnmount(() => {
   if (copiedTimer) clearTimeout(copiedTimer)
+  disconnectSectionObserver()
   wideQuery?.removeEventListener?.('change', syncWideLayout)
   document.removeEventListener('keydown', closeOnEscape)
 })
