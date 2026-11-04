@@ -43,6 +43,13 @@
         :aria-label="t('admin.crypto.title')"
         @update:model-value="(value: string | number) => switchTab(String(value))"
       >
+        <!-- Node status: per-chain scan progress and RPC node health -->
+        <template #chains>
+          <div id="crypto-panel-chains" class="crypto-view__panel flex flex-col gap-4">
+            <CryptoChainStatusPanel :active="chainsActive" @open-config="openConfigTab" />
+          </div>
+        </template>
+
         <!-- Configuration -->
         <template #config>
           <div id="crypto-panel-config" class="crypto-view__panel flex w-full flex-col gap-4 sm:gap-6 lg:max-w-3xl mx-auto">
@@ -596,6 +603,7 @@ import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue
 import CryptoPrivateKeyDialog from '@/components/crypto/CryptoPrivateKeyDialog.vue'
 import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
 import CryptoGasWalletPanel from '@/components/crypto/CryptoGasWalletPanel.vue'
+import CryptoChainStatusPanel from '@/components/crypto/CryptoChainStatusPanel.vue'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
@@ -680,20 +688,29 @@ const tabs = computed(() => [
   { value: 'config', slot: 'config' as const, label: t('admin.crypto.tabConfig') },
   { value: 'addresses', slot: 'addresses' as const, label: t('admin.crypto.tabAddresses') },
   { value: 'sweep', slot: 'sweep' as const, label: t('admin.crypto.tabSweep') },
-  { value: 'deposits', slot: 'deposits' as const, label: t('admin.crypto.tabDeposits') }
+  { value: 'deposits', slot: 'deposits' as const, label: t('admin.crypto.tabDeposits') },
+  { value: 'chains', slot: 'chains' as const, label: t('admin.crypto.tabChains') }
 ])
 // Open on the address list: it is the operator's main view (the config tab
 // is a one-time setup step).
 const activeTab = ref('addresses')
-type CryptoSection = 'overview' | 'addresses' | 'sweep' | 'deposits' | 'config'
-const { section, routed, to: sectionTo } = useSectionRoute<CryptoSection>('overview', { overview: 'AdminCrypto', addresses: 'AdminCryptoAddresses', sweep: 'AdminCryptoSweeps', deposits: 'AdminCryptoDeposits', config: 'AdminCryptoSettings' })
+type CryptoSection = 'overview' | 'addresses' | 'sweep' | 'deposits' | 'chains' | 'config'
+const { section, routed, to: sectionTo } = useSectionRoute<CryptoSection>('overview', { overview: 'AdminCrypto', addresses: 'AdminCryptoAddresses', sweep: 'AdminCryptoSweeps', deposits: 'AdminCryptoDeposits', chains: 'AdminCryptoChains', config: 'AdminCryptoSettings' })
 const overviewEntries = computed(() => [
   { section: 'addresses' as const, label: t('admin.crypto.tabAddresses'), icon: 'i-lucide-wallet' },
   { section: 'sweep' as const, label: t('admin.crypto.tabSweep'), icon: 'i-lucide-arrow-up-from-line' },
   { section: 'deposits' as const, label: t('admin.crypto.tabDeposits'), icon: 'i-lucide-arrow-down-to-line' },
+  { section: 'chains' as const, label: t('admin.crypto.tabChains'), icon: 'i-lucide-activity' },
   { section: 'config' as const, label: t('admin.crypto.tabConfig'), icon: 'i-lucide-settings-2' },
 ])
 const navItems = computed(() => [{ label: t('admin.crypto.tabOverview'), icon: 'i-lucide-layout-dashboard', to: sectionTo('overview') }, ...overviewEntries.value.map(entry => ({ label: entry.label, icon: entry.icon, to: sectionTo(entry.section) }))])
+// The node-status panel polls only while its tab is the visible one. In routed mode the
+// overview keeps the last tab mounted behind v-show, so the route decides, not activeTab.
+const chainsActive = computed(() => routed ? section.value === 'chains' : activeTab.value === 'chains')
+function openConfigTab() {
+  if (routed) section.value = 'config'
+  else switchTab('config')
+}
 
 const config = ref<CryptoConfig | null>(null)
 // Snapshot of the last loaded/saved config: the save confirmation diffs

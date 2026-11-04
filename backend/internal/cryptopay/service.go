@@ -214,6 +214,9 @@ type Service struct {
 	// sweepMu serialises sweep runs: the manual admin trigger and the
 	// scheduler must never send the same funds twice.
 	sweepMu sync.Mutex
+	// chainMon backs the admin node-status page (probe cache, sample window,
+	// on-demand ticker). Read-only; the zero value is ready to use.
+	chainMon chainMonitor
 }
 
 // NewService builds the facade and starts the scan worker when enabled.

@@ -74,6 +74,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.POST("/wallet/export-mnemonics", cryptoHandler.AdminExportMnemonics)
 		crypto.POST("/wallet/hot-mnemonic", cryptoHandler.AdminImportHotMnemonic)
 		crypto.GET("/pool", cryptoHandler.AdminPoolStatus)
+		crypto.GET("/chains/status", cryptoHandler.AdminChainStatus)
 		crypto.GET("/hot-wallet", cryptoHandler.AdminHotWalletStatus)
 		crypto.GET("/hot-wallet/address", cryptoHandler.AdminHotWalletAddress)
 		crypto.GET("/deposits.csv", cryptoHandler.AdminExportDeposits)
