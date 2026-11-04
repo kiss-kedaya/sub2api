@@ -489,6 +489,15 @@
                 <USelect :model-value="depositStatus || ALL" :items="depositStatusItems" class="min-w-32" :aria-label="t('common.status')" @update:model-value="setDepositStatus" />
               </div>
               <div class="flex flex-wrap items-center gap-1.5">
+                <UButton
+                  v-if="selectedDeposits.length"
+                  color="warning"
+                  icon="i-lucide-circle-check-big"
+                  data-testid="deposit-confirm-open"
+                  :loading="confirmingDeposits"
+                  :disabled="confirmingDeposits || loadingDeposits"
+                  @click="openDepositConfirm"
+                >{{ t('admin.crypto.depositConfirmAction', { count: selectedDeposits.length, total: fmtAmount(selectedDepositsTotal) }) }}</UButton>
                 <UButton color="neutral" variant="outline" icon="i-lucide-scan-search" :loading="scanningDeposits" :disabled="loadingDeposits || scanningDeposits" @click="runDepositCatchup">{{ t('admin.crypto.scanDeposits') }}</UButton>
                 <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :disabled="loadingDeposits" @click="loadDeposits">{{ t('common.refresh') }}</UButton>
                 <UButton color="neutral" variant="outline" icon="i-lucide-download" :disabled="exporting" @click="downloadCSV">{{ t('admin.crypto.exportCsv') }}</UButton>
@@ -506,6 +515,23 @@
               :empty="t('common.noData')"
               :ui="tableUi"
             >
+              <template #select-header>
+                <UCheckbox
+                  :model-value="allPendingSelected ? true : somePendingSelected ? 'indeterminate' : false"
+                  :aria-label="t('admin.crypto.depositSelectAll')"
+                  data-testid="deposit-select-all"
+                  @update:model-value="toggleAllPendingDeposits($event === true)"
+                />
+              </template>
+              <template #select-cell="{ row }">
+                <UCheckbox
+                  v-if="row.original.status === 'pending'"
+                  :model-value="selectedDepositIds.includes(row.original.id)"
+                  :aria-label="t('admin.crypto.depositSelectRow', { id: row.original.id })"
+                  data-testid="deposit-select-row"
+                  @update:model-value="toggleDepositSelected(row.original.id, $event === true)"
+                />
+              </template>
               <template #from_address-cell="{ row }"><span class="font-mono" :title="row.original.from_address">{{ short(row.original.from_address) }}</span></template>
               <template #to_address-cell="{ row }"><span class="font-mono" :title="row.original.to_address">{{ short(row.original.to_address) }}</span></template>
               <template #token_symbol-cell="{ row }"><UBadge color="neutral" variant="outline">{{ row.original.token_symbol || 'USDT' }}</UBadge></template>
@@ -564,6 +590,14 @@
 
     <CryptoMnemonicsDialog :show="mnemonicsDialogOpen" @close="mnemonicsDialogOpen = false" />
     <CryptoPrivateKeyDialog :address="privateKeyAddress" @close="privateKeyAddress = null" />
+    <CryptoDepositConfirmDialog
+      :show="depositDialogOpen"
+      :rows="depositDialogRows"
+      :total="depositDialogTotal"
+      :outcome="depositOutcome"
+      @close="depositDialogOpen = false"
+      @confirm="submitDepositConfirm"
+    />
     <BaseDialog :show="walletDialog !== null" :title="t('admin.crypto.hotImportAction')" @close="closeWalletDialog">
       <form id="crypto-wallet-form" class="space-y-4" autocomplete="off" @submit.prevent="submitWallet">
         <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.crypto.hotImportWarning')" />
@@ -591,6 +625,7 @@ import { useSectionRoute } from './sysSectionRoute'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import CryptoSecurityDialog from '@/components/crypto/CryptoSecurityDialog.vue'
+import CryptoDepositConfirmDialog from '@/components/crypto/CryptoDepositConfirmDialog.vue'
 import CryptoGrantStatus from '@/components/crypto/CryptoGrantStatus.vue'
 import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
 import CryptoPrivateKeyDialog from '@/components/crypto/CryptoPrivateKeyDialog.vue'
@@ -614,6 +649,7 @@ import {
   getSweepPlan,
   listAllAddresses,
   listDepositsPaged,
+  confirmDeposits,
   runCryptoScan,
   listSweepRecords,
   listBlockedSweeps,
@@ -633,6 +669,7 @@ import {
   type AdminAddressSummary,
   type CryptoConfig,
   type CryptoConfigPatch,
+  type DepositConfirmOutcome,
   type DepositRecord,
   type DepositSummary,
   type DepositAddress,
@@ -845,6 +882,8 @@ const recordColumns = computed<TableColumn<SweepRecord>[]>(() => [
   { accessorKey: 'sweep_tx_hash', header: 'TX' }
 ])
 const depositTableColumns = computed<TableColumn<DepositRecord>[]>(() => [
+  // Only pending rows can be confirmed by hand; a page with none keeps the table as it was.
+  ...(pendingDeposits.value.length ? [{ id: 'select', header: '', enableHiding: false }] : []),
   { accessorKey: 'chain', header: t('admin.crypto.chain') },
   { accessorKey: 'from_address', header: t('admin.crypto.from') },
   { accessorKey: 'to_address', header: t('admin.crypto.address') },
@@ -886,6 +925,21 @@ const scanningDeposits = ref(false)
 const depositTotalPages = computed(() =>
   Math.max(1, Math.ceil(depositSummary.value.total / depositPageSize))
 )
+
+// Manual confirmation of pending deposits. Selection is per page: loadDeposits
+// drops ids that are no longer pending rows, so a page or filter change starts clean.
+const selectedDepositIds = ref<number[]>([])
+const confirmingDeposits = ref(false)
+const depositDialogOpen = ref(false)
+const depositDialogRows = ref<DepositRecord[]>([])
+const depositDialogTotal = ref('')
+const depositOutcome = ref<DepositConfirmOutcome | null>(null)
+
+const pendingDeposits = computed(() => deposits.value.filter(item => item.status === 'pending'))
+const selectedDeposits = computed(() => pendingDeposits.value.filter(item => selectedDepositIds.value.includes(item.id)))
+const selectedDepositsTotal = computed(() => selectedDeposits.value.reduce((sum, item) => sum + (Number(item.amount) || 0), 0))
+const allPendingSelected = computed(() => pendingDeposits.value.length > 0 && selectedDeposits.value.length === pendingDeposits.value.length)
+const somePendingSelected = computed(() => selectedDeposits.value.length > 0 && !allPendingSelected.value)
 
 const poolStatus = ref<PoolStatus | null>(null)
 const hotWallets = ref<HotWalletStatus[]>([])
@@ -1685,8 +1739,66 @@ async function loadDeposits() {
     )
     deposits.value = items
     depositSummary.value = summary
+    const pending = new Set(items.filter(item => item.status === 'pending').map(item => item.id))
+    selectedDepositIds.value = selectedDepositIds.value.filter(id => pending.has(id))
   } finally {
     loadingDeposits.value = false
+  }
+}
+
+function toggleDepositSelected(id: number, selected: boolean) {
+  const rest = selectedDepositIds.value.filter(item => item !== id)
+  selectedDepositIds.value = selected ? [...rest, id] : rest
+}
+
+function toggleAllPendingDeposits(selected: boolean) {
+  selectedDepositIds.value = selected ? pendingDeposits.value.map(item => item.id) : []
+}
+
+// The dialog works on a snapshot, so a refresh behind it cannot change what the
+// operator agreed to credit.
+function openDepositConfirm() {
+  if (confirmingDeposits.value || !selectedDeposits.value.length) return
+  depositOutcome.value = null
+  depositDialogRows.value = [...selectedDeposits.value]
+  depositDialogTotal.value = fmtAmount(selectedDepositsTotal.value)
+  depositDialogOpen.value = true
+}
+
+// Same payment-proof path as sweep / address status: withCryptoVerification reuses
+// a live grant or asks for a fresh TOTP, and the proof rides on this one request.
+async function submitDepositConfirm(note: string) {
+  if (confirmingDeposits.value || !depositDialogRows.value.length) return
+  confirmingDeposits.value = true
+  const rows = depositDialogRows.value
+  const ids = rows.map(row => row.id)
+  const chains = [...new Set(rows.map(row => row.chain))].join(', ')
+  depositDialogOpen.value = false
+  depositOutcome.value = null
+  let attempted = false
+  try {
+    await withCryptoVerification(
+      t('admin.crypto.depositConfirmVerify', { count: ids.length, total: depositDialogTotal.value, chains }),
+      async (verification) => {
+        attempted = true
+        depositOutcome.value = await confirmDeposits(ids, verification, note)
+      }
+    )
+    // A request-level failure is shown by the verification dialog; per-deposit
+    // results (including rejected ones) are shown here.
+    if (depositOutcome.value) depositDialogOpen.value = true
+    // After any request that went out, the list is the only reliable record of
+    // what was credited. A cancelled verification leaves the selection alone.
+    if (attempted) {
+      selectedDepositIds.value = []
+      try {
+        await loadDeposits()
+      } catch (error) {
+        appStore.showError(extractApiErrorMessage(error, t('common.error')))
+      }
+    }
+  } finally {
+    confirmingDeposits.value = false
   }
 }
 

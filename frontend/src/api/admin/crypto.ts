@@ -336,6 +336,48 @@ export async function runCryptoScan(fromBlock = 0): Promise<void> {
   await apiClient.post('/admin/crypto/scan/run', { from_block: fromBlock }, { timeout: 15 * 60 * 1000 })
 }
 
+export type DepositConfirmStatus = 'credited' | 'already_credited' | 'rejected' | 'error'
+
+export interface DepositConfirmResult {
+  id: number
+  status: DepositConfirmStatus | string
+  order_id?: number
+  message?: string
+}
+
+export interface DepositConfirmOutcome {
+  results: DepositConfirmResult[]
+  credited: number
+  failed: number
+}
+
+// Manual credit for pending deposits. The server skips the confirmation-depth
+// and outflow-scan gates and only checks the on-chain receipt, then adds the
+// user's balance at once. It is a payment mutation, so the caller must pass a
+// fresh proof (X-Crypto-TOTP or X-Crypto-Grant), exactly like sweep.
+export async function confirmDeposits(
+  ids: number[],
+  verification: CryptoVerification,
+  note?: string
+): Promise<DepositConfirmOutcome> {
+  const trimmedNote = note?.trim()
+  const { data } = await apiClient.post('/admin/crypto/deposits/confirm', {
+    ids,
+    ...(trimmedNote ? { note: trimmedNote } : {})
+  }, {
+    ...cryptoRequestOptions(verification),
+    // The server reads one receipt per deposit before it credits.
+    timeout: 120_000
+  })
+  const body = data?.data ?? data
+  const results: DepositConfirmResult[] = Array.isArray(body?.results) ? body.results : []
+  return {
+    results,
+    credited: Number.isFinite(body?.credited) ? body.credited : results.filter(item => item.status === 'credited').length,
+    failed: Number.isFinite(body?.failed) ? body.failed : results.filter(item => item.status === 'rejected' || item.status === 'error').length
+  }
+}
+
 export interface WalletStatus {
   ok: boolean
   configured: boolean
