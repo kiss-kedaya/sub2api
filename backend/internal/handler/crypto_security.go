@@ -43,8 +43,12 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 	verify := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/security/verify")
 	intent := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/security/operation-intent")
 	configPatch := c.Request.Method == http.MethodPut && strings.HasSuffix(path, "/crypto/config")
-	risky := c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") ||
-		strings.HasSuffix(path, "/config/private")
+	// A cursor-forward scan is idempotent and uses the normal receipt,
+	// confirmation and ledger path. Keep administrator JWT, HTTPS, instance and
+	// read-only guards, but do not require a second factor just to retry it.
+	manualScan := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/crypto/scan/run")
+	risky := !manualScan && (c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv") ||
+		strings.HasSuffix(path, "/config/private"))
 	if service.CryptoAdminTestReadOnly() && (c.Request.Method != http.MethodGet || strings.HasSuffix(path, "/deposits.csv")) {
 		response.ErrorWithDetails(c, http.StatusForbidden, "crypto test instance is read-only", "CRYPTO_TEST_MODE_READ_ONLY", nil)
 		c.Abort()

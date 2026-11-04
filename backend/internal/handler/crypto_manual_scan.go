@@ -25,7 +25,7 @@ func (h *CryptoHandler) AdminRunScan(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Payment scanner unavailable")
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
 	if err := h.service.RunScan(ctx, request.FromBlock); err != nil {
 		if errors.Is(err, cryptopay.ErrScanBusy) {
