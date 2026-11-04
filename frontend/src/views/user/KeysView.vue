@@ -157,49 +157,25 @@
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="isSmartRoutingKey(row) ? t('keys.smartRoutingChangeInEditor') : t('keys.clickToChangeGroup')"
               >
-                <div v-if="isSmartRoutingKey(row)" class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <span
-                    v-for="(groupId, index) in keyGroupIds(row)"
-                    :key="`${row.id}-${groupId}`"
-                    class="inline-flex min-w-0 items-center gap-1"
-                    data-test="key-bound-group"
-                    :data-group-id="groupId"
-                    :aria-label="`${t('keys.smartRoutingRoute')} ${index + 1}`"
-                  >
-                    <span class="shrink-0 text-[10px] font-semibold tabular-nums text-muted">{{ index + 1 }}.</span>
-                    <GroupBadge
-                      v-if="groupForKey(row, groupId)"
-                      :name="groupForKey(row, groupId)!.name"
-                      :platform="groupForKey(row, groupId)!.platform"
-                      :subscription-type="groupForKey(row, groupId)!.subscription_type"
-                      :rate-multiplier="groupForKey(row, groupId)!.rate_multiplier"
-                      :user-rate-multiplier="userGroupRates[groupId]"
-                      :peak-rate-enabled="groupForKey(row, groupId)!.peak_rate_enabled"
-                      :peak-start="groupForKey(row, groupId)!.peak_start"
-                      :peak-end="groupForKey(row, groupId)!.peak_end"
-                      :peak-rate-multiplier="groupForKey(row, groupId)!.peak_rate_multiplier"
-                    />
-                    <UBadge v-else color="neutral" variant="subtle" size="sm">#{{ groupId }}</UBadge>
-                  </span>
-                </div>
                 <GroupBadge
-                  v-else-if="groupForKey(row, row.group_id)"
-                  :name="groupForKey(row, row.group_id)!.name"
-                  :platform="groupForKey(row, row.group_id)!.platform"
-                  :subscription-type="groupForKey(row, row.group_id)!.subscription_type"
-                  :rate-multiplier="groupForKey(row, row.group_id)!.rate_multiplier"
-                  :user-rate-multiplier="userGroupRates[row.group_id!]"
-                  :peak-rate-enabled="groupForKey(row, row.group_id)!.peak_rate_enabled"
-                  :peak-start="groupForKey(row, row.group_id)!.peak_start"
-                  :peak-end="groupForKey(row, row.group_id)!.peak_end"
-                  :peak-rate-multiplier="groupForKey(row, row.group_id)!.peak_rate_multiplier"
+                  v-if="groupForKey(row, primaryGroupId(row))"
+                  :name="groupForKey(row, primaryGroupId(row))!.name"
+                  :platform="groupForKey(row, primaryGroupId(row))!.platform"
+                  :subscription-type="groupForKey(row, primaryGroupId(row))!.subscription_type"
+                  :rate-multiplier="groupForKey(row, primaryGroupId(row))!.rate_multiplier"
+                  :user-rate-multiplier="userGroupRates[primaryGroupId(row)!]"
+                  :peak-rate-enabled="groupForKey(row, primaryGroupId(row))!.peak_rate_enabled"
+                  :peak-start="groupForKey(row, primaryGroupId(row))!.peak_start"
+                  :peak-end="groupForKey(row, primaryGroupId(row))!.peak_end"
+                  :peak-rate-multiplier="groupForKey(row, primaryGroupId(row))!.peak_rate_multiplier"
                   data-test="key-bound-group"
-                  :data-group-id="row.group_id"
+                  :data-group-id="primaryGroupId(row)"
                 />
-                <UBadge v-else-if="row.group_id != null" color="neutral" variant="subtle" size="sm" data-test="key-bound-group" :data-group-id="row.group_id">#{{ row.group_id }}</UBadge>
+                <UBadge v-else-if="primaryGroupId(row) != null" color="neutral" variant="subtle" size="sm" data-test="key-bound-group" :data-group-id="primaryGroupId(row)">#{{ primaryGroupId(row) }}</UBadge>
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noGroup') }}</span>
-                <UBadge v-if="isSmartRoutingKey(row)" color="primary" variant="subtle" size="sm">
+                <UBadge v-if="isSmartRoutingKey(row)" color="primary" variant="subtle" size="sm" data-test="key-smart-routing-count">
                   {{ t('keys.smartRouting') }}
+                  {{ t('keys.smartRoutingMore', { count: keyGroupIds(row).length - 1 }) }}
                 </UBadge>
                 <span v-else class="text-xs text-muted">{{ t('keys.selectGroup') }}</span>
                 <svg
@@ -1688,6 +1664,9 @@ const keyGroupIds = (key: ApiKey): number[] => {
   if (Array.isArray(key.group_ids) && key.group_ids.length > 0) return [...new Set(key.group_ids)]
   return key.group_id == null ? [] : [key.group_id]
 }
+
+/** The table only shows the first route plus the remaining route count, so many groups cannot widen the row. */
+const primaryGroupId = (key: ApiKey): number | null => keyGroupIds(key)[0] ?? null
 
 const groupForKey = (key: ApiKey, groupId: number | null): Group | undefined => {
   if (groupId == null) return undefined
