@@ -3,7 +3,9 @@ package routes
 import (
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,6 +21,13 @@ func TestCryptoForwardManualScanDoesNotRequireFreshCode(t *testing.T) {
 	// cursor-forward operation.
 	optional := cryptoRouteRequestBody(h.router, http.MethodPost, path, `{}`, wrongCryptoRouteCode(t, 0), nil, "127.0.0.1:1234", "localhost")
 	require.Equal(t, http.StatusServiceUnavailable, optional.Code, optional.Body.String())
+
+	rewind := cryptoRouteRequestBody(h.router, http.MethodPost, path, `{"from_block":12345}`, "", nil, "127.0.0.1:1234", "localhost")
+	requireCryptoReason(t, rewind, http.StatusForbidden, "CRYPTO_TOTP_REQUIRED")
+	code, err := totp.GenerateCode(cryptoRouteTotpSecret, time.Now())
+	require.NoError(t, err)
+	verified := cryptoRouteRequestBody(h.router, http.MethodPost, path, `{"from_block":12345}`, code, nil, "127.0.0.1:1234", "localhost")
+	require.Equal(t, http.StatusServiceUnavailable, verified.Code, verified.Body.String())
 }
 
 func TestCryptoManualScanIsReadOnlyInRestrictedReview(t *testing.T) {
