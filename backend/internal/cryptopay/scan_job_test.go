@@ -660,7 +660,11 @@ func TestScanRunStateJSONShape(t *testing.T) {
 	}
 	require.NotContains(t, decoded, "seq", "the ordering counter is internal")
 	require.NotContains(t, decoded, "last_error", "omitted while empty")
-	chain := decoded["chains"].([]any)[0].(map[string]any)
+	chains, ok := decoded["chains"].([]any)
+	require.True(t, ok, "chains is a JSON array")
+	require.NotEmpty(t, chains)
+	chain, ok := chains[0].(map[string]any)
+	require.True(t, ok, "each chain is a JSON object")
 	for _, key := range []string{"chain", "cursor", "confirmed_head", "remaining", "head_known"} {
 		require.Contains(t, chain, key)
 	}
