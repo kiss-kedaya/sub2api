@@ -17,8 +17,9 @@ const settingVault = "crypto.signer.vault"
 // transactions. Transaction-scoped ownership cannot leak back into the pool.
 const vaultSweepLockKey int64 = 0x43525950544f5357
 
-// Keep identical to sweeper's unfinishedPredicate, including ambiguous v0 jobs.
+// Keep identical to sweeper's reservedPredicate, including failed signed and ambiguous v0 jobs.
 const unfinishedSweepPredicate = `status NOT IN ('swept','failed') AND job_version = 1
+	OR job_version = 1 AND status = 'failed' AND (gas_tx_hash <> '' OR sweep_tx_hash <> '')
 	OR job_version = 0 AND status <> 'swept' AND
 	(status IN ('manual_review','gas_sent') OR gas_tx_hash <> '' OR sweep_tx_hash <> '')`
 

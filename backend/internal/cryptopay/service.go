@@ -9,6 +9,7 @@ import (
 	"maps"
 	"math/big"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/sweeper"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/wallet"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/google/uuid"
 )
 
 // TokenConfig is one watched token on a chain. Symbol is display-only:
@@ -251,6 +253,16 @@ func NewService(
 // startup and after every admin config save.
 func (s *Service) Reload(ctx context.Context) { s.reload(ctx) }
 
+// applyRPCThrottle publishes the configured pacing so every endpoint waits its
+// turn instead of firing together. Zero clears it.
+func applyRPCThrottle(cfg CryptoConfig) {
+	ms := cfg.RPCThrottleMs
+	if ms < 0 {
+		ms = 0
+	}
+	rpc.SetEndpointThrottleInterval(time.Duration(ms) * time.Millisecond)
+}
+
 func (s *Service) reload(ctx context.Context) {
 	cfg, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
 	if err != nil {
@@ -295,6 +307,7 @@ func (s *Service) reload(ctx context.Context) {
 	}
 	// Keep the selected chains' RPC pools available for the independent
 	// outflow guard even while new deposits and sweeps are disabled.
+	applyRPCThrottle(cfg)
 	s.pools = poolsForConfig(cfg, s.pools)
 	s.startRPCDiscoveryLocked()
 
@@ -703,6 +716,14 @@ func (s *Service) RunSweepChains(ctx context.Context, dryRun bool, chains []stri
 }
 
 func (s *Service) runSweep(ctx context.Context, dryRun, manual bool, chains []string) (summary *sweeper.Summary, err error) {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
+	return s.runSweepLocked(ctx, dryRun, manual, chains)
+}
+
+// runSweepLocked is shared by synchronous and asynchronous runs. Its caller
+// owns sweepMu; acquiring it again would deadlock every asynchronous run.
+func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chains []string) (summary *sweeper.Summary, err error) {
 	if !dryRun {
 		// Notify on the common result path: manual runs, scheduled sweeps and
 		// resumption of already-signed jobs must report the same failures.
@@ -719,8 +740,6 @@ func (s *Service) runSweep(ctx context.Context, dryRun, manual bool, chains []st
 			}
 		}
 	}
-	s.sweepMu.Lock()
-	defer s.sweepMu.Unlock()
 	s.mu.RLock()
 	exec := s.executor
 	s.mu.RUnlock()
@@ -744,6 +763,101 @@ func (s *Service) runSweep(ctx context.Context, dryRun, manual bool, chains []st
 		return exec.RunManualAndWait(ctx, dryRun)
 	}
 	return exec.RunAndWait(ctx, dryRun)
+}
+
+// SweepRunState is the in-memory record of one asynchronous sweep.
+//
+// The run itself already outlives the HTTP request (see the handler), but the
+// operator still needs to know it is running and what it produced without
+// holding a connection open for minutes. The state lives in memory on purpose:
+// it describes one process's current work, not durable history — the durable
+// record is sweep_records, which every job writes as it goes.
+type SweepRunState struct {
+	ID        string           `json:"id"`
+	DryRun    bool             `json:"dry_run"`
+	Chains    []string         `json:"chains"`
+	StartedAt time.Time        `json:"started_at"`
+	Finished  bool             `json:"finished"`
+	Error     string           `json:"error,omitempty"`
+	Summary   *sweeper.Summary `json:"summary,omitempty"`
+}
+
+var (
+	sweepRunsMu sync.Mutex
+	sweepRuns   = map[string]*SweepRunState{}
+)
+
+// sweepRunRetention bounds how many finished runs stay queryable, so a process
+// that has been up for weeks does not accumulate them.
+const sweepRunRetention = 20
+
+// StartSweepAsync launches a sweep and returns immediately with a run id the
+// caller can poll. Refuses when a run is already active: two concurrent sweeps
+// would read the same balances and could double-send.
+func (s *Service) StartSweepAsync(dryRun bool, chains []string) (*SweepRunState, error) {
+	if !s.sweepMu.TryLock() {
+		return nil, ErrScanBusy
+	}
+	state := &SweepRunState{
+		ID:        "sweep-" + uuid.NewString(),
+		DryRun:    dryRun,
+		Chains:    append([]string(nil), chains...),
+		StartedAt: time.Now().UTC(),
+	}
+	sweepRunsMu.Lock()
+	sweepRuns[state.ID] = state
+	for id, run := range sweepRuns {
+		if run.Finished && len(sweepRuns) > sweepRunRetention {
+			delete(sweepRuns, id)
+		}
+	}
+	sweepRunsMu.Unlock()
+	// Do not expose the object the worker will update to the JSON encoder.
+	initial := *state
+	initial.Chains = slices.Clone(state.Chains)
+
+	go func() {
+		defer s.sweepMu.Unlock()
+		// Detached from any request: a browser leaving must not cancel the run.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		summary, err := s.runSweepLocked(ctx, dryRun, true, state.Chains)
+		sweepRunsMu.Lock()
+		state.Finished = true
+		state.Summary = summary
+		if err != nil {
+			state.Error = rpc.SafeError(err)
+		}
+		sweepRunsMu.Unlock()
+	}()
+	return &initial, nil
+}
+
+// SweepRun returns the current state of an asynchronous run, or nil.
+func (s *Service) SweepRun(id string) *SweepRunState {
+	sweepRunsMu.Lock()
+	defer sweepRunsMu.Unlock()
+	run, ok := sweepRuns[id]
+	if !ok {
+		return nil
+	}
+	snapshot := *run
+	snapshot.Chains = slices.Clone(run.Chains)
+	return &snapshot
+}
+
+// SweepRuns lists known runs, newest first.
+func (s *Service) SweepRuns() []*SweepRunState {
+	sweepRunsMu.Lock()
+	defer sweepRunsMu.Unlock()
+	out := make([]*SweepRunState, 0, len(sweepRuns))
+	for _, run := range sweepRuns {
+		snapshot := *run
+		snapshot.Chains = slices.Clone(run.Chains)
+		out = append(out, &snapshot)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out
 }
 
 // SweepRecord is one sweep_records row for the admin UI.

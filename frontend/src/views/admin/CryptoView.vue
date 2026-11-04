@@ -396,6 +396,8 @@
               >{{ t('admin.crypto.sweepRun') }}</UButton>
             </div>
             <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
+            <UAlert v-if="activeSweep && !activeSweep.finished" color="info" variant="subtle" icon="i-lucide-loader-circle" :title="t('admin.crypto.sweepRunning')" :description="t('admin.crypto.sweepRunningHint')" />
+            <UAlert v-if="sweepRunError" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="sweepRunError" />
 
             <section v-if="blockedSweeps.length" class="crypto-view__blocked space-y-3">
               <UAlert role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="t('admin.crypto.blockedTitle')" :description="t('admin.crypto.blockedHint')" />
@@ -612,7 +614,9 @@ import {
   listSweepRecords,
   listBlockedSweeps,
   reconcileSweep,
-  runSweep,
+  startSweep,
+  listSweepRuns,
+  waitForSweepRun,
   setAddressStatus,
   exportDepositsCSV,
   initializeWallet,
@@ -634,6 +638,7 @@ import {
   type BlockedSweep,
   type SweepRecord,
   type SweepSummary,
+  type SweepRun,
   type WalletSecurityStatus,
   type WalletOperationAction,
   type CryptoVerification
@@ -856,6 +861,10 @@ const blockedSweeps = ref<BlockedSweep[]>([])
 const reconciling = ref<number | null>(null)
 const sweepSummary = ref<SweepSummary | null>(null)
 const sweeping = ref(false)
+const activeSweep = ref<SweepRun | null>(null)
+const sweepRunError = ref('')
+let sweepPoll: AbortController | null = null
+onUnmounted(() => sweepPoll?.abort())
 const channelConfirmOpen = ref(false)
 const sweepAutoConfirmOpen = ref(false)
 const pendingChannelEnabled = ref(false)
@@ -1412,11 +1421,33 @@ async function doSweep(dryRun: boolean) {
     if (activeTab.value !== operationTab) return
     const label = dryRun ? t('admin.crypto.sweepDryRun') : sweepConfirmMessage.value
     const completed = await withCryptoVerification(label, async (verification) => {
-      sweepSummary.value = await runSweep(dryRun, verification)
+      activeSweep.value = await startSweep(dryRun, verification)
     })
-    if (completed) await Promise.all([loadSweepRecords(), loadSweepPlan()])
+    if (completed && activeSweep.value) await followSweepRun(activeSweep.value)
   } finally {
     sweeping.value = false
+  }
+}
+
+async function followSweepRun(run: SweepRun) {
+  sweepPoll?.abort()
+  const controller = new AbortController()
+  sweepPoll = controller
+  sweeping.value = true
+  sweepRunError.value = ''
+  try {
+    const result = await waitForSweepRun(run, controller.signal, next => { activeSweep.value = next })
+    sweepSummary.value = result.summary ?? null
+    if (result.error) sweepRunError.value = result.error
+    else appStore.showSuccess(t('admin.crypto.sweepCompleted'))
+    await Promise.all([loadSweepRecords(), loadSweepPlan()])
+  } catch {
+    if (!controller.signal.aborted) sweepRunError.value = t('admin.crypto.sweepStatusUnavailable')
+  } finally {
+    if (sweepPoll === controller) {
+      sweepPoll = null
+      sweeping.value = false
+    }
   }
 }
 
@@ -1431,10 +1462,19 @@ function requestSweep() {
 async function loadSweepRecords() {
   sweepRecords.value = await listSweepRecords()
   blockedSweeps.value = await listBlockedSweeps()
+  if (!sweepPoll) {
+    try {
+      const runs = await listSweepRuns()
+      const running = runs.find(run => !run.finished)
+      if (running) void followSweepRun(running)
+    } catch {
+      // Run status is auxiliary; keep records usable when the in-memory
+      // process state was lost during a restart.
+    }
+  }
 }
 
-// Reconcile never signs a transaction: it only reads the chain and either
-// advances a confirmed job or releases an address whose tx never landed.
+// Reconcile never signs or broadcasts; unconfirmed jobs keep their reservation.
 async function reconcileJob(id: number) {
   if (reconciling.value !== null) return
   reconciling.value = id

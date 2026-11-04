@@ -28,15 +28,12 @@ type ReconcileResult struct {
 }
 
 // Reconcile inspects a stuck job against the chain and moves it forward
-// without ever signing anything new:
+// without ever signing or broadcasting anything:
 //
 //	sweep tx mined + confirmed -> swept
 //	gas tx mined + confirmed   -> gas_confirmed (next run signs the token transfer)
-//	tx reverted                -> failed (address released, needs a human look)
-//	tx absent                  -> failed (dropped broadcast, address released)
-//
-// The address is only released when no transaction of this job can still land,
-// which is exactly the "absent or reverted" case.
+//	tx reverted                -> manual_review (nonce consumed; no replacement)
+//	tx absent                  -> pending (retain the reservation and exact bytes)
 func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult, error) {
 	if err := mode.CheckWritable(); err != nil {
 		return nil, err
@@ -54,7 +51,8 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 		return nil, err
 	}
 	out := &ReconcileResult{JobID: job.ID, Chain: job.Chain, Status: job.Status}
-	if job.Status == "swept" || job.Status == "failed" {
+	hasTransaction := job.GasHash != "" || job.SweepHash != ""
+	if job.Status == "swept" || (job.Status == "failed" && !hasTransaction) {
 		out.Action = ReconcileObserved
 		out.Message = "job already final; nothing to reconcile"
 		return out, nil
@@ -83,15 +81,13 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 			return run.finishReconcile(ctx, job, out, "swept", "",
 				ReconcileConfirmed, "token transfer confirmed on chain")
 		case receiptReverted:
-			return run.finishReconcile(ctx, job, out, "failed",
-				"confirmed token transfer reverted; address released after manual review",
-				ReconcileReleased, "")
+			return run.finishReconcile(ctx, job, out, "manual_review",
+				"confirmed transaction reverted; automatic replacement/funding refused",
+				ReconcileObserved, "confirmed token transfer reverted; manual review required")
 		case receiptWaiting:
-			out.Action = ReconcileObserved
-			out.Message = "token transfer is mined but still short of confirmations"
-			return out, nil
+			return run.retainUnconfirmed(ctx, job, out, false, "token transfer is mined but still short of confirmations")
 		}
-		return run.releaseAbsent(ctx, job, out, "token transfer")
+		return run.retainUnconfirmed(ctx, job, out, false, "token transfer has no canonical receipt yet")
 	}
 
 	if job.GasHash != "" {
@@ -105,15 +101,13 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 			return run.finishReconcile(ctx, job, out, "gas_confirmed", "",
 				ReconcileConfirmed, "gas top-up confirmed; the next run signs the token transfer")
 		case receiptReverted:
-			return run.finishReconcile(ctx, job, out, "failed",
-				"gas top-up reverted; address released after manual review",
-				ReconcileReleased, "")
+			return run.finishReconcile(ctx, job, out, "manual_review",
+				"confirmed gas top-up reverted; automatic replacement/funding refused",
+				ReconcileObserved, "gas top-up reverted; manual review required")
 		case receiptWaiting:
-			out.Action = ReconcileObserved
-			out.Message = "gas top-up is mined but still short of confirmations"
-			return out, nil
+			return run.retainUnconfirmed(ctx, job, out, true, "gas top-up is mined but still short of confirmations")
 		}
-		return run.releaseAbsent(ctx, job, out, "gas top-up")
+		return run.retainUnconfirmed(ctx, job, out, true, "gas top-up has no canonical receipt yet")
 	}
 
 	out.Action = ReconcileObserved
@@ -136,13 +130,28 @@ func (e *Executor) finishReconcile(ctx context.Context, job *sweepJob, out *Reco
 	return out, nil
 }
 
-// releaseAbsent clears a job whose reserved transaction is not on chain.
-// Nothing was broadcast from these bytes, so the nonce stays free and the
-// address can be planned again on the next run.
-func (e *Executor) releaseAbsent(ctx context.Context, job *sweepJob, out *ReconcileResult,
-	label string) (*ReconcileResult, error) {
-	msg := label + ": transaction not found on chain; released, no funds moved"
-	return e.finishReconcile(ctx, job, out, "failed", msg, ReconcileReleased, msg)
+// retainUnconfirmed never releases an address merely because one RPC cannot
+// see a receipt. It retains immutable signed bytes for v1 jobs; old or
+// incomplete jobs require manual review and stay blocked.
+func (e *Executor) retainUnconfirmed(ctx context.Context, job *sweepJob, out *ReconcileResult,
+	gas bool, message string) (*ReconcileResult, error) {
+	if job.Version != 1 || (gas && job.GasRaw == "") || (!gas && job.SweepRaw == "") {
+		return e.finishReconcile(ctx, job, out, "manual_review",
+			"legacy or ambiguous transaction; reconcile hashes manually before releasing address",
+			ReconcileObserved, message+"; reservation retained for manual review")
+	}
+	if gas {
+		job.Status = "gas_pending"
+	} else {
+		job.Status = "sweep_pending"
+	}
+	job.Error = "awaiting canonical receipt and required confirmations"
+	if err := e.saveJob(ctx, job); err != nil {
+		return nil, err
+	}
+	out.Action, out.Status = ReconcileObserved, job.Status
+	out.Message = message + "; address remains reserved and the existing signed transaction will be resumed without creating a new signature"
+	return out, nil
 }
 
 // BlockedJob explains why an address cannot be swept yet.
@@ -164,7 +173,8 @@ func (e *Executor) ListBlocked(ctx context.Context, limit int) ([]BlockedJob, er
 	}
 	rows, err := e.queries().QueryContext(ctx, `SELECT id, chain, from_address, status, error,
 		GREATEST(0, EXTRACT(EPOCH FROM (NOW()-updated_at))/60)::bigint
-		FROM sweep_records WHERE job_version=1 AND status NOT IN ('swept','failed')
+		FROM sweep_records WHERE status <> 'swept'
+		AND (status <> 'failed' OR gas_tx_hash <> '' OR sweep_tx_hash <> '')
 		AND (gas_tx_hash<>'' OR sweep_tx_hash<>'')
 		ORDER BY updated_at ASC LIMIT $1`, limit)
 	if err != nil {
