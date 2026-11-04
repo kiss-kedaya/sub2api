@@ -31,6 +31,13 @@ func (h *CryptoHandler) AdminRunScan(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Payment scanner unavailable")
 		return
 	}
+	// ?async=1 runs repeated passes in the background and returns 202 with a
+	// run to poll. Without it the request stays synchronous: one pass, bound to
+	// this request, exactly as older pages expect.
+	if c.Query("async") == "1" {
+		h.startAsyncScan(c, request.FromBlock)
+		return
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
 	if err := h.service.RunScan(ctx, request.FromBlock); err != nil {
