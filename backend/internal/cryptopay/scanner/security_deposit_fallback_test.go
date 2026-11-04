@@ -15,8 +15,9 @@ func TestSecurityRPCFailureKeepsInboundTransferPending(t *testing.T) {
 		return rpc.NewTransportFailure(context.DeadlineExceeded)
 	}
 
-	if err := worker.processScanRange(t.Context(), NewEVMScanner(worker.pools["bsc"]), worker.pools["bsc"], worker.chains[0], 100, 105, []string{transfer.To}); err != nil {
-		t.Fatal(err)
+	err := worker.processScanRange(t.Context(), NewEVMScanner(worker.pools["bsc"]), worker.pools["bsc"], worker.chains[0], 100, 105, []string{transfer.To})
+	if err == nil {
+		t.Fatal("a range with an unverified outflow scan must not advance the cursor")
 	}
 	if len(handler.pending) != 1 || len(handler.processed) != 0 {
 		t.Fatalf("inbound transfer must be retained as pending: pending=%d processed=%d", len(handler.pending), len(handler.processed))

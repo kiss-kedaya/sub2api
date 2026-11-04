@@ -863,11 +863,13 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 // is contiguous with the durable cursor and can advance it.
 func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool *rpc.Pool, chain ChainConfig, from, to uint64, recipients []string) error {
 	securityUnavailable := false
+	var securityFailure error
 	if w.securityRange != nil {
 		if err := w.securityRange(ctx, scanner, pool, chain, from, to); err != nil {
 			var rpcFailure *rpc.Failure
 			if errors.As(err, &rpcFailure) || errors.Is(err, context.DeadlineExceeded) {
 				securityUnavailable = true
+				securityFailure = err
 				slog.Error("[cryptopay] outflow security scan unavailable; recording deposits as pending",
 					"chain", chain.Chain, "from", from, "to", to, "cause", rpc.SafeError(err))
 			} else {
@@ -903,6 +905,11 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 		if err := w.processTransfer(ctx, pool, chain, transfer, decimals); err != nil {
 			return err
 		}
+	}
+	if securityFailure != nil {
+		// Pending observations are durable, but this range is not safe to put
+		// behind the cursor until outflow verification succeeds.
+		return stageErr(chain.Chain, "security", from, to, securityFailure)
 	}
 	return nil
 }
