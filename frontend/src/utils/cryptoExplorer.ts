@@ -20,3 +20,26 @@ export function explorerTxURL(chain: string, txHash: string): string {
     : /^0x[0-9a-fA-F]{64}$/.test(txHash)
   return valid ? base + txHash : ''
 }
+
+// Address pages live on the same explorers as the transaction pages above.
+const explorerAddressBases: Readonly<Record<string, string>> = {
+  ethereum: 'https://etherscan.io/address/',
+  bsc: 'https://bscscan.com/address/',
+  polygon: 'https://polygonscan.com/address/',
+  plasma: 'https://plasmascan.to/address/',
+  arbitrum: 'https://arbiscan.io/address/',
+  base: 'https://basescan.org/address/',
+  xlayer: 'https://web3.okx.com/explorer/xlayer/address/',
+  solana: 'https://solscan.io/account/'
+}
+
+/** Link only recognized addresses, never backend-supplied URLs. */
+export function explorerAddressURL(chain: string, address: string): string {
+  if (!Object.prototype.hasOwnProperty.call(explorerAddressBases, chain)) return ''
+  const base = explorerAddressBases[chain]
+  if (!base) return ''
+  const valid = chain === 'solana'
+    ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)
+    : /^0x[0-9a-fA-F]{40}$/.test(address)
+  return valid ? base + address : ''
+}

@@ -416,10 +416,11 @@
               <UAlert role="alert" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="t('admin.crypto.blockedTitle')" :description="t('admin.crypto.blockedHint')" />
               <UTable :data="blockedSweeps" :columns="blockedColumns" :ui="tableUi">
                 <template #address-cell="{ row }"><span class="font-mono">#{{ row.original.job_id }} · {{ short(row.original.address) }}</span></template>
+                <template #owner-cell="{ row }"><CryptoOwnerCell :owner="ownerOf(row.original.address)" /></template>
                 <template #status-cell="{ row }">
                   <div class="flex flex-col items-start gap-1">
                     <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
-                    <span v-if="row.original.error" class="text-xs text-muted">{{ row.original.error }}</span>
+                    <span v-if="row.original.error" class="max-w-64 text-xs break-words whitespace-normal text-muted">{{ row.original.error }}</span>
                   </div>
                 </template>
                 <template #age_minutes-cell="{ row }">{{ row.original.age_minutes }}m</template>
@@ -445,10 +446,11 @@
               </p>
               <UTable v-if="sweepSummary.entries?.length" :data="sweepSummary.entries" :columns="summaryColumns" :ui="tableUi">
                 <template #address-cell="{ row }"><span class="font-mono">{{ short(row.original.address) }}</span></template>
+                <template #owner-cell="{ row }"><CryptoOwnerCell :owner="ownerOf(row.original.address)" /></template>
                 <template #status-cell="{ row }">
                   <div class="flex flex-col items-start gap-1">
                     <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
-                    <span v-if="row.original.error" class="text-xs text-muted">{{ row.original.error }}</span>
+                    <span v-if="row.original.error" class="max-w-64 text-xs break-words whitespace-normal text-muted">{{ row.original.error }}</span>
                   </div>
                 </template>
                 <template #tx-cell="{ row }"><span class="font-mono">{{ short(row.original.sweep_tx_hash || row.original.gas_tx_hash) }}</span></template>
@@ -463,18 +465,20 @@
               </p>
               <UTable v-if="sweepPlan.Entries?.length" :data="sweepPlan.Entries" :columns="planColumns" :ui="tableUi">
                 <template #Address-cell="{ row }"><span class="font-mono">{{ row.original.Address }}</span></template>
+                <template #owner-cell="{ row }"><CryptoOwnerCell :owner="ownerOf(row.original.Address)" /></template>
                 <template #AmountDecimal-cell="{ row }">{{ row.original.AmountDecimal.toFixed(2) }}</template>
               </UTable>
             </section>
 
-            <UTable v-if="sweepRecords.length" :data="sweepRecords" :columns="recordColumns" :ui="tableUi">
-              <template #from_address-cell="{ row }"><span class="font-mono">{{ short(row.original.from_address) }}</span></template>
-              <template #status-cell="{ row }">
-                <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
-              </template>
-              <template #sweep_tx_hash-cell="{ row }"><span class="font-mono">{{ short(row.original.sweep_tx_hash) }}</span></template>
-            </UTable>
-            <p v-else-if="!sweepPlan" class="py-10 text-center text-sm text-muted">{{ t('common.noData') }}</p>
+            <CryptoSweepRecordsPanel
+              v-if="sweepRecords.length || !sweepPlan"
+              :records="sweepRecords"
+              :has-more="sweepRecordsHasMore"
+              :loading="loadingSweepRecords"
+              :loading-more="loadingMoreSweepRecords"
+              @load-more="loadMoreRecords"
+              @refresh="loadSweepRecords"
+            />
           </div>
         </template>
 
@@ -662,9 +666,13 @@ import CryptoChainStatusPanel from '@/components/crypto/CryptoChainStatusPanel.v
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import CryptoOwnerCell from '@/components/crypto/CryptoOwnerCell.vue'
+import CryptoSweepRecordsPanel from '@/components/crypto/CryptoSweepRecordsPanel.vue'
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 import { useAppStore } from '@/stores/app'
 import { useClipboard } from '@/composables/useClipboard'
+import { useAddressOwners } from '@/composables/useAddressOwners'
+import { useSweepRecords } from '@/composables/useSweepRecords'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
 import {
@@ -708,7 +716,6 @@ import {
   type PoolStatus,
   type SweepPlan,
   type BlockedSweep,
-  type SweepRecord,
   type SweepSummary,
   type SweepRun,
   type ScanRun,
@@ -908,6 +915,7 @@ function columnMenu(table: 'address' | 'deposit'): DropdownMenuItem[] {
 const blockedColumns = computed<TableColumn<BlockedSweep>[]>(() => [
   { accessorKey: 'chain', header: t('admin.crypto.chain') },
   { accessorKey: 'address', header: t('admin.crypto.address') },
+  { id: 'owner', header: t('admin.crypto.sweepView.colUser') },
   { accessorKey: 'status', header: t('common.status') },
   { accessorKey: 'age_minutes', header: t('admin.crypto.blockedAge') },
   { id: 'actions', header: '' }
@@ -915,20 +923,15 @@ const blockedColumns = computed<TableColumn<BlockedSweep>[]>(() => [
 const summaryColumns = computed<TableColumn<SweepSummary['entries'][number]>[]>(() => [
   { accessorKey: 'chain', header: t('admin.crypto.chain') },
   { accessorKey: 'address', header: t('admin.crypto.address') },
+  { id: 'owner', header: t('admin.crypto.sweepView.colUser') },
   { accessorKey: 'status', header: t('common.status') },
   { id: 'tx', header: 'TX' }
 ])
 const planColumns = computed<TableColumn<NonNullable<SweepPlan['Entries']>[number]>[]>(() => [
   { accessorKey: 'Chain', header: t('admin.crypto.chain') },
   { accessorKey: 'Address', header: t('admin.crypto.address') },
+  { id: 'owner', header: t('admin.crypto.sweepView.colUser') },
   { accessorKey: 'AmountDecimal', header: t('admin.crypto.amount') }
-])
-const recordColumns = computed<TableColumn<SweepRecord>[]>(() => [
-  { accessorKey: 'chain', header: t('admin.crypto.chain') },
-  { accessorKey: 'from_address', header: t('admin.crypto.from') },
-  { accessorKey: 'amount', header: t('admin.crypto.amount') },
-  { accessorKey: 'status', header: t('common.status') },
-  { accessorKey: 'sweep_tx_hash', header: 'TX' }
 ])
 const depositTableColumns = computed<TableColumn<DepositRecord>[]>(() => [
   // Only pending rows can be confirmed by hand; a page with none keeps the table as it was.
@@ -948,10 +951,24 @@ const addressTotalPages = computed(() =>
 )
 
 const sweepPlan = ref<SweepPlan | null>(null)
-const sweepRecords = ref<SweepRecord[]>([])
+const {
+  records: sweepRecords,
+  hasMore: sweepRecordsHasMore,
+  loading: loadingSweepRecords,
+  loadingMore: loadingMoreSweepRecords,
+  reload: reloadSweepRecords,
+  loadMore: loadMoreSweepRecords
+} = useSweepRecords(page => listSweepRecords(undefined, { limit: page.limit, beforeId: page.beforeId }))
 const blockedSweeps = ref<BlockedSweep[]>([])
 const reconciling = ref<number | null>(null)
 const sweepSummary = ref<SweepSummary | null>(null)
+// Who owns the addresses in the blocked / summary / plan tables. The records
+// panel resolves its own rows; both share one cache.
+const { ownerOf } = useAddressOwners(() => [
+  ...blockedSweeps.value.map(job => job.address),
+  ...(sweepSummary.value?.entries ?? []).map(entry => entry.address),
+  ...(sweepPlan.value?.Entries ?? []).map(entry => entry.Address)
+])
 const sweeping = ref(false)
 const activeSweep = ref<SweepRun | null>(null)
 const sweepRunError = ref('')
@@ -1572,8 +1589,16 @@ function requestSweep() {
 }
 
 
+async function loadMoreRecords() {
+  try {
+    await loadMoreSweepRecords()
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.crypto.sweepView.loadMoreFailed')))
+  }
+}
+
 async function loadSweepRecords() {
-  sweepRecords.value = await listSweepRecords()
+  await reloadSweepRecords()
   blockedSweeps.value = await listBlockedSweeps()
   if (!sweepPoll) {
     try {

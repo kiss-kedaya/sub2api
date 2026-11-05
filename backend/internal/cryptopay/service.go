@@ -897,6 +897,9 @@ type SweepRecord struct {
 	Status      string `json:"status"`
 	Error       string `json:"error"`
 	CreatedAt   string `json:"created_at"`
+	// TokenSymbol and UpdatedAt are filled by ListSweepRecordsPage only.
+	TokenSymbol string `json:"token_symbol"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 // ReconcileSweep checks one stuck job against the chain without signing,

@@ -458,12 +458,7 @@ func (h *CryptoHandler) AdminSweepRecords(c *gin.Context) {
 		response.BadRequest(c, "crypto channel unavailable")
 		return
 	}
-	records, err := h.service.ListSweepRecords(c.Request.Context(), c.Query("chain"), 100)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": records})
+	serveSweepRecords(c, h.service)
 }
 
 // AdminReconcileSweep checks one stuck sweep job against the chain without

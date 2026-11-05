@@ -48,6 +48,9 @@ export interface SweepRecord {
   status: string
   error: string
   created_at: string
+  // Added by the paged records endpoint; absent from older backends.
+  token_symbol?: string
+  updated_at?: string
 }
 
 export interface DepositRecord {
@@ -366,8 +369,10 @@ export interface ReconcileResult {
 // therefore stopping the chain from sweeping further addresses.
 export async function listBlockedSweeps(): Promise<BlockedSweep[]> {
   const { data } = await apiClient.get('/admin/crypto/sweep/blocked')
-  // The handler answers { data: [...] } without a "code" key, so the client does not unwrap it.
-  return Array.isArray(data?.data) ? data.data : []
+  // The endpoint answers {"data": [...]} without a `code`, which the client does
+  // not unwrap; returning it as is left the blocked table permanently empty.
+  const list = Array.isArray(data) ? data : data?.data
+  return Array.isArray(list) ? list : []
 }
 
 // reconcileSweep observes the chain without signing or broadcasting. A missing
@@ -377,9 +382,34 @@ export async function reconcileSweep(jobId: number, verification?: CryptoVerific
   return data.data
 }
 
-export async function listSweepRecords(chain?: string): Promise<SweepRecord[]> {
-  const { data } = await apiClient.get('/admin/crypto/sweep/records', { params: { chain } })
+export async function listSweepRecords(
+  chain?: string,
+  page?: { limit?: number; beforeId?: number }
+): Promise<SweepRecord[]> {
+  const { data } = await apiClient.get('/admin/crypto/sweep/records', {
+    params: { chain, limit: page?.limit, before_id: page?.beforeId }
+  })
   return data.data ?? []
+}
+
+export interface AddressOwner {
+  user_id: number
+  username: string
+  email: string
+  deleted: boolean
+}
+
+// getAddressOwners maps deposit addresses to the user they were assigned to,
+// keyed by lower-case address. Addresses without an owner are absent. The
+// email in the answer is personal data: show it, never log it.
+export async function getAddressOwners(addresses: string[]): Promise<Record<string, AddressOwner>> {
+  const { data } = await apiClient.get('/admin/crypto/address-owners', {
+    params: { address: addresses },
+    // address=a&address=b, the repeated form the backend reads (no brackets).
+    paramsSerializer: { indexes: null }
+  })
+  const owners = data?.data?.owners
+  return owners && typeof owners === 'object' ? owners : {}
 }
 
 export async function listDeposits(chain?: string, status?: string): Promise<DepositRecord[]> {
