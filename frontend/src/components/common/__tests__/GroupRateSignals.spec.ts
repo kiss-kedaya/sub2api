@@ -144,7 +144,8 @@ describe('GroupRateSignals states', () => {
   it('speaks Chinese when the locale is zh', () => {
     state.locale = 'zh'
     const wrapper = mountSignals({ signals: { ...newGroup, ...rateUp } })
-    expect(wrapper.get('[data-testid="group-rate-signal-new"]').text()).toBe('新')
+    // The pill stays "NEW" in both languages, as the old channel-status badge did.
+    expect(wrapper.get('[data-testid="group-rate-signal-new"]').text()).toBe('NEW')
     expect(wrapper.get('[data-testid="group-rate-signal-rate"]').attributes('aria-label'))
       .toBe(`倍率上调 0.02，原 0.06x，${formatSignalTime(CHANGED_AT, 'zh')} 调整`)
     expect(wrapper.get('[data-testid="group-rate-signal-new"]').attributes('aria-label'))
