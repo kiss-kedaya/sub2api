@@ -365,6 +365,13 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		return e.finishSweep(ctx, pool, job, required)
 	}
 	if job.GasRaw != "" && !job.GasConfirmed {
+		// A top-up signed earlier that can never be mined must not hold the
+		// payer for every other address on the chain.
+		if err := e.refreshStuckGas(ctx, pool, job); err != nil {
+			return pendingError(job, err)
+		}
+	}
+	if job.GasRaw != "" && !job.GasConfirmed {
 		confirmed, err := e.settle(ctx, pool, job, true, required)
 		if err != nil {
 			return pendingError(job, err)

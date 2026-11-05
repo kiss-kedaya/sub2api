@@ -68,6 +68,8 @@ type localChain struct {
 	receiptReads int
 	chainID      string
 	gasPrice     string
+	payerNonce   string // hex; overrides the gas payer's transaction count when set
+	sendError    string // when set, eth_sendRawTransaction answers with this JSON-RPC error text
 	beforeSign   func()
 	beforeSend   func()
 }
@@ -149,6 +151,9 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 		result = "0x3"
 		if strings.EqualFold(address, c.payer) {
 			result = "0x7"
+			if c.payerNonce != "" {
+				result = c.payerNonce
+			}
 		}
 	case "eth_sendRawTransaction":
 		if c.beforeSend != nil {
@@ -157,6 +162,11 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 		raw := param(0)
 		hash := rawHash(raw)
 		c.raws = append(c.raws, raw)
+		if c.sendError != "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1,
+				"error": map[string]any{"code": -32000, "message": c.sendError}})
+			return
+		}
 		c.txs[hash] = true
 		var tx types.Transaction
 		_ = tx.UnmarshalBinary(common.FromHex(raw))
