@@ -1,4 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, type ComputedRef } from 'vue'
+import { Chart as ChartJS, type Plugin } from 'chart.js'
+import { isThemeSwitching } from '@/theme/switching'
 
 /**
  * Chart colours taken from the Nuxt UI tokens (`--ui-*`) and resolved to hex, so chart.js can
@@ -137,6 +139,32 @@ function startObserving() {
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   observer.observe(document.head, { childList: true, subtree: true, characterData: true })
 }
+
+const savedAnimation = new WeakMap<object, { had: boolean; value: unknown }>()
+
+/**
+ * While the page cross-fades between day and night (useSiteTheme.ts) a chart should simply repaint in its new
+ * colours. Left alone, Chart.js replays its whole animation from the old colours, one main-thread frame at a
+ * time, underneath a fade that already runs on the compositor. Only updates inside that window are affected;
+ * the chart's own animation setting is put back as soon as the update is done.
+ */
+export const themeSwitchNoReplay: Plugin = {
+  id: 'themeSwitchNoReplay',
+  beforeUpdate(chart) {
+    if (!isThemeSwitching()) return
+    const own = chart.config.options as unknown as Record<string, unknown>
+    savedAnimation.set(chart, { had: Object.prototype.hasOwnProperty.call(own, 'animation'), value: own.animation })
+    chart.options.animation = false
+  },
+  afterUpdate(chart) {
+    const saved = savedAnimation.get(chart)
+    if (!saved) return
+    savedAnimation.delete(chart)
+    chart.options.animation = (saved.had ? saved.value : undefined) as never
+  }
+}
+// Global on purpose: every chart that is on screen when the visitor flips the mode gets it, wherever it was built.
+ChartJS.register(themeSwitchNoReplay)
 
 /** Reactive chart colours for the calling component. */
 export function useChartTheme(): ComputedRef<ChartTheme> {

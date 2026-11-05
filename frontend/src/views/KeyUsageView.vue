@@ -417,9 +417,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
+import { toggleColorMode, useSiteColorMode } from '@/composables/useSiteTheme'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { buildGatewayUrl } from '@/api/client'
@@ -443,10 +444,12 @@ const githubUrl = PROJECT_GITHUB_URL
 // Browser theme detection happens after hydration, never during SSR setup.
 const isDark = ref(false)
 
+// The shared switch cross-fades the page; the class flips inside that transition, so follow it instead of guessing.
+const colorMode = useSiteColorMode()
+watch(colorMode.isDark, (dark) => { isDark.value = dark })
+
 function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+  toggleColorMode()
 }
 
 const currentYear = computed(() => new Date().getFullYear())

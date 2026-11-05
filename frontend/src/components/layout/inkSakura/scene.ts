@@ -5,6 +5,7 @@ import { buildSakura, VH, VW, type SakuraModel } from './model'
 import { DAY_INK, NIGHT_INK, renderBranchLayer } from './ink'
 import { DAY_BLOSSOM, NIGHT_BLOSSOM, drawBlossoms, drawFallenPetals, mixPalette } from './blossom'
 import { lerp } from './random'
+import { isThemeSwitching } from '@/theme/switching'
 
 export interface SceneLayout { cssW: number; cssH: number; dpr: number; scale: number }
 export interface SceneFrame { night: number; progress: number } // night: ink/palette mix, progress: 0 closed .. 1 open
@@ -141,7 +142,9 @@ export function mountInkSakura(canvas: HTMLCanvasElement, onShown: () => void): 
 
   const animateTo = (toNight: number) => {
     cancelAnimationFrame(raf)
-    if (reduceMotion?.matches || !layout) {
+    // While the whole page cross-fades (useSiteTheme.ts), jump to the final painting and let that fade carry the
+    // canvas too; a 1.6s repaint on top of it would cost a main-thread frame for every frame of the fade.
+    if (reduceMotion?.matches || !layout || isThemeSwitching()) {
       night = toNight
       progress = 1 - toNight
       draw()

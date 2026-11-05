@@ -63,6 +63,42 @@ html.theme-transitioning :is(.console-frame, .console-sidebar, .console-topbar, 
   }
 }
 
+/* A day/night switch the visitor asks for (useSiteTheme.ts) cross-fades the whole page with the View
+   Transitions API: the old frame stays fully opaque underneath and the new frame fades in on top. Normal
+   blending (the default is plus-lighter) means no dip in brightness, and nothing is ever half themed. The fade
+   runs on the compositor, so the sakura canvas and the charts snap to their final state instead of repainting
+   every frame. The soft, symmetric curve keeps the switch gentle rather than a sudden flash. */
+html[data-theme-switching]::view-transition {
+  pointer-events: none;
+}
+
+/* Elements land on their new colours at once; the fade above is the only thing that animates, so there is no
+   second, per-element colour transition to recalculate styles on every frame underneath it. */
+html[data-theme-switching] *,
+html[data-theme-switching] *::before,
+html[data-theme-switching] *::after {
+  transition: none !important;
+}
+
+html[data-theme-switching]::view-transition-group(root),
+html[data-theme-switching]::view-transition-old(root) {
+  animation: none;
+}
+
+html[data-theme-switching]::view-transition-old(root),
+html[data-theme-switching]::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+
+html[data-theme-switching]::view-transition-new(root) {
+  animation: theme-switch-fade-in 560ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@keyframes theme-switch-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @media (hover: hover) and (pointer: fine) {
   .console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]) {
     transition: transform var(--cb-t-fast) var(--cb-ease-press), box-shadow var(--cb-t-fast) var(--cb-ease-out), background-color var(--cb-t-fast) ease, color var(--cb-t-fast) ease, border-color var(--cb-t-fast) ease;
