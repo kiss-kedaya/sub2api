@@ -324,6 +324,8 @@ func openAIImageOutputMIMEType(outputFormat string) string {
 		return "image/jpeg"
 	case "webp":
 		return "image/webp"
+	case "gif":
+		return "image/gif"
 	default:
 		return "image/png"
 	}
@@ -430,6 +432,14 @@ func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel st
 	}
 	if parsed.PartialImages != nil {
 		tool, _ = sjson.SetBytes(tool, "partial_images", *parsed.PartialImages)
+	}
+	// GIF animation controls are forwarded verbatim; format/range validation and
+	// the edits-endpoint restriction stay upstream.
+	if parsed.FrameCount != nil {
+		tool, _ = sjson.SetBytes(tool, "frame_count", *parsed.FrameCount)
+	}
+	if parsed.FrameDurationMS != nil {
+		tool, _ = sjson.SetBytes(tool, "frame_duration_ms", *parsed.FrameDurationMS)
 	}
 
 	maskImageURL := strings.TrimSpace(parsed.MaskImageURL)
