@@ -1090,7 +1090,8 @@ export default {
         title: 'Grok Safety-Refusal Billing',
         hint: 'Charge per request rejected with SAFETY_CHECK_TYPE (USD). Leave empty for the default 0.1; set 0 to disable the charge.',
         pricePerCall: 'Charge per refusal (USD)',
-        placeholder: 'default 0.1'
+        placeholder: 'default 0.1',
+        effective: 'Effective now: {price} USD per refusal, charged flat per occurrence and never multiplied by the group rate; leave empty for the built-in 0.1 default, set 0 to disable.'
       },
       modelPricing: {
         title: 'Per-model group pricing',
