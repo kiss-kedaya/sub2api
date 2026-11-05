@@ -167,8 +167,26 @@ type Group struct {
 	// ReasoningEffortMappings Anthropic/OpenAI 推理强度映射，可按模型精确名、前缀或后缀限定。
 	ReasoningEffortMappings []domain.ReasoningEffortMapping `json:"reasoning_effort_mappings"`
 
+	// Display hints for the viewer, filled only by GET /groups/available. They
+	// never affect pricing. recent_rate_change is the latest base rate edit of
+	// the last 48h and is absent when the viewer pays a personal rate; is_new,
+	// launched_at and launch_rate describe a group created in the last 24h.
+	RecentRateChange *GroupRecentRateChange `json:"recent_rate_change,omitempty"`
+	IsNew            bool                   `json:"is_new,omitempty"`
+	LaunchedAt       *time.Time             `json:"launched_at,omitempty"`
+	LaunchRate       *float64               `json:"launch_rate,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// GroupRecentRateChange is the latest base rate edit of a group. delta is the
+// absolute size of the change; direction ("up" or "down") carries the sign.
+type GroupRecentRateChange struct {
+	Direction    string    `json:"direction"`
+	Delta        float64   `json:"delta"`
+	PreviousRate float64   `json:"previous_rate"`
+	ChangedAt    time.Time `json:"changed_at"`
 }
 
 // AdminGroup 是管理员接口使用的 group DTO（包含敏感/内部字段）。

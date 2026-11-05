@@ -355,9 +355,14 @@ func (h *APIKeyHandler) GetAvailableGroups(c *gin.Context) {
 		return
 	}
 
+	// Display hints (recent rate change, new group). Best effort: a failure
+	// inside only withholds hints, it never fails the group list.
+	signals := h.apiKeyService.GetGroupSignals(c.Request.Context(), subject.UserID, groups, time.Now())
 	out := make([]dto.Group, 0, len(groups))
 	for i := range groups {
-		out = append(out, *dto.GroupFromService(&groups[i]))
+		item := dto.GroupFromService(&groups[i])
+		dto.ApplyGroupSignals(item, signals[groups[i].ID])
+		out = append(out, *item)
 	}
 	response.Success(c, out)
 }
