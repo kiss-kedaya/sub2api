@@ -75,6 +75,13 @@ func RegisterAdminRoutes(
 		monitor.GET("/accounts", h.Admin.UpstreamMonitor.Accounts)
 		monitor.GET("/accounts/:id/history", h.Admin.UpstreamMonitor.AccountHistory)
 		monitor.GET("/rate-changes", h.Admin.UpstreamMonitor.RateChanges)
+		monitor.GET("/trend", h.Admin.UpstreamMonitor.Trend)
+		monitor.GET("/alerts", h.Admin.UpstreamMonitor.Alerts)
+		monitor.POST("/alerts/:id/ack", h.Admin.UpstreamMonitor.AckAlert)
+		monitor.GET("/alert-rules", h.Admin.UpstreamMonitor.ListAlertRules)
+		monitor.PUT("/alert-rules", h.Admin.UpstreamMonitor.SaveAlertRule)
+		monitor.DELETE("/alert-rules/:id", h.Admin.UpstreamMonitor.DeleteAlertRule)
+		monitor.GET("/export", h.Admin.UpstreamMonitor.Export)
 		monitor.POST("/sample", h.Admin.UpstreamMonitor.Sample)
 	}
 	{

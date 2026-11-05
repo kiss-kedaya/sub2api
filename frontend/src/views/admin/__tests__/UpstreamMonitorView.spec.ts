@@ -19,6 +19,13 @@ vi.mock('@/api/admin/upstreamMonitor', () => ({
   getHistory: vi.fn(),
   listRateChanges: vi.fn(),
   sampleNow: vi.fn(),
+  getTrend: vi.fn(),
+  listAlerts: vi.fn(),
+  ackAlert: vi.fn(),
+  listAlertRules: vi.fn(),
+  saveAlertRule: vi.fn(),
+  deleteAlertRule: vi.fn(),
+  exportMonitorCsv: vi.fn(),
 }))
 
 const router = createRouter({
@@ -43,6 +50,7 @@ const account = (overrides: Partial<api.UpstreamMonitorAccount> = {}): api.Upstr
   rate_sync_enabled: false,
   rate_read_at: '2026-11-05T04:00:00Z',
   last_sampled_at: '2026-11-05T04:05:00Z',
+  alert_enabled: false,
   ...overrides,
 })
 
@@ -59,6 +67,8 @@ const overview = (): api.UpstreamMonitorOverview => ({
   currencies: [{ unit: 'USD', total: 13.5, accounts: 2 }],
   attention: [account({ account_id: 8, name: 'backup-upstream', balance_status: 'stale', balance: 4 })],
   last_sample_at: '2026-11-05T04:05:00Z',
+  spend: [{ unit: 'USD', today: 1.25, last_7_days: 6.5, last_30_days: 20 }],
+  open_alerts: 1,
 })
 
 beforeEach(() => {
@@ -72,12 +82,42 @@ beforeEach(() => {
     pages: 1,
   })
   vi.mocked(api.listRateChanges).mockResolvedValue({
-    items: [{ id: 1, account_id: 7, name: 'main-upstream', old_rate: 1, new_rate: 0.8, changed_at: '2026-11-05T03:00:00Z' }],
+    items: [{ id: 1, account_id: 7, name: 'main-upstream', old_rate: 1, new_rate: 0.8, change_pct: -20, changed_at: '2026-11-05T03:00:00Z' }],
     total: 1,
     page: 1,
     page_size: 10,
     pages: 1,
   })
+  vi.mocked(api.getTrend).mockResolvedValue({
+    days: 7,
+    points: [
+      { day: '2026-11-04', unit: 'USD', spend: 2, balance_close: 15, accounts: 2 },
+      { day: '2026-11-05', unit: 'USD', spend: 1.5, balance_close: 13.5, accounts: 2 },
+    ],
+  })
+  vi.mocked(api.listAlerts).mockResolvedValue({
+    items: [
+      {
+        id: 11,
+        account_id: 7,
+        name: 'main-upstream',
+        kind: 'balance_low',
+        level: 'warning',
+        balance: 4,
+        threshold: 5,
+        unit: 'USD',
+        message: '余额 4 USD 低于阈值 5 USD',
+        created_at: '2026-11-05T04:10:00Z',
+        acked_at: null,
+      },
+    ],
+    total: 1,
+    page: 1,
+    page_size: 10,
+    pages: 1,
+  })
+  vi.mocked(api.listAlertRules).mockResolvedValue({ items: [] })
+  vi.mocked(api.ackAlert).mockResolvedValue({ id: 11, acked: true })
   vi.mocked(api.getHistory).mockResolvedValue({
     account_id: 7,
     days: 7,
@@ -133,3 +173,55 @@ describe('upstream monitor view', () => {
 })
 
 
+
+describe('upstream monitor second batch', () => {
+  it('renders spend, trend and alerts', async () => {
+    const wrapper = mount(UpstreamMonitorView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('今日消费')
+    expect(wrapper.text()).toContain('$1.25')
+    expect(api.getTrend).toHaveBeenCalledWith(7)
+    expect(wrapper.find('svg').exists()).toBe(true)
+    expect(wrapper.text()).toContain('余额 4 USD 低于阈值 5 USD')
+    wrapper.unmount()
+  })
+
+  it('acknowledges an alert', async () => {
+    const wrapper = mount(UpstreamMonitorView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const ack = wrapper.findAll('button').find(button => button.text().includes('标记已处理'))
+    expect(ack).toBeTruthy()
+    await ack!.trigger('click')
+    await flushPromises()
+
+    expect(api.ackAlert).toHaveBeenCalledWith(11)
+    wrapper.unmount()
+  })
+
+  it('saves a balance alert rule from the detail dialog', async () => {
+    vi.mocked(api.saveAlertRule).mockResolvedValue({
+      account_id: 7,
+      threshold: 2.7,
+      unit: 'USD',
+      rate_min_pct: 10,
+      enabled: true,
+      updated_at: '2026-11-05T05:10:00Z',
+    })
+
+    const wrapper = mount(UpstreamMonitorView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.findAll('button[aria-label="告警设置"]')[0].trigger('click')
+    await flushPromises()
+
+    const save = wrapper.findAll('button').find(button => button.text().includes('保存规则'))
+    expect(save).toBeTruthy()
+    await save!.trigger('click')
+    await flushPromises()
+
+    expect(api.saveAlertRule).toHaveBeenCalledWith(expect.objectContaining({ account_id: 7, unit: 'USD', enabled: false }))
+    wrapper.unmount()
+  })
+})

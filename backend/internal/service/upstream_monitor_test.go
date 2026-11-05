@@ -137,3 +137,88 @@ func TestNormalizeUpstreamMonitorFilter(t *testing.T) {
 	require.Equal(t, 1, filter.Page)
 	require.Equal(t, 200, filter.PageSize)
 }
+
+func TestBuildUpstreamSampleWritesSpendOnlyOnBalanceDrop(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	lastSample := now.Add(-10 * time.Minute)
+	previous := 10.0
+
+	drop := buildUpstreamSampleWrites([]UpstreamProbeSnapshot{
+		{AccountID: 1, BalanceText: "7.25", Unit: "USD"},
+	}, map[int64]UpstreamMonitorState{
+		1: {LastBalance: &previous, LastUnit: "USD", LastSampleAt: &lastSample},
+	}, now)
+	require.Len(t, drop, 1)
+	require.Equal(t, 2.75, drop[0].Spend, "a balance drop is spend")
+
+	topUp := buildUpstreamSampleWrites([]UpstreamProbeSnapshot{
+		{AccountID: 2, BalanceText: "12", Unit: "USD"},
+	}, map[int64]UpstreamMonitorState{
+		2: {LastBalance: &previous, LastUnit: "USD", LastSampleAt: &lastSample},
+	}, now)
+	require.Len(t, topUp, 1)
+	require.Zero(t, topUp[0].Spend, "a top-up is not spend")
+
+	otherUnit := buildUpstreamSampleWrites([]UpstreamProbeSnapshot{
+		{AccountID: 3, BalanceText: "3", Unit: "CNY"},
+	}, map[int64]UpstreamMonitorState{
+		3: {LastBalance: &previous, LastUnit: "USD", LastSampleAt: &lastSample},
+	}, now)
+	require.Len(t, otherUnit, 1)
+	require.Zero(t, otherUnit[0].Spend, "a currency change cannot be converted into spend")
+}
+
+func TestBuildUpstreamAlertsLowBalanceRules(t *testing.T) {
+	sampledAt := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	writes := []UpstreamSampleWrite{
+		{AccountID: 1, HasBalance: true, Balance: 4.5, Unit: "USD", SampledAt: &sampledAt},
+		{AccountID: 2, HasBalance: true, Balance: 0, Unit: "USD", SampledAt: &sampledAt},
+		{AccountID: 3, HasBalance: true, Balance: 1, Unit: "USD", SampledAt: &sampledAt},
+		{AccountID: 4, HasBalance: true, Balance: 1, Unit: "CNY", SampledAt: &sampledAt},
+		{AccountID: 5, HasBalance: true, Balance: 1, Unit: "USD", SampledAt: &sampledAt},
+	}
+	rules := map[int64]UpstreamAlertRule{
+		1: {AccountID: 1, Threshold: 5, Unit: "USD", Enabled: true},
+		2: {AccountID: 2, Threshold: 5, Unit: "USD", Enabled: true},
+		3: {AccountID: 3, Threshold: 5, Unit: "USD", Enabled: false},
+		4: {AccountID: 4, Threshold: 5, Unit: "USD", Enabled: true},
+	}
+
+	alerts := buildUpstreamAlerts(writes, rules)
+	require.Len(t, alerts, 2)
+	require.Equal(t, "balance_low", alerts[0].Kind)
+	require.Equal(t, int64(1), alerts[0].AccountID)
+	require.Equal(t, "warning", alerts[0].Level)
+	require.NotNil(t, alerts[0].Threshold)
+	require.Equal(t, "balance_depleted", alerts[1].Kind)
+	require.Equal(t, int64(2), alerts[1].AccountID)
+	require.Equal(t, "critical", alerts[1].Level)
+}
+
+func TestBuildUpstreamAlertsRateJumpThreshold(t *testing.T) {
+	sampledAt := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	previous := 0.5
+	writes := []UpstreamSampleWrite{
+		{AccountID: 1, HasRate: true, Rate: 0.75, PreviousRate: &previous, RateChanged: true, SampledAt: &sampledAt},
+	}
+
+	alerts := buildUpstreamAlerts(writes, map[int64]UpstreamAlertRule{
+		1: {AccountID: 1, RateMinPct: 10, Enabled: true},
+	})
+	require.Len(t, alerts, 1)
+	require.Equal(t, "rate_jump", alerts[0].Kind)
+	require.InDelta(t, 50, UpstreamRateChangePct(previous, 0.75), 0.001)
+
+	strict := buildUpstreamAlerts(writes, map[int64]UpstreamAlertRule{
+		1: {AccountID: 1, RateMinPct: 60, Enabled: true},
+	})
+	require.Empty(t, strict, "a move below the configured percentage stays quiet")
+}
+
+func TestUpstreamBeijingDayUsesFixedOffset(t *testing.T) {
+	utc := time.Date(2026, 11, 5, 17, 30, 0, 0, time.UTC)
+	require.Equal(t, "2026-11-06", UpstreamBeijingDay(utc))
+	begin := beginOfUpstreamBeijingDay(utc)
+	require.Equal(t, 0, begin.Hour())
+	require.Equal(t, 6, begin.Day())
+}
