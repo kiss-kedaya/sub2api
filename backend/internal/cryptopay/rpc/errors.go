@@ -15,7 +15,55 @@ type Failure struct {
 	Kind       string
 	HTTPStatus int
 	RPCCode    int
+	// Reason is one of the fixed phrases in remoteReasons, picked by matching the
+	// node's message against a list we wrote. The node's own text is never kept.
+	Reason     string
 	contextErr error
+}
+
+// ReasonAlreadyKnown is what a node answers when the same signed transaction is
+// already in its pool. Re-sending identical bytes is then a no-op, not a failure.
+const ReasonAlreadyKnown = "transaction already known"
+
+// remoteReasons turns the free text of a node's JSON-RPC error into one of our
+// own fixed phrases. Order matters: the first needle found wins, so a longer
+// message is listed before the shorter one it contains.
+var remoteReasons = []struct{ needle, reason string }{
+	{"replacement transaction underpriced", "replacement transaction underpriced"},
+	{"transaction underpriced", "transaction underpriced"},
+	{"already known", ReasonAlreadyKnown},
+	{"known transaction", ReasonAlreadyKnown},
+	{"nonce too low", "nonce too low"},
+	{"nonce too high", "nonce too high"},
+	{"insufficient funds", "insufficient funds for gas"},
+	{"intrinsic gas too low", "intrinsic gas too low"},
+	{"max fee per gas less than block base fee", "fee cap below base fee"},
+	{"fee cap less than block base fee", "fee cap below base fee"},
+	{"txpool is full", "transaction pool is full"},
+	{"transaction pool is full", "transaction pool is full"},
+	{"execution reverted", "execution reverted"},
+	{"rate limit", "rate limited"},
+	{"too many requests", "rate limited"},
+	{"block range", "query range or result limit exceeded"},
+	{"query returned more than", "query range or result limit exceeded"},
+	{"response size exceeded", "query range or result limit exceeded"},
+}
+
+func classifyRemote(message string) string {
+	lowered := strings.ToLower(message)
+	for _, candidate := range remoteReasons {
+		if strings.Contains(lowered, candidate.needle) {
+			return candidate.reason
+		}
+	}
+	return ""
+}
+
+// IsAlreadyKnown reports whether err is a node saying it already holds the
+// transaction we tried to send.
+func IsAlreadyKnown(err error) bool {
+	var failure *Failure
+	return errors.As(err, &failure) && failure.Kind == "remote" && failure.Reason == ReasonAlreadyKnown
 }
 
 // Unwrap retains only safe context sentinels. Transport/url errors can contain
@@ -37,6 +85,9 @@ func (e *Failure) Error() string {
 	case "http":
 		return fmt.Sprintf("RPC HTTP request failed (status %d)", e.HTTPStatus)
 	case "remote":
+		if e.Reason != "" {
+			return fmt.Sprintf("RPC node rejected request (code %d): %s", e.RPCCode, e.Reason)
+		}
 		return fmt.Sprintf("RPC node rejected request (code %d)", e.RPCCode)
 	case "request":
 		return "RPC request is invalid"
@@ -72,7 +123,29 @@ func SafeError(err error) string {
 	return SafeRecordedError(err.Error())
 }
 
-var safeRPCStatus = regexp.MustCompile(`^RPC (?:HTTP request failed \(status [1-5][0-9]{2}\)|node rejected request \(code -?[0-9]{1,10}\))$`)
+var safeRPCStatus = regexp.MustCompile(`^RPC (?:HTTP request failed \(status [1-5][0-9]{2}\)|node rejected request \(code -?[0-9]{1,10}\)(?:: (?:` + remoteReasonPattern() + `))?)$`)
+
+func remoteReasonPattern() string {
+	seen := map[string]bool{}
+	var parts []string
+	for _, candidate := range remoteReasons {
+		if !seen[candidate.reason] {
+			seen[candidate.reason] = true
+			parts = append(parts, regexp.QuoteMeta(candidate.reason))
+		}
+	}
+	return strings.Join(parts, "|")
+}
+
+// jobErrorGaveUp is what the sweeper appends when a job stops being retried.
+// Only digits can vary, so the suffix itself carries nothing that needs hiding.
+var gaveUpSuffix = regexp.MustCompile(` \(gave up after [0-9]{1,6} attempts\)$`)
+
+// safeLiveBalance covers "live balance N is below planned amount M": two plain
+// integers written by the sweeper, never node text.
+var safeLiveBalance = regexp.MustCompile(`^live balance [0-9]{1,78} is below planned amount [0-9]{1,78}$`)
+
+var safeScopeMessage = regexp.MustCompile(`^chain "[a-z0-9_-]{1,32}" is outside the requested sweep scope$`)
 
 // safeBusinessPrefixes are messages this repository writes itself. They carry
 // no endpoint, credential or node-supplied text, so a sweep record can keep
@@ -122,11 +195,42 @@ func SafeRecordedError(message string) string {
 	if message == "" {
 		return ""
 	}
-	if safeRPCStatus.MatchString(message) {
+	// A job that stops retrying gets " (gave up after N attempts)" appended. That
+	// suffix is plain digits, so keep it and judge only what comes before it:
+	// otherwise the real reason is always replaced by the generic sentence.
+	if loc := gaveUpSuffix.FindStringIndex(message); loc != nil && loc[0] > 0 {
+		return safeRecordedBase(message[:loc[0]]) + message[loc[0]:]
+	}
+	return safeRecordedBase(message)
+}
+
+func safeRecordedBase(message string) string {
+	if message == "" {
+		return ""
+	}
+	if safeRPCStatus.MatchString(message) || safeLiveBalance.MatchString(message) || safeScopeMessage.MatchString(message) {
 		return message
 	}
 	switch message {
 	case "independent RPC confirmation is unavailable or disagrees":
+		return message
+	case "current credited sweep balance or address assignment is invalid",
+		"current credited balance is below the per-address sweep minimum",
+		"unsigned sweep job changed before balance refresh",
+		"no matching token/decimals configured for chain/contract",
+		"invalid sweep plan",
+		"no rpc pool for chain",
+		"invalid balanceOf result",
+		"signed transaction does not match reserved chain/nonce/gas",
+		"signed transaction sender does not match reserved payer",
+		"signed transaction fee does not match request",
+		"signed gas payment differs from reserved payment",
+		"invalid reserved token/amount",
+		"signed token transfer differs from immutable plan",
+		"incomplete or mismatched receipt",
+		"receipt block is no longer canonical",
+		"persisted transaction hash does not match signed bytes",
+		"gas top-up superseded by another transaction at the same nonce; the address will be funded again":
 		return message
 	case "RPC request is invalid", "RPC response is invalid", "RPC connection failed", "RPC request failed",
 		"awaiting canonical receipt and required confirmations",

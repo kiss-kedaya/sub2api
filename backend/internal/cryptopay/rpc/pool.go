@@ -161,7 +161,9 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 		return nil, &Failure{Kind: "response"}
 	}
 	if decoded.Error != nil {
-		return nil, &Failure{Kind: "remote", RPCCode: decoded.Error.Code}
+		// Keep only the fixed phrase our own table maps the message to. The node's
+		// text can echo request data, so it is dropped here and never stored.
+		return nil, &Failure{Kind: "remote", RPCCode: decoded.Error.Code, Reason: classifyRemote(decoded.Error.Message)}
 	}
 	if method == "eth_getLogs" && !validLogsResult(decoded.Result) {
 		return nil, &Failure{Kind: "response"}
@@ -263,7 +265,18 @@ func (p *Pool) Balance(ctx context.Context, address string) (*big.Int, error) {
 // Nonce returns the account's next nonce including pending transactions;
 // gas top-up and sweep for one address are serial, so pending is correct.
 func (p *Pool) Nonce(ctx context.Context, address string) (uint64, error) {
-	result, err := p.Call(ctx, "eth_getTransactionCount", []any{address, "pending"})
+	return p.transactionCount(ctx, address, "pending")
+}
+
+// ConfirmedNonce is the number of transactions the account has had mined. A
+// transaction still waiting in a node's pool is not counted, so a reserved nonce
+// below this value was used by something else and can never be mined again.
+func (p *Pool) ConfirmedNonce(ctx context.Context, address string) (uint64, error) {
+	return p.transactionCount(ctx, address, "latest")
+}
+
+func (p *Pool) transactionCount(ctx context.Context, address, tag string) (uint64, error) {
+	result, err := p.Call(ctx, "eth_getTransactionCount", []any{address, tag})
 	if err != nil {
 		return 0, err
 	}
