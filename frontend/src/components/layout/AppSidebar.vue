@@ -302,6 +302,7 @@ const adminNavItems = computed((): NavItem[] => {
         { path: '/admin/credential-guard', label: locale.value === 'zh' ? '凭证巡检' : 'Credential inspection' },
         { path: '#ops-tier-channels', label: locale.value === 'zh' ? '渠道运营' : 'Channel operations', section: true },
         { path: '/admin/channel-operations', label: locale.value === 'zh' ? '渠道运维' : 'Channel operations' },
+        { path: '/admin/upstream-monitor', label: locale.value === 'zh' ? '上游监控' : 'Upstream monitor' },
         { path: '/admin/model-comparison', label: locale.value === 'zh' ? '模型比价' : 'Model comparison' },
         { path: '/admin/mihomo', label: locale.value === 'zh' ? '代理出口' : 'Managed proxies' },
         { path: '#ops-tier-diagnostics', label: locale.value === 'zh' ? '监控诊断' : 'Monitoring and diagnostics', section: true },

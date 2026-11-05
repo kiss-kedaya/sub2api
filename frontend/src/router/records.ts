@@ -610,6 +610,17 @@ export const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/upstream-monitor',
+    name: 'AdminUpstreamMonitor',
+    component: () => import('@/views/admin/UpstreamMonitorView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Upstream Monitor',
+      titleKey: 'nav.upstreamMonitor'
+    }
+  },
+  {
     path: '/admin/plugins',
     name: 'AdminPlugins',
     component: () => import('@/views/admin/PluginsView.vue'),
