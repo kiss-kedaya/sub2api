@@ -77,7 +77,7 @@
           <h4 class="text-sm font-medium text-highlighted">
             {{ t('admin.groups.rateMultipliers') }} ({{ localEntries.length }})
           </h4>
-          <!-- 批量调整 + 全部清空 -->
+          <!-- 批量调整 / 批量设置指定倍率 + 全部清空 -->
           <div v-if="localEntries.length > 0" class="flex flex-wrap items-center gap-2">
             <span class="text-xs text-muted">{{ t('admin.groups.batchAdjust') }}</span>
             <span class="text-xs text-dimmed" aria-hidden="true">×</span>
@@ -91,6 +91,7 @@
               class="w-20"
               :ui="centeredNumberInputUi"
               placeholder="0.5"
+              id="batch-adjust-factor"
               :aria-label="t('admin.groups.batchAdjust')"
             />
             <UButton
@@ -100,6 +101,31 @@
               :label="t('admin.groups.applyMultiplier')"
               :disabled="!batchFactor || batchFactor <= 0"
               @click="applyBatchFactor"
+            />
+            <span class="text-xs text-dimmed" aria-hidden="true">|</span>
+            <span class="text-xs text-muted">{{ t('admin.groups.batchSet') }}</span>
+            <span class="text-xs text-dimmed" aria-hidden="true">=</span>
+            <UInput
+              v-model.number="batchSetValue"
+              type="number"
+              step="0.001"
+              min="0"
+              autocomplete="off"
+              size="sm"
+              class="w-20"
+              :ui="centeredNumberInputUi"
+              placeholder="1.0"
+              id="batch-set-rate"
+              :aria-label="t('admin.groups.batchSet')"
+            />
+            <UButton
+              size="sm"
+              color="neutral"
+              variant="outline"
+              :label="t('admin.groups.applySet')"
+              :disabled="!batchSetValue || batchSetValue <= 0"
+              data-testid="apply-batch-set-rate"
+              @click="applyBatchSet"
             />
             <UButton
               size="sm"
@@ -263,6 +289,7 @@ const newRate = ref<number | null>(null)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const batchFactor = ref<number | null>(null)
+const batchSetValue = ref<number | null>(null)
 
 let searchTimeout: ReturnType<typeof setTimeout>
 
@@ -333,6 +360,7 @@ watch(() => props.show, (val) => {
   if (val && props.group) {
     currentPage.value = 1
     batchFactor.value = null
+    batchSetValue.value = null
     searchQuery.value = ''
     searchResults.value = []
     selectedUser.value = null
@@ -427,6 +455,17 @@ const applyBatchFactor = () => {
   batchFactor.value = null
 }
 
+// 批量把本地全部条目设为指定倍率（直接覆盖，不再乘以现有值）
+const applyBatchSet = () => {
+  const value = Number(batchSetValue.value)
+  if (!Number.isFinite(value) || value <= 0) return
+  const rounded = parseFloat(value.toFixed(6))
+  for (const entry of localEntries.value) {
+    entry.rate_multiplier = rounded
+  }
+  batchSetValue.value = null
+}
+
 // 本地清空
 const clearAllLocal = () => {
   localEntries.value = []
@@ -436,6 +475,7 @@ const clearAllLocal = () => {
 const handleCancel = () => {
   localEntries.value = cloneEntries(serverEntries.value)
   batchFactor.value = null
+  batchSetValue.value = null
   adjustPage()
 }
 
