@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -27,6 +28,7 @@ func TestDetectOpenAIImageResultSize(t *testing.T) {
 	webpVP8XEncoded := encodeOpenAIImageTestWebPVP8X(1920, 1080)
 	webpVP8Encoded := encodeOpenAIImageTestWebPVP8(1280, 720)
 	webpVP8LEncoded := encodeOpenAIImageTestWebPVP8L(640, 480)
+	gifEncoded := encodeOpenAIImageTestGIF(t, 512, 512)
 
 	require.Equal(t, "1672x941", detectOpenAIImageResultSize(pngEncoded))
 	require.Equal(t, "1672x941", detectOpenAIImageResultSize(strings.TrimRight(pngEncoded, "=")))
@@ -35,6 +37,8 @@ func TestDetectOpenAIImageResultSize(t *testing.T) {
 	require.Equal(t, "1920x1080", detectOpenAIImageResultSize(webpVP8XEncoded))
 	require.Equal(t, "1280x720", detectOpenAIImageResultSize(webpVP8Encoded))
 	require.Equal(t, "640x480", detectOpenAIImageResultSize(webpVP8LEncoded))
+	require.Equal(t, "512x512", detectOpenAIImageResultSize(gifEncoded))
+	require.Equal(t, "512x512", detectOpenAIImageResultSize("data:image/gif;base64,"+gifEncoded))
 	require.Empty(t, detectOpenAIImageResultSize("data:image/png;base64"))
 	require.Empty(t, detectOpenAIImageResultSize("not-image-data"))
 }
@@ -123,6 +127,20 @@ func encodeOpenAIImageTestPNG(t *testing.T, width, height int) string {
 	img.SetNRGBA(0, 0, color.NRGBA{R: 0xff, A: 0xff})
 	var buf bytes.Buffer
 	require.NoError(t, png.Encode(&buf, img))
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func encodeOpenAIImageTestGIF(t *testing.T, width, height int) string {
+	t.Helper()
+	palette := color.Palette{color.NRGBA{A: 0xff}, color.NRGBA{R: 0xff, A: 0xff}}
+	frames := make([]*image.Paletted, 0, 2)
+	for i := 0; i < 2; i++ {
+		frame := image.NewPaletted(image.Rect(0, 0, width, height), palette)
+		frame.SetColorIndex(0, 0, uint8(i))
+		frames = append(frames, frame)
+	}
+	var buf bytes.Buffer
+	require.NoError(t, gif.EncodeAll(&buf, &gif.GIF{Image: frames, Delay: []int{1, 1}}))
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 

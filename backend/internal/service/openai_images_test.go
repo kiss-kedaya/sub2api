@@ -2231,3 +2231,181 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingDrainsAfterClientDiscon
 	require.Equal(t, 9, result.Usage.OutputTokens)
 	require.Equal(t, 4, result.Usage.ImageOutputTokens)
 }
+
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSONGIFAnimation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2.6-sunburst","prompt":"a looping lantern","size":"512x512","output_format":"gif","frame_count":16,"frame_duration_ms":120}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	require.Equal(t, "gif", parsed.OutputFormat)
+	require.NotNil(t, parsed.FrameCount)
+	require.Equal(t, 16, *parsed.FrameCount)
+	require.NotNil(t, parsed.FrameDurationMS)
+	require.Equal(t, 120, *parsed.FrameDurationMS)
+	require.Equal(t, "512x512", parsed.Size)
+	require.True(t, parsed.HasNativeOptions)
+	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
+}
+
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_RejectsInvalidGIFAnimationFieldTypes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "frame_count string", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":"16"}`},
+		{name: "frame_duration_ms string", body: `{"prompt":"draw a cat","output_format":"gif","frame_duration_ms":"120"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(tc.body)
+			req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = req
+
+			svc := &OpenAIGatewayService{}
+			_, err := svc.ParseOpenAIImagesRequest(c, body)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartGIFAnimation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2.6-sunburst"))
+	require.NoError(t, writer.WriteField("prompt", "a looping lantern"))
+	require.NoError(t, writer.WriteField("size", "512x512"))
+	require.NoError(t, writer.WriteField("output_format", "gif"))
+	require.NoError(t, writer.WriteField("frame_count", "16"))
+	require.NoError(t, writer.WriteField("frame_duration_ms", "120"))
+	require.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body.Bytes()))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body.Bytes())
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	require.True(t, parsed.Multipart)
+	require.Equal(t, "gif", parsed.OutputFormat)
+	require.NotNil(t, parsed.FrameCount)
+	require.Equal(t, 16, *parsed.FrameCount)
+	require.NotNil(t, parsed.FrameDurationMS)
+	require.Equal(t, 120, *parsed.FrameDurationMS)
+	require.Equal(t, "512x512", parsed.Size)
+	require.True(t, parsed.HasNativeOptions)
+	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
+}
+
+func TestBuildOpenAIImagesResponsesRequest_PassesThroughGIFAnimationFields(t *testing.T) {
+	frameCount := 16
+	frameDurationMS := 120
+	parsed := &OpenAIImagesRequest{
+		Endpoint:        openAIImagesGenerationsEndpoint,
+		Model:           "gpt-image-2.6-sunburst",
+		Prompt:          "a looping lantern",
+		Size:            "512x512",
+		OutputFormat:    "gif",
+		FrameCount:      &frameCount,
+		FrameDurationMS: &frameDurationMS,
+	}
+
+	body, err := buildOpenAIImagesResponsesRequest(parsed, "gpt-image-2.6-sunburst")
+	require.NoError(t, err)
+	require.Equal(t, "gif", gjson.GetBytes(body, "tools.0.output_format").String())
+	require.Equal(t, int64(16), gjson.GetBytes(body, "tools.0.frame_count").Int())
+	require.Equal(t, int64(120), gjson.GetBytes(body, "tools.0.frame_duration_ms").Int())
+	require.Equal(t, "512x512", gjson.GetBytes(body, "tools.0.size").String())
+}
+
+func TestBuildOpenAIImagesResponsesRequest_OmitsAbsentGIFAnimationFields(t *testing.T) {
+	parsed := &OpenAIImagesRequest{
+		Endpoint: openAIImagesGenerationsEndpoint,
+		Model:    "gpt-image-2.6-sunburst",
+		Prompt:   "draw a cat",
+	}
+
+	body, err := buildOpenAIImagesResponsesRequest(parsed, "gpt-image-2.6-sunburst")
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(body, "tools.0.frame_count").Exists())
+	require.False(t, gjson.GetBytes(body, "tools.0.frame_duration_ms").Exists())
+}
+
+func TestOpenAIImageOutputMIMEType_GIF(t *testing.T) {
+	require.Equal(t, "image/gif", openAIImageOutputMIMEType("gif"))
+	require.Equal(t, "image/gif", openAIImageOutputMIMEType("GIF"))
+	require.Equal(t, "image/png", openAIImageOutputMIMEType(""))
+}
+
+func TestOpenAIGatewayServiceForwardImages_OAuthPassesThroughGIFAnimation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2.6-sunburst","prompt":"a looping lantern","size":"512x512","output_format":"gif","frame_count":16,"frame_duration_ms":120,"response_format":"url"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set("api_key", &APIKey{ID: 43})
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"text/event-stream"},
+				"X-Request-Id": []string{"req_img_gif"},
+			},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.completed\",\"response\":{\"created_at\":1710000000,\"output\":[{\"type\":\"image_generation_call\",\"result\":\"R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==\",\"revised_prompt\":\"a looping lantern\",\"output_format\":\"gif\",\"size\":\"512x512\"}]}}\n\n" +
+					"data: [DONE]\n\n",
+			)),
+		},
+	}
+	svc.httpUpstream = upstream
+
+	account := &Account{
+		ID:       2,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "token-123",
+			"chatgpt_account_id": "acct-123",
+		},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "gif", gjson.GetBytes(upstream.lastBody, "tools.0.output_format").String())
+	require.Equal(t, int64(16), gjson.GetBytes(upstream.lastBody, "tools.0.frame_count").Int())
+	require.Equal(t, int64(120), gjson.GetBytes(upstream.lastBody, "tools.0.frame_duration_ms").Int())
+	require.Equal(t, "512x512", gjson.GetBytes(upstream.lastBody, "tools.0.size").String())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "gif", gjson.Get(rec.Body.String(), "output_format").String())
+	require.Equal(t, "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", gjson.Get(rec.Body.String(), "data.0.url").String())
+}
