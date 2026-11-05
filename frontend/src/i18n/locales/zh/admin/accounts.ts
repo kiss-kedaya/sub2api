@@ -221,6 +221,7 @@ export default {
         syncRateHint: '成功探测后自动更新账号倍率，同步的是不含高峰的基准倍率；探测失败或声明超出允许范围时保持不变。开启本项会同时打开“自动探测上游声明倍率”。',
         syncRateManagedHint: '当前倍率由上游声明的基准倍率（不含高峰）自动维护。',
         syncedRateTooltip: '该账号倍率由上游声明的基准倍率（不含高峰）自动同步',
+        sameAsAccount: '同账号倍率',
         manualProbe: '立即探测上游倍率',
         stale: '已过期',
         unsupported: '不支持',

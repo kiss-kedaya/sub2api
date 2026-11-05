@@ -415,36 +415,7 @@
 
       <!-- Usage data or unlimited flow -->
       <div class="space-y-1">
-        <div
-          v-if="showGeminiTodayStats && todayStats"
-          class="mb-0.5 flex items-center"
-        >
-          <div class="flex flex-wrap items-center gap-x-2 text-xs tabular-nums text-muted">
-            <span>
-              {{ formatKeyRequests }} req
-            </span>
-            <span>
-              {{ formatKeyTokens }}
-            </span>
-            <span :title="t('usage.accountBilled')">
-              A ${{ formatKeyCost }}
-            </span>
-            <span
-              v-if="todayStats.user_cost != null"
-              :title="t('usage.userBilled')"
-            >
-              U ${{ formatKeyUserCost }}
-            </span>
-          </div>
-        </div>
-        <div
-          v-else-if="showGeminiTodayStats && todayStatsLoading"
-          class="mb-0.5 flex items-center gap-1"
-        >
-          <USkeleton class="h-3 w-10" />
-          <USkeleton class="h-3 w-8" />
-          <USkeleton class="h-3 w-12" />
-        </div>
+        <AccountTodayStatsCell v-if="showGeminiTodayStats" inline :stats="todayStats" :loading="todayStatsLoading" />
         <div v-if="loading" class="space-y-1">
           <div class="flex items-center gap-1">
             <USkeleton class="h-3 w-[32px]" />
@@ -494,38 +465,7 @@
         :account="account"
         @updated="handleOllamaCloudUsageUpdated"
       />
-      <!-- Today stats row (requests, tokens, cost, user_cost) -->
-      <div
-        v-if="todayStats"
-        class="mb-0.5 flex items-center"
-      >
-        <div class="flex flex-wrap items-center gap-x-2 text-xs tabular-nums text-muted">
-          <span>
-            {{ formatKeyRequests }} req
-          </span>
-          <span>
-            {{ formatKeyTokens }}
-          </span>
-          <span :title="t('usage.accountBilled')">
-            A ${{ formatKeyCost }}
-          </span>
-          <span
-            v-if="todayStats.user_cost != null"
-            :title="t('usage.userBilled')"
-          >
-            U ${{ formatKeyUserCost }}
-          </span>
-        </div>
-      </div>
-      <!-- Loading skeleton for today stats -->
-      <div
-        v-else-if="todayStatsLoading"
-        class="mb-0.5 flex items-center gap-1"
-      >
-        <USkeleton class="h-3 w-10" />
-        <USkeleton class="h-3 w-8" />
-        <USkeleton class="h-3 w-12" />
-      </div>
+      <AccountTodayStatsCell inline :stats="todayStats" :loading="todayStatsLoading" />
 
       <!-- API Key accounts with quota limits: show progress bars -->
       <UsageProgressBar
@@ -568,6 +508,7 @@ import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'
 import UsageProgressBar from './UsageProgressBar.vue'
+import AccountTodayStatsCell from './AccountTodayStatsCell.vue'
 import AccountQuotaInfo from './AccountQuotaInfo.vue'
 import ClaudeResetCreditsCell from './ClaudeResetCreditsCell.vue'
 import OpenAIQuotaResetCell from './OpenAIQuotaResetCell.vue'
@@ -1483,28 +1424,6 @@ const handleQuotaResetAccountUpdated = (account: Account) => {
 const handleOllamaCloudUsageUpdated = (state: NonNullable<Account['ollama_cloud_usage']>) => {
   emit('account-updated', { ...props.account, ollama_cloud_usage: state })
 }
-
-// ===== Key account today stats formatters =====
-
-const formatKeyRequests = computed(() => {
-  if (!props.todayStats) return ''
-  return formatCompactNumber(props.todayStats.requests, { allowBillions: false })
-})
-
-const formatKeyTokens = computed(() => {
-  if (!props.todayStats) return ''
-  return formatCompactNumber(props.todayStats.tokens)
-})
-
-const formatKeyCost = computed(() => {
-  if (!props.todayStats) return '0.00'
-  return props.todayStats.cost.toFixed(2)
-})
-
-const formatKeyUserCost = computed(() => {
-  if (!props.todayStats || props.todayStats.user_cost == null) return '0.00'
-  return props.todayStats.user_cost.toFixed(2)
-})
 
 onMounted(() => {
   if (typeof window !== 'undefined') {

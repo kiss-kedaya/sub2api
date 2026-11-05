@@ -4,10 +4,10 @@
       <template #trigger>
         <span
           class="cursor-help border-b border-dotted border-accented text-sm font-medium"
-          :class="hasEffectiveRate ? 'font-mono tabular-nums text-highlighted' : statusClass || 'text-dimmed'"
+          :class="sameAsAccount ? 'text-muted' : hasEffectiveRate ? 'font-mono tabular-nums text-highlighted' : statusClass || 'text-dimmed'"
           data-testid="upstream-billing-rate"
         >
-          {{ primaryValue }}
+          {{ sameAsAccount ? t('admin.accounts.upstreamBilling.sameAsAccount') : primaryValue }}
         </span>
       </template>
       <div class="space-y-1">
@@ -211,6 +211,13 @@ const statusClass = computed(() => {
   return ''
 })
 const hasEffectiveRate = computed(() => effectiveRate.value !== '-')
+// With rate sync on the account rate is the upstream base rate: repeat the number only when peak pricing makes them differ.
+const sameAsAccount = computed(() =>
+  props.account.extra?.upstream_billing_rate_sync_enabled === true &&
+  hasEffectiveRate.value &&
+  !statusLabel.value &&
+  effectiveRate.value === `${formatMultiplier(props.account.rate_multiplier ?? 1)}x`
+)
 const primaryValue = computed(() => hasEffectiveRate.value ? effectiveRate.value : statusLabel.value || '-')
 const formatDate = (value?: string) => value
   ? new Date(value).toLocaleString(undefined, {

@@ -232,6 +232,7 @@ import { useAppStore } from '@/stores/app'; import { adminAPI } from '@/api/admi
 import { useAuthStore } from '@/stores/auth'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
+import { buildErrorLogColumns } from '@/utils/errorLogColumns'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
@@ -837,26 +838,7 @@ const ERR_ALWAYS_VISIBLE = ['user', 'status', 'created_at', 'actions']
 const ERR_DEFAULT_HIDDEN_COLUMNS = ['user_agent']
 const ERR_HIDDEN_COLUMNS_KEY = 'usage-error-hidden-columns'
 
-// key 集合须与 OpsErrorLogTable 内部 allColumns 一致
-const errAllColumns = computed(() => [
-  { key: 'user', label: t('admin.ops.errorLog.user') },
-  { key: 'api_key', label: t('admin.ops.errorLog.apiKey') },
-  { key: 'account', label: t('admin.ops.errorLog.account') },
-  { key: 'platform', label: t('admin.ops.errorLog.platform') },
-  { key: 'model', label: t('admin.ops.errorLog.model') },
-  { key: 'endpoint', label: t('admin.ops.errorLog.endpoint') },
-  { key: 'group', label: t('admin.ops.errorLog.group') },
-  { key: 'type', label: t('admin.ops.errorLog.type') },
-  { key: 'category', label: t('usage.errors.category') },
-  { key: 'status', label: t('admin.ops.errorLog.status') },
-  { key: 'message', label: t('admin.ops.errorLog.message') },
-  { key: 'request_id', label: t('admin.ops.errorLog.requestId') },
-  { key: 'upstream_request_id', label: t('admin.ops.errorLog.upstreamRequestId') },
-  { key: 'created_at', label: t('admin.ops.errorLog.time') },
-  { key: 'user_agent', label: t('usage.userAgent') },
-  { key: 'client_ip', label: t('admin.ops.errorLog.ip') },
-  { key: 'actions', label: t('admin.ops.errorLog.action') },
-])
+const errAllColumns = computed(() => buildErrorLogColumns(t))
 
 const errHiddenColumns = reactive<Set<string>>(new Set())
 

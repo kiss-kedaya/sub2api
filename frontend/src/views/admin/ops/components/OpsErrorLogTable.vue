@@ -209,30 +209,11 @@ import type { Column } from '@/components/common/types'
 import { getSeverityClass, formatDateTime } from '../utils/opsFormatters'
 import { mapErrorCategory } from '@/utils/errorCategory'
 import { mapErrorSortKey, statusCodeBadgeClass } from '@/utils/errorBadges'
+import { buildErrorLogColumns } from '@/utils/errorLogColumns'
 
 const { t } = useI18n()
 
-// 列序对齐管理端用量明细:身份(用户→Key→账号)→ 请求形态(平台→模型→端点→分组→类型)
-// → 结果(状态→消息)→ 时间→UA→IP→操作
-const allColumns = computed<Column[]>(() => [
-  { key: 'user', label: t('admin.ops.errorLog.user') },
-  { key: 'api_key', label: t('admin.ops.errorLog.apiKey') },
-  { key: 'account', label: t('admin.ops.errorLog.account') },
-  { key: 'platform', label: t('admin.ops.errorLog.platform') },
-  { key: 'model', label: t('admin.ops.errorLog.model'), sortable: true },
-  { key: 'endpoint', label: t('admin.ops.errorLog.endpoint') },
-  { key: 'group', label: t('admin.ops.errorLog.group') },
-  { key: 'type', label: t('admin.ops.errorLog.type') },
-  { key: 'category', label: t('usage.errors.category') },
-  { key: 'status', label: t('admin.ops.errorLog.status'), sortable: true },
-  { key: 'message', label: t('admin.ops.errorLog.message') },
-  { key: 'request_id', label: t('admin.ops.errorLog.requestId') },
-  { key: 'upstream_request_id', label: t('admin.ops.errorLog.upstreamRequestId') },
-  { key: 'created_at', label: t('admin.ops.errorLog.time'), sortable: true },
-  { key: 'user_agent', label: t('usage.userAgent') },
-  { key: 'client_ip', label: t('admin.ops.errorLog.ip') },
-  { key: 'actions', label: t('admin.ops.errorLog.action') },
-])
+const allColumns = computed<Column[]>(() => buildErrorLogColumns(t))
 
 // 传入 visibleColumnKeys 时按其过滤(列设置);未传则全量(Ops 弹窗等使用方)
 const columns = computed<Column[]>(() => {

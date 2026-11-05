@@ -70,7 +70,7 @@
           <div class="space-y-5">
             <section class="space-y-2">
               <h4 class="text-xs font-medium text-muted">{{ t('admin.accounts.columns.usageWindows') }}</h4>
-              <AccountUsageCell :account="account" :today-stats="todayStats" :manual-refresh-token="usageRefreshKey" @account-updated="emit('account-updated', $event)" />
+              <AccountUsageCell :account="account" :manual-refresh-token="usageRefreshKey" @account-updated="emit('account-updated', $event)" />
             </section>
             <USeparator />
             <section class="space-y-2">
