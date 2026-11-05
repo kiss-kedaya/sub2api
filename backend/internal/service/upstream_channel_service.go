@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -148,7 +147,6 @@ type UpstreamChannelService struct {
 	lockCache  LeaderLockCache
 	db         *sql.DB
 	instanceID string
-	mu         sync.Mutex
 }
 
 func NewUpstreamChannelService(repo UpstreamChannelRepository, encryptor SecretEncryptor) *UpstreamChannelService {
