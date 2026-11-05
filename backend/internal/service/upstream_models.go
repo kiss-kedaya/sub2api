@@ -834,6 +834,12 @@ func builtinCatalogModelMetadata(modelID string) (UpstreamModelMetadata, bool) {
 
 func gptImageCatalogDisplayName(id string) string {
 	switch {
+	case strings.HasPrefix(id, "gpt-image-2.6-sunburst"):
+		return "GPT Image 2.6 Sunburst"
+	case strings.HasPrefix(id, "gpt-image-2.6-flare"):
+		return "GPT Image 2.6 Flare"
+	case strings.HasPrefix(id, "gpt-image-2.6"):
+		return "GPT Image 2.6"
 	case strings.HasPrefix(id, "gpt-image-2.5-sunburst"):
 		return "GPT Image 2.5 Sunburst"
 	case strings.HasPrefix(id, "gpt-image-2.5-flare"):
@@ -855,6 +861,12 @@ func gptImageCatalogDisplayName(id string) string {
 
 func gptImageCatalogDescription(id string) string {
 	switch {
+	case strings.HasPrefix(id, "gpt-image-2.6-sunburst"):
+		return "GPT Image 2.6 Sunburst generates and edits images from text and image inputs, with stronger character, product and brand consistency for detail-critical workflows."
+	case strings.HasPrefix(id, "gpt-image-2.6-flare"):
+		return "GPT Image 2.6 Flare is OpenAI's fastest GPT Image 2.6 model, for everyday image generation and editing."
+	case strings.HasPrefix(id, "gpt-image-2.6"):
+		return "GPT Image 2.6 family for prompt-driven generation and precise editing. Select flare for speed or sunburst for quality."
 	case strings.HasPrefix(id, "gpt-image-2.5-sunburst"):
 		return "GPT Image 2.5 Sunburst generates and edits images from text and image inputs. Use it for workflows where editing precision matters most."
 	case strings.HasPrefix(id, "gpt-image-2.5-flare"):

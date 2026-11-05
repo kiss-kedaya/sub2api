@@ -24,7 +24,7 @@ func TestOpenAIImagesResponsesDriverAndImageModels(t *testing.T) {
 			if driver == "" {
 				driver = "gpt-5.6-luna"
 			}
-			for _, model := range []string{"gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare-2026-09-08"} {
+			for _, model := range []string{"gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
 				for _, quality := range []string{"xhigh", "max", "auto"} {
 					for _, endpoint := range []string{openAIImagesGenerationsEndpoint, openAIImagesEditsEndpoint} {
 						parsed := &OpenAIImagesRequest{Endpoint: endpoint, Model: model, Prompt: "draw a red cup", Quality: quality, Size: "1536x864", Background: "transparent", OutputFormat: "png", N: 1}
