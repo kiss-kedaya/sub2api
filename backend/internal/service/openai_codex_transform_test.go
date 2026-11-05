@@ -1347,10 +1347,12 @@ func TestApplyCodexOAuthTransform_KeepsImageGenerationToolForNonSpark(t *testing
 
 func TestNormalizeOpenAIResponsesImageOnlyModel_BuildsImageToolRequest(t *testing.T) {
 	reqBody := map[string]any{
-		"model":         "gpt-image-2",
-		"prompt":        "draw a cat",
-		"size":          "1024x1024",
-		"output_format": "png",
+		"model":             "gpt-image-2",
+		"prompt":            "draw a cat",
+		"size":              "1024x1024",
+		"output_format":     "gif",
+		"frame_count":       16,
+		"frame_duration_ms": 120,
 	}
 
 	modified := normalizeOpenAIResponsesImageOnlyModel(reqBody)
@@ -1361,6 +1363,10 @@ func TestNormalizeOpenAIResponsesImageOnlyModel_BuildsImageToolRequest(t *testin
 	require.False(t, hasPrompt)
 	_, hasTopLevelSize := reqBody["size"]
 	require.False(t, hasTopLevelSize)
+	_, hasTopLevelFrameCount := reqBody["frame_count"]
+	require.False(t, hasTopLevelFrameCount)
+	_, hasTopLevelFrameDuration := reqBody["frame_duration_ms"]
+	require.False(t, hasTopLevelFrameDuration)
 
 	tools, ok := reqBody["tools"].([]any)
 	require.True(t, ok)
@@ -1370,7 +1376,9 @@ func TestNormalizeOpenAIResponsesImageOnlyModel_BuildsImageToolRequest(t *testin
 	require.Equal(t, "image_generation", tool["type"])
 	require.Equal(t, "gpt-image-2", tool["model"])
 	require.Equal(t, "1024x1024", tool["size"])
-	require.Equal(t, "png", tool["output_format"])
+	require.Equal(t, "gif", tool["output_format"])
+	require.Equal(t, 16, tool["frame_count"])
+	require.Equal(t, 120, tool["frame_duration_ms"])
 
 	choice, ok := reqBody["tool_choice"].(map[string]any)
 	require.True(t, ok)
