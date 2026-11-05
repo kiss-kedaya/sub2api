@@ -8,14 +8,45 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A run on main is never cancelled: cache-prime has to finish and save.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+
+  # Decides whether the Go test jobs are needed. Only pull requests are
+  # filtered: pushes to main and manual runs always run everything.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Classify changed paths
+        id: classify
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # actions/checkout checks out the PR merge commit; its first parent is the base tip.
+          if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -ne 3 ]; then
+            echo "HEAD is not a merge commit, running everything"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only --no-renames HEAD^1 HEAD | bash .github/ci/changed-paths.sh | tee -a "$GITHUB_OUTPUT"
+
   account-timer-integration:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     timeout-minutes: 20
     services:
       postgres:
@@ -33,11 +64,10 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
+      - name: Warm compile (best effort)
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs account-timer-integration --timeout 1500
       - name: Durable account schedule PostgreSQL 15 regression
         working-directory: backend
         env:
@@ -46,14 +76,15 @@ jobs:
 
   operator-storage-integration:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
+      - name: Warm compile (best effort)
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs operator-storage-integration --timeout 1500
       - name: Operator lease and credential state PostgreSQL regression
         working-directory: backend
         run: go test -race -p 1 -tags=integration ./internal/repository -run '^Test(CredentialGuardRepository|OAuthAdmissionCAS)' -count=1
@@ -65,13 +96,15 @@ jobs:
 
   deepseek-native-replay:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
+      - name: Warm compile (best effort)
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs deepseek-native-replay --timeout 1500
       - name: Native DeepSeek reasoning replay and tenant isolation
         working-directory: backend
         run: |
@@ -80,6 +113,7 @@ jobs:
 
   copilot-adapter:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -91,15 +125,18 @@ jobs:
         run: |
           "$RUNNER_TEMP/copilot-adapter/.venv/bin/python" -m pip install pytest pytest-asyncio pytest-socket
           PYTHONPATH="$RUNNER_TEMP/copilot-adapter" "$RUNNER_TEMP/copilot-adapter/.venv/bin/python" -m pytest --disable-socket --allow-unix-socket -q deploy/copilot-sdk/test_server.py deploy/copilot-sdk/test_adapter_contract.py
+
   client-error-privacy:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
+      - name: Warm compile (best effort)
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs client-error-privacy --timeout 1500
       - name: Client error privacy and protocol regression
         working-directory: backend
         run: |
@@ -108,6 +145,7 @@ jobs:
 
   shell:
     runs-on: macos-15-intel
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Check deployment scripts
@@ -119,16 +157,47 @@ jobs:
           /bin/sh deploy/tests/docker-runtime-resources-test.sh
           /bin/sh deploy/test-caddyfile-cache.sh
 
-  test:
+  test-unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          check-latest: false
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: Unit tests
+        working-directory: backend
+        run: make test-unit
+
+  test-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-cache
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: Integration tests
+        working-directory: backend
+        run: make test-integration
+
+  test-race-a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-cache
+      - name: Warm compile (best effort)
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs test-race-a --timeout 1500
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.10'
@@ -140,6 +209,21 @@ jobs:
         run: |
           go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
           go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+
+  test-race-b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-cache
+      - name: Warm compile (best effort)
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs test-race-b --timeout 1500
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
       - name: Explicit cache and operations safety regression
         working-directory: backend
         run: |
@@ -153,15 +237,24 @@ jobs:
       - name: Layered security admission and privacy regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/securityaudit -run '^Test(SecurityPenalty|SecurityAudit.*Constraint|SecurityAuditRejectsUnbound|Penalty|PromptPenalty|RegistrationEmailAlias)' -count=1
-      - name: Unit tests
-        working-directory: backend
-        run: make test-unit
       - name: Stream delivery and fixed tool billing concurrency regression
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/repository ./internal/handler/dto -run '^Test(AnthropicPassthrough|GatewayService_AnthropicAPIKeyPassthrough_StreamError|GatewayHandlerMessagesPassthroughStreamFailure|GatewayBridgePreservesFixedToolBilling|GatewayForwardErrorAlreadyCommunicated|UpstreamErrorFrameReader|DeepSeekStandaloneToolFees|DeepSeekFixed|DeepSeekHostedUsageRecord|DeepSeekHostedSearchAndFetchMark|UsageFailure)' -count=1
-      - name: Integration tests
-        working-directory: backend
-        run: make test-integration
+
+  test-race-c:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-cache
+      - name: Warm compile (best effort)
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs test-race-c --timeout 1500
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
       - name: Codex ticket concurrency regression
         working-directory: backend
         run: go test -race -tags=unit ./internal/service -run 'Test.*CodexTicket' -count=1
@@ -196,8 +289,46 @@ jobs:
         working-directory: backend
         run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository ./internal/handler ./internal/handler/dto ./internal/handler/admin ./internal/server/middleware -run '^Test(UsageInflight|TrackUsageInflight|UsageLogFromInflight|SetOpsSelectedAccount|IndependentInflight|AcquireUserSlot_ConcurrencyLimits|UserConcurrency|LiveLease)' -count=1
 
+  # One stable check for the whole Go test suite. The test-* jobs run in
+  # parallel; this job fails unless every one of them passed, or all were
+  # skipped because only frontend/docs/markdown files changed.
+  test:
+    needs: [changes, test-unit, test-integration, test-race-a, test-race-b, test-race-c]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Go test job
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          BACKEND: ${{ needs.changes.outputs.backend }}
+          R_UNIT: ${{ needs.test-unit.result }}
+          R_INTEGRATION: ${{ needs.test-integration.result }}
+          R_RACE_A: ${{ needs.test-race-a.result }}
+          R_RACE_B: ${{ needs.test-race-b.result }}
+          R_RACE_C: ${{ needs.test-race-c.result }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES" != success ]; then
+            echo "change detection: $CHANGES"
+            exit 1
+          fi
+          want=success
+          [ "$BACKEND" = true ] || want=skipped
+          bad=0
+          for pair in unit:"$R_UNIT" integration:"$R_INTEGRATION" race-a:"$R_RACE_A" race-b:"$R_RACE_B" race-c:"$R_RACE_C"; do
+            if [ "${pair#*:}" != "$want" ]; then
+              echo "test-${pair%%:*}: ${pair#*:} (expected $want)"
+              bad=1
+            fi
+          done
+          exit "$bad"
+
   crypto-sweep-integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     services:
       postgres:
         image: postgres:16-alpine
@@ -214,12 +345,7 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          check-latest: false
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
       - name: Durable sweep transactions against disposable PostgreSQL
         working-directory: backend
         env:
@@ -228,6 +354,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     env:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
@@ -278,14 +405,10 @@ jobs:
   build:
     needs: frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          check-latest: false
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
       - name: Download tested frontend
         uses: actions/download-artifact@v8
         with:
@@ -308,13 +431,10 @@ jobs:
   deepseek-search-probe:
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/fix/deepseek-search-provider'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
       - name: Compile opt-in live search verification
         working-directory: backend
         env:
@@ -332,14 +452,12 @@ jobs:
 
   golangci-lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: backend/go.mod
-          check-latest: false
-          cache: true
-          cache-dependency-path: backend/go.sum
+      - uses: ./.github/actions/go-cache
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.10'
@@ -348,4 +466,68 @@ jobs:
         with:
           version: v2.13
           args: --timeout=30m
+          skip-save-cache: ${{ github.event_name == 'pull_request' }}
           working-directory: backend
+
+  # The only writer of the Go caches that every other job restores. Runs on
+  # pushes to main only, next to the tests, and never fails the build.
+  cache-prime:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+      - name: Stub embedded dist
+        run: |
+          mkdir -p backend/internal/web/dist
+          printf '<!doctype html><title>stub</title>' > backend/internal/web/dist/index.html
+      # Go refreshes the timestamp of every entry it uses (at most once an
+      # hour). Aging all entries first lets the prune step drop what this run
+      # did not touch, so the cache follows the code instead of growing.
+      - name: Age cache entries
+        run: |
+          dir="$(go env GOCACHE)"
+          if [ -d "$dir" ]; then find "$dir" -type f -exec touch -d "2 hours ago" {} +; fi
+      - name: Compile every CI test configuration
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --timeout 2400
+      - name: Prune entries this run did not use
+        run: |
+          dir="$(go env GOCACHE)"
+          before=$(du -sm "$dir" | cut -f1)
+          find "$dir" -type f -not -newermt "90 minutes ago" -delete
+          after=$(du -sm "$dir" | cut -f1)
+          echo "GOCACHE pruned: ${before} MB -> ${after} MB" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Save module cache (exact miss only)
+        if: ${{ steps.gocache.outputs.mod-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.gocache.outputs.gomodcache }}
+          key: ci-gomod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+      - name: Save build cache
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.gocache.outputs.gocache }}
+          key: ci-gobuild-${{ runner.os }}-${{ steps.gocache.outputs.go-version }}-${{ github.sha }}
+
+  # Keeps one cache per kind. Cache keys are immutable, so a rolling cache
+  # needs the previous one removed. This job is the only one with
+  # actions: write, runs on pushes to main only, and only touches keys that
+  # start with ci-gobuild- or ci-gomod- (see .github/ci/gc-caches.sh).
+  cache-gc:
+    needs: cache-prime
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Delete older Go caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash .github/ci/gc-caches.sh --apply ci-gobuild- ci-gomod-

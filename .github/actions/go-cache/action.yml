@@ -1,0 +1,56 @@
+name: Go toolchain with restore-only caches
+description: >-
+  Installs Go and restores the module and build caches. It never saves them.
+  Saving happens in exactly one place (the cache-prime job on pushes to main),
+  so pull requests cannot grow the repository cache quota.
+inputs:
+  key-prefix:
+    description: Prefix of the cache keys. Keep the default except in experiments.
+    required: false
+    default: ci
+outputs:
+  gocache:
+    description: Resolved GOCACHE directory
+    value: ${{ steps.paths.outputs.gocache }}
+  gomodcache:
+    description: Resolved GOMODCACHE directory
+    value: ${{ steps.paths.outputs.gomodcache }}
+  go-version:
+    description: Installed Go version
+    value: ${{ steps.setup.outputs.go-version }}
+  mod-hit:
+    description: Whether the module cache matched its exact key
+    value: ${{ steps.mod.outputs.cache-hit }}
+  build-matched-key:
+    description: Key of the build cache that was restored (empty on a miss)
+    value: ${{ steps.build.outputs.cache-matched-key }}
+runs:
+  using: composite
+  steps:
+    - id: setup
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: backend/go.mod
+        check-latest: false
+        cache: false
+    - id: paths
+      shell: bash
+      run: |
+        echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+        echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+    - id: mod
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.paths.outputs.gomodcache }}
+        key: ${{ inputs.key-prefix }}-gomod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+        restore-keys: |
+          ${{ inputs.key-prefix }}-gomod-${{ runner.os }}-
+    # The exact key contains the commit, so it never matches; the restore-keys
+    # prefix then picks the newest build cache saved by the main branch.
+    - id: build
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.paths.outputs.gocache }}
+        key: ${{ inputs.key-prefix }}-gobuild-${{ runner.os }}-${{ steps.setup.outputs.go-version }}-${{ github.sha }}
+        restore-keys: |
+          ${{ inputs.key-prefix }}-gobuild-${{ runner.os }}-${{ steps.setup.outputs.go-version }}-
