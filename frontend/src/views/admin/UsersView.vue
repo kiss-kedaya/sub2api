@@ -9,7 +9,7 @@
           :description="t('admin.users.description')"
         >
           <template #actions>
-            <UButton icon="i-lucide-plus" :label="t('admin.users.createUser')" @click="showCreateModal = true" />
+            <UButton class="max-sm:flex-1 max-sm:justify-center pointer-coarse:min-h-10" icon="i-lucide-plus" :label="t('admin.users.createUser')" @click="showCreateModal = true" />
           </template>
         </AdminPageHeader>
         <PageToolbar>
@@ -18,7 +18,7 @@
               v-model="searchQuery"
               icon="i-lucide-search"
               :placeholder="t('admin.users.searchUsers')"
-              class="w-64 sm:w-80"
+              class="w-full sm:w-80"
               @update:model-value="handleSearch"
             />
 
@@ -125,6 +125,7 @@
               variant="outline"
               icon="i-lucide-refresh-cw"
               square
+              class="pointer-coarse:min-h-10 pointer-coarse:min-w-10"
               :disabled="loading"
               :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
               :title="t('common.refresh')"
@@ -136,6 +137,7 @@
                 color="neutral"
                 variant="outline"
                 icon="i-lucide-list-filter"
+                class="max-sm:px-1.5 pointer-coarse:min-h-10 pointer-coarse:min-w-10"
                 :title="t('admin.users.filterSettings')"
                 :aria-label="t('admin.users.filterSettings')"
               >
@@ -147,6 +149,7 @@
                 color="neutral"
                 variant="outline"
                 trailing-icon="i-lucide-settings-2"
+                class="max-sm:px-1.5 pointer-coarse:min-h-10 pointer-coarse:min-w-10"
                 :title="t('admin.users.displayColumns')"
                 :aria-label="t('admin.users.displayColumns')"
               >
@@ -158,6 +161,7 @@
               variant="outline"
               icon="i-lucide-tags"
               square
+              class="pointer-coarse:min-h-10 pointer-coarse:min-w-10"
               :title="t('admin.users.attributes.configButton')"
               :aria-label="t('admin.users.attributes.configButton')"
               @click="showAttributesModal = true"

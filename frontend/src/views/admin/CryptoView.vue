@@ -10,7 +10,13 @@
           </div>
         </template>
       </AdminPageHeader>
-      <PageToolbar v-if="routed"><template #left><UNavigationMenu :items="navItems" highlight class="-mx-1" /></template></PageToolbar>
+      <PageToolbar v-if="routed">
+        <template #left>
+          <div ref="sectionStrip" class="crypto-view__section-nav -mx-1 min-w-0 overflow-x-auto overflow-y-hidden px-1 scrollbar-hide" data-testid="crypto-section-nav">
+            <UNavigationMenu :items="navItems" highlight class="w-max" />
+          </div>
+        </template>
+      </PageToolbar>
 
       <CryptoWalletSecurityPanel v-show="!routed || section === 'overview'" class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
 
@@ -635,7 +641,8 @@
   </AppLayout>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { revealActiveNavItem } from '@/utils/revealActiveNavItem'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
@@ -757,6 +764,14 @@ const overviewEntries = computed(() => [
   { section: 'config' as const, label: t('admin.crypto.tabConfig'), icon: 'i-lucide-settings-2' },
 ])
 const navItems = computed(() => [{ label: t('admin.crypto.tabOverview'), icon: 'i-lucide-layout-dashboard', to: sectionTo('overview') }, ...overviewEntries.value.map(entry => ({ label: entry.label, icon: entry.icon, to: sectionTo(entry.section) }))])
+// Six entries do not fit a phone. The strip scrolls sideways (finger swipe, no scrollbar)
+// instead of squeezing the labels, and keeps the current entry in view.
+const sectionStrip = ref<HTMLElement | null>(null)
+function revealSectionStrip(smooth: boolean) {
+  void nextTick(() => { revealActiveNavItem(sectionStrip.value, { smooth }) })
+}
+watch(sectionStrip, strip => { if (strip) revealSectionStrip(false) }, { flush: 'post' })
+watch(section, () => revealSectionStrip(true), { flush: 'post' })
 // The node-status panel polls only while its tab is the visible one. In routed mode the
 // overview keeps the last tab mounted behind v-show, so the route decides, not activeTab.
 const chainsActive = computed(() => routed ? section.value === 'chains' : activeTab.value === 'chains')
