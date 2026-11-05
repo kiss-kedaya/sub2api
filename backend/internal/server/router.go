@@ -106,6 +106,7 @@ func SetupRouter(
 				channelService.SetLeaderLock(nil, db)
 			}
 			channelService.SetNotificationHub(service.DefaultNotificationHub())
+			channelService.SetOutboundURLPolicy(cfg)
 			handlers.Admin.UpstreamChannel = adminhandler.NewUpstreamChannelHandler(channelService)
 			if gin.Mode() != gin.TestMode && !upstreamChannelStarted.Swap(true) {
 				channelService.Start(context.Background())
