@@ -96,7 +96,12 @@ describe('public API documentation', () => {
     expect(content).toContain('grok-imagine-edit')
     expect(content).toContain('async image tasks are not enabled')
     expect(content).toContain('3 source images')
+    expect(content).toContain('GIF output is not enabled for this request')
+    expect(content).toContain('check the actual format of the returned image')
     expect(content).not.toContain('more returns a 400')
+    const zhContent = JSON.stringify(resolveDocsPage(getApiDocs('zh', origin), 'image-generation'))
+    expect(zhContent).toContain('GIF output is not enabled for this request')
+    expect(zhContent).toContain('请检查返回图片的实际格式')
     const fields = page.sections.find(section => section.id === 'image-request')!.fields!.map(field => field.name)
     expect(fields).toEqual(expect.arrayContaining(['model', 'prompt', 'n', 'size', 'response_format', 'stream']))
     const generate = page.sections.find(section => section.id === 'image-request')!.examples!
