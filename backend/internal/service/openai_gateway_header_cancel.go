@@ -10,30 +10,43 @@ import (
 
 // Only bound the header wait after the original client cancels. Once headers
 // arrive, the existing response handlers own draining and body cleanup.
-func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
-	return s.doOpenAIRequestWithHeaderCancel(clientCtx, request, func(req *http.Request) (*http.Response, error) {
+//
+// A streaming request is canceled upstream at once when the client leaves before
+// any header arrived: nothing was produced yet, so nothing is billed. A buffered
+// (non-stream) request keeps the drain budget because its usage only exists in the
+// final body.
+func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx context.Context, request *http.Request, proxyURL string, account *Account, streaming bool) (*http.Response, error) {
+	return s.doOpenAIRequestWithHeaderCancel(clientCtx, request, streaming, func(req *http.Request) (*http.Response, error) {
 		return s.doOpenAIUpstream(req, proxyURL, account)
 	})
 }
 
 // Independent OAuth resource servers share cancellation handoff without running
 // Codex-specific token, ticket or cookie injection on their requests.
-func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context.Context, request *http.Request, send func(*http.Request) (*http.Response, error)) (*http.Response, error) {
+func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context.Context, request *http.Request, streaming bool, send func(*http.Request) (*http.Response, error)) (*http.Response, error) {
 	if clientCtx == nil || clientCtx.Done() == nil {
 		return send(request)
 	}
 	if err := clientCtx.Err(); err != nil {
 		return nil, err
 	}
-	budget := openAIStreamClientDisconnectDrainTimeoutDefault
-	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
-		budget = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	// A zero budget means cancel the upstream the moment the client leaves.
+	budget := time.Duration(0)
+	if !streaming {
+		budget = openAIStreamClientDisconnectDrainTimeoutDefault
+		if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+			budget = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+		}
 	}
 	upstreamCtx, cancelUpstream := context.WithCancel(request.Context())
 	headerDone := make(chan struct{})
 	watchDone := make(chan struct{})
 	stopWatch := context.AfterFunc(clientCtx, func() {
 		defer close(watchDone)
+		if budget <= 0 {
+			cancelUpstream()
+			return
+		}
 		timer := time.NewTimer(budget)
 		defer timer.Stop()
 		select {

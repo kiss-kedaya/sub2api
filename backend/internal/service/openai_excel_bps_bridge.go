@@ -60,7 +60,7 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 	// acquisition and cookie injection must never run on this request.
 	upstreamStart := time.Now()
 	request := prepared.Request.WithContext(WithHTTPUpstreamProfile(upstreamCtx, HTTPUpstreamProfileOpenAI))
-	resp, err := s.doOpenAIRequestWithHeaderCancel(clientCtx, request, func(req *http.Request) (*http.Response, error) {
+	resp, err := s.doOpenAIRequestWithHeaderCancel(clientCtx, request, false, func(req *http.Request) (*http.Response, error) {
 		return s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
 	})
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())

@@ -47,6 +47,7 @@ type incompleteStreamHarness struct {
 	recorder *openAIResponseFlushRecorder
 	upstream *httpUpstreamRecorder
 	pipeW    *io.PipeWriter
+	tracked  *lifecycleTrackingBody
 	done     chan incompleteStreamOutcome
 }
 
@@ -63,24 +64,21 @@ func startIncompleteStreamForward(t *testing.T, streamIntervalSeconds int) *inco
 	c.Request.Header.Set("Content-Type", "application/json")
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 
-	pr, pw := io.Pipe()
+	resp, tracked, pw := newLifecycleTrackingResponse()
+	resp.Header = http.Header{
+		"Content-Type": []string{"text/event-stream"},
+		"X-Request-Id": []string{"rid-incomplete-stream"},
+	}
 	t.Cleanup(func() {
 		_ = pw.Close()
-		_ = pr.Close()
+		_ = tracked.Close()
 	})
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header: http.Header{
-			"Content-Type": []string{"text/event-stream"},
-			"X-Request-Id": []string{"rid-incomplete-stream"},
-		},
-		Body: pr,
-	}}
+	upstream := &httpUpstreamRecorder{resp: resp}
 	svc := newOpenAIPartialUsageService(upstream)
 	svc.cfg.Gateway.StreamDataIntervalTimeout = streamIntervalSeconds
 
 	h := &incompleteStreamHarness{
-		t: t, cancel: cancel, recorder: recorder, upstream: upstream, pipeW: pw,
+		t: t, cancel: cancel, recorder: recorder, upstream: upstream, pipeW: pw, tracked: tracked,
 		done: make(chan incompleteStreamOutcome, 1),
 	}
 	go func() {
@@ -160,6 +158,8 @@ func requireIncompleteStreamBilled(t *testing.T, out incompleteStreamOutcome, wa
 	require.Equal(t, wantClientDisconnect, out.result.ClientDisconnect)
 	require.Equal(t, estimateTokensForText(incompleteStreamDeltaOneText+incompleteStreamDeltaTwoText), out.result.Usage.OutputTokens)
 	require.Greater(t, out.result.Usage.InputTokens, 0, "input is estimated from the request when no usage frame exists")
+	require.Equal(t, incompleteStreamCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens,
+		"95% of the estimated input is priced as cache read")
 
 	usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
 	require.Equal(t, 1, usageRepo.calls)
@@ -183,18 +183,27 @@ func requireIncompleteStreamNotBilled(t *testing.T, out incompleteStreamOutcome)
 	}
 }
 
-// The client disconnects after receiving output and the upstream never sends the
-// terminal frame, so the drain budget runs out. The delivered output must be billed.
-func TestOpenAIForward_DrainBudgetExhaustedAfterDeliveredOutputIsBilled(t *testing.T) {
-	h := startIncompleteStreamForward(t, 1)
+// The client leaves after receiving output and the upstream never sent a terminal
+// frame. The upstream is closed at once (no drain window) and the delivered output
+// is billed from the estimate.
+func TestOpenAIForward_ClientLeavesAfterDeliveredOutputIsBilledAtOnce(t *testing.T) {
+	// A long idle interval: the old drain window would have kept this open.
+	h := startIncompleteStreamForward(t, 30)
 	h.write(incompleteStreamCreatedFrame, incompleteStreamDeltaOneFrame, incompleteStreamDeltaTwoFrame)
 	waitOpenAIResponseFlushCount(t, h.recorder, 2)
+	canceledAt := time.Now()
 	h.cancel()
 
-	out := h.await(8 * time.Second)
+	out := h.await(3 * time.Second)
 
-	require.ErrorContains(t, out.err, "disconnect timeout")
+	require.Less(t, time.Since(canceledAt), 2*time.Second)
+	require.ErrorContains(t, out.err, "stream usage incomplete after disconnect")
 	require.Len(t, h.upstream.requests, 1, "a canceled client must not trigger a retry")
+	select {
+	case <-h.tracked.closed:
+	default:
+		t.Fatal("the upstream body was left open after the client left")
+	}
 	requireIncompleteStreamBilled(t, out, true)
 }
 
@@ -257,17 +266,61 @@ func TestOpenAIForward_RealTerminalUsageIsNeverReplacedByEstimate(t *testing.T) 
 	require.Equal(t, 4, out.result.Usage.OutputTokens)
 }
 
-// Nothing reached the client before the budget ran out: nothing to charge.
-func TestOpenAIForward_DrainBudgetExhaustedWithoutDeliveredOutputStaysFree(t *testing.T) {
-	h := startIncompleteStreamForward(t, 1)
+// The client leaves before any output was produced. The upstream had accepted the
+// request, so the input is billed (95% at the cache price); there is no output.
+func TestOpenAIForward_ClientLeavesBeforeAnyOutputIsBilledForInputOnly(t *testing.T) {
+	h := startIncompleteStreamForward(t, 30)
 	h.write(incompleteStreamCreatedFrame)
 	h.cancel()
 
-	out := h.await(8 * time.Second)
+	out := h.await(3 * time.Second)
 
-	requireIncompleteStreamNotBilled(t, out)
+	require.ErrorContains(t, out.err, "stream usage incomplete after disconnect")
+	require.NotNil(t, out.result, "the input of an accepted request must reach billing")
+	require.True(t, out.result.ClientDisconnect)
+	require.Zero(t, out.result.Usage.OutputTokens)
+	require.Greater(t, out.result.Usage.InputTokens, 0)
+	require.Equal(t, incompleteStreamCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
+	usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
+	require.Equal(t, 1, usageRepo.calls)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.Greater(t, billingRepo.lastCmd.BalanceCost, 0.0)
 	body, _ := h.recorder.snapshot()
 	require.Empty(t, body, "no output may be committed to a canceled client")
+}
+
+// With the client still attached, an upstream that is cut before producing anything
+// is a replayable failure: nothing is billed.
+func TestOpenAIForward_UpstreamCutBeforeAnyOutputStaysFree(t *testing.T) {
+	h := startIncompleteStreamForward(t, 0)
+	h.write(incompleteStreamCreatedFrame)
+	h.closeUpstream()
+
+	out := h.await(5 * time.Second)
+
+	requireIncompleteStreamNotBilled(t, out)
+}
+
+// 95% of the estimated input is priced as cache read, so the bill is lower than the
+// same usage priced as plain input.
+func TestOpenAIForward_EstimatedInputIsBilledAtTheCacheDiscount(t *testing.T) {
+	h := startIncompleteStreamForward(t, 0)
+	h.write(incompleteStreamCreatedFrame, incompleteStreamDeltaOneFrame, incompleteStreamDeltaTwoFrame)
+	waitOpenAIResponseFlushCount(t, h.recorder, 2)
+	h.closeUpstream()
+
+	out := h.await(5 * time.Second)
+	require.NotNil(t, out.result)
+
+	_, discounted := billIncompleteStreamResult(t, out.result)
+	plain := *out.result
+	plain.Usage.CacheReadInputTokens = 0
+	_, undiscounted := billIncompleteStreamResult(t, &plain)
+
+	require.NotNil(t, discounted.lastCmd)
+	require.NotNil(t, undiscounted.lastCmd)
+	require.Greater(t, discounted.lastCmd.BalanceCost, 0.0)
+	require.Less(t, discounted.lastCmd.BalanceCost, undiscounted.lastCmd.BalanceCost, "the 95% cache share must lower the bill")
 }
 
 // An upstream error that produced no output must never be charged or estimated.
