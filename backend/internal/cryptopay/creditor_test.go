@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"math/big"
+	"strconv"
 	"testing"
 
 	"entgo.io/ent/dialect"
@@ -158,4 +159,62 @@ func TestCreditRejectsMismatchedExistingIdentity(t *testing.T) {
 	req.Amount = big.NewInt(10_000_000)
 	req.UserID++
 	require.ErrorContains(t, c.CreditDeposit(t.Context(), req), "identity mismatch")
+}
+
+// A user row may have no username. The order snapshot requires a non-empty
+// value, and before this fix an empty one failed the insert, which left the
+// deposit pending forever: the money was on-chain but never credited. The
+// fallback must be deterministic so a retry produces the same order identity
+// and cannot mint a second balance.
+func TestCreditUsesDeterministicDisplayNameWhenUsernameEmpty(t *testing.T) {
+	creditor, req := newCreditTest(t)
+	ctx := t.Context()
+
+	require.NoError(t, creditor.entClient.User.UpdateOneID(req.UserID).SetUsername("").Exec(ctx))
+
+	require.NoError(t, creditor.CreditDeposit(ctx, req))
+
+	order, err := creditor.entClient.PaymentOrder.Query().Where().Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "user-"+strconv.FormatInt(req.UserID, 10), order.UserName,
+		"an empty username must become a deterministic display name")
+	require.Equal(t, payment.OrderStatusCompleted, order.Status)
+
+	// The real username must never be overwritten by the fallback.
+	user, err := creditor.entClient.User.Get(ctx, req.UserID)
+	require.NoError(t, err)
+	require.Equal(t, "", user.Username, "users table must not be modified")
+}
+
+// Retrying the same deposit must reuse the same order instead of creating a
+// second one, which is what keeps a repeated scan from crediting twice.
+func TestCreditWithEmptyUsernameIsIdempotent(t *testing.T) {
+	creditor, req := newCreditTest(t)
+	ctx := t.Context()
+
+	require.NoError(t, creditor.entClient.User.UpdateOneID(req.UserID).SetUsername("").Exec(ctx))
+
+	require.NoError(t, creditor.CreditDeposit(ctx, req))
+	require.NoError(t, creditor.CreditDeposit(ctx, req))
+
+	count, err := creditor.entClient.PaymentOrder.Query().Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "a retry must not create a second order")
+
+	user, err := creditor.entClient.User.Get(ctx, req.UserID)
+	require.NoError(t, err)
+	require.InDelta(t, req.CreditUSDT, user.Balance, 0.0001, "the balance must be credited exactly once")
+}
+
+// A present username must be preserved verbatim.
+func TestCreditKeepsExistingUsername(t *testing.T) {
+	creditor, req := newCreditTest(t)
+	ctx := t.Context()
+
+	require.NoError(t, creditor.entClient.User.UpdateOneID(req.UserID).SetUsername("real-user").Exec(ctx))
+	require.NoError(t, creditor.CreditDeposit(ctx, req))
+
+	order, err := creditor.entClient.PaymentOrder.Query().Where().Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "real-user", order.UserName)
 }

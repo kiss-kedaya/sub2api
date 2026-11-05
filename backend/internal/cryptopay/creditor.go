@@ -87,6 +87,17 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 	if err != nil {
 		return fmt.Errorf("cryptopay credit: load user: %w", err)
 	}
+	// A user row can legitimately have no username (registered through a
+	// provider that returns none, or backfilled without one). An empty string
+	// violates the non-null constraint on the order snapshot, which used to
+	// fail the whole credit and leave the deposit pending forever — the on-chain
+	// money was already there, so the customer saw a deposit that never arrived.
+	// Fall back to a deterministic display name; the real value is preserved
+	// when present, and this changes only the snapshot copy, never users.
+	displayName := strings.TrimSpace(user.Username)
+	if displayName == "" {
+		displayName = fmt.Sprintf("user-%d", req.UserID)
+	}
 	paidAt := time.Now()
 
 	// Match the existing balance-order precision once, before persisting.
@@ -99,7 +110,7 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 	order, err = c.entClient.PaymentOrder.Create().
 		SetUserID(req.UserID).
 		SetUserEmail(user.Email).
-		SetUserName(user.Username).
+		SetUserName(displayName).
 		SetAmount(creditAmount).
 		SetPayAmount(paidToken.Round(3).InexactFloat64()).
 		SetFeeRate(0).
