@@ -217,6 +217,7 @@ export default {
     blockedTitle: 'A transaction is blocking sweeps',
     blockedHint: 'These jobs hold signed transactions, so new sweeps on the same chain wait. Reconcile checks the chain without signing or broadcasting. A missing receipt keeps the address reserved; retries use the same signed bytes. Reverted or incomplete jobs require manual review.',
     blockedAge: 'Blocked for',
+    reconcileLegacy: 'Old record handled by hand; cannot be reconciled here',
     sweepDryRun: 'Sweep (dry-run)',
     reconcile: 'Reconcile',
     sweepRun: 'Run sweep',

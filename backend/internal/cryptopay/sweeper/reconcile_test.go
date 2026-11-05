@@ -1,6 +1,7 @@
 package sweeper
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -88,15 +89,81 @@ func TestListBlockedReturnsFailedSignedTransactionsForReconciliation(t *testing.
 	e, mock, _, entry := setupExecutor(t)
 	mock.ExpectQuery(`(?s)SELECT id, chain, from_address, status, error,.*status <> 'swept'.*status <> 'failed'.*gas_tx_hash`).
 		WithArgs(50).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "chain", "from_address", "status", "error", "age_minutes"}).
-			AddRow(49, "bsc", entry.Address, "failed", "Payment operation failed; reconcile transaction status before retrying", int64(12)))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "chain", "from_address", "status", "error", "age_minutes", "job_version"}).
+			AddRow(49, "bsc", entry.Address, "failed", "Payment operation failed; reconcile transaction status before retrying", int64(12), 1).
+			AddRow(97, "bsc", entry.Address, "failed", "Payment operation failed; reconcile transaction status before retrying", int64(2175), 2))
 
 	blocked, err := e.ListBlocked(t.Context(), 50)
 	if err != nil {
 		t.Fatalf("list blocked sweep jobs: %v", err)
 	}
-	if len(blocked) != 1 || blocked[0].JobID != 49 || !blocked[0].CanResolve || blocked[0].Status != "failed" {
+	if len(blocked) != 2 || blocked[0].JobID != 49 || !blocked[0].CanResolve || blocked[0].Status != "failed" {
 		t.Fatalf("failed signed job was not surfaced for reconciliation: %+v", blocked)
+	}
+	// A record in an older format is listed (it still holds hashes) but cannot be reconciled.
+	if blocked[1].JobID != 97 || blocked[1].CanResolve {
+		t.Fatalf("an old-format record must not offer reconcile: %+v", blocked[1])
+	}
+}
+
+// Reconcile reads the chain and then has to save what it found. A row that
+// saveJob cannot update would fail only after the chain work, as a bare 500.
+func TestReconcileRefusesOldFormatRecordsBeforeTouchingTheChain(t *testing.T) {
+	for _, version := range []int{0, 2} {
+		e, mock, chain, entry := setupExecutor(t)
+		mock.ExpectQuery(`SELECT pg_try_advisory_lock`).
+			WithArgs(sweepLockKey).
+			WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+		mock.ExpectQuery(`SELECT id, chain, from_address`).
+			WithArgs(int64(97)).
+			WillReturnRows(sqlmock.NewRows([]string{
+				"id", "chain", "from_address", "to_address", "token", "raw_amount",
+				"token_decimals", "derivation_index", "status", "error", "job_version", "revision",
+				"confirmations_required", "gas_payer", "gas_amount", "gas_nonce", "gas_raw_tx",
+				"gas_tx_hash", "gas_confirmed", "sweep_nonce", "sweep_raw_tx", "sweep_tx_hash",
+			}).AddRow(97, "bsc", entry.Address, entry.Address, entry.Token, "1000000",
+				18, 0, "failed", "x", version, 3,
+				"2", chain.payer, "", "", "", "", false, "3", "0xraw", "0xhash"))
+		mock.ExpectQuery(`SELECT pg_advisory_unlock`).
+			WithArgs(sweepLockKey).
+			WillReturnRows(sqlmock.NewRows([]string{"unlock"}).AddRow(true))
+
+		out, err := e.Reconcile(t.Context(), 97)
+		if !errors.Is(err, ErrLegacySweepRecord) || out != nil {
+			t.Fatalf("version %d: out=%+v err=%v", version, out, err)
+		}
+		chain.mu.Lock()
+		reads := chain.receiptReads
+		chain.mu.Unlock()
+		if reads != 0 {
+			t.Fatalf("version %d: the chain was queried %d times for a record that cannot be saved", version, reads)
+		}
+	}
+}
+
+// A finished old record keeps the harmless answer it always had.
+func TestReconcileOfFinishedOldRecordStillSaysNothingToDo(t *testing.T) {
+	e, mock, chain, entry := setupExecutor(t)
+	mock.ExpectQuery(`SELECT pg_try_advisory_lock`).
+		WithArgs(sweepLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery(`SELECT id, chain, from_address`).
+		WithArgs(int64(5)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "chain", "from_address", "to_address", "token", "raw_amount",
+			"token_decimals", "derivation_index", "status", "error", "job_version", "revision",
+			"confirmations_required", "gas_payer", "gas_amount", "gas_nonce", "gas_raw_tx",
+			"gas_tx_hash", "gas_confirmed", "sweep_nonce", "sweep_raw_tx", "sweep_tx_hash",
+		}).AddRow(5, "bsc", entry.Address, entry.Address, entry.Token, "1000000",
+			18, 0, "swept", "", 2, 3,
+			"2", chain.payer, "", "", "", "", false, "", "", ""))
+	mock.ExpectQuery(`SELECT pg_advisory_unlock`).
+		WithArgs(sweepLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"unlock"}).AddRow(true))
+
+	out, err := e.Reconcile(t.Context(), 5)
+	if err != nil || out.Action != ReconcileObserved {
+		t.Fatalf("out=%+v err=%v", out, err)
 	}
 }
 

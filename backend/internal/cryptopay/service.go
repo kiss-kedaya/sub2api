@@ -905,7 +905,11 @@ func (s *Service) ReconcileSweep(ctx context.Context, jobID int64) (*sweeper.Rec
 	if jobID <= 0 {
 		return nil, fmt.Errorf("invalid sweep job id")
 	}
-	s.sweepMu.Lock()
+	// A sweep run holds sweepMu for its whole length (tens of seconds). Waiting
+	// here left the admin's request hanging until the browser gave up; say so at once.
+	if !s.sweepMu.TryLock() {
+		return nil, ErrScanBusy
+	}
 	defer s.sweepMu.Unlock()
 	s.mu.RLock()
 	exec := s.executor

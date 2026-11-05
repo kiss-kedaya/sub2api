@@ -425,7 +425,8 @@
                 <template #age_minutes-cell="{ row }">{{ row.original.age_minutes }}m</template>
                 <template #actions-cell="{ row }">
                   <div class="flex justify-end">
-                    <UButton color="neutral" variant="outline" size="xs" :disabled="reconciling === row.original.job_id" @click="reconcileJob(row.original.job_id)">
+                    <span v-if="!row.original.can_reconcile" class="max-w-48 text-end text-xs text-muted" data-testid="blocked-legacy">{{ t('admin.crypto.reconcileLegacy') }}</span>
+                    <UButton v-else color="neutral" variant="outline" size="xs" :disabled="reconciling === row.original.job_id" @click="reconcileJob(row.original.job_id)">
                       {{ reconciling === row.original.job_id ? t('common.loading') : t('admin.crypto.reconcile') }}
                     </UButton>
                   </div>
