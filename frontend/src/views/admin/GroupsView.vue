@@ -1205,6 +1205,16 @@
                   />
                 </UFormField>
               </div>
+              <div
+                class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default"
+                data-testid="create-grok-moderation-refusal-effective"
+              >
+                {{
+                  t("admin.groups.moderationRefusalPricing.effective", {
+                    price: createGrokModerationRefusalPreview,
+                  })
+                }}
+              </div>
             </div>
           </section>
           <section class="space-y-5">
@@ -2516,6 +2526,16 @@
                     class="w-full"
                   />
                 </UFormField>
+              </div>
+              <div
+                class="mt-2 rounded-lg bg-elevated/50 p-3 text-xs text-default"
+                data-testid="edit-grok-moderation-refusal-effective"
+              >
+                {{
+                  t("admin.groups.moderationRefusalPricing.effective", {
+                    price: editGrokModerationRefusalPreview,
+                  })
+                }}
               </div>
             </div>
           </section>
@@ -4774,6 +4794,30 @@ const createWebSearchFinalPricePreview = computed(() =>
 );
 const editWebSearchFinalPricePreview = computed(() =>
   buildWebSearchFinalPricePreview(editForm),
+);
+
+// Grok 安全拒绝按次固定扣费，不乘分组倍率；留空 = 内置默认 0.1 USD，填 0 = 不扣费。
+const DEFAULT_GROK_MODERATION_REFUSAL_PRICE = 0.1;
+
+const buildGrokModerationRefusalPreview = (form: {
+  grok_moderation_refusal_price: number | string | null;
+}) => {
+  const raw = form.grok_moderation_refusal_price;
+  if (raw === null || raw === undefined || raw === "") {
+    return formatImagePricePreview(DEFAULT_GROK_MODERATION_REFUSAL_PRICE);
+  }
+  const price = Number(raw);
+  if (!Number.isFinite(price) || price <= 0) {
+    return formatImagePricePreview(0);
+  }
+  return formatImagePricePreview(price);
+};
+
+const createGrokModerationRefusalPreview = computed(() =>
+  buildGrokModerationRefusalPreview(createForm),
+);
+const editGrokModerationRefusalPreview = computed(() =>
+  buildGrokModerationRefusalPreview(editForm),
 );
 
 const resetDisabledBatchImagePricing = (
