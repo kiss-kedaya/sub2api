@@ -423,7 +423,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		c.Next()
 	})
 	accounts.Use(h.Admin.Account.RequireAccountOwnerAccess)
-	customUsage := h.Admin.Account.NewCustomUsageHandler()
+	customUsage := h.Admin.Account.NewCustomUsageHandlerWithService(h.Admin.AccountOps.SharedCustomUsageService())
 	{
 		accounts.GET("/:id/custom-usage-config", customUsage.GetConfig)
 		accounts.PUT("/:id/custom-usage-config", customUsage.PutConfig)

@@ -5,9 +5,17 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import AccountOpsView from '../AccountOpsView.vue'
 import { useAppStore } from '@/stores/app'
-import { getAccountOpsSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, saveAccountOpsGroups, saveAccountOpsNotificationSettings, saveAccountOpsRulesBatch, saveAccountOpsRuleGroups, testAccountOpsWebhook } from '@/api/admin/accountOps'
+import { getAccountOpsSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, saveAccountOpsGroups, saveAccountOpsNotificationSettings, saveAccountOpsRulesBatch, saveAccountOpsRuleGroups, testAccountOpsWebhook, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
 const state = vi.hoisted(() => ({ auth: null as any }))
+// Channel credential writes are step-up guarded; the spec controls when the TOTP prompt is required/cancelled/blocked.
+const stepUp = vi.hoisted(() => ({ run: vi.fn(), cancelled: false, blocked: false, reason: '' }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => state.auth }))
+vi.mock('@/composables/useStepUp', () => ({
+  useStepUp: () => ({ visible: { value: false }, blockedReason: { value: '' }, run: stepUp.run, prompt: vi.fn(), onVerified: vi.fn(), onCancel: vi.fn() }),
+  isStepUpCancelled: () => stepUp.cancelled,
+  isStepUpBlocked: () => stepUp.blocked,
+  stepUpBlockReason: () => stepUp.reason
+}))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 vi.mock('vue-i18n', async importOriginal => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin/accountOps', () => ({ getAccountOpsSettings: vi.fn(), getAccountOpsEvents: vi.fn(), getAccountOpsThresholdAccounts: vi.fn(), getAccountOpsThresholdGroups: vi.fn(), saveAccountOpsNotificationSettings: vi.fn(), saveAccountOpsRulesBatch: vi.fn(), saveAccountOpsRuleGroups: vi.fn(), saveAccountOpsGroups: vi.fn(), deleteAccountOpsRule: vi.fn(), saveAccountOpsWebhook: vi.fn(), deleteAccountOpsWebhook: vi.fn(), testAccountOpsWebhook: vi.fn() }))
@@ -20,9 +28,9 @@ let router: ReturnType<typeof createRouter>
 // The router hands the view its sub-page; a memory router lets the sub-nav render real links.
 const create = (section: Section = 'overview') => {
   router = createRouter({ history: createMemoryHistory(), routes: [...Object.values(paths), '/:pathMatch(.*)*'].map(path => ({ path, component: { template: '<div />' } })) })
-  return mount(AccountOpsView, { props: { section }, global: { plugins: [createPinia(), router], stubs: { teleport: true } } })
+  return mount(AccountOpsView, { props: { section }, global: { plugins: [createPinia(), router], stubs: { teleport: true, TotpStepUpDialog: true } } })
 }
-beforeEach(() => { vi.resetAllMocks(); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.mocked(getAccountOpsSettings).mockResolvedValue(settings()); vi.mocked(getAccountOpsEvents).mockResolvedValue({ items: [], has_more: false }); vi.mocked(getAccountOpsThresholdAccounts).mockResolvedValue([]); vi.mocked(getAccountOpsThresholdGroups).mockResolvedValue([]); vi.mocked(saveAccountOpsGroups).mockResolvedValue(config); vi.mocked(saveAccountOpsRulesBatch).mockResolvedValue(config); vi.mocked(saveAccountOpsRuleGroups).mockResolvedValue(config); vi.mocked(testAccountOpsWebhook).mockResolvedValue({ ok: true }); vi.mocked(saveAccountOpsNotificationSettings).mockImplementation(async c => ({ ...config, ...c })) })
+beforeEach(() => { vi.resetAllMocks(); stepUp.cancelled = false; stepUp.blocked = false; stepUp.reason = ''; stepUp.run.mockImplementation((action: () => Promise<unknown>) => action()); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.mocked(getAccountOpsSettings).mockResolvedValue(settings()); vi.mocked(getAccountOpsEvents).mockResolvedValue({ items: [], has_more: false }); vi.mocked(getAccountOpsThresholdAccounts).mockResolvedValue([]); vi.mocked(getAccountOpsThresholdGroups).mockResolvedValue([]); vi.mocked(saveAccountOpsGroups).mockResolvedValue(config); vi.mocked(saveAccountOpsRulesBatch).mockResolvedValue(config); vi.mocked(saveAccountOpsRuleGroups).mockResolvedValue(config); vi.mocked(testAccountOpsWebhook).mockResolvedValue({ ok: true }); vi.mocked(deleteAccountOpsWebhook).mockResolvedValue(config); vi.mocked(saveAccountOpsNotificationSettings).mockImplementation(async c => ({ ...config, ...c })) })
 describe('account operations tabs and independent saves', () => {
   it('keeps previous settings and rules visible if a refresh fails', async () => {
     const wrapper = create(); await flushPromises()
@@ -268,6 +276,51 @@ describe('account operations tabs and independent saves', () => {
     expect(wrapper.find('[data-testid="account-ops-rules"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="account-ops-channels"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="notification-record"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('routes email removal and webhook test/delete through the step-up controller', async () => {
+    const hook = { id: 'hook', name: '值班通知', provider: 'custom', enabled: true, url_configured: true }
+    const channels = { ...config, recipient: 'ops@example.com', webhooks: [hook] }
+    vi.mocked(getAccountOpsSettings).mockResolvedValue({ ...settings(), config: channels } as any)
+    vi.mocked(saveAccountOpsNotificationSettings).mockImplementation(async c => ({ ...channels, ...c }))
+    vi.mocked(deleteAccountOpsWebhook).mockResolvedValue({ ...channels, webhooks: [] } as any)
+    const wrapper = create('channels'); await flushPromises()
+    await wrapper.get('[data-testid="delete-email-channel"]').trigger('click'); await flushPromises()
+    expect(stepUp.run).toHaveBeenCalledTimes(1)
+    expect(saveAccountOpsNotificationSettings).toHaveBeenCalledWith({ recipient: '', email_name: '' })
+    await wrapper.get('[data-testid="account-ops-webhook-test-hook"]').trigger('click'); await flushPromises()
+    expect(stepUp.run).toHaveBeenCalledTimes(2)
+    expect(testAccountOpsWebhook).toHaveBeenCalledWith('hook')
+    await (wrapper.vm as any).removeWebhook('hook'); await flushPromises()
+    expect(stepUp.run).toHaveBeenCalledTimes(3)
+    expect(deleteAccountOpsWebhook).toHaveBeenCalledWith('hook')
+    expect((wrapper.vm as any).testingId).toBe(null)
+    wrapper.unmount()
+  })
+  it('does not toast an error when the TOTP prompt is cancelled', async () => {
+    vi.mocked(getAccountOpsSettings).mockResolvedValue({ ...settings(), config: { ...config, recipient: 'ops@example.com', webhooks: [{ id: 'hook', name: '值班通知', provider: 'custom', enabled: true, url_configured: true }] } } as any)
+    const wrapper = create('channels'); await flushPromises()
+    stepUp.cancelled = true
+    stepUp.run.mockRejectedValue(new Error('cancelled'))
+    await wrapper.get('[data-testid="account-ops-webhook-test-hook"]').trigger('click'); await flushPromises()
+    expect((wrapper.vm as any).testingId).toBe(null)
+    expect(useAppStore().toasts.some(toast => toast.type === 'error')).toBe(false)
+    await wrapper.get('[data-testid="delete-email-channel"]').trigger('click'); await flushPromises()
+    expect(useAppStore().toasts.some(toast => toast.type === 'error')).toBe(false)
+    expect(wrapper.get('[data-testid="account-ops-email-channel"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+  it('reports step-up blocked reasons instead of the raw API error', async () => {
+    vi.mocked(getAccountOpsSettings).mockResolvedValue({ ...settings(), config: { ...config, recipient: 'ops@example.com', webhooks: [{ id: 'hook', name: '值班通知', provider: 'custom', enabled: true, url_configured: true }] } } as any)
+    const wrapper = create('channels'); await flushPromises()
+    stepUp.blocked = true
+    stepUp.reason = 'STEP_UP_TOTP_NOT_ENABLED'
+    stepUp.run.mockRejectedValue(new Error('This operation requires recent two-factor verification'))
+    await wrapper.get('[data-testid="delete-email-channel"]').trigger('click'); await flushPromises()
+    expect(useAppStore().toasts.at(-1)).toMatchObject({ type: 'error', message: 'stepUp.notEnabled' })
+    stepUp.reason = 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+    await wrapper.get('[data-testid="account-ops-webhook-test-hook"]').trigger('click'); await flushPromises()
+    expect(useAppStore().toasts.at(-1)).toMatchObject({ type: 'error', message: 'stepUp.adminApiKeyForbidden' })
     wrapper.unmount()
   })
 })

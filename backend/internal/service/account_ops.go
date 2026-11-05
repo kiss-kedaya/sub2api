@@ -99,6 +99,8 @@ type AccountOpsService struct {
 	usageLogs              UsageLogRepository
 	geminiQuota            *GeminiQuotaService
 	accounts               AccountRepository
+	customUsage            *CustomUsageService
+	customUsageOnce        sync.Once
 	usageCache             *UsageCache
 	encryptor              SecretEncryptor
 	fixedKey               bool
@@ -124,6 +126,29 @@ func NewAccountOpsService(settings SettingRepository, repo AccountOpsRepository,
 	s := &AccountOpsService{settings: settings, repo: repo, email: email, queue: make(chan AccountOpsEvent, 256), timezone: time.FixedZone("Asia/Shanghai", 8*3600), robotLast: make(map[string]time.Time)}
 	s.config.Store(defaultAccountOpsConfig())
 	return s
+}
+
+// SetCustomUsageService attaches the process-wide custom usage reader. Account
+// rules and the admin account page must share one instance: a second cache would
+// query the same upstream twice per interval and could disagree about freshness.
+func (s *AccountOpsService) SetCustomUsageService(usage *CustomUsageService) {
+	if s != nil {
+		s.customUsage = usage
+	}
+}
+
+// CustomUsageService returns the shared custom usage reader, creating it from
+// the account repository only when wiring did not attach one.
+func (s *AccountOpsService) CustomUsageService() *CustomUsageService {
+	if s == nil {
+		return nil
+	}
+	s.customUsageOnce.Do(func() {
+		if s.customUsage == nil {
+			s.customUsage = NewCustomUsageService(s.accounts)
+		}
+	})
+	return s.customUsage
 }
 func (s *AccountOpsService) GetConfig(ctx context.Context) (AccountOpsConfig, error) {
 	s.settingsMu.Lock()
