@@ -144,6 +144,31 @@ func GroupFromService(g *service.Group) *Group {
 	return GroupFromServiceShallow(g)
 }
 
+// ApplyGroupSignals copies the viewer-specific display hints onto a group DTO.
+// A zero GroupSignals leaves the DTO untouched, so the JSON stays unchanged.
+func ApplyGroupSignals(out *Group, signals service.GroupSignals) {
+	if out == nil {
+		return
+	}
+	if change := signals.RecentRateChange; change != nil {
+		out.RecentRateChange = &GroupRecentRateChange{
+			Direction:    string(change.Direction),
+			Delta:        change.Delta,
+			PreviousRate: change.PreviousRate,
+			ChangedAt:    change.ChangedAt.UTC(),
+		}
+	}
+	if signals.IsNew {
+		out.IsNew = true
+		launchedAt := signals.LaunchedAt.UTC()
+		out.LaunchedAt = &launchedAt
+		if signals.LaunchRate != nil {
+			rate := *signals.LaunchRate
+			out.LaunchRate = &rate
+		}
+	}
+}
+
 // GroupFromServiceAdmin converts a service Group to DTO for admin users.
 // It includes internal fields like model_routing and account_count.
 func GroupFromServiceAdmin(g *service.Group) *AdminGroup {

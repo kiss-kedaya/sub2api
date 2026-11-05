@@ -150,11 +150,17 @@
           </template>
 
           <template #cell-group="{ row }">
-            <div class="group/dropdown relative">
+            <!-- The cell is the click target; the real <button> inside is the keyboard stop. The rate hints sit
+                 beside the rate and are separate controls, so they cannot live inside that button. -->
+            <div
+              :ref="(el) => setGroupButtonRef(row.id, el)"
+              data-group-cell
+              class="group/dropdown relative -mx-2 -my-1 flex w-fit max-w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
+              @click="onGroupCellClick($event, row)"
+            >
               <button
-                :ref="(el) => setGroupButtonRef(row.id, el)"
-                @click="openGroupSelector(row)"
-                class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
+                type="button"
+                class="flex items-center gap-2 text-left"
                 :title="isSmartRoutingKey(row) ? t('keys.smartRoutingChangeInEditor') : t('keys.clickToChangeGroup')"
               >
                 <GroupBadge
@@ -173,25 +179,30 @@
                 />
                 <UBadge v-else-if="primaryGroupId(row) != null" color="neutral" variant="subtle" size="sm" data-test="key-bound-group" :data-group-id="primaryGroupId(row)">#{{ primaryGroupId(row) }}</UBadge>
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noGroup') }}</span>
-                <UBadge v-if="isSmartRoutingKey(row)" color="primary" variant="subtle" size="sm" data-test="key-smart-routing-count">
-                  {{ t('keys.smartRouting') }}
-                  {{ t('keys.smartRoutingMore', { count: keyGroupIds(row).length - 1 }) }}
-                </UBadge>
-                <span v-else class="text-xs text-muted">{{ t('keys.selectGroup') }}</span>
-                <svg
-                  class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M8.25 15L12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9"
-                  />
-                </svg>
               </button>
+              <GroupRateSignals
+                :signals="availableGroupsById.get(primaryGroupId(row) ?? -1)"
+                :show-rate-change="showRateChangeFor(groupForKey(row, primaryGroupId(row)))"
+              />
+              <UBadge v-if="isSmartRoutingKey(row)" color="primary" variant="subtle" size="sm" data-test="key-smart-routing-count">
+                {{ t('keys.smartRouting') }}
+                {{ t('keys.smartRoutingMore', { count: keyGroupIds(row).length - 1 }) }}
+              </UBadge>
+              <span v-else class="text-xs text-muted">{{ t('keys.selectGroup') }}</span>
+              <svg
+                class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                aria-hidden="true"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M8.25 15L12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9"
+                />
+              </svg>
             </div>
           </template>
 
@@ -694,6 +705,8 @@
                 :peak-end="(option as unknown as GroupOption).peakEnd"
                 :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
                 :description="(option as unknown as GroupOption).description"
+                :signals="(option as unknown as GroupOption).signals"
+                :show-rate-change="(option as unknown as GroupOption).showRateChange"
                 :selected="selected"
               />
             </template>
@@ -1203,6 +1216,8 @@
               :peak-end="option.peakEnd"
               :peak-rate-multiplier="option.peakRateMultiplier"
               :description="option.description"
+              :signals="option.signals"
+              :show-rate-change="option.showRateChange"
               :selected="
                 selectedKeyForGroup?.group_id === option.value ||
                 (!selectedKeyForGroup?.group_id && option.value === null)
@@ -1253,10 +1268,12 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+	import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
 	import PlatformIcon from '@/components/common/PlatformIcon.vue'
 	import UserPageHeader from '@/components/user/UserPageHeader.vue'
 	import type { ApiKey, CustomEndpoint, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
+import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
@@ -1294,6 +1311,8 @@ interface GroupOption {
   peakRateMultiplier: number
   subscriptionType: SubscriptionType
   platform: GroupPlatform
+  signals: GroupSignalSource
+  showRateChange: boolean
 }
 
 const appStore = useAppStore()
@@ -1584,6 +1603,10 @@ const onStatusFilterChange = (value: string | number | boolean | null) => {
   onFilterChange()
 }
 
+// A subscription group's badge shows a label instead of a per-token rate, so an arrow beside it would point at nothing.
+const showRateChangeFor = (group: Pick<Group, 'subscription_type'> | undefined): boolean =>
+  group?.subscription_type !== 'subscription'
+
 // Convert groups to Select options format with rate multiplier and subscription type
 const groupOptions = computed(() =>
   groups.value.map((group) => ({
@@ -1597,7 +1620,9 @@ const groupOptions = computed(() =>
     peakEnd: group.peak_end,
     peakRateMultiplier: group.peak_rate_multiplier,
     subscriptionType: group.subscription_type,
-    platform: group.platform
+    platform: group.platform,
+    signals: group,
+    showRateChange: showRateChangeFor(group)
   }))
 )
 
@@ -1939,6 +1964,13 @@ const toggleKeyStatus = async (key: ApiKey) => {
   } catch (error) {
     appStore.showError(t('keys.failedToUpdateStatus'))
   }
+}
+
+// The rate hints in the cell are their own controls (tap or hover opens their detail), so a click on them must not
+// also open the group selector.
+const onGroupCellClick = (event: MouseEvent, key: ApiKey) => {
+  if (event.target instanceof Element && event.target.closest('[data-group-signals]')) return
+  openGroupSelector(key)
 }
 
 const openGroupSelector = (key: ApiKey) => {
