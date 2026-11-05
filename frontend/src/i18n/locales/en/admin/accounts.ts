@@ -335,6 +335,7 @@ export default {
         syncRateHint: 'Update the account rate after each successful probe, using the base rate excluding peak hours. Failed probes or declarations outside the allowed range leave it unchanged. Enabling this also turns on "Automatically probe upstream declared rate".',
         syncRateManagedHint: 'The current rate is maintained automatically from the upstream declared base rate (excluding peak hours).',
         syncedRateTooltip: 'This account rate is synchronized from the upstream declared base rate (excluding peak hours)',
+        sameAsAccount: 'Same as account',
         manualProbe: 'Probe upstream rate now',
         stale: 'Stale',
         unsupported: 'Unsupported',

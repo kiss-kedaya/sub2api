@@ -357,4 +357,39 @@ describe('UpstreamBillingRateCell', () => {
     )
     expect(wrapper.text()).not.toContain('-admin.accounts.upstreamBilling.unsupported')
   })
+
+  describe('with rate sync on', () => {
+    const synced = (sync: boolean) => makeAccount({
+      rate_multiplier: 0.6,
+      extra: {
+        upstream_billing_rate_sync_enabled: sync,
+        upstream_billing_probe_enabled: true,
+        upstream_billing_probe: {
+          status: 'ok',
+          data: billingData,
+          received_at: '2026-07-13T00:00:00Z',
+          fresh_until: '2026-07-14T00:00:00Z',
+          last_attempt_at: '2026-07-13T00:00:00Z',
+          next_probe_at: '2026-07-13T00:30:00Z'
+        }
+      }
+    })
+
+    it('says "same as account" instead of repeating the number off peak', () => {
+      const wrapper = mount(UpstreamBillingRateCell, { props: { account: synced(true), now: Date.now() } })
+      expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.sameAsAccount')
+      expect(wrapper.text()).not.toContain('0.60x')
+      expect(wrapper.find('[data-testid="upstream-billing-probe"]').exists()).toBe(true)
+    })
+
+    it('shows the number again once peak pricing makes it differ from the account rate', () => {
+      const wrapper = mount(UpstreamBillingRateCell, { props: { account: synced(true), now: Date.parse('2026-07-13T01:00:00Z') } })
+      expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.90x')
+    })
+
+    it('keeps the number when the account rate is not synced from upstream', () => {
+      const wrapper = mount(UpstreamBillingRateCell, { props: { account: synced(false), now: Date.now() } })
+      expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.60x')
+    })
+  })
 })

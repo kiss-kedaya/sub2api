@@ -275,89 +275,19 @@
           </template>
 
           <template #cell-rate_limit="{ row }">
-            <div v-if="row.rate_limit_5h > 0 || row.rate_limit_1d > 0 || row.rate_limit_7d > 0" class="space-y-1.5 min-w-[140px]">
-              <!-- 5h window -->
-              <div v-if="row.rate_limit_5h > 0">
+            <div v-if="rateLimitWindows(row).length" class="space-y-1.5 min-w-[140px]">
+              <div v-for="w in rateLimitWindows(row)" :key="w.label">
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">5h</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_5h >= row.rate_limit_5h ? 'text-red-500' :
-                    row.usage_5h >= row.rate_limit_5h * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
-                    ${{ row.usage_5h?.toFixed(2) || '0.00' }}/${{ row.rate_limit_5h?.toFixed(2) }}
+                  <span class="text-gray-500 dark:text-gray-400">{{ w.label }}</span>
+                  <span :class="['font-medium tabular-nums', RATE_LIMIT_TEXT_CLASS[w.tone]]">
+                    ${{ w.used.toFixed(2) }}/${{ w.limit.toFixed(2) }}
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_5h >= row.rate_limit_5h ? 'bg-red-500' :
-                      row.usage_5h >= row.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
-                    ]"
-                    :style="{ width: Math.min((row.usage_5h / row.rate_limit_5h) * 100, 100) + '%' }"
-                  />
+                  <div :class="['h-full rounded-full transition-all', RATE_LIMIT_BAR_CLASS[w.tone]]" :style="{ width: w.percent + '%' }" />
                 </div>
-                <div v-if="row.reset_5h_at && formatResetTime(row.reset_5h_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-                  ⟳ {{ formatResetTime(row.reset_5h_at) }}
-                </div>
-              </div>
-              <!-- 1d window -->
-              <div v-if="row.rate_limit_1d > 0">
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">1d</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_1d >= row.rate_limit_1d ? 'text-red-500' :
-                    row.usage_1d >= row.rate_limit_1d * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
-                    ${{ row.usage_1d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_1d?.toFixed(2) }}
-                  </span>
-                </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_1d >= row.rate_limit_1d ? 'bg-red-500' :
-                      row.usage_1d >= row.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
-                    ]"
-                    :style="{ width: Math.min((row.usage_1d / row.rate_limit_1d) * 100, 100) + '%' }"
-                  />
-                </div>
-                <div v-if="row.reset_1d_at && formatResetTime(row.reset_1d_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-                  ⟳ {{ formatResetTime(row.reset_1d_at) }}
-                </div>
-              </div>
-              <!-- 7d window -->
-              <div v-if="row.rate_limit_7d > 0">
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">7d</span>
-                  <span :class="[
-                    'font-medium tabular-nums',
-                    row.usage_7d >= row.rate_limit_7d ? 'text-red-500' :
-                    row.usage_7d >= row.rate_limit_7d * 0.8 ? 'text-yellow-500' :
-                    'text-gray-700 dark:text-gray-300'
-                  ]">
-                    ${{ row.usage_7d?.toFixed(2) || '0.00' }}/${{ row.rate_limit_7d?.toFixed(2) }}
-                  </span>
-                </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div
-                    :class="[
-                      'h-full rounded-full transition-all',
-                      row.usage_7d >= row.rate_limit_7d ? 'bg-red-500' :
-                      row.usage_7d >= row.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
-                      'bg-emerald-500'
-                    ]"
-                    :style="{ width: Math.min((row.usage_7d / row.rate_limit_7d) * 100, 100) + '%' }"
-                  />
-                </div>
-                <div v-if="row.reset_7d_at && formatResetTime(row.reset_7d_at)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-                  ⟳ {{ formatResetTime(row.reset_7d_at) }}
+                <div v-if="w.resetAt && formatResetTime(w.resetAt)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                  ⟳ {{ formatResetTime(w.resetAt) }}
                 </div>
               </div>
               <!-- Reset button -->
@@ -1277,6 +1207,7 @@ import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
+import { rateLimitWindows, RATE_LIMIT_BAR_CLASS, RATE_LIMIT_TEXT_CLASS } from '@/utils/keyRateLimits'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import {
   buildCcSwitchImportDeeplink,
