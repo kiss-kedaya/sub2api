@@ -1063,4 +1063,98 @@ describe('user KeysView mutations', () => {
     expect(wrapper.find('[data-test="smart-routes-list"]').exists()).toBe(true)
     wrapper.unmount()
   })
+
+  describe('rate hints in the group cell', () => {
+    const rateUp = { direction: 'up', delta: 0.02, previous_rate: 0.06, changed_at: '2026-11-04T10:30:00Z' }
+    const hintedGroup = {
+      id: 1, name: 'Claude', platform: 'anthropic', subscription_type: 'standard',
+      recent_rate_change: rateUp, is_new: true, launched_at: '2026-11-05T01:00:00Z', launch_rate: 0.06,
+    }
+    const selectorSearch = 'input[placeholder="keys.searchGroup"]'
+
+    const mountWithHints = async (groups: Array<Record<string, unknown>>, key: Partial<ApiKey> = {}) => {
+      getAvailableGroups.mockResolvedValue(groups)
+      listKeys.mockResolvedValue({
+        items: [{ ...createApiKey(), group_id: 1, ...key }],
+        total: 1,
+        page: 1,
+        page_size: 20,
+        pages: 1,
+      })
+      return mountView()
+    }
+
+    it('puts the hints right after the trigger button instead of inside it', async () => {
+      const wrapper = await mountWithHints([hintedGroup])
+      const cell = wrapper.get('[data-group-cell]').element
+      const signals = cell.querySelector('[data-group-signals]')
+
+      expect(signals).not.toBeNull()
+      expect(signals?.parentElement).toBe(cell)
+      expect(cell.querySelector('button [data-group-signals]')).toBeNull()
+      const children = Array.from(cell.children)
+      expect(children[0].tagName).toBe('BUTTON')
+      expect(children[1]).toBe(signals)
+      expect(signals?.querySelector('[data-testid="group-rate-signal-rate"]')?.tagName).toBe('BUTTON')
+      expect(signals?.querySelector('[data-testid="group-rate-signal-new"]')).not.toBeNull()
+      wrapper.unmount()
+    })
+
+    it('reads the hints from the available groups, not from the group embedded in the key', async () => {
+      const wrapper = await mountWithHints([hintedGroup], {
+        group: { id: 1, name: 'Claude', platform: 'anthropic' } as ApiKey['group'],
+      })
+      expect(wrapper.find('[data-testid="group-rate-signal-rate"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('shows nothing for a group without hints', async () => {
+      const wrapper = await mountWithHints([{ id: 1, name: 'Claude', platform: 'anthropic' }])
+      expect(wrapper.find('[data-group-signals]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('keeps a click on a hint from opening the group selector, while the rest of the cell still does', async () => {
+      const wrapper = await mountWithHints([hintedGroup])
+      expect(wrapper.find(selectorSearch).exists()).toBe(false)
+
+      // Assert after each click: the selector toggles, so two clicks in a row would hide a bug.
+      await wrapper.get('[data-testid="group-rate-signal-rate"]').trigger('click')
+      expect(wrapper.find(selectorSearch).exists()).toBe(false)
+      await wrapper.get('[data-testid="group-rate-signal-new"]').trigger('click')
+      expect(wrapper.find(selectorSearch).exists()).toBe(false)
+
+      await wrapper.get('[data-group-cell] > button').trigger('click')
+      expect(wrapper.find(selectorSearch).exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('opens the group selector from the empty end of the cell too', async () => {
+      const wrapper = await mountWithHints([hintedGroup])
+      await wrapper.get('[data-group-cell]').trigger('click')
+      expect(wrapper.find(selectorSearch).exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('drops only the arrow for a subscription group, which shows a label instead of a rate', async () => {
+      const wrapper = await mountWithHints([{ ...hintedGroup, subscription_type: 'subscription' }])
+      expect(wrapper.find('[data-testid="group-rate-signal-rate"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="group-rate-signal-new"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('shows the hints of the primary route only for a smart-routing key', async () => {
+      const wrapper = await mountWithHints(
+        [
+          { id: 1, name: 'Claude', platform: 'anthropic', recent_rate_change: rateUp },
+          { id: 2, name: 'GPT', platform: 'openai', is_new: true, launched_at: '2026-11-05T01:00:00Z' },
+        ],
+        { group_id: 1, group_ids: [1, 2] },
+      )
+      expect(wrapper.findAll('[data-group-signals]')).toHaveLength(1)
+      expect(wrapper.find('[data-testid="group-rate-signal-rate"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="group-rate-signal-new"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+  })
 })

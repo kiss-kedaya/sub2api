@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MonitorHealth, MonitorMatrixRow, MonitorMetric } from '@/api/channelMonitorV2'
-import type { GroupRateChange } from '@/features/channel-monitor-v2/groupSignals'
+import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import ChannelMonitorV3Card from '../ChannelMonitorV3Card.vue'
 
 vi.mock('vue-i18n', async () => {
@@ -56,22 +56,9 @@ function row(overall: MonitorHealth['overall']): MonitorMatrixRow {
   }
 }
 
-function rateChange(direction: 'up' | 'down'): GroupRateChange {
-  const previous = direction === 'up' ? 0.06 : 0.11
-  const current = direction === 'up' ? 0.09 : 0.09
-  return {
-    direction,
-    previous,
-    current,
-    delta: current - previous,
-    changedAt: '2026-11-01T12:00:00Z',
-  }
-}
-
 function mountCard(options: {
   overall?: MonitorHealth['overall']
-  isNew?: boolean
-  rateChange?: GroupRateChange | null
+  signals?: GroupSignalSource | null
 } = {}) {
   return mount(ChannelMonitorV3Card, {
     attachTo: document.body,
@@ -79,8 +66,8 @@ function mountCard(options: {
       row: row(options.overall ?? 'healthy'),
       countdownSeconds: 0,
       timelineLength: 12,
-      isNew: options.isNew ?? false,
-      rateChange: options.rateChange ?? null,
+      userRateMultiplier: 0.08,
+      signals: options.signals ?? null,
     },
     global: {
       stubs: {
@@ -90,6 +77,14 @@ function mountCard(options: {
     },
   })
 }
+
+const rateUp: GroupSignalSource = {
+  recent_rate_change: { direction: 'up', delta: 0.03, previous_rate: 0.06, changed_at: '2026-11-01T12:00:00Z' },
+}
+const rateDown: GroupSignalSource = {
+  recent_rate_change: { direction: 'down', delta: 0.02, previous_rate: 0.11, changed_at: '2026-11-01T12:00:00Z' },
+}
+const newGroup: GroupSignalSource = { is_new: true, launched_at: '2026-11-05T01:00:00Z', launch_rate: 0.06 }
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -106,49 +101,60 @@ describe('ChannelMonitorV3Card freshness and rate signals', () => {
     }
   })
 
-  it('shows the NEW badge only for a group created within 24h', () => {
-    const fresh = mountCard({ isNew: true })
-    expect(fresh.get('[data-testid="channel-status-new-badge"]').text()).toBe('NEW')
+  it('shows the NEW marker beside the rate only for a group the backend flags as new', () => {
+    const fresh = mountCard({ signals: newGroup })
+    expect(fresh.get('[data-testid="group-rate-signal-new"]').exists()).toBe(true)
+    expect(fresh.get('[data-testid="group-rate-signal-new"]').text()).toBe('groupSignals.newBadge')
     fresh.unmount()
 
-    const old = mountCard({ isNew: false })
-    expect(old.find('[data-testid="channel-status-new-badge"]').exists()).toBe(false)
+    const old = mountCard({ signals: { is_new: false } })
+    expect(old.find('[data-testid="group-rate-signal-new"]').exists()).toBe(false)
     old.unmount()
   })
 
-  it('renders a red up arrow with the delta for a rate increase', () => {
-    const wrapper = mountCard({ rateChange: rateChange('up') })
-    const badge = wrapper.get('[data-testid="channel-status-rate-change"]')
-    expect(badge.text()).toContain('+0.03x')
-    const chip = wrapper.get('[data-testid="channel-status-rate-change-chip"]')
+  it('keeps the signals in the meta row, right after the user rate chip', () => {
+    const wrapper = mountCard({ signals: rateUp })
+    const meta = wrapper.get('.channel-signal-card__meta')
+    const kids = Array.from(meta.element.children)
+    const rateChip = kids.findIndex((el) => el.textContent?.includes('channelMonitorV3.userRate'))
+    const signals = kids.findIndex((el) => el.getAttribute('data-testid') === 'group-rate-signals')
+    expect(rateChip).toBeGreaterThanOrEqual(0)
+    expect(signals).toBe(rateChip + 1)
+    expect(wrapper.find('.channel-signal-card__header > [data-testid="group-rate-signals"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('renders an up arrow in the warning tone for a rate increase', () => {
+    const wrapper = mountCard({ signals: rateUp })
+    const chip = wrapper.get('[data-testid="group-rate-signal-rate"]')
     expect(chip.attributes('data-direction')).toBe('up')
-    expect(chip.classes().join(' ')).toContain('text-red-600')
-    expect(chip.classes().join(' ')).not.toContain('text-emerald-600')
+    expect(chip.text()).toContain('0.03')
+    expect(chip.classes()).toContain('text-warning-700')
+    expect(chip.classes()).not.toContain('text-success-700')
     wrapper.unmount()
   })
 
-  it('renders a green down arrow with the delta for a rate decrease', () => {
-    const wrapper = mountCard({ rateChange: rateChange('down') })
-    const badge = wrapper.get('[data-testid="channel-status-rate-change"]')
-    expect(badge.text()).toContain('-0.02x')
-    const chip = wrapper.get('[data-testid="channel-status-rate-change-chip"]')
+  it('renders a down arrow in the success tone for a rate decrease', () => {
+    const wrapper = mountCard({ signals: rateDown })
+    const chip = wrapper.get('[data-testid="group-rate-signal-rate"]')
     expect(chip.attributes('data-direction')).toBe('down')
-    expect(chip.classes().join(' ')).toContain('text-emerald-600')
+    expect(chip.text()).toContain('0.02')
+    expect(chip.classes()).toContain('text-success-700')
     wrapper.unmount()
   })
 
-  it('hides the rate signal when no change is available', () => {
+  it('hides every signal when the backend sends none', () => {
     const wrapper = mountCard()
-    expect(wrapper.find('[data-testid="channel-status-rate-change"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="group-rate-signals"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="group-rate-signal-rate"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="group-rate-signal-new"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('explains the rate change on hover', async () => {
-    const wrapper = mountCard({ rateChange: rateChange('up') })
-    await wrapper.get('[data-testid="channel-status-rate-change"]').trigger('mouseenter')
-    await new Promise(resolve => setTimeout(resolve, 0))
-    const tooltip = document.body.querySelector('[role="tooltip"]')
-    expect(tooltip?.textContent).toContain('channelMonitorV3.rateChangeTip')
+  it('shows both markers when a new group was also repriced', () => {
+    const wrapper = mountCard({ signals: { ...newGroup, ...rateUp } })
+    expect(wrapper.find('[data-testid="group-rate-signal-rate"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="group-rate-signal-new"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })

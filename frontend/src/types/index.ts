@@ -671,10 +671,22 @@ export interface Group {
   require_privacy_set: boolean
   created_at: string
   updated_at: string
-  // 渠道状态卡片信号：生效倍率最近一次变动的时间与变动前的倍率。
-  // 后端为可选增量字段；缺失时前端不渲染倍率箭头（不用 updated_at 反推，避免误报）。
-  rate_multiplier_changed_at?: string | null
-  previous_rate_multiplier?: number | null
+  // 展示提示（仅 GET /groups/available 返回，不影响计费）。
+  // recent_rate_change：最近 48 小时内分组基础倍率的最近一次调整；
+  // 当前用户有专属倍率时后端不返回（专属倍率不跟随基础倍率）。
+  // is_new / launched_at / launch_rate：创建不足 24 小时的新分组。
+  recent_rate_change?: GroupRecentRateChange | null
+  is_new?: boolean
+  launched_at?: string | null
+  launch_rate?: number | null
+}
+
+export interface GroupRecentRateChange {
+  direction: 'up' | 'down'
+  // 调整幅度的绝对值；方向由 direction 表示。
+  delta: number
+  previous_rate: number
+  changed_at: string
 }
 
 export interface AdminGroup extends Group {

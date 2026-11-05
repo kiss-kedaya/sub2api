@@ -42,3 +42,36 @@ describe('GroupOptionItem description layout', () => {
     expect(wrapper.find('[title]').attributes('title')).toBe(description)
   })
 })
+
+describe('GroupOptionItem rate hints', () => {
+  const mountItem = (props: Record<string, unknown> = {}) =>
+    mount(GroupOptionItem, {
+      props: { name: 'Example group', platform: 'openai', rateMultiplier: 0.08, ...props },
+      global: { stubs: { GroupBadge: true } },
+    })
+
+  const hints = {
+    recent_rate_change: { direction: 'down' as const, delta: 0.03, previous_rate: 0.11, changed_at: '2026-11-04T10:30:00Z' },
+    is_new: true,
+    launched_at: '2026-11-05T01:00:00Z',
+    launch_rate: 0.08,
+  }
+
+  it('renders the hints as passive badges, never as a nested control', () => {
+    const wrapper = mountItem({ signals: hints })
+    expect(wrapper.find('[data-testid="group-rate-signal-rate"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="group-rate-signal-new"]').exists()).toBe(true)
+    expect(wrapper.find('button').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="group-rate-signal-rate"]').attributes('role')).toBe('img')
+  })
+
+  it('shows no hint without signals', () => {
+    expect(mountItem().find('[data-group-signals]').exists()).toBe(false)
+  })
+
+  it('leaves out the arrow when the host shows no per-token rate', () => {
+    const wrapper = mountItem({ signals: hints, showRateChange: false })
+    expect(wrapper.find('[data-testid="group-rate-signal-rate"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="group-rate-signal-new"]').exists()).toBe(true)
+  })
+})

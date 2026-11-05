@@ -230,16 +230,18 @@
     text-align: left;
   }
 
-  .console-signal .signal-keys [data-field='group'] button {
+  /* The group cell holds the trigger button, the rate hint chips and the selector chevron as siblings.
+     Target the cell itself: a bare `button` / `button > svg` would also catch the hint chips and hide their arrow. */
+  .console-signal .signal-keys [data-field='group'] [data-group-cell] {
     flex-wrap: wrap;
     max-width: 100%;
   }
 
-  .console-signal .signal-keys [data-field='group'] button > span {
+  .console-signal .signal-keys [data-field='group'] [data-group-cell] > span {
     white-space: nowrap;
   }
 
-  .console-signal .signal-keys [data-field='group'] button > svg {
+  .console-signal .signal-keys [data-field='group'] [data-group-cell] > svg {
     display: none;
   }
 

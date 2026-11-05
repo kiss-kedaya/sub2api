@@ -9,37 +9,9 @@
         <div class="channel-signal-card__meta mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
           <span v-if="showPlatformBadge" class="rounded-md px-1.5 py-0.5 text-[10px] font-medium" :class="providerBadgeClass(row.platform)">{{ providerLabel(row.platform) }}</span>
           <span class="rounded-md bg-primary-50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary-700 dark:bg-dark-700 dark:text-gray-300">{{ t('channelMonitorV3.userRate') }} {{ formattedUserRate }}</span>
-          <HelpTooltip
-            v-if="rateChange"
-            data-testid="channel-status-rate-change"
-            :content="rateChangeTooltip"
-            width-class="w-56"
-          >
-            <template #trigger>
-              <span
-                class="inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 font-mono text-[10px] font-semibold tabular-nums"
-                :class="rateChangeClass"
-                data-testid="channel-status-rate-change-chip"
-                :data-direction="rateChange.direction"
-              >
-                <UIcon :name="rateChangeIcon" class="size-3" />
-                {{ rateChangeLabel }}
-              </span>
-            </template>
-          </HelpTooltip>
+          <GroupRateSignals :signals="signals" />
         </div>
       </div>
-      <HelpTooltip
-        v-if="isNew"
-        data-testid="channel-status-new-badge"
-        class="shrink-0"
-        :content="t('channelMonitorV3.newGroupTip')"
-        width-class="w-56"
-      >
-        <template #trigger>
-          <span class="inline-flex shrink-0 items-center rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-700 ring-1 ring-primary-500/15 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-400/20">NEW</span>
-        </template>
-      </HelpTooltip>
     </header>
 
     <div class="channel-signal-card__metrics mt-5 grid grid-cols-3 gap-2">
@@ -76,10 +48,9 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitorMatrixRow } from '@/api/channelMonitorV2'
 import { availabilityTextClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
-import type { GroupRateChange } from '@/features/channel-monitor-v2/groupSignals'
-import { formatRateDelta } from '@/features/channel-monitor-v2/groupSignals'
+import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import { providerGradient, useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
-import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
 import ProviderIcon from './ProviderIcon.vue'
 import ChannelMonitorV3Timeline from './ChannelMonitorV3Timeline.vue'
 import ChannelMonitorV3QualityHistory from './ChannelMonitorV3QualityHistory.vue'
@@ -90,15 +61,13 @@ const props = withDefaults(defineProps<{
   timelineLength: number
   userRateMultiplier?: number | null
   showPlatformBadge?: boolean
-  /** Group created inside the trailing 24h window (resolved by the view). */
-  isNew?: boolean
-  /** Effective-rate change inside the trailing 24h window (resolved by the view). */
-  rateChange?: GroupRateChange | null
+  /** Display hints of the group (recent rate change, new group) from GET /groups/available. */
+  signals?: GroupSignalSource | null
 }>(), {
   showPlatformBadge: true,
-  isNew: false,
+  signals: null,
 })
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { providerLabel, providerBadgeClass } = useChannelMonitorFormat()
 
 const groupLabel = computed(() => props.row.group_name || t('channelMonitorV3.unknownGroup'))
@@ -106,27 +75,6 @@ const formattedUserRate = computed(() => {
   const value = props.userRateMultiplier
   return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}x` : '-'
 })
-const rateChangeLabel = computed(() => (props.rateChange ? `${formatRateDelta(props.rateChange.delta)}x` : ''))
-const rateChangeIcon = computed(() => (props.rateChange?.direction === 'up'
-  ? 'i-lucide-arrow-up-right'
-  : 'i-lucide-arrow-down-right'))
-const rateChangeClass = computed(() => (props.rateChange?.direction === 'up'
-  ? 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400'
-  : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'))
-const rateChangeTooltip = computed(() => {
-  const change = props.rateChange
-  if (!change) return ''
-  return t('channelMonitorV3.rateChangeTip', {
-    previous: `${change.previous.toFixed(2)}x`,
-    current: `${change.current.toFixed(2)}x`,
-    time: formatChangedAt(change.changedAt),
-  })
-})
-function formatChangedAt(value: string): string {
-  const parsed = Date.parse(value)
-  if (!Number.isFinite(parsed)) return '-'
-  return new Intl.DateTimeFormat(locale?.value || undefined, { dateStyle: 'short', timeStyle: 'short' }).format(parsed)
-}
 const latestBucket = computed(() => [...props.row.buckets]
   .filter(bucket => bucket.bucket_start && bucket.metrics)
   .sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
