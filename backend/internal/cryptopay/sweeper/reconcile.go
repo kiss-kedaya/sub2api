@@ -57,6 +57,11 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 		out.Message = "job already final; nothing to reconcile"
 		return out, nil
 	}
+	// saveJob only writes version 1 rows, so a reconcile of anything else could
+	// read the chain but never record what it found. Say so up front.
+	if job.Version != 1 {
+		return nil, ErrLegacySweepRecord
+	}
 	pool := e.pools[job.Chain]
 	if pool == nil {
 		return nil, fmt.Errorf("no RPC pool for chain %s", job.Chain)
@@ -154,6 +159,10 @@ func (e *Executor) retainUnconfirmed(ctx context.Context, job *sweepJob, out *Re
 	return out, nil
 }
 
+// ErrLegacySweepRecord marks a record written before the current job format (or
+// handled by hand). It cannot be updated by the sweeper, so it cannot be reconciled.
+var ErrLegacySweepRecord = errors.New("legacy sweep record cannot be reconciled")
+
 // BlockedJob explains why an address cannot be swept yet.
 type BlockedJob struct {
 	JobID      int64  `json:"job_id"`
@@ -172,7 +181,7 @@ func (e *Executor) ListBlocked(ctx context.Context, limit int) ([]BlockedJob, er
 		limit = 50
 	}
 	rows, err := e.queries().QueryContext(ctx, `SELECT id, chain, from_address, status, error,
-		GREATEST(0, EXTRACT(EPOCH FROM (NOW()-updated_at))/60)::bigint
+		GREATEST(0, EXTRACT(EPOCH FROM (NOW()-updated_at))/60)::bigint, job_version
 		FROM sweep_records WHERE status <> 'swept'
 		AND (status <> 'failed' OR gas_tx_hash <> '' OR sweep_tx_hash <> '')
 		AND (gas_tx_hash<>'' OR sweep_tx_hash<>'')
@@ -184,11 +193,13 @@ func (e *Executor) ListBlocked(ctx context.Context, limit int) ([]BlockedJob, er
 	var out []BlockedJob
 	for rows.Next() {
 		var b BlockedJob
-		if err := rows.Scan(&b.JobID, &b.Chain, &b.Address, &b.Status, &b.Error, &b.AgeMin); err != nil {
+		var version int
+		if err := rows.Scan(&b.JobID, &b.Chain, &b.Address, &b.Status, &b.Error, &b.AgeMin, &version); err != nil {
 			return nil, err
 		}
 		b.Error = rpc.SafeRecordedError(b.Error)
-		b.CanResolve = true
+		// Reconcile can only record its findings on current-format rows.
+		b.CanResolve = version == 1
 		out = append(out, b)
 	}
 	return out, rows.Err()

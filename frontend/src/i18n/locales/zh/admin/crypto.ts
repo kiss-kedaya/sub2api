@@ -218,6 +218,7 @@ export default {
     blockedTitle: '有交易卡住了归集',
     blockedHint: '这些任务保留着已签名交易，同链新归集会等待。点「对账」只查链，不签名也不广播；暂时查不到回执时仍保留地址，后续只复用原交易字节。交易回滚或数据不完整时转人工复核。',
     blockedAge: '卡住时长',
+    reconcileLegacy: '旧记录，人工处置过，不能在这里对账',
     reconcile: '对账',
     sweepRun: '执行归集',
     sweepRunning: '归集任务正在后台处理',

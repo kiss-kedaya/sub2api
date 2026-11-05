@@ -482,10 +482,26 @@ func (h *CryptoHandler) AdminReconcileSweep(c *gin.Context) {
 	}
 	result, err := h.service.ReconcileSweep(c.Request.Context(), id)
 	if err != nil {
+		if status, message, ok := reconcileRefusal(err); ok {
+			response.Error(c, status, message)
+			return
+		}
 		response.ErrorFrom(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// reconcileRefusal maps the two expected "not now / not here" answers of a
+// reconcile to a 409 with a fixed message, instead of a bare 500.
+func reconcileRefusal(err error) (int, string, bool) {
+	switch {
+	case errors.Is(err, cryptopay.ErrScanBusy):
+		return http.StatusConflict, "A sweep is running; reconcile after it finishes", true
+	case errors.Is(err, sweeper.ErrLegacySweepRecord):
+		return http.StatusConflict, "This is an old record handled by hand and cannot be reconciled here", true
+	}
+	return 0, "", false
 }
 
 // AdminListBlockedSweeps lists jobs that hold a reserved transaction and are
