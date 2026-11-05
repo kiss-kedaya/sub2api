@@ -86,6 +86,7 @@ type OpenAIImagesRequest struct {
 	SizeTier           string
 	ResponseFormat     string
 	Quality            string
+	Complexity         string
 	Background         string
 	OutputFormat       string
 	Moderation         string
@@ -272,6 +273,7 @@ func parseOpenAIImagesJSONRequest(body []byte, req *OpenAIImagesRequest) error {
 	}
 	req.ResponseFormat = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "response_format").String()))
 	req.Quality = strings.TrimSpace(gjson.GetBytes(body, "quality").String())
+	req.Complexity = strings.TrimSpace(gjson.GetBytes(body, "complexity").String())
 	req.Background = strings.TrimSpace(gjson.GetBytes(body, "background").String())
 	req.OutputFormat = strings.TrimSpace(gjson.GetBytes(body, "output_format").String())
 	req.Moderation = strings.TrimSpace(gjson.GetBytes(body, "moderation").String())
@@ -427,6 +429,9 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 		case "quality":
 			req.Quality = value
 			req.HasNativeOptions = true
+		case "complexity":
+			req.Complexity = value
+			req.HasNativeOptions = true
 		case "background":
 			req.Background = value
 			req.HasNativeOptions = true
@@ -575,6 +580,7 @@ func hasOpenAINativeImageOptions(exists func(path string) bool) bool {
 	for _, path := range []string{
 		"background",
 		"quality",
+		"complexity",
 		"style",
 		"output_format",
 		"output_compression",
@@ -593,7 +599,7 @@ func hasOpenAINativeImageOptions(exists func(path string) bool) bool {
 
 func isOpenAINativeImageOption(name string) bool {
 	switch strings.TrimSpace(strings.ToLower(name)) {
-	case "background", "quality", "style", "output_format", "output_compression", "moderation", "input_fidelity", "partial_images", "frame_count", "frame_duration_ms":
+	case "background", "quality", "complexity", "style", "output_format", "output_compression", "moderation", "input_fidelity", "partial_images", "frame_count", "frame_duration_ms":
 		return true
 	default:
 		return false
@@ -970,7 +976,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	resp *http.Response,
 	c *gin.Context,
 	startTime time.Time,
+	directRequests ...*OpenAIImagesRequest,
 ) (OpenAIUsage, int, []string, *int, error) {
+	var direct *OpenAIImagesRequest
+	if len(directRequests) > 0 {
+		direct = directRequests[0]
+	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {
@@ -997,13 +1008,73 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	var sseData openAISSEDataAccumulator
 	pendingErrorHeader := ""
 	financialTerminal := false
+	var streamErr error
+	finish := func() error {
+		if direct == nil {
+			return nil
+		}
+		if streamErr != nil {
+			return streamErr
+		}
+		if !seenSSEData || imageCounter.Count() < max(direct.N, 1) {
+			return newOpenAIUpstreamStreamReadError(ErrOpenAIUpstreamStreamTruncated)
+		}
+		return nil
+	}
 
 	processSSEData := func(dataBytes []byte) {
 		seenSSEData = true
 		fallbackBody.Reset()
 		fallbackBytes = 0
+		if direct != nil && strings.HasSuffix(gjson.GetBytes(dataBytes, "type").String(), ".completed") {
+			if size := detectOpenAIImageResultSize(gjson.GetBytes(dataBytes, "b64_json").String()); size != "" {
+				dataBytes, _ = sjson.SetBytes(dataBytes, "size", size)
+			}
+		}
 		mergeOpenAIUsage(&usage, dataBytes)
 		imageCounter.AddSSEData(dataBytes)
+		if direct == nil || string(dataBytes) == "[DONE]" {
+			return
+		}
+		if directUsage, ok := codexDirectImagesUsage(dataBytes); ok {
+			mergeOpenAIUsageNonZero(&usage, directUsage)
+		}
+		if observer := upstreamResponseModelObserverFromContext(c); observer != nil {
+			observer.Observe(gjson.GetBytes(dataBytes, "model").String(), strings.HasSuffix(gjson.GetBytes(dataBytes, "type").String(), ".completed"))
+		}
+		if upstreamErr := openAIImagesUpstreamErrorFromSSEPayload(dataBytes); upstreamErr != nil {
+			streamErr = upstreamErr
+		}
+		if !gjson.ValidBytes(dataBytes) {
+			streamErr = newOpenAIUpstreamStreamReadError(fmt.Errorf("invalid image stream JSON"))
+			return
+		}
+		eventType := gjson.GetBytes(dataBytes, "type").String()
+		// The native edit endpoint still names its events image_generation.*;
+		// keep the edit event names clients already use.
+		if strings.HasPrefix(eventType, "image_generation.") && direct.IsEdits() {
+			eventType = strings.Replace(eventType, "image_generation.", "image_edit.", 1)
+			dataBytes, _ = sjson.SetBytes(dataBytes, "type", eventType)
+		}
+		if direct.ResponseFormat == "url" {
+			b64 := gjson.GetBytes(dataBytes, "b64_json").String()
+			format := gjson.GetBytes(dataBytes, "output_format").String()
+			if format == "" {
+				format = direct.OutputFormat
+			}
+			dataBytes = codexDirectImageURL(dataBytes, "", format)
+			// The existing streaming contract keeps b64_json alongside url.
+			if b64 != "" {
+				dataBytes, _ = sjson.SetBytes(dataBytes, "b64_json", b64)
+			}
+		}
+		if !clientDisconnected {
+			if err := s.writeOpenAIImagesStreamEvent(c, flusher, eventType, dataBytes); err != nil {
+				clientDisconnected = true
+			} else {
+				lastDownstreamWriteAt = time.Now()
+			}
+		}
 	}
 
 	flushSSEEvent := func() {
@@ -1036,7 +1107,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
-		if !clientDisconnected {
+		if !clientDisconnected && direct == nil {
 			if _, writeErr := c.Writer.Write(line); writeErr != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images stream client disconnected, continue draining upstream for billing")
@@ -1063,6 +1134,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	}
 
 	finalizeFallbackBody := func() {
+		if direct != nil {
+			return
+		}
 		if seenSSEData || fallbackBody.Len() == 0 {
 			return
 		}
@@ -1094,7 +1168,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		}
 		flushSSEEvent()
 		finalizeFallbackBody()
-		return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, nil
+		return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, finish()
 	}
 
 	type readEvent struct {
@@ -1161,7 +1235,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 			if !ok {
 				flushSSEEvent()
 				finalizeFallbackBody()
-				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, nil
+				return usage, imageCounter.Count(), imageCounter.Sizes(), firstTokenMs, finish()
 			}
 			if ev.err != nil {
 				flushSSEEvent()

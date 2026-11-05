@@ -1271,6 +1271,8 @@ func TestBuiltinCatalogModelMetadataCompletesMissingOfficialIDs(t *testing.T) {
 		{"gpt-image-2.5", "GPT Image 2.5", false, []string{"text", "image"}, 16384, 16384, "", nil},
 		{"gpt-image-2.5-flare", "GPT Image 2.5 Flare", false, []string{"text", "image"}, 16384, 16384, "", nil},
 		{"gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"gpt-image-2.6-flare", "GPT Image 2.6 Flare", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"gpt-image-2.6-sunburst", "GPT Image 2.6 Sunburst", false, []string{"text", "image"}, 16384, 16384, "", nil},
 		{"gpt-image-1k-th", "GPT Image 1K TH", false, []string{"text", "image"}, 16384, 16384, "", nil},
 		{"grok-imagine-image-2.0", "Grok Imagine Image 2.0", false, []string{"text", "image"}, 64000, 16384, "", nil},
 		{"grok-imagine-video-1.5", "Grok Imagine Video 1.5", false, []string{"text", "image"}, 1024, 1024, "", nil},

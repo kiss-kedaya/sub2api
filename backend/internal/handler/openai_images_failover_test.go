@@ -161,7 +161,7 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	)
 	handler.maxAccountSwitches = 10
 
-	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","quality":"high","size":"1536x1024"}`)
+	body := []byte(`{"model":"gpt-image-1","prompt":"draw a cat","quality":"high","size":"1536x1024"}`)
 	core, observedLogs := observer.New(zap.DebugLevel)
 	requestCtx := logger.IntoContext(context.Background(), zap.New(core))
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body)).WithContext(requestCtx)
@@ -217,7 +217,7 @@ func TestOpenAIImagesSmartRouteDisabledPrimary(t *testing.T) {
 	backup := &service.Group{ID: 17, Platform: service.PlatformOpenAI, Status: service.StatusActive, Hydrated: true, AllowImageGeneration: true}
 	account := service.Account{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true, GroupIDs: []int64{17}, Credentials: map[string]any{"access_token": "synthetic"}}
 	cfg := &config.Config{RunMode: config.RunModeStandard}
-	backup.ModelAllowlist = service.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-image-2"}}
+	backup.ModelAllowlist = service.GroupModelsListConfig{Enabled: true, Models: []string{"gpt-image-1"}}
 	repo := openAIImagesFailoverAccountRepo{accounts: []service.Account{account}}
 	snapshot := service.NewSchedulerSnapshotService(&smartRouteHandlerSnapshot{fakeSchedulerCache{accounts: []*service.Account{&account}}}, nil, repo, smartRouteHandlerGroups{groups: map[int64]*service.Group{9: primary, 17: backup}}, cfg)
 	for _, id := range []int64{9, 17} {
@@ -233,7 +233,7 @@ func TestOpenAIImagesSmartRouteDisabledPrimary(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewBufferString(`{"model":"gpt-image-2","prompt":"cat"}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewBufferString(`{"model":"gpt-image-1","prompt":"cat"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(string(middleware2.ContextKeyAPIKey), key)
 	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 42})

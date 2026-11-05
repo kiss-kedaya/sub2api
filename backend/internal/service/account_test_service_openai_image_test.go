@@ -45,11 +45,11 @@ func TestAccountTestService_OpenAIImageOAuthHandlesOutputItemDoneFallback(t *tes
 		},
 	}
 
-	err := svc.testOpenAIImageOAuth(c, context.Background(), account, "gpt-image-2.5-flare", "draw a cat")
+	err := svc.testOpenAIImageOAuth(c, context.Background(), account, "gpt-image-1", "draw a cat")
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(upstream.lastBody, "model").String())
-	require.Equal(t, "gpt-image-2.5-flare", gjson.GetBytes(upstream.lastBody, "tools.0.model").String())
+	require.Equal(t, "gpt-image-1", gjson.GetBytes(upstream.lastBody, "tools.0.model").String())
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 	require.Contains(t, rec.Body.String(), "Calling Codex /responses image tool")
 	require.Contains(t, rec.Body.String(), "data:image/png;base64,aGVsbG8=")
@@ -106,7 +106,44 @@ func TestAccountTestService_OpenAIImageOAuthSurfacesSSEError(t *testing.T) {
 		Body: io.NopCloser(strings.NewReader("data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The selected image model is unavailable\"}}\n\n")),
 	}}}
 	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": "test"}}
-	err := svc.testOpenAIImageOAuth(c, context.Background(), account, "gpt-image-2.5-flare", "draw a cup")
+	err := svc.testOpenAIImageOAuth(c, context.Background(), account, "gpt-image-1", "draw a cup")
 	require.ErrorContains(t, err, "The selected image model is unavailable")
 	require.NotContains(t, rec.Body.String(), "No images returned")
+}
+
+func TestAccountTestService_OpenAIImageOAuthGPTImage26UsesDirectEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/1/test", nil)
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"created":1710000000,"data":[{"b64_json":"aGVsbG8=","output_format":"png","revised_prompt":"draw a cat"}]}`,
+		)),
+	}}
+	svc := &AccountTestService{httpUpstream: upstream}
+	account := &Account{
+		ID:       55,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}
+
+	err := svc.testOpenAIImageOAuth(c, context.Background(), account, "gpt-image-2.6-flare", "draw a cat")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex/images/generations", upstream.lastReq.URL.String())
+	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
+	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Equal(t, "gpt-image-2.6-flare", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
+	require.Contains(t, rec.Body.String(), "Calling Codex /images/generations")
+	require.Contains(t, rec.Body.String(), "data:image/png;base64,aGVsbG8=")
+	require.Contains(t, rec.Body.String(), "\"success\":true")
 }
