@@ -1,4 +1,4 @@
-export type DocsCategory = 'start' | 'guides' | 'integrations' | 'reference'
+export type DocsCategory = 'start' | 'guides' | 'media' | 'integrations' | 'reference'
 export type DocsLanguage = 'curl' | 'python' | 'node' | 'json' | 'toml' | 'shell'
 
 export interface DocsField {
@@ -15,7 +15,7 @@ export interface DocsSection {
   note?: string
   fields?: DocsField[]
   examples?: Partial<Record<DocsLanguage, string>>
-  links?: { label: string; href: string }[]
+  links?: { label: string; href?: string; page?: string }[]
 }
 
 export interface DocsPage {
@@ -57,6 +57,13 @@ export function getApiDocs(locale: string, originValue: string): DocsPage[] {
   const textRequest = { model: 'YOUR_MODEL_ID', messages: [{ role: 'user', content: 'Hello!' }] }
   const responseRequest = { model: 'YOUR_MODEL_ID', input: 'Hello!' }
   const messageRequest = { ...textRequest, max_tokens: 1024 }
+  const imageGenerateRequest = { model: 'YOUR_IMAGE_MODEL', prompt: 'A red panda astronaut floating above a city at sunset', size: '1024x1024', n: 1 }
+  const grokImageEditRequest = { model: 'grok-imagine-edit', prompt: 'Make it snow', image: { url: 'https://example.test/source.png' }, size: '1024x1024' }
+  const videoCreateRequest = { model: 'grok-imagine-video', prompt: 'A slow drone shot over a misty lake at dawn', duration: 8, resolution: '720p' }
+  const minimaxVideoRequest = { model: 'MiniMax-H3', prompt: 'A drone shot over a misty lake', seconds: '8', size: '1280x720' }
+  const seedanceRequest = { model: 'YOUR_SEEDANCE_MODEL', content: [{ type: 'text', text: 'A wave breaking at sunset' }], duration: 5, resolution: '720p' }
+  const nanoGenerateRequest = { contents: [{ role: 'user', parts: [{ text: 'A watercolor fox in a forest' }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '1:1', imageSize: '2K' } } }
+  const nanoEditRequest = { contents: [{ role: 'user', parts: [{ text: 'Turn this photo into a watercolor painting' }, { inlineData: { mimeType: 'image/png', data: 'BASE64_SOURCE_IMAGE' } }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }
   const commonModel: DocsField = { name: 'model', type: 'string', required: true, description: l('从本站模型列表复制完整模型 ID；可用模型取决于密钥绑定的分组。', 'Copy the complete model ID from this site. Availability depends on the groups attached to your API key.') }
   const streamField: DocsField = { name: 'stream', type: 'boolean', description: l('设为 true 接收 SSE 事件。客户端必须同时处理正常结束与错误终态。', 'Set to true for SSE events. Handle both successful completion and terminal errors.') }
   return [
@@ -71,6 +78,11 @@ export function getApiDocs(locale: string, originValue: string): DocsPage[] {
         { id: 'before-you-start', title: l('开始之前', 'Before you start'), paragraphs: [l('确认密钥已启用、余额或订阅可用，并绑定了支持目标模型的分组。先请求 GET /v1/models 核对精确模型 ID。', 'Confirm that your key is enabled, has available balance or subscription access, and is assigned to a group supporting your model. Check the exact model ID with GET /v1/models first.')], examples: { shell: `export API_KEY="YOUR_API_KEY"\ncurl ${origin}/v1/models -H "Authorization: Bearer $API_KEY"` } },
         { id: 'first-request', title: l('发送第一条消息', 'Send a message'), examples: requestExamples(origin, '/v1/chat/completions', textRequest) },
         { id: 'read-response', title: l('读取响应', 'Read the response'), paragraphs: [l('Chat Completions 的文本通常位于 choices[0].message.content。读取 usage 获取上游报告的用量；本站最终扣费以使用记录中的账单为准。', 'Chat Completions text normally appears in choices[0].message.content. usage contains provider-reported consumption; your finalized charge is shown in this site’s usage records.')], examples: { json: JSON.stringify({ id: 'chatcmpl_example', object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: 'Hello!' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }, null, 2) } },
+        { id: 'media-generation', title: l('图像与视频生成', 'Image and video generation'), paragraphs: [l('图像生成、Nano Banana 与视频生成使用与聊天不同的入口，并且是否可用取决于密钥绑定的分组平台。按任务继续阅读：图像生成（OpenAI/Grok）、Nano Banana（Gemini 图像模型）与视频生成（Grok/MiniMax 异步任务）。', 'Image generation, Nano Banana, and video generation use endpoints separate from chat, and availability depends on the platform of the group bound to your key. Continue by task: image generation (OpenAI/Grok), Nano Banana (Gemini image models), and video generation (asynchronous Grok/MiniMax jobs).')], links: [
+          { label: l('图像生成', 'Image generation'), page: 'image-generation' },
+          { label: l('Nano Banana 图像模型', 'Nano Banana image models'), page: 'nano-banana' },
+          { label: l('视频生成', 'Video generation'), page: 'video-generation' },
+        ] },
       ],
     },
     {
@@ -97,6 +109,186 @@ export function getApiDocs(locale: string, originValue: string): DocsPage[] {
       id: 'tools', category: 'guides', title: l('工具调用与网页工具', 'Tool calls and web tools'), description: l('区分客户端执行的函数工具与平台执行的网页搜索、抓取。', 'Distinguish client-executed functions from hosted web search and fetch tools.'), sections: [
         { id: 'function-tools', title: l('函数工具', 'Function tools'), paragraphs: [l('模型返回工具调用参数后，由你的应用校验并执行函数，再把 tool 结果连同对应 tool_call_id 发送回模型。工具调用本身不是用户可读的最终答案。', 'Validate and execute a function after the model returns its arguments, then send a tool result with the matching tool_call_id. A tool call itself is not the final user-facing answer.')], examples: { json: JSON.stringify({ model: 'YOUR_MODEL_ID', messages: [{ role: 'user', content: 'What is the weather?' }], tools: [{ type: 'function', function: { name: 'get_weather', description: 'Get the current weather for a city.', parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] } } }] }, null, 2) } },
         { id: 'hosted-web', title: l('模型内网页工具', 'Hosted web tools'), paragraphs: [l('在本站已配置且支持的 DeepSeek 分组中，平台可向模型提供 web_search 与 web_fetch，并执行网页请求、把结果交还模型。是否启用取决于密钥、分组与上游设置。', 'When configured for a supported DeepSeek group, this site can offer web_search and web_fetch to the model, execute requests, and return results to the model. Availability depends on key, group, and upstream settings.'), l('网页内容属于外部不可信资料。不要让网页指令覆盖应用权限、系统规则或泄露密钥。需要确定性搜索或只获取正文时，可直接调用独立 Search/Fetch API，不必启动模型。', 'Web content is untrusted external data. Do not let page instructions override application permissions, system rules, or disclose credentials. Use the independent Search/Fetch APIs when you need direct results without a model.')] },
+      ],
+    },
+    {
+      id: 'image-generation', category: 'media', title: l('图像生成', 'Image generation'),
+      description: l('通过 OpenAI 兼容的 Images 接口生成与编辑图片，并区分 OpenAI 与 Grok 分组的模型、响应和限制。', 'Generate and edit images through the OpenAI-compatible Images API, including the model, response, and limit differences between OpenAI and Grok groups.'),
+      sections: [
+        { id: 'image-overview', title: l('接口与可用性', 'Endpoints and availability'), paragraphs: [
+          l('图像生成使用 POST /v1/images/generations，图像编辑使用 POST /v1/images/edits。鉴权方式与其他 OpenAI 兼容接口相同：请求头携带 Authorization: Bearer $API_KEY。', 'Use POST /v1/images/generations to generate images and POST /v1/images/edits to edit them. Authentication matches other OpenAI-compatible endpoints: send Authorization: Bearer $API_KEY.'),
+          l('接口是否可用由密钥绑定的分组平台决定。OpenAI 分组使用 gpt-image-* 模型，Grok 分组使用 xAI Imagine 图像模型；其他平台（例如 Gemini、MiniMax）会返回 404 "Images API is not supported for this platform"。分组还必须开启图像生成权限，否则返回 403 permission_error "Image generation is not enabled for this group"。', 'Availability depends on the platform of the group bound to your API key. OpenAI groups use gpt-image-* models and Grok groups use xAI Imagine image models. Other platforms, such as Gemini or MiniMax, return 404 "Images API is not supported for this platform". The group must also allow image generation; otherwise the request returns 403 permission_error "Image generation is not enabled for this group".'),
+          l('具体模型与能力由站点运营者配置的分组和上游账号决定。请先用 GET /v1/models 获取当前密钥可用的模型 ID，不要把页面中的示例模型当作固定清单。', 'The exact models and capabilities are configured by the site operator through groups and upstream accounts. Use GET /v1/models to discover the model IDs available to your key instead of treating the examples here as a fixed catalog.'),
+        ], note: l('404 表示该密钥的分组平台不提供 Images 接口；403 表示接口存在但分组未开启图像生成。不要仅凭状态码判断密钥失效。', 'A 404 means the Images API is not offered for your key’s group platform. A 403 means the endpoint exists but image generation is not enabled for the group. Do not treat either as proof that the key is invalid.') },
+        { id: 'image-request', title: l('生成图片', 'Generate an image'), paragraphs: [
+          l('JSON 与 multipart/form-data 均可使用。下面的示例发送 JSON：model 从本站模型列表复制，prompt 描述画面，size 与 n 按需调整。', 'Both JSON and multipart/form-data are accepted. The example below sends JSON: copy model from this site’s model list, describe the image in prompt, and adjust size and n as needed.'),
+        ], fields: [
+          { name: 'model', type: 'string', description: l('图片模型 ID。OpenAI 分组可填 gpt-image-*（例如 gpt-image-2）；Grok 分组可填 grok-imagine-image、grok-imagine-image-quality、grok-imagine-image-2.0 或别名 grok-imagine。OpenAI 路径省略时默认 gpt-image-2，Grok 路径必须显式提供；不受支持的模型返回 400。', 'Image model ID. OpenAI groups accept gpt-image-* (for example gpt-image-2); Grok groups accept grok-imagine-image, grok-imagine-image-quality, grok-imagine-image-2.0, or the grok-imagine alias. The OpenAI path defaults to gpt-image-2 when omitted; Grok paths require it explicitly. Unsupported models return a 400.') },
+          { name: 'prompt', type: 'string', required: true, description: l('描述要生成的画面。', 'Describe the image to generate.') },
+          { name: 'n', type: 'integer', description: l('生成数量，默认 1。Grok 路径原样转发，建议每次请求一张以简化计费与重试。', 'Number of images, default 1. Grok forwards the value as-is; one image per request keeps billing and retries simple.') },
+          { name: 'size', type: 'string', description: l('图片尺寸，例如 1024x1024。Grok 分组会把 size 换算为 resolution（1k/2k）和派生的 aspect_ratio 后转发。', 'Image size, for example 1024x1024. Grok groups convert size to resolution (1k/2k) plus a derived aspect_ratio before forwarding.') },
+          { name: 'response_format', type: 'string', description: l('OpenAI 路径默认按 b64_json 返回并回填；设为 url 时跳过回填、保留上游 URL。Grok 路径是否接受该字段由上游决定。', 'The OpenAI path returns and backfills b64_json by default; url skips the backfill and keeps upstream URLs. Whether Grok accepts this field is up to upstream.') },
+          { name: 'quality', type: 'string', description: l('质量档位，随请求转发；可选值取决于模型与上游。', 'Quality level, forwarded with the request. Accepted values depend on the model and upstream.') },
+          { name: 'background', type: 'string', description: l('背景选项，随请求转发；是否生效由模型与上游决定。', 'Background option, forwarded with the request. Whether it applies depends on the model and upstream.') },
+          { name: 'output_format', type: 'string', description: l('输出格式，随请求转发；上游支持范围可能不同。', 'Output format, forwarded with the request. Upstream support can vary.') },
+          { name: 'moderation', type: 'string', description: l('审核选项，随请求转发。', 'Moderation option, forwarded with the request.') },
+          { name: 'input_fidelity', type: 'string', description: l('输入保真选项，随请求转发。', 'Input fidelity option, forwarded with the request.') },
+          { name: 'style', type: 'string', description: l('风格选项，随请求转发。', 'Style option, forwarded with the request.') },
+          { name: 'output_compression', type: 'integer', description: l('输出压缩参数，随请求转发。', 'Output compression parameter, forwarded with the request.') },
+          { name: 'partial_images', type: 'integer', description: l('配合 stream 使用的部分图片数量；具体范围由上游决定。', 'Number of partial images used with stream. The exact range is defined by upstream.') },
+          { name: 'stream', type: 'boolean', description: l('OpenAI 路径在上游返回 text/event-stream 时以 SSE 转发，否则按普通 JSON 返回一次结果；Grok 路径会缓冲上游响应后一次返回 JSON，不提供 SSE。', 'The OpenAI path relays SSE when upstream answers with text/event-stream; otherwise it returns one JSON body. Grok buffers the upstream response and returns one JSON body with no SSE.') },
+        ], examples: requestExamples(origin, '/v1/images/generations', imageGenerateRequest) },
+        { id: 'image-response', title: l('响应结构', 'Response structure'), paragraphs: [
+          l('OpenAI 分组的非流式响应默认返回 data[].b64_json：若上游只返回 data[].url，网关会下载图片并回填 b64_json，同时移除 url，避免暴露上游地址。请求显式设置 response_format: "url" 时会跳过回填，响应保留 data[].url。单项回填失败时该项可能仍保留上游 URL，客户端应同时兼容 b64_json 与 url。', 'For OpenAI groups, non-streaming responses return data[].b64_json by default. When upstream only returns data[].url, the gateway downloads the image, backfills b64_json, and removes url so upstream addresses are not exposed. Setting response_format: "url" skips the backfill and keeps data[].url. If backfilling one item fails, that item may still carry the upstream URL, so clients should accept both b64_json and url.'),
+          l('Grok 分组的响应按上游原样返回，通常为 { "data": [ { "url": "..." } ] }，不保证包含 b64_json、revised_prompt 或 usage；这些字段只有上游确实返回时才会出现。若上游没有返回任何图片结果，网关以 502 结束请求。', 'Grok responses are passed through as returned by upstream and normally look like { "data": [ { "url": "..." } ] }. b64_json, revised_prompt, and usage are not guaranteed and appear only when upstream actually returns them. If upstream returns no image result at all, the gateway ends the request with a 502.'),
+        ], examples: { json: JSON.stringify({ created: 1700000000, data: [{ b64_json: 'BASE64_IMAGE_DATA' }] }, null, 2) } },
+        { id: 'image-edits', title: l('编辑图片（OpenAI 分组）', 'Edit images (OpenAI groups)'), paragraphs: [
+          l('OpenAI 分组的 JSON 编辑请求中，images 数组的每一项必须是 { "image_url": "..." }；file_id 不受支持，会返回 400。mask 可选，同样使用 { "image_url": "..." }。也可以发送 multipart 请求，文件部分使用 image（可重复）与 mask，并携带 model、prompt 等文本字段。', 'For JSON edits on OpenAI groups, each images entry must be { "image_url": "..." }; file_id is not supported and returns a 400. mask is optional and also uses { "image_url": "..." }. Multipart edits are also accepted: send the source file part as image (repeatable) and an optional mask, along with text fields such as model and prompt.'),
+          l('下面的示例使用 multipart 上传源图。JSON 编辑请求的最小结构为 { "model": "YOUR_IMAGE_MODEL", "prompt": "...", "images": [{ "image_url": "https://example.test/source.png" }] }。', 'The example below uploads a source image with multipart. A minimal JSON edit body is { "model": "YOUR_IMAGE_MODEL", "prompt": "...", "images": [{ "image_url": "https://example.test/source.png" }] }.'),
+        ], fields: [
+          { name: 'images', type: 'array', required: true, description: l('JSON 编辑的源图数组，元素为 { "image_url": "..." }；不支持 file_id。', 'Source-image array for JSON edits, with entries shaped as { "image_url": "..." }; file_id is not supported.') },
+          { name: 'mask', type: 'object', description: l('可选蒙版，{ "image_url": "..." }；不支持 mask.file_id。', 'Optional mask, { "image_url": "..." }; mask.file_id is not supported.') },
+          { name: 'image', type: 'file', description: l('multipart 编辑的源图文件部分，可重复发送多张。', 'Source file part for multipart edits; it may be repeated.') },
+          { name: 'mask (multipart)', type: 'file', description: l('multipart 编辑的可选蒙版文件部分。', 'Optional mask file part for multipart edits.') },
+        ], examples: { curl: `curl ${origin}/v1/images/edits \\\n  -H "Authorization: Bearer $API_KEY" \\\n  -F "model=gpt-image-2" \\\n  -F "prompt=Replace the background with a beach" \\\n  -F "image=@source.png" \\\n  -F "size=1024x1024"` } },
+        { id: 'image-grok-edits', title: l('编辑图片（Grok 分组）', 'Edit images (Grok groups)'), paragraphs: [
+          l('Grok 分组接受 JSON 编辑请求。参考图可以放在 image、images、reference_images、first_frame 或 last_frame 中，元素可以是 URL 字符串，也可以是 { "url": "..." } 或 { "image_url": ... } 形式；mask 可选。网关会统一改写为 { "url": "...", "type": "image_url" } 后转发。每次编辑最多使用 3 张源图，超过时应拆分成多次请求。', 'Grok groups accept JSON edit requests. Reference images may be passed in image, images, reference_images, first_frame, or last_frame, as a URL string or as { "url": "..." } / { "image_url": ... }. mask is optional. The gateway rewrites references to { "url": "...", "type": "image_url" } before forwarding. Each edit uses at most 3 source images; split larger sets into multiple requests.'),
+          l('下列示例使用单张参考图。mask 会被解析并转发，但上游是否按蒙版生效取决于模型与上游。', 'The example below uses a single reference image. mask is parsed and forwarded, but whether upstream honors it depends on the model and provider.'),
+        ], examples: requestExamples(origin, '/v1/images/edits', grokImageEditRequest) },
+        { id: 'image-models', title: l('模型系列', 'Model families'), paragraphs: [
+          l('OpenAI 分组使用 gpt-image-* 系列，model 省略时默认 gpt-image-2，其他前缀返回 400。Grok 分组使用 Grok Imagine 图像模型：grok-imagine-image（快速）、grok-imagine-image-quality（质量）、grok-imagine-image-2.0，别名 grok-imagine 会归一化为质量模型；编辑也可使用 grok-imagine-edit 别名。Grok 分组必须显式提供 model，不会套用默认值。', 'OpenAI groups use the gpt-image-* family; model defaults to gpt-image-2 when omitted, and other prefixes return a 400. Grok groups use Grok Imagine image models: grok-imagine-image (fast), grok-imagine-image-quality (quality), and grok-imagine-image-2.0; the grok-imagine alias is normalized to the quality model, and edits may use the grok-imagine-edit alias. Grok groups must send model explicitly; no default is applied.'),
+          l('专用图片模型请使用对应媒体端点调用；例如 gpt-image-* 在 /v1/chat/completions 和 /v1/messages 上会被拒绝。Nano Banana 等 Gemini 图像模型使用独立的 Gemini 原生入口，见下一页。', 'Use the matching media endpoint for dedicated image models; gpt-image-*, for example, is rejected on /v1/chat/completions and /v1/messages. Gemini image models such as Nano Banana use the separate native Gemini endpoint covered on the next page.'),
+        ] },
+        { id: 'image-async', title: l('异步任务', 'Asynchronous tasks'), paragraphs: [
+          l('同步请求可能超过代理或 CDN 的超时时间时，可以使用异步图片任务：POST /v1/images/generations/async 与 POST /v1/images/edits/async 接受与同步端点相同的 JSON 或 multipart 请求体，成功受理返回 202 Accepted 并提供 poll_url；随后用 GET /v1/images/tasks/{task_id} 查询结果。', 'When a synchronous request may exceed a proxy or CDN timeout, use asynchronous image tasks: POST /v1/images/generations/async and POST /v1/images/edits/async accept the same JSON or multipart bodies as their synchronous counterparts, return 202 Accepted with a poll_url, and are queried with GET /v1/images/tasks/{task_id}.'),
+          l('该功能默认关闭，只有运营者配置了对象存储后才可用；关闭时端点返回 404 "async image tasks are not enabled"。流式请求不能提交为异步任务。轮询必须使用提交任务的同一个密钥；状态包括 processing、billing、completed、failed，完成后的 result 中图片地址指向对象存储，b64_json 会被移除。', 'The feature is disabled by default and becomes available only after the operator configures object storage; while disabled the endpoints return 404 "async image tasks are not enabled". Streaming requests cannot be submitted as asynchronous tasks. Poll with the same API key that submitted the task; statuses include processing, billing, completed, and failed. Completed results point image URLs at object storage and have b64_json removed.'),
+        ], examples: requestExamples(origin, '/v1/images/generations/async', imageGenerateRequest) },
+        { id: 'image-batches', title: l('批量图片', 'Batch images'), paragraphs: [
+          l('批量图片接口位于 /v1/images/batches*，仅面向 Gemini 平台分组：需要运营者启用批量图片功能并给分组授予批量权限，否则返回 404 或 403。提交体包含 model、可选 provider（gemini_api 或 vertex）以及 items[]；每个 item 提供 custom_id、prompt，以及可选的 output_count 与 reference_images[]（mime_type 加 base64 data，或内部 file_uri）。任务通过 GET /v1/images/batches/{id}、items 与 download 接口查询和下载。', 'Batch image endpoints live under /v1/images/batches*. They are available only to Gemini-platform groups: the operator must enable batch image processing and grant the group batch permission, otherwise the API returns 404 or 403. A submission contains model, an optional provider (gemini_api or vertex), and items[]; each item provides custom_id, prompt, and optional output_count and reference_images[] (mime_type plus base64 data, or an internal file_uri). Query and download jobs with GET /v1/images/batches/{id}, its items, and download endpoints.'),
+          l('参考图数量、输出数量、请求大小等上限属于站点侧保护值，并可能随配置与模型变化；提交前请以本站返回的错误信息和运营者配置为准。批量接口没有不带 /v1 前缀的别名。', 'Reference-image counts, output counts, and request-size limits are site-side guardrails that can vary with configuration and model. Follow the errors returned by this site and the operator’s configuration. Batch routes have no aliases without the /v1 prefix.'),
+        ] },
+        { id: 'image-caveats', title: l('注意事项', 'Caveats'), paragraphs: [
+          l('内容策略拒绝会以错误对象返回，错误信息来自上游；重试不能绕过策略。模型可用性、价格与并发限制由本站配置，本页不列出具体费用。', 'Content-policy refusals are returned as error objects with upstream messages; retries do not bypass policy. Model availability, pricing, and concurrency limits are configured by this site, and this page lists no fee amounts.'),
+          l('Grok 返回的上游图片链接可能过期，请在收到响应后尽快保存，或转存到自己的对象存储。', 'Upstream image links returned by Grok can expire; save images promptly after receiving a response, or copy them to your own object storage.'),
+        ], links: [
+          { label: l('Nano Banana 图像模型', 'Nano Banana image models'), page: 'nano-banana' },
+          { label: l('视频生成', 'Video generation'), page: 'video-generation' },
+        ] },
+      ],
+    },
+    {
+      id: 'nano-banana', category: 'media', title: l('Nano Banana 图像模型', 'Nano Banana image models'),
+      description: l('通过 Gemini 原生 generateContent 接口调用 Gemini 图像模型，直接读取 inlineData 中的图像字节。', 'Call Gemini image models through the native Gemini generateContent endpoint and read image bytes from inlineData.'),
+      sections: [
+        { id: 'nano-overview', title: l('接口与可用性', 'Endpoints and availability'), paragraphs: [
+          l('Nano Banana 是社区对 Gemini 图像生成能力的昵称，不是模型 ID。本站通过 Gemini 原生协议提供这些模型：POST /v1beta/models/{model}:generateContent，流式调用使用同一路由的 :streamGenerateContent。', 'Nano Banana is a community nickname for Gemini image-generation capabilities, not a model ID. This site exposes them through the native Gemini protocol: POST /v1beta/models/{model}:generateContent, with :streamGenerateContent on the same route for streaming.'),
+          l('分组平台必须是 gemini 或 antigravity，并且模型在分组的模型白名单内；否则返回 400 "API key group platform is not gemini" 或 404 "Model is not available for this group"。这类模型不能通过 /v1/images/generations 调用，该端点只服务 OpenAI 与 Grok 分组。', 'The group platform must be gemini or antigravity, and the model must be allowed by the group’s model allowlist; otherwise the request returns 400 "API key group platform is not gemini" or 404 "Model is not available for this group". These models are not available through /v1/images/generations, which only serves OpenAI and Grok groups.'),
+          l('鉴权接受 x-goog-api-key、Authorization: Bearer 或 x-api-key；/v1beta 路径也接受查询参数 key。可用模型以 GET /v1beta/models 返回为准。常见图像模型 ID 包括 gemini-2.5-flash-image 与 gemini-3.1-flash-image，别名 gemini-3-pro-image 会映射到 gemini-3.1-flash-image；具体账号能否使用由运营者与上游决定。', 'Authentication accepts x-goog-api-key, Authorization: Bearer, or x-api-key; /v1beta paths also accept the key query parameter. Use GET /v1beta/models for available models. Common image model IDs include gemini-2.5-flash-image and gemini-3.1-flash-image, and the gemini-3-pro-image alias maps to gemini-3.1-flash-image. Whether a specific account can use them is decided by the operator and upstream.'),
+        ], note: l('网关不会替你注入 responseModalities；客户端必须在 generationConfig 中显式请求 ["TEXT","IMAGE"]，否则响应可能只包含文本。', 'The gateway does not inject responseModalities for you; the client must explicitly request ["TEXT","IMAGE"] in generationConfig, otherwise the response may contain text only.') },
+        { id: 'nano-request', title: l('发起生成请求', 'Send a generation request'), paragraphs: [
+          l('请求体是官方 Gemini JSON：contents[] 承载对话与图片输入，generationConfig.responseModalities 声明需要文本与图片。imageConfig 可按模型支持情况指定宽高比与图片尺寸。', 'The body is official Gemini JSON: contents[] carries the conversation and image input, while generationConfig.responseModalities declares that text and images are wanted. imageConfig can request an aspect ratio and image size when the model supports them.'),
+        ], fields: [
+          { name: 'contents', type: 'array', required: true, description: l('官方 contents[]，通常包含 role: "user" 与 parts[]；文本放在 parts[].text。', 'Official contents[], normally with role: "user" and parts[]; text goes in parts[].text.') },
+          { name: 'generationConfig.responseModalities', type: 'string[]', required: true, description: l('必须包含 "TEXT" 与 "IMAGE"，否则模型可能只返回文本。', 'Must include "TEXT" and "IMAGE"; otherwise the model may return text only.') },
+          { name: 'generationConfig.imageConfig.aspectRatio', type: 'string', description: l('可选宽高比，例如 1:1、16:9、9:16、4:3、3:4；上游不支持时可能忽略或报错。', 'Optional aspect ratio such as 1:1, 16:9, 9:16, 4:3, or 3:4. Unsupported values may be ignored or rejected upstream.') },
+          { name: 'generationConfig.imageConfig.imageSize', type: 'string', description: l('可选图片尺寸，例如 1K、2K、4K；实际支持范围由模型与上游决定。', 'Optional image size such as 1K, 2K, or 4K. The supported range depends on the model and upstream.') },
+          { name: 'model（URL 段）', type: 'string', required: true, description: l('放在 URL 中，例如 /v1beta/models/gemini-2.5-flash-image:generateContent。', 'Placed in the URL, for example /v1beta/models/gemini-2.5-flash-image:generateContent.') },
+        ], examples: {
+          curl: `curl ${origin}/v1beta/models/gemini-2.5-flash-image:generateContent \\\n  -H "x-goog-api-key: $API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '${JSON.stringify(nanoGenerateRequest, null, 2)}'`,
+          python: `import os
+import requests
+
+response = requests.post(
+    "${origin}/v1beta/models/gemini-2.5-flash-image:generateContent",
+    headers={"x-goog-api-key": os.environ["API_KEY"]},
+    json=${JSON.stringify(nanoGenerateRequest, null, 4)},
+    timeout=300,
+)
+response.raise_for_status()
+print(response.json())`,
+        } },
+        { id: 'nano-response', title: l('读取图像结果', 'Read the image result'), paragraphs: [
+          l('图像位于 candidates[].content.parts[].inlineData，包含 mimeType 与 data；data 是不带 data: 前缀的 base64。parts 也可能同时包含文本，请遍历数组而不是固定取第一个元素。', 'Images arrive in candidates[].content.parts[].inlineData with mimeType and data; data is base64 without a data: prefix. parts may also contain text, so iterate the array instead of assuming the first element.'),
+          l('usageMetadata 报告 promptTokenCount、candidatesTokenCount 等用量，图像 Token 计入 candidatesTokensDetails。把 data 按 base64 解码保存即可，例如 echo "$IMAGE_BASE64" | base64 -d > image.png。', 'usageMetadata reports usage such as promptTokenCount and candidatesTokenCount, and image tokens appear in candidatesTokensDetails. Save the image by decoding data as base64, for example echo "$IMAGE_BASE64" | base64 -d > image.png.'),
+          l(':streamGenerateContent 返回官方 Gemini 流式响应，按 SSE 数据帧读取；示例不再展开流式解析。', ':streamGenerateContent returns the official Gemini streaming response as SSE data frames; this page does not expand the streaming parser.'),
+        ], examples: { json: JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'Here is your image:' }, { inlineData: { mimeType: 'image/png', data: 'BASE64_IMAGE_DATA' } }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 1290 } }, null, 2) } },
+        { id: 'nano-edit', title: l('参考图编辑', 'Edit with reference images'), paragraphs: [
+          l('把参考图作为 inlineData 放进输入 contents[].parts[]，与文本提示一起发送即可。data 为不带 data: 前缀的 base64，mimeType 必须与图片内容匹配；参考图张数、大小与可接受格式由模型和上游决定。', 'Put reference images in the input contents[].parts[] as inlineData alongside the text prompt. data is base64 without a data: prefix and mimeType must match the image bytes. The number, size, and accepted formats of reference images depend on the model and upstream.'),
+          l('如果需要大量参考图或批量生成，请改用批量图片接口 /v1/images/batches，它要求 Gemini 平台分组并受站点侧上限约束，详见图像生成页。', 'For many reference images or batch generation, use the batch image API /v1/images/batches instead; it requires a Gemini-platform group and is subject to site-side limits, as described on the image generation page.'),
+        ], examples: { json: JSON.stringify(nanoEditRequest, null, 2) } },
+        { id: 'nano-caveats', title: l('注意事项', 'Caveats'), paragraphs: [
+          l('Gemini 图像以 /v1beta 原生响应中的 inlineData 为准；其他兼容入口（例如 /v1/messages）不保证返回图像内容，请不要依赖。', 'Gemini images are delivered as inlineData in the native /v1beta response; other compatibility endpoints such as /v1/messages do not guarantee image content and should not be relied on.'),
+          l('模型是否可用取决于分组白名单与上游账号类型，本页不承诺所有 Gemini 分组都能生成图像。计费按站点配置的 Token 规则计算，本页不列出价格。', 'Model availability depends on the group allowlist and upstream account type; this page does not promise that every Gemini group can generate images. Billing follows this site’s configured token rules, and no prices are listed here.'),
+        ], links: [
+          { label: l('图像生成', 'Image generation'), page: 'image-generation' },
+          { label: l('视频生成', 'Video generation'), page: 'video-generation' },
+        ] },
+      ],
+    },
+    {
+      id: 'video-generation', category: 'media', title: l('视频生成', 'Video generation'),
+      description: l('以异步任务方式创建视频、轮询状态并下载内容，覆盖 Grok Imagine、MiniMax-H3 与 Seedance。', 'Create videos as asynchronous jobs, poll their status, and download content, covering Grok Imagine, MiniMax-H3, and Seedance.'),
+      sections: [
+        { id: 'video-overview', title: l('接口与可用性', 'Endpoints and availability'), paragraphs: [
+          l('视频生成是异步任务：先创建任务取得任务 ID，再轮询状态，最后从 content 端点下载视频字节。创建使用 POST /v1/videos 或 POST /v1/videos/generations；查询使用 GET /v1/videos/{request_id} 或 GET /v1/videos/generations/{request_id}；下载使用 GET /v1/videos/{request_id}/content。编辑与扩展分别使用 POST /v1/videos/edits 与 POST /v1/videos/extensions。', 'Video generation is asynchronous: create a job to get a task ID, poll its status, then download the video bytes from the content endpoint. Create with POST /v1/videos or POST /v1/videos/generations; poll with GET /v1/videos/{request_id} or GET /v1/videos/generations/{request_id}; download with GET /v1/videos/{request_id}/content. Edits and extensions use POST /v1/videos/edits and POST /v1/videos/extensions.'),
+          l('可用平台由分组决定：Grok 分组使用 Grok Imagine 视频；MiniMax 分组转发到 MiniMax-H3；composite/智能路由密钥在模型为 grok-imagine-video* 时路由到 Grok。OpenAI、Gemini 等其他平台的密钥在所有视频路径（创建、状态、内容、编辑、扩展）上都会返回 404 "Videos API is not supported for this platform"。状态与内容请求不携带模型，composite 密钥会直接按 Grok 处理。', 'Availability depends on the group. Grok groups use Grok Imagine video, MiniMax groups forward to MiniMax-H3, and composite or smart-routed keys route to Grok when the model is grok-imagine-video*. Keys on other platforms, such as OpenAI or Gemini, get 404 "Videos API is not supported for this platform" on every video path (create, status, content, edits, and extensions). Status and content requests carry no model, so composite keys are handled as Grok.'),
+          l('Grok 视频创建与 Seedance 任务创建还要求分组开启图像生成权限（allow_image_generation），否则返回 403 permission_error；MiniMax-H3 不受该检查。composite 密钥可以透过平台门禁，但若没有可用的 Grok/composite 账号来服务该模型，会返回 503，错误码为 grok_media_no_eligible_account（"No eligible Grok media accounts"）。', 'Grok video creates and Seedance task creates also require the group to allow image generation (allow_image_generation); otherwise they return 403 permission_error. MiniMax-H3 is exempt from that check. Composite keys pass the platform gate, but when no Grok/composite account can serve the model the response is 503 with error code grok_media_no_eligible_account ("No eligible Grok media accounts").'),
+        ], note: l('创建前先确认密钥所在分组为 Grok、MiniMax，或 composite 路由且能匹配到 Grok 账号。返回 404 通常表示该平台不提供视频接口，而不是视频任务失败。', 'Before creating a job, confirm the key’s group is Grok or MiniMax, or a composite route that can match a Grok account. A 404 usually means the platform does not offer the Videos API, not that a job failed.') },
+        { id: 'video-create', title: l('创建视频任务（Grok）', 'Create a video job (Grok)'), paragraphs: [
+          l('Grok 分组的创建请求是 JSON，并已在上游允许的范围内尽量保持原生字段。请求体应至少包含 model 与 prompt；图生视频模型还需要参考图。与图片接口相同，创建请求要求分组开启图像生成权限（allow_image_generation），否则返回 403 permission_error。', 'Create requests on Grok groups are JSON and keep native fields as far as upstream allows. The body should contain at least model and prompt; image-to-video models also need a reference image. As with the image endpoints, creation requires the group to allow image generation (allow_image_generation); otherwise it returns 403 permission_error.'),
+        ], fields: [
+          { name: 'model', type: 'string', required: true, description: l('grok-imagine-video（默认视频模型）或 grok-imagine-video-1.5（图生视频，必须提供输入图片）；也接受 grok-imagine-video-1.5-preview、grok-video-1.5 等别名。', 'grok-imagine-video (default video model) or grok-imagine-video-1.5 (image-to-video, requires an input image); aliases such as grok-imagine-video-1.5-preview and grok-video-1.5 are also accepted.') },
+          { name: 'prompt', type: 'string', description: l('视频画面描述。文生视频需要描述场景；图生视频按上游要求提供。', 'Description of the video. Text-to-video needs a scene description; image-to-video follows upstream requirements.') },
+          { name: 'duration', type: 'number', description: l('视频时长（秒），seconds 是接受并会被规范化的别名。计费解析按 1–15 秒；省略时按上游默认 8 秒处理，超出上游范围可能被拒绝。', 'Video duration in seconds; seconds is an accepted alias that is normalized. Billing resolution uses 1–15 seconds; when omitted it is treated as upstream’s 8-second default, and values outside the upstream range may be rejected.') },
+          { name: 'resolution', type: 'string', description: l('480p、720p 或 1080p，也接受 480、720、1080、sd、hd 等别名。1080p 通常只由 1.5 图生视频模型支持，以实际上游为准。', '480p, 720p, or 1080p; aliases such as 480, 720, 1080, sd, and hd are also accepted. 1080p is usually supported only by the 1.5 image-to-video model; confirm with upstream.') },
+          { name: 'aspect_ratio', type: 'string', description: l('视频宽高比，例如 16:9、9:16、1:1；未提供时可从 size 推导。', 'Video aspect ratio such as 16:9, 9:16, or 1:1; it can be derived from size when omitted.') },
+          { name: 'size', type: 'string', description: l('例如 1280x720。网关会换算为 aspect_ratio 后移除该字段，不直接转发 size。', 'For example 1280x720. The gateway converts it to aspect_ratio and removes size; size itself is not forwarded.') },
+          { name: 'image / images / reference_images', type: 'string | array', description: l('输入参考图，接受 URL 字符串或 { "url": "..." } / { "image_url": ... } 形式；图生视频与 1.5 模型需要。', 'Input reference images, as URL strings or { "url": "..." } / { "image_url": ... } objects; needed for image-to-video and the 1.5 model.') },
+          { name: 'first_frame / last_frame', type: 'string | object', description: l('首帧与尾帧参考图，格式与参考图相同。', 'First-frame and last-frame reference images, in the same shape as other references.') },
+        ], examples: requestExamples(origin, '/v1/videos', videoCreateRequest) },
+        { id: 'video-create-response', title: l('创建响应', 'Create response'), paragraphs: [
+          l('创建响应是上游 JSON 的透传，网关在缺失时补上 id 与 request_id，便于客户端保存任务标识；上游只返回 task_id 时，网关会把它作为任务 ID 并补齐 id/request_id。若上游在创建响应中返回 status 等字段，会原样透传，值以上游为准。', 'Create responses pass through the upstream JSON, and the gateway adds id and request_id when missing so clients can persist the task identifier. When upstream only returns task_id, the gateway uses it as the task ID and fills in id/request_id. If upstream includes fields such as status in the create response, they are passed through unchanged and their values follow upstream.'),
+        ], fields: [
+          { name: 'id', type: 'string', description: l('任务 ID，用于后续查询与下载。', 'Task ID used for later polling and downloads.') },
+          { name: 'request_id', type: 'string', description: l('与 id 相同的任务标识，兼容不同客户端的字段名。', 'Task identifier matching id, kept for clients that use this field name.') },
+        ], examples: { json: JSON.stringify({ id: 'video_task_example', request_id: 'video_task_example' }, null, 2) } },
+        { id: 'video-status', title: l('轮询任务状态', 'Poll job status'), paragraphs: [
+          l('用创建响应中的任务 ID 轮询 GET /v1/videos/{request_id}（也可使用 /v1/videos/generations/{request_id}）。网关把上游的 done 映射为 completed、expired 映射为 failed，其他状态原样保留，具体值以上游为准。终态后才能下载内容。', 'Poll GET /v1/videos/{request_id} (or /v1/videos/generations/{request_id}) with the task ID from the create response. The gateway maps upstream done to completed and expired to failed, and passes other statuses through unchanged; their values follow upstream. Content can be downloaded only after a terminal status.'),
+          l('状态响应中的视频地址可能被改写为本站 content 路径，也可能保留上游临时链接；请始终使用 content 端点下载，不要依赖状态里的直链。轮询应使用退避间隔（例如从数秒开始逐步增加），避免高频请求。', 'Video URLs in status responses may be rewritten to this site’s content path or may keep upstream temporary links. Always download from the content endpoint instead of relying on links in the status body. Poll with a backoff interval (for example, start at a few seconds and increase) rather than at a high frequency.'),
+          l('常见错误：400 "request_id is required"、404 "Video request not found"、410 表示任务来源账号已被移除或变更（应停止轮询）、503 表示任务信息暂时不可用（稍后重试）。', 'Common errors: 400 "request_id is required", 404 "Video request not found", 410 when the source account for the task was removed or changed (stop polling), and 503 when task information is temporarily unavailable (retry later).'),
+        ], examples: {
+          curl: `curl ${origin}/v1/videos/VIDEO_REQUEST_ID \\\n  -H "Authorization: Bearer $API_KEY"`,
+          json: JSON.stringify({ id: 'video_task_example', status: 'completed', video: { url: '/v1/videos/video_task_example/content', duration: 8 } }, null, 2),
+        } },
+        { id: 'video-content', title: l('下载视频内容', 'Download video content'), paragraphs: [
+          l('任务到达成功终态后，用 GET /v1/videos/{request_id}/content 下载视频字节。响应转发 Content-Type、Content-Length、Content-Range、Accept-Ranges 与 Content-Disposition，并支持 Range 请求，可用于断点续传或只读取片段。', 'After the job reaches a successful terminal status, download the video bytes with GET /v1/videos/{request_id}/content. The response forwards Content-Type, Content-Length, Content-Range, Accept-Ranges, and Content-Disposition, and supports Range requests for resumable downloads or partial reads.'),
+          l('任务尚未完成时，content 端点会返回上游错误或未就绪状态；请先轮询状态，不要直接下载。下载时仍需携带与创建任务相同的密钥。', 'While the job is incomplete, the content endpoint returns an upstream error or not-ready status; poll the status first rather than downloading directly. Downloads still require the same API key used to create the job.'),
+        ], examples: { shell: `curl -L ${origin}/v1/videos/VIDEO_REQUEST_ID/content \\\n  -H "Authorization: Bearer $API_KEY" \\\n  -o output.mp4` } },
+        { id: 'video-minimax', title: l('MiniMax-H3', 'MiniMax-H3'), paragraphs: [
+          l('分组平台为 minimax 时，/v1/videos 会转发到 MiniMax-H3。请求必须使用 application/json（否则 415），且每次只创建一个任务、一段视频；上游地址由账号自定义 base URL 决定。MiniMax-H3 不受 allow_image_generation 检查。创建响应用 id 或 task_id 标识任务；查询到 status 为 completed 且存在 metadata.url 时表示成功，网关会把 metadata.url 改写为本站 /v1/videos/{id}/content。', 'When the group platform is minimax, /v1/videos forwards to MiniMax-H3. Requests must use application/json (otherwise 415), and each request creates a single job and video; the upstream address comes from the account’s custom base URL. MiniMax-H3 is exempt from the allow_image_generation check. The create response identifies the task with id or task_id; a status of completed with metadata.url means success, and the gateway rewrites metadata.url to this site’s /v1/videos/{id}/content.'),
+        ], fields: [
+          { name: 'model', type: 'string', required: true, description: l('必须映射到 MiniMax-H3（不区分大小写），否则请求被拒绝。', 'Must map to MiniMax-H3 (case-insensitive); otherwise the request is rejected.') },
+          { name: 'prompt', type: 'string', required: true, description: l('1–7000 个字符。', '1–7000 characters.') },
+          { name: 'seconds', type: 'string', required: true, description: l('必须是整数字符串 "1" 到 "15"，例如 "8"；不能写成数字类型。', 'Must be an integer string from "1" to "15", for example "8"; a numeric value is rejected.') },
+          { name: 'n', type: 'integer', description: l('可省略；如果提供必须为 1，否则返回错误。', 'May be omitted; when present it must be 1, otherwise the request fails.') },
+          { name: 'size', type: 'string', description: l('可选，例如 1280x720。', 'Optional, for example 1280x720.') },
+          { name: 'metadata.content', type: 'array', description: l('可选图像参考，元素为 { "type": "image_url", "image_url": { "url": "..." } }。', 'Optional image references shaped as { "type": "image_url", "image_url": { "url": "..." } }.') },
+        ], examples: requestExamples(origin, '/v1/videos', minimaxVideoRequest) },
+        { id: 'video-seedance', title: l('Seedance（Ark 原生协议）', 'Seedance (native Ark protocol)'), paragraphs: [
+          l('OpenAI 或 composite 分组的密钥还可以调用 Seedance 的 Ark 原生任务协议：POST /api/v3/contents/generations/tasks 创建，GET 或 DELETE 同一路径加 /{task_id} 查询或删除，GET .../{task_id}/content 下载视频。该入口使用原生请求体，不是 /v1/videos 的 OpenAI 视频格式；分组平台不是 OpenAI/composite 时返回 403。与 Grok 视频创建相同，该入口还要求分组开启图像生成权限（allow_image_generation），否则返回 403 permission_error。', 'Keys on OpenAI or composite groups can also use the native Ark task protocol for Seedance: create with POST /api/v3/contents/generations/tasks, query or delete with GET or DELETE on the same path plus /{task_id}, and download with GET .../{task_id}/content. This endpoint uses the native body, not the OpenAI videos format under /v1/videos; groups on other platforms return 403. As with Grok video creates, it also requires the group to allow image generation (allow_image_generation); otherwise it returns 403 permission_error.'),
+          l('请求必须是 JSON，并包含 model 与非空 content 数组：元素为 { "type": "text", "text": "..." } 或 { "type": "image_url", "image_url": { "url": "..." } }；可选 duration（整数秒，0–60）与 resolution。创建响应必须包含 id；本站以 succeeded、usage.completion_tokens 与 content.video_url 作为成功判定条件（这是网关侧校验，不代表上游一定返回这些字段），满足后网关会把 video_url 改写为本站 content 路径。', 'The request must be JSON with model and a non-empty content array: entries are { "type": "text", "text": "..." } or { "type": "image_url", "image_url": { "url": "..." } }, with optional duration (integer seconds, 0–60) and resolution. A create response must include id; this site treats succeeded, usage.completion_tokens, and content.video_url as its success criteria (a gateway-side check, not a guarantee that upstream returns these fields), and then rewrites video_url to this site’s content path.'),
+        ], examples: requestExamples(origin, '/api/v3/contents/generations/tasks', seedanceRequest) },
+        { id: 'video-edits', title: l('视频编辑与扩展', 'Video edits and extensions'), paragraphs: [
+          l('POST /v1/videos/edits 与 POST /v1/videos/extensions 用于基于源视频的编辑与延长。请求应包含 model 与源视频引用，其他字段按上游协议透传；仓库中的请求结构为 { "model": "grok-imagine-video", "prompt": "...", "video": { "url": "https://example.test/source.mp4" } }。', 'POST /v1/videos/edits and POST /v1/videos/extensions edit and extend an existing video. Requests should include model and a source-video reference, and other fields pass through according to the upstream protocol; the request shape used in this repository is { "model": "grok-imagine-video", "prompt": "...", "video": { "url": "https://example.test/source.mp4" } }.'),
+          l('这两个端点只对 Grok 平台（或 composite 路由）可用，其他平台返回同样的 404。创建成功后，用 /v1/videos/edits/{request_id} 与 /v1/videos/extensions/{request_id} 查询状态，并在对应路径加 /content 下载。', 'These endpoints are available only to Grok-platform (or composite-routed) keys; other platforms return the same 404. After creating a job, poll /v1/videos/edits/{request_id} and /v1/videos/extensions/{request_id}, and append /content to the matching path to download.'),
+        ], examples: { curl: `curl ${origin}/v1/videos/edits \\\n  -H "Authorization: Bearer $API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '${JSON.stringify({ model: 'grok-imagine-video', prompt: 'Add gentle snowfall', video: { url: 'https://example.test/source.mp4' } }, null, 2)}'` } },
+        { id: 'video-caveats', title: l('注意事项', 'Caveats'), paragraphs: [
+          l('查询与下载必须使用创建任务的同一个密钥；用其他密钥查询会得到 404。请持久化任务 ID，轮询失败时按退避重试，不要重复创建任务。', 'Polling and downloads must use the same API key that created the job; another key gets a 404. Persist the task ID, retry polling with backoff, and avoid creating duplicate jobs.'),
+          l('异步任务一旦受理即可能产生计费，即使视频未下载或最终失败；具体计费以本站使用记录为准，本页不列出价格。模型可用性、时长/分辨率支持、并发与限流由站点和上游配置决定。', 'An accepted asynchronous job may be billed even if the video is never downloaded or ultimately fails; billing is reflected in this site’s usage records, and no prices are listed here. Model availability, duration and resolution support, concurrency, and rate limits are configured by this site and upstream.'),
+        ], links: [
+          { label: l('图像生成', 'Image generation'), page: 'image-generation' },
+          { label: l('Nano Banana 图像模型', 'Nano Banana image models'), page: 'nano-banana' },
+        ] },
       ],
     },
     {
