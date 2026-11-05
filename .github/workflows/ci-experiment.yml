@@ -191,6 +191,8 @@ jobs:
           for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
             echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
           done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
       - name: "Stub embedded dist"
         run: |
           mkdir -p backend/internal/web/dist
@@ -685,3 +687,115 @@ jobs:
       - name: Build embedded Linux binary
         working-directory: backend
         run: make build
+
+  r-full-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: "Stub embedded frontend"
+        run: |
+          mkdir -p backend/internal/web/dist
+          printf '<!doctype html><title>stub</title>' > backend/internal/web/dist/index.html
+      - name: "Lowercase owner"
+        run: echo "OWNER_LOWER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+      - name: "Set up QEMU"
+        uses: docker/setup-qemu-action@v3
+      - name: "Set up Docker Buildx"
+        uses: docker/setup-buildx-action@v3
+      - name: "Run GoReleaser (snapshot)"
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: '~> v2'
+          args: release --snapshot --clean --skip=publish --config=.goreleaser.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_MESSAGE: snapshot
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO_OWNER_LOWER: ${{ env.OWNER_LOWER }}
+          GITHUB_REPO_NAME: ${{ github.event.repository.name }}
+          DOCKERHUB_USERNAME: skip
+          PUBLISH_GHCR: 'false'
+      - name: "List artifacts"
+        run: |
+          ls -l dist | grep -E "tar.gz|zip|checksums" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat dist/checksums.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+  r-full-nodocker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: "Stub embedded frontend"
+        run: |
+          mkdir -p backend/internal/web/dist
+          printf '<!doctype html><title>stub</title>' > backend/internal/web/dist/index.html
+      - name: "Lowercase owner"
+        run: echo "OWNER_LOWER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+      - name: "Run GoReleaser (snapshot)"
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: '~> v2'
+          args: release --snapshot --clean --skip=publish,docker --config=.goreleaser.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_MESSAGE: snapshot
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO_OWNER_LOWER: ${{ env.OWNER_LOWER }}
+          GITHUB_REPO_NAME: ${{ github.event.repository.name }}
+          DOCKERHUB_USERNAME: skip
+          PUBLISH_GHCR: 'false'
+      - name: "List artifacts"
+        run: |
+          ls -l dist | grep -E "tar.gz|zip|checksums" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat dist/checksums.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+  r-amd64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: "Stub embedded frontend"
+        run: |
+          mkdir -p backend/internal/web/dist
+          printf '<!doctype html><title>stub</title>' > backend/internal/web/dist/index.html
+      - name: "Lowercase owner"
+        run: echo "OWNER_LOWER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+      - name: "Run GoReleaser (snapshot)"
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: '~> v2'
+          args: release --snapshot --clean --skip=publish --config=.goreleaser.amd64.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_MESSAGE: snapshot
+          GITHUB_REPO_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO_OWNER_LOWER: ${{ env.OWNER_LOWER }}
+          GITHUB_REPO_NAME: ${{ github.event.repository.name }}
+          DOCKERHUB_USERNAME: skip
+          PUBLISH_GHCR: 'false'
+      - name: "List artifacts"
+        run: |
+          ls -l dist | grep -E "tar.gz|zip|checksums" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat dist/checksums.txt | tee -a "$GITHUB_STEP_SUMMARY"
