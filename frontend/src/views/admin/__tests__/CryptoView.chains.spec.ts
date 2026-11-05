@@ -6,8 +6,9 @@ import { routes } from '@/router/records'
 import { chain, report } from '@/components/crypto/__tests__/chainStatusFixtures'
 import { clearCryptoGrant } from '@/composables/cryptoGrant'
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), showSuccess: vi.fn(), showError: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), showSuccess: vi.fn(), showError: vi.fn(), reveal: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: mocks }))
+vi.mock('@/utils/revealActiveNavItem', () => ({ revealActiveNavItem: mocks.reveal }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
 vi.mock('@/stores', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }) }))
@@ -127,5 +128,41 @@ describe('node status tab (routed, real route records)', () => {
     const before = statusCalls()
     await advance(30_000)
     expect(statusCalls()).toBe(before)
+  })
+})
+
+describe('section strip on a phone (routed)', () => {
+  const crypto = routes.filter(r => String(r.name).startsWith('AdminCrypto')).map(r => ({ ...r, component: { template: '<div />' } }))
+  async function render(name: string) {
+    const router = createRouter({ history: createMemoryHistory(), routes: crypto })
+    await router.push({ name }); await router.isReady()
+    const w = mount(CryptoView, { global: { plugins: [router], stubs: { teleport: true } } })
+    await flushPromises()
+    return { w, router }
+  }
+
+  it('wraps the six entries in a box that scrolls sideways and hides its scrollbar', async () => {
+    const { w } = await render('AdminCryptoChains')
+    const strip = w.get('[data-testid="crypto-section-nav"]')
+    expect(strip.classes()).toEqual(expect.arrayContaining(['overflow-x-auto', 'overflow-y-hidden', 'scrollbar-hide', 'min-w-0']))
+    // Every entry, the settings one included, is inside the box that scrolls.
+    const labels = strip.findAll('a').map(a => a.text())
+    expect(labels).toEqual(['概览', '地址', '归集', '到账记录', '节点状态', '配置'])
+  })
+
+  it('brings the current entry into view when the page opens, without gliding', async () => {
+    const { w } = await render('AdminCryptoSettings')
+    expect(mocks.reveal).toHaveBeenCalled()
+    const [strip, options] = mocks.reveal.mock.calls[0]
+    expect(strip).toBe(w.get('[data-testid="crypto-section-nav"]').element)
+    expect(options).toEqual({ smooth: false })
+  })
+
+  it('brings the new entry into view, gliding, after moving to another section', async () => {
+    const { w, router } = await render('AdminCryptoChains')
+    mocks.reveal.mockClear()
+    await router.push({ name: 'AdminCryptoSettings' }); await flushPromises()
+    expect(mocks.reveal).toHaveBeenCalledTimes(1)
+    expect(mocks.reveal).toHaveBeenCalledWith(w.get('[data-testid="crypto-section-nav"]').element, { smooth: true })
   })
 })

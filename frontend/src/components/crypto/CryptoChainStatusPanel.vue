@@ -78,7 +78,22 @@
             <span v-for="item in statItems(chain)" :key="item.key" :class="item.warn ? 'text-warning' : ''" :data-stat="item.key">{{ item.text }}</span>
           </p>
 
-          <ul class="flex flex-col gap-1">
+          <!-- RPC nodes stay folded until tapped. The folded line still says how many are unhealthy. -->
+          <button
+            v-if="chain.nodes.length"
+            type="button"
+            class="-ms-1 flex w-full items-center gap-1.5 rounded-md px-1 py-1.5 text-start text-sm pointer-coarse:min-h-10 hover:bg-elevated/60 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary sm:w-fit"
+            :aria-expanded="isNodesOpen(chain.chain)"
+            :aria-controls="nodesId(chain.chain)"
+            data-testid="chain-nodes-toggle"
+            @click="toggleNodes(chain.chain)"
+          >
+            <UIcon name="i-lucide-chevron-right" class="size-4 shrink-0 text-dimmed transition-transform motion-reduce:transition-none" :class="isNodesOpen(chain.chain) ? 'rotate-90' : ''" aria-hidden="true" />
+            <span class="text-default">{{ t('admin.crypto.chainStatus.nodesTitle', { count: chain.nodes.length }) }}</span>
+            <span :class="nodeSummary(chain).cls" data-testid="chain-nodes-summary">{{ nodeSummary(chain).text }}</span>
+          </button>
+
+          <ul v-show="isNodesOpen(chain.chain)" :id="nodesId(chain.chain)" class="flex flex-col gap-1.5 ps-1" data-testid="chain-nodes">
             <li v-for="node in chain.nodes" :key="node.label" class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm" :data-testid="`node-${node.label}`" :data-status="node.status">
               <span class="size-2 shrink-0 rounded-full" :class="dotClass(node)" aria-hidden="true" />
               <span class="sr-only">{{ nodeStatusLabel(node.status) }}</span>
@@ -236,6 +251,28 @@ function errorKindLabel(kind: string): string {
 }
 
 const isBadNode = (node: ChainNodeStatus) => node.status === 'error' || node.status === 'wrong_chain'
+
+// Which chains have their node list unfolded. Kept by chain name, so the 3-second refresh
+// does not fold it again. Leaving the tab drops it: the list starts folded on every visit.
+const openNodes = ref<Record<string, boolean>>({})
+const isNodesOpen = (chain: string) => openNodes.value[chain] === true
+const toggleNodes = (chain: string) => { openNodes.value[chain] = !isNodesOpen(chain) }
+const nodesId = (chain: string) => `chain-nodes-${chain}`
+
+// The text beside the fold arrow: everything fine, or what is not.
+function nodeSummary(chain: ChainStatus): { text: string; cls: string } {
+  let bad = 0
+  let warn = 0
+  for (const node of chain.nodes) {
+    if (isBadNode(node)) bad++
+    else if (node.status === 'slow' || node.status === 'behind') warn++
+  }
+  const parts: string[] = []
+  if (bad) parts.push(t('admin.crypto.chainStatus.nodesBad', { count: bad }))
+  if (warn) parts.push(t('admin.crypto.chainStatus.nodesWarn', { count: warn }))
+  if (!parts.length) return { text: t('admin.crypto.chainStatus.nodesAllOk'), cls: 'text-muted' }
+  return { text: parts.join(' · '), cls: bad ? 'text-error' : 'text-warning' }
+}
 
 // Two keys of one provider share a host name, so the list position ("blockpi#1" -> 1) tells them apart.
 const nodeIndex = (node: ChainNodeStatus) => (node.label.includes('#') ? node.label.slice(node.label.lastIndexOf('#') + 1) : '')
