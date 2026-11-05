@@ -258,6 +258,10 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(
 		}
 		return OpenAIUsage{}, 0, nil, err
 	}
+	// The native Codex Images endpoint may normalize GIF animation controls to
+	// its own defaults; repair the returned animation so the request's
+	// frame_count/frame_duration_ms/size are honored.
+	body = normalizeOpenAIImagesGIFAnimationResponseBody(body, parsed)
 	results, err := parseCodexDirectImagesResponse(body)
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err

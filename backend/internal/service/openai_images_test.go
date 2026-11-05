@@ -2354,7 +2354,7 @@ func TestOpenAIImageOutputMIMEType_GIF(t *testing.T) {
 	require.Equal(t, "image/png", openAIImageOutputMIMEType(""))
 }
 
-func TestOpenAIGatewayServiceForwardImages_OAuthPassesThroughGIFAnimation(t *testing.T) {
+func TestOpenAIGatewayServiceForwardImages_OAuthHonorsGIFAnimation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-2.6-sunburst","prompt":"a looping lantern","size":"512x512","output_format":"gif","frame_count":16,"frame_duration_ms":120,"response_format":"url"}`)
 
@@ -2413,6 +2413,20 @@ func TestOpenAIGatewayServiceForwardImages_OAuthPassesThroughGIFAnimation(t *tes
 	require.False(t, gjson.GetBytes(upstream.lastBody, "response_format").Exists())
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "data:image/gif;base64,"+gifBase64, gjson.Get(rec.Body.String(), "data.0.url").String())
 	require.Equal(t, "gpt-image-2.6-sunburst", gjson.Get(rec.Body.String(), "data.0.model").String())
+	require.Equal(t, "512x512", gjson.Get(rec.Body.String(), "data.0.size").String())
+
+	// The upstream returned a single 1x1 frame and ignored the animation
+	// controls; the response must carry the requested 16-frame, 120 ms,
+	// 512x512 animation instead of the upstream defaults.
+	responseURL := gjson.Get(rec.Body.String(), "data.0.url").String()
+	const dataURLPrefix = "data:image/gif;base64,"
+	require.True(t, strings.HasPrefix(responseURL, dataURLPrefix), responseURL)
+	animation := decodeOpenAIGIFTestAnimation(t, openAIGIFTestDecodeBase64(t, strings.TrimPrefix(responseURL, dataURLPrefix)))
+	require.Len(t, animation.Image, 16)
+	require.Equal(t, 512, animation.Config.Width)
+	require.Equal(t, 512, animation.Config.Height)
+	for index, delay := range animation.Delay {
+		require.Equal(t, 12, delay, "frame %d delay", index)
+	}
 }
