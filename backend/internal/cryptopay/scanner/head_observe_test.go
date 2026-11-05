@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -71,7 +72,9 @@ func TestHeadObservationPersistsSuccessfulBatchesDespiteRateLimit(t *testing.T) 
 	tr := headTransfer()
 	recipients := splitRecipients(batchSize + 1)
 	recipients[0] = tr.To
-	var calls int
+	// Address batches are fetched concurrently, so the counter must be atomic and
+	// "the second request" is whichever batch happens to arrive second.
+	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Method string `json:"method"`
@@ -81,9 +84,9 @@ func TestHeadObservationPersistsSuccessfulBatchesDespiteRateLimit(t *testing.T) 
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		calls++
+		call := calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		if calls == 2 {
+		if call == 2 {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -97,8 +100,8 @@ func TestHeadObservationPersistsSuccessfulBatchesDespiteRateLimit(t *testing.T) 
 	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET confirmations = \$1.*status = 'pending'`).
 		WithArgs(int64(2), "bsc", tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
 	err := w.observeHead(t.Context(), w.pools["bsc"], w.chains[0], 110)
-	if err == nil || calls != 2 {
-		t.Fatalf("expected one partial scan error without retry storm: calls=%d err=%v", calls, err)
+	if err == nil || calls.Load() != 2 {
+		t.Fatalf("expected one partial scan error without retry storm: calls=%d err=%v", calls.Load(), err)
 	}
 	if len(handler.pending) != 1 || len(handler.processed) != 0 {
 		t.Fatalf("successful batch must be displayed as pending only: pending=%d credited=%d", len(handler.pending), len(handler.processed))
