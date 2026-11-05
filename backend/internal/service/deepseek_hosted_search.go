@@ -112,9 +112,23 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		return result, true, forwardErr
 	}
 	state := &deepSeekHostedSearchState{c: c, stream: gjson.GetBytes(body, "stream").Bool(), model: gjson.GetBytes(body, "model").String(), started: time.Now(), header: make(http.Header), callIDs: make(map[string]struct{}), skipFetchTool: !injectTools}
+	// What the client has been sent so far, SSE heartbeats not counted. The handler fails over only while this
+	// is unchanged, so nothing here may change it before the hosted layer has produced something.
+	writtenAtEntry := OpenAICompactKeepaliveAdjustedWrittenSize(c)
 	fail := func(cause error) (*OpenAIForwardResult, bool, error) {
 		if ctx.Err() != nil {
 			state.clientDisconnected = true
+		}
+		if cause != nil && !state.clientDisconnected && state.attempted == 0 && state.sequence == 0 &&
+			OpenAICompactKeepaliveAdjustedWrittenSize(c) == writtenAtEntry {
+			var failover *UpstreamFailoverError
+			if errors.As(cause, &failover) {
+				// The first upstream attempt failed before the client saw anything and before any search ran
+				// (a dial timeout, or a 429/5xx the provider wants retried elsewhere). Hand the error back
+				// unchanged so the handler can try another account. Writing response.failed here, or hiding
+				// the failover type, would end the request on one bad account. Heartbeats do not count as output.
+				return state.finishResult(), true, cause
+			}
 		}
 		if cause != nil && !state.clientDisconnected {
 			status := c.GetInt(OpsUpstreamStatusCodeKey)
@@ -179,7 +193,12 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 			}
 		}
 		if writer.err != nil {
-			return fail(writer.err)
+			if forwardErr == nil || writer.size > 0 || len(writer.buffer) > 0 || len(writer.response) > 0 {
+				return fail(writer.err)
+			}
+			// The round produced nothing, so writer.err is only finish() complaining about the empty round.
+			// The forward error is the real cause, and it may be the failover error the handler must see.
+			writer.err = nil
 		}
 		if ctx.Err() != nil {
 			return fail(ctx.Err())
