@@ -366,14 +366,15 @@ export interface ReconcileResult {
 // therefore stopping the chain from sweeping further addresses.
 export async function listBlockedSweeps(): Promise<BlockedSweep[]> {
   const { data } = await apiClient.get('/admin/crypto/sweep/blocked')
-  return data
+  // The handler answers { data: [...] } without a "code" key, so the client does not unwrap it.
+  return Array.isArray(data?.data) ? data.data : []
 }
 
 // reconcileSweep observes the chain without signing or broadcasting. A missing
 // receipt retains the reservation and original signed bytes for safe resumption.
 export async function reconcileSweep(jobId: number, verification?: CryptoVerification): Promise<ReconcileResult> {
   const { data } = await apiClient.post(`/admin/crypto/sweep/records/${jobId}/reconcile`, null, cryptoRequestOptions(verification))
-  return data
+  return data.data
 }
 
 export async function listSweepRecords(chain?: string): Promise<SweepRecord[]> {

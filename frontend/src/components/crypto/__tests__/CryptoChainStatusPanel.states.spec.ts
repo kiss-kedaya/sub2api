@@ -152,6 +152,7 @@ describe('node list', () => {
   it('never renders a URL, path or key: only the host the server sent', async () => {
     const w = await render(report([chain({ nodes: [node({ host: 'rpc.ankr.com' })] })]))
     expect(w.text()).toContain('rpc.ankr.com')
-    expect(w.html()).not.toMatch(/https?:\/\//)
+    // The fold arrow is an inline SVG, whose namespace attribute is a URL nobody reads.
+    expect(w.html().replace(/\sxmlns(:\w+)?="[^"]*"/g, '')).not.toMatch(/https?:\/\//)
   })
 })
