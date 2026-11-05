@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type AccountOpsUsageWindow struct {
@@ -113,6 +115,172 @@ func opsBalanceAccount(a *Account, now time.Time) AccountOpsBalanceAccount {
 	}
 	item.Balance = &n
 	return item
+}
+
+// accountOpsCustomUsageTimeout bounds one threshold-triggered custom usage
+// refresh independently of the short snapshot reads used by a scan. The custom
+// usage client itself gives up after 30s, so a slow site may finish instead of
+// caching a cancelled read for the whole configured interval.
+const accountOpsCustomUsageTimeout = 35 * time.Second
+
+// accountOpsCustomUsagePrefetchLimit bounds the concurrent cold-cache reads so a
+// rules page or scan warms N accounts in parallel instead of serially.
+const accountOpsCustomUsagePrefetchLimit = 4
+
+// opsConfiguredCustomUsage reports whether the account's custom usage query is
+// the same source the account page's balance query reads. Unconfigured or
+// disabled custom usage keeps the existing upstream billing probe behavior.
+func opsConfiguredCustomUsage(a *Account) bool {
+	if a == nil || a.Type != AccountTypeAPIKey || a.IsCredentialShadow() {
+		return false
+	}
+	c, _, configured := readCustomUsage(a)
+	return configured && c.Enabled
+}
+
+// opsCustomUsageBalanceAccount turns one custom usage result into the account
+// rules value. Failed, stale, missing and non-finite samples deliberately carry
+// no balance, so a later delivery recheck can never confirm a recovery from them.
+func opsCustomUsageBalanceAccount(a *Account, r CustomUsageResult) (AccountOpsBalanceAccount, bool) {
+	if a == nil || !r.Configured || !r.Enabled {
+		return AccountOpsBalanceAccount{}, false
+	}
+	item := AccountOpsBalanceAccount{AccountID: a.ID, AccountName: a.Name, Platform: a.Platform, Type: a.Type, Unit: "USD", BalanceStatus: "unknown", UsageWindows: []AccountOpsUsageWindow{}}
+	if unit := strings.TrimSpace(r.Unit); unit != "" {
+		item.Unit = unit
+	}
+	item.ReceivedAt = r.UpdatedAt
+	if r.Error != "" {
+		item.BalanceStatus = "failed"
+		return item, true
+	}
+	if r.Remaining == nil {
+		item.BalanceStatus = "unsupported"
+		return item, true
+	}
+	if r.Stale || r.UpdatedAt == nil {
+		item.BalanceStatus = "stale"
+		return item, true
+	}
+	if math.IsNaN(*r.Remaining) || math.IsInf(*r.Remaining, 0) {
+		item.BalanceStatus = "unsupported"
+		return item, true
+	}
+	balance := *r.Remaining
+	item.BalanceStatus = "ok"
+	item.Balance = &balance
+	return item, true
+}
+
+// opsQueryCustomUsage runs one interval-gated custom usage query on behalf of a
+// threshold reader. The detached budget lets a slow site finish instead of
+// caching a cancelled read for the whole configured interval.
+func (s *AccountOpsService) opsQueryCustomUsage(ctx context.Context, id int64) (CustomUsageResult, bool) {
+	if s == nil {
+		return CustomUsageResult{}, false
+	}
+	usage := s.CustomUsageService()
+	if usage == nil {
+		return CustomUsageResult{}, false
+	}
+	query, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountOpsCustomUsageTimeout)
+	defer cancel()
+	result, err := usage.Query(query, id, false, nil)
+	if err != nil {
+		result = CustomUsageResult{Configured: true, Enabled: true, Error: "read_failed"}
+	}
+	return result, true
+}
+
+// opsCurrentBalanceAccount resolves the current balance value for account rules.
+// API-key accounts whose custom usage query is configured and enabled read that
+// result, exactly like the account page's balance query, so the rules page and
+// threshold alerts work without the account page ever being opened. Everything
+// else keeps the upstream billing probe behavior.
+func (s *AccountOpsService) opsCurrentBalanceAccount(ctx context.Context, a *Account, now time.Time) AccountOpsBalanceAccount {
+	if a == nil {
+		return AccountOpsBalanceAccount{Unit: "USD", BalanceStatus: "unknown", UsageWindows: []AccountOpsUsageWindow{}}
+	}
+	if s == nil || !opsConfiguredCustomUsage(a) {
+		return opsBalanceAccount(a, now)
+	}
+	result, ok := s.opsQueryCustomUsage(ctx, a.ID)
+	if !ok {
+		return opsBalanceAccount(a, now)
+	}
+	item, mapped := opsCustomUsageBalanceAccount(a, result)
+	if !mapped {
+		// A fresher account read may have just disabled the query.
+		return opsBalanceAccount(a, now)
+	}
+	return item
+}
+
+// opsPrefetchCustomUsage warms the shared custom usage cache for exactly the
+// API-key accounts whose enabled balance rule reads that source. The rules-page
+// request and the scan goroutine evaluate accounts serially, so without this a
+// cold cache would block one upstream request per account. Bounded concurrency
+// keeps a cold page load to N/limit upstream rounds while the serial loops below
+// then observe cheap cache hits; no account is queried twice.
+func (s *AccountOpsService) opsPrefetchCustomUsage(ctx context.Context, accounts []Account, enabledRules map[int64]struct{}) map[int64]CustomUsageResult {
+	if s == nil || len(accounts) == 0 || len(enabledRules) == 0 || s.CustomUsageService() == nil {
+		return nil
+	}
+	candidates := make([]int64, 0, len(enabledRules))
+	seen := make(map[int64]struct{}, len(enabledRules))
+	for i := range accounts {
+		a := &accounts[i]
+		if a.Type != AccountTypeAPIKey {
+			continue
+		}
+		if _, ok := enabledRules[a.ID]; !ok {
+			continue
+		}
+		if _, ok := seen[a.ID]; ok {
+			continue
+		}
+		if !opsConfiguredCustomUsage(a) {
+			continue
+		}
+		seen[a.ID] = struct{}{}
+		candidates = append(candidates, a.ID)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	results := make([]CustomUsageResult, len(candidates))
+	var group errgroup.Group
+	group.SetLimit(accountOpsCustomUsagePrefetchLimit)
+	for i, id := range candidates {
+		i, id := i, id
+		group.Go(func() error {
+			if result, ok := s.opsQueryCustomUsage(ctx, id); ok {
+				results[i] = result
+			}
+			return nil
+		})
+	}
+	_ = group.Wait()
+	prefetched := make(map[int64]CustomUsageResult, len(candidates))
+	for i, id := range candidates {
+		prefetched[id] = results[i]
+	}
+	return prefetched
+}
+
+// opsRuleBalanceAccount builds the rules-page value from a prefetched custom
+// usage result, falling back to the billing probe whenever that source is not
+// the configured balance source.
+func opsRuleBalanceAccount(a *Account, now time.Time, prefetched map[int64]CustomUsageResult) AccountOpsBalanceAccount {
+	if a == nil {
+		return AccountOpsBalanceAccount{Unit: "USD", BalanceStatus: "unknown", UsageWindows: []AccountOpsUsageWindow{}}
+	}
+	if result, ok := prefetched[a.ID]; ok {
+		if item, mapped := opsCustomUsageBalanceAccount(a, result); mapped {
+			return item
+		}
+	}
+	return opsBalanceAccount(a, now)
 }
 func opsWindow(window, label string, value any, scale float64, observed, reset *time.Time, now time.Time) AccountOpsUsageWindow {
 	w := AccountOpsUsageWindow{Window: window, Label: label, Status: "unknown", ObservedAt: observed, ResetsAt: reset}
@@ -266,12 +434,28 @@ func (s *AccountOpsService) thresholdAccounts(ctx context.Context, apiOnly bool)
 		return nil, err
 	}
 	now := time.Now()
+	enabledBalanceRules := make(map[int64]struct{}, len(c.BalanceThresholds))
+	for _, rule := range c.BalanceThresholds {
+		if rule.Enabled {
+			enabledBalanceRules[rule.AccountID] = struct{}{}
+		}
+	}
+	// Warm the custom usage cache concurrently before the serial render loop so a
+	// cold rules page does not block one upstream request per account.
+	prefetched := s.opsPrefetchCustomUsage(ctx, accounts, enabledBalanceRules)
 	for i := range accounts {
 		a := &accounts[i]
 		if a.Type != AccountTypeAPIKey && (apiOnly || a.Type != AccountTypeOAuth) {
 			continue
 		}
 		item := opsBalanceAccount(a, now)
+		// Only accounts with an enabled balance rule read the configured custom
+		// usage source; every other account keeps the cached probe view.
+		if a.Type == AccountTypeAPIKey {
+			if _, ok := enabledBalanceRules[a.ID]; ok {
+				item = opsRuleBalanceAccount(a, now, prefetched)
+			}
+		}
 		group := accountOpsGroupAssignment(a, c)
 		item.GroupID, item.GroupName, item.GroupMode = group.ID, group.Name, group.Mode
 		if a.Type == AccountTypeOAuth {
@@ -352,7 +536,7 @@ func (s *AccountOpsService) assessThreshold(ctx context.Context, a *Account, kin
 	if kind == "balance_threshold" && a.Type == AccountTypeAPIKey {
 		for _, r := range c.BalanceThresholds {
 			if r.AccountID == a.ID && r.Enabled {
-				item := opsBalanceAccount(a, now)
+				item := s.opsCurrentBalanceAccount(ctx, a, now)
 				if item.Balance == nil || item.Unit != r.Unit {
 					return nil, "suppressed"
 				}
@@ -539,6 +723,23 @@ func (s *AccountOpsService) scanBalances(ctx context.Context) {
 	}
 	ids := append(thresholdRuleIDs(c, "balance_threshold"), thresholdRuleIDs(c, "quota_threshold")...)
 	accounts := s.loadThresholdAccounts(ctx, ids)
+
+	// Warm the balance-rule custom usage cache concurrently before the serial
+	// group assessments, so one slow or dead upstream cannot delay every later
+	// group (and the delivery pass that follows) by a full query budget.
+	enabledBalanceRules := make(map[int64]struct{}, len(c.BalanceThresholds))
+	for _, rule := range c.BalanceThresholds {
+		if rule.Enabled {
+			enabledBalanceRules[rule.AccountID] = struct{}{}
+		}
+	}
+	prefetchAccounts := make([]Account, 0, len(accounts))
+	for _, member := range accounts {
+		if member.account != nil && member.lookupErr == nil {
+			prefetchAccounts = append(prefetchAccounts, *member.account)
+		}
+	}
+	s.opsPrefetchCustomUsage(ctx, prefetchAccounts, enabledBalanceRules)
 
 	for _, kind := range []string{"balance_threshold", "quota_threshold"} {
 		groups := map[string]struct {

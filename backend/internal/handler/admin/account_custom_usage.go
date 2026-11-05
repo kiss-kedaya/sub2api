@@ -23,6 +23,25 @@ func (h *AccountHandler) NewCustomUsageHandler() *CustomUsageHandler {
 	}
 	return &CustomUsageHandler{usage: h.upstreamBillingProbe.NewCustomUsageService()}
 }
+
+// NewCustomUsageHandlerWithService reuses the account-ops reader so the account
+// page and the notification rules/alerts share one interval-gated cache instead
+// of querying the same upstream twice.
+func (h *AccountHandler) NewCustomUsageHandlerWithService(usage *service.CustomUsageService) *CustomUsageHandler {
+	if usage == nil {
+		return h.NewCustomUsageHandler()
+	}
+	return &CustomUsageHandler{usage: usage}
+}
+
+// SharedCustomUsageService exposes the account-ops service's process-wide custom
+// usage reader to route registration without adding a new Wire provider.
+func (h *AccountOpsHandler) SharedCustomUsageService() *service.CustomUsageService {
+	if h == nil || h.svc == nil {
+		return nil
+	}
+	return h.svc.CustomUsageService()
+}
 func customUsageID(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {

@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/stretchr/testify/require"
+	"net/http"
+	"sync"
 	"testing"
 	"time"
 )
@@ -263,4 +266,318 @@ func TestAccountOpsValidationErrorPreservesPersistedConfiguration(t *testing.T) 
 	require.NotErrorIs(t, err, ErrAccountOpsConfigValidation)
 	require.NotContains(t, err.Error(), "private database")
 	require.Equal(t, before, settings.raw)
+}
+
+// opsCustomUsageRoundTripFixture keeps the upstream HTTP fake counted so tests
+// can assert the rules page, alerting and cache reuse never query twice.
+type opsCustomUsageFixture struct {
+	usage  *CustomUsageService
+	calls  int
+	body   string
+	status int
+}
+
+type opsCustomUsageClock struct{ at time.Time }
+
+func (c *opsCustomUsageClock) now() time.Time          { return c.at }
+func (c *opsCustomUsageClock) advance(d time.Duration) { c.at = c.at.Add(d) }
+
+func newOpsCustomUsageFixture(t *testing.T, a *Account, clock *opsCustomUsageClock) (*AccountOpsService, *opsCustomUsageFixture) {
+	t.Helper()
+	fixture := &opsCustomUsageFixture{body: `{"remaining":12.5}`, status: http.StatusOK}
+	fixture.usage = NewCustomUsageService(&customUsageTestRepo{accounts: map[int64]*Account{a.ID: a}})
+	fixture.usage.now = clock.now
+	fixture.usage.client.Transport = customUsageRoundTrip(func(*http.Request) (*http.Response, error) {
+		fixture.calls++
+		return customUsageResponse(fixture.body, fixture.status), nil
+	})
+	svc := NewAccountOpsService(&accountOpsSettingsStub{}, &accountOpsRepoStub{}, nil)
+	svc.SetNotificationDependencies(&opsAccountsStub{account: a}, nil, false, "Asia/Shanghai")
+	svc.SetCustomUsageService(fixture.usage)
+	return svc, fixture
+}
+
+func opsCustomUsageRuleConfig(accountID int64, threshold float64, unit string) AccountOpsConfig {
+	cfg := defaultAccountOpsConfig()
+	cfg.Enabled = true
+	cfg.Recipient = "ops@example.test"
+	cfg.BalanceLow = false
+	cfg.WeeklyQuota = false
+	cfg.BalanceThresholds = []AccountOpsBalanceRule{{AccountID: accountID, Enabled: true, Threshold: threshold, Unit: unit}}
+	return cfg
+}
+
+// TestAccountOpsRulesReadConfiguredCustomUsageWithoutBillingProbe is the
+// regression for issue #181: the account page's balance query reads the
+// configured custom usage endpoint, so the account rules page and threshold
+// alerting must read the same sample instead of showing no data.
+func TestAccountOpsRulesReadConfiguredCustomUsageWithoutBillingProbe(t *testing.T) {
+	clock := &opsCustomUsageClock{at: time.Now()}
+	a := &Account{
+		ID:          7,
+		Name:        "relay-usd",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://relay.example.test"},
+		Extra:       map[string]any{},
+	}
+	svc, fixture := newOpsCustomUsageFixture(t, a, clock)
+	cfg := opsCustomUsageRuleConfig(a.ID, 20, "USD")
+	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
+
+	items, err := svc.ThresholdAccounts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "ok", items[0].BalanceStatus)
+	require.NotNil(t, items[0].Balance)
+	require.Equal(t, 12.5, *items[0].Balance)
+	require.Equal(t, "USD", items[0].Unit)
+	require.Equal(t, 1, fixture.calls)
+
+	// Threshold alerting evaluates the same sample without the account page open.
+	e, state := svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, clock.at)
+	require.Equal(t, "active", state)
+	require.NotNil(t, e)
+	require.NotNil(t, e.Details)
+	require.NotNil(t, e.Details.Balance)
+	require.Equal(t, 12.5, *e.Details.Balance)
+	require.Equal(t, "USD", e.Details.Unit)
+	// The configured interval gates upstream traffic: the cached sample is reused.
+	require.Equal(t, 1, fixture.calls)
+
+	// A refreshed sample above the threshold resolves the episode.
+	clock.advance(11 * time.Minute)
+	fixture.body = `{"remaining":25}`
+	e, state = svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, clock.at)
+	require.Equal(t, "resolved", state)
+	require.Equal(t, 25.0, *e.Details.Balance)
+	require.Equal(t, 2, fixture.calls)
+
+	// The rule unit must still match the unit reported by the custom usage query.
+	cfg.BalanceThresholds[0].Unit = "CNY"
+	_, state = svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, clock.at)
+	require.Equal(t, "suppressed", state)
+	require.Equal(t, 2, fixture.calls)
+}
+
+// TestAccountOpsCustomUsageFailureNeverConfirmsRecovery pins the no-data rule:
+// a failed refresh keeps the alert suppressed instead of rendering the stale
+// sample as a recovery.
+func TestAccountOpsCustomUsageFailureNeverConfirmsRecovery(t *testing.T) {
+	clock := &opsCustomUsageClock{at: time.Now()}
+	a := &Account{
+		ID:          7,
+		Name:        "relay-usd",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://relay.example.test"},
+		Extra:       map[string]any{},
+	}
+	svc, fixture := newOpsCustomUsageFixture(t, a, clock)
+	cfg := opsCustomUsageRuleConfig(a.ID, 20, "USD")
+	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
+
+	_, state := svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, clock.at)
+	require.Equal(t, "active", state)
+	require.Equal(t, 1, fixture.calls)
+
+	clock.advance(11 * time.Minute)
+	fixture.body = `{}`
+	fixture.status = http.StatusInternalServerError
+	_, state = svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, clock.at)
+	require.Equal(t, "suppressed", state)
+	require.Equal(t, 2, fixture.calls)
+
+	items, err := svc.ThresholdAccounts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "failed", items[0].BalanceStatus)
+	require.Nil(t, items[0].Balance)
+	require.Equal(t, 2, fixture.calls)
+}
+
+// TestAccountOpsCustomUsageDisabledOrUnconfiguredKeepsBillingProbe preserves the
+// previous billing probe behavior for accounts that do not opt into custom usage.
+func TestAccountOpsCustomUsageDisabledOrUnconfiguredKeepsBillingProbe(t *testing.T) {
+	now := time.Now()
+	received := now.Add(-time.Minute)
+	fresh := now.Add(time.Hour)
+	for _, tc := range []struct {
+		name        string
+		credentials map[string]any
+		extra       map[string]any
+	}{
+		{"unconfigured", map[string]any{"api_key": "sk-test"}, map[string]any{}},
+		{"disabled", map[string]any{"api_key": "sk-test", "base_url": "https://relay.example.test"}, map[string]any{CustomUsageExtraKey: map[string]any{"enabled": false}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			extra := map[string]any{UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{Status: "ok", Balance: &UpstreamBalanceSnapshot{Status: "ok", ReceivedAt: &received, FreshUntil: &fresh, Data: map[string]any{"remaining": 7.0, "unit": "USD"}}}}
+			for k, v := range tc.extra {
+				extra[k] = v
+			}
+			clock := &opsCustomUsageClock{at: now}
+			a := &Account{ID: 8, Name: "probe-key", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: tc.credentials, Extra: extra}
+			svc, fixture := newOpsCustomUsageFixture(t, a, clock)
+			cfg := opsCustomUsageRuleConfig(a.ID, 10, "USD")
+			require.NoError(t, svc.SaveConfig(context.Background(), cfg))
+
+			items, err := svc.ThresholdAccounts(context.Background())
+			require.NoError(t, err)
+			require.Len(t, items, 1)
+			require.Equal(t, "ok", items[0].BalanceStatus)
+			require.NotNil(t, items[0].Balance)
+			require.Equal(t, 7.0, *items[0].Balance)
+
+			e, state := svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, now)
+			require.Equal(t, "active", state)
+			require.Equal(t, 7.0, *e.Details.Balance)
+			// Disabled and unconfigured custom usage must never hit the upstream query.
+			require.Zero(t, fixture.calls)
+		})
+	}
+}
+
+// opsMultiAccountsStub serves several accounts so prefetch behaviour can be
+// asserted across a whole rules page.
+type opsMultiAccountsStub struct {
+	AccountRepository
+	accounts map[int64]*Account
+	ids      []int64
+}
+
+func (s *opsMultiAccountsStub) GetByID(_ context.Context, id int64) (*Account, error) {
+	if a := s.accounts[id]; a != nil {
+		return a, nil
+	}
+	return nil, ErrAccountNotFound
+}
+
+func (s *opsMultiAccountsStub) GetByIDs(_ context.Context, ids []int64) ([]*Account, error) {
+	out := make([]*Account, 0, len(ids))
+	for _, id := range ids {
+		if a := s.accounts[id]; a != nil {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+func (s *opsMultiAccountsStub) ListAllWithFilters(context.Context, string, string, string, string, int64, string) ([]Account, error) {
+	out := make([]Account, 0, len(s.ids))
+	for _, id := range s.ids {
+		out = append(out, *s.accounts[id])
+	}
+	return out, nil
+}
+
+// TestAccountOpsRulesPrefetchQueriesEachAccountOnce pins the cold-cache rule for
+// the rules page: enabled-rule accounts are warmed concurrently but upstream is
+// still queried exactly once per account, and the interval cache serves the next
+// page load without duplicate queries.
+func TestAccountOpsRulesPrefetchQueriesEachAccountOnce(t *testing.T) {
+	clock := &opsCustomUsageClock{at: time.Now()}
+	const count = 5
+	accounts := make(map[int64]*Account, count)
+	ids := make([]int64, 0, count)
+	for i := 0; i < count; i++ {
+		id := int64(11 + i)
+		accounts[id] = &Account{
+			ID:          id,
+			Name:        fmt.Sprintf("relay-%d", id),
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "sk-test", "base_url": fmt.Sprintf("https://relay%d.example.test", id)},
+			Extra:       map[string]any{},
+		}
+		ids = append(ids, id)
+	}
+	usage := NewCustomUsageService(&customUsageTestRepo{accounts: accounts})
+	usage.now = clock.now
+	var requestMu sync.Mutex
+	requests := map[string]int{}
+	usage.client.Transport = customUsageRoundTrip(func(r *http.Request) (*http.Response, error) {
+		requestMu.Lock()
+		requests[r.URL.Host]++
+		requestMu.Unlock()
+		var id int64
+		_, _ = fmt.Sscanf(r.URL.Host, "relay%d.example.test", &id)
+		return customUsageResponse(fmt.Sprintf(`{"remaining":%d}`, id), http.StatusOK), nil
+	})
+	svc := NewAccountOpsService(&accountOpsSettingsStub{}, &accountOpsRepoStub{}, nil)
+	svc.SetNotificationDependencies(&opsMultiAccountsStub{accounts: accounts, ids: ids}, nil, false, "Asia/Shanghai")
+	svc.SetCustomUsageService(usage)
+	cfg := defaultAccountOpsConfig()
+	cfg.Enabled = true
+	cfg.Recipient = "ops@example.test"
+	cfg.BalanceLow = false
+	cfg.WeeklyQuota = false
+	for _, id := range ids {
+		cfg.BalanceThresholds = append(cfg.BalanceThresholds, AccountOpsBalanceRule{AccountID: id, Enabled: true, Threshold: 100, Unit: "USD"})
+	}
+	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
+
+	items, err := svc.ThresholdAccounts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, count)
+	require.Len(t, requests, count)
+	for host, n := range requests {
+		require.Equal(t, 1, n, host)
+	}
+	byID := make(map[int64]AccountOpsBalanceAccount, count)
+	for _, item := range items {
+		byID[item.AccountID] = item
+	}
+	for _, id := range ids {
+		item, ok := byID[id]
+		require.True(t, ok)
+		require.Equal(t, "ok", item.BalanceStatus)
+		require.NotNil(t, item.Balance)
+		require.Equal(t, float64(id), *item.Balance)
+		require.Equal(t, "USD", item.Unit)
+	}
+
+	// A second rules-page load is served by the interval cache: no extra queries.
+	_, err = svc.ThresholdAccounts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, requests, count)
+	for host, n := range requests {
+		require.Equal(t, 1, n, host)
+	}
+}
+
+// TestAccountOpsCustomUsagePrefetchedResultMapping keeps the failure semantics
+// after prefetch: fresh samples render, while stale and failed samples keep the
+// value unavailable so a recovery can never be confirmed from them.
+func TestAccountOpsCustomUsagePrefetchedResultMapping(t *testing.T) {
+	now := time.Now()
+	a := &Account{ID: 21, Name: "relay-mapped", Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	remaining := 12.5
+	fresh := CustomUsageResult{Configured: true, Enabled: true, Unit: "USD", Remaining: &remaining, UpdatedAt: &now}
+
+	item, mapped := opsCustomUsageBalanceAccount(a, fresh)
+	require.True(t, mapped)
+	require.Equal(t, "ok", item.BalanceStatus)
+	require.NotNil(t, item.Balance)
+	require.Equal(t, remaining, *item.Balance)
+	require.Equal(t, "USD", item.Unit)
+
+	stale := fresh
+	stale.Stale = true
+	item, mapped = opsCustomUsageBalanceAccount(a, stale)
+	require.True(t, mapped)
+	require.Equal(t, "stale", item.BalanceStatus)
+	require.Nil(t, item.Balance)
+
+	failed := fresh
+	failed.Error = "upstream_error"
+	item, mapped = opsCustomUsageBalanceAccount(a, failed)
+	require.True(t, mapped)
+	require.Equal(t, "failed", item.BalanceStatus)
+	require.Nil(t, item.Balance)
+
+	// The render path maps prefetched results the same way.
+	prefetched := map[int64]CustomUsageResult{a.ID: failed}
+	require.Equal(t, "failed", opsRuleBalanceAccount(a, now, prefetched).BalanceStatus)
+	prefetched[a.ID] = fresh
+	require.Equal(t, "ok", opsRuleBalanceAccount(a, now, prefetched).BalanceStatus)
 }

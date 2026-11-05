@@ -21,6 +21,7 @@
       </div>
     </template>
   </BaseDialog>
+  <TotpStepUpDialog :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
@@ -31,11 +32,19 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import { saveAccountOpsNotificationSettings } from '@/api/admin/accountOps'
 import type { AccountOpsConfig } from '@/api/admin/accountOps'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 
 const props = defineProps<{ show: boolean; config: AccountOpsConfig; smtpConfigured: boolean }>()
 const emit = defineEmits<{ (event: 'close'): void; (event: 'saved', config: AccountOpsConfig): void; (event: 'error', message: string): void }>()
 const { t } = useI18n({ useScope: 'local', messages: accountOpsMessages })
+// Saving a recipient is a step-up guarded admin action; the TOTP prompt retries the request.
+const stepUp = useStepUp()
 const busy = ref(false), recipient = ref(''), name = ref('')
+function saveErrorMessage(error: unknown): string {
+  if (isStepUpBlocked(error)) return stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN' ? t('stepUp.adminApiKeyForbidden') : t('stepUp.notEnabled')
+  return extractApiErrorMessage(error, t('accountOps.saveFailed'))
+}
 let sequence = 0
 watch(() => props.show, () => {
   sequence++
@@ -44,17 +53,20 @@ watch(() => props.show, () => {
   name.value = props.show ? props.config.email_name ?? '' : ''
 }, { immediate: true })
 const close = () => { sequence++; busy.value = false; recipient.value = ''; name.value = ''; emit('close') }
-onBeforeUnmount(() => { sequence++; recipient.value = '' })
+onBeforeUnmount(() => { sequence++; recipient.value = ''; stepUp.onCancel() })
 async function save() {
   if (busy.value) return
   if (!recipient.value) { emit('error', t('accountOps.emailRequired')); return }
   const current = sequence
   busy.value = true
   try {
-    const config = await saveAccountOpsNotificationSettings({ recipient: recipient.value, email_name: name.value })
+    const config = await stepUp.run(() => saveAccountOpsNotificationSettings({ recipient: recipient.value, email_name: name.value }))
     if (current === sequence) { emit('saved', config); close() }
   } catch (e) {
-    if (current === sequence) emit('error', extractApiErrorMessage(e, t('accountOps.saveFailed')))
+    if (current !== sequence) return
+    // Cancelling the TOTP prompt is a user decision, not a failure to report.
+    if (isStepUpCancelled(e)) return
+    emit('error', saveErrorMessage(e))
   } finally {
     if (current === sequence) busy.value = false
   }

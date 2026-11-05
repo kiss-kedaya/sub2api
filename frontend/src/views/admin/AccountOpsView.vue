@@ -197,6 +197,7 @@
           @close="showGroupDialog = false" @saved="acceptGroupConfig" @error="app.showError" />
       </template>
     </div>
+    <TotpStepUpDialog :controller="stepUp" />
   </AppLayout>
 </template>
 
@@ -224,10 +225,14 @@ import AccountOpsGroupDialog from '@/components/admin/operations/AccountOpsGroup
 import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, testAccountOpsWebhook, saveAccountOpsRuleGroups, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
 import type { AccountOpsConfig, AccountOpsEvent, AccountOpsThresholdAccount, AccountOpsWebhook, AccountOpsWebhookProvider, AccountOpsGroup, AccountOpsRuleBatchGroup } from '@/api/admin/accountOps'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 type AccountOpsSection = 'overview' | 'channels' | 'rules' | 'records'
 // The router passes the sub-page (/admin/account-ops, /channels, /rules, /records); all four share this instance and its data.
 const props = withDefaults(defineProps<{ section?: AccountOpsSection }>(), { section: 'overview' })
 const { t } = useI18n({ useScope: 'local', messages: accountOpsMessages }), auth = useAuthStore(), app = useAppStore()
+// Channel credential writes (recipient / webhook / test / delete) are step-up guarded by the backend.
+const stepUp = useStepUp()
 const { remote, events, hasMore } = storeToRefs(useAccountOpsStore())
 const activeTab = computed<AccountOpsSection>(() => props.section)
 const sectionRoutes: Record<AccountOpsSection, string> = { overview: '/admin/account-ops', channels: '/admin/account-ops/channels', rules: '/admin/account-ops/rules', records: '/admin/account-ops/records' }
@@ -283,6 +288,9 @@ const eventKey = (e: AccountOpsEvent) => e.id ?? `${e.account_id}:${e.kind}:${e.
 const filteredEvents = computed(()=>events.value.filter(e=>(kind.value==='all'||kind.value===e.kind)&&(phase.value==='all'||phase.value===(e.phase??'alert'))&&`${e.account_name} ${e.account_id}`.toLowerCase().includes(query.value.toLowerCase().trim())))
 const date = (value: string) => { const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleString():'-' }
 const message = (e: unknown) => extractApiErrorMessage(e,t('accountOps.saveFailed'))
+// Blocked step-up (TOTP disabled / admin API key) cannot be resolved by retrying the request.
+const stepUpMessage = (e: unknown) => stepUpBlockReason(e) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN' ? t('stepUp.adminApiKeyForbidden') : t('stepUp.notEnabled')
+const actionMessage = (e: unknown) => isStepUpBlocked(e) ? stepUpMessage(e) : message(e)
 async function load() {
   if (!auth.user || mutating.value || globalSaving.value) return
   const current=++version;loading.value=true
@@ -324,8 +332,22 @@ function addChannel(provider: 'email'|'webhook'|'bark') {
   }
   showAddChannel.value = false
 }
-async function removeEmail(){await mutate(()=>saveAccountOpsNotificationSettings({recipient:'',email_name:''}))}
-async function mutate(action:()=>Promise<AccountOpsConfig>){if(mutating.value)return;const current=++mutationSequence;mutating.value=true;try{const c=await action();if(alive&&current===mutationSequence)acceptConfig(c)}catch(e){if(alive&&current===mutationSequence)app.showError(message(e))}finally{if(alive&&current===mutationSequence)mutating.value=false}}
+async function removeEmail(){await mutate(()=>stepUp.run(()=>saveAccountOpsNotificationSettings({recipient:'',email_name:''})))}
+async function mutate(action:()=>Promise<AccountOpsConfig>){
+  if(mutating.value)return
+  const current=++mutationSequence
+  mutating.value=true
+  try{
+    const c=await action()
+    if(alive&&current===mutationSequence)acceptConfig(c)
+  }catch(e){
+    if(!alive||current!==mutationSequence)return
+    if(isStepUpCancelled(e))return
+    app.showError(actionMessage(e))
+  }finally{
+    if(alive&&current===mutationSequence)mutating.value=false
+  }
+}
 async function toggleNotifications(enabled: boolean) {
   enabledDraft.value = enabled
   await mutate(() => saveAccountOpsNotificationSettings({ enabled: enabledDraft.value }))
@@ -340,10 +362,24 @@ async function toggleGroup(_group:AccountOpsGroup, accounts:AccountOpsThresholdA
   if (oauth.length) groups.push({ account_ids: oauth.map(account => account.account_id), rule: { metric: 'quota' as const, enabled, enabled_only: true } })
   if (groups.length) await mutate(() => saveAccountOpsRuleGroups(groups))
 }
-async function removeWebhook(id:string){await mutate(()=>deleteAccountOpsWebhook(id))}
-async function testWebhook(id:string){if(testingId.value)return;const current=++testSequence;testingId.value=id;try{await testAccountOpsWebhook(id);if(alive&&current===testSequence)app.showSuccess(t('accountOps.testSuccess'))}catch(e){if(alive&&current===testSequence)app.showError(message(e))}finally{if(alive&&current===testSequence)testingId.value=null}}
+async function removeWebhook(id:string){await mutate(()=>stepUp.run(()=>deleteAccountOpsWebhook(id)))}
+async function testWebhook(id:string){
+  if(testingId.value)return
+  const current=++testSequence
+  testingId.value=id
+  try{
+    await stepUp.run(()=>testAccountOpsWebhook(id))
+    if(alive&&current===testSequence)app.showSuccess(t('accountOps.testSuccess'))
+  }catch(e){
+    if(!alive||current!==testSequence)return
+    if(isStepUpCancelled(e))return
+    app.showError(actionMessage(e))
+  }finally{
+    if(alive&&current===testSequence)testingId.value=null
+  }
+}
 async function more(){if(loadingMore.value||loading.value)return;const current=version, sequence=++paginationSequence;loadingMore.value=true;try{const p=await getAccountOpsEvents(events.value.length);if(alive&&current===version){const merged=new Map([...events.value,...p.items].map(e=>[eventKey(e),e]));events.value=[...merged.values()];hasMore.value=p.has_more}}catch(e){if(alive&&current===version)app.showError(message(e))}finally{if(alive&&sequence===paginationSequence)loadingMore.value=false}}
 watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showWebhook.value=showEmail.value=showAddChannel.value=showGroupDialog.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;batchAccounts.value=[];loadError.value=''},{flush:'sync'})
 onMounted(()=>{void load();void loadAccounts();timer=setInterval(()=>{if(document.visibilityState==='visible'&&!loadingMore.value&&!mutating.value&&!globalSaving.value){void load();if(activeTab.value==='rules')void loadAccounts()}},30000)})
-onBeforeUnmount(()=>{alive=false;version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;if(timer)clearInterval(timer)})
+onBeforeUnmount(()=>{alive=false;version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;stepUp.onCancel();if(timer)clearInterval(timer)})
 </script>

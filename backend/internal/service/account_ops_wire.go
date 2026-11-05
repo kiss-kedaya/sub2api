@@ -4,6 +4,9 @@ import "github.com/Wei-Shaw/sub2api/internal/config"
 
 func ProvideAccountOpsService(settings SettingRepository, repo AccountOpsRepository, email *EmailService, accounts AccountRepository, encryptor SecretEncryptor, cfg *config.Config, usageCache *UsageCache, usageLogs UsageLogRepository, quota *GeminiQuotaService) *AccountOpsService {
 	svc := NewAccountOpsService(settings, repo, email)
+	// One custom usage cache per process: the admin account page queries and the
+	// account rules/alerts resolve the same interval-gated snapshots.
+	svc.SetCustomUsageService(NewCustomUsageService(accounts))
 	svc.SetNotificationDependencies(accounts, encryptor, cfg.Totp.HasPersistentEncryptionKey(), cfg.Timezone)
 	svc.SetNotificationUsageCache(usageCache)
 	svc.SetNotificationQuotaReaders(usageLogs, quota)
