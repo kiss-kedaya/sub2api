@@ -1,0 +1,687 @@
+# EXPERIMENT ONLY - do not merge. Measures CI speed-up hypotheses in one run.
+# It only reacts to changes of its own files, so it never mixes with CI.
+name: CI experiment
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-experiment.yml
+      - .github/actions/go-cache/**
+      - .github/ci/**
+      - .goreleaser*.yaml
+
+concurrency:
+  group: ci-experiment-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  x0-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "cold S5 wallet (cryptopay+notify)"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/cold-s5.json
+        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: "cold S6a diagnostic untagged"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/cold-s6a.json
+        run: go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+      - name: "cold S6b diagnostic unit-tag"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/cold-s6b.json
+        run: go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "x0 baseline cold" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  x1a-warm-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Warm: go build -race ./..."
+        continue-on-error: true
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warm-build.json
+        run: go build -race ./...
+      - name: "warmbuild S5 wallet (cryptopay+notify)"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warmbuild-s5.json
+        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: "warmbuild S6a diagnostic untagged"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warmbuild-s6a.json
+        run: go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+      - name: "warmbuild S6b diagnostic unit-tag"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warmbuild-s6b.json
+        run: go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: "Probe S6b again (plain)"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/probe-plain.json
+        run: go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: "Probe S6b again (-ldflags=-w)"
+        working-directory: backend
+        env:
+          GOFLAGS: -ldflags=-w -debug-actiongraph=${{ runner.temp }}/ag/probe-ldw.json
+        run: go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "x1a warm build -race ./..." "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  x1b-warm-exec:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Warm twin 1: go test -race -tags=unit -exec true -count=1 ./internal/server/middlew"
+        continue-on-error: true
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warm-1.json
+        run: go test -race -tags=unit -exec true -count=1 ./internal/server/middleware ./internal/service ./internal/handler/admin
+      - name: "Warm twin 2: go test -race -exec true -count=1 ./internal/cryptopay/... ./internal/"
+        continue-on-error: true
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warm-2.json
+        run: go test -race -exec true -count=1 ./internal/cryptopay/... ./internal/notify/... ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery
+      - name: "warmexec S5 wallet (cryptopay+notify)"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warmexec-s5.json
+        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: "warmexec S6a diagnostic untagged"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warmexec-s6a.json
+        run: go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+      - name: "warmexec S6b diagnostic unit-tag"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/warmexec-s6b.json
+        run: go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "x1b warm -exec true twins" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  x2-p4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "p4 S5 wallet (cryptopay+notify)"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/p4-s5.json
+        run: go test -race -p 4 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: "p4 S6a diagnostic untagged"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/p4-s6a.json
+        run: go test -race -p 4 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+      - name: "p4 S6b diagnostic unit-tag"
+        working-directory: backend
+        env:
+          GOFLAGS: -debug-actiongraph=${{ runner.temp }}/ag/p4-s6b.json
+        run: go test -race -p 4 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "x2 cold, -p 4" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  prime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Stub embedded dist"
+        run: |
+          mkdir -p backend/internal/web/dist
+          printf '<!doctype html><title>stub</title>' > backend/internal/web/dist/index.html
+      - name: "Age cache entries"
+        run: |
+          dir="$(go env GOCACHE)"
+          if [ -d "$dir" ]; then find "$dir" -type f -exec touch -d "2 hours ago" {} +; fi
+      - name: "Warm every CI build configuration"
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --ag-dir "$RUNNER_TEMP/ag" --timeout 2400
+      - name: "Prune entries this run did not use"
+        run: |
+          dir="$(go env GOCACHE)"
+          before=$(du -sm "$dir" | cut -f1)
+          find "$dir" -type f -not -newermt "90 minutes ago" -delete
+          after=$(du -sm "$dir" | cut -f1)
+          echo "GOCACHE pruned: ${before} MB -> ${after} MB" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: "Cache state after prune"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "prime warm steps" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: "Save module cache (exact miss only)"
+        if: steps.gocache.outputs.mod-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.gocache.outputs.gomodcache }}
+          key: exp-gomod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+      - name: "Save build cache (no previous match only)"
+        if: steps.gocache.outputs.build-matched-key == ''
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.gocache.outputs.gocache }}
+          key: exp-gobuild-${{ runner.os }}-${{ steps.gocache.outputs.go-version }}-${{ github.sha }}
+
+  g-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: Unit tests
+        working-directory: backend
+        run: make test-unit
+
+  g-int:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: Integration tests
+        working-directory: backend
+        run: make test-integration
+
+  g-race-a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: "Warm compile (best effort)"
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/ci-experiment.yml --jobs g-race-a --ag-dir "$RUNNER_TEMP/ag" --timeout 1500
+      - name: Wallet security concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: Diagnostic and operator feature concurrency regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+          go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "g-race-a warm step" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  g-race-a-nodelta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: "Warm compile (best effort)"
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/ci-experiment.yml --jobs g-race-a-nodelta --ag-dir "$RUNNER_TEMP/ag" --timeout 1500
+      - name: Wallet security concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: Diagnostic and operator feature concurrency regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+          go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "g-race-a-nodelta warm step" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  g-race-a-nowarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: Wallet security concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
+      - name: Diagnostic and operator feature concurrency regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/requestcapture ./internal/pkg/requesttiming ./internal/util/transportdiag ./internal/accounttimer ./internal/handler/admin/accounttimerapi ./internal/iprisk ./internal/handler/trafficquery -count=1
+          go test -race -p 1 -tags=unit ./internal/server/middleware ./internal/service ./internal/handler/admin -run 'Test(Capture|RequestCapture|ConnectionDiagnostics|Anonymous|.*IPRisk|.*ContentModerationCategor|.*Traffic|.*SchedulableTimer)' -count=1
+
+  g-race-b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: "Warm compile (best effort)"
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/ci-experiment.yml --jobs g-race-b --ag-dir "$RUNNER_TEMP/ag" --timeout 1500
+      - name: Explicit cache and operations safety regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/mihomo -count=1
+          go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository ./cmd/server -run '^Test(GeminiCached|GeminiExplicit|GeminiCache|FixedCharge|AccountOps|ChannelOperations|CredentialGuard|ManagedProxy|ManagedAccount|APIKeyQueue|APIKeySlot|APIKeyAdmission|LiveLease|ProvideCleanup)' -count=1
+      - name: Provider and automation regression
+        working-directory: backend
+        run: |
+          go test -race -p 1 ./internal/localreasoning ./internal/serverless ./internal/service/basispoints -count=1
+          go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository -run '^Test(CopilotSDK|Excel|Seedance|MiniMaxH3|VideoProvider|Automation|OpsAutomation|LocalReasoning|APIKeyAuthSnapshot.*Concurrency)' -count=1
+      - name: Layered security admission and privacy regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/securityaudit -run '^Test(SecurityPenalty|SecurityAudit.*Constraint|SecurityAuditRejectsUnbound|Penalty|PromptPenalty|RegistrationEmailAlias)' -count=1
+      - name: Stream delivery and fixed tool billing concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/repository ./internal/handler/dto -run '^Test(AnthropicPassthrough|GatewayService_AnthropicAPIKeyPassthrough_StreamError|GatewayHandlerMessagesPassthroughStreamFailure|GatewayBridgePreservesFixedToolBilling|GatewayForwardErrorAlreadyCommunicated|UpstreamErrorFrameReader|DeepSeekStandaloneToolFees|DeepSeekFixed|DeepSeekHostedUsageRecord|DeepSeekHostedSearchAndFetchMark|UsageFailure)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "g-race-b warm step" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  g-race-c:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: "Warm compile (best effort)"
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/ci-experiment.yml --jobs g-race-c --ag-dir "$RUNNER_TEMP/ag" --timeout 1500
+      - name: Codex ticket concurrency regression
+        working-directory: backend
+        run: go test -race -tags=unit ./internal/service -run 'Test.*CodexTicket' -count=1
+      - name: Custom usage and upstream error concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository -run 'Test(CustomUsage|CrossCustomUsage|AccountCustomUsage|.*UpstreamFinancial|.*FinancialError|.*FinancialStream)' -count=1
+      - name: Routing affinity concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository -run 'Test(UpstreamPreferences|UpstreamAffinity|FailedAffinity)' -count=1
+      - name: Anthropic converted cache regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/pkg/apicompat ./internal/service -run 'Test(AnthropicUsagePresence|ChatAnthropicCacheControl|ResponsesAnthropicCacheControl|ConvertedAnthropic|NativeAnthropicCachePolicy)' -count=1
+      - name: Requested response model concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/repository -run '^Test(RequestedModel|RewriteRequestedModel|ContextShouldReturnRequestedModel|GrokRealtimeRequestedModel|OpenAIWSPassthroughRequestedSession|LiveCallRequestedModel|LiveModelPresentation|LiveSidebandRequestedModel)' -count=1
+      - name: DeepSeek search configuration and hosted tool regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler -run '^Test(APIKey.*(SearchProvider|ProviderSnapshot)|PrepareDeepSeek|DeepSeekHosted|ForwardDeepSeekTools|HasIndependentDeepSeek)' -count=1
+      - name: Key-level DeepSeek tool injection regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/handler ./internal/handler/dto -run 'Test.*DeepSeekToolInjection|TestAPIKeyService_RejectsV25' -count=1
+      - name: Billing and media concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/handler ./internal/service ./internal/repository -run 'Test(CNBalancePushNotifierConcurrent|GrokVideoDurable|MediaBilling|AsyncImage|ImageTask|OpenAIResponsesWebSocket.*(Balance|Subscription|Settlement)|SmartBilling|.*Refund.*Pending)' -count=1
+      - name: Payment verification grant security regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository ./internal/server/routes ./internal/server/middleware -run 'Test(CryptoGrant|CryptoVerificationGrant|.*Crypto.*Grant)' -count=1
+      - name: Ordered wallet outbox concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository -run '^Test(LiveBalanceAdjustmentOutbox|AdjustLiveBalance.*Batch|ApplyExternalBalanceOutbox|RecoveringLiveBalanceAdjustment)' -count=1
+      - name: Inflight display and unlimited user concurrency regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=unit ./internal/service ./internal/repository ./internal/handler ./internal/handler/dto ./internal/handler/admin ./internal/server/middleware -run '^Test(UsageInflight|TrackUsageInflight|UsageLogFromInflight|SetOpsSelectedAccount|IndependentInflight|AcquireUserSlot_ConcurrencyLimits|UserConcurrency|LiveLease)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "g-race-c warm step" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  g-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: "Warm compile (best effort)"
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/ci-experiment.yml --jobs g-replay --ag-dir "$RUNNER_TEMP/ag" --timeout 1500
+      - name: Native DeepSeek reasoning replay and tenant isolation
+        working-directory: backend
+        run: |
+          go test -race -p 1 -tags=unit ./internal/service -run '^Test(DeepSeekNative|NormalizeDeepSeekResponsesRequestBody|RewriteInboundDeepSeekCallIDs|AdaptiveProtocolRoutesDeepSeek|ForwardResponses_ChatFallback)' -count=1
+          go test -race -p 1 ./internal/pkg/apicompat -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "g-replay warm step" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  g-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: "Warm compile (best effort)"
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/ci-experiment.yml --jobs g-privacy --ag-dir "$RUNNER_TEMP/ag" --timeout 1500
+      - name: Client error privacy and protocol regression
+        working-directory: backend
+        run: |
+          go test -race ./internal/util/clientprivacy ./internal/util/responseheaders -count=1
+          go test -race -p 1 -tags=unit ./internal/service -run '^Test(ClientErrorPrivacy|DeepSeekDirectTransportCooldown|WSHTTPBridgeClientErrorPrivacy|ForwardWSV2ClientErrorPrivacy|ToUserErrorRequest|AnthropicPassthroughForwardStreamErrors|ForwardDeepSeekTools|ForwardAlphaSearch)' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "g-privacy warm step" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  g-opstorage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Prepare action graph dir"
+        run: mkdir -p "$RUNNER_TEMP/ag"
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: "Warm compile (best effort)"
+        continue-on-error: true
+        run: python3 .github/ci/warm-go.py --workflow .github/workflows/ci-experiment.yml --jobs g-opstorage --ag-dir "$RUNNER_TEMP/ag" --timeout 1500
+      - name: Operator lease and credential state PostgreSQL regression
+        working-directory: backend
+        run: go test -race -p 1 -tags=integration ./internal/repository -run '^Test(CredentialGuardRepository|OAuthAdmissionCAS)' -count=1
+      - name: Capture request ID filters PostgreSQL 15 regression
+        working-directory: backend
+        env:
+          SUB2API_TEST_POSTGRES_IMAGE: postgres:15-alpine
+        run: go test -race -p 1 -tags=integration ./internal/repository -run '^TestRequestCaptureSQLStore' -count=1
+      - name: "Action graph summary"
+        if: always()
+        run: python3 .github/ci/ag-summary.py "g-opstorage warm step" "$RUNNER_TEMP"/ag/*.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  g-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.10'
+      - name: "golangci-lint"
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13
+          args: --timeout=30m
+          working-directory: backend
+          skip-save-cache: true
+
+  fe-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.22'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Verify production frontend build
+        working-directory: frontend
+        run: pnpm run build
+      - name: "Upload frontend dist"
+        uses: actions/upload-artifact@v7
+        with:
+          name: exp-frontend-dist
+          path: backend/internal/web/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  g-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: fe-build
+    steps:
+      - uses: actions/checkout@v6
+      - id: gocache
+        uses: ./.github/actions/go-cache
+        with:
+          key-prefix: exp
+      - name: "Cache state after restore"
+        run: |
+          echo "mod-hit=${{ steps.gocache.outputs.mod-hit }} build-matched='${{ steps.gocache.outputs.build-matched-key }}'"
+          for d in "$(go env GOCACHE)" "$(go env GOMODCACHE)"; do
+            echo "$d: $(du -sm "$d" 2>/dev/null | cut -f1) MB, $(find "$d" -type f 2>/dev/null | wc -l) files"
+          done
+      - name: "Experiment delta (never committed)"
+        run: bash .github/ci/exp-delta.sh
+      - name: "Download frontend dist"
+        uses: actions/download-artifact@v8
+        with:
+          name: exp-frontend-dist
+          path: backend/internal/web/dist/
+      - name: Verify embedded frontend
+        working-directory: backend
+        run: go test -tags=embed ./internal/web -count=1
+      - name: Build embedded Linux binary
+        working-directory: backend
+        run: make build

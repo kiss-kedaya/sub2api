@@ -5,6 +5,14 @@ on:
   push:
     branches: [main]
   pull_request:
+    # EXPERIMENT BRANCH ONLY: keep CI from competing for runners with the
+    # experiment workflow. Not part of the real change.
+    paths-ignore:
+      - .github/workflows/backend-ci.yml
+      - .github/workflows/ci-experiment.yml
+      - .github/actions/go-cache/**
+      - .github/ci/**
+      - .goreleaser*.yaml
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
