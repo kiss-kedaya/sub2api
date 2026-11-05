@@ -129,6 +129,7 @@ import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useClipboard } from '@/composables/useClipboard'
+import { toggleColorMode, useSiteColorMode } from '@/composables/useSiteTheme'
 import { sanitizeUrl } from '@/utils/url'
 import { getApiDocs, resolveDocsOrigin, resolveDocsPage, type DocsCategory, type DocsLanguage, type DocsPage, type DocsSection } from '@/data/apiDocs'
 
@@ -191,10 +192,12 @@ const languages = (section: DocsSection) => Object.keys(section.examples || {}) 
 const selectedLanguage = (section: DocsSection) => languages(section).includes(selectedLanguages[section.id]) ? selectedLanguages[section.id] : languages(section)[0]
 const example = (section: DocsSection) => section.examples?.[selectedLanguage(section)] || ''
 
+// The shared switch cross-fades the page; the class flips inside that transition, so follow it instead of guessing.
+const colorMode = useSiteColorMode()
+watch(colorMode.isDark, (dark) => { isDark.value = dark })
+
 function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+  toggleColorMode()
 }
 
 function syncWideLayout(event: MediaQueryListEvent) { wideLayout.value = event.matches }

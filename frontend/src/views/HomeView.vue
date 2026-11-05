@@ -452,9 +452,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
+import { toggleColorMode, useSiteColorMode } from '@/composables/useSiteTheme'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
@@ -510,11 +511,12 @@ const userInitial = computed(() => {
 // Current year for footer
 const currentYear = computed(() => new Date().getFullYear())
 
-// Toggle theme
+// Toggle theme: the shared switch cross-fades the page and flips the class inside that transition, so follow it.
+const colorMode = useSiteColorMode()
+watch(colorMode.isDark, (dark) => { isDark.value = dark })
+
 function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+  toggleColorMode()
 }
 
 // Initialize theme

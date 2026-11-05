@@ -16,6 +16,7 @@ import {
   useSiteTheme
 } from '../useSiteTheme'
 import { paletteColor, paletteHex, paletteRgbChannels } from '@/theme/palettes'
+import { THEME_SWITCHING_ATTR } from '@/theme/switching'
 
 function css(): string {
   return document.getElementById(SITE_THEME_STYLE_ID)?.textContent ?? ''
@@ -236,5 +237,142 @@ describe('useSiteTheme', () => {
     await Promise.resolve()
     expect(mode.isDark.value).toBe(true)
     expect(useSiteColorMode().preference.value).toBe('dark')
+  })
+})
+
+describe('day/night switch with the View Transitions API', () => {
+  type FakeTransition = { update: () => Promise<void>; finish: () => void; skip: () => void }
+  type WithTransitions = { startViewTransition?: unknown }
+  let transitions: FakeTransition[] = []
+  const root = document.documentElement
+  const doc = document as unknown as WithTransitions
+  const marked = () => root.hasAttribute(THEME_SWITCHING_ATTR)
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  function installViewTransitions() {
+    doc.startViewTransition = vi.fn((update: () => Promise<void>) => {
+      let finish!: () => void
+      let abort!: (reason: unknown) => void
+      const finished = new Promise<void>((resolve) => { finish = resolve })
+      const ready = new Promise<void>((_, reject) => { abort = reject })
+      transitions.push({ update, finish, skip: () => { abort(new DOMException('Transition was skipped', 'AbortError')); finish() } })
+      return { ready, finished }
+    })
+  }
+
+  // The global test mock answers `matches: true` to every query, which would read as "reduced motion".
+  function reducedMotion(matches: boolean) {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches: query.includes('prefers-reduced-motion') && matches, media: query }) as MediaQueryList)
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    root.classList.remove('dark', 'motion-reduce')
+    transitions = []
+    applySiteTheme(DEFAULT_SITE_THEME)
+    reducedMotion(false)
+    installViewTransitions()
+  })
+
+  afterEach(async () => {
+    transitions.forEach((transition) => transition.finish())
+    await settle()
+    delete doc.startViewTransition
+    root.classList.remove('dark', 'motion-reduce')
+    root.removeAttribute(THEME_SWITCHING_ATTR)
+    vi.restoreAllMocks()
+    document.getElementById(SITE_THEME_STYLE_ID)?.remove()
+  })
+  it('cross-fades a visitor toggle: the class flips inside the transition and the marker clears when it ends', async () => {
+    const mode = useSiteColorMode()
+    toggleColorMode()
+    expect(transitions).toHaveLength(1)
+    expect(marked()).toBe(true)
+    // A data attribute, not a class: the sakura canvas and the charts watch the class for the mode itself.
+    expect(root.classList.contains(THEME_SWITCHING_ATTR)).toBe(false)
+    expect(root.classList.contains('dark')).toBe(false)
+    expect(localStorage.getItem('theme')).toBe('dark')
+
+    await transitions[0].update()
+    expect(root.classList.contains('dark')).toBe(true)
+    expect(mode.isDark.value).toBe(true)
+
+    transitions[0].finish()
+    await settle()
+    expect(marked()).toBe(false)
+  })
+
+  it('does not animate the mode applied at startup', () => {
+    localStorage.setItem('theme', 'dark')
+    applySiteTheme(DEFAULT_SITE_THEME, { colorMode: true })
+    expect(root.classList.contains('dark')).toBe(true)
+    expect(transitions).toHaveLength(0)
+    expect(marked()).toBe(false)
+  })
+
+  it.each([
+    ['prefers-reduced-motion', () => reducedMotion(true)],
+    ['the motion-reduce class', () => root.classList.add('motion-reduce')]
+  ])('falls back to a plain flip when the visitor asked for reduced motion (%s)', (_name, ask) => {
+    ask()
+    toggleColorMode()
+    expect(transitions).toHaveLength(0)
+    expect(marked()).toBe(false)
+    expect(root.classList.contains('dark')).toBe(true)
+    expect(localStorage.getItem('theme')).toBe('dark')
+  })
+
+  it('falls back to a plain flip when the browser has no View Transitions or refuses to start one', () => {
+    delete doc.startViewTransition
+    toggleColorMode()
+    expect(root.classList.contains('dark')).toBe(true)
+    expect(marked()).toBe(false)
+
+    doc.startViewTransition = vi.fn(() => { throw new Error('InvalidStateError') })
+    toggleColorMode()
+    expect(root.classList.contains('dark')).toBe(false)
+    expect(marked()).toBe(false)
+    expect(localStorage.getItem('theme')).toBe('light')
+  })
+
+  it('two quick clicks flip twice instead of collapsing into one, and the marker stays until the last one ends', async () => {
+    toggleColorMode()
+    toggleColorMode()
+    expect(transitions).toHaveLength(2)
+    expect(localStorage.getItem('theme')).toBe('light')
+
+    // The browser skips the first transition when the second starts; its update callback still runs.
+    transitions[0].skip()
+    await transitions[0].update()
+    await transitions[1].update()
+    expect(root.classList.contains('dark')).toBe(false)
+    await settle()
+    expect(marked()).toBe(true)
+
+    transitions[1].finish()
+    await settle()
+    expect(marked()).toBe(false)
+  })
+
+  it('swallows the AbortError of a skipped transition', async () => {
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      toggleColorMode()
+      transitions[0].skip()
+      await settle()
+      await settle()
+      expect(unhandled).not.toHaveBeenCalled()
+      expect(marked()).toBe(false)
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
+  })
+
+  it('cross-fades the admin live preview of the default mode, but restoring the saved theme does not animate', () => {
+    previewSiteThemeMode('dark')
+    expect(transitions).toHaveLength(1)
+    restoreSiteTheme()
+    expect(transitions).toHaveLength(1)
   })
 })

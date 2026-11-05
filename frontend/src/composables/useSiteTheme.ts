@@ -1,4 +1,5 @@
-import { computed, readonly, ref } from 'vue'
+import { computed, nextTick, readonly, ref } from 'vue'
+import { THEME_SWITCHING_ATTR } from '@/theme/switching'
 import {
   PALETTE_SHADES,
   paletteColor,
@@ -191,11 +192,71 @@ export function resolveSiteThemeDark(theme: SiteThemeSettings): boolean {
 const htmlDark = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
 let colorModeWatched = false
 
-function setDark(dark: boolean): void {
-  if (typeof document === 'undefined') return
-  if (document.documentElement.classList.contains('dark') !== dark) animateThemeChange()
+// A switch the visitor asks for cross-fades the whole page with the View Transitions API: the browser
+// freezes the old frame, the class flips once behind it, and only a soft fade of the new frame runs on the
+// compositor. The earlier path animated colours element by element while the sakura canvas and every chart
+// repainted each frame, all on the main thread. Browsers without the API, and visitors who asked for reduced
+// motion, keep that earlier path.
+type ViewTransitionLike = { ready: Promise<unknown>; finished: Promise<unknown> }
+type ViewTransitionDocument = Document & { startViewTransition?: (update: () => Promise<void>) => ViewTransitionLike }
+
+let activeTransitions = 0
+// Where the latest request is heading. While a transition is in flight the class on <html> is still the old
+// one, so a quick second click flips relative to this instead of collapsing into the first.
+let requestedDark: boolean | null = null
+
+function prefersReducedMotion(): boolean {
+  return document.documentElement.classList.contains('motion-reduce') ||
+    (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+}
+
+function applyDarkClass(dark: boolean): void {
   document.documentElement.classList.toggle('dark', dark)
   htmlDark.value = dark
+}
+
+function effectiveDark(): boolean {
+  if (typeof document === 'undefined') return false
+  return activeTransitions > 0 && requestedDark !== null ? requestedDark : document.documentElement.classList.contains('dark')
+}
+
+function startSwitch(doc: ViewTransitionDocument, dark: boolean): boolean {
+  let transition: ViewTransitionLike
+  try {
+    transition = doc.startViewTransition!(async () => {
+      applyDarkClass(requestedDark ?? dark)
+      // Let Vue render the new icons and chart colours before the browser captures the new frame.
+      await nextTick()
+    })
+  } catch {
+    return false
+  }
+  const root = document.documentElement
+  activeTransitions++
+  root.setAttribute(THEME_SWITCHING_ATTR, '')
+  const settle = () => {
+    activeTransitions = Math.max(0, activeTransitions - 1)
+    // A superseded transition settles too; the marker stays until the latest one is done.
+    if (activeTransitions === 0) root.removeAttribute(THEME_SWITCHING_ATTR)
+  }
+  transition.ready.catch(() => {}) // a skipped transition rejects with AbortError
+  transition.finished.then(settle, settle)
+  return true
+}
+
+function setDark(dark: boolean, animate = false): void {
+  if (typeof document === 'undefined') return
+  const inFlight = activeTransitions > 0
+  const wasDark = effectiveDark()
+  requestedDark = dark
+  if (wasDark === dark) {
+    if (!inFlight) applyDarkClass(dark) // keeps the mirror in step when the class was edited elsewhere
+    return
+  }
+  const doc = document as ViewTransitionDocument
+  if (animate && typeof doc.startViewTransition === 'function' && !prefersReducedMotion() && startSwitch(doc, dark)) return
+  animateThemeChange()
+  applyDarkClass(dark)
 }
 
 function watchColorMode(): void {
@@ -211,7 +272,7 @@ function watchColorMode(): void {
   // With "system" in force, follow the OS switching between light and dark.
   const query = typeof window.matchMedia === 'function' ? window.matchMedia(DARK_QUERY) : null
   query?.addEventListener?.('change', () => {
-    if ((savedVisitorMode() ?? currentTheme().value.theme_default_mode) === 'system') setDark(systemPrefersDark())
+    if ((savedVisitorMode() ?? currentTheme().value.theme_default_mode) === 'system') setDark(systemPrefersDark(), true)
   })
 }
 
@@ -245,7 +306,7 @@ export function previewSiteTheme(input: unknown): SiteThemeSettings {
 
 /** Live preview of a default mode, ignoring the visitor's saved toggle. */
 export function previewSiteThemeMode(mode: unknown): void {
-  setDark(modeIsDark(pick(THEME_MODE_OPTIONS, mode, DEFAULT_SITE_THEME.theme_default_mode)))
+  setDark(modeIsDark(pick(THEME_MODE_OPTIONS, mode, DEFAULT_SITE_THEME.theme_default_mode)), true)
 }
 
 /** Undoes previews by re-applying the remembered theme. */
@@ -273,13 +334,12 @@ export function setColorModePreference(mode: ThemeMode): void {
     // Private mode: the choice still applies to this page.
   }
   currentVisitorMode().value = next
-  setDark(modeIsDark(next))
+  setDark(modeIsDark(next), true)
 }
 
-/** Flips whatever mode is in force now (read from <html>) and saves the result. */
+/** Flips whatever mode is in force now (read from <html>, or the pending target of a switch under way) and saves the result. */
 export function toggleColorMode(): void {
-  const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-  setColorModePreference(dark ? 'light' : 'dark')
+  setColorModePreference(effectiveDark() ? 'light' : 'dark')
 }
 
 /**
