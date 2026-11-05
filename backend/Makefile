@@ -1,4 +1,4 @@
-.PHONY: build generate test test-unit test-integration test-e2e
+.PHONY: build generate test test-unit test-integration test-e2e prepush
 
 VERSION ?= $(shell ./scripts/resolve-version.sh)
 LDFLAGS ?= -s -w -X main.Version=$(VERSION)
@@ -22,6 +22,12 @@ test-integration:
 
 test-e2e:
 	./scripts/e2e-test.sh
+
+# Quick checks on what changed relative to origin/main (gofmt, go vet, errcheck
+# level lint, and eslint/vue-tsc when frontend/ changed). Same checks CI would
+# fail on, without waiting for CI. Options: make prepush PREPUSH_ARGS="--full"
+prepush:
+	bash ../scripts/prepush.sh $(PREPUSH_ARGS)
 
 test-e2e-local:
 	go test -tags=e2e -v -timeout=300s ./internal/integration/...
