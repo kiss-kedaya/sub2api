@@ -41,6 +41,10 @@ type openaiStreamingResult struct {
 	searchCount              int
 	nonBillableUpstreamError bool
 	clientDisconnect         bool
+	// incompleteOutputTokens is a lower-bound estimate of the output the upstream
+	// produced when the stream ended without any terminal frame (so no real usage
+	// exists). It is 0 for streams that reached a terminal frame or produced nothing.
+	incompleteOutputTokens int
 }
 
 type openaiNonStreamingResult struct {
@@ -423,6 +427,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		streamSearchSeen = make(map[string]struct{})
 	}
 	resultWithUsage := func() *openaiStreamingResult {
+		incompleteOutputTokens := 0
+		if !sawTerminalEvent && !nonBillableUpstreamError {
+			// No terminal frame means no real usage can arrive. Keep a lower-bound
+			// estimate of what the upstream already produced so it is not free.
+			incompleteOutputTokens = estimateIncompleteStreamOutputTokens(streamOutputAccumulator)
+		}
 		return &openaiStreamingResult{
 			usage:                    usage,
 			firstTokenMs:             firstTokenMs,
@@ -432,6 +442,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			searchCount:              searchCounter,
 			nonBillableUpstreamError: nonBillableUpstreamError,
 			clientDisconnect:         clientDisconnected,
+			incompleteOutputTokens:   incompleteOutputTokens,
 		}
 	}
 	flushPending := func(disconnectMessage string) {

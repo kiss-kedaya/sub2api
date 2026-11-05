@@ -1448,6 +1448,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					}
 					return s.handleErrorResponse(ctx, compactResp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 				}
+				// The stream ended without a terminal frame after the upstream produced
+				// output: bill an estimate instead of dropping the output for free.
+				applyIncompleteOpenAIStreamUsage(account, streamResult, body, upstreamModel, err)
 				return preserveOpenAIStreamingResultOnError(buildForwardResult(), err)
 			}
 		} else {
