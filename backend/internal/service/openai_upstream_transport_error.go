@@ -178,6 +178,11 @@ func (s *OpenAIGatewayService) tempUnscheduleOpenAITransportErrorFor(ctx context
 	if s == nil || account == nil {
 		return
 	}
+	// Two independent gates: the operator's global switch, then the account's
+	// own policy. Both must allow the cooldown before we unschedule.
+	if s.cfg != nil && s.cfg.Gateway.DisableOpenAITransportErrorCooldown {
+		return
+	}
 	if !account.ShouldAutoTempUnscheduleOnTransportError() {
 		return
 	}
