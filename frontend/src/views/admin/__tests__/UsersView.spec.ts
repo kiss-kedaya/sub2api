@@ -591,4 +591,30 @@ describe('admin UsersView', () => {
     expect(listEnabledDefinitions).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
+
+  it('lays the toolbar out for phones: full-width search, a create button that fills the row, finger-sized icon buttons', async () => {
+    const wrapper = mountBulkDeleteView()
+    await flushPromises()
+
+    // A fixed 256px search box cut its own placeholder short on a 402px phone.
+    const searchBox = wrapper.get('input[placeholder="admin.users.searchUsers"]').element.closest('[data-slot="root"]')
+    expect(searchBox, 'the search field root').not.toBeNull()
+    expect(searchBox!.classList.contains('w-full')).toBe(true)
+    expect(searchBox!.classList.contains('sm:w-80')).toBe(true)
+    expect(searchBox!.classList.contains('w-64')).toBe(false)
+
+    const create = wrapper.findAll('button').find(b => b.text().includes('admin.users.createUser'))
+    expect(create?.classes()).toEqual(expect.arrayContaining(['max-sm:flex-1', 'max-sm:justify-center']))
+
+    // 32px is a mouse size; a finger needs 40px.
+    const iconButtons = ['common.refresh', 'admin.users.filterSettings', 'admin.users.displayColumns', 'admin.users.attributes.configButton']
+    for (const label of iconButtons) {
+      expect(wrapper.get(`button[aria-label="${label}"]`).classes(), label).toEqual(expect.arrayContaining(['pointer-coarse:min-h-10', 'pointer-coarse:min-w-10']))
+    }
+    // These two show a text label on wide screens; on a phone they shrink to the same square as the others.
+    for (const label of ['admin.users.filterSettings', 'admin.users.displayColumns']) {
+      expect(wrapper.get(`button[aria-label="${label}"]`).classes(), label).toContain('max-sm:px-1.5')
+    }
+    wrapper.unmount()
+  })
 })
