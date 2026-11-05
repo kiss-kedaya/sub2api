@@ -25,6 +25,32 @@ export interface UpstreamMonitorAccount {
   last_sampled_at?: string | null
   alert_threshold?: number | null
   alert_enabled?: boolean
+  usage?: UpstreamUsageSummary | null
+}
+
+export interface UpstreamUsageWindow {
+  window: string
+  limit: number
+  used: number
+  remaining: number
+  remaining_pct: number
+  reset_at?: string | null
+}
+
+export interface UpstreamUsageSummary {
+  mode?: string
+  key_status?: string
+  plan_name?: string
+  unit?: string
+  unlimited?: boolean
+  limit?: number | null
+  used?: number | null
+  remaining?: number | null
+  min_remaining_pct?: number | null
+  windows?: UpstreamUsageWindow[]
+  expires_at?: string | null
+  received_at?: string | null
+  status?: string
 }
 
 export interface UpstreamCurrencyTotal {
@@ -81,7 +107,12 @@ export interface UpstreamRateChange {
   changed_at: string
 }
 
-export type UpstreamAlertKind = 'balance_low' | 'balance_depleted' | 'rate_jump'
+export type UpstreamAlertKind =
+  | 'balance_low'
+  | 'balance_depleted'
+  | 'rate_jump'
+  | 'quota_low'
+  | 'subscription_expiring'
 
 export interface UpstreamAlert {
   id: number
@@ -104,6 +135,8 @@ export interface UpstreamAlertRule {
   threshold: number
   unit: string
   rate_min_pct: number
+  usage_min_pct: number
+  expire_days: number
   enabled: boolean
   updated_at: string
 }
@@ -218,6 +251,8 @@ export async function saveAlertRule(rule: {
   threshold: number
   unit: string
   rate_min_pct: number
+  usage_min_pct: number
+  expire_days: number
   enabled: boolean
 }): Promise<UpstreamAlertRule> {
   const { data } = await apiClient.put<UpstreamAlertRule>('/admin/upstream-monitor/alert-rules', rule)

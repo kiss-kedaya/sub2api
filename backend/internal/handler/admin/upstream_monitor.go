@@ -280,11 +280,13 @@ func (h *UpstreamMonitorHandler) ListAlertRules(c *gin.Context) {
 }
 
 type upstreamAlertRuleRequest struct {
-	AccountID  int64   `json:"account_id"`
-	Threshold  float64 `json:"threshold"`
-	Unit       string  `json:"unit"`
-	RateMinPct float64 `json:"rate_min_pct"`
-	Enabled    bool    `json:"enabled"`
+	AccountID   int64   `json:"account_id"`
+	Threshold   float64 `json:"threshold"`
+	Unit        string  `json:"unit"`
+	RateMinPct  float64 `json:"rate_min_pct"`
+	UsageMinPct float64 `json:"usage_min_pct"`
+	ExpireDays  int     `json:"expire_days"`
+	Enabled     bool    `json:"enabled"`
 }
 
 // PUT /api/v1/admin/upstream-monitor/alert-rules
@@ -302,11 +304,13 @@ func (h *UpstreamMonitorHandler) SaveAlertRule(c *gin.Context) {
 		return
 	}
 	rule, err := h.svc.SaveAlertRule(c.Request.Context(), service.UpstreamAlertRule{
-		AccountID:  req.AccountID,
-		Threshold:  req.Threshold,
-		Unit:       req.Unit,
-		RateMinPct: req.RateMinPct,
-		Enabled:    req.Enabled,
+		AccountID:   req.AccountID,
+		Threshold:   req.Threshold,
+		Unit:        req.Unit,
+		RateMinPct:  req.RateMinPct,
+		UsageMinPct: req.UsageMinPct,
+		ExpireDays:  req.ExpireDays,
+		Enabled:     req.Enabled,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -361,6 +365,7 @@ func (h *UpstreamMonitorHandler) Export(c *gin.Context) {
 		"account_id", "name", "notes", "platform", "type", "status", "balance", "unit", "unlimited",
 		"balance_status", "balance_read_at", "rate", "rate_synced", "rate_sync_enabled",
 		"alert_threshold", "alert_enabled", "last_sampled_at", "balance_error",
+		"plan_name", "usage_mode", "key_status", "min_remaining_pct", "expires_at",
 	})
 	for _, item := range rows {
 		balance := ""
@@ -389,11 +394,24 @@ func (h *UpstreamMonitorHandler) Export(c *gin.Context) {
 		if item.LastSampledAt != nil {
 			sampledAt = item.LastSampledAt.Format(time.RFC3339)
 		}
+		planName, usageMode, keyStatus, minPct, expiresAt := "", "", "", "", ""
+		if item.Usage != nil {
+			planName = csvSafe(item.Usage.PlanName)
+			usageMode = csvSafe(item.Usage.Mode)
+			keyStatus = csvSafe(item.Usage.KeyStatus)
+			if item.Usage.MinRemainingPct != nil {
+				minPct = strconv.FormatFloat(*item.Usage.MinRemainingPct, 'f', 2, 64)
+			}
+			if item.Usage.ExpiresAt != nil {
+				expiresAt = item.Usage.ExpiresAt.Format(time.RFC3339)
+			}
+		}
 		_ = writer.Write([]string{
 			strconv.FormatInt(item.AccountID, 10), csvSafe(item.Name), csvSafe(item.Notes), csvSafe(item.Platform), csvSafe(item.Type), csvSafe(item.Status),
 			balance, csvSafe(item.Unit), strconv.FormatBool(item.Unlimited),
 			csvSafe(item.BalanceStatus), readAt, rate, synced, strconv.FormatBool(item.RateSyncEnabled),
 			threshold, strconv.FormatBool(item.AlertEnabled), sampledAt, csvSafe(item.BalanceError),
+			planName, usageMode, keyStatus, minPct, expiresAt,
 		})
 	}
 	writer.Flush()

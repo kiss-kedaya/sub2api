@@ -222,3 +222,106 @@ func TestUpstreamBeijingDayUsesFixedOffset(t *testing.T) {
 	require.Equal(t, 0, begin.Hour())
 	require.Equal(t, 6, begin.Day())
 }
+
+func TestParseUpstreamUsageSummaryReadsWindowsAndExpiry(t *testing.T) {
+	raw := `{
+  "status": "ok",
+  "received_at": "2026-11-05T04:00:00Z",
+  "data": {
+    "is_valid": true,
+    "mode": "unrestricted",
+    "key_status": "active",
+    "plan_name": "Pro 200",
+    "unit": "USD",
+    "remaining": 12,
+    "windows": [
+      {"window": "daily", "limit": 5, "used": 4.4, "reset_at": "2026-11-06T00:00:00Z"},
+      {"window": "monthly", "limit": 200, "used": 24}
+    ],
+    "expires_at": "2026-11-20T00:00:00Z"
+  }
+}`
+
+	usage := ParseUpstreamUsageSummary(raw)
+	require.NotNil(t, usage)
+	require.Equal(t, "Pro 200", usage.PlanName)
+	require.Equal(t, "active", usage.KeyStatus)
+	require.Len(t, usage.Windows, 2)
+	require.InDelta(t, 12.0, usage.Windows[0].RemainingPct, 0.001)
+	require.InDelta(t, 88.0, usage.Windows[1].RemainingPct, 0.001)
+	require.NotNil(t, usage.MinRemainingPct)
+	require.InDelta(t, 12.0, *usage.MinRemainingPct, 0.001)
+	require.NotNil(t, usage.ExpiresAt)
+	require.NotNil(t, TightestUpstreamUsageWindow(usage))
+	require.Equal(t, "daily", TightestUpstreamUsageWindow(usage).Window)
+}
+
+func TestParseUpstreamUsageSummarySkipsWalletOnlyAndFailed(t *testing.T) {
+	require.Nil(t, ParseUpstreamUsageSummary(""))
+	require.Nil(t, ParseUpstreamUsageSummary("null"))
+	require.Nil(t, ParseUpstreamUsageSummary(`{"status":"failed","data":{"remaining":3}}`))
+	require.Nil(t, ParseUpstreamUsageSummary(`{"status":"ok","data":{"unit":"USD"}}`))
+}
+
+func TestParseUpstreamUsageSummaryUsesKeyQuotaWhenNoWindows(t *testing.T) {
+	usage := ParseUpstreamUsageSummary(`{"status":"ok","data":{"mode":"quota_limited","unit":"USD","quota_limit":10,"quota_used":7.5}}`)
+	require.NotNil(t, usage)
+	require.NotNil(t, usage.MinRemainingPct)
+	require.InDelta(t, 25.0, *usage.MinRemainingPct, 0.001)
+	require.NotNil(t, usage.Remaining)
+	require.InDelta(t, 2.5, *usage.Remaining, 0.001)
+}
+
+func TestBuildUpstreamUsageAlertsQuotaAndExpiry(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	received := now.Add(-10 * time.Minute)
+	expires := now.Add(3 * 24 * time.Hour)
+	snapshots := []UpstreamProbeSnapshot{{
+		AccountID: 7,
+		Usage: &UpstreamUsageSummary{
+			Status:     UpstreamBillingProbeStatusOK,
+			Unit:       "USD",
+			ReceivedAt: &received,
+			ExpiresAt:  &expires,
+			Windows: []UpstreamUsageWindow{
+				{Window: "daily", Limit: 5, Used: 4.6, Remaining: 0.4, RemainingPct: 8},
+			},
+			MinRemainingPct: func() *float64 { value := 8.0; return &value }(),
+		},
+	}}
+	rules := map[int64]UpstreamAlertRule{
+		7: {AccountID: 7, Enabled: true, UsageMinPct: 20, ExpireDays: 7},
+	}
+
+	alerts := buildUpstreamUsageAlerts(snapshots, rules, now)
+	require.Len(t, alerts, 2)
+	require.Equal(t, UpstreamAlertKindQuotaLow, alerts[0].Kind)
+	require.Equal(t, "warning", alerts[0].Level)
+	require.Contains(t, alerts[0].Message, "日额度剩余 8.0%")
+	require.Equal(t, UpstreamAlertKindExpiring, alerts[1].Kind)
+	require.Contains(t, alerts[1].Message, "到期")
+}
+
+func TestBuildUpstreamUsageAlertsRespectsRulesAndFreshness(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-48 * time.Hour)
+	fresh := now.Add(-time.Hour)
+	lowPct := func() *float64 { value := 50.0; return &value }()
+	base := UpstreamUsageSummary{
+		Status:          UpstreamBillingProbeStatusOK,
+		Unit:            "USD",
+		MinRemainingPct: lowPct,
+		Windows:         []UpstreamUsageWindow{{Window: "monthly", Limit: 10, Used: 5, Remaining: 5, RemainingPct: 50}},
+	}
+	staleUsage := base
+	staleUsage.ReceivedAt = &stale
+	freshUsage := base
+	freshUsage.ReceivedAt = &fresh
+
+	require.Empty(t, buildUpstreamUsageAlerts([]UpstreamProbeSnapshot{{AccountID: 7, Usage: &staleUsage}}, map[int64]UpstreamAlertRule{7: {Enabled: true}}, now),
+		"a stale snapshot must not keep alerting")
+	require.Empty(t, buildUpstreamUsageAlerts([]UpstreamProbeSnapshot{{AccountID: 7, Usage: &freshUsage}}, map[int64]UpstreamAlertRule{}, now),
+		"an account without a rule stays silent")
+	require.Empty(t, buildUpstreamUsageAlerts([]UpstreamProbeSnapshot{{AccountID: 7, Usage: &freshUsage}}, map[int64]UpstreamAlertRule{7: {Enabled: true, UsageMinPct: 10}}, now),
+		"50% remaining stays above a 10% threshold")
+}

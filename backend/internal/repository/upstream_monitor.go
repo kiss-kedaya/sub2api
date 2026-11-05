@@ -41,7 +41,8 @@ WITH src AS (
     NULLIF(probe->>'status','') AS rate_status,
     NULLIF(probe->>'received_at','') AS rate_received_at,
     NULLIF(probe->>'last_error','') AS rate_error,
-    NULLIF(probe->>'synced_rate_multiplier','') AS rate_synced_text
+    NULLIF(probe->>'synced_rate_multiplier','') AS rate_synced_text,
+    probe->'balance' AS balance_json
   FROM src
 ), valued AS (
   SELECT *, CASE WHEN balance_text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN balance_text::numeric END AS balance_num
@@ -63,7 +64,8 @@ WITH shaped AS (
     NULLIF(extra->'upstream_billing_probe'->>'received_at','') AS rate_received_at,
     NULLIF(extra->'upstream_billing_probe'->>'last_error','') AS rate_error,
     NULLIF(extra->'upstream_billing_probe'->>'synced_rate_multiplier','') AS rate_synced_text,
-    extra->>'upstream_billing_rate_sync_enabled' AS rate_sync_text
+    extra->>'upstream_billing_rate_sync_enabled' AS rate_sync_text,
+    extra->'upstream_billing_probe'->'balance' AS balance_json
   FROM accounts
   WHERE deleted_at IS NULL
 ), valued AS (
@@ -75,7 +77,8 @@ const upstreamMonitorSelectColumns = `
   v.id, v.name, v.notes, v.platform, v.type, v.status,
   v.balance_text, v.unit, v.unlimited_text, v.balance_status, v.balance_received_at, v.balance_fresh_until, v.balance_error,
   v.rate_text, v.rate_status, v.rate_received_at, v.rate_error, v.rate_synced_text, v.rate_sync_text,
-  st.last_sample_at, ar.threshold::float8, COALESCE(ar.enabled, false)`
+  st.last_sample_at, ar.threshold::float8, COALESCE(ar.enabled, false),
+  v.balance_json::text`
 
 // The status filter treats a fresh-window expiry as stale even though the
 // stored status is still "ok", matching the value the UI displays.
@@ -142,11 +145,12 @@ func scanUpstreamMonitorAccount(row scannable) (service.UpstreamMonitorAccount, 
 	var lastSample sql.NullTime
 	var alertThreshold sql.NullFloat64
 	var alertEnabled bool
+	var balanceJSON sql.NullString
 	err := row.Scan(
 		&item.AccountID, &item.Name, &notes, &item.Platform, &item.Type, &item.Status,
 		&balanceText, &unit, &unlimitedText, &balanceStatus, &balanceRead, &balanceFresh, &balanceErr,
 		&rateText, &rateStatus, &rateRead, &rateErr, &rateSynced, &rateSync, &lastSample,
-		&alertThreshold, &alertEnabled,
+		&alertThreshold, &alertEnabled, &balanceJSON,
 	)
 	if err != nil {
 		return item, err
@@ -182,6 +186,7 @@ func scanUpstreamMonitorAccount(row scannable) (service.UpstreamMonitorAccount, 
 		item.AlertThreshold = &value
 	}
 	item.AlertEnabled = alertEnabled
+	item.Usage = service.ParseUpstreamUsageSummary(balanceJSON.String)
 	return item, nil
 }
 
@@ -343,7 +348,8 @@ func (r *upstreamMonitorRepository) ListProbeSnapshots(ctx context.Context) ([]s
 SELECT a.id,
   COALESCE(NULLIF(a.extra->'upstream_billing_probe'->'balance'->'data'->>'remaining',''),''),
   COALESCE(NULLIF(a.extra->'upstream_billing_probe'->'balance'->'data'->>'unit',''),''),
-  COALESCE(NULLIF(a.extra->'upstream_billing_probe'->'data'->>'effective_rate_multiplier',''),'')
+  COALESCE(NULLIF(a.extra->'upstream_billing_probe'->'data'->>'effective_rate_multiplier',''),''),
+  COALESCE((a.extra->'upstream_billing_probe'->'balance')::text,'')
 FROM accounts a
 WHERE a.deleted_at IS NULL AND a.extra ? 'upstream_billing_probe'`)
 	if err != nil {
@@ -353,9 +359,10 @@ WHERE a.deleted_at IS NULL AND a.extra ? 'upstream_billing_probe'`)
 	items := make([]service.UpstreamProbeSnapshot, 0, 256)
 	for rows.Next() {
 		var item service.UpstreamProbeSnapshot
-		if err := rows.Scan(&item.AccountID, &item.BalanceText, &item.Unit, &item.RateText); err != nil {
+		if err := rows.Scan(&item.AccountID, &item.BalanceText, &item.Unit, &item.RateText, &item.BalanceJSON); err != nil {
 			return nil, err
 		}
+		item.Usage = service.ParseUpstreamUsageSummary(item.BalanceJSON)
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -550,7 +557,8 @@ ORDER BY day ASC, unit ASC`, service.UpstreamBeijingDay(from))
 
 func (r *upstreamMonitorRepository) LoadAlertRules(ctx context.Context) (map[int64]service.UpstreamAlertRule, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT account_id, threshold::float8, COALESCE(unit,''), rate_min_pct::float8, enabled, updated_at
+SELECT account_id, threshold::float8, COALESCE(unit,''), rate_min_pct::float8,
+  usage_min_pct::float8, expire_days, enabled, updated_at
 FROM upstream_monitor_alert_rules`)
 	if err != nil {
 		return nil, err
@@ -559,7 +567,8 @@ FROM upstream_monitor_alert_rules`)
 	rules := make(map[int64]service.UpstreamAlertRule)
 	for rows.Next() {
 		var rule service.UpstreamAlertRule
-		if err := rows.Scan(&rule.AccountID, &rule.Threshold, &rule.Unit, &rule.RateMinPct, &rule.Enabled, &rule.UpdatedAt); err != nil {
+		if err := rows.Scan(&rule.AccountID, &rule.Threshold, &rule.Unit, &rule.RateMinPct,
+			&rule.UsageMinPct, &rule.ExpireDays, &rule.Enabled, &rule.UpdatedAt); err != nil {
 			return nil, err
 		}
 		rules[rule.AccountID] = rule
@@ -569,17 +578,21 @@ FROM upstream_monitor_alert_rules`)
 
 func (r *upstreamMonitorRepository) UpsertAlertRule(ctx context.Context, rule service.UpstreamAlertRule) (service.UpstreamAlertRule, error) {
 	err := r.db.QueryRowContext(ctx, `
-INSERT INTO upstream_monitor_alert_rules(account_id, threshold, unit, rate_min_pct, enabled, updated_at)
-VALUES ($1, $2, $3, $4, $5, NOW())
+INSERT INTO upstream_monitor_alert_rules(account_id, threshold, unit, rate_min_pct, usage_min_pct, expire_days, enabled, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 ON CONFLICT (account_id) DO UPDATE SET
   threshold = EXCLUDED.threshold,
   unit = EXCLUDED.unit,
   rate_min_pct = EXCLUDED.rate_min_pct,
+  usage_min_pct = EXCLUDED.usage_min_pct,
+  expire_days = EXCLUDED.expire_days,
   enabled = EXCLUDED.enabled,
   updated_at = NOW()
-RETURNING account_id, threshold::float8, COALESCE(unit,''), rate_min_pct::float8, enabled, updated_at`,
-		rule.AccountID, rule.Threshold, rule.Unit, rule.RateMinPct, rule.Enabled,
-	).Scan(&rule.AccountID, &rule.Threshold, &rule.Unit, &rule.RateMinPct, &rule.Enabled, &rule.UpdatedAt)
+RETURNING account_id, threshold::float8, COALESCE(unit,''), rate_min_pct::float8,
+  usage_min_pct::float8, expire_days, enabled, updated_at`,
+		rule.AccountID, rule.Threshold, rule.Unit, rule.RateMinPct, rule.UsageMinPct, rule.ExpireDays, rule.Enabled,
+	).Scan(&rule.AccountID, &rule.Threshold, &rule.Unit, &rule.RateMinPct,
+		&rule.UsageMinPct, &rule.ExpireDays, &rule.Enabled, &rule.UpdatedAt)
 	return rule, err
 }
 

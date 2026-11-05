@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -36,7 +37,14 @@ const (
 	upstreamMonitorAlertCooldown   = 6 * time.Hour
 	upstreamMonitorRateAlertMinPct = 10.0
 	upstreamMonitorBeijingOffset   = 8 * time.Hour
-	upstreamMonitorExportMaxRows   = 5000
+
+	// Third batch: plan, quota and subscription state stays read-only here. The
+	// probe already parses /v1/usage; these limits only bound what the page
+	// shows and when the sampler raises a quota or expiry alert.
+	upstreamMonitorUsageAlertMinPct = 20.0
+	upstreamMonitorExpireAlertDays  = 7
+	upstreamMonitorUsageAlertMaxAge = 24 * time.Hour
+	upstreamMonitorExportMaxRows    = 5000
 )
 
 // UpstreamMonitorBeijingZone is the fixed +08:00 day boundary used for "today"
@@ -90,6 +98,9 @@ type UpstreamMonitorAccount struct {
 	LastSampledAt   *time.Time `json:"last_sampled_at,omitempty"`
 	AlertThreshold  *float64   `json:"alert_threshold,omitempty"`
 	AlertEnabled    bool       `json:"alert_enabled"`
+	// Usage is the plan, quota windows and expiry already present in the
+	// stored balance snapshot; it is nil for upstreams that report none.
+	Usage *UpstreamUsageSummary `json:"usage,omitempty"`
 }
 
 // UpstreamCurrencyTotal is the balance sum of one currency unit.
@@ -142,10 +153,16 @@ type UpstreamTrendPoint struct {
 // UpstreamAlertRule is the per-account alert configuration. No row means the
 // account is not alerting at all.
 type UpstreamAlertRule struct {
-	AccountID  int64     `json:"account_id"`
-	Threshold  float64   `json:"threshold"`
-	Unit       string    `json:"unit"`
-	RateMinPct float64   `json:"rate_min_pct"`
+	AccountID  int64   `json:"account_id"`
+	Threshold  float64 `json:"threshold"`
+	Unit       string  `json:"unit"`
+	RateMinPct float64 `json:"rate_min_pct"`
+	// UsageMinPct alerts when the tightest quota window keeps less than this
+	// percentage of its limit. Zero falls back to the built-in default.
+	UsageMinPct float64 `json:"usage_min_pct"`
+	// ExpireDays alerts when a subscription or key expires within this many
+	// days. Zero falls back to the built-in default.
+	ExpireDays int       `json:"expire_days"`
 	Enabled    bool      `json:"enabled"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -175,6 +192,46 @@ type UpstreamAlertFilter struct {
 	From      time.Time
 	Page      int
 	PageSize  int
+}
+
+// Alert kinds raised by the sampler. Balance and rate kinds came with the
+// second batch; the usage kinds read the plan and expiry the probe stored.
+const (
+	UpstreamAlertKindBalanceDepleted = "balance_depleted"
+	UpstreamAlertKindBalanceLow      = "balance_low"
+	UpstreamAlertKindRateJump        = "rate_jump"
+	UpstreamAlertKindQuotaLow        = "quota_low"
+	UpstreamAlertKindExpiring        = "subscription_expiring"
+)
+
+// UpstreamUsageWindow is one quota window the upstream reported: daily,
+// weekly, monthly, or a key rate-limit window such as 5h or 1d.
+type UpstreamUsageWindow struct {
+	Window       string     `json:"window"`
+	Limit        float64    `json:"limit"`
+	Used         float64    `json:"used"`
+	Remaining    float64    `json:"remaining"`
+	RemainingPct float64    `json:"remaining_pct"`
+	ResetAt      *time.Time `json:"reset_at,omitempty"`
+}
+
+// UpstreamUsageSummary is the plan and quota projection of the balance
+// snapshot. Unrestricted wallet accounts usually only carry Mode and
+// KeyStatus; subscription and quota-limited keys add windows and an expiry.
+type UpstreamUsageSummary struct {
+	Mode            string                `json:"mode,omitempty"`
+	KeyStatus       string                `json:"key_status,omitempty"`
+	PlanName        string                `json:"plan_name,omitempty"`
+	Unit            string                `json:"unit,omitempty"`
+	Unlimited       bool                  `json:"unlimited"`
+	Limit           *float64              `json:"limit,omitempty"`
+	Used            *float64              `json:"used,omitempty"`
+	Remaining       *float64              `json:"remaining,omitempty"`
+	MinRemainingPct *float64              `json:"min_remaining_pct,omitempty"`
+	Windows         []UpstreamUsageWindow `json:"windows,omitempty"`
+	ExpiresAt       *time.Time            `json:"expires_at,omitempty"`
+	ReceivedAt      *time.Time            `json:"received_at,omitempty"`
+	Status          string                `json:"status,omitempty"`
 }
 
 // UpstreamMonitorPoint is one sampled balance value.
@@ -211,6 +268,11 @@ type UpstreamProbeSnapshot struct {
 	BalanceText string
 	Unit        string
 	RateText    string
+	// BalanceJSON is the raw upstream_billing_probe.balance object. The probe
+	// already parsed /v1/usage into it, so plan and quota state cost no extra
+	// request; ParseUpstreamUsageSummary only reshapes it for readers.
+	BalanceJSON string
+	Usage       *UpstreamUsageSummary
 }
 
 // UpstreamMonitorState is the last value observed by the sampler. It keeps
@@ -410,6 +472,7 @@ func (s *UpstreamMonitorService) SampleNow(ctx context.Context) (UpstreamMonitor
 		return result, err
 	}
 	alerts := buildUpstreamAlerts(writes, rules)
+	alerts = append(alerts, buildUpstreamUsageAlerts(snapshots, rules, now)...)
 	if len(alerts) > 0 {
 		recorded, recordErr := s.repo.RecordAlerts(ctx, alerts, now.Add(-upstreamMonitorAlertCooldown))
 		if recordErr != nil {
@@ -512,6 +575,18 @@ func (s *UpstreamMonitorService) SaveAlertRule(ctx context.Context, rule Upstrea
 	}
 	if rule.RateMinPct > 100 {
 		rule.RateMinPct = 100
+	}
+	if rule.UsageMinPct < 0 {
+		rule.UsageMinPct = 0
+	}
+	if rule.UsageMinPct > 100 {
+		rule.UsageMinPct = 100
+	}
+	if rule.ExpireDays < 0 {
+		rule.ExpireDays = 0
+	}
+	if rule.ExpireDays > 365 {
+		rule.ExpireDays = 365
 	}
 	rule.Unit = strings.TrimSpace(rule.Unit)
 	if len(rule.Unit) > 16 {
@@ -797,6 +872,222 @@ func buildUpstreamAlerts(writes []UpstreamSampleWrite, rules map[int64]UpstreamA
 				})
 			}
 		}
+	}
+	return alerts
+}
+
+// ParseUpstreamUsageSummary reshapes the stored balance snapshot into the
+// plan and quota view the operations center renders. It returns nil when the
+// upstream reported neither a plan, a quota window nor an expiry, so plain
+// wallet accounts keep an empty usage section instead of a row of dashes.
+func ParseUpstreamUsageSummary(raw string) *UpstreamUsageSummary {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	var stored struct {
+		Status     string `json:"status"`
+		ReceivedAt string `json:"received_at"`
+		Data       struct {
+			Mode       string   `json:"mode"`
+			KeyStatus  string   `json:"key_status"`
+			PlanName   string   `json:"plan_name"`
+			Unit       string   `json:"unit"`
+			Unlimited  bool     `json:"unlimited"`
+			Remaining  *float64 `json:"remaining"`
+			QuotaLimit *float64 `json:"quota_limit"`
+			QuotaUsed  *float64 `json:"quota_used"`
+			ExpiresAt  string   `json:"expires_at"`
+			Windows    []struct {
+				Window  string   `json:"window"`
+				Limit   float64  `json:"limit"`
+				Used    *float64 `json:"used"`
+				ResetAt string   `json:"reset_at"`
+			} `json:"windows"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return nil
+	}
+	if stored.Status != UpstreamBillingProbeStatusOK {
+		return nil
+	}
+	summary := &UpstreamUsageSummary{
+		Mode:       strings.TrimSpace(stored.Data.Mode),
+		KeyStatus:  strings.TrimSpace(stored.Data.KeyStatus),
+		PlanName:   strings.TrimSpace(stored.Data.PlanName),
+		Unit:       strings.TrimSpace(stored.Data.Unit),
+		Unlimited:  stored.Data.Unlimited,
+		Limit:      finiteUpstreamMonitorFloat(stored.Data.QuotaLimit),
+		Used:       finiteUpstreamMonitorFloat(stored.Data.QuotaUsed),
+		Remaining:  finiteUpstreamMonitorFloat(stored.Data.Remaining),
+		ExpiresAt:  ParseUpstreamSnapshotTime(stored.Data.ExpiresAt),
+		Status:     stored.Status,
+		ReceivedAt: ParseUpstreamSnapshotTime(stored.ReceivedAt),
+	}
+	if len(stored.Data.Windows) > 0 {
+		summary.Windows = make([]UpstreamUsageWindow, 0, len(stored.Data.Windows))
+	}
+	for _, window := range stored.Data.Windows {
+		name := strings.TrimSpace(window.Window)
+		if name == "" || window.Limit <= 0 || math.IsNaN(window.Limit) || math.IsInf(window.Limit, 0) {
+			continue
+		}
+		used := 0.0
+		if window.Used != nil && !math.IsNaN(*window.Used) && !math.IsInf(*window.Used, 0) {
+			used = *window.Used
+		}
+		remaining := window.Limit - used
+		if remaining < 0 {
+			remaining = 0
+		}
+		entry := UpstreamUsageWindow{
+			Window:       name,
+			Limit:        window.Limit,
+			Used:         used,
+			Remaining:    remaining,
+			RemainingPct: remaining / window.Limit * 100,
+		}
+		if reset := ParseUpstreamSnapshotTime(window.ResetAt); reset != nil {
+			entry.ResetAt = reset
+		}
+		summary.Windows = append(summary.Windows, entry)
+		if summary.MinRemainingPct == nil || entry.RemainingPct < *summary.MinRemainingPct {
+			value := entry.RemainingPct
+			summary.MinRemainingPct = &value
+		}
+	}
+	// Quota-limited keys report one window at the top level instead of a list.
+	if summary.MinRemainingPct == nil && summary.Limit != nil && *summary.Limit > 0 {
+		if summary.Used != nil {
+			remaining := *summary.Limit - *summary.Used
+			if remaining < 0 {
+				remaining = 0
+			}
+			pct := remaining / *summary.Limit * 100
+			summary.Remaining = &remaining
+			summary.MinRemainingPct = &pct
+		} else if summary.Remaining != nil {
+			pct := *summary.Remaining / *summary.Limit * 100
+			summary.MinRemainingPct = &pct
+		}
+	}
+	if summary.Mode == "" && summary.PlanName == "" && len(summary.Windows) == 0 &&
+		summary.ExpiresAt == nil && summary.Limit == nil {
+		return nil
+	}
+	return summary
+}
+
+// TightestUpstreamUsageWindow returns the window with the least headroom, the
+// one an operator has to act on first.
+func TightestUpstreamUsageWindow(usage *UpstreamUsageSummary) *UpstreamUsageWindow {
+	if usage == nil || len(usage.Windows) == 0 {
+		return nil
+	}
+	tightest := &usage.Windows[0]
+	for index := 1; index < len(usage.Windows); index++ {
+		if usage.Windows[index].RemainingPct < tightest.RemainingPct {
+			tightest = &usage.Windows[index]
+		}
+	}
+	return tightest
+}
+
+func finiteUpstreamMonitorFloat(value *float64) *float64 {
+	if value == nil || math.IsNaN(*value) || math.IsInf(*value, 0) {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+// UpstreamUsageWindowLabel renders the upstream window token for operators.
+func UpstreamUsageWindowLabel(window string) string {
+	switch strings.ToLower(strings.TrimSpace(window)) {
+	case "daily", "day", "1d":
+		return "日额度"
+	case "weekly", "week", "7d":
+		return "周额度"
+	case "monthly", "month", "30d":
+		return "月额度"
+	case "5h":
+		return "5 小时额度"
+	case "":
+		return "额度"
+	default:
+		return window + " 额度"
+	}
+}
+
+// buildUpstreamUsageAlerts raises quota and expiry alerts from the snapshots
+// the probe already stored. Nothing here calls an upstream: a snapshot older
+// than a day is ignored so a paused probe cannot keep paging.
+func buildUpstreamUsageAlerts(snapshots []UpstreamProbeSnapshot, rules map[int64]UpstreamAlertRule, now time.Time) []UpstreamAlert {
+	alerts := make([]UpstreamAlert, 0, 4)
+	for _, snapshot := range snapshots {
+		usage := snapshot.Usage
+		if usage == nil || usage.Status != UpstreamBillingProbeStatusOK {
+			continue
+		}
+		if usage.ReceivedAt == nil || now.Sub(*usage.ReceivedAt) > upstreamMonitorUsageAlertMaxAge {
+			continue
+		}
+		rule, hasRule := rules[snapshot.AccountID]
+		if !hasRule || !rule.Enabled {
+			continue
+		}
+		minPct := upstreamMonitorUsageAlertMinPct
+		if rule.UsageMinPct > 0 {
+			minPct = rule.UsageMinPct
+		}
+		if window := TightestUpstreamUsageWindow(usage); window != nil && window.RemainingPct < minPct {
+			level := "warning"
+			if window.RemainingPct <= 5 {
+				level = "critical"
+			}
+			alerts = append(alerts, UpstreamAlert{
+				AccountID: snapshot.AccountID,
+				Kind:      UpstreamAlertKindQuotaLow,
+				Level:     level,
+				Unit:      usage.Unit,
+				Message: fmt.Sprintf("%s剩余 %.1f%%（%s / %s）",
+					UpstreamUsageWindowLabel(window.Window),
+					window.RemainingPct,
+					formatUpstreamAlertMoney(window.Remaining, usage.Unit),
+					formatUpstreamAlertMoney(window.Limit, usage.Unit)),
+				CreatedAt: now,
+			})
+		}
+		if usage.ExpiresAt == nil {
+			continue
+		}
+		expireDays := upstreamMonitorExpireAlertDays
+		if rule.ExpireDays > 0 {
+			expireDays = rule.ExpireDays
+		}
+		left := usage.ExpiresAt.Sub(now)
+		if left > time.Duration(expireDays)*24*time.Hour {
+			continue
+		}
+		expiresAt := usage.ExpiresAt.In(UpstreamMonitorBeijingZone).Format("2006-01-02 15:04")
+		message := fmt.Sprintf("订阅或密钥将于 %s 到期（还剩 %d 天）", expiresAt, int(math.Ceil(left.Hours()/24)))
+		level := "warning"
+		switch {
+		case left <= 0:
+			level = "critical"
+			message = fmt.Sprintf("订阅或密钥已到期（%s）", expiresAt)
+		case left <= 48*time.Hour:
+			level = "critical"
+		}
+		alerts = append(alerts, UpstreamAlert{
+			AccountID: snapshot.AccountID,
+			Kind:      UpstreamAlertKindExpiring,
+			Level:     level,
+			Unit:      usage.Unit,
+			Message:   message,
+			CreatedAt: now,
+		})
 	}
 	return alerts
 }

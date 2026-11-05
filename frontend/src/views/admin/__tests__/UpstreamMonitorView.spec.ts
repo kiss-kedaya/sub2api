@@ -225,3 +225,84 @@ describe('upstream monitor second batch', () => {
     wrapper.unmount()
   })
 })
+
+describe('upstream monitor plan and quota', () => {
+  const usageAccount = account({
+    account_id: 9,
+    name: 'plan-upstream',
+    usage: {
+      mode: 'unrestricted',
+      key_status: 'active',
+      plan_name: 'Pro 200',
+      unit: 'USD',
+      unlimited: false,
+      limit: null,
+      used: null,
+      remaining: 12,
+      min_remaining_pct: 12,
+      windows: [
+        { window: 'daily', limit: 5, used: 4.4, remaining: 0.6, remaining_pct: 12, reset_at: '2026-11-06T00:00:00Z' },
+        { window: 'monthly', limit: 200, used: 24, remaining: 176, remaining_pct: 88 },
+      ],
+      expires_at: '2026-11-20T00:00:00Z',
+      received_at: '2026-11-05T04:00:00Z',
+      status: 'ok',
+    },
+  })
+
+  beforeEach(() => {
+    vi.mocked(api.listAccounts).mockResolvedValue({
+      items: [usageAccount],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+  })
+
+  it('shows the plan, the tightest quota window and the expiry in the table', async () => {
+    const wrapper = mount(UpstreamMonitorView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Pro 200')
+    expect(wrapper.text()).toContain('日额度 12.0%')
+    wrapper.unmount()
+  })
+
+  it('renders every quota window in the detail dialog', async () => {
+    const wrapper = mount(UpstreamMonitorView, { global: { plugins: [router] } })
+    await flushPromises()
+    await wrapper.findAll('button[aria-label="详情"]')[0].trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.find('[data-test="dialog"]')
+    expect(dialog.text()).toContain('套餐与额度')
+    expect(dialog.text()).toContain('日额度')
+    expect(dialog.text()).toContain('月额度')
+    expect(dialog.text()).toContain('到期时间')
+    wrapper.unmount()
+  })
+
+  it('saves the quota threshold and expiry lead with the rule', async () => {
+    vi.mocked(api.saveAlertRule).mockImplementation(async rule => ({
+      ...rule,
+      updated_at: '2026-11-05T05:00:00Z',
+    }))
+    const wrapper = mount(UpstreamMonitorView, { global: { plugins: [router] } })
+    await flushPromises()
+    await wrapper.findAll('button[aria-label="告警设置"]')[0].trigger('click')
+    await flushPromises()
+
+    const saveButton = wrapper.findAll('button').find(button => button.text().includes('保存规则'))
+    expect(saveButton).toBeTruthy()
+    await saveButton!.trigger('click')
+    await flushPromises()
+
+    expect(api.saveAlertRule).toHaveBeenCalledWith(expect.objectContaining({
+      account_id: 9,
+      usage_min_pct: 20,
+      expire_days: 7,
+    }))
+    wrapper.unmount()
+  })
+})

@@ -4,8 +4,8 @@
       <AdminPageHeader
         :title="text('上游监控', 'Upstream monitor')"
         :description="text(
-          '余额、消费、告警、上游倍率与变动记录集中在一页。数据只来自已有的上游探测快照和本地汇总表，页面不会额外请求上游，也不扫 usage_logs。',
-          'Balances, spend, alerts and upstream rates in one place. Everything reads the existing probe snapshots plus local rollups; the page adds no upstream calls and never scans usage_logs.'
+          '余额、消费、套餐额度、告警、上游倍率与变动记录集中在一页。数据只来自已有的上游探测快照和本地汇总表，页面不会额外请求上游，也不扫 usage_logs。',
+          'Balances, spend, plan quotas, alerts and upstream rates in one place. Everything reads the existing probe snapshots plus local rollups; the page adds no upstream calls and never scans usage_logs.'
         )"
       >
         <template #actions>
@@ -153,7 +153,7 @@
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 class="font-semibold">{{ text('告警', 'Alerts') }}</h3>
-            <p class="text-xs text-muted">{{ text('低余额与倍率跳变，同账号同类型 6 小时内只记一条', 'Low balance and rate jumps; at most one entry per account and kind every 6 hours') }}</p>
+            <p class="text-xs text-muted">{{ text('低余额、额度不足、即将到期与倍率跳变，同账号同类型 6 小时内只记一条', 'Low balance, low quota, expiring plans and rate jumps; at most one entry per account and kind every 6 hours') }}</p>
           </div>
           <div class="flex items-center gap-2">
             <USelect v-model="alertStatus" :items="alertStatusItems" class="min-w-32" :aria-label="text('告警状态', 'Alert status')" />
@@ -229,6 +229,16 @@
             {{ row.original.rate_sync_enabled ? text('同步已开启', 'Sync on') : text('仅观察', 'Observe only') }}
             <span v-if="row.original.rate_synced != null"> · {{ text('已写回', 'Applied') }} × {{ row.original.rate_synced.toFixed(4) }}</span>
           </p>
+        </template>
+        <template #plan-cell="{ row }">
+          <div v-if="row.original.usage" class="space-y-0.5">
+            <p class="truncate text-sm font-medium">{{ row.original.usage.plan_name || usageModeLabel(row.original.usage) }}</p>
+            <p v-if="usageTightestLabel(row.original.usage)" class="text-xs tabular-nums" :class="usagePctClass(usageTightest(row.original.usage)?.remaining_pct ?? 100)">
+              {{ usageTightestLabel(row.original.usage) }}
+            </p>
+            <p v-if="row.original.usage.expires_at" class="text-xs text-muted">{{ expiryLabel(row.original.usage.expires_at) }}</p>
+          </div>
+          <span v-else class="text-muted">—</span>
         </template>
         <template #sampled-cell="{ row }">{{ row.original.last_sampled_at ? new Date(row.original.last_sampled_at).toLocaleString() : '—' }}</template>
         <template #actions-cell="{ row }">
@@ -323,6 +333,40 @@
           </div>
         </div>
 
+        <section v-if="selected.usage" class="rounded-lg border border-default p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h4 class="text-sm font-semibold">{{ text('套餐与额度', 'Plan and quota') }}</h4>
+            <UBadge v-if="selected.usage.key_status" color="neutral" variant="subtle" size="sm">{{ selected.usage.key_status }}</UBadge>
+          </div>
+          <dl class="mt-2 grid grid-cols-2 gap-2 text-sm">
+            <div>
+              <dt class="text-xs text-muted">{{ text('套餐', 'Plan') }}</dt>
+              <dd>{{ selected.usage.plan_name || usageModeLabel(selected.usage) }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-muted">{{ text('到期时间', 'Expires') }}</dt>
+              <dd>{{ selected.usage.expires_at ? new Date(selected.usage.expires_at).toLocaleString() : '—' }}</dd>
+            </div>
+          </dl>
+          <div v-if="selected.usage.windows?.length" class="mt-3 space-y-2">
+            <div v-for="window in selected.usage.windows" :key="window.window">
+              <div class="flex flex-wrap items-center justify-between gap-1 text-xs">
+                <span class="text-muted">{{ usageWindowLabel(window.window) }}</span>
+                <span class="tabular-nums">{{ formatMoney(window.used, selected.usage.unit) }} / {{ formatMoney(window.limit, selected.usage.unit) }} · {{ window.remaining_pct.toFixed(1) }}%</span>
+              </div>
+              <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-elevated">
+                <div class="h-full rounded-full" :class="usageBarClass(window.remaining_pct)" :style="{ width: `${Math.max(0, Math.min(100, window.remaining_pct))}%` }" />
+              </div>
+              <p v-if="window.reset_at" class="mt-0.5 text-[11px] text-muted">{{ text('下次重置', 'Resets') }} {{ new Date(window.reset_at).toLocaleString() }}</p>
+            </div>
+          </div>
+          <p v-else-if="selected.usage.limit != null" class="mt-2 text-sm">
+            {{ text('密钥额度', 'Key quota') }}：{{ formatMoney(selected.usage.used ?? 0, selected.usage.unit) }} / {{ formatMoney(selected.usage.limit, selected.usage.unit) }}
+            <span v-if="selected.usage.min_remaining_pct != null" class="text-muted"> · {{ text('剩余', 'Remaining') }} {{ selected.usage.min_remaining_pct.toFixed(1) }}%</span>
+          </p>
+          <p v-else class="mt-2 text-xs text-muted">{{ text('上游没有返回额度窗口；余额模式账号只有钱包余额。', 'The upstream reported no quota window; wallet accounts only carry a balance.') }}</p>
+        </section>
+
         <dl class="grid grid-cols-2 gap-2 text-sm">
           <div><dt class="text-xs text-muted">{{ text('平台', 'Platform') }}</dt><dd>{{ selected.platform }} · {{ selected.type }}</dd></div>
           <div><dt class="text-xs text-muted">{{ text('账号状态', 'Account status') }}</dt><dd>{{ selected.status }}</dd></div>
@@ -348,6 +392,14 @@
               {{ text('倍率提醒幅度 %', 'Rate alert move %') }}
               <UInput v-model.number="ruleForm.rate_min_pct" type="number" min="0" max="100" step="1" class="mt-1 w-full" />
             </label>
+            <label class="text-xs text-muted">
+              {{ text('额度剩余提醒 %', 'Quota remaining %') }}
+              <UInput v-model.number="ruleForm.usage_min_pct" type="number" min="0" max="100" step="1" class="mt-1 w-full" />
+            </label>
+            <label class="text-xs text-muted">
+              {{ text('到期提前提醒（天）', 'Expiry lead (days)') }}
+              <UInput v-model.number="ruleForm.expire_days" type="number" min="0" max="365" step="1" class="mt-1 w-full" />
+            </label>
           </div>
           <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
             <label class="inline-flex items-center gap-2 text-sm">
@@ -366,7 +418,7 @@
               <UButton size="sm" :loading="savingRule" :label="text('保存规则', 'Save rule')" @click="saveRule" />
             </div>
           </div>
-          <p class="mt-2 text-xs text-muted">{{ text('阈值为 0 且启用时只提醒余额归零；留空币种表示不限制币种。', 'With a zero threshold only a depleted balance alerts; an empty currency matches any unit.') }}</p>
+          <p class="mt-2 text-xs text-muted">{{ text('阈值为 0 且启用时只提醒余额归零；留空币种表示不限制币种。额度与到期提醒读的是上游 /v1/usage 已返回的套餐窗口；填 0 表示沿用默认值（额度 20%、到期提前 7 天）。', 'With a zero threshold only a depleted balance alerts; an empty currency matches any unit. Quota and expiry alerts read the plan windows the upstream already returned from /v1/usage; 0 keeps the default (20% quota, 7-day expiry lead).') }}</p>
         </section>
 
         <div>
@@ -436,6 +488,8 @@ import {
   type UpstreamMonitorPoint,
   type UpstreamRateChange,
   type UpstreamTrendPoint,
+  type UpstreamUsageSummary,
+  type UpstreamUsageWindow,
 } from '@/api/admin/upstreamMonitor'
 
 const { locale } = useI18n()
@@ -469,7 +523,7 @@ const alertPages = ref(1)
 const alertStatus = ref('open')
 
 const rulesByAccount = ref<Record<number, UpstreamAlertRule>>({})
-const ruleForm = reactive({ account_id: 0, threshold: 0, unit: '', rate_min_pct: 10, enabled: false })
+const ruleForm = reactive({ account_id: 0, threshold: 0, unit: '', rate_min_pct: 10, usage_min_pct: 20, expire_days: 7, enabled: false })
 const savingRule = ref(false)
 
 const rateChanges = ref<UpstreamRateChange[]>([])
@@ -525,6 +579,7 @@ const columns = computed<TableColumn<UpstreamMonitorAccount>[]>(() => [
   { id: 'account', header: text('账号', 'Account') },
   { id: 'balance', header: text('余额', 'Balance') },
   { id: 'status', header: text('状态', 'Status') },
+  { id: 'plan', header: text('套餐 / 额度', 'Plan / quota'), meta: { class: { th: 'w-44', td: 'w-44' } } },
   { id: 'rate', header: text('上游倍率', 'Upstream rate') },
   { id: 'sampled', header: text('最近采样', 'Last sample'), meta: { class: { th: 'w-40', td: 'w-40' } } },
   { id: 'actions', header: () => text('操作', 'Actions'), meta: { class: { th: 'w-28 text-right', td: 'w-28' } } },
@@ -575,10 +630,70 @@ function alertKindLabel(kind: string): string {
     balance_low: ['余额偏低', 'Low balance'],
     balance_depleted: ['余额归零', 'Depleted'],
     rate_jump: ['倍率跳变', 'Rate jump'],
+    quota_low: ['额度不足', 'Low quota'],
+    subscription_expiring: ['即将到期', 'Expiring'],
   }
   const label = labels[kind]
   return label ? text(label[0], label[1]) : kind
 }
+function usageModeLabel(usage: UpstreamUsageSummary): string {
+  if (usage.plan_name) return usage.plan_name
+  switch (usage.mode) {
+    case 'quota_limited':
+      return text('密钥额度', 'Key quota')
+    case 'unrestricted':
+      return usage.unlimited ? text('不限额度', 'Unlimited') : text('余额模式', 'Wallet')
+    default:
+      return text('未返回套餐', 'No plan reported')
+  }
+}
+
+function usageWindowLabel(window: string): string {
+  const labels: Record<string, [string, string]> = {
+    daily: ['日额度', 'Daily'],
+    weekly: ['周额度', 'Weekly'],
+    monthly: ['月额度', 'Monthly'],
+    '5h': ['5 小时额度', '5h'],
+    '1d': ['1 天额度', '1d'],
+    '7d': ['7 天额度', '7d'],
+  }
+  const label = labels[window.toLowerCase()]
+  return label ? text(label[0], label[1]) : window
+}
+
+function usageTightest(usage?: UpstreamUsageSummary | null): UpstreamUsageWindow | null {
+  const windows = usage?.windows ?? []
+  if (!windows.length) return null
+  return windows.reduce((tightest, item) => (item.remaining_pct < tightest.remaining_pct ? item : tightest), windows[0]!)
+}
+
+function usageTightestLabel(usage?: UpstreamUsageSummary | null): string {
+  const window = usageTightest(usage)
+  if (!window) return ''
+  return `${usageWindowLabel(window.window)} ${window.remaining_pct.toFixed(1)}%`
+}
+
+function usagePctClass(pct: number): string {
+  if (pct <= 5) return 'text-red-600 dark:text-red-400'
+  if (pct <= 20) return 'text-amber-600 dark:text-amber-400'
+  return 'text-muted'
+}
+
+function usageBarClass(pct: number): string {
+  if (pct <= 5) return 'bg-red-500'
+  if (pct <= 20) return 'bg-amber-400'
+  return 'bg-emerald-500'
+}
+
+function expiryLabel(value: string): string {
+  const target = new Date(value).getTime()
+  if (!Number.isFinite(target)) return value
+  const days = Math.ceil((target - Date.now()) / 86400000)
+  if (days < 0) return text(`已过期 ${Math.abs(days)} 天`, `Expired ${Math.abs(days)}d ago`)
+  if (days === 0) return text('今天到期', 'Expires today')
+  return text(`${days} 天后到期`, `Expires in ${days}d`)
+}
+
 const trendPoints = computed(() => trend.value.filter(point => !trendUnit.value || point.unit === trendUnit.value))
 const trendChart = computed(() => {
   const points = trendPoints.value
@@ -781,6 +896,8 @@ async function openDetail(row: UpstreamMonitorAccount, focusRule = false) {
   ruleForm.threshold = rule?.threshold ?? Number(((row.balance ?? 0) * 0.2).toFixed(2))
   ruleForm.unit = rule?.unit ?? (row.unit || '')
   ruleForm.rate_min_pct = rule?.rate_min_pct ?? 10
+  ruleForm.usage_min_pct = rule?.usage_min_pct ?? 20
+  ruleForm.expire_days = rule?.expire_days ?? 7
   ruleForm.enabled = rule?.enabled ?? false
   try {
     await loadDetail(row.account_id)
@@ -813,6 +930,8 @@ async function saveRule() {
       threshold: Number(ruleForm.threshold) || 0,
       unit: ruleForm.unit.trim(),
       rate_min_pct: Number(ruleForm.rate_min_pct) || 0,
+      usage_min_pct: Number(ruleForm.usage_min_pct) || 0,
+      expire_days: Number(ruleForm.expire_days) || 0,
       enabled: ruleForm.enabled,
     })
     rulesByAccount.value = { ...rulesByAccount.value, [saved.account_id]: saved }
@@ -838,6 +957,8 @@ async function removeRule() {
     selected.value = { ...selected.value, alert_enabled: false, alert_threshold: null }
     ruleForm.enabled = false
     ruleForm.threshold = 0
+    ruleForm.usage_min_pct = 20
+    ruleForm.expire_days = 7
     await refresh()
   } catch (cause) {
     error.value = (cause as { message?: string })?.message || text('删除失败', 'Delete failed')
