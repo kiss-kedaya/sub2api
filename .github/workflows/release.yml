@@ -19,11 +19,20 @@ on:
         required: false
         type: boolean
         default: false
+      all_platforms:
+        description: 'Build all platforms (linux/darwin/windows, amd64+arm64) and multi-arch images. Default: linux/amd64 only'
+        required: false
+        type: boolean
+        default: false
 
 # 环境变量：合并 workflow_dispatch 输入和 repository variable
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
 env:
   SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
+  # Default release builds linux/amd64 only. Set the workflow_dispatch input
+  # all_platforms, or the repository variable RELEASE_ALL_PLATFORMS=true, to build
+  # every platform and the multi-arch images (.goreleaser.yaml).
+  ALL_PLATFORMS: ${{ github.event.inputs.all_platforms == 'true' || vars.RELEASE_ALL_PLATFORMS == 'true' }}
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event_name == 'create' && github.event.ref || github.ref_name }}
   # Forks may not have write access to an existing GHCR package. Enable only after
   # the repository/package has been granted write:packages access.
@@ -231,11 +240,52 @@ jobs:
         run: |
           go version | grep -q 'go1.26.10'
 
+      # Decide what this release builds.
+      #   default       .goreleaser.amd64.yaml: linux/amd64 archive + checksums.
+      #   all platforms .goreleaser.yaml: five platforms and multi-arch images.
+      #   simple        .goreleaser.simple.yaml: unchanged.
+      # Images are only built when a registry push is configured. Without a
+      # target they were built and then discarded. QEMU is only needed to build
+      # the arm64 image, so it is only set up for the all-platforms path.
+      - name: Select release scope
+        id: scope
+        env:
+          PUSH_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' }}
+          PUSH_GHCR: ${{ env.PUBLISH_GHCR }}
+        run: |
+          set -euo pipefail
+          config=.goreleaser.amd64.yaml
+          skip=validate
+          qemu=false
+          buildx=false
+          if [ "$SIMPLE_RELEASE" = "true" ]; then
+            config=.goreleaser.simple.yaml
+            qemu=true
+            buildx=true
+          elif [ "$ALL_PLATFORMS" = "true" ]; then
+            config=.goreleaser.yaml
+            if [ "$PUSH_DOCKERHUB" = "true" ] || [ "$PUSH_GHCR" = "true" ]; then
+              qemu=true
+              buildx=true
+            else
+              skip=validate,docker
+            fi
+          fi
+          {
+            echo "config=$config"
+            echo "skip=$skip"
+            echo "qemu=$qemu"
+            echo "buildx=$buildx"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release scope: config=$config skip=$skip qemu=$qemu buildx=$buildx"
+
       # Docker setup for GoReleaser
       - name: Set up QEMU
+        if: ${{ steps.scope.outputs.qemu == 'true' }}
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: ${{ steps.scope.outputs.buildx == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Login to DockerHub
@@ -328,7 +378,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
-          args: release --clean --skip=validate ${{ env.SIMPLE_RELEASE == 'true' && '--config=.goreleaser.simple.yaml' || '' }}
+          args: release --clean --skip=${{ steps.scope.outputs.skip }} --config=${{ steps.scope.outputs.config }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_MESSAGE: ${{ steps.tag_message.outputs.message }}
