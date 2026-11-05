@@ -954,6 +954,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		return OpenAIUsage{}, 0, nil, err
 	}
 	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
+	// A relay or a normalizing upstream may ignore explicit GIF animation
+	// controls; repair the returned animation before it reaches the client.
+	body = normalizeOpenAIImagesGIFAnimationResponseBody(body, parsed)
 	if upstreamFinancialFailureEnvelope(body) {
 		WriteUpstreamFinancialError(c, 0, body)
 		usage, _ := extractOpenAIUsageFromJSONBytes(body)
@@ -1027,6 +1030,10 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		fallbackBody.Reset()
 		fallbackBytes = 0
 		if direct != nil && strings.HasSuffix(gjson.GetBytes(dataBytes, "type").String(), ".completed") {
+			// Repair a GIF animation the native endpoint normalized away from the
+			// requested frame_count/frame_duration_ms/size before the client sees
+			// it and before size metadata is derived from the bytes.
+			dataBytes = normalizeOpenAIImagesGIFAnimationEvent(dataBytes, direct)
 			if size := detectOpenAIImageResultSize(gjson.GetBytes(dataBytes, "b64_json").String()); size != "" {
 				dataBytes, _ = sjson.SetBytes(dataBytes, "size", size)
 			}
