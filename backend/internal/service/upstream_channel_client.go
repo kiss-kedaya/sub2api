@@ -237,11 +237,21 @@ type UpstreamRedeemResult struct {
 // UpstreamChannelClient is the HTTP adapter.
 type UpstreamChannelClient struct {
 	now func() time.Time
+	// urlCheck vets (and normalizes) the site address before every request. Nil
+	// means no outbound policy is wired, which is how the tests run.
+	urlCheck func(string) (string, error)
 }
 
 // NewUpstreamChannelClient builds a client.
 func NewUpstreamChannelClient() *UpstreamChannelClient {
 	return &UpstreamChannelClient{now: func() time.Time { return time.Now().UTC() }}
+}
+
+// SetURLCheck installs the outbound address check run before every request.
+func (c *UpstreamChannelClient) SetURLCheck(check func(string) (string, error)) {
+	if c != nil {
+		c.urlCheck = check
+	}
 }
 
 func (c *UpstreamChannelClient) clock() time.Time {
@@ -332,6 +342,15 @@ func (c *UpstreamChannelClient) doJSON(
 	site := strings.TrimRight(strings.TrimSpace(siteURL), "/")
 	if site == "" {
 		return nil, errors.New("upstream site url is empty")
+	}
+	// The stored address is checked again right before each request: it may have
+	// been saved before the operator tightened the outbound policy.
+	if c.urlCheck != nil {
+		checked, checkErr := c.urlCheck(site)
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		site = strings.TrimRight(checked, "/")
 	}
 	client, err := c.httpClient(proxyURL)
 	if err != nil {

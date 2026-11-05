@@ -8,41 +8,12 @@ package service
 // （validateUpstreamBaseURL）、Grok 探测（grokOperatorPolicyValidator）一致，
 // 探测发起前必须过同一套运营者策略。
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-
-	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
-)
+import "github.com/Wei-Shaw/sub2api/internal/config"
 
 // cnValidateProbeURL 按全局出站 URL 安全策略校验探测端点，返回规范化 URL。
 // 白名单开启时强制 UpstreamHosts（阻断私网与未列名主机）；关闭时仅做格式
 // 校验（HTTP 允许与否跟随配置）；cfg 为 nil 时退化为纯格式校验。
+// 规则本身在 ValidateOperatorOutboundURL，运营中心的上游渠道共用同一份。
 func cnValidateProbeURL(cfg *config.Config, raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", errors.New("probe url is required")
-	}
-	if cfg != nil && cfg.Security.URLAllowlist.Enabled {
-		normalized, err := urlvalidator.ValidateHTTPSURL(trimmed, urlvalidator.ValidationOptions{
-			AllowedHosts:     cfg.Security.URLAllowlist.UpstreamHosts,
-			RequireAllowlist: true,
-			AllowPrivate:     cfg.Security.URLAllowlist.AllowPrivateHosts,
-		})
-		if err != nil {
-			return "", fmt.Errorf("probe target rejected by URL security policy: %w", err)
-		}
-		return normalized, nil
-	}
-	var allowInsecureHTTP bool
-	if cfg != nil {
-		allowInsecureHTTP = cfg.Security.URLAllowlist.AllowInsecureHTTP
-	}
-	normalized, err := urlvalidator.ValidateURLFormat(trimmed, allowInsecureHTTP)
-	if err != nil {
-		return "", fmt.Errorf("probe target rejected by URL security policy: %w", err)
-	}
-	return normalized, nil
+	return ValidateOperatorOutboundURL(cfg, "probe", raw)
 }

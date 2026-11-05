@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/google/uuid"
 )
 
@@ -147,6 +148,31 @@ type UpstreamChannelService struct {
 	lockCache  LeaderLockCache
 	db         *sql.DB
 	instanceID string
+	// outboundURL vets an administrator-typed address against the operator's
+	// outbound URL policy. Nil means no policy is wired (tests).
+	outboundURL func(subject, raw string) (string, error)
+}
+
+// SetOutboundURLPolicy applies the operator's global outbound URL policy to the
+// site and captcha addresses: when they are saved, and again before each request.
+func (s *UpstreamChannelService) SetOutboundURLPolicy(cfg *config.Config) {
+	if s == nil {
+		return
+	}
+	s.outboundURL = func(subject, raw string) (string, error) {
+		return ValidateOperatorOutboundURL(cfg, subject, raw)
+	}
+	s.client.SetURLCheck(func(raw string) (string, error) {
+		return ValidateOperatorOutboundURL(cfg, "upstream site", raw)
+	})
+}
+
+// checkOutboundURL returns raw unchanged when no policy is wired.
+func (s *UpstreamChannelService) checkOutboundURL(subject, raw string) (string, error) {
+	if s.outboundURL == nil {
+		return raw, nil
+	}
+	return s.outboundURL(subject, raw)
 }
 
 func NewUpstreamChannelService(repo UpstreamChannelRepository, encryptor SecretEncryptor) *UpstreamChannelService {
@@ -298,6 +324,13 @@ func (s *UpstreamChannelService) applyInput(existing *UpstreamChannel, input Ups
 				return nil, errors.New("site url must start with http:// or https://")
 			}
 		}
+		if site != "" {
+			checked, err := s.checkOutboundURL("upstream site", site)
+			if err != nil {
+				return nil, err
+			}
+			site = checked
+		}
 		channel.SiteURL = site
 	}
 	if username := strings.TrimSpace(input.Username); username != "" || creating {
@@ -335,7 +368,11 @@ func (s *UpstreamChannelService) applyInput(existing *UpstreamChannel, input Ups
 		}
 	}
 	if endpoint := strings.TrimSpace(input.CaptchaEndpoint); endpoint != "" {
-		channel.CaptchaEndpoint = endpoint
+		checked, err := s.checkOutboundURL("captcha endpoint", endpoint)
+		if err != nil {
+			return nil, err
+		}
+		channel.CaptchaEndpoint = checked
 	}
 	if proxy := strings.TrimSpace(input.ProxyURL); proxy != "" {
 		channel.ProxyURL = proxy
@@ -412,10 +449,20 @@ func (s *UpstreamChannelService) Login(ctx context.Context, id int64) (*Upstream
 		if strings.TrimSpace(creds.captchaKey) == "" {
 			return nil, errors.New("upstream requires a turnstile token but the channel has no captcha key")
 		}
+		// The captcha key goes to this address, so it is vetted again here, not
+		// only when it was saved.
+		captchaEndpoint := channel.CaptchaEndpoint
+		if strings.TrimSpace(captchaEndpoint) != "" {
+			checked, checkErr := s.checkOutboundURL("captcha endpoint", captchaEndpoint)
+			if checkErr != nil {
+				return nil, checkErr
+			}
+			captchaEndpoint = checked
+		}
 		solver, solverErr := NewUpstreamCaptchaSolver(UpstreamCaptchaConfig{
 			Provider: channel.CaptchaProvider,
 			APIKey:   creds.captchaKey,
-			Endpoint: channel.CaptchaEndpoint,
+			Endpoint: captchaEndpoint,
 			ProxyURL: channel.ProxyURL,
 		})
 		if solverErr != nil {
