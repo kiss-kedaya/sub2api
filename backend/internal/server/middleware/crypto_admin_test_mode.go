@@ -43,6 +43,7 @@ func cryptoTestModeRouteAllowed(method, path string) bool {
 		switch path {
 		case "/api/v1/admin/crypto/config", "/api/v1/admin/crypto/addresses",
 			"/api/v1/admin/crypto/sweep/plan", "/api/v1/admin/crypto/sweep/records",
+			"/api/v1/admin/crypto/address-owners",
 			"/api/v1/admin/crypto/deposits", "/api/v1/admin/crypto/wallet/status",
 			"/api/v1/admin/crypto/pool", "/api/v1/admin/crypto/hot-wallet",
 			"/api/v1/admin/crypto/hot-wallet/address", "/api/v1/admin/crypto/rpc/candidates":
