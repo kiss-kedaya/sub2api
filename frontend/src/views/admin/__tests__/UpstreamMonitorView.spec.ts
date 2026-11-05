@@ -27,6 +27,29 @@ vi.mock('@/api/admin/upstreamMonitor', () => ({
   deleteAlertRule: vi.fn(),
   exportMonitorCsv: vi.fn(),
 }))
+vi.mock('@/api/admin/upstreamChannel', () => ({
+  listChannels: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })),
+  getChannel: vi.fn(),
+  createChannel: vi.fn(),
+  updateChannel: vi.fn(),
+  deleteChannel: vi.fn(),
+  loginChannel: vi.fn(),
+  channelBalance: vi.fn(),
+  listChannelAnnouncements: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })),
+  syncChannelAnnouncements: vi.fn(),
+  listUpstreamAPIKeys: vi.fn(async () => ({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })),
+  listUpstreamAPIKeyGroups: vi.fn(async () => ({ items: [] })),
+  createUpstreamAPIKey: vi.fn(),
+  updateUpstreamAPIKey: vi.fn(),
+  deleteUpstreamAPIKey: vi.fn(),
+  revealUpstreamAPIKey: vi.fn(),
+  channelRechargeInfo: vi.fn(),
+  createChannelRecharge: vi.fn(),
+  redeemOnChannel: vi.fn(),
+  channelSubscriptionInfo: vi.fn(),
+  channelSubscriptionUsage: vi.fn(),
+  createChannelSubscription: vi.fn(),
+}))
 
 const router = createRouter({
   history: createMemoryHistory(),
@@ -303,6 +326,18 @@ describe('upstream monitor plan and quota', () => {
       usage_min_pct: 20,
       expire_days: 7,
     }))
+    wrapper.unmount()
+  })
+
+  it('switches operation tabs without re-rendering the overview', async () => {
+    const wrapper = mount(UpstreamMonitorView, { global: { plugins: [router] } })
+    await flushPromises()
+    const tabs = wrapper.findAll('button').map(button => button.text())
+    expect(tabs).toContain('概览')
+    expect(tabs).toContain('渠道与凭据')
+    expect(tabs).toContain('公告')
+    expect(tabs).toContain('API Key')
+    expect(tabs).toContain('充值 / 兑换 / 订阅')
     wrapper.unmount()
   })
 })

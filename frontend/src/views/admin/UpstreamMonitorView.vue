@@ -9,12 +9,25 @@
         )"
       >
         <template #actions>
-          <UButton icon="i-lucide-download" color="neutral" variant="outline" :label="text('导出 CSV', 'Export CSV')" :loading="exporting" @click="exportCsv" />
-          <UButton icon="i-lucide-refresh-cw" color="neutral" variant="outline" :label="text('刷新', 'Refresh')" :loading="busy" @click="refresh" />
-          <UButton icon="i-lucide-scan-line" :label="text('记录当前快照', 'Record current snapshots')" :loading="sampling" @click="pullSamples" />
+          <UButton v-if="activeTab === 'overview'" icon="i-lucide-download" color="neutral" variant="outline" :label="text('导出 CSV', 'Export CSV')" :loading="exporting" @click="exportCsv" />
+          <UButton v-if="activeTab === 'overview'" icon="i-lucide-refresh-cw" color="neutral" variant="outline" :label="text('刷新', 'Refresh')" :loading="busy" @click="refresh" />
+          <UButton v-if="activeTab === 'overview'" icon="i-lucide-scan-line" :label="text('记录当前快照', 'Record current snapshots')" :loading="sampling" @click="pullSamples" />
         </template>
       </AdminPageHeader>
 
+      <div class="flex flex-wrap items-center gap-1 rounded-lg border border-default p-1">
+        <UButton
+          v-for="option in tabOptions"
+          :key="option.value"
+          size="sm"
+          color="neutral"
+          :variant="activeTab === option.value ? 'soft' : 'ghost'"
+          :label="option.label"
+          @click="activeTab = option.value"
+        />
+      </div>
+
+      <div v-show="activeTab === 'overview'" class="flex flex-col gap-4">
       <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="error" />
 
       <section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" :aria-label="text('上游概览', 'Upstream overview')">
@@ -316,6 +329,12 @@
           </div>
         </div>
       </section>
+      </div>
+
+      <ChannelsPanel v-if="activeTab === 'channels'" />
+      <AnnouncementsPanel v-else-if="activeTab === 'announcements'" />
+      <ApiKeysPanel v-else-if="activeTab === 'keys'" />
+      <BillingPanel v-else-if="activeTab === 'billing'" />
     </div>
 
     <BaseDialog :show="detailOpen" :title="selected ? `${selected.name} · #${selected.account_id}` : ''" @close="closeDetail">
@@ -465,6 +484,10 @@ import { useI18n } from 'vue-i18n'
 import type { TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
+import ChannelsPanel from './upstream/ChannelsPanel.vue'
+import AnnouncementsPanel from './upstream/AnnouncementsPanel.vue'
+import ApiKeysPanel from './upstream/ApiKeysPanel.vue'
+import BillingPanel from './upstream/BillingPanel.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { probeUpstreamBilling } from '@/api/admin/accounts'
@@ -494,6 +517,17 @@ import {
 
 const { locale } = useI18n()
 const text = (zh: string, en: string) => (locale.value.startsWith('zh') ? zh : en)
+
+// Tabs keep the overview light: new panels are mounted only when opened, so the
+// first paint still issues the same five bounded requests as before.
+const activeTab = ref<'overview' | 'channels' | 'announcements' | 'keys' | 'billing'>('overview')
+const tabOptions = computed(() => [
+  { label: text('概览', 'Overview'), value: 'overview' as const },
+  { label: text('渠道与凭据', 'Channels'), value: 'channels' as const },
+  { label: text('公告', 'Announcements'), value: 'announcements' as const },
+  { label: text('API Key', 'API keys'), value: 'keys' as const },
+  { label: text('充值 / 兑换 / 订阅', 'Billing'), value: 'billing' as const },
+])
 
 const overview = ref<UpstreamMonitorOverview | null>(null)
 const rows = ref<UpstreamMonitorAccount[]>([])

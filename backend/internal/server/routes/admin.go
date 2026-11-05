@@ -84,6 +84,31 @@ func RegisterAdminRoutes(
 		monitor.GET("/export", h.Admin.UpstreamMonitor.Export)
 		monitor.POST("/sample", h.Admin.UpstreamMonitor.Sample)
 	}
+
+	if h.Admin.UpstreamChannel != nil {
+		channel := admin.Group("/upstream-monitor")
+		channel.GET("/channels", h.Admin.UpstreamChannel.List)
+		channel.POST("/channels", h.Admin.UpstreamChannel.Create)
+		channel.GET("/channels/:id", h.Admin.UpstreamChannel.Get)
+		channel.PUT("/channels/:id", h.Admin.UpstreamChannel.Update)
+		channel.DELETE("/channels/:id", h.Admin.UpstreamChannel.Delete)
+		channel.POST("/channels/:id/login", h.Admin.UpstreamChannel.Login)
+		channel.GET("/channels/:id/balance", h.Admin.UpstreamChannel.Balance)
+		channel.GET("/announcements", h.Admin.UpstreamChannel.Announcements)
+		channel.POST("/channels/:id/announcements/sync", h.Admin.UpstreamChannel.SyncAnnouncements)
+		channel.GET("/channels/:id/api-keys", h.Admin.UpstreamChannel.APIKeys)
+		channel.GET("/channels/:id/api-key-groups", h.Admin.UpstreamChannel.APIKeyGroups)
+		channel.POST("/channels/:id/api-keys", h.Admin.UpstreamChannel.CreateAPIKey)
+		channel.PUT("/channels/:id/api-keys/:key_id", h.Admin.UpstreamChannel.UpdateAPIKey)
+		channel.DELETE("/channels/:id/api-keys/:key_id", h.Admin.UpstreamChannel.DeleteAPIKey)
+		channel.POST("/channels/:id/api-keys/:key_id/reveal", h.Admin.UpstreamChannel.RevealAPIKey)
+		channel.GET("/channels/:id/recharge", h.Admin.UpstreamChannel.RechargeInfo)
+		channel.POST("/channels/:id/recharge", h.Admin.UpstreamChannel.CreateRecharge)
+		channel.POST("/channels/:id/redeem", h.Admin.UpstreamChannel.Redeem)
+		channel.GET("/channels/:id/subscriptions", h.Admin.UpstreamChannel.SubscriptionInfo)
+		channel.GET("/channels/:id/subscriptions/usage", h.Admin.UpstreamChannel.SubscriptionUsage)
+		channel.POST("/channels/:id/subscriptions", h.Admin.UpstreamChannel.CreateSubscription)
+	}
 	{
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)

@@ -28,6 +28,10 @@ const frameSrcRefreshTimeout = 5 * time.Second
 // upstreamMonitorStarted guards the sampler against repeated router setup in tests.
 var upstreamMonitorStarted atomic.Bool
 
+// upstreamChannelStarted guards the announcement sync loop against repeated
+// router setup in tests.
+var upstreamChannelStarted atomic.Bool
+
 // SetupRouter 配置路由器中间件和路由
 func SetupRouter(
 	r *gin.Engine,
@@ -84,9 +88,28 @@ func SetupRouter(
 		} else {
 			monitorService.SetLeaderLock(nil, db)
 		}
+		monitorService.SetNotificationHub(service.DefaultNotificationHub())
 		handlers.Admin.UpstreamMonitor = adminhandler.NewUpstreamMonitorHandler(monitorService)
 		if gin.Mode() != gin.TestMode && !upstreamMonitorStarted.Swap(true) {
 			monitorService.Start(context.Background())
+		}
+	}
+	if db != nil && handlers.Admin != nil && handlers.Admin.UpstreamChannel == nil && cfg != nil {
+		encryptor, encErr := repository.NewAESEncryptor(cfg)
+		if encErr != nil {
+			log.Printf("Warning: upstream channel credentials unavailable: %v", encErr)
+		} else {
+			channelService := service.NewUpstreamChannelService(repository.NewUpstreamChannelRepository(db), encryptor)
+			if redisClient != nil {
+				channelService.SetLeaderLock(repository.NewLeaderLockCache(redisClient), db)
+			} else {
+				channelService.SetLeaderLock(nil, db)
+			}
+			channelService.SetNotificationHub(service.DefaultNotificationHub())
+			handlers.Admin.UpstreamChannel = adminhandler.NewUpstreamChannelHandler(channelService)
+			if gin.Mode() != gin.TestMode && !upstreamChannelStarted.Swap(true) {
+				channelService.Start(context.Background())
+			}
 		}
 	}
 	if handlers.Admin != nil && handlers.Admin.Usage != nil {

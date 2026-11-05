@@ -337,10 +337,53 @@ type UpstreamMonitorService struct {
 	lockCache  LeaderLockCache
 	db         *sql.DB
 	instanceID string
+	hub        *NotificationHub
 }
 
 func NewUpstreamMonitorService(repo UpstreamMonitorRepository) *UpstreamMonitorService {
 	return &UpstreamMonitorService{repo: repo, instanceID: uuid.NewString()}
+}
+
+// SetNotificationHub routes upstream alerts through the shared notification
+// hub instead of a private Bark/email loop. Nil keeps alerts local-only, which
+// is what tests and single-purpose tools want.
+func (s *UpstreamMonitorService) SetNotificationHub(hub *NotificationHub) {
+	if s == nil {
+		return
+	}
+	s.hub = hub
+}
+
+// publishAlerts hands newly recorded alerts to the shared channels. Dedupe keys
+// mirror the database cooldown, so the six-hour rule holds even when several
+// instances sample the same account.
+func (s *UpstreamMonitorService) publishAlerts(ctx context.Context, alerts []UpstreamAlert) {
+	if s == nil || s.hub == nil || len(alerts) == 0 {
+		return
+	}
+	for _, alert := range alerts {
+		level := NotificationLevelWarning
+		if alert.Level == "critical" {
+			level = NotificationLevelCritical
+		}
+		title := fmt.Sprintf("上游账号告警 #%d", alert.AccountID)
+		if alert.Name != "" {
+			title = fmt.Sprintf("上游账号告警 · %s", alert.Name)
+		}
+		s.hub.Publish(ctx, NotificationMessage{
+			EventKind: "upstream.alert",
+			DedupeKey: fmt.Sprintf("upstream:alert:%d:%s", alert.AccountID, alert.Kind),
+			Title:     title,
+			Body:      alert.Message,
+			Level:     level,
+			Group:     "上游监控",
+			Target:    NotificationTargetAdmins,
+			Metadata: map[string]string{
+				"account_id": strconv.FormatInt(alert.AccountID, 10),
+				"kind":       alert.Kind,
+			},
+		})
+	}
 }
 
 // SetLeaderLock injects cross-instance coordination. Without it the sampler
@@ -479,6 +522,7 @@ func (s *UpstreamMonitorService) SampleNow(ctx context.Context) (UpstreamMonitor
 			return result, recordErr
 		}
 		result.Alerts = recorded
+		s.publishAlerts(ctx, alerts)
 	}
 	err = s.repo.ApplySamples(
 		ctx,
