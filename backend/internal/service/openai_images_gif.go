@@ -27,12 +27,102 @@ const (
 	openAIGIFMinFrameDurationMS = 20
 	openAIGIFMaxFrameDurationMS = 2000
 	openAIGIFDurationRoundToMS  = 10
+	// A relay that animates GIFs by packing every frame into one square sheet
+	// cannot exceed 3840px on either edge. The sheet side is estimated as
+	// ceil(sqrt(frame_count)) — the 4x4 packing used for 16 frames — because the
+	// exact layout is upstream-owned; this deliberately rejects the conservative
+	// upper bound instead of silently shrinking the requested size.
+	openAIImagesGIFSheetMaxEdge   = 3840
+	openAIImagesGIFSheetMaxFrames = 16
 	// Decoding an animation costs roughly one byte per pixel per frame. Cap the
 	// work so a degenerate upstream GIF cannot pin an image slot with hundreds of
 	// megapixels; the request itself is already bounded by the upstream body
 	// limit.
 	maxOpenAIGIFAnimationPixels = 96 << 20
 )
+
+// openAIImagesGIFSheetSide is the conservative square-sheet side for frameCount:
+// 16 frames -> 4, 8/12 frames -> 3/4, 4 frames -> 2, 2 frames -> 2.
+func openAIImagesGIFSheetSide(frameCount int) int {
+	if frameCount <= 1 {
+		return max(frameCount, 1)
+	}
+	side := int(math.Ceil(math.Sqrt(float64(frameCount))))
+	if side < 1 {
+		side = 1
+	}
+	return side
+}
+
+// validateOpenAIImagesGIFSheetLimit rejects a GIF request whose frame count and
+// per-frame size cannot fit the upstream sheet before it is sent. It is scoped
+// to API-key accounts with a non-official base_url because the sheet packing is
+// a relay behavior; official OpenAI and OAuth paths keep their existing
+// upstream-owned validation (the sheet limit there is 未验证).
+//
+// The estimate is conservative: sheet side = ceil(sqrt(frame_count)), and the
+// per-frame longest edge is the requested size's longest edge. A request is
+// rejected when sheet_side × longest_edge > 3840. The returned message carries
+// concrete alternatives (largest per-frame size for the requested frame count,
+// and largest frame count at the requested size) and never silently clamps.
+func validateOpenAIImagesGIFSheetLimit(parsed *OpenAIImagesRequest, account *Account) error {
+	if parsed == nil || account == nil || parsed.FrameCount == nil {
+		return nil
+	}
+	frameCount := *parsed.FrameCount
+	if frameCount < openAIGIFMinFrameCount || frameCount > openAIImagesGIFSheetMaxFrames {
+		// Out-of-range frame counts stay upstream-owned, matching the GIF repair
+		// path in this file.
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(parsed.OutputFormat), "gif") {
+		return nil
+	}
+	if account.Type != AccountTypeAPIKey || isOfficialOpenAIModelsBaseURL(account.GetOpenAIBaseURL()) {
+		return nil
+	}
+	width, height, ok := openAIGIFTargetFrameSize(parsed.Size)
+	if !ok {
+		// "auto" and non-pixel values cannot be bounded locally.
+		return nil
+	}
+	size := strings.TrimSpace(parsed.Size)
+	longest := max(width, height)
+	if longest > openAIImagesGIFSheetMaxEdge {
+		return fmt.Errorf(
+			"size %q has a %dpx longest edge, which exceeds the upstream %dpx GIF sheet limit; frame_count=%d cannot be generated at this size; use a size whose longest edge is at most %dpx",
+			size, longest, openAIImagesGIFSheetMaxEdge, frameCount, openAIImagesGIFSheetMaxEdge,
+		)
+	}
+	sheetSide := openAIImagesGIFSheetSide(frameCount)
+	if sheetSide*longest <= openAIImagesGIFSheetMaxEdge {
+		return nil
+	}
+
+	maxFrameEdge := openAIImagesGIFSheetMaxEdge / sheetSide
+	scale := float64(maxFrameEdge) / float64(longest)
+	maxWidth := max(1, int(math.Floor(float64(width)*scale)))
+	maxHeight := max(1, int(math.Floor(float64(height)*scale)))
+	// Largest square frame count that still fits at the requested size:
+	// floor(limit / longest_edge)² but never above the documented 16 frames.
+	edgeCount := openAIImagesGIFSheetMaxEdge / longest
+	maxFramesAtSize := edgeCount * edgeCount
+	if maxFramesAtSize > openAIImagesGIFSheetMaxFrames {
+		maxFramesAtSize = openAIImagesGIFSheetMaxFrames
+	}
+	if maxFramesAtSize < 1 {
+		maxFramesAtSize = 1
+	}
+	frameWord := "frames"
+	if maxFramesAtSize == 1 {
+		frameWord = "frame"
+	}
+	return fmt.Errorf(
+		"frame_count=%d at size %q needs a %dx%d GIF sheet (%dpx per edge), which exceeds the upstream limit of %dpx per edge; use at most %dx%d per frame for %d frames, or at most %d %s at %s",
+		frameCount, size, sheetSide, sheetSide, sheetSide*longest, openAIImagesGIFSheetMaxEdge,
+		maxWidth, maxHeight, frameCount, maxFramesAtSize, frameWord, size,
+	)
+}
 
 // openAIGIFAnimationControls are the GIF animation fields a caller explicitly
 // set on /v1/images/{generations,edits}. Nil pointers mean "not requested".

@@ -709,6 +709,32 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		parsed.Endpoint,
 		account.Type,
 	)
+	// 中转站把 16 帧 GIF 拼成 4x4 工作表，单边 = ceil(sqrt(frame_count)) × 单帧
+	// 最长边；超过 3840 的请求上游只会返回错误（可能还是 HTTP 200 文本）。在发往
+	// 上游前直接 400，并给出可用的尺寸/帧数组合，不静默改小 size、不截断帧数。
+	// 仅对非官方 base_url 的 API Key 账号生效：这是已知的中转拼图行为，官方
+	// OpenAI 与 OAuth 路径是否同样受限未验证，保持原样。
+	if sheetErr := validateOpenAIImagesGIFSheetLimit(parsed, account); sheetErr != nil {
+		upErr := &OpenAIImagesUpstreamError{
+			StatusCode: http.StatusBadRequest,
+			ErrorType:  "invalid_request_error",
+			Code:       "image_gif_sheet_size_unsupported",
+			Param:      "size",
+			Message:    sanitizeUpstreamErrorMessage(sheetErr.Error()),
+		}
+		logger.LegacyPrintf(
+			"service.openai_gateway",
+			"[OpenAI] Images GIF sheet limit rejected account=%d account_type=%s endpoint=%s frame_count=%d size=%s message=%s",
+			account.ID,
+			account.Type,
+			parsed.Endpoint,
+			*parsed.FrameCount,
+			strings.TrimSpace(parsed.Size),
+			truncateForLog([]byte(upErr.Message), 1024),
+		)
+		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+		return nil, upErr
+	}
 	forwardBody, forwardContentType, err := rewriteOpenAIImagesModel(body, parsed.ContentType, upstreamModel)
 	if err != nil {
 		return nil, err
@@ -1014,6 +1040,38 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		WriteUpstreamFinancialError(c, 0, body)
 		usage, _ := extractOpenAIUsageFromJSONBytes(body)
 		return usage, 0, nil, fmt.Errorf("images upstream financial error")
+	}
+	// A relay can answer a rejected image request with HTTP 200 and a plain-text
+	// error body. Treating that as success both misleads clients that only check
+	// the status code and bills an image that was never generated. Only
+	// recognizable image error shapes are reclassified (see
+	// openAIImagesHTTP200Error); a normal data[].b64_json/url payload is
+	// untouched.
+	if upstreamErr := openAIImagesHTTP200Error(body, resp.Header); upstreamErr != nil {
+		setOpsUpstreamError(c, upstreamErr.clientStatusCode(), upstreamErr.clientMessage(), "")
+		if account != nil {
+			logger.LegacyPrintf(
+				"service.openai_gateway",
+				"[OpenAI] Images upstream returned HTTP 200 with an error payload account=%d upstream_request_id=%s error_code=%s message=%s",
+				account.ID,
+				upstreamErr.UpstreamRequestID,
+				upstreamErr.Code,
+				truncateForLog([]byte(upstreamErr.Message), 1024),
+			)
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				ProxyID:            opsUpstreamProxyID(account),
+				ProxyName:          opsUpstreamProxyName(account),
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  upstreamErr.UpstreamRequestID,
+				Kind:               "response_error",
+				Message:            upstreamErr.clientMessage(),
+			})
+		}
+		writeOpenAIImagesUpstreamErrorResponse(c, upstreamErr)
+		return OpenAIUsage{}, 0, nil, upstreamErr
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"
