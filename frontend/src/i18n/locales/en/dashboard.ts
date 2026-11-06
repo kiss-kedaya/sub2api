@@ -323,8 +323,13 @@ export default {
       openclaw: 'OpenClaw',
       hermes: 'Hermes',
       pi: 'Pi',
+      mcode: 'MiniMax Code',
+      kimi: 'Kimi Code',
+      dsh: 'DeepSeek Harness',
+      agy: 'Antigravity',
+      omp: 'Oh My Pi',
       deeplinkUnsupported:
-        'CC Switch currently rejects provider deeplinks for this app (Invalid provider app type). Add Pi providers from the Pi page; Claude Desktop provider import is not enabled yet.',
+        'This CC Switch version rejects provider deeplinks for this app. Upgrade CC Switch and try again.',
     },
     // Quota and expiration
     quotaLimit: 'Quota Limit',

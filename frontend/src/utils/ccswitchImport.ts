@@ -18,7 +18,13 @@ export type CcSwitchApp =
   | 'openclaw'
   | 'hermes'
   | 'pi'
+  | 'mcode'
+  | 'kimi'
+  | 'dsh'
+  | 'agy'
+  | 'omp'
 
+// Keep the order in step with AppType::all() in farion1231/cc-switch (v4.0.26).
 export const CC_SWITCH_APPS: CcSwitchApp[] = [
   'claude',
   'claude-desktop',
@@ -28,7 +34,12 @@ export const CC_SWITCH_APPS: CcSwitchApp[] = [
   'opencode',
   'openclaw',
   'hermes',
-  'pi'
+  'pi',
+  'mcode',
+  'kimi',
+  'dsh',
+  'agy',
+  'omp'
 ]
 
 export const CC_SWITCH_APP_LABEL_KEYS: Record<CcSwitchApp, string> = {
@@ -40,20 +51,18 @@ export const CC_SWITCH_APP_LABEL_KEYS: Record<CcSwitchApp, string> = {
   opencode: 'opencode',
   openclaw: 'openclaw',
   hermes: 'hermes',
-  pi: 'pi'
+  pi: 'pi',
+  mcode: 'mcode',
+  kimi: 'kimi',
+  dsh: 'dsh',
+  agy: 'agy',
+  omp: 'omp'
 }
 
-// src-tauri/src/deeplink/parser.rs provider allowlist. Pi and Claude Desktop
-// exist as apps but provider import currently rejects them.
-export const CC_SWITCH_PROVIDER_DEEPLINK_APPS: readonly CcSwitchApp[] = [
-  'claude',
-  'codex',
-  'gemini',
-  'grokbuild',
-  'opencode',
-  'openclaw',
-  'hermes'
-]
+// src-tauri/src/deeplink/parser.rs provider allowlist (v4.0.26): every app
+// accepts provider deeplinks, including claude-desktop, pi and the Pi-family
+// apps added in v4 (mcode / kimi / dsh / omp). Pi-family apps require a model.
+export const CC_SWITCH_PROVIDER_DEEPLINK_APPS: readonly CcSwitchApp[] = CC_SWITCH_APPS
 
 export const CC_SWITCH_MODEL_SUGGESTIONS: Record<CcSwitchApp, string[]> = {
   claude: ['claude-sonnet-4-6', 'claude-sonnet-5', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
@@ -64,7 +73,12 @@ export const CC_SWITCH_MODEL_SUGGESTIONS: Record<CcSwitchApp, string[]> = {
   opencode: ['gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6'],
   openclaw: ['gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6'],
   hermes: ['gpt-5.6-sol', 'claude-sonnet-4-6'],
-  pi: ['gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6']
+  pi: ['gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6'],
+  mcode: ['gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6'],
+  kimi: ['gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6'],
+  dsh: ['gpt-5.6-sol', 'deepseek-v4.1', 'claude-sonnet-4-6'],
+  agy: ['gemini-2.5-pro', 'gemini-3-pro-preview'],
+  omp: ['gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6']
 }
 
 export interface CcSwitchImportConfig {
@@ -126,6 +140,13 @@ export function defaultCcSwitchModel(app: CcSwitchApp): string {
       return GEMINI_CC_SWITCH_MODEL
     case 'grokbuild':
       return GROK_CC_SWITCH_MODEL
+    case 'agy':
+      return GEMINI_CC_SWITCH_MODEL
+    case 'mcode':
+    case 'kimi':
+    case 'dsh':
+    case 'omp':
+      return OPENAI_CC_SWITCH_CODEX_MODEL
     default:
       return CLAUDE_CC_SWITCH_MODEL
   }

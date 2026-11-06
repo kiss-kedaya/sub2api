@@ -184,7 +184,12 @@ describe('ccswitchImport utils', () => {
       'opencode',
       'openclaw',
       'hermes',
-      'pi'
+      'pi',
+      'mcode',
+      'kimi',
+      'dsh',
+      'agy',
+      'omp'
     ])
   })
 
@@ -207,7 +212,7 @@ describe('ccswitchImport utils', () => {
     }
   )
 
-  it('still emits app=pi even though CC Switch rejects Pi provider deeplinks', () => {
+  it('emits app=pi and marks it as a supported provider deeplink', () => {
     const params = paramsFromDeeplink(
       buildCcSwitchImportDeeplink({
         ...baseInput,
@@ -219,7 +224,7 @@ describe('ccswitchImport utils', () => {
 
     expect(params.get('app')).toBe('pi')
     expect(params.get('model')).toBe('grok-4.5')
-    expect(ccSwitchProviderDeeplinkSupported('pi')).toBe(false)
+    expect(ccSwitchProviderDeeplinkSupported('pi')).toBe(true)
   })
 
   it('emits app=claude-desktop for Claude Desktop imports', () => {
@@ -233,7 +238,28 @@ describe('ccswitchImport utils', () => {
     )
 
     expect(params.get('app')).toBe('claude-desktop')
-    expect(ccSwitchProviderDeeplinkSupported('claude-desktop')).toBe(false)
+    expect(ccSwitchProviderDeeplinkSupported('claude-desktop')).toBe(true)
+  })
+
+  it.each([
+    ['mcode', OPENAI_CC_SWITCH_CODEX_MODEL],
+    ['kimi', OPENAI_CC_SWITCH_CODEX_MODEL],
+    ['dsh', OPENAI_CC_SWITCH_CODEX_MODEL],
+    ['agy', GEMINI_CC_SWITCH_MODEL],
+    ['omp', OPENAI_CC_SWITCH_CODEX_MODEL]
+  ] as const)('imports the v4 app=%s with its default model', (app, model) => {
+    const params = paramsFromDeeplink(
+      buildCcSwitchImportDeeplink({
+        ...baseInput,
+        platform: 'openai',
+        app,
+        model: undefined
+      })
+    )
+
+    expect(params.get('app')).toBe(app)
+    expect(params.get('model')).toBe(model)
+    expect(ccSwitchProviderDeeplinkSupported(app)).toBe(true)
   })
 
   it('parses OpenAI-style /v1/models payloads and drops duplicates', () => {
