@@ -740,9 +740,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
-	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account, true)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
+		if clientErr := clientCtx.Err(); clientErr != nil {
+			// The client left while the upstream was still generating. Images are billed
+			// per image or per image token, so nothing is estimated here: nothing was
+			// reported and nothing completed, hence nothing is billed and nothing fails over.
+			return nil, clientErr
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(upstreamCtx, c, account, err, false)
 	}
 	if resp.StatusCode >= 400 {
@@ -777,10 +783,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
 	}
-	defer func() { _ = resp.Body.Close() }()
 	// A client that leaves while the answer is still arriving closes the upstream at
-	// once. Stopped before the body is closed (deferred calls run last-in first).
-	defer closeOpenAIBodyOnClientGone(resp.Body, ctx, clientCtx)()
+	// once, stream or not.
+	resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	var usage OpenAIUsage
 	imageCount := parsed.N

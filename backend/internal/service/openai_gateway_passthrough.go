@@ -420,11 +420,22 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		upstreamStart := time.Now()
-		// A client that leaves before the response headers cancels the upstream call
-		// at once, for buffered requests too: nothing was produced, so nothing is billed.
-		resp, err = s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account, true)
+		resp, err = s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
+			if clientErr := clientCtx.Err(); clientErr != nil {
+				// The client left while the upstream was still working on the headers.
+				// The upstream call was canceled with it. A request that never left the
+				// gateway is just the client's error; one that was dispatched is billed
+				// for its input (estimated, 95% as cache read) because the upstream was
+				// canceled before it could report usage.
+				if errors.Is(err, errOpenAIRequestNotSent) {
+					return nil, clientErr
+				}
+				return newClientGoneOpenAIForwardResult(
+					c, account, body, requestedModel, imageBillingModel, upstreamPassthroughModel, reasoningEffort, reqStream, startTime,
+				), clientErr
+			}
 			if account.IsCopilotSDKEnabled() {
 				c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Copilot sidecar transport failed; request was not replayed"}})
 				return nil, fmt.Errorf("copilot sidecar transport: %w", err)
@@ -439,11 +450,23 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			c.JSON(resp.StatusCode, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "Copilot sidecar rejected this turn; check session continuity and sidecar configuration"}})
 			return nil, fmt.Errorf("copilot sidecar rejected request: %d", resp.StatusCode)
 		}
+		// The upstream request runs detached from the client (billing and failover
+		// must outlive it), so a buffered body is closed the moment the client leaves:
+		// the blocked read fails at once instead of waiting for the whole response. An
+		// SSE body is closed by the stream handler itself.
+		if !reqStream || resp.StatusCode >= http.StatusBadRequest {
+			resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
+		}
 		if resp.StatusCode >= 400 {
 			// Peek only to identify an invalid task. Restore the body so the existing
 			// passthrough error handling sees the same response after recovery fails.
 			probeBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
+			if clientErr := clientCtx.Err(); clientErr != nil {
+				// The client left while the error body was being read. The upstream
+				// rejected the request, so nothing is billed and nothing fails over.
+				return nil, clientErr
+			}
 			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
 			if !responsesLiteParallelToolCallsRetryTried &&
 				resp.StatusCode == http.StatusBadRequest &&
@@ -519,7 +542,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		if reqStream {
-			result, handleErr := s.handleStreamingResponsePassthroughWithOptions(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel, passthroughClosesUpstreamOnClientGone)
+			result, handleErr := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
 				if account.IsCopilotSDKEnabled() {
 					handleErr = fmt.Errorf("copilot turn failed: %v", handleErr)
@@ -563,10 +586,17 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			nonBillableUpstreamError = result.nonBillableUpstreamError
 			clientDisconnect = result.clientDisconnect
 		} else {
-			result, handleErr := s.handleNonStreamingResponsePassthroughWithOptions(ctx, resp, c, account, reqModel, upstreamPassthroughModel, passthroughClosesUpstreamOnClientGone)
+			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
-				// Read before the Copilot rewrap below, which drops the error chain.
-				abandoned := errors.Is(handleErr, errOpenAIBufferedResponseAbandoned)
+				if clientErr := clientCtx.Err(); clientErr != nil {
+					// Headers arrived and the body read was cut by the client leaving: the
+					// buffered body was closed with it. The request had been accepted, so
+					// its input is billed from the estimate; nothing fails over.
+					_ = resp.Body.Close()
+					return newClientGoneOpenAIForwardResult(
+						c, account, body, reqModel, imageBillingModel, upstreamPassthroughModel, reasoningEffort, reqStream, startTime,
+					), clientErr
+				}
 				if account.IsCopilotSDKEnabled() {
 					handleErr = fmt.Errorf("copilot turn failed: %v", handleErr)
 				}
@@ -587,13 +617,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					return nil, s.handleErrorResponsePassthrough(ctx, compactResp, c, account, body, compactBody)
 				}
 				_ = resp.Body.Close()
-				if abandoned {
-					// The client left while the body was still arriving and the upstream
-					// was closed. The request had been accepted, so bill its input.
-					usage = abandonedPassthroughBufferedUsage(account, body, upstreamPassthroughModel, handleErr)
-					clientDisconnect = true
-					return preserveOpenAIStreamingResultOnError(buildForwardResult(), handleErr)
-				}
 				return nil, handleErr
 			}
 			usage = result.usage
@@ -2129,8 +2152,6 @@ func (s *OpenAIGatewayService) reportOpenAIStreamOutputHoldTopUpFailure(c *gin.C
 	}
 }
 
-// handleStreamingResponsePassthrough keeps the historic client-gone behaviour (see
-// passthroughResponseOptions); forwardOpenAIPassthrough uses the options variant.
 func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	ctx context.Context,
 	resp *http.Response,
@@ -2140,33 +2161,20 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiStreamingResultPassthrough, error) {
-	return s.handleStreamingResponsePassthroughWithOptions(ctx, resp, c, account, startTime, originalModel, mappedModel, passthroughResponseOptions{})
-}
-
-func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithOptions(
-	ctx context.Context,
-	resp *http.Response,
-	c *gin.Context,
-	account *Account,
-	startTime time.Time,
-	originalModel string,
-	mappedModel string,
-	options passthroughResponseOptions,
-) (*openaiStreamingResultPassthrough, error) {
 	nativeReasoning := s.newDeepSeekNativeReasoningRecorder(c, account)
 	requestCtx := openAIRequestContext(c)
-	if options.closeUpstreamOnClientGone {
-		// The upstream request is detached from the client, so nothing cancels a
-		// quiet upstream when the client leaves. Close the body then: the blocked
-		// read fails at once, and frames the scanner already buffered are still
-		// processed.
-		if resp.Body != nil {
-			stopCloseOnClientGone := closeOpenAIBodyOnClientGone(resp.Body, ctx, requestCtx)
-			defer stopCloseOnClientGone()
+	// The upstream request is detached from the client, so nothing cancels a quiet
+	// upstream when the client leaves (owner decision 2026-11-06: the upstream is
+	// closed at once). Close the body then: the blocked read fails immediately, and
+	// frames the scanner already buffered are still processed, so a terminal frame
+	// that had arrived keeps its real usage.
+	if resp.Body != nil {
+		for _, watched := range []context.Context{ctx, requestCtx} {
+			if watched != nil && watched.Done() != nil {
+				stop := context.AfterFunc(watched, func() { _ = resp.Body.Close() })
+				defer stop()
+			}
 		}
-	} else if account.IsCopilotSDKEnabled() && ctx != nil && resp.Body != nil {
-		stop := context.AfterFunc(ctx, func() { _ = resp.Body.Close() })
-		defer stop()
 	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -2203,19 +2211,14 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithOptions(
 		streamAccountID = account.ID
 	}
 	// markClientDisconnected is the single exit for a departed client, whether the
-	// request context ended or a write to the client failed. With
-	// closeUpstreamOnClientGone it closes the upstream at once; frames the scanner
-	// already buffered are still processed, so a terminal frame that had arrived
-	// keeps its real usage. Without it the stream keeps draining for usage.
+	// request context ended or a write to the client failed. It closes the upstream
+	// at once; frames the scanner already buffered are still processed, so a
+	// terminal frame that had arrived keeps its real usage.
 	markClientDisconnected := func() {
 		if clientDisconnected {
 			return
 		}
 		clientDisconnected = true
-		if !options.closeUpstreamOnClientGone {
-			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", streamAccountID)
-			return
-		}
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
@@ -2787,7 +2790,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithOptions(
 		s.recordOpenAIProxyStreamDisconnect(account, errors.New("stream ended before terminal event"), upstreamRequestID)
 		return resultWithUsage(), errors.New("stream usage incomplete: missing terminal event")
 	}
-	if options.closeUpstreamOnClientGone && clientDisconnected && !sawDone && !sawTerminalEvent {
+	if clientDisconnected && !sawDone && !sawTerminalEvent {
 		// The client left and the upstream was closed before any terminal frame: the
 		// stream ended cleanly from the reader's side but no usage was ever reported.
 		// Say so, so the estimate is billed instead of a zero-usage "success".
@@ -2801,9 +2804,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthroughWithOptions(
 	return resultWithUsage(), nil
 }
 
-// handleNonStreamingResponsePassthrough keeps the historic client-gone behaviour
-// (see passthroughResponseOptions); forwardOpenAIPassthrough uses the options
-// variant.
 func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	ctx context.Context,
 	resp *http.Response,
@@ -2812,35 +2812,8 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiNonStreamingResultPassthrough, error) {
-	return s.handleNonStreamingResponsePassthroughWithOptions(ctx, resp, c, account, originalModel, mappedModel, passthroughResponseOptions{})
-}
-
-func (s *OpenAIGatewayService) handleNonStreamingResponsePassthroughWithOptions(
-	ctx context.Context,
-	resp *http.Response,
-	c *gin.Context,
-	account *Account,
-	originalModel string,
-	mappedModel string,
-	options passthroughResponseOptions,
-) (*openaiNonStreamingResultPassthrough, error) {
-	requestCtx := openAIRequestContext(c)
-	stopCloseOnClientGone := func() {}
-	if options.closeUpstreamOnClientGone {
-		// The upstream request is detached from the client, so close the body when
-		// the client leaves: the blocked read fails at once instead of waiting for
-		// the full response. A body that was already fully read is unaffected.
-		stopCloseOnClientGone = closeOpenAIBodyOnClientGone(resp.Body, ctx, requestCtx)
-	}
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
-	stopCloseOnClientGone()
 	if err != nil {
-		if options.closeUpstreamOnClientGone && !errors.Is(err, ErrUpstreamResponseBodyTooLarge) && openAIClientGone(ctx, requestCtx) {
-			// The client left before the response was complete and the upstream was
-			// closed. No usage was reported; the caller bills the accepted input. The
-			// result stays nil, as for every read failure.
-			return nil, newOpenAIBufferedResponseAbandonedError(err)
-		}
 		return nil, err
 	}
 	s.cacheDeepSeekNativeReasoningBody(c, account, body)

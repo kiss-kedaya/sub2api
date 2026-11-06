@@ -1,16 +1,52 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/gin-gonic/gin"
 )
 
-// Estimation helpers for the OpenAI passthrough path on client disconnect (owner
-// decision 2026-11-06). The shared client-gone helpers live in
-// openai_client_gone.go.
+// Client disconnect on the OpenAI passthrough and image paths (owner decision
+// 2026-11-06): the upstream connection is closed the moment the client leaves,
+// stream or not. What the upstream already reported stays authoritative; what it
+// produced without reporting is billed from an estimate where the protocol allows
+// one (see incomplete_request_usage.go and openai_stream_incomplete_usage.go), and
+// never invented where it does not (images).
+//
+// These requests run on a context detached from the client so that token refresh,
+// billing and failover outlive it. That also means nothing cancels a quiet upstream
+// when the client leaves, so the helpers here and openai_gateway_header_cancel.go
+// watch the client's own context.
+
+// openAIRequestContext returns the client's request context, or nil when the
+// gin context carries no request.
+func openAIRequestContext(c *gin.Context) context.Context {
+	if c == nil || c.Request == nil {
+		return nil
+	}
+	return c.Request.Context()
+}
+
+// openAIClientContext returns the context whose end means the client left: the
+// request context when there is one, otherwise ctx.
+func openAIClientContext(ctx context.Context, c *gin.Context) context.Context {
+	if requestCtx := openAIRequestContext(c); requestCtx != nil {
+		return requestCtx
+	}
+	return ctx
+}
+
+// openAIClientGone reports whether any of the contexts has ended.
+func openAIClientGone(contexts ...context.Context) bool {
+	for _, ctx := range contexts {
+		if ctx != nil && ctx.Err() != nil {
+			return true
+		}
+	}
+	return false
+}
 
 // passthroughStreamEventContributesOutput reports whether a Responses stream event
 // carries content the upstream bills as output. It is a superset of the events the
@@ -65,47 +101,4 @@ func applyIncompletePassthroughStreamUsage(account *Account, result *openaiStrea
 		incompleteStream:         result.incompleteStream,
 		incompleteOutputTokens:   result.incompleteOutputTokens,
 	}, requestBody, model, streamErr)
-}
-
-// passthroughResponseOptions selects what the shared passthrough response handlers
-// do when the client leaves.
-//
-// The zero value is the historic behaviour: keep reading the upstream until it
-// answers so its usage can be billed. The Excel relay still depends on that and
-// is migrated by its own change. forwardOpenAIPassthrough uses
-// closeUpstreamOnClientGone, the 2026-11-06 owner decision: close the upstream the
-// moment the client leaves and bill an estimate for what is missing.
-type passthroughResponseOptions struct {
-	closeUpstreamOnClientGone bool
-}
-
-// passthroughClosesUpstreamOnClientGone is what forwardOpenAIPassthrough passes.
-var passthroughClosesUpstreamOnClientGone = passthroughResponseOptions{closeUpstreamOnClientGone: true}
-
-// errOpenAIBufferedResponseAbandoned marks a non-stream response whose client left
-// while the body was still arriving, so the upstream was closed before the usage
-// it would have reported. The buffered handler still returns a nil result with it,
-// like every other read failure, so callers that rely on that contract (the Excel
-// relay keeps its own usage tap for it) are unaffected.
-var errOpenAIBufferedResponseAbandoned = errors.New("upstream response abandoned after client disconnect")
-
-// newOpenAIBufferedResponseAbandonedError wraps the read failure that the closed
-// upstream caused.
-func newOpenAIBufferedResponseAbandonedError(readErr error) error {
-	return fmt.Errorf("%w: %w", errOpenAIBufferedResponseAbandoned, readErr)
-}
-
-// abandonedPassthroughBufferedUsage bills the input of a non-stream request whose
-// client left while the response body was still arriving. The upstream had accepted
-// the request, but no usage was reported and no output was observed, so only the
-// input side is estimated. It returns the usage to bill, empty when the estimate
-// has nothing to bill.
-func abandonedPassthroughBufferedUsage(account *Account, requestBody []byte, model string, err error) *OpenAIUsage {
-	usage := &OpenAIUsage{}
-	applyIncompleteOpenAIStreamUsage(account, &openaiStreamingResult{
-		usage:            usage,
-		clientDisconnect: true,
-		incompleteStream: true,
-	}, requestBody, model, err)
-	return usage
 }

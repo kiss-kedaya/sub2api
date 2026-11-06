@@ -340,9 +340,10 @@ func (u *passthroughBlockingUpstream) unblock() {
 
 // The client leaves while the upstream is still working on the response headers.
 // The old code detached the upstream request from the client, so the call kept
-// running; now it is canceled at once. Nothing was produced, nothing is billed,
-// and a departed client must not trigger a failover.
-func TestOpenAIPassthrough_ClientLeavesBeforeResponseHeadersCancelsUpstream(t *testing.T) {
+// running; now it is canceled at once. The request had been dispatched, so its
+// input is billed from the estimate (95% as cache read); no output is invented. A
+// departed client must not trigger a failover.
+func TestOpenAIPassthrough_ClientLeavesBeforeResponseHeadersCancelsUpstreamAndBillsInput(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		body string
@@ -377,9 +378,17 @@ func TestOpenAIPassthrough_ClientLeavesBeforeResponseHeadersCancelsUpstream(t *t
 				require.ErrorIs(t, out.err, context.Canceled)
 				var failoverErr *UpstreamFailoverError
 				require.False(t, errors.As(out.err, &failoverErr), "a departed client must not fail over")
-				require.Nil(t, out.result)
 				require.EqualValues(t, 1, upstream.calls.Load())
-				requireIncompleteStreamNotBilled(t, out.asIncomplete())
+				require.NotNil(t, out.result, "the input of a dispatched request must reach billing")
+				require.True(t, out.result.ClientDisconnect)
+				require.Zero(t, out.result.Usage.OutputTokens)
+				require.Greater(t, out.result.Usage.InputTokens, 0)
+				require.Equal(t, incompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
+				require.True(t, out.result.Usage.CacheReadEstimated)
+				usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
+				require.Equal(t, 1, usageRepo.calls)
+				require.NotNil(t, billingRepo.lastCmd)
+				require.Greater(t, billingRepo.lastCmd.BalanceCost, 0.0)
 			case <-time.After(3 * time.Second):
 				t.Fatal("the upstream request outlived the departed client")
 			}
@@ -416,53 +425,6 @@ func TestOpenAIPassthroughBuffered_ClientLeavesWhileBodyArrivesBillsInputOnly(t 
 	require.Empty(t, body, "no response may be committed to a canceled client")
 }
 
-// The shared buffered handler keeps its contract when the client leaves mid-body:
-// it closes the upstream and returns a nil result with the abandoned marker, like
-// every other read failure. The Excel relay relies on the nil result to fall back
-// to its own usage tap, so the estimate for this case is made by the caller.
-func TestOpenAIPassthroughBuffered_AbandonedBodyKeepsNilResultContract(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	c, _ := newPassthroughDisconnectContext(t, ctx, []byte(passthroughDisconnectBufferedBody))
-	resp, tracked, pw := newLifecycleTrackingResponse()
-	resp.Header = http.Header{"Content-Type": []string{"application/json"}}
-	t.Cleanup(func() {
-		_ = pw.Close()
-		_ = tracked.Close()
-	})
-	svc := newPassthroughDisconnectService(&httpUpstreamRecorder{})
-
-	type outcome struct {
-		result *openaiNonStreamingResultPassthrough
-		err    error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		result, err := svc.handleNonStreamingResponsePassthroughWithOptions(ctx, resp, c, newOpenAIPartialUsageAccount(true), "gpt-5.1", "gpt-5.1", passthroughClosesUpstreamOnClientGone)
-		done <- outcome{result: result, err: err}
-	}()
-	select {
-	case <-tracked.readStarted:
-	case <-time.After(3 * time.Second):
-		t.Fatal("the handler never started reading the upstream body")
-	}
-	cancel()
-
-	select {
-	case out := <-done:
-		require.Nil(t, out.result, "the shared handler must keep returning a nil result on a failed read")
-		require.ErrorIs(t, out.err, errOpenAIBufferedResponseAbandoned)
-		require.ErrorIs(t, out.err, io.ErrClosedPipe, "the read failure the closed upstream caused stays in the chain")
-	case <-time.After(3 * time.Second):
-		t.Fatal("the handler kept reading after the client left")
-	}
-	select {
-	case <-tracked.closed:
-	default:
-		t.Fatal("the upstream body was left open after the client left")
-	}
-}
-
 // A terminal frame the gateway already read before noticing the client is gone
 // keeps its real usage; nothing is estimated over it.
 func TestOpenAIPassthroughStream_TerminalUsageAlreadyReadSurvivesClientCancellation(t *testing.T) {
@@ -475,7 +437,7 @@ func TestOpenAIPassthroughStream_TerminalUsageAlreadyReadSurvivesClientCancellat
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(frames))}
 	svc := newPassthroughDisconnectService(&httpUpstreamRecorder{})
 
-	result, err := svc.handleStreamingResponsePassthroughWithOptions(ctx, resp, c, newOpenAIPartialUsageAccount(true), time.Now(), "gpt-5.1", "gpt-5.1", passthroughClosesUpstreamOnClientGone)
+	result, err := svc.handleStreamingResponsePassthrough(ctx, resp, c, newOpenAIPartialUsageAccount(true), time.Now(), "gpt-5.1", "gpt-5.1")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -498,7 +460,7 @@ func TestOpenAIPassthroughStream_CleanEOFAfterClientLeftIsReportedIncomplete(t *
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(frames))}
 	svc := newPassthroughDisconnectService(&httpUpstreamRecorder{})
 
-	result, err := svc.handleStreamingResponsePassthroughWithOptions(ctx, resp, c, newOpenAIPartialUsageAccount(true), time.Now(), "gpt-5.1", "gpt-5.1", passthroughClosesUpstreamOnClientGone)
+	result, err := svc.handleStreamingResponsePassthrough(ctx, resp, c, newOpenAIPartialUsageAccount(true), time.Now(), "gpt-5.1", "gpt-5.1")
 
 	require.ErrorContains(t, err, "stream usage incomplete after disconnect")
 	require.NotNil(t, result)
@@ -517,7 +479,7 @@ func TestOpenAIPassthroughBuffered_BodyAlreadyReadKeepsRealUsageAfterCancellatio
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(respBody))}
 	svc := newPassthroughDisconnectService(&httpUpstreamRecorder{})
 
-	result, err := svc.handleNonStreamingResponsePassthroughWithOptions(ctx, resp, c, newOpenAIPartialUsageAccount(true), "gpt-5.1", "gpt-5.1", passthroughClosesUpstreamOnClientGone)
+	result, err := svc.handleNonStreamingResponsePassthrough(ctx, resp, c, newOpenAIPartialUsageAccount(true), "gpt-5.1", "gpt-5.1")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
