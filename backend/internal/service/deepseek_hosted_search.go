@@ -864,6 +864,7 @@ func (s *deepSeekHostedSearchState) addResult(result *OpenAIForwardResult) {
 		s.result.Usage.CacheCreationInputTokens += result.Usage.CacheCreationInputTokens
 		s.result.Usage.ImageInputTokens += result.Usage.ImageInputTokens
 		s.result.Usage.ImageOutputTokens += result.Usage.ImageOutputTokens
+		s.result.Usage.CacheReadEstimated = s.result.Usage.CacheReadEstimated || result.Usage.CacheReadEstimated
 	}
 	s.result.ClientDisconnect = s.result.ClientDisconnect || result.ClientDisconnect
 	s.result.NonBillableUpstreamError = s.result.NonBillableUpstreamError && result.NonBillableUpstreamError

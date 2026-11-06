@@ -11,31 +11,13 @@ import (
 
 // OpenAI Responses streams report usage only on the terminal frame. A stream that
 // ends without one (the client left, the upstream was cut or stalled) leaves the
-// parsed usage at zero and the handler would record nothing.
-//
-// Billing policy for that case (owner decision, 2026-11-06):
-//   - the upstream connection is closed the moment the client disconnects;
-//   - output is billed for what was really produced, estimated from the streamed
-//     content;
-//   - input is billed for what was really sent, estimated from the request body,
-//     with 95% of it priced as cache read and the rest as normal input.
+// parsed usage at zero and the handler would record nothing. The billing policy for
+// that case, and the protocol neutral input estimate, live in
+// incomplete_request_usage.go; this file maps them onto OpenAIUsage.
 //
 // A usage figure the upstream really reported is never overwritten, and a stream
 // that reached a terminal frame (response.completed / failed / error) is never
 // estimated.
-
-// incompleteStreamInputCacheReadPercent is the share of the estimated input priced
-// as cache read. It applies only to estimated input, never to reported usage.
-const incompleteStreamInputCacheReadPercent = 95
-
-// incompleteStreamCacheReadTokens rounds down, so the remainder (the part priced as
-// normal input) is the larger side of any rounding.
-func incompleteStreamCacheReadTokens(inputTokens int) int {
-	if inputTokens <= 0 {
-		return 0
-	}
-	return inputTokens * incompleteStreamInputCacheReadPercent / 100
-}
 
 // estimateIncompleteStreamOutputTokens estimates the output tokens of the content
 // accumulated from stream deltas (visible text, refusal, reasoning summary,
@@ -77,9 +59,11 @@ func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBo
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 &&
 		usage.CacheCreationInputTokens == 0 && usage.ImageInputTokens == 0 {
 		if inputTokens, err := EstimateOpenAIResponsesInputTokens(requestBody); err == nil && inputTokens > 0 {
-			usage.InputTokens = inputTokens
-			usage.CacheReadInputTokens = incompleteStreamCacheReadTokens(inputTokens)
-			filledInput = inputTokens
+			split := splitIncompleteInput(inputTokens)
+			usage.InputTokens = split.Total
+			usage.CacheReadInputTokens = split.CacheRead
+			usage.CacheReadEstimated = true
+			filledInput = split.Total
 		}
 	}
 	return filledOutput, filledInput
@@ -119,7 +103,7 @@ func applyIncompleteOpenAIStreamUsage(account *Account, result *openaiStreamingR
 		zap.Bool("client_disconnect", result.clientDisconnect),
 		zap.Int("estimated_output_tokens", outputTokens),
 		zap.Int("estimated_input_tokens", inputTokens),
-		zap.Int("estimated_cache_read_tokens", incompleteStreamCacheReadTokens(inputTokens)),
+		zap.Int("estimated_cache_read_tokens", incompleteCacheReadTokens(inputTokens)),
 		zap.Error(streamErr),
 	).Warn("openai_usage.incomplete_stream_estimated")
 }

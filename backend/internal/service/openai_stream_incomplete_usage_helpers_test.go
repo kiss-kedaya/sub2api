@@ -59,6 +59,7 @@ func TestFillIncompleteStreamUsage(t *testing.T) {
 		require.Equal(t, in*95/100, usage.CacheReadInputTokens, "95% of the estimated input is priced as cache read")
 		require.Less(t, usage.CacheReadInputTokens, usage.InputTokens, "some input must stay at the normal price")
 		require.Zero(t, usage.CacheCreationInputTokens)
+		require.True(t, usage.CacheReadEstimated, "an estimated cache share must be marked so a missing cache price bills as input")
 	})
 	t.Run("reported input is kept", func(t *testing.T) {
 		usage := &OpenAIUsage{InputTokens: 13}
@@ -67,6 +68,7 @@ func TestFillIncompleteStreamUsage(t *testing.T) {
 		require.Zero(t, in)
 		require.Equal(t, 13, usage.InputTokens)
 		require.Zero(t, usage.CacheReadInputTokens, "a reported input count is never re-split")
+		require.False(t, usage.CacheReadEstimated, "nothing was estimated on the input side")
 		require.Equal(t, 10, usage.OutputTokens)
 	})
 	t.Run("reported cache read counts as an input side", func(t *testing.T) {
@@ -74,6 +76,7 @@ func TestFillIncompleteStreamUsage(t *testing.T) {
 		_, in := fillIncompleteStreamUsage(usage, 10, body)
 		require.Zero(t, in)
 		require.Zero(t, usage.InputTokens)
+		require.False(t, usage.CacheReadEstimated, "a reported cache read is never marked as estimated")
 	})
 	t.Run("reported output is never overwritten", func(t *testing.T) {
 		usage := &OpenAIUsage{InputTokens: 13, OutputTokens: 4}
@@ -113,18 +116,6 @@ func TestFillIncompleteStreamUsage(t *testing.T) {
 	})
 }
 
-func TestIncompleteStreamCacheReadTokens(t *testing.T) {
-	for _, tc := range []struct{ input, want int }{
-		{-5, 0}, {0, 0}, {1, 0}, {19, 18}, {20, 19}, {100, 95}, {1000, 950}, {123456, 117283},
-	} {
-		got := incompleteStreamCacheReadTokens(tc.input)
-		require.Equal(t, tc.want, got, "input=%d", tc.input)
-		if tc.input > 0 {
-			require.Less(t, got, tc.input, "the remainder must stay billed at the normal input price")
-		}
-	}
-}
-
 func TestApplyIncompleteOpenAIStreamUsage(t *testing.T) {
 	body := []byte(incompleteStreamRequestBody)
 	newResult := func() *openaiStreamingResult {
@@ -137,7 +128,7 @@ func TestApplyIncompleteOpenAIStreamUsage(t *testing.T) {
 		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", streamErr)
 		require.Equal(t, 10, result.usage.OutputTokens)
 		require.Greater(t, result.usage.InputTokens, 0)
-		require.Equal(t, incompleteStreamCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
+		require.Equal(t, incompleteCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
 	})
 	t.Run("no error means a terminal frame was handled elsewhere", func(t *testing.T) {
 		result := newResult()
@@ -169,7 +160,7 @@ func TestApplyIncompleteOpenAIStreamUsage(t *testing.T) {
 		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", streamErr)
 		require.Zero(t, result.usage.OutputTokens)
 		require.Greater(t, result.usage.InputTokens, 0)
-		require.Equal(t, incompleteStreamCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
+		require.Equal(t, incompleteCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
 	})
 	t.Run("reported usage survives a client that left", func(t *testing.T) {
 		result := newResult()
@@ -248,6 +239,6 @@ func TestOpenAIGatewayService_GrokIncompleteStreamIsEstimated(t *testing.T) {
 	t.Logf("usage=%+v", result.Usage)
 	require.Equal(t, estimateTokensForText(incompleteStreamDeltaOneText+incompleteStreamDeltaTwoText), result.Usage.OutputTokens)
 	require.Greater(t, result.Usage.InputTokens, 0)
-	require.Equal(t, incompleteStreamCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
+	require.Equal(t, incompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
 	require.Equal(t, "rid-grok-incomplete", result.RequestID)
 }

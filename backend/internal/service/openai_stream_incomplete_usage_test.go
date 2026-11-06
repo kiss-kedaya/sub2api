@@ -158,7 +158,7 @@ func requireIncompleteStreamBilled(t *testing.T, out incompleteStreamOutcome, wa
 	require.Equal(t, wantClientDisconnect, out.result.ClientDisconnect)
 	require.Equal(t, estimateTokensForText(incompleteStreamDeltaOneText+incompleteStreamDeltaTwoText), out.result.Usage.OutputTokens)
 	require.Greater(t, out.result.Usage.InputTokens, 0, "input is estimated from the request when no usage frame exists")
-	require.Equal(t, incompleteStreamCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens,
+	require.Equal(t, incompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens,
 		"95% of the estimated input is priced as cache read")
 
 	usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
@@ -280,7 +280,7 @@ func TestOpenAIForward_ClientLeavesBeforeAnyOutputIsBilledForInputOnly(t *testin
 	require.True(t, out.result.ClientDisconnect)
 	require.Zero(t, out.result.Usage.OutputTokens)
 	require.Greater(t, out.result.Usage.InputTokens, 0)
-	require.Equal(t, incompleteStreamCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
+	require.Equal(t, incompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
 	usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
 	require.Equal(t, 1, usageRepo.calls)
 	require.NotNil(t, billingRepo.lastCmd)

@@ -611,6 +611,9 @@ type ClaudeUsage struct {
 	CacheCreation5mTokens    int // 5分钟缓存创建token（来自嵌套 cache_creation 对象）
 	CacheCreation1hTokens    int // 1小时缓存创建token（来自嵌套 cache_creation 对象）
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	// CacheReadEstimated 表示 CacheReadInputTokens 是无终帧时按请求体估算的值
+	// （见 incomplete_request_usage.go），不是上游上报的，不进入线上格式。
+	CacheReadEstimated bool `json:"-"`
 }
 
 // ForwardResult 转发结果
