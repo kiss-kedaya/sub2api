@@ -1567,7 +1567,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingReadError(t *testing
 	require.False(t, result.clientDisconnect)
 }
 
-func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDisconnect(t *testing.T) {
+// A failed client write closes the upstream at once: the handler returns without
+// waiting for the idle watchdog (the old behaviour drained until it fired).
+func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingClientWriteFailureDoesNotWaitForIdle(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1595,17 +1597,20 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDi
 	go func() {
 		defer close(done)
 		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":9}}}` + "\n"))
-		// 保持上游连接静默，触发数据间隔超时分支。
+		// 上游随后保持静默：旧行为会一直排空到数据间隔超时。
 		time.Sleep(1500 * time.Millisecond)
 		_ = pw.Close()
 	}()
 
+	started := time.Now()
 	result, err := svc.handleStreamingResponseAnthropicAPIKeyPassthrough(context.Background(), resp, c, &Account{ID: 7}, time.Now(), "claude-3-7-sonnet-20250219")
+	elapsed := time.Since(started)
 	_ = pr.Close()
 	<-done
 
+	require.Less(t, elapsed, 900*time.Millisecond, "a departed client must not wait for the idle watchdog")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "stream usage incomplete after timeout")
+	require.Contains(t, err.Error(), "stream usage incomplete after disconnect")
 	require.NotNil(t, result)
 	require.True(t, result.clientDisconnect)
 	require.Equal(t, 9, result.usage.InputTokens)

@@ -98,13 +98,16 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 
 	var resp *http.Response
 	retryStart := time.Now()
+	sentBody := input.Body
+	// 上游调用随客户端结束：客户端一走就关上游，不留排空窗口。
+	upstream := newAnthropicUpstreamCall(ctx, c, input.RequestStream)
+	defer upstream.close()
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
-		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, input.RequestStream)
-		upstreamReq, wireBody, err := s.buildUpstreamRequestAnthropicAPIKeyPassthrough(upstreamCtx, c, account, input.Body, token)
-		releaseUpstreamCtx()
+		upstreamReq, wireBody, err := s.buildUpstreamRequestAnthropicAPIKeyPassthrough(upstream.attempt(), c, account, input.Body, token)
 		if err != nil {
 			return nil, err
 		}
+		sentBody = wireBody
 		if input.Parsed != nil && !bytes.Equal(wireBody, input.Body) {
 			// build 阶段会按 beta 能力清理 body，发送前同步到 ParsedRequest 当前视图。
 			if err := input.Parsed.ReplaceBody(wireBody); err != nil {
@@ -117,6 +120,14 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
+			}
+			// 客户端已走：不 failover、不记账号故障。请求已完整发出的，输入按估算计费。
+			if upstream.departedClient(err) {
+				var gone *ForwardResult
+				if upstream.dispatched() {
+					gone = anthropicClientGoneResult(account, sentBody, input.OriginalModel, input.RequestModel, input.RequestStream, input.StartTime, nil)
+				}
+				return gone, newAnthropicClientGoneError(anthropicGoneRequest, err)
 			}
 			// A transport failure has no upstream HTTP status. Return a typed
 			// failover error so the request handler can try the next account in
@@ -274,7 +285,9 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		streamResult, err := s.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.StartTime, input.RequestModel)
 		if err != nil {
 			// 流中断时保留已观测到的 usage 与错误一起返回，避免上游已计量的请求
-			// 完全漏记漏计费（issue #5148）。
+			// 完全漏记漏计费（issue #5148）。上游没有 usage 上报的部分按已产出内容
+			// 和请求体估算。
+			applyIncompleteAnthropicStreamUsage(account, streamResult, sentBody, input.OriginalModel, resp.Header.Get("x-request-id"), err)
 			if partial := partialStreamUsageResult(c, resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, err); partial != nil {
 				return partial, err
 			}
@@ -286,6 +299,10 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	} else {
 		usage, err = s.handleNonStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account)
 		if err != nil {
+			// 上游已受理，客户端在最终 JSON 读完前离开：没有 usage 可读，输入按估算计费。
+			if upstream.departedClient(err) {
+				return anthropicClientGoneResult(account, sentBody, input.OriginalModel, input.RequestModel, false, input.StartTime, resp), newAnthropicClientGoneError(anthropicGoneRequest, err)
+			}
 			return nil, err
 		}
 	}
@@ -415,7 +432,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	account *Account,
 	startTime time.Time,
 	model string,
-) (*streamingResult, error) {
+) (result *streamingResult, err error) {
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -452,6 +469,24 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	progress := &anthropicStreamProgress{}
+	clientWatch := newAnthropicClientWatch(ctx, c, resp.Body)
+	defer clientWatch.stop()
+	defer func() {
+		if result != nil {
+			result.progress = progress
+			result.incompleteStream = err != nil && !sawTerminalEvent
+		}
+	}()
+	// 客户端已走：立刻关上游。已读入队列的帧仍会处理，已到达的终帧保留真实 usage。
+	markClientGone := func(reason string) {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		clientWatch.markGone()
+		logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming (%s), upstream connection closed: account=%d", reason, account.ID)
+	}
 	pendingErrorHeader := ""
 	var pendingErrorLines strings.Builder
 	var pendingErrorData strings.Builder
@@ -583,7 +618,14 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	}
 	inPartialEvent := false
 
+	goneResult := func(cause error) (*streamingResult, error) {
+		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, newAnthropicClientGoneError(anthropicGoneStream, cause)
+	}
+
 	for {
+		if !clientDisconnected && clientWatch.isGone() {
+			markClientGone("request context ended")
+		}
 		select {
 		case ev, ok := <-events:
 			if !ok {
@@ -595,11 +637,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					flusher.Flush()
 				}
 				if !sawTerminalEvent {
-					if clientDisconnected && streamInterval > 0 {
-						lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
-						if time.Since(lastRead) >= streamInterval {
-							return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
-						}
+					if clientDisconnected || clientWatch.isGone() {
+						markClientGone("request context ended")
+						return goneResult(errors.New("missing terminal event"))
 					}
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
@@ -617,8 +657,11 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				if sawTerminalEvent {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
-				if clientDisconnected {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+				// 客户端已走（写失败或请求 context 结束）：上游是被我们自己关掉的，
+				// 读错误只是关闭的结果，不是上游故障。
+				if clientDisconnected || clientWatch.isGone() {
+					markClientGone("request context ended")
+					return goneResult(ev.err)
 				}
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
@@ -680,6 +723,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					firstTokenMs = &ms
 				}
 				parseSSEUsagePassthrough(data, usage)
+				progress.observeData(trimmed)
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
@@ -689,12 +733,11 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 
 			if !clientDisconnected {
 				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
+				// 写失败：立即关闭上游，不再排空。本行的 usage 已合并，已读入队列的帧继续处理。
 				if _, err := io.WriteString(w, restored); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+					markClientGone("client write failed")
 				} else if _, err := io.WriteString(w, "\n"); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+					markClientGone("client write failed")
 				} else if line == "" {
 					// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
 					flusher.Flush()
@@ -733,8 +776,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				continue
 			}
 			if _, err := fmt.Fprint(w, "event: ping\ndata: {\"type\": \"ping\"}\n\n"); err != nil {
-				clientDisconnected = true
-				logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during keepalive ping, continue draining upstream for usage: account=%d", account.ID)
+				markClientGone("keepalive write failed")
 				continue
 			}
 			flusher.Flush()

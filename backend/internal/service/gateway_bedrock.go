@@ -112,9 +112,20 @@ func (s *GatewayService) forwardBedrock(
 		}
 	}
 
-	// 执行上游请求（含重试）
-	resp, err := s.executeBedrockUpstream(ctx, c, account, bedrockBody, mappedModel, region, reqStream, signer, bedrockAPIKey, proxyURL)
+	// 执行上游请求（含重试）。上游调用随客户端结束；Bedrock 的上游 context 本来就
+	// 不脱钩，这里只是记下「请求是否已完整发出」，用于客户端走后的计费。
+	upstream := newAnthropicUpstreamCall(ctx, c, false)
+	defer upstream.close()
+	resp, err := s.executeBedrockUpstream(ctx, upstream, c, account, bedrockBody, mappedModel, region, reqStream, signer, bedrockAPIKey, proxyURL)
 	if err != nil {
+		// 客户端已走：不 failover、不记账号故障。请求已发出且未被应答的，输入按估算计费。
+		if upstream.departedClient(err) {
+			var gone *ForwardResult
+			if upstream.dispatched() {
+				gone = anthropicClientGoneResult(account, body, reqModel, mappedModel, reqStream, startTime, nil)
+			}
+			return gone, newAnthropicClientGoneError(anthropicGoneRequest, err)
+		}
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -141,7 +152,14 @@ func (s *GatewayService) forwardBedrock(
 	var clientDisconnect bool
 	if reqStream {
 		streamResult, err := s.handleBedrockStreamingResponse(ctx, resp, c, account, startTime, reqModel)
+		// 没有终帧就结束的流：上游没报的部分按已产出内容和请求体估算（Bedrock 上游
+		// 请求体已去掉 model，估算用客户端原始请求体）。
+		outputTokens, inputTokens := applyIncompleteAnthropicStreamUsage(account, streamResult, body, reqModel, resp.Header.Get("x-request-id"), err)
 		if err != nil {
+			// 估算出了东西才带结果返回；其余读错误保持原行为。
+			if outputTokens > 0 || inputTokens > 0 {
+				return partialStreamUsageResult(c, resp, streamResult, reqModel, mappedModel, startTime, err), err
+			}
 			return nil, err
 		}
 		usage = streamResult.usage
@@ -150,6 +168,10 @@ func (s *GatewayService) forwardBedrock(
 	} else {
 		usage, err = s.handleBedrockNonStreamingResponse(ctx, resp, c, account)
 		if err != nil {
+			// 上游已受理，客户端在最终 JSON 读完前离开：没有 usage 可读，输入按估算计费。
+			if upstream.departedClient(err) {
+				return anthropicClientGoneResult(account, body, reqModel, mappedModel, false, startTime, resp), newAnthropicClientGoneError(anthropicGoneRequest, err)
+			}
 			return nil, err
 		}
 	}
@@ -173,6 +195,7 @@ func (s *GatewayService) forwardBedrock(
 // executeBedrockUpstream 执行 Bedrock 上游请求（含重试逻辑）
 func (s *GatewayService) executeBedrockUpstream(
 	ctx context.Context,
+	upstream *anthropicUpstreamCall,
 	c *gin.Context,
 	account *Account,
 	body []byte,
@@ -188,10 +211,11 @@ func (s *GatewayService) executeBedrockUpstream(
 	retryStart := time.Now()
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		var upstreamReq *http.Request
+		attemptCtx := upstream.attempt()
 		if account.IsBedrockAPIKey() {
-			upstreamReq, err = s.buildUpstreamRequestBedrockAPIKey(ctx, body, modelID, region, stream, apiKey)
+			upstreamReq, err = s.buildUpstreamRequestBedrockAPIKey(attemptCtx, body, modelID, region, stream, apiKey)
 		} else {
-			upstreamReq, err = s.buildUpstreamRequestBedrock(ctx, body, modelID, region, stream, signer)
+			upstreamReq, err = s.buildUpstreamRequestBedrock(attemptCtx, body, modelID, region, stream, signer)
 		}
 		if err != nil {
 			return nil, err
@@ -202,10 +226,17 @@ func (s *GatewayService) executeBedrockUpstream(
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
+			// A departed client is not an upstream fault; the caller bills a request
+			// that was fully written and never answered.
+			if upstream.departedClient(err) {
+				return nil, err
+			}
 			return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
 				UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
 			})
 		}
+		// Any answer ends the "waiting for usage" state of this try.
+		upstream.markAnswered()
 
 		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
 			if attempt < maxRetryAttempts {

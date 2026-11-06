@@ -393,11 +393,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var resp *http.Response
 	lastWireBody := body
 	retryStart := time.Now()
+	// 上游调用随客户端结束：客户端一走就关上游，不留排空窗口。
+	upstream := newAnthropicUpstreamCall(ctx, c, reqStream)
+	defer upstream.close()
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		// 构建上游请求（每次重试需要重新构建，因为请求体需要重新读取）
-		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
-		upstreamReq, wireBody, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
-		releaseUpstreamCtx()
+		upstreamReq, wireBody, err := s.buildUpstreamRequest(upstream.attempt(), c, account, body, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 		if err != nil {
 			return nil, err
 		}
@@ -409,6 +410,14 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
+			}
+			// 客户端已走：不 failover、不记账号故障。请求已完整发出的，输入按估算计费。
+			if upstream.departedClient(err) {
+				var gone *ForwardResult
+				if upstream.dispatched() {
+					gone = anthropicClientGoneResult(account, wireBody, originalModel, mappedModel, reqStream, startTime, nil)
+				}
+				return gone, newAnthropicClientGoneError(anthropicGoneRequest, err)
 			}
 			// A transport failure has no upstream HTTP status. Return a typed
 			// failover error so the request handler can try the next account in
@@ -472,9 +481,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					//    also downgrade tool_use/tool_result blocks to text.
 
 					filteredBody := FilterThinkingBlocksForRetry(body, reqModel)
-					retryCtx, releaseRetryCtx := detachStreamUpstreamContext(ctx, reqStream)
-					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
-					releaseRetryCtx()
+					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(upstream.attempt(), c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					if buildErr == nil {
 						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 						if retryErr == nil {
@@ -515,9 +522,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 								if looksLikeToolSignatureError(msg2) && time.Since(retryStart) < maxRetryElapsed {
 									logger.LegacyPrintf("service.gateway", "Account %d: signature retry still failing and looks tool-related, retrying with tool blocks downgraded", account.ID)
 									filteredBody2 := FilterSignatureSensitiveBlocksForRetry(body, reqModel)
-									retryCtx2, releaseRetryCtx2 := detachStreamUpstreamContext(ctx, reqStream)
-									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(retryCtx2, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
-									releaseRetryCtx2()
+									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(upstream.attempt(), c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									if buildErr2 == nil {
 										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
 										if retryErr2 == nil {
@@ -603,9 +608,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					}
 					if applied && time.Since(retryStart) < maxRetryElapsed {
 						logger.LegacyPrintf("service.gateway", "Account %d: detected budget_tokens constraint error, retrying with rectified budget (budget_tokens=%d, max_tokens=%d)", account.ID, BudgetRectifyBudgetTokens, BudgetRectifyMaxTokens)
-						budgetRetryCtx, releaseBudgetRetryCtx := detachStreamUpstreamContext(ctx, reqStream)
-						budgetRetryReq, budgetWireBody, buildErr := s.buildUpstreamRequest(budgetRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
-						releaseBudgetRetryCtx()
+						budgetRetryReq, budgetWireBody, buildErr := s.buildUpstreamRequest(upstream.attempt(), c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						if buildErr == nil {
 							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 							if retryErr == nil {
@@ -850,8 +853,10 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					ResponseBody:     body,
 				}
 			}
-			// 流中断（缺失 terminal 事件、读错误、数据间隔超时等）时保留已观测到的
+			// 流中断（缺失 terminal 事件、读错误、数据间隔超时、客户端断开等）时保留已观测到的
 			// usage 与错误一起返回，handler 在错误处理完成后照常提交 usage 记录。
+			// 上游没有 usage 上报的部分按已产出内容和请求体估算。
+			applyIncompleteAnthropicStreamUsage(account, streamResult, body, originalModel, resp.Header.Get("x-request-id"), err)
 			if partial := partialStreamUsageResult(c, resp, streamResult, originalModel, mappedModel, startTime, err); partial != nil {
 				return partial, err
 			}
@@ -863,6 +868,10 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	} else {
 		usage, err = s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, reqModel)
 		if err != nil {
+			// 上游已受理，客户端在最终 JSON 读完前离开：没有 usage 可读，输入按估算计费。
+			if upstream.departedClient(err) {
+				return anthropicClientGoneResult(account, body, originalModel, mappedModel, false, startTime, resp), newAnthropicClientGoneError(anthropicGoneRequest, err)
+			}
 			return nil, err
 		}
 	}
