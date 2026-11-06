@@ -281,6 +281,10 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	// cancellation/deadlines; otherwise token-cache misses and Spark shadow
 	// parent resolution can re-enter PostgreSQL once the worker starts.
 	base = service.WithSchedulerSnapshotContext(parent, base)
+	// 计费结算（finalizePostUsageBilling）需要在扣费落地后更新 key 配额的实时用量镜像；
+	// 把请求级预留句柄带进 worker context，Release 仍由 wrapUsageRecordTaskContext 的
+	// Acquire 引用控制（这里只传值，不改变引用计数）。
+	base = service.WithInflightReservation(base, service.InflightReservationFromContext(parent))
 	if clientRequestID, _ := parent.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
 		base = context.WithValue(base, ctxkey.ClientRequestID, strings.TrimSpace(clientRequestID))
 	}

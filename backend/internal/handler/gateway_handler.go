@@ -2791,6 +2791,15 @@ func billingErrorDetails(err error) (status int, code, message string, retryAfte
 		msg := pkgerrors.Message(err)
 		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, extractQuotaResetSeconds(err)
 	}
+	if errors.Is(err, service.ErrAPIKeyQuotaExhausted) {
+		// key 级 USD 配额耗尽：与中间件同语义（429 + API_KEY_QUOTA_EXHAUSTED），
+		// 客户端应按额度用尽处理并退避，而不是把它当成 403 权限错误。
+		msg := pkgerrors.Message(err)
+		if msg == "" {
+			msg = "api key 额度已用完"
+		}
+		return http.StatusTooManyRequests, "API_KEY_QUOTA_EXHAUSTED", msg, 0
+	}
 	if errors.Is(err, service.ErrInsufficientBalance) || errors.Is(err, service.ErrBalanceWithholdingFailed) {
 		msg := pkgerrors.Message(err)
 		if msg == "" {

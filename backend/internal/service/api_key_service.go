@@ -1015,6 +1015,17 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
 
+	// 配额被重置/调整后，丢弃 key 配额的实时用量镜像，下一次准入从数据库重新播种；
+	// 否则镜像里残留的旧用量会把这把 key 继续挡在门外（最多一个镜像 TTL）。
+	if (fields.QuotaUsed || fields.Quota) && s.rateLimitCacheInvalid != nil {
+		type apiKeyQuotaUsageInvalidator interface {
+			InvalidateAPIKeyQuotaUsage(ctx context.Context, keyID int64) error
+		}
+		if invalidator, ok := s.rateLimitCacheInvalid.(apiKeyQuotaUsageInvalidator); ok && invalidator != nil {
+			_ = invalidator.InvalidateAPIKeyQuotaUsage(ctx, apiKey.ID)
+		}
+	}
+
 	// Invalidate Redis rate limit cache so reset takes effect immediately
 	if resetRateLimit && s.rateLimitCacheInvalid != nil {
 		_ = s.rateLimitCacheInvalid.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)

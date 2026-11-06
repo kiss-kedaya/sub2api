@@ -63,11 +63,16 @@ func tokenInflightEstimate(model string, body []byte) service.InflightEstimateRe
 
 func inflightNoop() {}
 
-// reserveInflightBalance 在 CheckBillingEligibility 之后为余额模式请求登记在途预留。
+// reserveInflightBalance 在 CheckBillingEligibility 之后为请求登记准入预占。
+//
+// 两个维度：
+//   - key 级 USD 配额（quota>0 时始终生效）：原子预占本次请求的金额上界，
+//     并发请求不会再看同一份鉴权快照把 quota 一起花超；
+//   - 余额模式在途预留：仅在 billing.inflight_reservation.enabled 开启时生效。
 //
 // 成功时把预留句柄挂到 c.Request 的 context 上：之后通过 submit*UsageRecordTask 提交的
-// 计费任务会接管一个引用，直到余额缓存实际扣减后才释放。返回的 done 必须 defer 调用
-// （停止续期并归还 handler 引用；没有提交计费任务时即刻释放）。
+// 计费任务会接管一个引用，直到计费任务结束（余额缓存扣减 / 结算镜像写入之后）才释放。
+// 返回的 done 必须 defer 调用（停止续期并归还 handler 引用；没有提交计费任务时即刻释放）。
 // 开关关闭、订阅模式、Redis 故障时返回 no-op（fail-open）；无法定价时默认 fail-open，
 // 配置 fail_closed_on_unpriced=true 时返回 ErrInsufficientBalance。
 func reserveInflightBalance(
@@ -100,20 +105,31 @@ func reserveInflightBalanceCtx(
 	subscription *service.UserSubscription,
 	req service.InflightEstimateRequest,
 ) (context.Context, func(), error) {
-	if billing == nil || estimator == nil || apiKey == nil || apiKey.User == nil || !billing.InflightReservationEnabled() {
+	if billing == nil || estimator == nil || apiKey == nil || apiKey.User == nil {
 		return ctx, inflightNoop, nil
 	}
-	if apiKey.Group != nil && apiKey.Group.IsSubscriptionType() && subscription != nil {
+	balanceEnabled := billing.InflightReservationEnabled()
+	// key 级配额是硬上限，不受「余额在途预留」开关控制：只要 quota>0 且缓存支持就预占。
+	quotaEnabled := apiKey.ID > 0 && apiKey.Quota > 0 && billing.APIKeyQuotaReservationEnabled()
+	if !balanceEnabled && !quotaEnabled {
+		return ctx, inflightNoop, nil
+	}
+	subscriptionBill := apiKey.Group != nil && apiKey.Group.IsSubscriptionType() && subscription != nil
+	if subscriptionBill && !quotaEnabled {
 		return ctx, inflightNoop, nil
 	}
 	estimate, priced := estimator.EstimateInflightReservation(ctx, apiKey, req)
-	if !priced && billing.InflightReservationFailClosedOnUnpriced() {
-		return ctx, inflightNoop, service.ErrInsufficientBalance
+	if !priced {
+		if balanceEnabled && !subscriptionBill && billing.InflightReservationFailClosedOnUnpriced() {
+			return ctx, inflightNoop, service.ErrInsufficientBalance
+		}
+		// 无法定价时 key 配额同样 fail-open（审计风险见 PR 说明）。
+		return ctx, inflightNoop, nil
 	}
 	if estimate <= 0 {
 		return ctx, inflightNoop, nil
 	}
-	res, err := billing.ReserveInflight(ctx, apiKey.User, apiKey.Group, subscription, estimate)
+	res, err := billing.ReserveAdmission(ctx, apiKey.User, apiKey, apiKey.Group, subscription, estimate)
 	if err != nil {
 		return ctx, inflightNoop, err
 	}
