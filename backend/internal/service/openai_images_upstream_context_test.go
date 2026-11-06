@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,11 +64,13 @@ func openAIImagesJSONResponse() *http.Response {
 	}
 }
 
-// issue #5411：生图是长耗时、上游侧已经产生实际成本的操作。客户端中途断开时，
-// 如果连带取消上游请求，就会出现「上游已出图并计费、网关记 502 context canceled、
-// 用户不扣费」。非流式路径以前走 detachStreamUpstreamContext(ctx, false)，
-// 该函数在非流式时原样返回请求 context，因此不脱钩。
-func TestForwardOpenAIImagesAPIKey_NonStreamDetachesUpstreamContext(t *testing.T) {
+// 老板 2026-11-06 的决定取代了 issue #5411 的取舍：客户端走了就立刻关上游，非流式
+// 生图也一样，没有「继续等上游出图」的窗口。#5411 当时为了避免「上游已出图计费、
+// 网关记 502 不扣费」让非流式生图完全脱钩；现在图片只记账上游已上报的用量和已完成
+// 的图片张数，不估算、不编造，客户端先走则请求根本不发往上游，也就不计费。
+// 上游请求对象仍与客户端脱钩构建（取 token、账号侧副作用、计费要在客户端走后继续），
+// 只有「等响应头」和「读响应体」跟着客户端，见 openai_client_gone.go。
+func TestForwardOpenAIImagesAPIKey_NonStreamClientGoneBeforeSendIsNotSentUpstream(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"b64_json"}`)
 	c, _ := newOpenAIImagesTestContext(t, body)
 
@@ -80,20 +83,19 @@ func TestForwardOpenAIImagesAPIKey_NonStreamDetachesUpstreamContext(t *testing.T
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 客户端已断开
+	c.Request = c.Request.WithContext(ctx)
 
 	result, err := svc.ForwardImages(ctx, c, newOpenAIImagesAPIKeyAccount(), body, parsed, "")
 
-	require.NoError(t, err, "客户端断开不应把已在出图的上游调用打断成 context canceled")
-	require.NotNil(t, result)
-	require.Equal(t, 1, result.ImageCount, "图片已产出，必须带回结果供计费")
-
-	require.NotNil(t, recorder.lastReq)
-	require.NoError(t, recorder.lastReq.Context().Err(),
-		"交给上游的请求 context 必须已脱钩，不随客户端断开取消")
+	require.ErrorIs(t, err, context.Canceled)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "走掉的客户端不能触发换号")
+	require.Nil(t, result, "没有上报也没有完成的图片，不能编造出一个结果去计费")
+	require.Nil(t, recorder.lastReq, "客户端已走，请求不能再发往上游")
 }
 
-// 流式路径本来就脱钩，这条守卫防止对齐时把它改坏。
-func TestForwardOpenAIImagesAPIKey_StreamKeepsDetachedUpstreamContext(t *testing.T) {
+// 流式生图同理。
+func TestForwardOpenAIImagesAPIKey_StreamClientGoneBeforeSendIsNotSentUpstream(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true,"response_format":"b64_json"}`)
 	c, _ := newOpenAIImagesTestContext(t, body)
 
@@ -117,12 +119,13 @@ func TestForwardOpenAIImagesAPIKey_StreamKeepsDetachedUpstreamContext(t *testing
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	c.Request = c.Request.WithContext(ctx)
 
-	_, _ = svc.ForwardImages(ctx, c, newOpenAIImagesAPIKeyAccount(), body, parsed, "")
+	result, err := svc.ForwardImages(ctx, c, newOpenAIImagesAPIKeyAccount(), body, parsed, "")
 
-	require.NotNil(t, recorder.lastReq)
-	require.NoError(t, recorder.lastReq.Context().Err(),
-		"流式路径原本就脱钩，不能被改回随客户端取消")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, result)
+	require.Nil(t, recorder.lastReq, "客户端已走，请求不能再发往上游")
 }
 
 // 两个 detach 辅助函数的语义差异是本次修复的根据，锁死它们防止被悄悄改动。

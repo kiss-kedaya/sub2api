@@ -1730,7 +1730,9 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingTransformsEvents(t *tes
 	require.False(t, gjson.Get(completed.Data, "revised_prompt").Exists())
 }
 
-func TestOpenAIGatewayServiceForwardImages_APIKeyStreamingDrainsAfterClientDisconnect(t *testing.T) {
+// A write failure closes the upstream, but frames already read still count: the
+// completed image and its usage were in the body before the write failed.
+func TestOpenAIGatewayServiceForwardImages_APIKeyStreamingKeepsCompletedImageAfterClientWriteFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","stream":true}`)
 
@@ -2174,7 +2176,9 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingHandlesMultilineSSE(t *
 	require.NotContains(t, rec.Body.String(), "event: error")
 }
 
-func TestOpenAIGatewayServiceForwardImages_OAuthStreamingDrainsAfterClientDisconnect(t *testing.T) {
+// A write failure closes the upstream, but frames already read still count: the
+// completed image and its usage were in the body before the write failed.
+func TestOpenAIGatewayServiceForwardImages_OAuthStreamingKeepsCompletedImageAfterClientWriteFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-1","prompt":"draw a cat","stream":true,"response_format":"url"}`)
 

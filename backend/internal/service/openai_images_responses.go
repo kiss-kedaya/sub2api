@@ -1192,7 +1192,7 @@ func (s *OpenAIGatewayService) tryWriteOpenAIImagesStreamEvent(
 		if clientDisconnected != nil {
 			*clientDisconnected = true
 		}
-		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images stream client disconnected, continue draining upstream for billing")
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images stream client disconnected")
 		return false
 	}
 	if lastWriteAt != nil {
@@ -1473,6 +1473,22 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 	}
 	var createdAt int64
 	clientDisconnected := false
+	// closeUpstreamForGoneClient closes the upstream once the client is known to be
+	// gone through a failed write, so it stops producing output nobody reads. Frames
+	// already buffered are still processed, so an image the upstream had completed
+	// is still counted. A client whose context ended is handled by the body watch
+	// in forwardOpenAIImagesOAuth.
+	upstreamClosedForClient := false
+	closeUpstreamForGoneClient := func() {
+		if !clientDisconnected || upstreamClosedForClient {
+			return
+		}
+		upstreamClosedForClient = true
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images responses stream upstream connection closed after client disconnect")
+	}
 	lastDownstreamWriteAt := time.Now()
 	var sseData openAISSEDataAccumulator
 	var processDataErr error
@@ -1617,6 +1633,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 			return false, nil
 		}
 		sseData.AddLine(string(line), processData)
+		closeUpstreamForGoneClient()
 		if processDataErr != nil {
 			return true, processDataErr
 		}
@@ -1625,6 +1642,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 
 	flushData := func() (bool, error) {
 		sseData.Flush(processData)
+		closeUpstreamForGoneClient()
 		if processDataErr != nil {
 			return true, processDataErr
 		}
@@ -1683,7 +1701,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				} else if done {
 					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
 				}
-				if shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
+				if !clientDisconnected && shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
 					err = newOpenAIUpstreamStreamReadError(err)
 				}
 				return usage, imageCount, imageOutputSizes, firstTokenMs, err
@@ -1778,7 +1796,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				} else if done {
 					return usage, imageCount, imageOutputSizes, firstTokenMs, nil
 				}
-				if shouldClassifyOpenAIUpstreamStreamReadError(ev.err, c.Request.Context()) {
+				if !clientDisconnected && shouldClassifyOpenAIUpstreamStreamReadError(ev.err, c.Request.Context()) {
 					ev.err = newOpenAIUpstreamStreamReadError(ev.err)
 				}
 				return usage, imageCount, imageOutputSizes, firstTokenMs, ev.err
@@ -1807,7 +1825,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 			}
 			if _, writeErr := io.WriteString(c.Writer, ":\n\n"); writeErr != nil {
 				clientDisconnected = true
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images responses stream client disconnected during keepalive, continue draining upstream for billing")
+				closeUpstreamForGoneClient()
 				continue
 			}
 			flusher.Flush()
@@ -1851,8 +1869,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		account.Type,
 		len(parsed.Uploads),
 	)
+	// The upstream request is detached from the client (token refresh, account side
+	// effects and billing outlive it), but waiting for the response headers and
+	// reading the body follow the client: when it leaves the upstream is closed at
+	// once, stream or not (owner decision 2026-11-06, see openai_client_gone.go).
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
+	clientCtx := openAIClientContext(ctx, c)
 
 	token, _, err := s.GetAccessToken(upstreamCtx, account)
 	if err != nil {
@@ -1898,9 +1921,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
+		if clientErr := clientCtx.Err(); clientErr != nil {
+			// The client left while the upstream was still generating. Images are billed
+			// per image or per image token, so nothing is estimated here: nothing was
+			// reported and nothing completed, hence nothing is billed and nothing fails over.
+			return nil, clientErr
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(upstreamCtx, c, account, err, false)
 	}
 	if resp.StatusCode >= 400 {
@@ -1951,6 +1980,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
 	}
+	// A client that leaves while the answer is still arriving closes the upstream at
+	// once, stream or not.
+	resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 	defer func() { _ = resp.Body.Close() }()
 
 	var (

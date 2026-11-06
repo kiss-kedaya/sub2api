@@ -253,7 +253,10 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
-		if shouldClassifyOpenAIUpstreamStreamReadError(err) {
+		// A read that failed because the client left (the upstream was closed for it)
+		// is not an upstream fault: classifying it would fail over to another account
+		// and count a fault against this one.
+		if shouldClassifyOpenAIUpstreamStreamReadError(err, openAIRequestContext(c)) {
 			err = newOpenAIUpstreamStreamReadError(err)
 		}
 		return OpenAIUsage{}, 0, nil, err
