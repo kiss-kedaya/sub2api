@@ -124,9 +124,9 @@ func TestConvertedAnthropicUsageAfterDisconnect(t *testing.T) {
 			var result *ForwardResult
 			var err error
 			if protocol == "chat" {
-				result, err = svc.handleCCStreamingFromAnthropic(response, c, "claude-test", "claude-test", nil, time.Now(), true)
+				result, err = svc.handleCCStreamingFromAnthropic(response, c, "claude-test", "claude-test", nil, time.Now(), true, anthropicEstimateSource{})
 			} else {
-				result, err = svc.handleResponsesStreamingResponse(response, c, "claude-test", "claude-test", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+				result, err = svc.handleResponsesStreamingResponse(response, c, "claude-test", "claude-test", nil, time.Now(), apicompat.ResponsesClientToolMapping{}, anthropicEstimateSource{})
 			}
 			require.NoError(t, err)
 			require.True(t, result.ClientDisconnect)
@@ -135,7 +135,9 @@ func TestConvertedAnthropicUsageAfterDisconnect(t *testing.T) {
 	}
 }
 
-func TestConvertedAnthropicUsageDrainHasIdleLimit(t *testing.T) {
+// A failed client write closes the upstream at once. The old behaviour kept reading
+// until the idle watchdog gave up; there is no drain window any more.
+func TestConvertedAnthropicClientWriteFailureClosesUpstreamWithoutWaitingForIdle(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, protocol := range []string{"chat", "responses"} {
 		t.Run(protocol, func(t *testing.T) {
@@ -154,15 +156,18 @@ func TestConvertedAnthropicUsageDrainHasIdleLimit(t *testing.T) {
 			response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
 			var result *ForwardResult
 			var err error
+			started := time.Now()
 			if protocol == "chat" {
-				result, err = svc.handleCCStreamingFromAnthropic(response, c, "claude-test", "claude-test", nil, time.Now(), true)
+				result, err = svc.handleCCStreamingFromAnthropic(response, c, "claude-test", "claude-test", nil, time.Now(), true, anthropicEstimateSource{})
 			} else {
-				result, err = svc.handleResponsesStreamingResponse(response, c, "claude-test", "claude-test", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+				result, err = svc.handleResponsesStreamingResponse(response, c, "claude-test", "claude-test", nil, time.Now(), apicompat.ResponsesClientToolMapping{}, anthropicEstimateSource{})
 			}
-			require.ErrorIs(t, err, errAnthropicNativeStreamIdle)
+			require.Less(t, time.Since(started), 800*time.Millisecond, "a departed client must not wait for the 1s idle watchdog")
+			require.ErrorContains(t, err, "stream usage incomplete after disconnect")
+			require.ErrorIs(t, err, context.Canceled)
 			require.True(t, result.ClientDisconnect)
 			_, err = writer.Write([]byte("late"))
-			require.ErrorIs(t, err, io.ErrClosedPipe, "idle drain must release the original upstream body")
+			require.ErrorIs(t, err, io.ErrClosedPipe, "the original upstream body must be released at once")
 			<-writeDone
 		})
 	}

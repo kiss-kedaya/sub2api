@@ -29,7 +29,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	account *Account,
 	startTime time.Time,
 	model string,
-) (*streamingResult, error) {
+) (result *streamingResult, err error) {
 	w := c.Writer
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -49,6 +49,26 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 	clientDisconnected := false
+	sawTerminal := false
+	progress := &anthropicStreamProgress{}
+	clientWatch := newAnthropicClientWatch(ctx, c, resp.Body)
+	defer clientWatch.stop()
+	// 没有终帧就结束的流不会再有 usage；调用方据此按已产出内容估算。
+	defer func() {
+		if result != nil {
+			result.progress = progress
+			result.incompleteStream = !sawTerminal
+		}
+	}()
+	// 客户端已走：立刻关上游。已读入队列的帧仍会处理，已到达的终帧保留真实 usage。
+	markClientGone := func(reason string) {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		clientWatch.markGone()
+		logger.LegacyPrintf("service.gateway", "[Bedrock] Client disconnected during streaming (%s), upstream connection closed: account=%d", reason, account.ID)
+	}
 
 	// Bedrock EventStream 使用 application/vnd.amazon.eventstream 二进制格式。
 	// 每个帧结构：total_length(4) + headers_length(4) + prelude_crc(4) + headers + payload + message_crc(4)
@@ -107,16 +127,23 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	}
 
 	for {
+		if !clientDisconnected && clientWatch.isGone() {
+			markClientGone("request context ended")
+		}
 		select {
 		case ev, ok := <-events:
 			if !ok {
 				if !clientDisconnected {
 					flusher.Flush()
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected || clientWatch.isGone()}, nil
 			}
 			if ev.err != nil {
-				if clientDisconnected {
+				if sawTerminal {
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				}
+				if clientDisconnected || clientWatch.isGone() {
+					markClientGone("request context ended")
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 				}
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
@@ -142,9 +169,13 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 
 			// 解析 SSE 事件数据提取 usage
 			parseSSEUsagePassthrough(string(sseData), usage)
+			progress.observeData(string(sseData))
 
 			// 确定 SSE event type
 			eventType := gjson.GetBytes(sseData, "type").String()
+			if eventType == "message_stop" {
+				sawTerminal = true
+			}
 
 			// 写入标准 SSE 格式
 			if !clientDisconnected {
@@ -155,8 +186,8 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 					_, writeErr = fmt.Fprintf(w, "data: %s\n\n", sseData)
 				}
 				if writeErr != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Bedrock] Client disconnected during streaming, continue draining for usage: account=%d", account.ID)
+					// 立即关闭上游，不再排空。本事件的 usage 已合并，已读入队列的帧继续处理。
+					markClientGone("client write failed")
 				} else {
 					flusher.Flush()
 				}

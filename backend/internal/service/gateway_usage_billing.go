@@ -917,6 +917,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 				CacheCreationTokens: result.Usage.CacheCreationInputTokens,
 				CacheReadTokens:     result.Usage.CacheReadInputTokens,
 				ImageOutputTokens:   result.Usage.ImageOutputTokens,
+				// An estimated cache read must be priced like the user's bill.
+				CacheReadEstimated: result.Usage.CacheReadEstimated,
 			},
 			cost.TotalCost-cacheStorageCost, pricingAt,
 		)

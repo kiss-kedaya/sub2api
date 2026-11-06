@@ -151,10 +151,11 @@ func (s *GatewayService) ForwardAsResponses(
 		proxyURL = account.Proxy.URL()
 	}
 
-	// 10. Build upstream request
-	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
-	upstreamReq, _, err := s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
-	releaseUpstreamCtx()
+	// 10. Build upstream request. The call ends with the client: a departed client
+	// closes the upstream at once, also while the response headers are awaited.
+	upstream := newAnthropicUpstreamCall(ctx, c, reqStream)
+	defer upstream.close()
+	upstreamReq, wireBody, err := s.buildUpstreamRequest(upstream.attempt(), c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
@@ -164,6 +165,18 @@ func (s *GatewayService) ForwardAsResponses(
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
+		}
+		// The client left: no failover, no account fault. A request that was fully
+		// written to the upstream is billed for its input, estimated.
+		if upstream.departedClient(err) {
+			var gone *ForwardResult
+			if upstream.dispatched() {
+				gone = anthropicClientGoneResult(account, wireBody, originalModel, mappedModel, clientStream, startTime, nil)
+				if gone != nil {
+					gone.ReasoningEffort = reasoningEffort
+				}
+			}
+			return gone, newAnthropicClientGoneError(anthropicGoneRequest, err)
 		}
 		return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
 			UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
@@ -210,12 +223,13 @@ func (s *GatewayService) ForwardAsResponses(
 	}
 
 	// 13. Handle normal response (convert Anthropic → Responses)
+	estimate := anthropicEstimateSource{account: account, body: wireBody, model: originalModel}
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
-		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
+		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping, estimate)
 	} else {
-		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
+		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping, estimate)
 	}
 
 	return result, handleErr
@@ -395,6 +409,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	reasoningEffort *string,
 	startTime time.Time,
 	clientToolMapping apicompat.ResponsesClientToolMapping,
+	estimate anthropicEstimateSource,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -408,6 +423,11 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	// Accumulate the final Anthropic response from streaming events
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
+	progress := &anthropicStreamProgress{}
+	sawStop := false
+	// 客户端一走就关上游，不再读完整个应答。
+	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
+	defer clientWatch.stop()
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -438,6 +458,10 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 				zap.String("event_type", eventType),
 			)
 			continue
+		}
+		progress.observeEvent(&event)
+		if event.Type == "message_stop" {
+			sawStop = true
 		}
 
 		// message_start carries the initial response structure
@@ -475,10 +499,28 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	scanErr := scanner.Err()
+	// The client left before the answer was complete: the upstream was closed, there
+	// is nobody to write to, and no usage will ever arrive. Bill what was produced.
+	if !sawStop && clientWatch.isGone() {
+		clientWatch.markGone()
+		estimate.fill(&usage, progress, requestID, true, scanErr)
+		return &ForwardResult{
+			RequestID:        requestID,
+			UpstreamHeaders:  resp.Header,
+			Usage:            usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           false,
+			Duration:         time.Since(startTime),
+			ClientDisconnect: true,
+		}, newAnthropicClientGoneError(anthropicGoneStream, scanErr)
+	}
+	if scanErr != nil {
+		if !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_responses buffered: read error",
-				zap.Error(err),
+				zap.Error(scanErr),
 				zap.String("request_id", requestID),
 			)
 		}
@@ -487,6 +529,13 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	if finalResp == nil {
 		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
 		return nil, fmt.Errorf("upstream stream ended without response")
+	}
+
+	// The client-visible answer carries what the upstream reported. When the upstream
+	// ended without a final usage, only the billed copy is estimated.
+	billedUsage := usage
+	if !sawStop {
+		estimate.fill(&billedUsage, progress, requestID, false, scanErr)
 	}
 
 	// Update usage from accumulated delta
@@ -519,7 +568,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	return &ForwardResult{
 		RequestID:       requestID,
 		UpstreamHeaders: resp.Header,
-		Usage:           usage,
+		Usage:           billedUsage,
 		Model:           originalModel,
 		UpstreamModel:   mappedModel,
 		ReasoningEffort: reasoningEffort,
@@ -538,6 +587,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	reasoningEffort *string,
 	startTime time.Time,
 	clientToolMapping apicompat.ResponsesClientToolMapping,
+	estimate anthropicEstimateSource,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -559,6 +609,8 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
+	sawStop := false
+	progress := &anthropicStreamProgress{}
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
@@ -573,6 +625,20 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	pump := newAnthropicNativeLinePump(scanner, interval)
 	defer pump.stop()
 	defer func() { _ = resp.Body.Close() }()
+	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
+	defer clientWatch.stop()
+	// 客户端已走：立刻关上游，不再排空。已读入队列的帧仍会处理，已到达的终帧保留真实 usage。
+	markClientGone := func(reason string) {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		clientWatch.markGone()
+		logger.L().Info("forward_as_responses stream: client disconnected, upstream connection closed",
+			zap.String("request_id", requestID),
+			zap.String("reason", reason),
+		)
+	}
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
@@ -591,11 +657,15 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 	// processEvent handles a single parsed Anthropic SSE event.
 	processEvent := func(event *apicompat.AnthropicStreamEvent) bool {
+		if !clientDisconnected && clientWatch.isGone() {
+			markClientGone("request context ended")
+		}
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
+		progress.observeEvent(event)
 
 		// Extract usage from message_delta
 		if event.Type == "message_delta" && event.Usage != nil {
@@ -633,11 +703,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			for _, restored := range payloads {
 				eventType := gjson.GetBytes(restored, "type").String()
 				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
-					logger.L().Info("forward_as_responses stream: client disconnected",
-						zap.String("request_id", requestID),
-					)
-					clientDisconnected = true
-					return false // continue observing the existing upstream for final usage
+					// Close the upstream at once; frames already read are still processed.
+					markClientGone("client write failed")
+					return false
 				}
 			}
 		}
@@ -704,8 +772,21 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			return resultWithUsage(), nil
 		}
 		if event.Type == "message_stop" {
+			sawStop = true
 			break
 		}
+	}
+
+	// The upstream ended without a terminal frame, so no final usage will arrive.
+	// A departed client is billed for the dispatched request; an attached client
+	// only for the output that was really produced.
+	if !sawStop {
+		if clientDisconnected || clientWatch.isGone() {
+			markClientGone("request context ended")
+			estimate.fill(&usage, progress, requestID, true, readErr)
+			return resultWithUsage(), newAnthropicClientGoneError(anthropicGoneStream, readErr)
+		}
+		estimate.fill(&usage, progress, requestID, false, readErr)
 	}
 
 	if err := readErr; err != nil && !errors.Is(err, io.EOF) {

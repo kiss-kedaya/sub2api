@@ -133,10 +133,20 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		proxyURL = account.Proxy.URL()
 	}
 
-	// 10. Build upstream request
-	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
-	upstreamReq, _, err := s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
-	releaseUpstreamCtx()
+	// Extract reasoning effort from CC request body. It is a pure function of the
+	// request, computed before the upstream call because the result of a request the
+	// client abandoned in flight carries it too.
+	reasoningEffort := extractCCReasoningEffortFromBody(body, mappedModel, originalModel)
+	// 国产模型默认 effort 补充：本路径是客户端 CC 请求 → Anthropic 上游，
+	// 如果上游是 passback-required 国产模型 (Kimi-anthropic / GLM-anthropic / MiniMax)
+	// 且客户端在 body 里传了 thinking.type=enabled，补中默认 effort。
+	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, mappedModel)
+
+	// 10. Build upstream request. The call ends with the client: a departed client
+	// closes the upstream at once, also while the response headers are awaited.
+	upstream := newAnthropicUpstreamCall(ctx, c, reqStream)
+	defer upstream.close()
+	upstreamReq, wireBody, err := s.buildUpstreamRequest(upstream.attempt(), c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
@@ -146,6 +156,18 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
+		}
+		// The client left: no failover, no account fault. A request that was fully
+		// written to the upstream is billed for its input, estimated.
+		if upstream.departedClient(err) {
+			var gone *ForwardResult
+			if upstream.dispatched() {
+				gone = anthropicClientGoneResult(account, wireBody, originalModel, mappedModel, clientStream, startTime, nil)
+				if gone != nil {
+					gone.ReasoningEffort = reasoningEffort
+				}
+			}
+			return gone, newAnthropicClientGoneError(anthropicGoneRequest, err)
 		}
 		return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
 			UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
@@ -190,21 +212,15 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
 
-	// 13. Extract reasoning effort from CC request body
-	reasoningEffort := extractCCReasoningEffortFromBody(body, mappedModel, originalModel)
-	// 国产模型默认 effort 补充：本路径是客户端 CC 请求 → Anthropic 上游，
-	// 如果上游是 passback-required 国产模型 (Kimi-anthropic / GLM-anthropic / MiniMax)
-	// 且客户端在 body 里传了 thinking.type=enabled，补中默认 effort。
-	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, mappedModel)
-
 	// 14. Handle normal response
 	// Read Anthropic SSE → convert to Responses events → convert to CC format
+	estimate := anthropicEstimateSource{account: account, body: wireBody, model: originalModel}
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
-		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage)
+		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage, estimate)
 	} else {
-		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, estimate)
 	}
 
 	return result, handleErr
@@ -241,6 +257,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	mappedModel string,
 	reasoningEffort *string,
 	startTime time.Time,
+	estimate anthropicEstimateSource,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -253,6 +270,11 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
+	progress := &anthropicStreamProgress{}
+	sawStop := false
+	// 客户端一走就关上游，不再读完整个应答。
+	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
+	defer clientWatch.stop()
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -277,6 +299,10 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
+		}
+		progress.observeEvent(&event)
+		if event.Type == "message_stop" {
+			sawStop = true
 		}
 
 		// message_start carries the initial response structure and cache usage
@@ -312,10 +338,28 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	scanErr := scanner.Err()
+	// The client left before the answer was complete: the upstream was closed, there
+	// is nobody to write to, and no usage will ever arrive. Bill what was produced.
+	if !sawStop && clientWatch.isGone() {
+		clientWatch.markGone()
+		estimate.fill(&usage, progress, requestID, true, scanErr)
+		return &ForwardResult{
+			RequestID:        requestID,
+			UpstreamHeaders:  resp.Header,
+			Usage:            usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           false,
+			Duration:         time.Since(startTime),
+			ClientDisconnect: true,
+		}, newAnthropicClientGoneError(anthropicGoneStream, scanErr)
+	}
+	if scanErr != nil {
+		if !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_cc buffered: read error",
-				zap.Error(err),
+				zap.Error(scanErr),
 				zap.String("request_id", requestID),
 			)
 		}
@@ -324,6 +368,13 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	if finalResp == nil {
 		writeGatewayCCError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
 		return nil, fmt.Errorf("upstream stream ended without response")
+	}
+
+	// The client-visible answer carries what the upstream reported. When the upstream
+	// ended without a final usage, only the billed copy is estimated.
+	billedUsage := usage
+	if !sawStop {
+		estimate.fill(&billedUsage, progress, requestID, false, scanErr)
 	}
 
 	// Update usage from accumulated delta
@@ -354,7 +405,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	return &ForwardResult{
 		RequestID:       requestID,
 		UpstreamHeaders: resp.Header,
-		Usage:           usage,
+		Usage:           billedUsage,
 		Model:           originalModel,
 		UpstreamModel:   mappedModel,
 		ReasoningEffort: reasoningEffort,
@@ -373,6 +424,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	reasoningEffort *string,
 	startTime time.Time,
 	includeUsage bool,
+	estimate anthropicEstimateSource,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -398,6 +450,8 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
+	sawStop := false
+	progress := &anthropicStreamProgress{}
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
@@ -412,6 +466,20 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	pump := newAnthropicNativeLinePump(scanner, interval)
 	defer pump.stop()
 	defer func() { _ = resp.Body.Close() }()
+	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
+	defer clientWatch.stop()
+	// 客户端已走：立刻关上游，不再排空。已读入队列的帧仍会处理，已到达的终帧保留真实 usage。
+	markClientGone := func(reason string) {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		clientWatch.markGone()
+		logger.L().Info("forward_as_cc stream: client disconnected, upstream connection closed",
+			zap.String("request_id", requestID),
+			zap.String("reason", reason),
+		)
+	}
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
@@ -440,19 +508,22 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		// c 可能持有请求侧注入的 ToolNameRewrite；无则仅做静态前缀还原。
 		out := string(reverseToolNamesIfPresent(c, []byte(sse)))
 		if _, err := fmt.Fprint(c.Writer, out); err != nil {
-			clientDisconnected = true
+			markClientGone("client write failed")
 		}
 		return false
 	}
 
 	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent) bool {
+		if !clientDisconnected && clientWatch.isGone() {
+			markClientGone("request context ended")
+		}
 		if event.Type == "ping" {
 			if clientDisconnected {
 				return false
 			}
 			// OpenAI 流客户端不认 event: ping。改写成注释心跳，避免长请求被当断流。
 			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {
-				clientDisconnected = true
+				markClientGone("client write failed")
 				return false
 			}
 			c.Writer.Flush()
@@ -463,6 +534,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
+		progress.observeEvent(event)
 
 		// Extract usage from message_delta
 		if event.Type == "message_delta" && event.Usage != nil {
@@ -527,8 +599,21 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			return resultWithUsage(), nil
 		}
 		if event.Type == "message_stop" {
+			sawStop = true
 			break
 		}
+	}
+
+	// The upstream ended without a terminal frame, so no final usage will arrive.
+	// A departed client is billed for the dispatched request; an attached client
+	// only for the output that was really produced.
+	if !sawStop {
+		if clientDisconnected || clientWatch.isGone() {
+			markClientGone("request context ended")
+			estimate.fill(&usage, progress, requestID, true, readErr)
+			return resultWithUsage(), newAnthropicClientGoneError(anthropicGoneStream, readErr)
+		}
+		estimate.fill(&usage, progress, requestID, false, readErr)
 	}
 
 	if err := readErr; err != nil && !errors.Is(err, io.EOF) {

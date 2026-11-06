@@ -718,6 +718,10 @@ type streamingResult struct {
 	usage            *ClaudeUsage
 	firstTokenMs     *int
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
+	// incompleteStream 表示流在没有终帧的情况下结束，上游不会再报 usage。
+	incompleteStream bool
+	// progress 记录上游已产出的内容，供无 usage 时估算输出。
+	progress *anthropicStreamProgress
 }
 
 // hasObservedTokens 报告流式过程中是否已观测到任何上游计量的 token。
@@ -770,7 +774,7 @@ func partialStreamUsageResult(c *gin.Context, resp *http.Response, streamResult 
 	}
 }
 
-func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string, mimicClaudeCode bool) (*streamingResult, error) {
+func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string, mimicClaudeCode bool) (result *streamingResult, err error) {
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -919,8 +923,30 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	}
 
 	needModelReplace := originalModel != mappedModel
-	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
+	clientDisconnected := false // 客户端断开标志；断开后立即关闭上游，不再排空
 	sawTerminalEvent := false
+	progress := &anthropicStreamProgress{}
+	clientWatch := newAnthropicClientWatch(ctx, c, resp.Body)
+	defer clientWatch.stop()
+	defer func() {
+		if result != nil {
+			result.progress = progress
+			result.incompleteStream = err != nil && !sawTerminalEvent
+		}
+	}()
+	accountID := int64(0)
+	if account != nil {
+		accountID = account.ID
+	}
+	// 客户端已走：立刻关上游。已读入队列的帧仍会处理，已到达的终帧保留真实 usage。
+	markClientGone := func(reason string) {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		clientWatch.markGone()
+		logger.LegacyPrintf("service.gateway", "Client disconnected during streaming (%s), upstream connection closed: account=%d model=%s", reason, accountID, originalModel)
+	}
 	useNoopDeltaKeepalive := c != nil && c.Request != nil && shouldUseClaudeCodeNoopDeltaKeepalive(c.GetHeader("User-Agent"))
 	noopDeltaKeepaliveBlockIndex := -1
 	noopDeltaKeepaliveDeltaType := ""
@@ -983,6 +1009,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			return nil, dataLine, nil, &sseStreamErrorEventError{RawData: dataLine}
 		}
 		observer.ObserveAnthropic([]byte(dataLine))
+		progress.observeData(dataLine)
 		if eventName == "" {
 			eventName = eventType
 		}
@@ -1095,12 +1122,23 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		return []string{block}, string(newData), usagePatch, nil
 	}
 
+	goneResult := func(cause error) (*streamingResult, error) {
+		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, newAnthropicClientGoneError(anthropicGoneStream, cause)
+	}
+
 	for {
+		if !clientDisconnected && clientWatch.isGone() {
+			markClientGone("request context ended")
+		}
 		select {
 		case ev, ok := <-events:
 			if !ok {
 				// 上游完成，返回结果
 				if !sawTerminalEvent {
+					if clientDisconnected || clientWatch.isGone() {
+						markClientGone("request context ended")
+						return goneResult(errors.New("missing terminal event"))
+					}
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
@@ -1109,13 +1147,15 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				if sawTerminalEvent {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
-				// 检测 context 取消（客户端断开会导致 context 取消，进而影响上游读取）
+				// 客户端已走（写失败或请求 context 结束）：上游是被我们自己关掉的，
+				// 读错误只是关闭的结果，不是上游故障。
+				if clientDisconnected || clientWatch.isGone() {
+					markClientGone("request context ended")
+					return goneResult(ev.err)
+				}
+				// 检测 context 取消（上游 context 被租约方取消等）
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
-				}
-				// 客户端已通过写入失败检测到断开，上游也出错了，返回已收集的 usage
-				if clientDisconnected {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
 				// 客户端未断开，正常的错误处理
 				if errors.Is(ev.err, bufio.ErrTooLong) {
@@ -1169,11 +1209,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					if !clientDisconnected {
 						restored := reverseToolNamesIfPresent(c, []byte(block))
 						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
-							clientDisconnected = true
-							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
-							// 不 break：客户端断开后仍需继续合并本事件及后续事件的 usage，
-							// 否则会漏计当前事件携带的 usage 导致少计费。后续写入由
-							// clientDisconnected 守卫跳过。
+							// 立即关闭上游，不再排空。不 break：本事件携带的 usage 仍要合并，
+							// 已读入队列的帧也继续处理；后续写入由 clientDisconnected 守卫跳过。
+							markClientGone("client write failed")
 						} else {
 							flusher.Flush()
 							lastDataAt = time.Now()
@@ -1236,8 +1274,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				}
 			}
 			if _, werr := fmt.Fprint(w, keepaliveBlock); werr != nil {
-				clientDisconnected = true
-				logger.LegacyPrintf("service.gateway", "Client disconnected during keepalive ping, continuing to drain upstream for billing")
+				markClientGone("keepalive write failed")
 				continue
 			}
 			flusher.Flush()

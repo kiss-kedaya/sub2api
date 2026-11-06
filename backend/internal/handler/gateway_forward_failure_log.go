@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -23,6 +24,14 @@ func logGatewayForwardFailure(log *zap.Logger, c *gin.Context, event string, err
 
 func logGatewayForwardFailureWithWarn(log *zap.Logger, c *gin.Context, event string, err error, forceWarn bool, fields ...zap.Field) {
 	if log == nil {
+		return
+	}
+
+	// A client that left is not a gateway failure. The upstream is closed the moment
+	// the client goes, so this path runs for every aborted request; keep it out of
+	// ERROR (and its stack) while the usage of the dispatched request is still billed.
+	if isGatewayForwardClientGone(c, err) {
+		log.Info(event+".client_gone", append(fields, zap.Error(err))...)
 		return
 	}
 
@@ -51,6 +60,19 @@ func logGatewayForwardFailureWithWarn(log *zap.Logger, c *gin.Context, event str
 		fields = append(fields, zap.Int("upstream_status", status))
 	}
 	log.Error(event, append(fields, zap.Error(err))...)
+}
+
+// isGatewayForwardClientGone reports a failure caused by the departed client: the
+// request context ended and the error is that cancellation, not an upstream fault.
+func isGatewayForwardClientGone(c *gin.Context, err error) bool {
+	if c == nil || c.Request == nil || c.Request.Context().Err() == nil {
+		return false
+	}
+	var failoverErr *service.UpstreamFailoverError
+	if errors.As(err, &failoverErr) {
+		return false
+	}
+	return errors.Is(err, context.Canceled)
 }
 
 func isGatewayForwardTimeoutFailure(err error, summary string) bool {
