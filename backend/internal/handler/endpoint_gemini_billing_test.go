@@ -85,6 +85,23 @@ func TestGeminiBridgeGatewayConversionPreservesMetadataAndClampsInput(t *testing
 	require.Equal(t, 1.0, result.AudioUsage.DurationOrUnits)
 }
 
+// A cache read estimated from the request body (no usage frame arrived) must keep its
+// mark through the conversion, or a model without a cache read price would bill that
+// share as free instead of at the input price.
+func TestGeminiBridgeGatewayConversionKeepsEstimatedCacheReadMark(t *testing.T) {
+	estimated := openAIForwardResultAsGateway(&service.OpenAIForwardResult{
+		Usage: service.OpenAIUsage{InputTokens: 100, CacheReadInputTokens: 95, CacheReadEstimated: true},
+	})
+	require.True(t, estimated.Usage.CacheReadEstimated)
+	require.Equal(t, 5, estimated.Usage.InputTokens)
+	require.Equal(t, 95, estimated.Usage.CacheReadInputTokens)
+
+	reported := openAIForwardResultAsGateway(&service.OpenAIForwardResult{
+		Usage: service.OpenAIUsage{InputTokens: 100, CacheReadInputTokens: 95},
+	})
+	require.False(t, reported.Usage.CacheReadEstimated, "a reported cache read is never marked as estimated")
+}
+
 func TestGeminiBridgeGatewayNonBillableFlagPreservesUsage(t *testing.T) {
 	cfg := &config.Config{RunMode: config.RunModeStandard}
 	cfg.Default.RateMultiplier = 1

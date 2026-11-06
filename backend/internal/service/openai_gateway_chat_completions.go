@@ -390,6 +390,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	// 9. Handle normal response
+	// Keep the body that went upstream: a request that ends without a usage report is
+	// billed for the input it really sent (see applyCompatIncompleteUsage).
+	stashCompatUpstreamRequestBody(c, account, responsesBody)
 	var result *OpenAIForwardResult
 	var handleErr error
 	if clientStream {
@@ -503,6 +506,26 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, c, "openai chat_completions buffered", requestID)
 	if err != nil {
+		var gone *compatClientGoneError
+		if errors.As(err, &gone) {
+			// The client left and the upstream is closed. Bill what was produced and
+			// sent; nothing is written to a client that is no longer there.
+			base := &OpenAIForwardResult{
+				RequestID:                     requestID,
+				Model:                         originalModel,
+				BillingModel:                  billingModel,
+				UpstreamModel:                 upstreamModel,
+				UpstreamResponseModel:         observedUpstreamResponseModel(c),
+				UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+				UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+				Stream:                        false,
+				Duration:                      time.Since(startTime),
+			}
+			if result := compatBufferedGoneResult(c, account, "chat_completions_buffered", base, usage, acc, gone.cause); result != nil {
+				return result, nil
+			}
+			err = gone.asReadError()
+		}
 		return nil, s.newOpenAICompatBufferedReadFailoverError(c, account, resp, requestID, upstreamModel, err)
 	}
 
@@ -698,6 +721,30 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
+	// The client leaving (its request ends, or a write to it fails) closes the upstream
+	// at once. Frames the scanner already queued are still processed, so a terminal
+	// frame that had arrived keeps its real usage; otherwise the output produced so far
+	// (streamAcc) and the input sent are billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	streamAcc := apicompat.NewBufferedResponseAccumulator()
+	clientCancelCh := watch.Done()
+	var graceTimer *time.Timer
+	var graceCh <-chan time.Time
+	defer func() {
+		if graceTimer != nil {
+			graceTimer.Stop()
+		}
+	}()
+	markGone := func() {
+		clientDisconnected = true
+		watch.Disconnect()
+		if graceTimer == nil {
+			graceTimer = time.NewTimer(compatClientGoneGrace)
+			graceCh = graceTimer.C
+		}
+	}
+
 	streamInterval := time.Duration(0)
 	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
@@ -725,6 +772,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			ClientDisconnect:              clientDisconnected || watch.Gone(),
 			NonBillableUpstreamError:      nonBillableUpstreamError,
 		}
 		if searchCount > 0 {
@@ -756,6 +804,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		observer.ObserveOpenAI([]byte(payload), event.Type)
 		refusalDetector.ObservePayload([]byte(payload))
 		s.parseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
+		streamAcc.ProcessEvent(&event)
 
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(event.Type)
 		if isTerminalEvent {
@@ -988,8 +1037,26 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		return resultWithUsage(), nil
 	}
 
+	// finishIncomplete ends a stream that has no terminal frame. When the client is
+	// gone the request is complete from the gateway's side: what the upstream produced
+	// and what was sent is billed from an estimate and no error is returned, so the
+	// handler neither fails over nor counts the account as faulty. With the client
+	// still attached the cause is returned as before, and output already produced is
+	// still billed.
+	finishIncomplete := func(cause error) (*OpenAIForwardResult, error) {
+		gone := clientDisconnected || watch.Gone()
+		applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
+			Path: "chat_completions_stream", Account: account, Model: originalModel, RequestID: requestID,
+			ClientGone: gone, Cause: cause, OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),
+		})
+		result := resultWithUsage()
+		if gone {
+			return result, nil
+		}
+		return result, cause
+	}
 	handleScanErr := func(err error) {
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && !watch.Gone() && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			logger.FromContext(c.Request.Context()).Warn("openai chat_completions stream: read error",
 				zap.Error(err),
 				zap.String("upstream_request_id", requestID),
@@ -997,14 +1064,19 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 	}
 	missingTerminalErr := func() (*OpenAIForwardResult, error) {
-		return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
+		return finishIncomplete(fmt.Errorf("stream usage incomplete: missing terminal event"))
 	}
 	processFrame := func(frame openAICompatSSEFrame) bool {
 		payload := openAICompatPayloadWithEventType(frame.Data, frame.EventType)
 		if strings.TrimSpace(payload) == "[DONE]" {
 			return false
 		}
-		return processDataLine(payload)
+		terminal := processDataLine(payload)
+		if clientDisconnected {
+			// A write to the client failed somewhere in the frame: stop the upstream.
+			markGone()
+		}
+		return terminal
 	}
 
 	// Determine keepalive interval
@@ -1031,10 +1103,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
-			if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
+			if clientDisconnected || watch.Gone() || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return finishIncomplete(fmt.Errorf("stream usage incomplete: %w", err))
 			}
-			return resultWithUsage(), newOpenAIUpstreamStreamReadError(err)
+			return finishIncomplete(newOpenAIUpstreamStreamReadError(err))
 		}
 		if frame, ok := parser.Finish(); ok {
 			if strings.TrimSpace(frame.Data) == "[DONE]" {
@@ -1106,10 +1178,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
-				if clientDisconnected || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
+				if clientDisconnected || watch.Gone() || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
+					return finishIncomplete(fmt.Errorf("stream usage incomplete: %w", ev.err))
 				}
-				return resultWithUsage(), newOpenAIUpstreamStreamReadError(ev.err)
+				return finishIncomplete(newOpenAIUpstreamStreamReadError(ev.err))
 			}
 			lastDataAt = time.Now()
 			line := ev.line
@@ -1124,20 +1196,27 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				return finalizeStream()
 			}
 
+		case <-clientCancelCh:
+			clientCancelCh = nil
+			markGone()
+
+		case <-graceCh:
+			return finishIncomplete(fmt.Errorf("stream usage incomplete after disconnect"))
+
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 			if time.Since(lastRead) < streamInterval {
 				continue
 			}
-			if clientDisconnected {
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout")
+			if clientDisconnected || watch.Gone() {
+				return finishIncomplete(fmt.Errorf("stream usage incomplete after timeout"))
 			}
 			logger.L().Warn("openai chat_completions stream: data interval timeout",
 				zap.String("request_id", requestID),
 				zap.String("model", originalModel),
 				zap.Duration("interval", streamInterval),
 			)
-			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+			return finishIncomplete(fmt.Errorf("stream data interval timeout"))
 
 		case <-keepaliveCh:
 			if clientDisconnected {
@@ -1155,7 +1234,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				logger.L().Info("openai chat_completions stream: client disconnected during keepalive",
 					zap.String("request_id", requestID),
 				)
-				clientDisconnected = true
+				markGone()
 				continue
 			}
 			c.Writer.Flush()

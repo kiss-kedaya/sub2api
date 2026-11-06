@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -271,6 +272,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 
 	// 8. Forward response
+	// Keep the body that went upstream: a request that ends without a usage report is
+	// billed for the input it really sent (see applyCompatIncompleteUsage).
+	stashCompatUpstreamRequestBody(c, account, upstreamBody)
 	var result *OpenAIForwardResult
 	var forwardErr error
 	if clientStream {
@@ -333,6 +337,18 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	var protocolRefusalErr error
 	pendingSSEEventType := ""
 
+	// The client leaving (its request ends, or a write to it fails) closes the upstream
+	// at once: the next read fails and the loop ends. Lines the scanner already buffered
+	// are still processed, so a usage chunk that had arrived keeps its real numbers;
+	// otherwise the output tallied so far and the input sent are billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	var tally compatChatTally
+	markGone := func() {
+		clientDisconnected = true
+		watch.Disconnect()
+	}
+
 	writeLine := func(line string) {
 		if clientDisconnected {
 			return
@@ -345,8 +361,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			writeStreamHeaders()
 			for _, pending := range pendingLines {
 				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
-					clientDisconnected = true
-					logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
+					markGone()
+					logger.L().Debug("openai chat_completions raw: client disconnected, upstream closed",
 						zap.Error(werr),
 						zap.String("request_id", requestID),
 					)
@@ -357,8 +373,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			clientOutputStarted = true
 		}
 		if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
-			clientDisconnected = true
-			logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
+			markGone()
+			logger.L().Debug("openai chat_completions raw: client disconnected, upstream closed",
 				zap.Error(werr),
 				zap.String("request_id", requestID),
 			)
@@ -396,6 +412,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
+				tally.AddPayload(payload)
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsage(payload); u != nil {
 					usage = *u
@@ -441,14 +458,25 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			ClientDisconnect:              clientDisconnected || watch.Gone(),
 		}
 	}
 	if protocolRefusalErr != nil {
 		return resultWithUsage(), protocolRefusalErr
 	}
+	// finishIncomplete bills what the stream produced and the input that was sent when
+	// no usage chunk arrived. Usage the upstream reported is never overwritten.
+	finishIncomplete := func(cause error, clientGone bool) *OpenAIForwardResult {
+		applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
+			Path: "raw_chat_stream", Account: account, Model: originalModel, RequestID: requestID,
+			ClientGone: clientGone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+		})
+		return resultWithUsage()
+	}
 
 	scanErr := scanner.Err()
-	if scanErr != nil && !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
+	clientGone := clientDisconnected || watch.Gone()
+	if scanErr != nil && !clientGone && !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
 		logger.L().Warn("openai chat_completions raw: stream read error",
 			zap.Error(scanErr),
 			zap.String("request_id", requestID),
@@ -458,13 +486,17 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	if c != nil && c.Request != nil {
 		requestContextCanceled = c.Request.Context().Err() != nil
 	}
-	// A canceled client request must retain the existing partial-usage billing
-	// semantics. A transport timeout that did not cancel the request context is
-	// an upstream failure and must not be silently treated as a client abort.
-	clientAborted := clientDisconnected ||
+	// A client that left (or whose request was canceled) is not an upstream failure: the
+	// upstream is closed and the stream is billed with what it produced. A transport
+	// timeout that did not cancel the request context is an upstream failure and must
+	// not be silently treated as a client abort.
+	clientAborted := clientGone ||
 		(errors.Is(scanErr, context.Canceled) && requestContextCanceled) ||
 		(errors.Is(scanErr, context.DeadlineExceeded) && requestContextCanceled)
-	if !clientAborted && terminal.IsTruncated(clientOutputStarted) {
+	if clientAborted {
+		return finishIncomplete(scanErr, true), nil
+	}
+	if terminal.IsTruncated(clientOutputStarted) {
 		cause := scanErr
 		if cause == nil {
 			cause = ErrOpenAIUpstreamStreamTruncated
@@ -481,7 +513,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			return nil, newOpenAIRawStreamTruncatedFailoverError(c, account, requestID, cause)
 		}
 		recordOpenAIRawStreamTruncation(c, account, requestID, cause, "http_error")
-		return resultWithUsage(), newOpenAIUpstreamStreamReadError(cause)
+		return finishIncomplete(cause, false), newOpenAIUpstreamStreamReadError(cause)
 	}
 
 	if scanErr == nil && !clientDisconnected && !clientOutputStarted {
@@ -546,6 +578,83 @@ func extractCCStreamUsage(payload string) *OpenAIUsage {
 	return &u
 }
 
+// compatChatTally accumulates what a Chat Completions stream has produced (visible
+// text, refusal, reasoning, tool call names and arguments). A stream that ends without
+// a usage chunk is billed for its output from an estimate over this content. Reasoning
+// the upstream does not stream is not counted, so the estimate is a lower bound.
+type compatChatTally struct {
+	text      strings.Builder
+	refusal   strings.Builder
+	reasoning strings.Builder
+	tools     strings.Builder
+}
+
+func writeIfJSONString(b *strings.Builder, v gjson.Result) {
+	if v.Type == gjson.String {
+		_, _ = b.WriteString(v.String())
+	}
+}
+
+// AddPayload reads one raw stream chunk (the JSON after "data:").
+func (t *compatChatTally) AddPayload(payload string) {
+	if !strings.Contains(payload, `"delta"`) {
+		return
+	}
+	gjson.Get(payload, "choices").ForEach(func(_, choice gjson.Result) bool {
+		delta := choice.Get("delta")
+		writeIfJSONString(&t.text, delta.Get("content"))
+		writeIfJSONString(&t.refusal, delta.Get("refusal"))
+		if reasoning := delta.Get("reasoning_content"); reasoning.Type == gjson.String {
+			_, _ = t.reasoning.WriteString(reasoning.String())
+		} else {
+			writeIfJSONString(&t.reasoning, delta.Get("reasoning"))
+		}
+		delta.Get("tool_calls").ForEach(func(_, call gjson.Result) bool {
+			writeIfJSONString(&t.tools, call.Get("function.name"))
+			writeIfJSONString(&t.tools, call.Get("function.arguments"))
+			return true
+		})
+		writeIfJSONString(&t.tools, delta.Get("function_call.name"))
+		writeIfJSONString(&t.tools, delta.Get("function_call.arguments"))
+		return true
+	})
+}
+
+// AddChunk reads one parsed stream chunk.
+func (t *compatChatTally) AddChunk(chunk *apicompat.ChatCompletionsChunk) {
+	if chunk == nil {
+		return
+	}
+	for _, choice := range chunk.Choices {
+		delta := choice.Delta
+		if delta.Content != nil {
+			_, _ = t.text.WriteString(*delta.Content)
+		}
+		if delta.Refusal != nil {
+			_, _ = t.refusal.WriteString(*delta.Refusal)
+		}
+		switch {
+		case delta.ReasoningContent != nil:
+			_, _ = t.reasoning.WriteString(*delta.ReasoningContent)
+		case delta.Reasoning != nil:
+			_, _ = t.reasoning.WriteString(*delta.Reasoning)
+		}
+		for _, call := range delta.ToolCalls {
+			_, _ = t.tools.WriteString(call.Function.Name)
+			_, _ = t.tools.WriteString(call.Function.Arguments)
+		}
+	}
+}
+
+// EstimateTokens estimates the output tokens of everything tallied; 0 when nothing was
+// produced.
+func (t *compatChatTally) EstimateTokens() int {
+	return estimateTokensForText(t.text.String()) +
+		estimateTokensForText(t.refusal.String()) +
+		estimateTokensForText(t.reasoning.String()) +
+		estimateTokensForText(t.tools.String())
+}
+
 // bufferRawChatCompletions 透传上游 CC 非流式 JSON 响应。
 func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	c *gin.Context,
@@ -560,9 +669,32 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
+	// The client leaving closes the upstream at once, which fails the read below. The
+	// request was dispatched and accepted, so its input is still billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
-		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
+		if watch.Gone() && !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
+			base := &OpenAIForwardResult{
+				RequestID:                     requestID,
+				UpstreamHeaders:               resp.Header,
+				Model:                         originalModel,
+				BillingModel:                  billingModel,
+				UpstreamModel:                 upstreamModel,
+				UpstreamResponseModel:         observedUpstreamResponseModel(c),
+				UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+				UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+				ReasoningEffort:               reasoningEffort,
+				ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
+				Stream:                        false,
+				Duration:                      time.Since(startTime),
+			}
+			if result := compatBufferedGoneResult(c, account, "raw_chat_buffered", base, OpenAIUsage{}, nil, err); result != nil {
+				return result, nil
+			}
+		}
+		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) && !watch.Gone() {
 			writeChatCompletionsError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
 		}
 		return nil, fmt.Errorf("read upstream body: %w", err)

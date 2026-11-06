@@ -133,6 +133,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 		return s.handleAnthropicErrorResponse(resp, c, account, billingModel)
 	}
 
+	// Keep the body that went upstream: a request that ends without a usage report is
+	// billed for the input it really sent (see applyCompatIncompleteUsage).
+	stashCompatUpstreamRequestBody(c, account, body)
 	if clientStream {
 		return s.handleNativeAnthropicStreamingResponse(ctx, resp, c, account, originalModel, billingModel, upstreamModel, reasoningEffort, startTime)
 	}
@@ -258,8 +261,28 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 	}
 
+	// The client leaving closes the upstream at once, which fails the read below. The
+	// request was dispatched and accepted, so its input is still billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, anthropicTooLargeError)
 	if err != nil {
+		if watch.Gone() && !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
+			base := &OpenAIForwardResult{
+				RequestID:        resp.Header.Get("x-request-id"),
+				UpstreamHeaders:  resp.Header,
+				Model:            originalModel,
+				BillingModel:     billingModel,
+				UpstreamModel:    upstreamModel,
+				UpstreamEndpoint: "/v1/messages",
+				Stream:           false,
+				ReasoningEffort:  reasoningEffort,
+				Duration:         time.Since(startTime),
+			}
+			if result := compatBufferedGoneResult(c, account, "native_anthropic_buffered", base, OpenAIUsage{}, nil, err); result != nil {
+				return result, nil
+			}
+		}
 		return nil, err
 	}
 	observer := upstreamResponseModelObserverFromContext(c)
@@ -360,6 +383,57 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	sawTerminalEvent := false
 	pendingErrorHeader := ""
 
+	// The client leaving (its request ends, or a write to it fails) closes the upstream
+	// at once. Lines the scanner already queued are still processed, so a final usage
+	// report that had arrived keeps its real numbers; otherwise the output tallied so
+	// far and the input sent are billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	var tally compatAnthropicTally
+	clientCancelCh := watch.Done()
+	var graceTimer *time.Timer
+	var graceCh <-chan time.Time
+	defer func() {
+		if graceTimer != nil {
+			graceTimer.Stop()
+		}
+	}()
+	markGone := func() {
+		clientDisconnected = true
+		watch.Disconnect()
+		if graceTimer == nil {
+			graceTimer = time.NewTimer(compatClientGoneGrace)
+			graceCh = graceTimer.C
+		}
+	}
+	buildResult := func() *OpenAIForwardResult {
+		return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected || watch.Gone(), originalModel, billingModel, upstreamModel, reasoningEffort, startTime)
+	}
+	// finishIncomplete ends a stream that has no terminal event. When the client is gone
+	// the request is complete from the gateway's side: what the upstream produced and
+	// what was sent is billed from an estimate and no error is returned, so the handler
+	// neither fails over nor counts the account as faulty. With the client still
+	// attached the cause is returned as before, and output already produced is still
+	// billed. The output count in message_start is a placeholder (1) until message_delta
+	// reports the real one, so it is replaced by a larger estimate.
+	finishIncomplete := func(cause error) (*OpenAIForwardResult, error) {
+		gone := clientDisconnected || watch.Gone()
+		result := buildResult()
+		replaceUpTo := 0
+		if !tally.sawFinalOutput {
+			replaceUpTo = result.Usage.OutputTokens
+		}
+		applyCompatIncompleteUsage(c, &result.Usage, compatIncompleteUsage{
+			Path: "native_anthropic_stream", Account: account, Model: originalModel,
+			RequestID: result.RequestID, ClientGone: gone, Cause: cause,
+			OutputEstimate: tally.EstimateTokens(), ReplaceOutputUpTo: replaceUpTo,
+		})
+		if gone {
+			return result, nil
+		}
+		return result, cause
+	}
+
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -449,29 +523,25 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					flusher.Flush()
 				}
 				if !sawTerminalEvent {
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-						fmt.Errorf("stream usage incomplete: missing terminal event")
+					return finishIncomplete(fmt.Errorf("stream usage incomplete: missing terminal event"))
 				}
-				return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
+				return buildResult(), nil
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
+					return buildResult(), nil
 				}
-				if clientDisconnected {
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-						fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+				if clientDisconnected || watch.Gone() {
+					return finishIncomplete(fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err))
 				}
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-						fmt.Errorf("stream usage incomplete: %w", ev.err)
+					return finishIncomplete(fmt.Errorf("stream usage incomplete: %w", ev.err))
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), ev.err
+					return buildResult(), ev.err
 				}
-				return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-					fmt.Errorf("stream read error: %w", ev.err)
+				return finishIncomplete(fmt.Errorf("stream read error: %w", ev.err))
 			}
 
 			line := ev.line
@@ -486,7 +556,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					if !clientDisconnected {
 						WriteUpstreamFinancialError(c, 0, []byte(data))
 					}
-					return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime), nil
+					return buildResult(), nil
 				}
 				observer.ObserveAnthropic([]byte(trimmed))
 				if anthropicStreamEventIsTerminal("", trimmed) {
@@ -497,6 +567,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					firstTokenMs = &ms
 				}
 				parseSSEUsagePassthrough(data, usage)
+				tally.AddData(data)
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
@@ -511,11 +582,11 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					pendingErrorHeader = ""
 				}
 				if _, err := io.WriteString(w, restored); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+					markGone()
+					logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Client disconnected during streaming, upstream closed: account=%d", account.ID)
 				} else if _, err := io.WriteString(w, "\n"); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+					markGone()
+					logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Client disconnected during streaming, upstream closed: account=%d", account.ID)
 				} else if line == "" {
 					// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
 					flusher.Flush()
@@ -527,21 +598,26 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				}
 			}
 
+		case <-clientCancelCh:
+			clientCancelCh = nil
+			markGone()
+
+		case <-graceCh:
+			return finishIncomplete(fmt.Errorf("stream usage incomplete after disconnect"))
+
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 			if time.Since(lastRead) < streamInterval {
 				continue
 			}
-			if clientDisconnected {
-				return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-					fmt.Errorf("stream usage incomplete after timeout")
+			if clientDisconnected || watch.Gone() {
+				return finishIncomplete(fmt.Errorf("stream usage incomplete after timeout"))
 			}
 			logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, upstreamModel, streamInterval)
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, upstreamModel)
 			}
-			return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected, originalModel, billingModel, upstreamModel, reasoningEffort, startTime),
-				fmt.Errorf("stream data interval timeout")
+			return finishIncomplete(fmt.Errorf("stream data interval timeout"))
 
 		case <-keepaliveCh:
 			if clientDisconnected {
@@ -556,8 +632,8 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				continue
 			}
 			if _, err := fmt.Fprint(w, "event: ping\ndata: {\"type\": \"ping\"}\n\n"); err != nil {
-				clientDisconnected = true
-				logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Client disconnected during keepalive ping, continue draining upstream for usage: account=%d", account.ID)
+				markGone()
+				logger.LegacyPrintf("service.gateway", "[CN Anthropic 直通] Client disconnected during keepalive ping, upstream closed: account=%d", account.ID)
 				continue
 			}
 			flusher.Flush()
@@ -598,6 +674,56 @@ func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
 	}
+}
+
+// compatAnthropicTally accumulates what a native Anthropic stream has produced (text,
+// thinking, tool names and tool input JSON). A stream that ends before message_delta
+// reports the final usage is billed for its output from an estimate over this content.
+type compatAnthropicTally struct {
+	text     strings.Builder
+	thinking strings.Builder
+	tools    strings.Builder
+	// sawFinalOutput is set once message_delta carried an output token count, the real
+	// one; message_start only carries a placeholder.
+	sawFinalOutput bool
+}
+
+// AddData reads one SSE data payload.
+func (t *compatAnthropicTally) AddData(data string) {
+	switch gjson.Get(data, "type").String() {
+	case "content_block_start":
+		block := gjson.Get(data, "content_block")
+		switch block.Get("type").String() {
+		case "text":
+			_, _ = t.text.WriteString(block.Get("text").String())
+		case "thinking":
+			_, _ = t.thinking.WriteString(block.Get("thinking").String())
+		case "tool_use", "server_tool_use":
+			_, _ = t.tools.WriteString(block.Get("name").String())
+		}
+	case "content_block_delta":
+		delta := gjson.Get(data, "delta")
+		switch delta.Get("type").String() {
+		case "text_delta":
+			_, _ = t.text.WriteString(delta.Get("text").String())
+		case "thinking_delta":
+			_, _ = t.thinking.WriteString(delta.Get("thinking").String())
+		case "input_json_delta":
+			_, _ = t.tools.WriteString(delta.Get("partial_json").String())
+		}
+	case "message_delta":
+		if v := gjson.Get(data, "usage.output_tokens"); v.Exists() && v.Type != gjson.Null {
+			t.sawFinalOutput = true
+		}
+	}
+}
+
+// EstimateTokens estimates the output tokens of everything tallied; 0 when nothing was
+// produced.
+func (t *compatAnthropicTally) EstimateTokens() int {
+	return estimateTokensForText(t.text.String()) +
+		estimateTokensForText(t.thinking.String()) +
+		estimateTokensForText(t.tools.String())
 }
 
 // claudeUsageToOpenAIUsage 把 Anthropic 格式 usage 映射到 OpenAI 网关统一的

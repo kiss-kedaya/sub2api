@@ -135,6 +135,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		return s.handleErrorResponse(ctx, resp, c, account, chatBody, billingModel)
 	}
 
+	// Keep the client's Responses body: a request that ends without a usage report is
+	// billed for the input it really sent (see applyCompatIncompleteUsage).
+	stashCompatUpstreamRequestBody(c, account, body)
 	if clientStream {
 		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, localShellTools, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
@@ -157,8 +160,33 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
-	ccResp, usage, err := s.readCCUpstreamJSONResponse(c, resp, writeOpenAIResponsesFallbackError)
+	// The client leaving closes the upstream at once, which fails the read below. The
+	// request was dispatched and accepted, so its input is still billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	ccResp, usage, err := s.readCCUpstreamJSONResponse(c, watch.wrapResponse(resp), func(c *gin.Context, status int, errType, message string) {
+		if !watch.Gone() {
+			writeOpenAIResponsesFallbackError(c, status, errType, message)
+		}
+	})
 	if err != nil {
+		if watch.Gone() && errors.Is(err, context.Canceled) {
+			base := &OpenAIForwardResult{
+				RequestID:                   requestID,
+				UpstreamHeaders:             resp.Header,
+				Model:                       originalModel,
+				BillingModel:                billingModel,
+				UpstreamModel:               upstreamModel,
+				ReasoningEffort:             reasoningEffort,
+				UpstreamResponseServiceTier: observedUpstreamResponseServiceTier(c),
+				ServiceTier:                 resolvedOpenAIUpstreamServiceTier(c, serviceTier),
+				Stream:                      false,
+				Duration:                    time.Since(startTime),
+			}
+			if result := compatBufferedGoneResult(c, nil, "responses_chat_buffered", base, OpenAIUsage{}, nil, err); result != nil {
+				return result, nil
+			}
+		}
 		return nil, err
 	}
 	responsesResp := apicompat.ChatCompletionsResponseToResponsesWithLocalShell(ccResp, originalModel, customTools, functionTools, toolSearch, namespaceTools, localShellTools)
@@ -210,6 +238,14 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	state.LocalShellTools = localShellTools
 	clientDisconnected := false
 
+	// The client leaving (its request ends, or a write to it fails) closes the upstream
+	// at once: the next read fails and the scan ends. Chunks already buffered are still
+	// converted, so a usage chunk that had arrived keeps its real numbers; otherwise the
+	// output tallied so far and the input sent are billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	var tally compatChatTally
+
 	writeEvents := func(events []apicompat.ResponsesStreamEvent) {
 		if clientDisconnected || len(events) == 0 {
 			return
@@ -226,7 +262,8 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			}
 			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
 				clientDisconnected = true
-				logger.L().Debug("openai responses chat fallback: client disconnected, continuing to drain upstream for billing",
+				watch.Disconnect()
+				logger.L().Debug("openai responses chat fallback: client disconnected, upstream closed",
 					zap.Error(err),
 					zap.String("request_id", requestID),
 				)
@@ -236,14 +273,18 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		c.Writer.Flush()
 	}
 
-	scan := s.scanCCStream(c, resp, "openai responses chat fallback", requestID, startTime, func(chunk *apicompat.ChatCompletionsChunk) {
+	// scanCCStream reads the body through the watch, which reports the read error that
+	// closing it causes as a canceled context, as the shared scanner expects.
+	scan := s.scanCCStream(c, watch.wrapResponse(resp), "openai responses chat fallback", requestID, startTime, func(chunk *apicompat.ChatCompletionsChunk) {
+		tally.AddChunk(chunk)
 		events := apicompat.ChatCompletionsChunkToResponsesEvents(chunk, state)
 		s.cacheReasoningItemsFromEvents(events)
 		writeEvents(events)
 	})
 
-	if scan.Err != nil {
-		return &OpenAIForwardResult{
+	// The stream ended without [DONE] and the client is gone: nothing more will come.
+	if gone := clientDisconnected || watch.Gone(); scan.Err != nil || (gone && !scan.SawDone) {
+		result := &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
 			Usage:                       scan.Usage,
@@ -256,7 +297,20 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			Stream:                      true,
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
-		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
+			ClientDisconnect:            gone,
+		}
+		cause := scan.Err
+		if cause == nil {
+			cause = errors.New("missing done sentinel")
+		}
+		applyCompatIncompleteUsage(c, &result.Usage, compatIncompleteUsage{
+			Path: "responses_chat_stream", Model: originalModel, RequestID: requestID,
+			ClientGone: gone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+		})
+		if gone {
+			return result, nil
+		}
+		return result, fmt.Errorf("stream usage incomplete: %w", cause)
 	}
 	if err := state.ValidateToolCallArguments(); err != nil {
 		return &OpenAIForwardResult{

@@ -2161,10 +2161,10 @@ func TestForwardAsAnthropic_MissingTerminalAfterClientDisconnectSkipsOpsAndFailo
 	}
 
 	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing terminal event")
-	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
+	// A client that left is not an upstream failure: the request ends as a result
+	// flagged ClientDisconnect (billed from an estimate), not as an error, so no
+	// handler fails over or counts the account as faulty.
+	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.ClientDisconnect)
 	require.Empty(t, rec.Body.String())
