@@ -312,6 +312,10 @@ func TestOpenAIImages_ClientLeavesBeforeResponseHeadersCancelsUpstream(t *testin
 					require.ErrorIs(t, out.err, context.Canceled)
 					require.EqualValues(t, 1, upstream.calls.Load())
 					requireImagesNothingBilled(t, out)
+					// The upstream did not fail; the client left. No upstream error event
+					// is recorded for it (it would count against the account).
+					events, _ := c.Get(OpsUpstreamErrorsKey)
+					require.Empty(t, events, "a departed client must not be recorded as an upstream error")
 				case <-time.After(3 * time.Second):
 					t.Fatal("the upstream request outlived the departed client")
 				}

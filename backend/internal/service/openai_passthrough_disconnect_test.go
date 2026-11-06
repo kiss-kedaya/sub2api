@@ -76,11 +76,19 @@ func newPassthroughDisconnectService(upstream HTTPUpstream) *OpenAIGatewayServic
 // content type; the request body decides whether the client asked for a stream.
 func startPassthroughDisconnectForward(t *testing.T, body string, streaming bool) *disconnectPipeHarness {
 	t.Helper()
+	return startPassthroughDisconnectForwardWithStatus(t, body, streaming, http.StatusOK)
+}
+
+// startPassthroughDisconnectForwardWithStatus is startPassthroughDisconnectForward
+// for an upstream that answers with the given status.
+func startPassthroughDisconnectForwardWithStatus(t *testing.T, body string, streaming bool, status int) *disconnectPipeHarness {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	c, recorder := newPassthroughDisconnectContext(t, ctx, []byte(body))
 	resp, tracked, pw := newLifecycleTrackingResponse()
+	resp.StatusCode = status
 	contentType := "application/json"
 	if streaming {
 		contentType = "text/event-stream"
@@ -423,6 +431,27 @@ func TestOpenAIPassthroughBuffered_ClientLeavesWhileBodyArrivesBillsInputOnly(t 
 	require.Greater(t, billingRepo.lastCmd.BalanceCost, 0.0)
 	body, _ := h.recorder.snapshot()
 	require.Empty(t, body, "no response may be committed to a canceled client")
+}
+
+// The upstream answers with an error status and the client leaves while the error
+// body is still arriving. The upstream rejected the request, so nothing is billed;
+// the half-read error body must not be mistaken for the upstream's verdict, which
+// would fail over to another account for a client that is gone.
+func TestOpenAIPassthrough_ClientLeavesWhileErrorBodyArrivesDoesNotFailOver(t *testing.T) {
+	h := startPassthroughDisconnectForwardWithStatus(t, passthroughDisconnectBufferedBody, false, http.StatusBadGateway)
+	h.write(`{"error":{"message":"upstream is`)
+	canceledAt := time.Now()
+	h.cancel()
+
+	out := h.await(3 * time.Second)
+
+	require.Less(t, time.Since(canceledAt), 2*time.Second)
+	require.ErrorIs(t, out.err, context.Canceled)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(out.err, &failoverErr), "a departed client must not fail over to another account")
+	require.Nil(t, out.result, "an upstream that rejected the request is not billed")
+	require.Len(t, h.upstream.requests, 1)
+	h.requireUpstreamClosed()
 }
 
 // A terminal frame the gateway already read before noticing the client is gone
