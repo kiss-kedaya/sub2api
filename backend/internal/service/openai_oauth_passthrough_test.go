@@ -849,7 +849,11 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 	require.Contains(t, rec.Body.String(), `"id":"cmp_123"`)
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCancel(t *testing.T) {
+// Owner decision 2026-11-06 reversed the old "upstream request ignores client
+// cancel" rule: a client that is already gone before the request is sent is not
+// served. The request never reaches the upstream, so nothing is produced and
+// nothing is billed.
+func TestOpenAIGatewayService_OAuthPassthrough_ClientGoneBeforeSendIsNotSentUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -889,10 +893,11 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 	}
 
 	result, err := svc.Forward(reqCtx, c, account, originalBody)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, upstream.lastReq)
-	require.NoError(t, upstream.lastReq.Context().Err())
+	require.ErrorIs(t, err, context.Canceled)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "a departed client must not fail over")
+	require.Nil(t, result)
+	require.Nil(t, upstream.lastReq, "a request whose client already left must not be sent upstream")
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsGetsDefault(t *testing.T) {

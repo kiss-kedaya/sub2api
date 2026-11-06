@@ -355,6 +355,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	compactModelFallbackRetried := false
 	responsesLiteParallelToolCallsRetryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
+	// The upstream request runs detached from the client (billing and failover must
+	// outlive it), so the client's own context is watched separately: when it ends,
+	// the upstream call is canceled while waiting for headers and the body is closed
+	// while it streams.
+	clientCtx := ctx
+	if c != nil && c.Request != nil {
+		clientCtx = c.Request.Context()
+	}
 	var resp *http.Response
 	var usage *OpenAIUsage
 	var firstTokenMs *int
@@ -415,7 +423,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		upstreamStart := time.Now()
-		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		// A client that leaves before the response headers cancels the upstream call
+		// at once, for buffered requests too: nothing was produced, so nothing is billed.
+		resp, err = s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account, true)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			if account.IsCopilotSDKEnabled() {
@@ -543,6 +553,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					clientDisconnect = result.clientDisconnect
 				}
 				_ = resp.Body.Close()
+				// The stream ended without a terminal frame after the upstream accepted
+				// the request: bill an estimate instead of dropping the work for free.
+				applyIncompletePassthroughStreamUsage(account, result, body, upstreamPassthroughModel, handleErr)
 				return preserveOpenAIStreamingResultOnError(buildForwardResult(), handleErr)
 			}
 			usage = result.usage
@@ -575,6 +588,15 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					return nil, s.handleErrorResponsePassthrough(ctx, compactResp, c, account, body, compactBody)
 				}
 				_ = resp.Body.Close()
+				if result != nil && result.clientDisconnect {
+					// The client left while the body was still arriving and the upstream
+					// was closed. The request had been accepted, so bill its input.
+					usage = result.usage
+					responseID = strings.TrimSpace(result.responseID)
+					clientDisconnect = true
+					applyIncompletePassthroughBufferedUsage(account, result, body, upstreamPassthroughModel, handleErr)
+					return preserveOpenAIStreamingResultOnError(buildForwardResult(), handleErr)
+				}
 				return nil, handleErr
 			}
 			usage = result.usage
@@ -1153,6 +1175,12 @@ type openaiStreamingResultPassthrough struct {
 	imageOutputSizes         []string
 	nonBillableUpstreamError bool
 	clientDisconnect         bool
+	// incompleteStream is true when the stream ended without any terminal frame, so
+	// no real usage was reported (unless an early frame carried some).
+	incompleteStream bool
+	// incompleteOutputTokens is a lower-bound estimate of the output the upstream
+	// produced in that case; 0 when a terminal frame arrived or nothing was produced.
+	incompleteOutputTokens int
 }
 
 type openaiNonStreamingResultPassthrough struct {
@@ -1162,6 +1190,9 @@ type openaiNonStreamingResultPassthrough struct {
 	imageCount               int
 	imageOutputSizes         []string
 	nonBillableUpstreamError bool
+	// clientDisconnect marks a response the client left before it was fully read;
+	// usage is then empty and only the input side may be estimated.
+	clientDisconnect bool
 }
 
 const openAIStreamKeepaliveBytesKey = "openai_stream_keepalive_bytes"
@@ -2114,9 +2145,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	mappedModel string,
 ) (*openaiStreamingResultPassthrough, error) {
 	nativeReasoning := s.newDeepSeekNativeReasoningRecorder(c, account)
-	if account.IsCopilotSDKEnabled() && ctx != nil && resp.Body != nil {
-		stop := context.AfterFunc(ctx, func() { _ = resp.Body.Close() })
-		defer stop()
+	var requestCtx context.Context
+	if c != nil && c.Request != nil {
+		requestCtx = c.Request.Context()
+	}
+	// The upstream request is detached from the client, so nothing cancels a quiet
+	// upstream when the client leaves. Close the body then: the blocked read fails
+	// at once, and frames the scanner already buffered are still processed.
+	if resp.Body != nil {
+		stopCloseOnClientGone := closeOpenAIBodyOnClientGone(resp.Body, ctx, requestCtx)
+		defer stopCloseOnClientGone()
 	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -2145,6 +2183,27 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	responseID := ""
 	ttftMode := s.openAITTFTMode(ctx)
 	clientDisconnected := false
+	// Output the upstream produced, kept so a stream that ends without a terminal
+	// frame is billed from an estimate instead of being dropped for free.
+	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
+	streamAccountID := int64(0)
+	if account != nil {
+		streamAccountID = account.ID
+	}
+	// markClientDisconnected is the single exit for a departed client, whether the
+	// request context ended or a write to the client failed. It closes the upstream
+	// at once; frames the scanner already buffered are still processed, so a
+	// terminal frame that had arrived keeps its real usage.
+	markClientDisconnected := func() {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, upstream connection closed: account=%d", streamAccountID)
+	}
 	sawDone := false
 	sawTerminalEvent := false
 	sawFailedEvent := false
@@ -2219,8 +2278,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	writePendingLines := func() bool {
 		for _, pending := range pendingLines {
 			if _, err := fmt.Fprintln(w, pending); err != nil {
-				clientDisconnected = true
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+				markClientDisconnected()
 				return false
 			}
 		}
@@ -2253,7 +2311,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return
 		}
 		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, bareErrorPayload, failedMessage)); err != nil {
-			clientDisconnected = true
+			markClientDisconnected()
 			return
 		}
 		clientOutputStarted = true
@@ -2279,6 +2337,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
+		incompleteStream := !sawTerminalEvent && !nonBillableUpstreamError
+		incompleteOutputTokens := 0
+		if incompleteStream {
+			// No terminal frame means no real usage can arrive. Keep a lower-bound
+			// estimate of what the upstream already produced so it is not free.
+			incompleteOutputTokens = estimateIncompleteStreamOutputTokens(streamOutputAccumulator)
+		}
 		return &openaiStreamingResultPassthrough{
 			usage:                    usage,
 			firstTokenMs:             firstTokenMs,
@@ -2287,14 +2352,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			imageOutputSizes:         imageCounter.Sizes(),
 			nonBillableUpstreamError: nonBillableUpstreamError,
 			clientDisconnect:         clientDisconnected,
+			incompleteStream:         incompleteStream,
+			incompleteOutputTokens:   incompleteOutputTokens,
 		}
 	}
 
 	for documentScanner.Scan() {
 		var deepSeekBefore, deepSeekAfter []string
 		dropDeepSeekLine := false
-		if ctx.Err() != nil || (c.Request != nil && c.Request.Context().Err() != nil) {
-			clientDisconnected = true
+		if openAIClientGone(ctx, requestCtx) {
+			markClientDisconnected()
 		}
 		line := documentScanner.Text()
 		if eventType, ok := extractOpenAISSEEventLine(line); ok {
@@ -2314,13 +2381,15 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if refusalErr := grokModerationRefusalProtocolError(account, dataBytes); refusalErr != nil &&
 				(rawEventType == "response.failed" || rawEventType == "error") {
 				s.parseSSEUsageBytesWithType(dataBytes, rawEventType, usage)
+				// A failed / error frame is a terminal frame: nothing is estimated after it.
+				sawTerminalEvent = true
 				responseID = firstNonEmpty(responseID, extractOpenAIResponseIDFromSSEFrame(frame))
 				s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "stream_failed", dataBytes, extractOpenAISSEErrorMessage(dataBytes))
 				s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, true)
 				stopKeepalive()
 				if !clientDisconnected && writePendingLines() {
 					if _, err := fmt.Fprint(w, line+"\n\n"); err != nil {
-						clientDisconnected = true
+						markClientDisconnected()
 					} else {
 						flushPending = true
 					}
@@ -2391,6 +2460,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			cyberHit := false
 			if eventType == "response.failed" || eventType == "error" {
+				// A failed / error frame is a terminal frame, also on the paths below that
+				// return early: the upstream has answered, so nothing is estimated after it.
+				sawTerminalEvent = true
 				// Financial bare-error preludes must resolve to one Responses terminal.
 				if IsUpstreamFinancialError(0, dataBytes) {
 					codexFailureTerminal = true
@@ -2546,6 +2618,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				firstTokenMs = &ms
 			}
 			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
+			observePassthroughStreamOutput(streamOutputAccumulator, eventType, dataBytes)
 		}
 		if line == "" {
 			pendingSSEEventType = ""
@@ -2578,8 +2651,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			writeDeepSeekLines := func(lines []string) bool {
 				for _, extra := range lines {
 					if _, err := fmt.Fprintln(w, extra); err != nil {
-						clientDisconnected = true
-						logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+						markClientDisconnected()
 						return false
 					}
 					clientOutputStarted = true
@@ -2605,8 +2677,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				line = rewritten
 			}
 			if _, err := fmt.Fprintln(w, line); err != nil {
-				clientDisconnected = true
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+				markClientDisconnected()
 			} else {
 				clientOutputStarted = true
 				flushPending = true
@@ -2634,8 +2705,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			failureDelivered = true
 		}
 	}
-	if ctx.Err() != nil || (c.Request != nil && c.Request.Context().Err() != nil) {
-		clientDisconnected = true
+	if openAIClientGone(ctx, requestCtx) {
+		markClientDisconnected()
 	}
 	ensureResponseFailedTerminal()
 	if err := documentScanner.Err(); err != nil {
@@ -2699,6 +2770,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		s.recordOpenAIProxyStreamDisconnect(account, errors.New("stream ended before terminal event"), upstreamRequestID)
 		return resultWithUsage(), errors.New("stream usage incomplete: missing terminal event")
 	}
+	if clientDisconnected && !sawDone && !sawTerminalEvent {
+		// The client left and the upstream was closed before any terminal frame: the
+		// stream ended cleanly from the reader's side but no usage was ever reported.
+		// Say so, so the estimate is billed instead of a zero-usage "success".
+		return resultWithUsage(), errors.New("stream usage incomplete after disconnect: missing terminal event")
+	}
 	if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 		s.clearOpenAIProxyStreamDisconnect(account)
 	}
@@ -2715,8 +2792,27 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiNonStreamingResultPassthrough, error) {
+	var requestCtx context.Context
+	if c != nil && c.Request != nil {
+		requestCtx = c.Request.Context()
+	}
+	// The upstream request is detached from the client, so close the body when the
+	// client leaves: the blocked read fails at once instead of waiting for the full
+	// response. A body that was already fully read is unaffected.
+	stopCloseOnClientGone := closeOpenAIBodyOnClientGone(resp.Body, ctx, requestCtx)
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	stopCloseOnClientGone()
 	if err != nil {
+		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) && openAIClientGone(ctx, requestCtx) {
+			// The client left before the response was complete and the upstream was
+			// closed. No usage was reported; the caller bills the accepted input.
+			abandoned := &OpenAIUsage{}
+			return &openaiNonStreamingResultPassthrough{
+				OpenAIUsage:      abandoned,
+				usage:            abandoned,
+				clientDisconnect: true,
+			}, fmt.Errorf("upstream response abandoned after client disconnect: %w", err)
+		}
 		return nil, err
 	}
 	s.cacheDeepSeekNativeReasoningBody(c, account, body)
