@@ -208,6 +208,16 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	h.respondWithTokenPair(c, user)
 }
 
+const verifyCodeSendCountdown = 60
+
+// isRegisterEmailTaken reports whether a send-verify-code failure is the
+// "email already registered" case. The handler must answer such requests with
+// the same success payload as a real send, otherwise the endpoint becomes a
+// reliable account-enumeration oracle (audit finding #14).
+func isRegisterEmailTaken(err error) bool {
+	return errors.Is(err, service.ErrEmailExists)
+}
+
 // SendVerifyCode 发送邮箱验证码
 // POST /api/v1/auth/send-verify-code
 func (h *AuthHandler) SendVerifyCode(c *gin.Context) {
@@ -225,6 +235,15 @@ func (h *AuthHandler) SendVerifyCode(c *gin.Context) {
 
 	result, err := h.authService.SendVerifyCodeAsync(c.Request.Context(), req.Email, c.GetHeader("Accept-Language"))
 	if err != nil {
+		// 注册发码不能暴露邮箱是否已注册：已注册邮箱与正常发码返回完全相同的 200，
+		// 只是不会真的发信。审计 finding #14。
+		if isRegisterEmailTaken(err) {
+			response.Success(c, SendVerifyCodeResponse{
+				Message:   "Verification code sent successfully",
+				Countdown: verifyCodeSendCountdown,
+			})
+			return
+		}
 		response.ErrorFrom(c, err)
 		return
 	}
