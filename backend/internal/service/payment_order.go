@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -178,6 +180,13 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// The pending/daily checks are read-then-write. Serialize every order
+	// creation of the same user so a concurrent request cannot count before
+	// the previous one commits; the transaction-scoped lock is released on
+	// commit/rollback and different users hash to different keys.
+	if err := lockPaymentOrderCreateForUser(ctx, s.entClient, tx, req.UserID); err != nil {
+		return nil, err
+	}
 	if err := s.checkPendingLimit(ctx, tx, req.UserID, cfg.MaxPendingOrders); err != nil {
 		return nil, err
 	}
@@ -260,6 +269,34 @@ func (s *PaymentService) allocateOutTradeNo(ctx context.Context, tx *dbent.Tx) (
 		}
 	}
 	return "", fmt.Errorf("generate unique out_trade_no: exhausted %d attempts", maxAttempts)
+}
+
+const (
+	// paymentOrderCreateLockNamespace keeps this lock in its own hash space so
+	// it never collides with advisories taken for a bare user identifier.
+	paymentOrderCreateLockNamespace = "payment-order-create:"
+	paymentOrderCreateLockQuery     = "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"
+)
+
+// lockPaymentOrderCreateForUser serializes pending/daily limit checks with the
+// order insert for a single user. It is a no-op outside PostgreSQL (unit tests
+// and deployments that use another dialect), where the transaction-scoped
+// advisory lock does not exist.
+func lockPaymentOrderCreateForUser(ctx context.Context, client *dbent.Client, tx *dbent.Tx, userID int64) error {
+	if client == nil || tx == nil || client.Driver().Dialect() != dialect.Postgres {
+		return nil
+	}
+	key := paymentOrderCreateLockKey(userID)
+	var rows entsql.Rows
+	if err := tx.Client().Driver().Query(ctx, paymentOrderCreateLockQuery, []any{key}, &rows); err != nil {
+		return fmt.Errorf("lock payment order creation for user: %w", err)
+	}
+	_ = rows.Close()
+	return nil
+}
+
+func paymentOrderCreateLockKey(userID int64) string {
+	return paymentOrderCreateLockNamespace + strconv.FormatInt(userID, 10)
 }
 
 func (s *PaymentService) checkPendingLimit(ctx context.Context, tx *dbent.Tx, userID int64, max int) error {
