@@ -6,8 +6,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
 )
+
+func TestGrokVoiceTTSUsesUpstreamTextField(t *testing.T) {
+	body := []byte(`{"input":"short","text":"the text upstream speaks"}`)
+	if got, want := extractGrokTTSInputText(body), "the text upstream speaks"; got != want {
+		t.Fatalf("moderation text = %q, want %q", got, want)
+	}
+	estimate := grokVoiceInflightEstimate("tts", body)
+	if estimate.Kind != service.InflightEstimateAudio || estimate.AudioMode != "tts" {
+		t.Fatalf("unexpected estimate shape: %#v", estimate)
+	}
+	if want := float64(len("the text upstream speaks")) / 1e6; estimate.AudioUnits != want {
+		t.Fatalf("in-flight units = %v, want %v", estimate.AudioUnits, want)
+	}
+}
 
 func TestIsExpectedGrokRealtimeClose(t *testing.T) {
 	for _, status := range []coderws.StatusCode{
