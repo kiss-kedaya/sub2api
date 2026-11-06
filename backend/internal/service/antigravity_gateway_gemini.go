@@ -419,6 +419,7 @@ handleSuccess:
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	goneOutputTokens := 0
 
 	if stream {
 		// 客户端要求流式，直接透传
@@ -430,6 +431,7 @@ handleSuccess:
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
+		goneOutputTokens = streamRes.outputTokens
 	} else {
 		// 客户端要求非流式，收集流式响应后返回
 		streamRes, err := s.handleGeminiStreamToNonStreaming(c, resp, startTime)
@@ -439,10 +441,17 @@ handleSuccess:
 		}
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
+		clientDisconnect = streamRes.clientDisconnect
+		goneOutputTokens = streamRes.outputTokens
 	}
 
 	if usage == nil {
 		usage = &ClaudeUsage{}
+	}
+	if clientDisconnect {
+		// The client left after the upstream accepted the request: bill what the upstream
+		// reported and estimate the rest (gemini_family_incomplete_usage.go).
+		applyIncompleteGeminiUsage("antigravity_usage.client_gone_estimated", account, forwardedModel, usage, goneOutputTokens, body)
 	}
 
 	// 判断是否为图片生成模型
