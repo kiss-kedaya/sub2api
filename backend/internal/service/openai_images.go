@@ -294,19 +294,19 @@ func parseOpenAIImagesJSONRequest(body []byte, req *OpenAIImagesRequest) error {
 		v := int(partialImages.Int())
 		req.PartialImages = &v
 	}
-	if frameCount := gjson.GetBytes(body, "frame_count"); frameCount.Exists() {
-		if frameCount.Type != gjson.Number {
-			return fmt.Errorf("invalid frame_count field type")
-		}
-		v := int(frameCount.Int())
-		req.FrameCount = &v
+	frameCount, hasFrameCount, err := parseOpenAIImagesJSONIntField(body, "frame_count")
+	if err != nil {
+		return err
 	}
-	if frameDuration := gjson.GetBytes(body, "frame_duration_ms"); frameDuration.Exists() {
-		if frameDuration.Type != gjson.Number {
-			return fmt.Errorf("invalid frame_duration_ms field type")
-		}
-		v := int(frameDuration.Int())
-		req.FrameDurationMS = &v
+	if hasFrameCount {
+		req.FrameCount = &frameCount
+	}
+	frameDuration, hasFrameDuration, err := parseOpenAIImagesJSONIntField(body, "frame_duration_ms")
+	if err != nil {
+		return err
+	}
+	if hasFrameDuration {
+		req.FrameDurationMS = &frameDuration
 	}
 	if req.IsEdits() {
 		images := gjson.GetBytes(body, "images")
@@ -339,6 +339,55 @@ func parseOpenAIImagesJSONRequest(body []byte, req *OpenAIImagesRequest) error {
 		return gjson.GetBytes(body, path).Exists()
 	})
 	return nil
+}
+
+// parseOpenAIImagesJSONIntField reads an optional integer field of a JSON image request.
+// A JSON number is accepted as before. A JSON string that holds a plain decimal integer
+// (for example "8") is accepted too: the upstream's own examples quote the GIF animation
+// controls, and the multipart form path already parses them from text. Everything else
+// (bool, null, object, array, a non-numeric string) is still rejected.
+func parseOpenAIImagesJSONIntField(body []byte, field string) (int, bool, error) {
+	result := gjson.GetBytes(body, field)
+	if !result.Exists() {
+		return 0, false, nil
+	}
+	switch result.Type {
+	case gjson.Number:
+		return int(result.Int()), true, nil
+	case gjson.String:
+		n, err := strconv.Atoi(strings.TrimSpace(result.String()))
+		if err != nil {
+			return 0, false, fmt.Errorf("invalid %s field value", field)
+		}
+		return n, true, nil
+	default:
+		return 0, false, fmt.Errorf("invalid %s field type", field)
+	}
+}
+
+// normalizeOpenAIImagesAnimationFields turns GIF animation controls that arrived as quoted
+// numbers ("frame_count":"8") into real JSON numbers before the body goes to an API-key
+// upstream. The numeric form is what has been verified end to end, and a strict upstream
+// may refuse the quoted one. Bodies that already carry numbers, and multipart forms (where
+// every field is text anyway), are returned untouched.
+func normalizeOpenAIImagesAnimationFields(body []byte, contentType string) ([]byte, error) {
+	if mediaType, _, err := mime.ParseMediaType(contentType); err == nil && strings.EqualFold(mediaType, "multipart/form-data") {
+		return body, nil
+	}
+	for _, field := range []string{"frame_count", "frame_duration_ms"} {
+		value, present, err := parseOpenAIImagesJSONIntField(body, field)
+		if err != nil {
+			return nil, err
+		}
+		if !present || gjson.GetBytes(body, field).Type != gjson.String {
+			continue
+		}
+		body, err = sjson.SetBytes(body, field, value)
+		if err != nil {
+			return nil, fmt.Errorf("rewrite image request %s: %w", field, err)
+		}
+	}
+	return body, nil
 }
 
 func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *OpenAIImagesRequest) error {
@@ -661,6 +710,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		account.Type,
 	)
 	forwardBody, forwardContentType, err := rewriteOpenAIImagesModel(body, parsed.ContentType, upstreamModel)
+	if err != nil {
+		return nil, err
+	}
+	forwardBody, err = normalizeOpenAIImagesAnimationFields(forwardBody, forwardContentType)
 	if err != nil {
 		return nil, err
 	}
