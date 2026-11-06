@@ -16,9 +16,177 @@ type Failure struct {
 	HTTPStatus int
 	RPCCode    int
 	// Reason is one of the fixed phrases in remoteReasons, picked by matching the
-	// node's message against a list we wrote. The node's own text is never kept.
-	Reason     string
+	// node's message against a list we wrote.
+	Reason string
+	// Message is the node-supplied free text. It is never part of Error(), which
+	// is the durable-record boundary; Detail() sanitises it for operator logs and
+	// diagnostics only.
+	Message string
+	// Host is the endpoint hostname (no scheme, path, query or credentials) that
+	// produced the failure, so a scan failure can name a node without writing a
+	// configured URL.
+	Host       string
 	contextErr error
+}
+
+// Failure categories. They answer "what should the caller do", not "what did
+// the node say". Transport/timeout is retryable and must never be written down
+// as a business failure; rejected-known means the node definitively refused the
+// exact request; auth-config needs an operator; unknown needs a human to look.
+const (
+	CategoryTransport     = "transport"
+	CategoryTimeout       = "timeout"
+	CategoryRejectedKnown = "rejected-known"
+	CategoryAuthConfig    = "auth-config"
+	CategoryUnknown       = "unknown"
+)
+
+// rejectedKnownReasons are deterministic node rejections of a request. Retrying
+// the same bytes cannot change them, but they say nothing about a payment job.
+var rejectedKnownReasons = map[string]bool{
+	ReasonAlreadyKnown:                    true,
+	"nonce too low":                       true,
+	"nonce too high":                      true,
+	"replacement transaction underpriced": true,
+	"transaction underpriced":             true,
+	"insufficient funds for gas":          true,
+	"intrinsic gas too low":               true,
+	"fee cap below base fee":              true,
+	"transaction pool is full":            true,
+	"execution reverted":                  true,
+}
+
+// authNeedles turn endpoint/auth misconfiguration into an actionable category.
+var authNeedles = []string{
+	"invalid api key", "invalid api-key", "invalid apikey", "api key not valid",
+	"unauthorized", "forbidden", "authentication", "invalid project id",
+	"project id not found", "invalid token", "missing api key",
+}
+
+func remoteCategory(reason, message string) string {
+	lowered := strings.ToLower(message)
+	for _, needle := range authNeedles {
+		if strings.Contains(lowered, needle) {
+			return CategoryAuthConfig
+		}
+	}
+	if rejectedKnownReasons[reason] {
+		return CategoryRejectedKnown
+	}
+	return CategoryUnknown
+}
+
+// Category classifies a failure for retry and log decisions.
+func (e *Failure) Category() string {
+	if e == nil {
+		return CategoryUnknown
+	}
+	switch e.Kind {
+	case "transport":
+		if errors.Is(e.contextErr, context.DeadlineExceeded) {
+			return CategoryTimeout
+		}
+		return CategoryTransport
+	case "http":
+		switch {
+		case e.HTTPStatus == 401 || e.HTTPStatus == 403:
+			return CategoryAuthConfig
+		case e.HTTPStatus == 408 || e.HTTPStatus == 429 || e.HTTPStatus >= 500:
+			return CategoryTransport
+		}
+		return CategoryUnknown
+	case "remote":
+		return remoteCategory(e.Reason, e.Message)
+	}
+	return CategoryUnknown
+}
+
+// IsTransient reports whether the same request may succeed on another endpoint
+// or a later attempt. A canceled caller context is not transient.
+func (e *Failure) IsTransient() bool {
+	if e == nil || errors.Is(e.contextErr, context.Canceled) {
+		return false
+	}
+	switch e.Category() {
+	case CategoryTransport, CategoryTimeout:
+		return true
+	}
+	return false
+}
+
+// CategoryOf classifies any error; anything that is not an rpc.Failure is
+// unknown to this package.
+func CategoryOf(err error) string {
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return failure.Category()
+	}
+	return CategoryUnknown
+}
+
+// IsTransient reports whether err is a retryable transport or timeout failure.
+func IsTransient(err error) bool {
+	var failure *Failure
+	return errors.As(err, &failure) && failure.IsTransient()
+}
+
+// IsRejectedKnown reports a deterministic node rejection (nonce too low,
+// already known, underpriced, insufficient funds, ...).
+func IsRejectedKnown(err error) bool {
+	return CategoryOf(err) == CategoryRejectedKnown
+}
+
+var (
+	urlPattern = regexp.MustCompile(`[a-z][a-z0-9+.-]*://\S+`)
+	keyPattern = regexp.MustCompile(`(?i)\b(api[_-]?key|access[_-]?token|token|secret|password|passwd|authorization)\b\s*[=:]\s*\S+`)
+	// 0x-prefixed data of address/hash length and long bare hex runs can be a
+	// private key or a signed transaction; neither belongs in a log.
+	hexPattern = regexp.MustCompile(`0x[0-9a-fA-F]{20,}|[0-9a-fA-F]{40,}`)
+)
+
+// SanitizeNodeMessage keeps an operator-useful shape of a node's text while
+// removing URLs, credential pairs and long hex values. Nodes echo request data
+// (addresses, signed bytes), so this is the only form allowed to leave the
+// process in a diagnostic field.
+func SanitizeNodeMessage(message string) string {
+	text := strings.Join(strings.Fields(message), " ")
+	if text == "" {
+		return ""
+	}
+	text = urlPattern.ReplaceAllString(text, "[url]")
+	text = keyPattern.ReplaceAllString(text, "$1=[hidden]")
+	text = hexPattern.ReplaceAllString(text, "[hex]")
+	const limit = 160
+	if len(text) > limit {
+		text = text[:limit-4] + "…"
+	}
+	return text
+}
+
+// Detail is the sanitised node text for logs. It never enters Error().
+func (e *Failure) Detail() string {
+	if e == nil {
+		return ""
+	}
+	return SanitizeNodeMessage(e.Message)
+}
+
+// DetailOf returns the sanitised node text of err, if any.
+func DetailOf(err error) string {
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return failure.Detail()
+	}
+	return ""
+}
+
+// HostOf returns the failing endpoint host, if it is known.
+func HostOf(err error) string {
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return failure.Host
+	}
+	return ""
 }
 
 // ReasonAlreadyKnown is what a node answers when the same signed transaction is
@@ -33,6 +201,10 @@ var remoteReasons = []struct{ needle, reason string }{
 	{"transaction underpriced", "transaction underpriced"},
 	{"already known", ReasonAlreadyKnown},
 	{"known transaction", ReasonAlreadyKnown},
+	{"invalid api key", "invalid API key"},
+	{"invalid api-key", "invalid API key"},
+	{"unauthorized", "unauthorized"},
+	{"forbidden", "forbidden"},
 	{"nonce too low", "nonce too low"},
 	{"nonce too high", "nonce too high"},
 	{"insufficient funds", "insufficient funds for gas"},
@@ -152,6 +324,10 @@ var safeScopeMessage = regexp.MustCompile(`^chain "[a-z0-9_-]{1,32}" is outside 
 // them: "gas top-up is insufficient" and "gas payer is busy" are different
 // operator actions and must not collapse into one opaque sentence.
 var safeBusinessPrefixes = []string{
+	// Written by the sweeper when it proves a signed transaction can never be
+	// mined and deliberately frees the address. Keep in step with
+	// sweeper.staleReleasePrefix; a test in the sweeper package pins it.
+	"stale pending released:",
 	"sweep refused:",
 	"confirmed gas top-up is insufficient",
 	"RPC gas quote exceeds",

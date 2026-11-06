@@ -137,7 +137,8 @@ describe('sweep page: who owns each address', () => {
     expect(headers(found[2])).toEqual(['admin.crypto.chain', 'admin.crypto.address', 'admin.crypto.sweepView.colUser', 'admin.crypto.amount'])
     expect(headers(found[3])).toEqual([
       'admin.crypto.colTime', 'admin.crypto.chain', 'admin.crypto.sweepView.colUser',
-      'admin.crypto.sweepView.colDepositAddress', 'admin.crypto.amount', 'common.status', 'TX'
+      'admin.crypto.sweepView.colDepositAddress', 'admin.crypto.amount', 'common.status', 'TX',
+      'admin.crypto.sweepView.colActions'
     ])
   })
 

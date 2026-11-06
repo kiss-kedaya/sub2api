@@ -39,7 +39,7 @@ func (s *Service) ListSweepRecordsPage(ctx context.Context, chain string, limit 
 		limit = SweepRecordsDefaultLimit
 	}
 	query := `SELECT id, chain, from_address, to_address, token, amount::text,
-	                 gas_tx_hash, sweep_tx_hash, status, error, created_at, updated_at
+	                 gas_tx_hash, sweep_tx_hash, status, error, created_at, updated_at, job_version
 	            FROM sweep_records WHERE 1=1`
 	args := []any{}
 	if chain != "" {
@@ -62,7 +62,7 @@ func (s *Service) ListSweepRecordsPage(ctx context.Context, chain string, limit 
 		var r SweepRecord
 		var created, updated time.Time
 		if err := rows.Scan(&r.ID, &r.Chain, &r.FromAddress, &r.ToAddress, &r.Token,
-			&r.Amount, &r.GasTxHash, &r.SweepTxHash, &r.Status, &r.Error, &created, &updated); err != nil {
+			&r.Amount, &r.GasTxHash, &r.SweepTxHash, &r.Status, &r.Error, &created, &updated, &r.JobVersion); err != nil {
 			return nil, err
 		}
 		r.Amount = trimDecimalZeros(r.Amount)

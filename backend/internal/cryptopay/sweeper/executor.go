@@ -362,13 +362,38 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		}
 	}
 	if job.SweepRaw != "" {
+		// A signed transfer that no node can see at an already-consumed nonce
+		// can never land. Recover it before replaying the same dead bytes, which
+		// would otherwise keep the address reserved forever.
+		if job.Status == "sweep_pending" {
+			released, err := e.releaseStaleTransaction(ctx, pool, job, false, true)
+			if err != nil {
+				return pendingError(job, err)
+			}
+			if released {
+				return job.outcome(), nil
+			}
+		}
 		return e.finishSweep(ctx, pool, job, required)
 	}
 	if job.GasRaw != "" && !job.GasConfirmed {
+		beforeHash := job.GasHash
 		// A top-up signed earlier that can never be mined must not hold the
 		// payer for every other address on the chain.
 		if err := e.refreshStuckGas(ctx, pool, job); err != nil {
 			return pendingError(job, err)
+		}
+		// refreshStuckGas either re-funds (planned) or signs a replacement at the
+		// same nonce. Only a top-up it left untouched may be concluded dead here,
+		// so a freshly signed replacement is never released by mistake.
+		if job.Status == "gas_pending" && job.GasHash == beforeHash {
+			released, err := e.releaseStaleTransaction(ctx, pool, job, true, true)
+			if err != nil {
+				return pendingError(job, err)
+			}
+			if released {
+				return job.outcome(), nil
+			}
 		}
 	}
 	if job.GasRaw != "" && !job.GasConfirmed {
@@ -468,12 +493,24 @@ func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (Sw
 	if errors.As(cause, &storage) {
 		return pendingError(job, cause)
 	}
+	// A transport failure or timeout says nothing about the payment. Persisting
+	// it would burn one of the bounded attempts (and could eventually mark a
+	// perfectly valid transaction failed), so the durable state stays exactly as
+	// it was and the next pass retries.
+	if rpc.IsTransient(cause) {
+		slog.Warn("[cryptopay] sweep job deferred: RPC temporarily unavailable",
+			"job_id", job.ID, "chain", job.Chain, "address", job.Address,
+			"category", rpc.CategoryOf(cause), "endpoint_host", rpc.HostOf(cause),
+			"detail", rpc.DetailOf(cause))
+		return pendingError(job, cause)
+	}
 	// Transport errors may contain endpoint credentials. The same sanitized
 	// boundary applies to operator logs and persisted payment records.
 	slog.Error("[cryptopay] sweep job failed",
 		"job_id", job.ID, "chain", job.Chain, "address", job.Address,
 		"token", job.Token, "status", job.Status, "revision", job.Revision,
-		"error", rpc.SafeError(cause))
+		"category", rpc.CategoryOf(cause), "endpoint_host", rpc.HostOf(cause),
+		"detail", rpc.DetailOf(cause), "error", rpc.SafeError(cause))
 	job.Error = rpc.SafeError(cause)
 	if job.Revision >= maxSweepAttempts {
 		// Terminal: stop retrying and stop reserving the address.

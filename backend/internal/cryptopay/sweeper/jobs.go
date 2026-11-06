@@ -118,6 +118,7 @@ const unfinishedPredicate = `status NOT IN ('swept','failed') AND job_version = 
 
 const reservedPredicate = `status NOT IN ('swept','failed') AND job_version = 1
 	OR job_version = 1 AND status = 'failed' AND (gas_tx_hash <> '' OR sweep_tx_hash <> '')
+	   AND COALESCE(error,'') NOT LIKE 'stale pending released:%'
 	OR job_version = 0 AND status <> 'swept' AND
 	(status IN ('manual_review','gas_sent') OR gas_tx_hash <> '' OR sweep_tx_hash <> '')`
 

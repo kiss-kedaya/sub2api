@@ -21,7 +21,31 @@
         <UButton color="neutral" variant="ghost" icon="i-lucide-refresh-cw" :loading="loading" :aria-label="t('common.refresh')" data-testid="crypto-sweep-refresh" @click="emit('refresh')" />
       </div>
 
-      <UTable v-if="filtered.length" :data="filtered" :columns="columns" :loading="loading" :ui="tableUi">
+      <!-- Three status groups, in the order an operator needs them. Legacy rows
+           stay collapsed so they never look like work that is still running. -->
+      <div class="flex flex-wrap items-center gap-1.5 text-xs" data-testid="crypto-sweep-groups">
+        <UBadge color="warning" variant="subtle" data-testid="crypto-sweep-group-current">
+          {{ t('admin.crypto.sweepView.groupCurrent', { count: currentCount }) }}
+        </UBadge>
+        <UBadge color="error" variant="subtle" data-testid="crypto-sweep-group-failed">
+          {{ t('admin.crypto.sweepView.groupFailed', { count: failedCount }) }}
+        </UBadge>
+        <UButton
+          v-if="archivedCount"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          icon="i-lucide-archive"
+          data-testid="crypto-sweep-archive-toggle"
+          @click="showArchived = !showArchived"
+        >
+          {{ showArchived
+            ? t('admin.crypto.sweepView.hideArchived', { count: archivedCount })
+            : t('admin.crypto.sweepView.showArchived', { count: archivedCount }) }}
+        </UButton>
+      </div>
+
+      <UTable v-if="visibleRows.length" :data="visibleRows" :columns="columns" :loading="loading" :ui="tableUi">
         <template #time-cell="{ row }">
           <span class="whitespace-normal text-muted" :title="timeTitle(row.original)" data-testid="crypto-sweep-time">{{ formatSweepTime(row.original.updated_at || row.original.created_at, localeTag) }}</span>
         </template>
@@ -49,9 +73,14 @@
           <span class="whitespace-normal tabular-nums" data-testid="crypto-sweep-amount">{{ amountText(row.original) }}</span>
         </template>
         <template #status-cell="{ row }">
-          <div class="flex max-w-52 flex-col items-start gap-1">
+          <div class="flex max-w-56 flex-col items-start gap-1">
             <UBadge :color="sweepStatusColor(row.original.status)" variant="subtle" data-testid="crypto-sweep-status">{{ statusText(row.original.status) }}</UBadge>
-            <span v-if="errorText(row.original)" class="line-clamp-2 text-xs break-words whitespace-normal text-muted" :title="errorText(row.original)" data-testid="crypto-sweep-error">{{ errorText(row.original) }}</span>
+            <span v-if="errorHead(row.original)" class="text-xs break-words whitespace-normal text-muted" data-testid="crypto-sweep-error">{{ errorHead(row.original) }}</span>
+            <details v-if="errorDetail(row.original) !== errorHead(row.original)" class="max-w-72 text-xs text-muted" data-testid="crypto-sweep-error-detail">
+              <summary class="cursor-pointer select-none">{{ t('admin.crypto.sweepView.showRawError') }}</summary>
+              <pre class="mt-1 whitespace-pre-wrap break-words font-sans">{{ errorDetail(row.original) }}</pre>
+            </details>
+            <span v-if="isReleased(row.original)" class="text-xs text-muted" data-testid="crypto-sweep-released">{{ t('admin.crypto.sweepView.releasedHint') }}</span>
           </div>
         </template>
         <template #tx-cell="{ row }">
@@ -75,6 +104,28 @@
               :title="row.original.gas_tx_hash"
               data-testid="crypto-sweep-gas-link"
             >{{ t('admin.crypto.sweepView.gasTx') }}</ULink>
+          </div>
+        </template>
+        <template #actions-cell="{ row }">
+          <div class="flex flex-col items-start gap-1">
+            <UButton
+              v-if="canReconcile(row.original)"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :disabled="loading"
+              data-testid="crypto-sweep-reconcile"
+              @click="emit('reconcile', row.original.id)"
+            >{{ t('admin.crypto.reconcile') }}</UButton>
+            <UButton
+              v-if="isReleased(row.original)"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              data-testid="crypto-sweep-resweep"
+              @click="emit('resweep', row.original.chain)"
+            >{{ t('admin.crypto.sweepView.resweep') }}</UButton>
+            <span v-if="isLegacy(row.original)" class="max-w-48 text-xs text-muted" data-testid="crypto-sweep-legacy">{{ t('admin.crypto.reconcileLegacy') }}</span>
           </div>
         </template>
       </UTable>
@@ -103,10 +154,17 @@ import { useClipboard } from '@/composables/useClipboard'
 import { explorerAddressURL, explorerTxURL } from '@/utils/cryptoExplorer'
 import {
   SWEEP_FILTER_ALL,
+  SWEEP_GROUP_ARCHIVED,
+  SWEEP_GROUP_CURRENT,
+  SWEEP_GROUP_FAILED,
   formatSweepFullTime,
   formatSweepTime,
-  redactSweepError,
   shortValue,
+  sweepCanReconcile,
+  sweepErrorDetail,
+  sweepErrorHead,
+  sweepGroupOf,
+  sweepIsReleasedFailure,
   sweepRecordMatches,
   sweepStatusColor,
   sweepStatusLabelKey,
@@ -115,14 +173,20 @@ import {
 
 // Shows the sweep history it is given. Loading stays with the page: this panel
 // only filters what is already there and asks for more (`load-more`) or a fresh
-// list (`refresh`).
+// list (`refresh`). Reconcile and re-sweep are page actions; the panel only
+// emits intent so it never talks to the API by itself.
 const props = withDefaults(defineProps<{
   records: SweepRecord[]
   hasMore?: boolean
   loading?: boolean
   loadingMore?: boolean
 }>(), { hasMore: false, loading: false, loadingMore: false })
-const emit = defineEmits<{ (e: 'load-more'): void; (e: 'refresh'): void }>()
+const emit = defineEmits<{
+  (e: 'load-more'): void
+  (e: 'refresh'): void
+  (e: 'reconcile', id: number): void
+  (e: 'resweep', chain: string): void
+}>()
 
 const { t, locale } = useI18n()
 const { copyToClipboard } = useClipboard()
@@ -133,6 +197,7 @@ const { ownerOf } = useAddressOwners(() => props.records.map(record => record.fr
 const statusFilter = ref<string>(SWEEP_FILTER_ALL)
 const chainFilter = ref<string>(SWEEP_FILTER_ALL)
 const search = ref('')
+const showArchived = ref(false)
 
 const statusItems = computed(() => [
   { label: t('admin.crypto.allStatuses'), value: SWEEP_FILTER_ALL },
@@ -152,6 +217,14 @@ const filtered = computed(() => props.records.filter(record =>
   && sweepRecordMatches(record, ownerOf(record.from_address), search.value)
 ))
 
+const currentCount = computed(() => filtered.value.filter(record => sweepGroupOf(record) === SWEEP_GROUP_CURRENT).length)
+const failedCount = computed(() => filtered.value.filter(record => sweepGroupOf(record) === SWEEP_GROUP_FAILED).length)
+const archivedCount = computed(() => filtered.value.filter(record => sweepGroupOf(record) === SWEEP_GROUP_ARCHIVED).length)
+
+const visibleRows = computed(() => showArchived.value
+  ? filtered.value
+  : filtered.value.filter(record => sweepGroupOf(record) !== SWEEP_GROUP_ARCHIVED))
+
 const columns = computed<TableColumn<SweepRecord>[]>(() => [
   { id: 'time', header: t('admin.crypto.colTime') },
   { accessorKey: 'chain', header: t('admin.crypto.chain') },
@@ -159,7 +232,8 @@ const columns = computed<TableColumn<SweepRecord>[]>(() => [
   { id: 'from_address', header: t('admin.crypto.sweepView.colDepositAddress') },
   { id: 'amount', header: t('admin.crypto.amount') },
   { accessorKey: 'status', header: t('common.status') },
-  { id: 'tx', header: 'TX' }
+  { id: 'tx', header: 'TX' },
+  { id: 'actions', header: t('admin.crypto.sweepView.colActions') }
 ])
 
 // Same table look as the other tables on the crypto page.
@@ -179,8 +253,20 @@ function statusText(status: string): string {
 function amountText(record: SweepRecord): string {
   return record.token_symbol ? `${record.amount} ${record.token_symbol}` : record.amount
 }
-function errorText(record: SweepRecord): string {
-  return redactSweepError(record.error)
+function errorHead(record: SweepRecord): string {
+  return sweepErrorHead(record.error)
+}
+function errorDetail(record: SweepRecord): string {
+  return sweepErrorDetail(record.error)
+}
+function canReconcile(record: SweepRecord): boolean {
+  return sweepCanReconcile(record)
+}
+function isReleased(record: SweepRecord): boolean {
+  return sweepIsReleasedFailure(record)
+}
+function isLegacy(record: SweepRecord): boolean {
+  return (record.job_version ?? 1) < 1
 }
 function timeTitle(record: SweepRecord): string {
   return t('admin.crypto.sweepView.timeTitle', { id: record.id, time: formatSweepFullTime(record.created_at) })

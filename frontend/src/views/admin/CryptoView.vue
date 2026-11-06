@@ -478,6 +478,8 @@
               :loading-more="loadingMoreSweepRecords"
               @load-more="loadMoreRecords"
               @refresh="loadSweepRecords"
+              @reconcile="reconcileJob"
+              @resweep="resweepChain"
             />
           </div>
         </template>
@@ -1540,7 +1542,7 @@ async function loadSweepPlan() {
   sweepPlan.value = await getSweepPlan()
 }
 
-async function doSweep(dryRun: boolean) {
+async function doSweep(dryRun: boolean, chains?: string[]) {
   if (sweeping.value) return
   sweeping.value = true
   const operationTab = activeTab.value
@@ -1551,12 +1553,20 @@ async function doSweep(dryRun: boolean) {
     if (activeTab.value !== operationTab) return
     const label = dryRun ? t('admin.crypto.sweepDryRun') : sweepConfirmMessage.value
     const completed = await withCryptoVerification(label, async (verification) => {
-      activeSweep.value = await startSweep(dryRun, verification)
+      activeSweep.value = await startSweep(dryRun, verification, chains)
     })
     if (completed && activeSweep.value) await followSweepRun(activeSweep.value)
   } finally {
     sweeping.value = false
   }
+}
+
+// A released failure no longer holds its address, so the normal sweep run is
+// the re-sweep entry point. Scope it to the record's chain instead of sweeping
+// every chain the operator did not ask about.
+async function resweepChain(chain: string) {
+  if (!chain) return
+  await doSweep(false, [chain])
 }
 
 async function followSweepRun(run: SweepRun) {

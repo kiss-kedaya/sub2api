@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
@@ -25,6 +26,11 @@ type Config struct {
 	// Execution fails closed when a chain is missing or zero. Wire from the
 	// same confirmation configuration used by the deposit scanner.
 	Confirmations map[string]uint64
+	// StalePendingAge and StalePendingRebroadcastDelay tune the recovery of a
+	// signed transaction that no node can see. Zero values use the production
+	// defaults (45 minutes, 2 seconds); tests set them explicitly.
+	StalePendingAge              time.Duration
+	StalePendingRebroadcastDelay time.Duration
 }
 
 // PlanEntry is one address to sweep.

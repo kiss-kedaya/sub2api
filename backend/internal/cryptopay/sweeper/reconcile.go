@@ -92,6 +92,17 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 		case receiptWaiting:
 			return run.retainUnconfirmed(ctx, job, out, false, "token transfer is mined but still short of confirmations")
 		}
+		if job.Status == "sweep_pending" {
+			released, releaseErr := run.releaseStaleTransaction(ctx, pool, job, false, false)
+			if releaseErr != nil {
+				return nil, releaseErr
+			}
+			if released {
+				out.Action, out.Status = ReconcileReleased, job.Status
+				out.Message = job.Error
+				return out, nil
+			}
+		}
 		return run.retainUnconfirmed(ctx, job, out, false, "token transfer has no canonical receipt yet")
 	}
 
@@ -111,6 +122,17 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 				ReconcileObserved, "gas top-up reverted; manual review required")
 		case receiptWaiting:
 			return run.retainUnconfirmed(ctx, job, out, true, "gas top-up is mined but still short of confirmations")
+		}
+		if job.Status == "gas_pending" {
+			released, releaseErr := run.releaseStaleTransaction(ctx, pool, job, true, false)
+			if releaseErr != nil {
+				return nil, releaseErr
+			}
+			if released {
+				out.Action, out.Status = ReconcileReleased, job.Status
+				out.Message = job.Error
+				return out, nil
+			}
 		}
 		return run.retainUnconfirmed(ctx, job, out, true, "gas top-up has no canonical receipt yet")
 	}
@@ -185,6 +207,7 @@ func (e *Executor) ListBlocked(ctx context.Context, limit int) ([]BlockedJob, er
 		FROM sweep_records WHERE status <> 'swept'
 		AND (status <> 'failed' OR gas_tx_hash <> '' OR sweep_tx_hash <> '')
 		AND (gas_tx_hash<>'' OR sweep_tx_hash<>'')
+		AND COALESCE(error,'') NOT LIKE 'stale pending released:%'
 		ORDER BY updated_at ASC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err

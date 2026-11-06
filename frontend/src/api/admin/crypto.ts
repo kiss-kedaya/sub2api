@@ -48,6 +48,9 @@ export interface SweepRecord {
   status: string
   error: string
   created_at: string
+  // 0 marks a record written before durable jobs (or handled by hand); the
+  // console archives those instead of mixing them with current work.
+  job_version?: number
   // Added by the paged records endpoint; absent from older backends.
   token_symbol?: string
   updated_at?: string
@@ -224,8 +227,13 @@ export interface SweepRun {
 }
 
 // A 202 response means the run was accepted, not that the transfer finished.
-export async function startSweep(dryRun: boolean, verification?: CryptoVerification): Promise<SweepRun> {
-  const { data } = await apiClient.post('/admin/crypto/sweep/run', null, {
+// `chains` reuses the existing repeated ?chain= scope of the run endpoint; an
+// empty list keeps the historical "every configured chain" behaviour.
+export async function startSweep(dryRun: boolean, verification?: CryptoVerification, chains?: string[]): Promise<SweepRun> {
+  const scope = (chains ?? []).filter(Boolean)
+    .map(chain => `chain=${encodeURIComponent(chain)}`)
+    .join('&')
+  const { data } = await apiClient.post(`/admin/crypto/sweep/run${scope ? `?${scope}` : ''}`, null, {
     ...cryptoRequestOptions(verification),
     timeout: 30000,
     params: { dry_run: dryRun ? '1' : '0', async: '1' }
