@@ -77,6 +77,17 @@ func estimateResponsesInputTokensForBilling(body []byte) (int, error) {
 	return clampIncompleteInputTokens(tokens), err
 }
 
+// estimateIncompleteResponsesInput estimates the input of an OpenAI Responses
+// request that ended without usage. The shape dispatcher goes first; a body it cannot
+// place, for example one that only carries instructions and a previous_response_id,
+// falls back to the Responses estimator.
+func estimateIncompleteResponsesInput(body []byte) (int, error) {
+	if tokens := estimateRequestInputTokens(body); tokens > 0 {
+		return tokens, nil
+	}
+	return estimateResponsesInputTokensForBilling(body)
+}
+
 // estimateRequestInputTokensRaw returns the estimated input tokens of a request body
 // as it is, or 0 when the shape is not recognised or cannot be parsed (nothing is
 // invented). It dispatches by the request shape: Gemini (contents / systemInstruction),

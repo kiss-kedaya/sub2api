@@ -58,7 +58,7 @@ func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBo
 	}
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 &&
 		usage.CacheCreationInputTokens == 0 && usage.ImageInputTokens == 0 {
-		if inputTokens, err := estimateResponsesInputTokensForBilling(requestBody); err == nil && inputTokens > 0 {
+		if inputTokens, err := estimateIncompleteResponsesInput(requestBody); err == nil && inputTokens > 0 {
 			split := splitIncompleteInput(inputTokens)
 			usage.InputTokens = split.Total
 			usage.CacheReadInputTokens = split.CacheRead

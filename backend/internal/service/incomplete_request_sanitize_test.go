@@ -137,3 +137,21 @@ func TestFillIncompleteStreamUsage_FoldsBlobsAndPreauthKeepsTheRawBound(t *testi
 	require.True(t, usage.CacheReadEstimated)
 	require.Greater(t, estimateBalancePreauthorizationInputTokens(body), 100_000, "the reserve is meant to stay conservative")
 }
+
+// A Responses body with no input field (only instructions and a previous_response_id)
+// is not placed by the shape dispatcher; the Responses estimator still counts its text.
+func TestEstimateIncompleteResponsesInput(t *testing.T) {
+	onlyInstructions := []byte(`{"model":"gpt-5.4","previous_response_id":"resp_1","instructions":"` + strings.Repeat("Answer briefly. ", 40) + `"}`)
+	require.Zero(t, estimateRequestInputTokens(onlyInstructions))
+	got, err := estimateIncompleteResponsesInput(onlyInstructions)
+	require.NoError(t, err)
+	require.Greater(t, got, 50)
+
+	withInput := []byte(`{"model":"gpt-5.4","input":"` + strings.Repeat("hello there ", 50) + `"}`)
+	got, err = estimateIncompleteResponsesInput(withInput)
+	require.NoError(t, err)
+	require.Equal(t, estimateRequestInputTokens(withInput), got)
+
+	_, err = estimateIncompleteResponsesInput([]byte("not json"))
+	require.Error(t, err)
+}
