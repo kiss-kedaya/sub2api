@@ -2525,7 +2525,9 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs(t *test
 	require.Equal(t, "priority", *result.ServiceTier)
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollectsUsage(t *testing.T) {
+// A write failure closes the upstream, but a terminal frame already read keeps its
+// real usage.
+func TestOpenAIGatewayService_OAuthPassthrough_StreamClientWriteFailureKeepsUsageAlreadyRead(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()

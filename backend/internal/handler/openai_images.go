@@ -323,6 +323,17 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		}
 		if err != nil {
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
+			if (result == nil || result.ImageCount <= 0) && failoverClientGone(c) {
+				// The client left and the upstream was closed with it. Nothing was
+				// completed or reported, so nothing is billed; this is not an account
+				// fault, must not fail over (a second paid generation for nobody) and
+				// there is no one to write an error to.
+				reqLog.Info("openai.images.client_disconnected",
+					zap.Int64("account_id", account.ID),
+					zap.Error(err),
+				)
+				return
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai.images.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),

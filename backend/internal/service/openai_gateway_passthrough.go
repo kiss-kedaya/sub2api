@@ -359,10 +359,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	// outlive it), so the client's own context is watched separately: when it ends,
 	// the upstream call is canceled while waiting for headers and the body is closed
 	// while it streams.
-	clientCtx := ctx
-	if c != nil && c.Request != nil {
-		clientCtx = c.Request.Context()
-	}
+	clientCtx := openAIClientContext(ctx, c)
 	var resp *http.Response
 	var usage *OpenAIUsage
 	var firstTokenMs *int
@@ -2145,10 +2142,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	mappedModel string,
 ) (*openaiStreamingResultPassthrough, error) {
 	nativeReasoning := s.newDeepSeekNativeReasoningRecorder(c, account)
-	var requestCtx context.Context
-	if c != nil && c.Request != nil {
-		requestCtx = c.Request.Context()
-	}
+	requestCtx := openAIRequestContext(c)
 	// The upstream request is detached from the client, so nothing cancels a quiet
 	// upstream when the client leaves. Close the body then: the blocked read fails
 	// at once, and frames the scanner already buffered are still processed.
@@ -2792,10 +2786,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiNonStreamingResultPassthrough, error) {
-	var requestCtx context.Context
-	if c != nil && c.Request != nil {
-		requestCtx = c.Request.Context()
-	}
+	requestCtx := openAIRequestContext(c)
 	// The upstream request is detached from the client, so close the body when the
 	// client leaves: the blocked read fails at once instead of waiting for the full
 	// response. A body that was already fully read is unaffected.

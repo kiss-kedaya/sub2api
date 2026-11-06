@@ -32,17 +32,17 @@ const (
 	passthroughDisconnectBufferedBody = `{"model":"gpt-5.1","instructions":"You are a careful assistant.","input":"Write a very long story about a fox who learns to code.","stream":false}`
 )
 
-type passthroughDisconnectOutcome struct {
+type disconnectOutcome struct {
 	result *OpenAIForwardResult
 	err    error
 }
 
 // asIncomplete adapts the outcome to the shared billing assertions.
-func (o passthroughDisconnectOutcome) asIncomplete() incompleteStreamOutcome {
+func (o disconnectOutcome) asIncomplete() incompleteStreamOutcome {
 	return incompleteStreamOutcome{result: o.result, err: o.err}
 }
 
-type passthroughDisconnectHarness struct {
+type disconnectPipeHarness struct {
 	t        *testing.T
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -50,7 +50,7 @@ type passthroughDisconnectHarness struct {
 	upstream *httpUpstreamRecorder
 	pipeW    *io.PipeWriter
 	tracked  *lifecycleTrackingBody
-	done     chan passthroughDisconnectOutcome
+	done     chan disconnectOutcome
 }
 
 func newPassthroughDisconnectContext(t *testing.T, ctx context.Context, body []byte) (*gin.Context, *openAIResponseFlushRecorder) {
@@ -74,7 +74,7 @@ func newPassthroughDisconnectService(upstream HTTPUpstream) *OpenAIGatewayServic
 // startPassthroughDisconnectForward starts Forward for a passthrough account whose
 // upstream body is a pipe the test writes to. streaming selects the upstream
 // content type; the request body decides whether the client asked for a stream.
-func startPassthroughDisconnectForward(t *testing.T, body string, streaming bool) *passthroughDisconnectHarness {
+func startPassthroughDisconnectForward(t *testing.T, body string, streaming bool) *disconnectPipeHarness {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -93,21 +93,21 @@ func startPassthroughDisconnectForward(t *testing.T, body string, streaming bool
 	upstream := &httpUpstreamRecorder{resp: resp}
 	svc := newPassthroughDisconnectService(upstream)
 
-	h := &passthroughDisconnectHarness{
+	h := &disconnectPipeHarness{
 		t: t, ctx: ctx, cancel: cancel, recorder: recorder, upstream: upstream, pipeW: pw, tracked: tracked,
-		done: make(chan passthroughDisconnectOutcome, 1),
+		done: make(chan disconnectOutcome, 1),
 	}
 	done := h.done
 	go func() {
 		result, err := svc.Forward(ctx, c, newOpenAIPartialUsageAccount(true), []byte(body))
-		done <- passthroughDisconnectOutcome{result: result, err: err}
+		done <- disconnectOutcome{result: result, err: err}
 	}()
 	return h
 }
 
 // write pushes text through the upstream pipe. The write returns once the gateway
 // has consumed it, so a stuck reader fails the test instead of hanging it.
-func (h *passthroughDisconnectHarness) write(frames ...string) {
+func (h *disconnectPipeHarness) write(frames ...string) {
 	h.t.Helper()
 	payload := strings.Join(frames, "")
 	errCh := make(chan error, 1)
@@ -125,24 +125,24 @@ func (h *passthroughDisconnectHarness) write(frames ...string) {
 
 // failClientWrites makes every later write to the client fail, as a vanished
 // client does, without canceling the request context.
-func (h *passthroughDisconnectHarness) failClientWrites() {
+func (h *disconnectPipeHarness) failClientWrites() {
 	h.recorder.mu.Lock()
 	h.recorder.failAfterWrites = h.recorder.writes
 	h.recorder.mu.Unlock()
 }
 
-func (h *passthroughDisconnectHarness) await(timeout time.Duration) passthroughDisconnectOutcome {
+func (h *disconnectPipeHarness) await(timeout time.Duration) disconnectOutcome {
 	h.t.Helper()
 	select {
 	case out := <-h.done:
 		return out
 	case <-time.After(timeout):
 		h.t.Fatal("Forward did not finish")
-		return passthroughDisconnectOutcome{}
+		return disconnectOutcome{}
 	}
 }
 
-func (h *passthroughDisconnectHarness) requireUpstreamClosed() {
+func (h *disconnectPipeHarness) requireUpstreamClosed() {
 	h.t.Helper()
 	select {
 	case <-h.tracked.closed:
@@ -358,10 +358,10 @@ func TestOpenAIPassthrough_ClientLeavesBeforeResponseHeadersCancelsUpstream(t *t
 			t.Cleanup(upstream.unblock)
 			svc := newPassthroughDisconnectService(upstream)
 
-			done := make(chan passthroughDisconnectOutcome, 1)
+			done := make(chan disconnectOutcome, 1)
 			go func() {
 				result, err := svc.Forward(ctx, c, newOpenAIPartialUsageAccount(true), []byte(tc.body))
-				done <- passthroughDisconnectOutcome{result: result, err: err}
+				done <- disconnectOutcome{result: result, err: err}
 			}()
 			select {
 			case <-upstream.started:

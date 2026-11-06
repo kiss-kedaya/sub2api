@@ -1,55 +1,14 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
-	"io"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 )
 
-// Client disconnect on the OpenAI passthrough and image paths (owner decision
-// 2026-11-06): the upstream connection is closed the moment the client leaves,
-// stream or not. What the upstream already reported stays authoritative; what it
-// produced without reporting is billed from an estimate (see
-// incomplete_request_usage.go and openai_stream_incomplete_usage.go).
-//
-// These requests run on a context detached from the client so that billing and
-// failover outlive it. That also means nothing cancels a quiet upstream when the
-// client leaves, so the response body is closed explicitly.
-
-// closeOpenAIBodyOnClientGone closes body as soon as any of the contexts ends and
-// returns a function that stops the watch. The close unblocks a Read that waits on
-// a quiet upstream; frames a scanner already buffered are still delivered first.
-// Closing is idempotent, so overlapping watches (and the caller's own close) are
-// harmless.
-func closeOpenAIBodyOnClientGone(body io.Closer, contexts ...context.Context) (stop func()) {
-	if body == nil {
-		return func() {}
-	}
-	stops := make([]func() bool, 0, len(contexts))
-	for _, ctx := range contexts {
-		if ctx == nil || ctx.Done() == nil {
-			continue
-		}
-		stops = append(stops, context.AfterFunc(ctx, func() { _ = body.Close() }))
-	}
-	return func() {
-		for _, stopWatch := range stops {
-			stopWatch()
-		}
-	}
-}
-
-// openAIClientGone reports whether any of the contexts has ended.
-func openAIClientGone(contexts ...context.Context) bool {
-	for _, ctx := range contexts {
-		if ctx != nil && ctx.Err() != nil {
-			return true
-		}
-	}
-	return false
-}
+// Estimation helpers for the OpenAI passthrough path on client disconnect (owner
+// decision 2026-11-06). The shared client-gone helpers live in
+// openai_client_gone.go.
 
 // passthroughStreamEventContributesOutput reports whether a Responses stream event
 // carries content the upstream bills as output. It is a superset of the events the

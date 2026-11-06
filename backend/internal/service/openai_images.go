@@ -717,13 +717,14 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if err != nil {
 		return nil, err
 	}
-	// 生图是长耗时、上游侧已产生实际成本的操作：客户端中途断开不应连带取消上游请求。
-	// detachStreamUpstreamContext 在非流式时原样返回请求 context，于是客户端一断开
-	// 就把已经在出图的上游调用打断成 context canceled，网关记 502、不扣费，而上游那边
-	// 图已经生成并计费。同一端点的 OAuth 分支 forwardOpenAIImagesOAuth 以及 Grok 媒体
-	// 路径本来就无条件脱钩，这里对齐；上游侧仍由 ResponseHeaderTimeout 兜底。
+	// 上游请求与客户端脱钩（取 token、建请求、账号侧副作用、计费都要在客户端走后继续），
+	// 但「等响应头」和「读响应体」仍跟着客户端：客户端一走就立刻关上游（老板 2026-11-06
+	// 的决定，流式与非流式一样，没有继续排空的窗口）。图片只记账上游已上报的用量和已
+	// 完成的图片张数，不估算、不编造。此前 #5411 为避免「上游已出图计费、网关记 502 不扣费」
+	// 让非流式生图完全脱钩，这个取舍被该决定取代，见 openai_client_gone.go。
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
+	clientCtx := openAIClientContext(ctx, c)
 
 	token, _, err := s.GetAccessToken(upstreamCtx, account)
 	if err != nil {
@@ -739,7 +740,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account, true)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(upstreamCtx, c, account, err, false)
@@ -777,6 +778,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// A client that leaves while the answer is still arriving closes the upstream at
+	// once. Stopped before the body is closed (deferred calls run last-in first).
+	defer closeOpenAIBodyOnClientGone(resp.Body, ctx, clientCtx)()
 
 	var usage OpenAIUsage
 	imageCount := parsed.N
@@ -1065,6 +1069,20 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	pendingErrorHeader := ""
 	financialTerminal := false
 	var streamErr error
+	// markClientDisconnected is the single exit for a departed client whose context
+	// did not end first: a failed write to it. The upstream is closed at once so it
+	// stops producing output nobody reads; frames already buffered are still
+	// processed, so an image the upstream had completed is still counted.
+	markClientDisconnected := func() {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images stream client disconnected, upstream connection closed")
+	}
 	finish := func() error {
 		if direct == nil {
 			return nil
@@ -1130,7 +1148,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		}
 		if !clientDisconnected {
 			if err := s.writeOpenAIImagesStreamEvent(c, flusher, eventType, dataBytes); err != nil {
-				clientDisconnected = true
+				markClientDisconnected()
 			} else {
 				lastDownstreamWriteAt = time.Now()
 			}
@@ -1169,8 +1187,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		}
 		if !clientDisconnected && direct == nil {
 			if _, writeErr := c.Writer.Write(line); writeErr != nil {
-				clientDisconnected = true
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images stream client disconnected, continue draining upstream for billing")
+				markClientDisconnected()
 			} else {
 				flusher.Flush()
 				lastDownstreamWriteAt = time.Now()
@@ -1321,8 +1338,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 				continue
 			}
 			if _, writeErr := io.WriteString(c.Writer, ":\n\n"); writeErr != nil {
-				clientDisconnected = true
-				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images stream client disconnected during keepalive, continue draining upstream for billing")
+				markClientDisconnected()
 				continue
 			}
 			flusher.Flush()
