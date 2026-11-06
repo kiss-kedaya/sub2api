@@ -11,6 +11,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -130,45 +131,61 @@ type rpcResponse struct {
 }
 
 func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any) (json.RawMessage, error) {
+	host := endpointHost(endpoint)
 	// Pace per endpoint before building anything: a burst that the provider
 	// answers with 429 costs a full round-trip and, because Call rotates on
 	// failure, burns the next endpoint too.
 	if throttle := ThrottleFor(endpoint); throttle != nil {
 		if err := throttle.Wait(ctx); err != nil {
-			return nil, NewTransportFailure(err)
+			failure := NewTransportFailure(err)
+			failure.Host = host
+			return nil, failure
 		}
 	}
 	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: 1, Method: method, Params: params})
 	if err != nil {
-		return nil, &Failure{Kind: "request"}
+		return nil, &Failure{Kind: "request", Host: host}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, &Failure{Kind: "request"}
+		return nil, &Failure{Kind: "request", Host: host}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, NewTransportFailure(err)
+		failure := NewTransportFailure(err)
+		failure.Host = host
+		return nil, failure
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return nil, &Failure{Kind: "http", HTTPStatus: resp.StatusCode}
+		return nil, &Failure{Kind: "http", HTTPStatus: resp.StatusCode, Host: host}
 	}
 	var decoded rpcResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&decoded); err != nil {
-		return nil, &Failure{Kind: "response"}
+		return nil, &Failure{Kind: "response", Host: host}
 	}
 	if decoded.Error != nil {
-		// Keep only the fixed phrase our own table maps the message to. The node's
-		// text can echo request data, so it is dropped here and never stored.
-		return nil, &Failure{Kind: "remote", RPCCode: decoded.Error.Code, Reason: classifyRemote(decoded.Error.Message)}
+		// Keep the node's text only as a sanitised diagnostic: Error() stays a
+		// fixed phrase so a durable record can never carry endpoint credentials.
+		return nil, &Failure{Kind: "remote", RPCCode: decoded.Error.Code,
+			Reason: classifyRemote(decoded.Error.Message), Message: decoded.Error.Message, Host: host}
 	}
 	if method == "eth_getLogs" && !validLogsResult(decoded.Result) {
-		return nil, &Failure{Kind: "response"}
+		return nil, &Failure{Kind: "response", Host: host}
 	}
 	return decoded.Result, nil
+}
+
+// endpointHost extracts the hostname of a configured endpoint for safe logging.
+// Anything unparsable yields the empty string rather than the raw value.
+func endpointHost(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Hostname()
 }
 
 // eth_getLogs must return an array, including [] when no logs match. In
@@ -324,6 +341,31 @@ func (p *Pool) SendRawTransaction(ctx context.Context, rawTx string) (string, er
 		return "", fmt.Errorf("empty transaction hash")
 	}
 	return hash, nil
+}
+
+// TransactionByHash reports whether a node in the rotation can see the
+// transaction. A JSON null is a definitive absence from that node, not an
+// error; transport failures stay errors so a caller never treats "the endpoint
+// timed out" as "the transaction does not exist".
+func (p *Pool) TransactionByHash(ctx context.Context, hash string) (bool, error) {
+	result, err := p.Call(ctx, "eth_getTransactionByHash", []any{hash})
+	if err != nil {
+		return false, err
+	}
+	trimmed := bytes.TrimSpace(result)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return false, nil
+	}
+	var tx struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal(trimmed, &tx); err != nil {
+		return false, &Failure{Kind: "response"}
+	}
+	if !strings.EqualFold(tx.Hash, hash) {
+		return false, &Failure{Kind: "response"}
+	}
+	return true, nil
 }
 
 // TightestLimits returns the most restrictive limits across the pool, so a

@@ -241,6 +241,9 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 	}
 	if err != nil {
 		j.Error = rpc.SafeError(err)
+		// A timeout is persisted as an observation, never as a status change:
+		// saveJob only bumps the revision here, so a transport failure cannot
+		// move the job to failed by itself.
 		return false, joinErrors(err, e.saveJob(ctx, j))
 	}
 	if state == receiptReverted {

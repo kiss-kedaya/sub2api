@@ -27,7 +27,8 @@ const longAgo = new Date(Date.now() - 800 * 86400000).toISOString()
 function record(id: number, over: Partial<SweepRecord> = {}): SweepRecord {
   return {
     id, chain: 'bsc', from_address: addr(id), to_address: addr(9999), token: '0xtoken', token_symbol: 'USDT', amount: '123.45',
-    gas_tx_hash: '', sweep_tx_hash: hash(id), status: 'swept', error: '', created_at: recent, updated_at: recent, ...over
+    gas_tx_hash: '', sweep_tx_hash: hash(id), status: 'swept', error: '', created_at: recent, updated_at: recent,
+    job_version: 1, ...over
   }
 }
 
@@ -55,12 +56,13 @@ const byId = (wrapper: Awaited<ReturnType<typeof render>>, id: string) => wrappe
 const rows = (wrapper: Awaited<ReturnType<typeof render>>) => wrapper.findAll('tbody tr')
 
 describe('records table', () => {
-  it('has the seven columns in order, with the user column right after the time and chain', async () => {
+  it('has the eight columns in order, with the user column right after the time and chain', async () => {
     const wrapper = await render()
     const headers = wrapper.findAll('thead th').map(th => th.text())
     expect(headers).toEqual([
       'admin.crypto.colTime', 'admin.crypto.chain', 'admin.crypto.sweepView.colUser',
-      'admin.crypto.sweepView.colDepositAddress', 'admin.crypto.amount', 'common.status', 'TX'
+      'admin.crypto.sweepView.colDepositAddress', 'admin.crypto.amount', 'common.status', 'TX',
+      'admin.crypto.sweepView.colActions'
     ])
     expect(rows(wrapper)).toHaveLength(3)
   })
@@ -169,15 +171,17 @@ describe('status cell', () => {
     expect(byId(wrapper, 'crypto-sweep-status')[0].text()).toBe('brand_new')
   })
 
-  it('shows the error under a failed badge, masked, clamped to two lines, full text on hover', async () => {
-    const message = 'rpc https://node.example.test/fixture-path?key=fixture-secret refused'
+  it('shows a readable first line under a failed badge and the raw error on demand', async () => {
+    const message = 'nonce 2 already consumed; retry https://node.example.test/fixture-path?key=fixture-secret refused'
     const wrapper = await render({ records: [record(1, { status: 'failed', error: message }), record(2)] })
     const [error] = byId(wrapper, 'crypto-sweep-error')
+    const [detail] = byId(wrapper, 'crypto-sweep-error-detail')
     expect(byId(wrapper, 'crypto-sweep-error')).toHaveLength(1) // the clean row has none
+    expect(error.text()).toBe('nonce 2 already consumed')
     expect(error.text()).not.toContain('https://')
-    expect(error.text()).not.toContain('fixture-secret')
-    expect(error.attributes('title')).toBe(error.text())
-    expect(error.classes()).toContain('line-clamp-2')
+    expect(detail.find('pre').text()).not.toContain('https://')
+    expect(detail.find('pre').text()).not.toContain('fixture-secret')
+    expect(detail.find('pre').text()).toContain('[url]')
   })
 
   it('shows an error line whatever the status, because a pending job can carry one too', async () => {
@@ -287,6 +291,56 @@ describe('filter bar', () => {
   it('says loading, not "no data", while the first page is on its way', async () => {
     const wrapper = await render({ records: [], loading: true })
     expect(byId(wrapper, 'crypto-sweep-empty')[0].text()).toBe('common.loading')
+  })
+})
+
+describe('status groups and row actions', () => {
+  it('keeps legacy records out of the current list until the archive toggle is used', async () => {
+    const wrapper = await render({
+      records: [record(2, { status: 'sweep_pending' }), record(1, { status: 'failed', job_version: 0, error: 'old record' })]
+    })
+    expect(rows(wrapper)).toHaveLength(1)
+    expect(byId(wrapper, 'crypto-sweep-legacy')).toHaveLength(0)
+    expect(byId(wrapper, 'crypto-sweep-archive-toggle')[0].text()).toBe('admin.crypto.sweepView.showArchived{"count":1}')
+    await byId(wrapper, 'crypto-sweep-archive-toggle')[0].trigger('click')
+    await flushPromises()
+    expect(rows(wrapper)).toHaveLength(2)
+    expect(byId(wrapper, 'crypto-sweep-legacy')).toHaveLength(1)
+    expect(byId(wrapper, 'crypto-sweep-archive-toggle')[0].text()).toBe('admin.crypto.sweepView.hideArchived{"count":1}')
+  })
+
+  it('counts current, actionable failures and archived rows separately', async () => {
+    const wrapper = await render({
+      records: [
+        record(3, { status: 'gas_pending' }),
+        record(2, { status: 'failed', error: 'RPC request failed' }),
+        record(1, { status: 'failed', job_version: 0 })
+      ]
+    })
+    expect(byId(wrapper, 'crypto-sweep-group-current')[0].text()).toBe('admin.crypto.sweepView.groupCurrent{"count":1}')
+    expect(byId(wrapper, 'crypto-sweep-group-failed')[0].text()).toBe('admin.crypto.sweepView.groupFailed{"count":1}')
+    expect(byId(wrapper, 'crypto-sweep-archive-toggle')).toHaveLength(1)
+  })
+
+  it('offers reconcile only where a reconcile can act, and asks the page to run it', async () => {
+    const wrapper = await render({
+      records: [record(2, { status: 'sweep_pending' }), record(1, { status: 'swept' })]
+    })
+    expect(byId(wrapper, 'crypto-sweep-reconcile')).toHaveLength(1)
+    await byId(wrapper, 'crypto-sweep-reconcile')[0].trigger('click')
+    expect(wrapper.emitted('reconcile')?.[0]).toEqual([2])
+  })
+
+  it('offers a re-sweep entry for a released failure, bounded to its chain', async () => {
+    const error = 'stale pending released: tx absent on chain; nonce 2 already consumed (latest nonce 3); released'
+    const wrapper = await render({
+      records: [record(1, { status: 'failed', chain: 'bsc', error })]
+    })
+    expect(byId(wrapper, 'crypto-sweep-released')).toHaveLength(1)
+    const button = byId(wrapper, 'crypto-sweep-resweep')[0]
+    expect(button.text()).toBe('admin.crypto.sweepView.resweep')
+    await button.trigger('click')
+    expect(wrapper.emitted('resweep')?.[0]).toEqual(['bsc'])
   })
 })
 

@@ -11,9 +11,9 @@ import (
 )
 
 var sweepPageColumns = []string{"id", "chain", "from_address", "to_address", "token", "amount", "gas_tx_hash",
-	"sweep_tx_hash", "status", "error", "created_at", "updated_at"}
+	"sweep_tx_hash", "status", "error", "created_at", "updated_at", "job_version"}
 
-const sweepPageSelect = `(?s)SELECT id, chain, from_address, to_address, token, amount::text,\s+gas_tx_hash, sweep_tx_hash, status, error, created_at, updated_at\s+FROM sweep_records WHERE 1=1`
+const sweepPageSelect = `(?s)SELECT id, chain, from_address, to_address, token, amount::text,\s+gas_tx_hash, sweep_tx_hash, status, error, created_at, updated_at, job_version\s+FROM sweep_records WHERE 1=1`
 
 func newSweepPageService(t *testing.T) (*Service, sqlmock.Sqlmock) {
 	t.Helper()
@@ -96,9 +96,9 @@ func TestListSweepRecordsPageAddsTokenSymbolAndUpdatedAt(t *testing.T) {
 	updated := created.Add(90 * time.Minute)
 	usdt := "0xdac17f958d2ee523a2206206994597c13d831ec7"
 	mock.ExpectQuery(sweepPageSelect).WillReturnRows(sqlmock.NewRows(sweepPageColumns).
-		AddRow(12, "ethereum", "0xfrom", "0xto", usdt, "123.450000000000000000", "0xgas", "0xsweep", "swept", "", created, updated).
-		AddRow(11, "ethereum", "0xfrom", "0xto", "0x0000000000000000000000000000000000000001", "1", "", "", "planned", "", created, created).
-		AddRow(10, "solana", "from", "to", "SomeMint111", "5.0", "", "", "failed", "", created, created))
+		AddRow(12, "ethereum", "0xfrom", "0xto", usdt, "123.450000000000000000", "0xgas", "0xsweep", "swept", "", created, updated, 1).
+		AddRow(11, "ethereum", "0xfrom", "0xto", "0x0000000000000000000000000000000000000001", "1", "", "", "planned", "", created, created, 1).
+		AddRow(10, "solana", "from", "to", "SomeMint111", "5.0", "", "", "failed", "", created, created, 0))
 	rows, err := s.ListSweepRecordsPage(t.Context(), "", 100, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 3)
@@ -115,6 +115,8 @@ func TestListSweepRecordsPageAddsTokenSymbolAndUpdatedAt(t *testing.T) {
 	require.Contains(t, string(encoded), `"token_symbol":"USDT"`)
 	require.Contains(t, string(encoded), `"updated_at":"2026-11-05T01:30:00Z"`)
 	require.Contains(t, string(encoded), `"token":"`+usdt+`"`, "the contract stays available next to the symbol")
+	require.Contains(t, string(encoded), `"job_version":1`, "the console needs the version to hide legacy rows")
+	require.Zero(t, rows[2].JobVersion, "a legacy row keeps its zero version so the console can archive it")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -123,7 +125,7 @@ func TestListSweepRecordsPageStillRedactsStoredErrors(t *testing.T) {
 	now := time.Now()
 	mock.ExpectQuery(sweepPageSelect).WillReturnRows(sqlmock.NewRows(sweepPageColumns).
 		AddRow(1, "bsc", "from", "to", "token", "1", "", "", "failed",
-			"rpc https://example.test/fixture-secret-path?key=fixture-secret-query: fixture-node-message", now, now))
+			"rpc https://example.test/fixture-secret-path?key=fixture-secret-query: fixture-node-message", now, now, 1))
 	rows, err := s.ListSweepRecordsPage(t.Context(), "", 100, 0)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -147,9 +149,9 @@ func TestLegacyListSweepRecordsKeepsItsOwnShape(t *testing.T) {
 	// The original function is unchanged: it neither selects updated_at nor
 	// resolves a symbol, so the zero values below are what an old caller sees.
 	s, mock := newSweepPageService(t)
-	mock.ExpectQuery(`(?s)SELECT id, chain, from_address, to_address, token, amount::text,\s+gas_tx_hash, sweep_tx_hash, status, error, created_at\s+FROM sweep_records ORDER BY id DESC LIMIT 100`).
-		WillReturnRows(sqlmock.NewRows(sweepPageColumns[:11]).
-			AddRow(1, "bsc", "from", "to", "token", "1", "", "", "swept", "", time.Now()))
+	mock.ExpectQuery(`(?s)SELECT id, chain, from_address, to_address, token, amount::text,\s+gas_tx_hash, sweep_tx_hash, status, error, created_at, job_version\s+FROM sweep_records ORDER BY id DESC LIMIT 100`).
+		WillReturnRows(sqlmock.NewRows(append(sweepPageColumns[:11:11], "job_version")).
+			AddRow(1, "bsc", "from", "to", "token", "1", "", "", "swept", "", time.Now(), 0))
 	rows, err := s.ListSweepRecords(t.Context(), "", 100)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)

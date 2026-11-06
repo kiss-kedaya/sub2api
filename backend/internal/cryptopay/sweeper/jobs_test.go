@@ -69,6 +69,8 @@ type localChain struct {
 	chainID      string
 	gasPrice     string
 	payerNonce   string // hex; overrides the gas payer's transaction count when set
+	childNonce   string // hex; overrides the child address's latest (mined) nonce
+	childPending string // hex; overrides the child address's pending nonce
 	sendError    string // when set, eth_sendRawTransaction answers with this JSON-RPC error text
 	beforeSign   func()
 	beforeSend   func()
@@ -98,9 +100,18 @@ func (c *localChain) signed(req EVMSignRequest) string {
 	return "0x" + hex.EncodeToString(raw)
 }
 
-func rawHash(raw string) string {
+func rawHash(raw string) (hash string) {
+	// A fixture may replay bytes that are not a signed transaction yet; a panic
+	// in the fake server would otherwise abort the whole test process.
+	defer func() {
+		if recover() != nil {
+			hash = "0xinvalid"
+		}
+	}()
 	var tx types.Transaction
-	_ = tx.UnmarshalBinary(common.FromHex(raw))
+	if err := tx.UnmarshalBinary(common.FromHex(raw)); err != nil {
+		return "0xinvalid"
+	}
 	return tx.Hash().Hex()
 }
 
@@ -148,12 +159,28 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 	case "eth_getTransactionCount":
 		address := param(0)
 		c.nonceReads = append(c.nonceReads, address)
+		tag := ""
+		if len(req.Params) > 1 {
+			_ = json.Unmarshal(req.Params[1], &tag)
+		}
 		result = "0x3"
+		if strings.EqualFold(address, c.address) {
+			if tag == "pending" && c.childPending != "" {
+				result = c.childPending
+			} else if tag != "pending" && c.childNonce != "" {
+				result = c.childNonce
+			}
+		}
 		if strings.EqualFold(address, c.payer) {
 			result = "0x7"
 			if c.payerNonce != "" {
 				result = c.payerNonce
 			}
+		}
+	case "eth_getTransactionByHash":
+		hash := param(0)
+		if c.txs[hash] {
+			result = map[string]string{"hash": hash}
 		}
 	case "eth_sendRawTransaction":
 		if c.beforeSend != nil {

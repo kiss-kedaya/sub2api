@@ -45,6 +45,57 @@ export function sweepStatusColor(status: string): 'success' | 'warning' | 'error
   return 'neutral'
 }
 
+/** Active work: the row is waiting on the chain, not on a human. */
+const ACTIVE_STATUSES = ['planned', 'gas_pending', 'gas_confirmed', 'sweep_pending', 'token_pending']
+/** A failed row a person can still act on in this console. */
+const ACTIONABLE_FAILED_STATUSES = ['failed', 'manual_review']
+
+export const SWEEP_GROUP_CURRENT = 'current'
+export const SWEEP_GROUP_FAILED = 'failed'
+export const SWEEP_GROUP_ARCHIVED = 'archived'
+export type SweepGroup = typeof SWEEP_GROUP_CURRENT | typeof SWEEP_GROUP_FAILED | typeof SWEEP_GROUP_ARCHIVED
+
+/**
+ * job_version 0 is a record written before durable jobs (or handled by hand
+ * before the current format). The admin console keeps those out of the current
+ * task list instead of mixing dead rows with work that is still progressing.
+ * job_version 1 is the current format.
+ */
+export function sweepGroupOf(record: SweepRecord): SweepGroup {
+  if ((record.job_version ?? 1) < 1) return SWEEP_GROUP_ARCHIVED
+  if (record.status === 'gas_sent') return SWEEP_GROUP_ARCHIVED
+  if (ACTIVE_STATUSES.includes(record.status)) return SWEEP_GROUP_CURRENT
+  if (ACTIONABLE_FAILED_STATUSES.includes(record.status)) return SWEEP_GROUP_FAILED
+  return SWEEP_GROUP_CURRENT
+}
+
+/** Reconcile is offered only where it can actually change something. */
+export function sweepCanReconcile(record: SweepRecord): boolean {
+  if ((record.job_version ?? 1) < 1) return false
+  if (record.status === 'swept' || record.status === 'planned') return false
+  return Boolean(record.gas_tx_hash || record.sweep_tx_hash) || ACTIVE_STATUSES.includes(record.status)
+}
+
+/** A failed row the sweeper itself released after proving the tx was dead. */
+export const SWEEP_RELEASED_PREFIX = 'stale pending released:'
+
+export function sweepIsReleasedFailure(record: SweepRecord): boolean {
+  return record.status === 'failed' && String(record.error ?? '').trim().startsWith(SWEEP_RELEASED_PREFIX)
+}
+
+/** First readable sentence of an error, for the collapsed row. */
+export function sweepErrorHead(message: string | null | undefined, max = 120): string {
+  const text = redactSweepError(message)
+  if (!text) return ''
+  const firstLine = text.split(/\n|;\s/)[0]?.trim() || text
+  return firstLine.length > max ? `${firstLine.slice(0, max)}…` : firstLine
+}
+
+/** Full redacted error, for the expandable detail. */
+export function sweepErrorDetail(message: string | null | undefined): string {
+  return redactSweepError(message)
+}
+
 export const SWEEP_STATUS_LABEL_KEYS: readonly string[] = [...new Set(Object.values(STATUS_LABEL_KEYS))]
 
 const ERROR_LINE_MAX = 300

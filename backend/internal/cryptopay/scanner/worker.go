@@ -261,7 +261,7 @@ func (e *scanStageError) logAttrs() []any {
 	var failure *rpc.Failure
 	switch {
 	case errors.As(e.err, &failure):
-		attrs = append(attrs, "kind", failure.Kind)
+		attrs = append(attrs, "kind", failure.Kind, "category", failure.Category())
 		if failure.HTTPStatus != 0 {
 			attrs = append(attrs, "http_status", failure.HTTPStatus)
 		}
@@ -272,13 +272,21 @@ func (e *scanStageError) logAttrs() []any {
 			attrs = append(attrs, "timeout", true)
 		}
 	case errors.Is(e.err, context.DeadlineExceeded):
-		attrs = append(attrs, "kind", "timeout")
+		attrs = append(attrs, "kind", "timeout", "category", rpc.CategoryTimeout)
 	case errors.Is(e.err, context.Canceled):
-		attrs = append(attrs, "kind", "canceled")
+		attrs = append(attrs, "kind", "canceled", "category", "canceled")
 	case errors.Is(e.err, rpc.ErrIndependentEvidence):
-		attrs = append(attrs, "kind", "evidence")
+		attrs = append(attrs, "kind", "evidence", "category", rpc.CategoryUnknown)
 	default:
-		attrs = append(attrs, "kind", "other")
+		attrs = append(attrs, "kind", "other", "category", rpc.CategoryUnknown)
+	}
+	// The endpoint hostname (never the URL) plus a sanitised node sentence make a
+	// transport failure actionable: which node timed out, and what it said.
+	if host := rpc.HostOf(e.err); host != "" {
+		attrs = append(attrs, "endpoint_host", host)
+	}
+	if detail := rpc.DetailOf(e.err); detail != "" {
+		attrs = append(attrs, "detail", detail)
 	}
 	return append(attrs, "cause", rpc.SafeError(e.err))
 }
