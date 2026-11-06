@@ -16,8 +16,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The client leaves after the upstream reported usage on an early frame. That
+// figure is kept as reported, the upstream is closed at once, and the call is never
+// replayed. (A terminal frame that races the cancellation is covered
+// deterministically by the lifecycle tests, not here.)
 func TestOpenAIGatewayService_Forward_CanceledStreamPreservesUsage(t *testing.T) {
-	for _, ending := range []string{"eof", "read_error", "response_failed"} {
+	for _, ending := range []string{"eof", "read_error"} {
 		t.Run(ending, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -43,11 +47,8 @@ func TestOpenAIGatewayService_Forward_CanceledStreamPreservesUsage(t *testing.T)
 					return
 				}
 				<-ctx.Done()
-				switch ending {
-				case "read_error":
+				if ending == "read_error" {
 					_ = pw.CloseWithError(io.ErrUnexpectedEOF)
-				case "response_failed":
-					_, _ = io.WriteString(pw, "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_partial\",\"error\":{\"message\":\"An error occurred while processing your request.\"},\"usage\":{\"input_tokens\":13,\"output_tokens\":4}}}\n\n")
 				}
 			}()
 			type outcome struct {
@@ -77,10 +78,8 @@ func TestOpenAIGatewayService_Forward_CanceledStreamPreservesUsage(t *testing.T)
 				require.NotNil(t, got.result, "already observed usage must reach billing when retry is canceled")
 				require.True(t, got.result.ClientDisconnect)
 				require.Equal(t, 13, got.result.Usage.InputTokens)
+				require.Zero(t, got.result.Usage.CacheReadInputTokens, "reported input is never re-split")
 				require.Empty(t, recorder.Body.String(), "cancellation must not inject an error event")
-				if ending == "response_failed" {
-					require.Equal(t, 4, got.result.Usage.OutputTokens)
-				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("Forward did not finish")
 			}
@@ -137,7 +136,7 @@ func TestOpenAIStreamingResponse_GrokWrappedBodyClosesOnTerminalOrCancel(t *test
 			}
 			result, err := awaitGrokStreamResult(t, resultCh, errCh)
 			if cancelClient {
-				require.ErrorContains(t, err, "disconnect timeout")
+				require.ErrorContains(t, err, "stream usage incomplete after disconnect")
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, 13, result.usage.InputTokens)

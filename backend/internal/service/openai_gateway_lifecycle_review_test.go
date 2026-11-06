@@ -31,7 +31,10 @@ func (w *lifecycleFailedClientWriter) Write([]byte) (int, error) {
 	return 0, io.ErrClosedPipe
 }
 
-func TestOpenAILifecycleReview_DownstreamWriteFailureDrainsUsage(t *testing.T) {
+// A failed client write means the client is gone: the upstream is closed at once
+// instead of being drained for a terminal frame. Usage the upstream already
+// reported is kept; the call never replays on another account.
+func TestOpenAILifecycleReview_DownstreamWriteFailureClosesUpstream(t *testing.T) {
 	for _, firstWrite := range []string{"keepalive", "first_output"} {
 		t.Run(firstWrite, func(t *testing.T) {
 			body := []byte(`{"model":"gpt-5.4","input":"hello","stream":true}`)
@@ -41,7 +44,9 @@ func TestOpenAILifecycleReview_DownstreamWriteFailureDrainsUsage(t *testing.T) {
 			resp, tracked, pw := newLifecycleTrackingResponse()
 			upstream := &httpUpstreamRecorder{resp: resp}
 			svc := newOpenAIPartialUsageService(upstream)
-			svc.cfg.Gateway.StreamDataIntervalTimeout = 3
+			// A long idle interval proves the return is driven by the failed write,
+			// not by the upstream going quiet.
+			svc.cfg.Gateway.StreamDataIntervalTimeout = 30
 			if firstWrite == "keepalive" {
 				svc.cfg.Gateway.StreamKeepaliveInterval = 1
 			}
@@ -52,12 +57,7 @@ func TestOpenAILifecycleReview_DownstreamWriteFailureDrainsUsage(t *testing.T) {
 				if _, err := io.WriteString(pw, partialOpenAIResponsesSSE(firstWrite == "first_output")+"\n"); err != nil {
 					return
 				}
-				select {
-				case <-writer.failed:
-				case <-tracked.closed:
-					return
-				}
-				_, _ = io.WriteString(pw, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_final\",\"usage\":{\"input_tokens\":13,\"output_tokens\":7,\"input_tokens_details\":{\"cached_tokens\":2}}}}\n\n")
+				<-tracked.closed
 			}()
 			done := make(chan headerCancelForwardResult, 1)
 			go func() {
@@ -73,12 +73,21 @@ func TestOpenAILifecycleReview_DownstreamWriteFailureDrainsUsage(t *testing.T) {
 			case got := <-done:
 				var failover *UpstreamFailoverError
 				require.False(t, errors.As(got.err, &failover), "downstream write failure must not replay an upstream request")
-				require.NoError(t, got.err)
-				require.NotNil(t, got.result, "terminal usage must survive a failed first client write")
+				require.ErrorContains(t, got.err, "stream usage incomplete")
+				require.NotNil(t, got.result, "usage the upstream already reported must survive a failed client write")
 				require.True(t, got.result.ClientDisconnect)
 				require.Equal(t, 13, got.result.Usage.InputTokens)
-				require.Equal(t, 7, got.result.Usage.OutputTokens)
-				require.Equal(t, 2, got.result.Usage.CacheReadInputTokens)
+				require.Zero(t, got.result.Usage.CacheReadInputTokens, "reported input is never re-split")
+				if firstWrite == "first_output" {
+					require.Equal(t, 4, got.result.Usage.OutputTokens)
+				} else {
+					require.Zero(t, got.result.Usage.OutputTokens)
+				}
+				select {
+				case <-tracked.closed:
+				default:
+					t.Fatal("the upstream body was left open after the client write failed")
+				}
 				require.Len(t, upstream.requests, 1)
 				require.Empty(t, recorder.Body.String())
 			case <-time.After(5 * time.Second):
@@ -259,7 +268,7 @@ func TestOpenAILifecycleReview_HeaderHandoffCancelAndBodyCloseRace(t *testing.T)
 					return resp, nil
 				}),
 			}
-			got, err := svc.doOpenAIUpstreamWithHeaderCancel(ctx, httptest.NewRequest(http.MethodPost, "/v1/responses", nil), "", &Account{ID: 1})
+			got, err := svc.doOpenAIUpstreamWithHeaderCancel(ctx, httptest.NewRequest(http.MethodPost, "/v1/responses", nil), "", &Account{ID: 1}, false)
 			require.NoError(t, err)
 			<-cancelDone
 			time.Sleep(2 * time.Second)

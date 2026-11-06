@@ -27,8 +27,16 @@ import (
 )
 
 const (
+	// Grace for a canceled client whose upstream answer is ONE buffered body
+	// (non-stream success, any error body): the final JSON is the only place usage
+	// is reported, so closing early would make the work free. SSE responses do not
+	// use it; they close the upstream the moment the client leaves.
 	openAIStreamClientDisconnectDrainTimeoutDefault = 180 * time.Second
 	openAIStreamScannerShutdownTimeout              = time.Second
+	// Safety net only. After the upstream body is closed for a departed client the
+	// scanner's read fails at once; this bound keeps the loop from waiting on a body
+	// whose Close does not unblock Read.
+	openAIStreamDisconnectCloseGrace = time.Second
 )
 
 // openaiStreamingResult streaming response result
@@ -41,6 +49,13 @@ type openaiStreamingResult struct {
 	searchCount              int
 	nonBillableUpstreamError bool
 	clientDisconnect         bool
+	// incompleteStream is true when the stream ended without any terminal frame, so
+	// no real usage was reported (unless an early frame carried some).
+	incompleteStream bool
+	// incompleteOutputTokens is a lower-bound estimate of the output the upstream
+	// produced in that case. It is 0 when the stream reached a terminal frame or
+	// produced nothing.
+	incompleteOutputTokens int
 }
 
 type openaiNonStreamingResult struct {
@@ -60,7 +75,8 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
 	nativeReasoning := s.newDeepSeekNativeReasoningRecorder(c, account)
 	// detachUpstreamContext deliberately keeps billing/failover work independent.
-	// A canceled client still gets a bounded window for the terminal usage frame.
+	// When the client leaves, the upstream connection is closed at once; whatever
+	// was already produced is billed from an estimate (see openai_stream_incomplete_usage.go).
 	watchCtx := ctx
 	if c != nil && c.Request != nil {
 		watchCtx = c.Request.Context()
@@ -73,28 +89,27 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var drainCh <-chan time.Time
 	clientDisconnected := false
 	clientCancelCh := watchCtx.Done()
-	drainTimeout := openAIStreamClientDisconnectDrainTimeoutDefault
-	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
-		drainTimeout = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
-	}
 	streamAccountID := int64(0)
 	if account != nil {
 		streamAccountID = account.ID
 	}
-	startDisconnectDrain := func() {
+	onClientDisconnect := func() {
 		if clientDisconnected {
 			return
 		}
 		clientDisconnected = true
-		// This is a total budget from disconnect, never refreshed by new data.
-		drainTimer = time.NewTimer(drainTimeout)
+		// Stop paying for output nobody will read: close the upstream now. Frames the
+		// scanner already queued are still processed, so a terminal frame that had
+		// arrived keeps its real usage; otherwise billing uses the estimate.
+		_ = resp.Body.Close()
+		drainTimer = time.NewTimer(openAIStreamDisconnectCloseGrace)
 		drainCh = drainTimer.C
-		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, draining upstream usage for %s", drainTimeout)
+		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, upstream connection closed: account=%d model=%s", streamAccountID, originalModel)
 	}
 	observeClientCancellation := func() {
 		if !clientDisconnected && watchCtx.Err() != nil {
 			clientCancelCh = nil
-			startDisconnectDrain()
+			onClientDisconnect()
 		}
 	}
 	defer func() {
@@ -336,7 +351,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	eventShouldFlush := false
 	handlePendingWriteError := func(err error) {
 		if errors.Is(err, errOpenAIFirstOutputClientWrite) {
-			startDisconnectDrain()
+			onClientDisconnect()
 			return
 		}
 		if firstOutputStage != nil && !firstOutputStage.closed {
@@ -351,7 +366,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			_ = resp.Body.Close()
 			return
 		}
-		startDisconnectDrain()
+		onClientDisconnect()
 	}
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
@@ -393,15 +408,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		errorEventSent = true
 		payload := `{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":` + strconv.Quote(reason) + `,"code":` + strconv.Quote(reason) + `}}`
 		if err := flushBuffered(); err != nil {
-			startDisconnectDrain()
+			onClientDisconnect()
 			return
 		}
 		if _, err := writePendingString("data: " + payload + "\n\n"); err != nil {
-			startDisconnectDrain()
+			onClientDisconnect()
 			return
 		}
 		if err := flushBuffered(); err != nil {
-			startDisconnectDrain()
+			onClientDisconnect()
 			return
 		}
 		clientOutputStarted = true
@@ -423,6 +438,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		streamSearchSeen = make(map[string]struct{})
 	}
 	resultWithUsage := func() *openaiStreamingResult {
+		incompleteStream := !sawTerminalEvent && !nonBillableUpstreamError
+		incompleteOutputTokens := 0
+		if incompleteStream {
+			// No terminal frame means no real usage can arrive. Keep a lower-bound
+			// estimate of what the upstream already produced so it is not free.
+			incompleteOutputTokens = estimateIncompleteStreamOutputTokens(streamOutputAccumulator)
+		}
 		return &openaiStreamingResult{
 			usage:                    usage,
 			firstTokenMs:             firstTokenMs,
@@ -432,6 +454,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			searchCount:              searchCounter,
 			nonBillableUpstreamError: nonBillableUpstreamError,
 			clientDisconnect:         clientDisconnected,
+			incompleteStream:         incompleteStream,
+			incompleteOutputTokens:   incompleteOutputTokens,
 		}
 	}
 	flushPending := func(disconnectMessage string) {
@@ -439,7 +463,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return
 		}
 		if err := flushBuffered(); err != nil {
-			startDisconnectDrain()
+			onClientDisconnect()
 			logger.LegacyPrintf("service.openai_gateway", "%s", disconnectMessage)
 			return
 		}
@@ -1056,7 +1080,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		select {
 		case <-clientCancelCh:
 			clientCancelCh = nil
-			startDisconnectDrain()
+			onClientDisconnect()
 
 		case <-drainCh:
 			_ = resp.Body.Close()
@@ -1166,7 +1190,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				n, err := w.Write([]byte(":\n\n"))
 				recordOpenAIStreamKeepaliveBytes(c, n)
 				if err != nil {
-					startDisconnectDrain()
+					onClientDisconnect()
 					continue
 				}
 				flusher.Flush()

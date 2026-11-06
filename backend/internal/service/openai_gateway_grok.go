@@ -266,6 +266,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			clientDisconnect = streamResult.clientDisconnect
 		}
 		if err != nil {
+			applyIncompleteOpenAIStreamUsage(account, streamResult, patchedBody, upstreamModel, err)
 			return preserveOpenAIStreamingResultOnError(buildForwardResult(), err)
 		}
 	} else {
