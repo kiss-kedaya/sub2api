@@ -48,13 +48,44 @@ func incompleteCacheReadTokens(total int) int {
 	return splitIncompleteInput(total).CacheRead
 }
 
-// estimateRequestInputTokens returns the estimated input tokens of a request body,
-// or 0 when the shape is not recognised or cannot be parsed (nothing is invented).
-// It dispatches by the request shape: Gemini (contents / systemInstruction), OpenAI
-// Responses (input), Anthropic and Chat Completions (messages). History that is not
-// in the body, such as the context behind previous_response_id, is not counted, so
-// the result is a lower bound. Feed it to splitIncompleteInput for the billing split.
+// maxIncompleteInputTokens bounds an estimated input. No supported model takes more
+// than about 2M tokens of context and the largest completed request seen in
+// production was 1.7M, so a larger estimate is an estimator fault, never a real
+// request. It is a backstop behind stripOpaqueBlobs, not a substitute for it.
+const maxIncompleteInputTokens = 2_000_000
+
+func clampIncompleteInputTokens(tokens int) int {
+	if tokens > maxIncompleteInputTokens {
+		return maxIncompleteInputTokens
+	}
+	return tokens
+}
+
+// estimateRequestInputTokens is the input estimate for billing a request that ended
+// without a usage report: opaque blobs are folded first because they are not text
+// (see incomplete_request_sanitize.go), the request shape picks the estimator, and
+// the result is clamped. 0 means "unknown", nothing is invented.
 func estimateRequestInputTokens(body []byte) int {
+	return clampIncompleteInputTokens(estimateRequestInputTokensRaw(stripOpaqueBlobs(body)))
+}
+
+// estimateResponsesInputTokensForBilling is the same for a body known to be an
+// OpenAI Responses request, including one without an input field (it may only carry
+// instructions and a previous_response_id).
+func estimateResponsesInputTokensForBilling(body []byte) (int, error) {
+	tokens, err := EstimateOpenAIResponsesInputTokens(stripOpaqueBlobs(body))
+	return clampIncompleteInputTokens(tokens), err
+}
+
+// estimateRequestInputTokensRaw returns the estimated input tokens of a request body
+// as it is, or 0 when the shape is not recognised or cannot be parsed (nothing is
+// invented). It dispatches by the request shape: Gemini (contents / systemInstruction),
+// OpenAI Responses (input), Anthropic and Chat Completions (messages). History that is
+// not in the body, such as the context behind previous_response_id, is not counted, so
+// the result is a lower bound. Billing must use estimateRequestInputTokens instead:
+// this one counts base64 payloads as text. The balance preauthorization reserve keeps
+// it on purpose, it only sizes a hold and is a conservative upper bound.
+func estimateRequestInputTokensRaw(body []byte) int {
 	if len(body) == 0 {
 		return 0
 	}

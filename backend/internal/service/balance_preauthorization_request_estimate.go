@@ -48,7 +48,9 @@ func estimateBalancePreauthorizationInputTokens(body []byte) int {
 	}
 	// The shape-based estimator is shared with the incomplete-request billing
 	// (incomplete_request_usage.go); it returns 0 for a shape it cannot estimate.
-	if estimated := estimateRequestInputTokens(body); estimated > 0 {
+	// The raw variant is kept on purpose: a reserve is a conservative upper bound and
+	// the billing variant folds base64 payloads, which would shrink it.
+	if estimated := estimateRequestInputTokensRaw(body); estimated > 0 {
 		return estimated
 	}
 
