@@ -374,6 +374,7 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 			CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
 			ImageOutputTokens:        result.Usage.ImageOutputTokens,
+			CacheReadEstimated:       result.Usage.CacheReadEstimated,
 		},
 		Model:                         result.Model,
 		UpstreamModel:                 result.UpstreamModel,
