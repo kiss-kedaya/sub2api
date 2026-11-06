@@ -1155,6 +1155,11 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	// 结果一起在函数末尾返回给 handler（result 非 nil + err 非 nil），避免既走结算又
 	// 被误判为成功。
 	var streamTopUpAbortErr error
+	// clientGone: the client left after the upstream accepted the request. The deferred
+	// body close hangs up on the upstream (no drain window) and the request is billed from
+	// what was observed plus the estimates (gemini_family_incomplete_usage.go).
+	clientGone := false
+	goneOutputTokens := 0
 	if req.Stream {
 		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel)
 		if err != nil {
@@ -1176,34 +1181,53 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		} else {
 			usage = streamRes.usage
 			firstTokenMs = streamRes.firstTokenMs
+			clientGone = streamRes.clientDisconnect
+			goneOutputTokens = streamRes.outputTokens
 		}
 	} else {
 		if useUpstreamStream {
-			collected, usageObj, err := collectGeminiSSE(resp.Body, true)
+			collected, usageObj, stats, err := collectGeminiSSEObserved(resp.Body, true, nil)
 			if err != nil {
-				return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
-			}
-			collectedBytes, _ := json.Marshal(collected)
-			upstreamResponseModelObserverFromContext(c).ObserveGemini(collectedBytes)
-			observeGeminiImageOutputs(c, collectedBytes)
-			claudeResp, usageObj2 := convertGeminiToClaudeMessage(collected, originalModel, collectedBytes, false)
-			c.JSON(http.StatusOK, claudeResp)
-			usage = usageObj2
-			if usageObj != nil && (usageObj.InputTokens > 0 || usageObj.OutputTokens > 0) {
-				usage = usageObj
+				if !geminiClientGoneCtx(ctx, c) {
+					return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
+				}
+				clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
+			} else {
+				collectedBytes, _ := json.Marshal(collected)
+				upstreamResponseModelObserverFromContext(c).ObserveGemini(collectedBytes)
+				observeGeminiImageOutputs(c, collectedBytes)
+				claudeResp, usageObj2 := convertGeminiToClaudeMessage(collected, originalModel, collectedBytes, false)
+				c.JSON(http.StatusOK, claudeResp)
+				usage = usageObj2
+				if usageObj != nil && (usageObj.InputTokens > 0 || usageObj.OutputTokens > 0) {
+					usage = usageObj
+				}
 			}
 		} else {
 			usage, err = s.handleNonStreamingResponse(c, resp, originalModel)
 			if err != nil {
-				return nil, err
+				if !geminiClientGoneCtx(ctx, c) {
+					return nil, err
+				}
+				clientGone, usage = true, nil
 			}
 		}
+	}
+	if clientGone {
+		if usage == nil {
+			usage = &ClaudeUsage{}
+		}
+		applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body)
 	}
 
 	// 图片生成计费
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
+	if clientGone {
+		// The model-name floor of one image only holds for a request that ran to the end.
+		imageCount = observedGeminiImageOutputs(c)
+	}
 
 	return &ForwardResult{
 		RequestID:                     requestID,
@@ -1216,6 +1240,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		Stream:                        req.Stream,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		ClientDisconnect:              clientGone,
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
@@ -2187,6 +2212,33 @@ func mapGeminiStatusToClaudeErrorType(status string) string {
 type geminiStreamResult struct {
 	usage        *ClaudeUsage
 	firstTokenMs *int
+	// clientDisconnect: the client left mid stream; outputTokens then estimates the
+	// content relayed so far, for an upstream that had not reported usage yet.
+	clientDisconnect bool
+	outputTokens     int
+}
+
+// geminiWriteTracker remembers a failed client write, so a handler that writes through
+// helpers which drop errors (writeSSE) can still notice that the client left.
+type geminiWriteTracker struct {
+	gin.ResponseWriter
+	failed bool
+}
+
+func (w *geminiWriteTracker) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	if err != nil {
+		w.failed = true
+	}
+	return n, err
+}
+
+func (w *geminiWriteTracker) WriteString(s string) (int, error) {
+	n, err := w.ResponseWriter.WriteString(s)
+	if err != nil {
+		w.failed = true
+	}
+	return n, err
 }
 
 func (s *GeminiMessagesCompatService) handleNonStreamingResponse(c *gin.Context, resp *http.Response, originalModel string) (*ClaudeUsage, error) {
@@ -2230,6 +2282,12 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	if !ok {
 		return nil, errors.New("streaming not supported")
 	}
+	// writeSSE drops write errors, so track them: a failed client write ends the stream at
+	// once (the caller's deferred body close hangs up on the upstream) instead of draining.
+	tracker := &geminiWriteTracker{ResponseWriter: c.Writer}
+	originalWriter := c.Writer
+	c.Writer = tracker
+	defer func() { c.Writer = originalWriter }()
 
 	messageID := generateAnthropicMsgID()
 	messageStart := map[string]any{
@@ -2272,10 +2330,23 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	openToolName := ""
 	seenToolJSON := ""
 
+	var meter geminiOutputMeter
+	goneResult := func() (*geminiStreamResult, error) {
+		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+	}
+
 	reader := bufio.NewReader(resp.Body)
 	for {
+		if tracker.failed || geminiClientGone(c) {
+			return goneResult()
+		}
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
+			if tracker.failed || geminiClientGone(c) {
+				// A line cut short by the disconnect is dropped (a truncated
+				// usageMetadata would parse into a smaller number).
+				return goneResult()
+			}
 			return nil, fmt.Errorf("stream read error: %w", err)
 		}
 
@@ -2337,6 +2408,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 				if delta == "" {
 					continue
 				}
+				meter.addText(delta)
 
 				if openBlockType != "text" {
 					if openBlockIndex >= 0 {
@@ -2415,6 +2487,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					openToolName = name
 					nextBlockIndex++
 					sawToolUse = true
+					meter.addText(name)
 
 					writeSSE(c.Writer, "content_block_start", map[string]any{
 						"type":  "content_block_start",
@@ -2444,6 +2517,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 
 				delta, newSeen := computeGeminiTextDelta(seenToolJSON, argsJSONText)
 				seenToolJSON = newSeen
+				meter.addText(delta)
 				if delta != "" {
 					writeSSE(c.Writer, "content_block_delta", map[string]any{
 						"type":  "content_block_delta",
