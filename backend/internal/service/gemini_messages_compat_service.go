@@ -851,6 +851,11 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				// The client left before the upstream answered: the request was never
+				// accepted, so nothing is billed and no retry is worth its backoff.
+				return nil, ctx.Err()
+			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
@@ -1427,6 +1432,11 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				// The client left before the upstream answered: the request was never
+				// accepted, so nothing is billed and no retry is worth its backoff.
+				return nil, ctx.Err()
+			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
@@ -1695,6 +1705,11 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
+	// clientGone: the client left after the upstream accepted the request. The upstream
+	// body is closed by the deferred close above, with no drain window, and the request
+	// is billed from what was observed plus the estimates (gemini_family_incomplete_usage.go).
+	clientGone := false
+	goneOutputTokens := 0
 
 	if stream {
 		streamRes, err := s.handleNativeStreamingResponse(c, resp, startTime, isOAuth, account, requestID)
@@ -1703,6 +1718,8 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		}
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
+		clientGone = streamRes.clientDisconnect
+		goneOutputTokens = streamRes.outputTokens
 	} else {
 		if useUpstreamStream {
 			var best geminiResponseSignal
@@ -1712,37 +1729,56 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				}
 			})
 			if err != nil {
-				return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to read upstream stream")
+				if !geminiClientGoneCtx(ctx, c) {
+					return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to read upstream stream")
+				}
+				if best.Kind == geminiSignalError && !geminiUsageReported(usageObj) && stats.meter.tokens() == 0 {
+					return nil, errGeminiClientGone
+				}
+				clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
+			} else {
+				s.finalizeGeminiSSESignal(c, account, false, requestID, best, stats.dataEvents > 0, stats.fallback)
+				b, _ := json.Marshal(collected)
+				if upstreamFinancialFailureEnvelope(b) {
+					defer GuardUpstreamFinancialError(c, 0, b)()
+				}
+				if best.Kind == geminiSignalError {
+					defer GuardUpstreamFinancialError(c, best.Status, []byte(best.Detail))()
+				}
+				upstreamResponseModelObserverFromContext(c).ObserveGemini(b)
+				observeGeminiImageOutputs(c, b)
+				c.Data(http.StatusOK, "application/json", b)
+				usage = usageObj
 			}
-			s.finalizeGeminiSSESignal(c, account, false, requestID, best, stats.dataEvents > 0, stats.fallback)
-			b, _ := json.Marshal(collected)
-			if upstreamFinancialFailureEnvelope(b) {
-				defer GuardUpstreamFinancialError(c, 0, b)()
-			}
-			if best.Kind == geminiSignalError {
-				defer GuardUpstreamFinancialError(c, best.Status, []byte(best.Detail))()
-			}
-			upstreamResponseModelObserverFromContext(c).ObserveGemini(b)
-			observeGeminiImageOutputs(c, b)
-			c.Data(http.StatusOK, "application/json", b)
-			usage = usageObj
 		} else {
 			usageResp, err := s.handleNativeNonStreamingResponse(c, resp, isOAuth, account, requestID)
 			if err != nil {
-				return nil, err
+				if errors.Is(err, ErrUpstreamResponseBodyTooLarge) || !geminiClientGoneCtx(ctx, c) {
+					return nil, err
+				}
+				clientGone = true
+			} else {
+				usage = usageResp
 			}
-			usage = usageResp
 		}
 	}
 
 	if usage == nil {
 		usage = &ClaudeUsage{}
 	}
+	if clientGone {
+		applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body)
+	}
 
 	// 图片生成计费
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
+	if clientGone {
+		// The model-name floor of one image only holds for a request that ran to the
+		// end; a client that left bills only the images it really received.
+		imageCount = observedGeminiImageOutputs(c)
+	}
 
 	return &ForwardResult{
 		RequestID:                     requestID,
@@ -1755,6 +1791,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		Stream:                        stream,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		ClientDisconnect:              clientGone,
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
@@ -2543,6 +2580,8 @@ func collectGeminiSSE(body io.Reader, isOAuth bool) (map[string]any, *ClaudeUsag
 type geminiSSECollectStats struct {
 	dataEvents int
 	fallback   *geminiSSEFallbackBody
+	// meter estimates the content collected so far, for a read that fails midway.
+	meter geminiOutputMeter
 }
 
 // collectGeminiSSEObserved 在聚合的同时把每个解包后的事件原文交给 observe（可为 nil）。
@@ -2557,6 +2596,11 @@ func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawByte
 
 	for {
 		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			// A read that failed midway keeps the usage and content collected so far, and
+			// drops the line it cut short (a truncated usageMetadata parses too small).
+			return nil, usage, stats, err
+		}
 		if len(line) > 0 {
 			trimmed := strings.TrimRight(line, "\r\n")
 			if !strings.HasPrefix(trimmed, "data:") {
@@ -2585,6 +2629,7 @@ func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawByte
 					}
 					if len(rawBytes) > 0 {
 						stats.dataEvents++
+						stats.meter.observe(rawBytes)
 						if observe != nil {
 							observe(rawBytes)
 						}
@@ -2610,9 +2655,6 @@ func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawByte
 
 		if errors.Is(err, io.EOF) {
 			break
-		}
-		if err != nil {
-			return nil, nil, stats, err
 		}
 	}
 
@@ -2709,6 +2751,10 @@ func mergeCollectedTextParts(response map[string]any, textParts []string) map[st
 type geminiNativeStreamResult struct {
 	usage        *ClaudeUsage
 	firstTokenMs *int
+	// clientDisconnect: the client left mid stream; usage then covers only what the
+	// upstream reported before that, and outputTokens estimates the content relayed.
+	clientDisconnect bool
+	outputTokens     int
 }
 
 func isGeminiInsufficientScope(headers http.Header, body []byte) bool {
@@ -2879,9 +2925,40 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	sawDataEvent := false
 	fallback := &geminiSSEFallbackBody{}
 	pendingErrorHeader := ""
+	// A failed client write means the client left. The stream then ends at once and the
+	// caller's deferred body close hangs up on the upstream, instead of draining it.
+	clientGone := false
+	emit := func(text string) {
+		if clientGone {
+			return
+		}
+		if _, err := io.WriteString(c.Writer, text); err != nil {
+			clientGone = true
+			return
+		}
+		flusher.Flush()
+	}
+	var meter geminiOutputMeter
+	// goneResult ends the stream for a client that left. An upstream that produced only an
+	// error envelope, with no usage and no content, is a failure the client did not wait
+	// for, not billable output.
+	goneResult := func() (*geminiNativeStreamResult, error) {
+		if best.Kind == geminiSignalError && !geminiUsageReported(usage) && meter.tokens() == 0 {
+			return nil, errGeminiClientGone
+		}
+		return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+	}
 
 	for {
+		if clientGone || geminiClientGone(c) {
+			return goneResult()
+		}
 		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) && (clientGone || geminiClientGone(c)) {
+			// A line cut short by the disconnect is dropped: a truncated usageMetadata
+			// would parse into a smaller number than the upstream reported.
+			return goneResult()
+		}
 		if len(line) > 0 {
 			trimmed := strings.TrimRight(line, "\r\n")
 			if strings.TrimSpace(trimmed) == "event: error" {
@@ -2892,9 +2969,8 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				// Keepalive / done markers
 				if payload == "" || payload == "[DONE]" {
-					_, _ = io.WriteString(c.Writer, pendingErrorHeader+line)
+					emit(pendingErrorHeader + line)
 					pendingErrorHeader = ""
-					flusher.Flush()
 				} else {
 					var rawToWrite string
 					rawToWrite = payload
@@ -2917,6 +2993,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					if u := extractGeminiUsage(rawBytes); u != nil {
 						usage = u
 					}
+					meter.observe(rawBytes)
 					observer.ObserveGemini(rawBytes)
 					observeGeminiImageOutputs(c, rawBytes)
 					if upstreamFinancialFailureEnvelope(rawBytes) {
@@ -2936,21 +3013,19 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					}
 					if isOAuth || !bytes.Equal(clientBytes, []byte(rawToWrite)) {
 						// SSE format requires double newline (\n\n) to separate events
-						_, _ = fmt.Fprintf(c.Writer, "%sdata: %s\n\n", pendingErrorHeader, clientBytes)
+						emit(fmt.Sprintf("%sdata: %s\n\n", pendingErrorHeader, clientBytes))
 					} else {
 						// Pass-through for AI Studio responses.
-						_, _ = io.WriteString(c.Writer, pendingErrorHeader+line)
+						emit(pendingErrorHeader + line)
 					}
 					pendingErrorHeader = ""
-					flusher.Flush()
 				}
 			} else {
 				if !sawDataEvent {
 					fallback.AddLine(trimmed)
 				}
-				_, _ = io.WriteString(c.Writer, pendingErrorHeader+line)
+				emit(pendingErrorHeader + line)
 				pendingErrorHeader = ""
-				flusher.Flush()
 			}
 		}
 
