@@ -86,22 +86,34 @@ func (h *CryptoHandler) GetDepositAddresses(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	chains := make([]gin.H, 0, len(cfg.Chains))
-	for _, chain := range cfg.Chains {
+	// 只有真正会去扫的链才下发地址。当前 NormalizeConfig 只接受 EVM 链，扫描器
+	// 也会跳过非 EVM 链，所以 solana 地址转进去永远不会入账——宁可不给，免得
+	// 用户按这个地址转账后资金静默丢失。哪天扫描器支持了，这里会自动跟着开放。
+	c.JSON(http.StatusOK, gin.H{"data": buildDepositAddressResponse(cfg.Chains, assigned)})
+}
+
+func buildDepositAddressResponse(chains []string, assigned map[string]string) gin.H {
+	out := make([]gin.H, 0, len(chains))
+	solanaEnabled := false
+	for _, chain := range chains {
 		family := addresses.FamilyEVM
 		if chain == cryptopay.ChainSolana {
 			family = addresses.FamilySolana
+			solanaEnabled = true
 		}
-		chains = append(chains, gin.H{
+		out = append(out, gin.H{
 			"chain":   chain,
 			"address": assigned[family],
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+	data := gin.H{
 		"evm":    assigned[addresses.FamilyEVM],
-		"solana": assigned[addresses.FamilySolana],
-		"chains": chains,
-	}})
+		"chains": out,
+	}
+	if solanaEnabled {
+		data["solana"] = assigned[addresses.FamilySolana]
+	}
+	return data
 }
 
 // AdminGetConfig returns non-secret channel settings. RPC credentials are
