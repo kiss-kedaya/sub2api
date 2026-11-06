@@ -37,10 +37,23 @@ type UpstreamModelMetadata struct {
 	DefaultReasoningLevel    string                     `json:"default_reasoning_level,omitempty"`
 	SupportedReasoningLevels []string                   `json:"supported_reasoning_levels,omitempty"`
 	InputModalities          []string                   `json:"input_modalities,omitempty"`
+	OutputModalities         []string                   `json:"output_modalities,omitempty"`
 	ContextWindow            int64                      `json:"context_window,omitempty"`
 	MaxContextWindow         int64                      `json:"max_context_window,omitempty"`
 	MaxOutputTokens          int64                      `json:"max_output_tokens,omitempty"`
 	CodexToolCapabilities    map[string]json.RawMessage `json:"codex_tool_capabilities,omitempty"`
+
+	// Capability and catalogue facts published by models.dev. All fields are
+	// optional so existing account snapshots keep their semantics.
+	ToolCall         *bool                `json:"tool_call,omitempty"`
+	StructuredOutput *bool                `json:"structured_output,omitempty"`
+	Attachment       *bool                `json:"attachment,omitempty"`
+	Temperature      *bool                `json:"temperature,omitempty"`
+	OpenWeights      *bool                `json:"open_weights,omitempty"`
+	Family           string               `json:"family,omitempty"`
+	ReleaseDate      string               `json:"release_date,omitempty"`
+	Knowledge        string               `json:"knowledge,omitempty"`
+	ReferencePricing *ModelCatalogPricing `json:"reference_pricing,omitempty"`
 }
 
 type UpstreamModelMetadataSnapshot struct {
@@ -75,6 +88,32 @@ type modelsDevModel struct {
 	ReasoningOptions []modelsDevReasoningOption `json:"reasoning_options"`
 	Modalities       modelsDevModalities        `json:"modalities"`
 	Limit            modelsDevLimit             `json:"limit"`
+
+	// Catalogue facts published by models.dev (see https://models.dev/api.json).
+	// Cost values are USD per one million tokens.
+	Cost             modelsDevCost `json:"cost"`
+	ToolCall         *bool         `json:"tool_call"`
+	StructuredOutput *bool         `json:"structured_output"`
+	Attachment       *bool         `json:"attachment"`
+	Temperature      *bool         `json:"temperature"`
+	OpenWeights      *bool         `json:"open_weights"`
+	Family           string        `json:"family"`
+	ReleaseDate      string        `json:"release_date"`
+	LastUpdated      string        `json:"last_updated"`
+	Knowledge        string        `json:"knowledge"`
+	CanonicalModelID string        `json:"canonical_model_id"`
+	Type             string        `json:"type"`
+	Status           string        `json:"status"`
+}
+
+// modelsDevCost is the models.dev price block. Values are USD per one million
+// tokens; cache_read/cache_write are only present when the provider prices them.
+type modelsDevCost struct {
+	Input      *float64 `json:"input"`
+	Output     *float64 `json:"output"`
+	CacheRead  *float64 `json:"cache_read"`
+	CacheWrite *float64 `json:"cache_write"`
+	Reasoning  *float64 `json:"reasoning"`
 }
 
 type modelsDevReasoningOption struct {
@@ -517,6 +556,46 @@ func mergeUpstreamModelMetadata(primary, fallback UpstreamModelMetadata) (Upstre
 		merged.MaxOutputTokens = fallback.MaxOutputTokens
 		changed = true
 	}
+	if len(merged.OutputModalities) == 0 && len(fallback.OutputModalities) > 0 {
+		merged.OutputModalities = append([]string(nil), fallback.OutputModalities...)
+		changed = true
+	}
+	if merged.ToolCall == nil && fallback.ToolCall != nil {
+		merged.ToolCall = copyBoolPointer(fallback.ToolCall)
+		changed = true
+	}
+	if merged.StructuredOutput == nil && fallback.StructuredOutput != nil {
+		merged.StructuredOutput = copyBoolPointer(fallback.StructuredOutput)
+		changed = true
+	}
+	if merged.Attachment == nil && fallback.Attachment != nil {
+		merged.Attachment = copyBoolPointer(fallback.Attachment)
+		changed = true
+	}
+	if merged.Temperature == nil && fallback.Temperature != nil {
+		merged.Temperature = copyBoolPointer(fallback.Temperature)
+		changed = true
+	}
+	if merged.OpenWeights == nil && fallback.OpenWeights != nil {
+		merged.OpenWeights = copyBoolPointer(fallback.OpenWeights)
+		changed = true
+	}
+	if strings.TrimSpace(merged.Family) == "" && strings.TrimSpace(fallback.Family) != "" {
+		merged.Family = strings.TrimSpace(fallback.Family)
+		changed = true
+	}
+	if strings.TrimSpace(merged.ReleaseDate) == "" && strings.TrimSpace(fallback.ReleaseDate) != "" {
+		merged.ReleaseDate = strings.TrimSpace(fallback.ReleaseDate)
+		changed = true
+	}
+	if strings.TrimSpace(merged.Knowledge) == "" && strings.TrimSpace(fallback.Knowledge) != "" {
+		merged.Knowledge = strings.TrimSpace(fallback.Knowledge)
+		changed = true
+	}
+	if merged.ReferencePricing == nil && fallback.ReferencePricing != nil {
+		merged.ReferencePricing = fallback.ReferencePricing
+		changed = true
+	}
 	return merged, changed
 }
 
@@ -609,9 +688,19 @@ func upstreamMetadataFromModelsDevModel(modelID string, model modelsDevModel) Up
 		Reasoning:                reasoning,
 		SupportedReasoningLevels: levels,
 		InputModalities:          normalizeCodexInputModalities(model.Modalities.Input),
+		OutputModalities:         normalizeModelModalities(model.Modalities.Output),
 		ContextWindow:            model.Limit.Context,
 		MaxContextWindow:         model.Limit.Context,
 		MaxOutputTokens:          model.Limit.Output,
+		ToolCall:                 copyBoolPointer(model.ToolCall),
+		StructuredOutput:         copyBoolPointer(model.StructuredOutput),
+		Attachment:               copyBoolPointer(model.Attachment),
+		Temperature:              copyBoolPointer(model.Temperature),
+		OpenWeights:              copyBoolPointer(model.OpenWeights),
+		Family:                   strings.TrimSpace(model.Family),
+		ReleaseDate:              strings.TrimSpace(model.ReleaseDate),
+		Knowledge:                strings.TrimSpace(model.Knowledge),
+		ReferencePricing:         modelsDevModelPricing(model.Cost),
 	}
 	if len(levels) > 0 {
 		metadata.DefaultReasoningLevel = levels[0]

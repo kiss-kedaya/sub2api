@@ -844,6 +844,10 @@ type GatewayService struct {
 	// ceiling for distinct windows so a cold cache cannot fan out into an
 	// unbounded number of PostgreSQL aggregates.
 	windowCostPrefetchSF singleflight.Group
+
+	// modelMetadata holds the lazily created model metadata catalogue used by
+	// public model discovery. See gateway_model_metadata.go.
+	modelMetadata gatewayModelMetadata
 }
 
 // NewGatewayService creates a new GatewayService

@@ -34,6 +34,11 @@ func RegisterAdminRoutes(
 	if h.ModelPlaza != nil {
 		admin.GET("/model-plaza", h.ModelPlaza.AdminGet)
 	}
+	// Read-only refresh of the models.dev metadata registry used by /v1/models.
+	// It never reads or writes pricing/billing configuration.
+	if h.Gateway != nil {
+		admin.POST("/models/metadata/sync", h.Gateway.SyncModelMetadata)
+	}
 	registerAdminTicketRoutes(admin, h.Ticket)
 	registerAccountOperationsRoutes(admin, h)
 	registerMihomoRoutes(admin, h)
