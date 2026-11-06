@@ -92,7 +92,9 @@ func runPassthroughFlushTest(
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body:       body,
 	}
-	result, err := svc.handleStreamingResponsePassthrough(
+	// The production policy: a client that leaves closes the upstream. Every body
+	// these tests use ignores Close, so what was already written is still read.
+	result, err := svc.handleStreamingResponsePassthroughWithOptions(
 		context.Background(),
 		resp,
 		c,
@@ -100,6 +102,7 @@ func runPassthroughFlushTest(
 		time.Now(),
 		"",
 		"",
+		passthroughClosesUpstreamOnClientGone,
 	)
 	return result, recorder, writer, err
 }

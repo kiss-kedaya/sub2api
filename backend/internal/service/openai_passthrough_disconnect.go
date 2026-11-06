@@ -2,6 +2,8 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 )
@@ -65,18 +67,45 @@ func applyIncompletePassthroughStreamUsage(account *Account, result *openaiStrea
 	}, requestBody, model, streamErr)
 }
 
-// applyIncompletePassthroughBufferedUsage bills the input of a non-stream request
-// whose client left while the response body was still arriving. The upstream had
-// accepted the request, but no usage was reported and no output was observed, so
-// only the input side is estimated.
-func applyIncompletePassthroughBufferedUsage(account *Account, result *openaiNonStreamingResultPassthrough, requestBody []byte, model string, err error) {
-	if result == nil {
-		return
-	}
+// passthroughResponseOptions selects what the shared passthrough response handlers
+// do when the client leaves.
+//
+// The zero value is the historic behaviour: keep reading the upstream until it
+// answers so its usage can be billed. The Excel relay still depends on that and
+// is migrated by its own change. forwardOpenAIPassthrough uses
+// closeUpstreamOnClientGone, the 2026-11-06 owner decision: close the upstream the
+// moment the client leaves and bill an estimate for what is missing.
+type passthroughResponseOptions struct {
+	closeUpstreamOnClientGone bool
+}
+
+// passthroughClosesUpstreamOnClientGone is what forwardOpenAIPassthrough passes.
+var passthroughClosesUpstreamOnClientGone = passthroughResponseOptions{closeUpstreamOnClientGone: true}
+
+// errOpenAIBufferedResponseAbandoned marks a non-stream response whose client left
+// while the body was still arriving, so the upstream was closed before the usage
+// it would have reported. The buffered handler still returns a nil result with it,
+// like every other read failure, so callers that rely on that contract (the Excel
+// relay keeps its own usage tap for it) are unaffected.
+var errOpenAIBufferedResponseAbandoned = errors.New("upstream response abandoned after client disconnect")
+
+// newOpenAIBufferedResponseAbandonedError wraps the read failure that the closed
+// upstream caused.
+func newOpenAIBufferedResponseAbandonedError(readErr error) error {
+	return fmt.Errorf("%w: %w", errOpenAIBufferedResponseAbandoned, readErr)
+}
+
+// abandonedPassthroughBufferedUsage bills the input of a non-stream request whose
+// client left while the response body was still arriving. The upstream had accepted
+// the request, but no usage was reported and no output was observed, so only the
+// input side is estimated. It returns the usage to bill, empty when the estimate
+// has nothing to bill.
+func abandonedPassthroughBufferedUsage(account *Account, requestBody []byte, model string, err error) *OpenAIUsage {
+	usage := &OpenAIUsage{}
 	applyIncompleteOpenAIStreamUsage(account, &openaiStreamingResult{
-		usage:            result.usage,
-		responseID:       result.responseID,
-		clientDisconnect: result.clientDisconnect,
+		usage:            usage,
+		clientDisconnect: true,
 		incompleteStream: true,
 	}, requestBody, model, err)
+	return usage
 }
