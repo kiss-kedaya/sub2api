@@ -1026,6 +1026,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	var activeResponseID atomic.Value
 	turnLifecycle := newOpenAIWSPassthroughTurnLifecycle(true)
 	var acceptedTurnStartedAt atomic.Pointer[time.Time]
+	// The response.create of the turn in flight, as sent upstream. A turn cut off by
+	// the client leaving has no usage; its input is estimated from this body.
+	var turnRequestBody atomic.Pointer[[]byte]
 	clientFrameConn := &openAIWSClientFrameConn{
 		conn:                 clientConn,
 		controlCtx:           ctx,
@@ -1198,6 +1201,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				SetOpsUpstreamModel(c, actualModel)
 				responseCreateAtCopy := responseCreateAt
 				acceptedTurnStartedAt.Store(&responseCreateAtCopy)
+				acceptedBody := out
+				turnRequestBody.Store(&acceptedBody)
 				acceptedTurn = true
 			}
 			return out, blocked, policyErr
@@ -1228,6 +1233,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		)
 	}
 	upstreamFirstMessageSent = true
+	firstTurnBody := firstClientMessage
+	turnRequestBody.Store(&firstTurnBody)
 
 	readNextClientFrame := func(readCtx context.Context, conn openaiwsv2.FrameConn) (coderws.MessageType, []byte, error) {
 		for {
@@ -1309,12 +1316,28 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					Duration:                      turn.Duration,
 					FirstTokenMs:                  turn.FirstTokenMs,
 				}
+				if turn.Abandoned {
+					// The client left while this turn was running and the upstream was
+					// closed, so no terminal event reported its usage. Estimate what the
+					// upstream never reported; anything it did report is kept.
+					turnResult.ClientDisconnect = true
+					var requestBody []byte
+					if body := turnRequestBody.Load(); body != nil {
+						requestBody = *body
+					}
+					applyIncompleteOpenAIWSTurnUsage(account, &turnResult.Usage, turn.Output, requestBody, incompleteOpenAIWSTurn{
+						mode:       "passthrough",
+						model:      turnUpstreamModel,
+						responseID: turn.RequestID,
+					})
+				}
 				logOpenAIWSV2Passthrough(
-					"relay_turn_completed account_id=%d turn=%d request_id=%s terminal_event=%s turn_requested_model=%s turn_upstream_model=%s duration_ms=%d first_token_ms=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d",
+					"relay_turn_completed account_id=%d turn=%d request_id=%s terminal_event=%s abandoned=%v turn_requested_model=%s turn_upstream_model=%s duration_ms=%d first_token_ms=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d",
 					account.ID,
 					turnNo,
 					truncateOpenAIWSLogValue(turnResult.RequestID, openAIWSIDValueMaxLen),
 					truncateOpenAIWSLogValue(turn.TerminalEventType, openAIWSLogValueMaxLen),
+					turn.Abandoned,
 					truncateOpenAIWSLogValue(turnRequestModel, openAIWSLogValueMaxLen),
 					truncateOpenAIWSLogValue(turnUpstreamModel, openAIWSLogValueMaxLen),
 					turnResult.Duration.Milliseconds(),
@@ -1487,14 +1510,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	turnCount := int(completedTurns.Load())
 	if relayExit == nil {
 		logOpenAIWSV2Passthrough(
-			"relay_completed account_id=%d request_id=%s terminal_event=%s duration_ms=%d c2u_frames=%d u2c_frames=%d dropped_frames=%d turns=%d",
+			"relay_completed account_id=%d request_id=%s terminal_event=%s duration_ms=%d c2u_frames=%d u2c_frames=%d turns=%d",
 			account.ID,
 			truncateOpenAIWSLogValue(result.RequestID, openAIWSIDValueMaxLen),
 			truncateOpenAIWSLogValue(relayResult.TerminalEventType, openAIWSLogValueMaxLen),
 			result.Duration.Milliseconds(),
 			relayResult.ClientToUpstreamFrames,
 			relayResult.UpstreamToClientFrames,
-			relayResult.DroppedDownstreamFrames,
 			turnCount,
 		)
 		// 正常路径按 terminal 事件逐 turn 已回调；仅在零 turn 场景兜底回调一次。
@@ -1507,7 +1529,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		return nil
 	}
 	logOpenAIWSV2Passthrough(
-		"relay_failed account_id=%d stage=%s wrote_downstream=%v err=%s duration_ms=%d c2u_frames=%d u2c_frames=%d dropped_frames=%d turns=%d",
+		"relay_failed account_id=%d stage=%s wrote_downstream=%v err=%s duration_ms=%d c2u_frames=%d u2c_frames=%d turns=%d",
 		account.ID,
 		truncateOpenAIWSLogValue(relayExit.Stage, openAIWSLogValueMaxLen),
 		relayExit.WroteDownstream,
@@ -1515,7 +1537,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		result.Duration.Milliseconds(),
 		relayResult.ClientToUpstreamFrames,
 		relayResult.UpstreamToClientFrames,
-		relayResult.DroppedDownstreamFrames,
 		turnCount,
 	)
 

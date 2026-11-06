@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -394,10 +396,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	lastEventType := ""
 	upstreamTerminalEvent := ""
 	clientDisconnected := false
-	clientDisconnectDrainStartedAt := time.Time{}
+	// What the upstream produced, kept in case the client leaves before the terminal
+	// event and the turn has to be billed from an estimate.
+	turnOutput := apicompat.NewBufferedResponseAccumulator()
 	readTimeout := s.openAIWSReadTimeout()
-	upstreamReadCtx := ctx
-	upstreamReadDetached := false
 	clientRequestCanceled := func() bool {
 		return ctx != nil && errors.Is(ctx.Err(), context.Canceled)
 	}
@@ -406,11 +408,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return
 		}
 		clientDisconnected = true
-		clientDisconnectDrainStartedAt = time.Now()
-		if !upstreamReadDetached {
-			upstreamReadCtx = context.WithoutCancel(ctx)
-			upstreamReadDetached = true
-		}
 		logOpenAIWSModeInfo(
 			"client_disconnected account_id=%d conn_id=%s cause=%s events=%d token_events=%d",
 			account.ID,
@@ -502,7 +499,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return
 		}
 		markClientDisconnected("downstream_write_error")
-		logger.LegacyPrintf("service.openai_gateway", "[OpenAI WS Mode] client disconnected, continue draining upstream: account=%d", account.ID)
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI WS Mode] client disconnected, closing upstream: account=%d", account.ID)
 	}
 	flushBufferedStreamEvents := func(reason string) {
 		if len(bufferedStreamEvents) == 0 {
@@ -528,32 +525,24 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
-	// Keep per-read timeouts unchanged for connected clients. Once a client
-	// disconnects, use the same timeout as a bounded total drain budget.
 	var pendingJSONDocuments [][]byte
 
 readLoop:
 	for {
 		markClientRequestCanceled()
+		if clientDisconnected {
+			// Nobody is reading the stream any more. Stop reading the upstream; the
+			// deferred cleanup (cleanExit is still false) takes the connection out of
+			// the pool and closes it.
+			break readLoop
+		}
 		var message []byte
 		var readErr error
-		readUsedDetachedContext := upstreamReadDetached
 		if len(pendingJSONDocuments) > 0 {
 			message = pendingJSONDocuments[0]
 			pendingJSONDocuments = pendingJSONDocuments[1:]
 		} else {
-			currentReadTimeout := readTimeout
-			if clientDisconnected && !clientDisconnectDrainStartedAt.IsZero() {
-				remaining := readTimeout - time.Since(clientDisconnectDrainStartedAt)
-				if remaining <= 0 {
-					lease.MarkBroken()
-					break readLoop
-				}
-				if remaining < currentReadTimeout {
-					currentReadTimeout = remaining
-				}
-			}
-			message, readErr = lease.ReadMessageWithContextTimeout(upstreamReadCtx, currentReadTimeout)
+			message, readErr = lease.ReadMessageWithContextTimeout(ctx, readTimeout)
 			if readErr == nil {
 				if documents, repaired := splitOpenAIConcatenatedJSONDocuments(message); repaired {
 					logOpenAIWSModeInfo(
@@ -608,9 +597,6 @@ readLoop:
 				truncateOpenAIWSLogValue(lastEventType, openAIWSLogValueMaxLen),
 			)
 			if clientDisconnected {
-				if !readUsedDetachedContext && errors.Is(readErr, context.Canceled) && clientRequestCanceled() {
-					continue
-				}
 				break
 			}
 			if !wroteDownstream {
@@ -628,6 +614,7 @@ readLoop:
 			continue
 		}
 		responseModelObserver.ObserveOpenAI(message, eventType)
+		openaiwsv2.ObserveOutputEvent(turnOutput, eventType, message)
 		eventCount++
 		if firstEventType == "" {
 			firstEventType = eventType
@@ -809,7 +796,15 @@ readLoop:
 	}
 
 	if clientDisconnected && terminalEventCount == 0 {
-		return resultWithUsage(), fmt.Errorf("openai ws stream incomplete after client disconnect: %w", context.Canceled)
+		// The request reached the upstream and its answer was cut short by the client
+		// leaving: bill an estimate of what was produced.
+		result := resultWithUsage()
+		applyIncompleteOpenAIWSTurnUsage(account, &result.Usage, turnOutput, payload, incompleteOpenAIWSTurn{
+			mode:       "forward_v2",
+			model:      mappedModel,
+			responseID: responseID,
+		})
+		return result, fmt.Errorf("openai ws stream incomplete after client disconnect: %w", context.Canceled)
 	}
 	if !reqStream {
 		if clientDisconnected {

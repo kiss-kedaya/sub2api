@@ -26,12 +26,6 @@ type passthroughTestFrameConn struct {
 	once   sync.Once
 }
 
-type delayedReadFrameConn struct {
-	base       FrameConn
-	firstDelay time.Duration
-	once       sync.Once
-}
-
 type readStartSpyFrameConn struct {
 	base      FrameConn
 	started   chan struct{}
@@ -123,37 +117,6 @@ func (c *passthroughTestFrameConn) Writes() []passthroughTestFrame {
 	out := make([]passthroughTestFrame, len(c.writes))
 	copy(out, c.writes)
 	return out
-}
-
-func (c *delayedReadFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
-	if c == nil || c.base == nil {
-		return coderws.MessageText, nil, io.EOF
-	}
-	c.once.Do(func() {
-		if c.firstDelay > 0 {
-			timer := time.NewTimer(c.firstDelay)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-			case <-timer.C:
-			}
-		}
-	})
-	return c.base.ReadFrame(ctx)
-}
-
-func (c *delayedReadFrameConn) WriteFrame(ctx context.Context, msgType coderws.MessageType, payload []byte) error {
-	if c == nil || c.base == nil {
-		return io.EOF
-	}
-	return c.base.WriteFrame(ctx, msgType, payload)
-}
-
-func (c *delayedReadFrameConn) Close() error {
-	if c == nil || c.base == nil {
-		return nil
-	}
-	return c.base.Close()
 }
 
 func (c *readStartSpyFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
@@ -261,7 +224,6 @@ func TestRelay_BasicRelayAndUsage(t *testing.T) {
 	require.Nil(t, result.FirstTokenMs)
 	require.Equal(t, int64(1), result.ClientToUpstreamFrames)
 	require.Equal(t, int64(1), result.UpstreamToClientFrames)
-	require.Equal(t, int64(0), result.DroppedDownstreamFrames)
 
 	upstreamWrites := upstreamConn.Writes()
 	require.Len(t, upstreamWrites, 1)
@@ -397,40 +359,6 @@ func TestRelay_ClientDisconnect(t *testing.T) {
 	require.NotNil(t, relayExit, "客户端 EOF 应返回可观测的中断状态")
 	require.Equal(t, "client_disconnected", relayExit.Stage)
 	require.Equal(t, "gpt-4o", result.RequestModel)
-}
-
-func TestRelay_ClientDisconnect_DrainCapturesLateUsage(t *testing.T) {
-	t.Parallel()
-
-	clientConn := newPassthroughTestFrameConn(nil, true)
-	upstreamBase := newPassthroughTestFrameConn([]passthroughTestFrame{
-		{
-			msgType: coderws.MessageText,
-			payload: []byte(`{"type":"response.completed","response":{"id":"resp_drain","usage":{"input_tokens":6,"output_tokens":4,"input_tokens_details":{"cached_tokens":1}}}}`),
-		},
-	}, true)
-	upstreamConn := &delayedReadFrameConn{
-		base:       upstreamBase,
-		firstDelay: 80 * time.Millisecond,
-	}
-
-	firstPayload := []byte(`{"type":"response.create","model":"gpt-4o","input":[]}`)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{
-		UpstreamDrainTimeout: 400 * time.Millisecond,
-	})
-	require.NotNil(t, relayExit)
-	require.Equal(t, "client_disconnected", relayExit.Stage)
-	require.Equal(t, "resp_drain", result.RequestID)
-	require.Equal(t, "response.completed", result.TerminalEventType)
-	require.Equal(t, 6, result.Usage.InputTokens)
-	require.Equal(t, 4, result.Usage.OutputTokens)
-	require.Equal(t, 1, result.Usage.CacheReadInputTokens)
-	require.Equal(t, int64(1), result.ClientToUpstreamFrames)
-	require.Equal(t, int64(0), result.UpstreamToClientFrames)
-	require.Equal(t, int64(1), result.DroppedDownstreamFrames)
 }
 
 func TestRelay_IdleTimeout(t *testing.T) {

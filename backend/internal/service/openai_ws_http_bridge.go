@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -643,6 +644,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	tokenEventCount := 0
 	terminalEventCount := 0
 	replayCollector := &openAIWSToolCallReplayCollector{}
+	// What the upstream produced for this turn, kept in case the client leaves before
+	// the terminal event and the turn has to be billed from an estimate.
+	turnOutput := apicompat.NewBufferedResponseAccumulator()
 	firstEventType := ""
 	lastEventType := ""
 	upstreamTerminalEvent := ""
@@ -687,6 +691,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			ResponseHeaders:               cloneHeader(resp.Header),
 			Duration:                      time.Since(turnStart),
 			FirstTokenMs:                  firstTokenMs,
+			ClientDisconnect:              clientDisconnected,
 		}
 		if replayInput := replayCollector.Items(); len(replayInput) > 0 {
 			result.wsReplayInput = replayInput
@@ -780,6 +785,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		eventType, eventResponseID, _ := parseOpenAIWSEventEnvelope(upstreamMessage)
 		responseModelObserver.ObserveOpenAI(upstreamMessage, eventType)
+		openaiwsv2.ObserveOutputEvent(turnOutput, eventType, upstreamMessage)
 		if responseID == "" && eventResponseID != "" {
 			responseID = eventResponseID
 		}
@@ -936,7 +942,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 							clientDisconnected = true
 							closeStatus, closeReason := summarizeOpenAIWSReadCloseError(err)
 							logOpenAIWSModeInfo(
-								"ingress_ws_http_bridge_client_disconnected_drain account_id=%d turn=%d close_status=%s close_reason=%s",
+								"ingress_ws_http_bridge_client_disconnected account_id=%d turn=%d close_status=%s close_reason=%s",
 								account.ID,
 								turn,
 								closeStatus,
@@ -966,6 +972,19 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 
 		if upstreamEventErr != nil {
 			return resultWithUsage(), upstreamEventErr
+		}
+		if clientDisconnected && !isOpenAIWSTerminalEvent(eventType) {
+			// The client left in the middle of the turn and nobody will read the rest of the
+			// stream: end the upstream request now instead of draining it, and bill what the
+			// upstream had produced from an estimate.
+			_ = resp.Body.Close()
+			result := resultWithUsage()
+			applyIncompleteOpenAIWSTurnUsage(account, &result.Usage, turnOutput, body, incompleteOpenAIWSTurn{
+				mode:       "http_bridge",
+				model:      mappedModel,
+				responseID: responseID,
+			})
+			return result, nil
 		}
 		if isOpenAIWSTerminalEvent(eventType) && !bareErrorPending {
 			if eventType == "response.failed" {

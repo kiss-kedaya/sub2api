@@ -105,15 +105,13 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 	})
 }
 
-func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
+func TestRunUpstreamToClient_ErrorPaths(t *testing.T) {
 	t.Parallel()
 
 	t.Run("read upstream eof", func(t *testing.T) {
 		t.Parallel()
 
 		exitCh := make(chan relayExitSignal, 1)
-		drop := &atomic.Bool{}
-		drop.Store(false)
 		runUpstreamToClient(
 			context.Background(),
 			newPassthroughTestFrameConn(nil, true),
@@ -126,8 +124,6 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			nil,
 			nil,
 			nil,
-			nil,
-			drop,
 			nil,
 			nil,
 			func() {},
@@ -143,8 +139,6 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 		t.Parallel()
 
 		exitCh := make(chan relayExitSignal, 1)
-		drop := &atomic.Bool{}
-		drop.Store(false)
 		runUpstreamToClient(
 			context.Background(),
 			newPassthroughTestFrameConn([]passthroughTestFrame{
@@ -160,8 +154,6 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			nil,
 			nil,
 			nil,
-			drop,
-			nil,
 			nil,
 			func() {},
 			nil,
@@ -169,44 +161,6 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 		)
 		sig := <-exitCh
 		require.Equal(t, "write_client", sig.stage)
-	})
-
-	t.Run("drop downstream and stop on terminal", func(t *testing.T) {
-		t.Parallel()
-
-		exitCh := make(chan relayExitSignal, 1)
-		drop := &atomic.Bool{}
-		drop.Store(true)
-		dropped := &atomic.Int64{}
-		runUpstreamToClient(
-			context.Background(),
-			newPassthroughTestFrameConn([]passthroughTestFrame{
-				{
-					msgType: coderws.MessageText,
-					payload: []byte(`{"type":"response.completed","response":{"id":"resp_drop","usage":{"input_tokens":1,"output_tokens":1}}}`),
-				},
-			}, true),
-			func(_ coderws.MessageType, _ []byte) error { return nil },
-			time.Now(),
-			time.Now,
-			&relayState{},
-			nil,
-			nil,
-			nil,
-			nil,
-			nil,
-			nil,
-			drop,
-			nil,
-			dropped,
-			func() {},
-			nil,
-			exitCh,
-		)
-		sig := <-exitCh
-		require.Equal(t, "drain_terminal", sig.stage)
-		require.True(t, sig.graceful)
-		require.Equal(t, int64(1), dropped.Load())
 	})
 }
 
