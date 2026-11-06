@@ -99,6 +99,27 @@ func (m *geminiOutputMeter) observeSSELine(line string) {
 	m.observe([]byte(payload))
 }
 
+// observeAnthropicSSELine adds the content of one raw Anthropic SSE line (the Antigravity
+// upstream passthrough relays an Anthropic compatible /v1/messages stream): text and
+// thinking deltas, tool input deltas and the tool name.
+func (m *geminiOutputMeter) observeAnthropicSSELine(line string) {
+	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
+	if !ok {
+		return
+	}
+	event := gjson.Parse(strings.TrimSpace(payload))
+	switch event.Get("type").String() {
+	case "content_block_start":
+		if event.Get("content_block.type").String() == "tool_use" {
+			m.addText(event.Get("content_block.name").String())
+		}
+	case "content_block_delta":
+		m.addText(event.Get("delta.text").String())
+		m.addText(event.Get("delta.thinking").String())
+		m.addText(event.Get("delta.partial_json").String())
+	}
+}
+
 func (m *geminiOutputMeter) tokens() int {
 	if m == nil || m.runes == 0 {
 		return 0

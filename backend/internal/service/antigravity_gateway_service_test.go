@@ -1456,9 +1456,10 @@ func TestHandleClaudeStreamingResponse_ThoughtsTokenCount(t *testing.T) {
 
 // --- 流式客户端断开检测测试 ---
 
-// TestStreamUpstreamResponse_ClientDisconnectDrainsUsage
-// 验证：客户端写入失败后，streamUpstreamResponse 继续读取上游以收集 usage
-func TestStreamUpstreamResponse_ClientDisconnectDrainsUsage(t *testing.T) {
+// TestStreamUpstreamResponse_ClientDisconnectStopsWithoutDraining
+// 验证：客户端写入失败后立刻结束并让调用方关闭上游，不再继续排空等终帧
+// （2026-11-06 规则：客户端断开 = 立刻关上游；缺失的 usage 由 ForwardUpstream 按估算补）。
+func TestStreamUpstreamResponse_ClientDisconnectStopsWithoutDraining(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityTestService(&config.Config{
 		Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
@@ -1488,7 +1489,7 @@ func TestStreamUpstreamResponse_ClientDisconnectDrainsUsage(t *testing.T) {
 	require.NotNil(t, result)
 	require.True(t, result.clientDisconnect)
 	require.NotNil(t, result.usage)
-	require.Equal(t, 20, result.usage.OutputTokens)
+	require.Zero(t, result.usage.OutputTokens, "no drain: the message_delta after the failed write is never read")
 }
 
 // TestStreamUpstreamResponse_ContextCanceled
