@@ -1128,6 +1128,18 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if c.Request != nil {
 		clientCtx = c.Request.Context()
 	}
+	// The client left. A request that never left the gateway is just the client's
+	// error. One that was dispatched upstream is billed for its input (estimated,
+	// 95% as cache read) because the upstream was canceled before it could report
+	// usage; see openai_gateway_client_gone.go.
+	clientGone := func(sendErr, clientErr error) (*OpenAIForwardResult, error) {
+		if errors.Is(sendErr, errOpenAIRequestNotSent) {
+			return nil, clientErr
+		}
+		return newClientGoneOpenAIForwardResult(
+			c, account, body, originalModel, billingModel, upstreamModel, reasoningEffort, reqStream, startTime,
+		), clientErr
+	}
 	for {
 		if err := clientCtx.Err(); err != nil {
 			return nil, err
@@ -1159,7 +1171,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account, reqStream)
+		resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {
@@ -1183,7 +1195,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				headerGuard.close()
 			}
 			if clientErr := clientCtx.Err(); clientErr != nil {
-				return nil, clientErr
+				return clientGone(err, clientErr)
 			}
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account, and temporarily
@@ -1457,7 +1469,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
 				if clientErr := clientCtx.Err(); clientErr != nil {
-					return nil, clientErr
+					// Headers arrived and the body read was cut by the client leaving.
+					return clientGone(nil, clientErr)
 				}
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(

@@ -5,60 +5,49 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"time"
 )
 
-// Only bound the header wait after the original client cancels. Once headers
-// arrive, the existing response handlers own draining and body cleanup.
+// errOpenAIRequestNotSent marks a client that was already gone before the request
+// was handed to the upstream transport: nothing was dispatched, so nothing is
+// billed. It is joined with the client's context error, so errors.Is(err,
+// context.Canceled) still holds.
+var errOpenAIRequestNotSent = errors.New("openai upstream request not sent: client already gone")
+
+// A client that leaves cancels the upstream request at once (owner decision
+// 2026-11-06: disconnect closes the connection immediately, sync or stream). Once
+// headers arrive, the response handlers own body cleanup: the SSE handler closes
+// the body when the client leaves, buffered bodies are closed by
+// openAIBufferedBodyWithCancel.
 //
-// A streaming request is canceled upstream at once when the client leaves before
-// any header arrived: nothing was produced yet, so nothing is billed. A buffered
-// (non-stream) request keeps the drain budget because its usage only exists in the
-// final body.
-func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx context.Context, request *http.Request, proxyURL string, account *Account, streaming bool) (*http.Response, error) {
-	return s.doOpenAIRequestWithHeaderCancel(clientCtx, request, streaming, func(req *http.Request) (*http.Response, error) {
+// A request that was dispatched and whose client then left returns a client
+// context error; the caller bills the input estimate (see
+// newClientGoneOpenAIForwardResult). A request that never left the gateway returns
+// the same error joined with errOpenAIRequestNotSent.
+func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	return s.doOpenAIRequestWithHeaderCancel(clientCtx, request, func(req *http.Request) (*http.Response, error) {
 		return s.doOpenAIUpstream(req, proxyURL, account)
 	})
 }
 
 // Independent OAuth resource servers share cancellation handoff without running
 // Codex-specific token, ticket or cookie injection on their requests.
-func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context.Context, request *http.Request, streaming bool, send func(*http.Request) (*http.Response, error)) (*http.Response, error) {
+func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context.Context, request *http.Request, send func(*http.Request) (*http.Response, error)) (*http.Response, error) {
 	if clientCtx == nil || clientCtx.Done() == nil {
 		return send(request)
 	}
 	if err := clientCtx.Err(); err != nil {
-		return nil, err
-	}
-	// A zero budget means cancel the upstream the moment the client leaves.
-	budget := time.Duration(0)
-	if !streaming {
-		budget = openAIStreamClientDisconnectDrainTimeoutDefault
-		if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
-			budget = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
-		}
+		return nil, errors.Join(err, errOpenAIRequestNotSent)
 	}
 	upstreamCtx, cancelUpstream := context.WithCancel(request.Context())
-	headerDone := make(chan struct{})
 	watchDone := make(chan struct{})
 	stopWatch := context.AfterFunc(clientCtx, func() {
 		defer close(watchDone)
-		if budget <= 0 {
-			cancelUpstream()
-			return
-		}
-		timer := time.NewTimer(budget)
-		defer timer.Stop()
-		select {
-		case <-headerDone:
-		case <-timer.C:
-			cancelUpstream()
-		}
+		cancelUpstream()
 	})
 	resp, err := send(request.WithContext(upstreamCtx))
-	close(headerDone)
 	if !stopWatch() {
-		// Join a started callback so it cannot cancel the body after handoff.
+		// Join a started callback so the cancellation is settled before the handoff
+		// decision below, and cannot cancel the body after handoff.
 		<-watchDone
 	}
 	if err != nil {
@@ -83,31 +72,19 @@ func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context
 	return resp, nil
 }
 
-// Buffered success/error reads have no SSE drain loop after header handoff.
-// Give only canceled clients the same existing drain budget, then close the
-// source body to unblock ReadAll. Closing the returned body joins the watcher.
+// Buffered success/error reads have no SSE loop after header handoff. A canceled
+// client closes the source body at once, which unblocks ReadAll. Closing the
+// returned body joins the watcher.
 func (s *OpenAIGatewayService) openAIBufferedBodyWithCancel(clientCtx context.Context, body io.ReadCloser) io.ReadCloser {
 	if clientCtx == nil || clientCtx.Done() == nil {
 		return body
 	}
-	budget := openAIStreamClientDisconnectDrainTimeoutDefault
-	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
-		budget = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
-	}
-	readDone := make(chan struct{})
 	watchDone := make(chan struct{})
 	stopWatch := context.AfterFunc(clientCtx, func() {
 		defer close(watchDone)
-		timer := time.NewTimer(budget)
-		defer timer.Stop()
-		select {
-		case <-readDone:
-		case <-timer.C:
-			_ = body.Close()
-		}
+		_ = body.Close()
 	})
 	return &openAIRequestContextReadCloser{ReadCloser: body, cleanup: func() {
-		close(readDone)
 		if !stopWatch() {
 			<-watchDone
 		}

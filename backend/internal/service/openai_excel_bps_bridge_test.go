@@ -46,7 +46,7 @@ func excelBPSGatewayFixture(t *testing.T, upstream HTTPUpstream) (*OpenAIGateway
 	return svc, &accounts.account
 }
 
-func TestExcelBPSGatewayCancelledClientStillRecordsAcceptedUsage(t *testing.T) {
+func TestExcelBPSGatewayCancelledClientClosesUpstreamAndBillsEstimatedInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -58,7 +58,14 @@ func TestExcelBPSGatewayCancelledClientStillRecordsAcceptedUsage(t *testing.T) {
 		go func() {
 			defer func() { _ = writer.Close() }()
 			<-ctx.Done()
-			upstreamCancelled <- req.Context().Err() != nil
+			// A departed client closes the upstream at once: the request context is
+			// canceled shortly after, and the late terminal frame is never read.
+			select {
+			case <-req.Context().Done():
+				upstreamCancelled <- true
+			case <-time.After(2 * time.Second):
+				upstreamCancelled <- false
+			}
 			_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_excel\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":13,\"output_tokens\":4}}}\n\n")
 		}()
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: reader}, nil
@@ -84,14 +91,16 @@ func TestExcelBPSGatewayCancelledClientStillRecordsAcceptedUsage(t *testing.T) {
 	cancel()
 	select {
 	case got := <-done:
-		require.NoError(t, got.err)
-		require.NotNil(t, got.result)
+		require.ErrorIs(t, got.err, context.Canceled)
+		require.NotNil(t, got.result, "the input of an accepted turn is billed")
 		require.True(t, got.result.ClientDisconnect)
-		require.Equal(t, 13, got.result.Usage.InputTokens)
-		require.Equal(t, 4, got.result.Usage.OutputTokens)
-		require.False(t, <-upstreamCancelled)
+		require.Greater(t, got.result.Usage.InputTokens, 0)
+		require.NotEqual(t, 13, got.result.Usage.InputTokens, "the late real usage must not be read")
+		require.Zero(t, got.result.Usage.OutputTokens)
+		require.True(t, got.result.Usage.CacheReadEstimated)
+		require.True(t, <-upstreamCancelled, "the upstream must be closed when the client leaves")
 	case <-time.After(2 * time.Second):
-		t.Fatal("accepted BPS usage did not drain")
+		t.Fatal("a departed client kept the BPS turn open")
 	}
 }
 

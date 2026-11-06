@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -56,7 +55,7 @@ func TestOpenAIHeaderCancel_ClosesDiscardedResponse(t *testing.T) {
 	for _, timedOut := range []bool{false, true} {
 		name := "response_and_error"
 		if timedOut {
-			name = "response_after_cancel_budget"
+			name = "response_after_cancel"
 		}
 		t.Run(name, func(t *testing.T) {
 			clientCtx, cancel := context.WithCancelCause(context.Background())
@@ -66,7 +65,7 @@ func TestOpenAIHeaderCancel_ClosesDiscardedResponse(t *testing.T) {
 			defer func() { _ = body.Close() }()
 			defer func() { _ = writer.Close() }()
 			svc := &OpenAIGatewayService{
-				cfg: &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}},
+				cfg: &config.Config{},
 				httpUpstream: headerCancelUpstreamFunc(func(req *http.Request) (*http.Response, error) {
 					if !timedOut {
 						return resp, cause
@@ -81,7 +80,7 @@ func TestOpenAIHeaderCancel_ClosesDiscardedResponse(t *testing.T) {
 				}),
 			}
 			req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-			_, err := svc.doOpenAIUpstreamWithHeaderCancel(clientCtx, req, "", &Account{ID: 1}, false)
+			_, err := svc.doOpenAIUpstreamWithHeaderCancel(clientCtx, req, "", &Account{ID: 1})
 			select {
 			case <-body.closed:
 			default:
@@ -120,157 +119,4 @@ func startHeaderCancelForward(t *testing.T, ctx context.Context, stream bool, ha
 		done <- headerCancelForwardResult{result, err}
 	}()
 	return upstream, done
-}
-
-// A buffered (non-stream) request keeps the drain budget: its usage only exists in
-// the final body, so canceling the upstream at once would make the work free.
-func TestOpenAIForwardHeaderCancel_NonStreamBlocksUntilClientCancelBudget(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	arrived := make(chan struct{})
-	closed := make(chan struct{})
-	upstream, done := startHeaderCancelForward(t, ctx, false, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		close(arrived)
-		<-r.Context().Done()
-		close(closed)
-	})
-	select {
-	case <-arrived:
-	case <-time.After(2 * time.Second):
-		t.Fatal("upstream request did not arrive")
-	}
-	select {
-	case got := <-done:
-		t.Fatalf("active request must not acquire a header deadline: %v", got.err)
-	case <-time.After(1200 * time.Millisecond):
-	}
-	canceledAt := time.Now()
-	cancel()
-	select {
-	case <-closed:
-		t.Fatal("upstream was canceled without a drain budget")
-	case <-time.After(150 * time.Millisecond):
-	}
-	select {
-	case got := <-done:
-		require.ErrorIs(t, got.err, context.Canceled)
-		var failover *UpstreamFailoverError
-		require.False(t, errors.As(got.err, &failover))
-		require.Nil(t, got.result)
-		require.GreaterOrEqual(t, time.Since(canceledAt), 900*time.Millisecond)
-		require.Equal(t, int32(1), upstream.calls.Load())
-	case <-time.After(2 * time.Second):
-		t.Fatal("canceled client still holds the response-header wait beyond the configured budget")
-	}
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("header cancellation did not close the upstream HTTP connection")
-	}
-}
-
-// A streaming request whose client leaves before any header arrived is canceled
-// upstream at once: nothing was produced, so nothing is billed.
-func TestOpenAIForwardHeaderCancel_StreamCancelsUpstreamImmediately(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	arrived := make(chan struct{})
-	closed := make(chan struct{})
-	upstream, done := startHeaderCancelForward(t, ctx, true, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		close(arrived)
-		<-r.Context().Done()
-		close(closed)
-	})
-	select {
-	case <-arrived:
-	case <-time.After(2 * time.Second):
-		t.Fatal("upstream request did not arrive")
-	}
-	canceledAt := time.Now()
-	cancel()
-	select {
-	case got := <-done:
-		require.ErrorIs(t, got.err, context.Canceled)
-		var failover *UpstreamFailoverError
-		require.False(t, errors.As(got.err, &failover))
-		require.Nil(t, got.result, "nothing was produced, nothing is billed")
-		require.Less(t, time.Since(canceledAt), 800*time.Millisecond, "the 1s budget must not apply to streams")
-		require.Equal(t, int32(1), upstream.calls.Load())
-	case <-time.After(2 * time.Second):
-		t.Fatal("a canceled streaming request kept waiting for response headers")
-	}
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("upstream connection was not closed")
-	}
-}
-
-// A canceled non-stream request whose answer still arrives inside the budget is
-// billed from the real final body.
-func TestOpenAIForwardHeaderCancel_NonStreamAnswerWithinBudgetIsBilled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	arrived := make(chan struct{})
-	upstream, done := startHeaderCancelForward(t, ctx, false, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		close(arrived)
-		<-ctx.Done()
-		timer := time.NewTimer(600 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-		case <-r.Context().Done():
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"resp_budget","object":"response","status":"completed","output":[],"usage":{"input_tokens":13,"output_tokens":4,"input_tokens_details":{"cached_tokens":2}}}`)
-	})
-	select {
-	case <-arrived:
-	case <-time.After(2 * time.Second):
-		t.Fatal("upstream request did not arrive")
-	}
-	cancel()
-	select {
-	case got := <-done:
-		require.NoError(t, got.err)
-		require.NotNil(t, got.result)
-		require.Equal(t, 13, got.result.Usage.InputTokens)
-		require.Equal(t, 4, got.result.Usage.OutputTokens)
-		require.Equal(t, 2, got.result.Usage.CacheReadInputTokens)
-		require.Equal(t, int32(1), upstream.calls.Load())
-	case <-time.After(3 * time.Second):
-		t.Fatal("the in-budget answer did not finish the request")
-	}
-}
-
-func TestOpenAIForwardHeaderCancel_ErrorResponseDoesNotFailover(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	arrived := make(chan struct{})
-	upstream, done := startHeaderCancelForward(t, ctx, false, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		close(arrived)
-		<-ctx.Done()
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = io.WriteString(w, `{"error":{"message":"service unavailable"}}`)
-	})
-	select {
-	case <-arrived:
-	case <-time.After(2 * time.Second):
-		t.Fatal("upstream request did not arrive")
-	}
-	cancel()
-	select {
-	case got := <-done:
-		require.ErrorIs(t, got.err, context.Canceled)
-		var failover *UpstreamFailoverError
-		require.False(t, errors.As(got.err, &failover))
-		require.Equal(t, int32(1), upstream.calls.Load())
-	case <-time.After(2 * time.Second):
-		t.Fatal("canceled error response did not return")
-	}
 }

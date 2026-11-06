@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -105,6 +106,11 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		proxyURL = account.Proxy.URL()
 	}
 
+	clientCtx := ctx
+	if c.Request != nil {
+		clientCtx = c.Request.Context()
+	}
+	reasoningEffortAtDispatch := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
 	upstreamStart := time.Now()
 	var resp *http.Response
 	for attempt := 0; ; attempt++ {
@@ -113,10 +119,20 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return nil, buildErr
 		}
 
-		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		// A client that leaves cancels the upstream at once; a dispatched request is
+		// billed for its estimated input (see openai_gateway_client_gone.go).
+		resp, err = s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		logGrokAPIKeyUpstreamResult(account, upstreamReq, resp, err)
 		if err != nil {
+			if clientErr := clientCtx.Err(); clientErr != nil {
+				if errors.Is(err, errOpenAIRequestNotSent) {
+					return nil, clientErr
+				}
+				return newClientGoneOpenAIForwardResult(
+					c, account, patchedBody, originalModel, "", upstreamModel, reasoningEffortAtDispatch, reqStream, startTime,
+				), clientErr
+			}
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
 
@@ -270,8 +286,16 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return preserveOpenAIStreamingResultOnError(buildForwardResult(), err)
 		}
 	} else {
+		// The buffered body is closed the moment the client leaves.
+		resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 		if err != nil {
+			if clientErr := clientCtx.Err(); clientErr != nil {
+				// Headers arrived and the body read was cut by the client leaving.
+				return newClientGoneOpenAIForwardResult(
+					c, account, patchedBody, originalModel, "", upstreamModel, reasoningEffortAtDispatch, reqStream, startTime,
+				), clientErr
+			}
 			return nil, err
 		}
 		usage = nonStreamResult.usage
