@@ -185,6 +185,10 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		if err := p.APIKeyService.UpdateQuotaUsed(billingCtx, p.APIKey.ID, cost.ActualCost); err != nil {
 			slog.Error("update api key quota failed", "api_key_id", p.APIKey.ID, "error", err)
 		}
+		// 与数据库同一笔费用同步累加到实时用量镜像；准入处的原子预占依赖它看到最新已用量。
+		if deps.billingCacheService != nil {
+			deps.billingCacheService.IncrementAPIKeyQuotaUsage(p.APIKey.ID, cost.ActualCost)
+		}
 	}
 
 	if p.shouldUpdateRateLimits() {
@@ -436,6 +440,13 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
 		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, p.Cost.ActualCost)
+	}
+
+	// key 级 USD 配额：数据库已在上面的事务里原子递增 quota_used，这里同步刷新
+	// Redis 实时用量镜像（计费 worker 内执行，不在请求热路径）。下一次准入读到的
+	// 是「数据库已用量 + 本进程在途」，而不是最长滞后 15s/300s 的鉴权快照。
+	if p.APIKey != nil && deps.billingCacheService != nil && p.shouldDeductAPIKeyQuota() {
+		deps.billingCacheService.IncrementAPIKeyQuotaUsage(p.APIKey.ID, p.Cost.ActualCost)
 	}
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
