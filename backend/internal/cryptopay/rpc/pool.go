@@ -27,6 +27,7 @@ type Pool struct {
 	next         atomic.Uint64
 	client       *http.Client
 	verification *verificationPolicy
+	health       *endpointHealthTracker
 }
 
 // NewPool builds a pool from a comma-separated endpoint list.
@@ -88,9 +89,24 @@ func (p *Pool) Endpoints() []string {
 	return append([]string(nil), p.endpoints...)
 }
 
+// healthTracker lazily initialises the endpoint health state so pools built
+// before this field existed keep working (and tests can construct literals).
+func (p *Pool) healthTracker() *endpointHealthTracker {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.health == nil {
+		p.health = newEndpointHealthTracker()
+	}
+	return p.health
+}
+
 // Call runs one JSON-RPC method, rotating endpoints on transport, RPC, or
 // response-contract failure. A successful HTTP exchange alone does not prove
 // that the endpoint supplied usable data for the requested method.
+//
+// Endpoints inside a cooldown window are skipped, and a transient failure of
+// the whole rotation is retried with exponential backoff (up to maxCallRounds
+// rounds) before the batch reports "all rpc endpoints failed".
 func (p *Pool) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	p.mu.RLock()
 	endpoints := append([]string(nil), p.endpoints...)
@@ -99,18 +115,33 @@ func (p *Pool) Call(ctx context.Context, method string, params any) (json.RawMes
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("no rpc endpoints configured")
 	}
-	start := int(p.next.Add(1)-1) % len(endpoints)
+	health := p.healthTracker()
 	var lastErr error
-	for i := 0; i < len(endpoints); i++ {
-		endpoint := endpoints[(start+i)%len(endpoints)]
-		result, err := p.callOne(ctx, endpoint, method, params)
-		if err == nil && policy != nil && needsIndependentEvidence(method) {
-			result, err = p.verifyIndependentEvidence(ctx, policy, endpoint, method, params, result)
+	for round := 0; round < maxCallRounds; round++ {
+		candidates := health.eligible(endpoints)
+		start := int(p.next.Add(1)-1) % len(candidates)
+		for i := 0; i < len(candidates); i++ {
+			endpoint := candidates[(start+i)%len(candidates)]
+			result, err := p.callOne(ctx, endpoint, method, params)
+			if err == nil && policy != nil && needsIndependentEvidence(method) {
+				result, err = p.verifyIndependentEvidence(ctx, policy, endpoint, method, params, result)
+			}
+			if err == nil {
+				health.succeed(endpoint)
+				return result, nil
+			}
+			health.fail(endpoint, err)
+			lastErr = err
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("all rpc endpoints failed: %w", lastErr)
+			}
 		}
-		if err == nil {
-			return result, nil
+		if !isRetryableWithoutResponse(lastErr) || round == maxCallRounds-1 {
+			break
 		}
-		lastErr = err
+		if err := sleepWithContext(ctx, callRetryDelay(round)); err != nil {
+			break
+		}
 	}
 	return nil, fmt.Errorf("all rpc endpoints failed: %w", lastErr)
 }
