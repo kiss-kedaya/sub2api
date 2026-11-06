@@ -112,6 +112,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	goneOutputTokens := 0
 
 	if claudeReq.Stream {
 		// 流式响应：透传
@@ -126,20 +127,32 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
+		goneOutputTokens = streamRes.outputTokens
 	} else {
 		// 非流式响应：直接透传
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, fmt.Errorf("read upstream response: %w", err)
+			if !geminiClientGoneCtx(ctx, c) {
+				return nil, fmt.Errorf("read upstream response: %w", err)
+			}
+			// The client left while the body was being read: the upstream is closed by the
+			// deferred close above and the accepted request is billed from the estimate.
+			clientDisconnect = true
+			usage = &ClaudeUsage{}
+		} else {
+			// 提取 usage
+			upstreamResponseModelObserverFromContext(c).ObserveAnthropic(respBody)
+			usage = s.extractClaudeUsage(respBody)
+
+			c.Header("Content-Type", resp.Header.Get("Content-Type"))
+			c.Status(http.StatusOK)
+			_, _ = c.Writer.Write(respBody)
 		}
-
-		// 提取 usage
-		upstreamResponseModelObserverFromContext(c).ObserveAnthropic(respBody)
-		usage = s.extractClaudeUsage(respBody)
-
-		c.Header("Content-Type", resp.Header.Get("Content-Type"))
-		c.Status(http.StatusOK)
-		_, _ = c.Writer.Write(respBody)
+	}
+	if clientDisconnect {
+		// The client left after the upstream accepted the request: bill what the upstream
+		// reported and estimate the rest (gemini_family_incomplete_usage.go).
+		applyIncompleteGeminiUsage("antigravity_usage.client_gone_estimated", account, originalModel, usage, goneOutputTokens, body)
 	}
 
 	// 构建计费结果
@@ -160,6 +173,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 			OutputTokens:             usage.OutputTokens,
 			CacheReadInputTokens:     usage.CacheReadInputTokens,
 			CacheCreationInputTokens: usage.CacheCreationInputTokens,
+			CacheReadEstimated:       usage.CacheReadEstimated,
 		},
 	}, nil
 }
@@ -238,8 +252,15 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 
 	flusher, _ := c.Writer.(http.Flusher)
 	cw := newAntigravityClientWriter(c.Writer, flusher, "antigravity upstream")
+	// The client leaving ends the stream at once; ForwardUpstream's deferred body close
+	// hangs up on the upstream (no drain window) and the caller bills what was observed
+	// plus the estimates.
+	var meter geminiOutputMeter
 
 	for {
+		if cw.Disconnected() || geminiClientGone(c) {
+			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}
+		}
 		select {
 		case ev, ok := <-events:
 			if !ok {
@@ -247,7 +268,7 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity upstream"); handled {
-					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect}
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens()}
 				}
 				logger.LegacyPrintf("service.antigravity_gateway", "Stream read error (antigravity upstream): %v", ev.err)
 				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}
@@ -268,6 +289,7 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 
 			// 尝试从 message_delta 或 message_stop 事件提取 usage
 			s.extractSSEUsage(line, usage)
+			meter.observeAnthropicSSELine(line)
 
 			// 透传行
 			cw.Fprintf("%s\n", line)
@@ -294,7 +316,7 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 			// SSE ping 事件：Anthropic 原生格式，客户端会正确处理，
 			// 同时保持连接活跃防止 Cloudflare Tunnel 等代理断开
 			if !cw.Fprintf("event: ping\ndata: {\"type\": \"ping\"}\n\n") {
-				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity upstream), continuing to drain upstream for billing")
+				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity upstream), closing upstream")
 				continue
 			}
 		}

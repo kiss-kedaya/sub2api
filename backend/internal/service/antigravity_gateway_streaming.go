@@ -20,6 +20,9 @@ type antigravityStreamResult struct {
 	usage            *ClaudeUsage
 	firstTokenMs     *int
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
+	// outputTokens estimates the content relayed before the client left, for a request
+	// whose upstream never reported usage (gemini_family_incomplete_usage.go).
+	outputTokens int
 }
 
 func (s *AntigravityGatewayService) observeAntigravityGeminiSSELine(c *gin.Context, line string) {
@@ -97,7 +100,7 @@ func (cw *antigravityClientWriter) prepareFirstWrite() {
 
 func (cw *antigravityClientWriter) markDisconnected() {
 	cw.disconnected = true
-	logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during streaming (%s), continuing to drain upstream for billing", cw.prefix)
+	logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during streaming (%s)", cw.prefix)
 }
 
 // handleStreamReadError 处理上游读取错误的通用逻辑。
@@ -212,6 +215,14 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 
 	cw := newAntigravityClientWriter(c.Writer, flusher, "antigravity gemini")
 	pendingErrorHeader := ""
+	// The client leaving ends the stream at once and hangs up on the upstream (no drain
+	// window): the body close unblocks the reader goroutine, and the caller bills what
+	// was observed plus the estimates.
+	var meter geminiOutputMeter
+	defer func() { _ = resp.Body.Close() }()
+	goneResult := func() (*antigravityStreamResult, error) {
+		return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+	}
 
 	// 仅发送一次错误事件，避免多次写入导致协议混乱
 	errorEventSent := false
@@ -225,6 +236,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 	}
 
 	for {
+		if cw.Disconnected() || geminiClientGone(c) {
+			return goneResult()
+		}
 		select {
 		case ev, ok := <-events:
 			if !ok {
@@ -232,7 +246,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity gemini"); handled {
-					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect}, nil
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens()}, nil
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity): max_size=%d error=%v", maxLineSize, ev.err)
@@ -269,6 +283,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				if u := extractGeminiUsage(inner); u != nil {
 					usage = u
 				}
+				meter.observe(inner)
 				if upstreamFinancialFailureEnvelope([]byte(payload)) {
 					if !cw.Disconnected() {
 						WriteUpstreamFinancialError(c, 0, []byte(payload))
@@ -327,7 +342,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 			}
 			// SSE ping/keepalive：保持连接活跃防止 Cloudflare Tunnel 等代理断开
 			if !cw.Fprintf(":\n\n") {
-				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity gemini), continuing to drain upstream for billing")
+				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity gemini), closing upstream")
 				continue
 			}
 		}
@@ -404,7 +419,15 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 		intervalCh = intervalTicker.C
 	}
 
+	// The client leaving ends the read at once: the upstream is closed (no drain window)
+	// and the caller bills what was observed plus the estimates.
+	var meter geminiOutputMeter
+	defer func() { _ = resp.Body.Close() }()
+
 	for {
+		if geminiClientGone(c) {
+			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+		}
 		select {
 		case ev, ok := <-events:
 			if !ok {
@@ -414,6 +437,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 			if ev.err != nil {
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity non-stream): max_size=%d error=%v", maxLineSize, ev.err)
+				}
+				if geminiClientGone(c) {
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
 				}
 				return nil, ev.err
 			}
@@ -458,6 +484,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 			if u := extractGeminiUsage(inner); u != nil {
 				usage = u
 			}
+			meter.observe(inner)
 
 			// Check for MALFORMED_FUNCTION_CALL
 			if candidates, ok := parsed["candidates"].([]any); ok && len(candidates) > 0 {
@@ -1142,7 +1169,15 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 		return convertUsage(agUsage)
 	}
 
+	// The client leaving ends the stream at once and hangs up on the upstream (no drain
+	// window); the caller bills what was observed plus the estimates.
+	var meter geminiOutputMeter
+	defer func() { _ = resp.Body.Close() }()
+
 	for {
+		if cw.Disconnected() || geminiClientGone(c) {
+			return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+		}
 		select {
 		case ev, ok := <-events:
 			if !ok {
@@ -1164,7 +1199,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity claude"); handled {
-					return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs, clientDisconnect: disconnect}, nil
+					return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens()}, nil
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity): max_size=%d error=%v", maxLineSize, ev.err)
@@ -1177,6 +1212,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 
 			lastDataAt = time.Now()
 			s.observeAntigravityGeminiSSELine(c, ev.line)
+			meter.observeSSELine(ev.line)
 
 			// 处理 SSE 行，转换为 Claude 格式
 			claudeEvents := processor.ProcessLine(strings.TrimRight(ev.line, "\r\n"))
@@ -1211,7 +1247,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 			// SSE ping 事件：Anthropic 原生格式，客户端会正确处理，
 			// 同时保持连接活跃防止 Cloudflare Tunnel 等代理断开
 			if !cw.Fprintf("event: ping\ndata: {\"type\": \"ping\"}\n\n") {
-				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity claude), continuing to drain upstream for billing")
+				logger.LegacyPrintf("service.antigravity_gateway", "Client disconnected during keepalive ping (antigravity claude), closing upstream")
 				continue
 			}
 		}
