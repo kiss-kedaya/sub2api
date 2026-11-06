@@ -157,14 +157,14 @@
         </UTabs>
 
         <!-- Tab Content -->
-        <UForm id="channel-form" class="flex-1 overflow-y-auto pt-5" @submit="handleSubmit">
+        <UForm id="channel-form" class="flex-1 overflow-y-auto pt-5" novalidate @submit="handleSubmit">
           <!-- Basic Settings Tab -->
           <div v-show="activeTab === 'basic'" class="space-y-5">
             <UFormField :label="t('admin.channels.form.name', 'Name')" required>
               <UInput
+                ref="nameInputRef"
                 v-model="form.name"
                 type="text"
-                required
                 class="w-full"
                 :placeholder="t('admin.channels.form.namePlaceholder', 'Enter channel name')"
               />
@@ -571,7 +571,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -730,6 +730,7 @@ const sortState = reactive({
 const showDialog = ref(false)
 const editingChannel = ref<Channel | null>(null)
 const submitting = ref(false)
+const nameInputRef = ref<{ input?: HTMLInputElement; $el?: HTMLElement } | null>(null)
 const showDeleteDialog = ref(false)
 const deletingChannel = ref<Channel | null>(null)
 const activeTab = ref<string>('basic')
@@ -1486,7 +1487,15 @@ function closeDialog() {
 async function handleSubmit() {
   if (submitting.value) return
   if (!form.name.trim()) {
+    // The name field lives in the "basic" tab; if another tab is open the native
+    // validation bubble cannot focus it, so switch tabs ourselves before prompting.
+    activeTab.value = 'basic'
     appStore.showError(t('admin.channels.nameRequired', 'Please enter a channel name'))
+    await nextTick()
+    const nameInput = nameInputRef.value
+    const el = nameInput?.input ?? (nameInput?.$el?.querySelector?.('input') as HTMLInputElement | null | undefined)
+    el?.focus()
+    el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
     return
   }
 
