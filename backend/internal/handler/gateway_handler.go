@@ -61,6 +61,9 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini   int
 	cfg                        *config.Config
 	settingService             *service.SettingService
+	// modelMetadata enriches /v1/models with catalogue metadata. It is optional
+	// so lightweight handler constructions (tests) keep the raw list shape.
+	modelMetadata modelsListMetadataProvider
 }
 
 // streamKeepaliveInterval returns the configured interval for compatibility
@@ -1315,35 +1318,35 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
-		writeAllowlistedModelsList(c, responsePlatform, availableModels)
+		h.writeAllowlistedModelsList(c, responsePlatform, availableModels)
 		return
 	}
 
 	if len(availableModels) > 0 {
-		writeModelsList(c, responsePlatform, availableModels)
+		h.writeModelsList(c, responsePlatform, availableModels)
 		return
 	}
 
 	// Fallback to default models
 	if responsePlatform == service.PlatformOpenAI {
-		writeModelsListResponse(c, openai.DefaultModels)
+		h.writeModelsListResponse(c, responsePlatform, openai.DefaultModels)
 		return
 	}
 
 	if responsePlatform == service.PlatformGemini {
-		writeModelsListResponse(c, geminicli.DefaultModels)
+		h.writeModelsListResponse(c, responsePlatform, geminicli.DefaultModels)
 		return
 	}
 	if responsePlatform == service.PlatformGrok {
-		writeGrokModelsList(c, xai.DefaultModelIDs())
+		h.writeGrokModelsList(c, responsePlatform, xai.DefaultModelIDs())
 		return
 	}
 	if responsePlatform == service.PlatformTypeSafe {
-		writeModelsList(c, responsePlatform, []string{typesafe.JevLatestModel})
+		h.writeModelsList(c, responsePlatform, []string{typesafe.JevLatestModel})
 		return
 	}
 
-	writeModelsListResponse(c, claude.DefaultModels)
+	h.writeModelsListResponse(c, responsePlatform, claude.DefaultModels)
 }
 
 func apiKeyModelsListGroupIDs(apiKey *service.APIKey) []int64 {
@@ -1551,13 +1554,13 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	return models
 }
 
-func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
+func (h *GatewayHandler) writeModelsList(c *gin.Context, platform string, modelIDs []string) {
 	if platform == service.PlatformOpenAI {
-		writeOpenAIModelsList(c, modelIDs)
+		h.writeOpenAIModelsList(c, platform, modelIDs)
 		return
 	}
 	if platform == service.PlatformGrok {
-		writeGrokModelsList(c, modelIDs)
+		h.writeGrokModelsList(c, platform, modelIDs)
 		return
 	}
 	models := make([]claude.Model, 0, len(modelIDs))
@@ -1569,15 +1572,15 @@ func writeModelsList(c *gin.Context, platform string, modelIDs []string) {
 			CreatedAt:   "2024-01-01T00:00:00Z",
 		})
 	}
-	writeModelsListResponse(c, models)
+	h.writeModelsListResponse(c, platform, models)
 }
 
-func writeAllowlistedModelsList(c *gin.Context, platform string, modelIDs []string) {
+func (h *GatewayHandler) writeAllowlistedModelsList(c *gin.Context, platform string, modelIDs []string) {
 	if platform == service.PlatformOpenAI {
-		writeOpenAIModelsList(c, modelIDs)
+		h.writeOpenAIModelsList(c, platform, modelIDs)
 		return
 	}
-	writeModelsList(c, platform, modelIDs)
+	h.writeModelsList(c, platform, modelIDs)
 }
 
 type grokReasoningEffortOption struct {
@@ -1593,7 +1596,7 @@ type grokModelListItem struct {
 	ReasoningEfforts        []grokReasoningEffortOption `json:"reasoningEfforts,omitempty"`
 }
 
-func writeGrokModelsList(c *gin.Context, modelIDs []string) {
+func (h *GatewayHandler) writeGrokModelsList(c *gin.Context, platform string, modelIDs []string) {
 	defaults := xai.DefaultModels()
 	defaultsByID := make(map[string]xai.Model, len(defaults))
 	for _, model := range defaults {
@@ -1628,7 +1631,7 @@ func writeGrokModelsList(c *gin.Context, modelIDs []string) {
 		models = append(models, item)
 	}
 
-	writeModelsListResponse(c, models)
+	h.writeModelsListResponse(c, platform, models)
 }
 
 func grokModelSupportsConfigurableReasoning(modelID string) bool {
@@ -1640,7 +1643,7 @@ func grokModelSupportsConfigurableReasoning(modelID string) bool {
 	}
 }
 
-func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
+func (h *GatewayHandler) writeOpenAIModelsList(c *gin.Context, platform string, modelIDs []string) {
 	defaultsByID := make(map[string]openai.Model, len(openai.DefaultModels))
 	for _, model := range openai.DefaultModels {
 		defaultsByID[model.ID] = model
@@ -1661,7 +1664,25 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 			DisplayName: modelID,
 		})
 	}
-	writeModelsListResponse(c, models)
+	h.writeModelsListResponse(c, platform, models)
+}
+
+// writeModelsListResponse marshals the model list, merges catalogue metadata,
+// and writes either the collection or the single-model representation. The
+// metadata pass is additive: standard id/object/created/owned_by fields are
+// preserved and an enrichment failure falls back to the raw list.
+func (h *GatewayHandler) writeModelsListResponse(c *gin.Context, platform string, models any) {
+	body, err := json.Marshal(gin.H{"object": "list", "data": models})
+	if err != nil {
+		writeOpenAIModelsError(c, http.StatusInternalServerError, "api_error", "Failed to encode model catalogue")
+		return
+	}
+	body = h.enrichModelsListBody(c, platform, body)
+	if c.Param("model") == "" {
+		c.Data(http.StatusOK, "application/json", body)
+		return
+	}
+	writeRetrievedModel(c, body)
 }
 
 // modelListingSource 汇总模型列表过滤的候选来源：账号映射键（availableModels）

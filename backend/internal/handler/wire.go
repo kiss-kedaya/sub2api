@@ -132,6 +132,11 @@ func ProvideGatewayHandler(
 		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
 	h.balancePreauthorizer = balancePreauthorizationService
 	h.securityAuditCoordinator = coordinator
+	// Public model discovery merges catalogue metadata (description, limits,
+	// modalities, capabilities, prices) through the gateway service.
+	if gatewayService != nil {
+		h.modelMetadata = gatewayService
+	}
 	return h
 }
 
