@@ -85,6 +85,20 @@ func (m *geminiOutputMeter) observe(chunk []byte) {
 	})
 }
 
+// observeSSELine adds the content of one raw upstream SSE line ("data: {...}"), reading
+// through the Code Assist {"response": ...} envelope when there is one.
+func (m *geminiOutputMeter) observeSSELine(line string) {
+	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
+	if !ok {
+		return
+	}
+	payload = strings.TrimSpace(payload)
+	if inner := gjson.Get(payload, "response"); inner.Type == gjson.JSON {
+		payload = inner.Raw
+	}
+	m.observe([]byte(payload))
+}
+
 func (m *geminiOutputMeter) tokens() int {
 	if m == nil || m.runes == 0 {
 		return 0
