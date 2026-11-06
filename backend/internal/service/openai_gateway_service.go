@@ -229,6 +229,10 @@ type OpenAIUsage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	// CacheReadEstimated marks CacheReadInputTokens as a request-body estimate made
+	// when no usage frame arrived (see incomplete_request_usage.go). It never comes
+	// from the upstream, so it is not part of the wire format.
+	CacheReadEstimated bool `json:"-"`
 }
 
 // OpenAIForwardResult represents the result of forwarding

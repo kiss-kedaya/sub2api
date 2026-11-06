@@ -46,19 +46,9 @@ func estimateBalancePreauthorizationInputTokens(body []byte) int {
 	if len(body) == 0 {
 		return 0
 	}
-
-	root := gjson.ParseBytes(body)
-	var estimated int
-	var err error
-	switch {
-	case root.Get("contents").Exists() || root.Get("systemInstruction").Exists():
-		estimated = estimateGeminiCountTokens(body)
-	case root.Get("input").Exists():
-		estimated, err = EstimateOpenAIResponsesInputTokens(body)
-	case root.Get("messages").Exists():
-		estimated, err = EstimateAnthropicCountTokens(body)
-	}
-	if err == nil && estimated > 0 {
+	// The shape-based estimator is shared with the incomplete-request billing
+	// (incomplete_request_usage.go); it returns 0 for a shape it cannot estimate.
+	if estimated := estimateRequestInputTokens(body); estimated > 0 {
 		return estimated
 	}
 

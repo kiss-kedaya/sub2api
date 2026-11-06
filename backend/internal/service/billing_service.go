@@ -202,6 +202,10 @@ type UsageTokens struct {
 	CacheCreation5mTokens int
 	CacheCreation1hTokens int
 	ImageOutputTokens     int
+	// CacheReadEstimated 表示 CacheReadTokens 是断开后无终帧时按请求体估算出的值
+	// （见 incomplete_request_usage.go），不是上游上报的真实缓存命中。模型没有缓存读价时，
+	// 这部分按普通输入价计费，而不是当成免费。上游真实上报的缓存读不受影响。
+	CacheReadEstimated bool
 }
 
 // CostBreakdown 费用明细
@@ -1614,6 +1618,13 @@ func (s *BillingService) computeTokenBreakdown(
 		}
 	} else {
 		tierMultiplier = configuredServiceTierMultiplier(serviceTier, pricing)
+	}
+
+	// 估算出来的缓存读没有缓存读价可用时（价格未配置或为 0），按此刻已选定的输入价计，
+	// 即「缓存读价缺失按全输入算」（老板 2026-11-06）。放在长上下文倍率之前：
+	// 下面会把 inputPrice 和 cacheReadPrice 一起乘倍率，两者保持一致。
+	if tokens.CacheReadEstimated && cacheReadPrice <= 0 {
+		cacheReadPrice = inputPrice
 	}
 
 	longContextPricingEligible := applyLongCtx && s.shouldApplySessionLongContextPricing(tokens, pricing)

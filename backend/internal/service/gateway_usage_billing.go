@@ -1193,6 +1193,7 @@ func (s *GatewayService) calculateTokenCost(
 		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
 		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
 		ImageOutputTokens:     result.Usage.ImageOutputTokens,
+		CacheReadEstimated:    result.Usage.CacheReadEstimated,
 	}
 
 	var resolved *ResolvedPricing
