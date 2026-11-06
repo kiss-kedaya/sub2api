@@ -15,6 +15,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/tidwall/gjson"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
@@ -38,15 +39,14 @@ type RelayResult struct {
 	ResponseModelConflict bool
 	// ResponseServiceTier is the raw service_tier declared by the last terminal
 	// response event; "" when the upstream never declared one.
-	ResponseServiceTier     string
-	Usage                   Usage
-	RequestID               string
-	TerminalEventType       string
-	FirstTokenMs            *int
-	Duration                time.Duration
-	ClientToUpstreamFrames  int64
-	UpstreamToClientFrames  int64
-	DroppedDownstreamFrames int64
+	ResponseServiceTier    string
+	Usage                  Usage
+	RequestID              string
+	TerminalEventType      string
+	FirstTokenMs           *int
+	Duration               time.Duration
+	ClientToUpstreamFrames int64
+	UpstreamToClientFrames int64
 }
 
 type RelayTurnResult struct {
@@ -60,6 +60,13 @@ type RelayTurnResult struct {
 	StartedAt             time.Time
 	Duration              time.Duration
 	FirstTokenMs          *int
+	// Abandoned marks a turn that never reached a terminal event because the client
+	// left while it was in flight; the upstream connection was closed on the spot.
+	// Usage then holds only what the upstream reported before that, and Output what
+	// it had produced, so the caller can estimate the rest. A turn that did reach its
+	// terminal event is never reported as abandoned.
+	Abandoned bool
+	Output    *apicompat.BufferedResponseAccumulator
 }
 
 type RelayExit struct {
@@ -72,7 +79,6 @@ type RelayExit struct {
 type RelayOptions struct {
 	WriteTimeout                    time.Duration
 	IdleTimeout                     time.Duration
-	UpstreamDrainTimeout            time.Duration
 	FirstTurnStartedAt              time.Time
 	TakeNextTurnStartedAt           func() time.Time
 	FirstMessageType                coderws.MessageType
@@ -115,6 +121,10 @@ type relayState struct {
 	turnTimingByID          map[string]*relayTurnTiming
 	activeTurn              *relayTurnTiming
 	pendingBareError        *observedUpstreamEvent
+	// output collects what the upstream produced for the turn in flight. It is
+	// touched only by the upstream reader goroutine and, after that goroutine has
+	// been joined, by Relay itself.
+	output *apicompat.BufferedResponseAccumulator
 }
 
 type relayExitSignal struct {
@@ -170,10 +180,6 @@ func Relay(
 	writeTimeout := options.WriteTimeout
 	if writeTimeout <= 0 {
 		writeTimeout = 2 * time.Minute
-	}
-	drainTimeout := options.UpstreamDrainTimeout
-	if drainTimeout <= 0 {
-		drainTimeout = 1200 * time.Millisecond
 	}
 	firstMessageType := options.FirstMessageType
 	if firstMessageType != coderws.MessageBinary {
@@ -243,7 +249,6 @@ func Relay(
 
 	clientToUpstreamFrames := &atomic.Int64{}
 	upstreamToClientFrames := &atomic.Int64{}
-	droppedDownstreamFrames := &atomic.Int64{}
 	emitRelayTrace(onTrace, RelayTraceEvent{
 		Stage:        "relay_start",
 		PayloadBytes: len(firstClientMessage),
@@ -280,7 +285,6 @@ func Relay(
 	markActivity()
 
 	exitCh := make(chan relayExitSignal, 3)
-	dropDownstreamWrites := atomic.Bool{}
 	clientReaderStarted := atomic.Bool{}
 	startClientReader := func() {
 		if !clientReaderStarted.CompareAndSwap(false, true) {
@@ -311,9 +315,7 @@ func Relay(
 					startClientReader()
 				}
 			},
-			&dropDownstreamWrites,
 			upstreamToClientFrames,
-			droppedDownstreamFrames,
 			markActivity,
 			onTrace,
 			exitCh,
@@ -348,16 +350,14 @@ func Relay(
 	secondExit := relayExitSignal{graceful: true}
 	hasSecondExit := false
 
-	// 客户端断开后尽力继续读取上游短窗口，捕获延迟 usage/terminal 事件用于计费。
-	if firstExit.stage == "read_client" && firstExit.graceful {
-		dropDownstreamWrites.Store(true)
-		secondExit, hasSecondExit = waitRelayExit(exitCh, drainTimeout)
-	} else {
-		relayCancel()
-		_ = upstreamConn.Close()
-		if clientReaderStarted.Load() {
-			secondExit, hasSecondExit = waitRelayExit(exitCh, 200*time.Millisecond)
-		}
+	// The client is gone, so nobody will read what the upstream still sends: end the
+	// upstream request on the spot instead of waiting for a terminal event. A turn
+	// that was still in flight is settled below from what was observed so far.
+	clientGone := ctx.Err() == nil && relayClientGone(firstExit)
+	relayCancel()
+	_ = upstreamConn.Close()
+	if !clientGone && clientReaderStarted.Load() {
+		secondExit, hasSecondExit = waitRelayExit(exitCh, 200*time.Millisecond)
 	}
 	if hasSecondExit {
 		combinedWroteDownstream = combinedWroteDownstream || secondExit.wroteDownstream
@@ -378,11 +378,14 @@ func Relay(
 	<-upstreamDone
 
 	emitTurnComplete(options.OnTurnComplete, state, finalizePendingBareError(state, nowFn()))
+	if clientGone {
+		emitAbandonedTurn(options.OnTurnComplete, state, nowFn())
+	}
 	enrichResult(&result, state, nowFn().Sub(startAt))
 	result.ClientToUpstreamFrames = clientToUpstreamFrames.Load()
 	result.UpstreamToClientFrames = upstreamToClientFrames.Load()
-	result.DroppedDownstreamFrames = droppedDownstreamFrames.Load()
-	if options.FirstMessageSent && firstExit.stage == "read_client" && firstExit.graceful {
+	if options.FirstMessageSent && clientGone {
+		// A client that left is not a relay failure, whichever side noticed first.
 		emitRelayTrace(onTrace, RelayTraceEvent{
 			Stage:           "relay_client_closed",
 			Graceful:        true,
@@ -393,10 +396,6 @@ func Relay(
 	if firstExit.stage == "read_client" && firstExit.graceful {
 		stage := "client_disconnected"
 		exitErr := firstExit.err
-		if hasSecondExit && !secondExit.graceful {
-			stage = secondExit.stage
-			exitErr = secondExit.err
-		}
 		if exitErr == nil {
 			exitErr = io.EOF
 		}
@@ -533,9 +532,7 @@ func runUpstreamToClient(
 	beforeClientWrite func(msgType coderws.MessageType, payload []byte),
 	afterClientWrite func(msgType coderws.MessageType, payload []byte, writeErr error),
 	afterWriteClient func(msgType coderws.MessageType, payload []byte),
-	dropDownstreamWrites *atomic.Bool,
 	forwardedFrames *atomic.Int64,
-	droppedFrames *atomic.Int64,
 	markActivity func(),
 	onTrace func(event RelayTraceEvent),
 	exitCh chan<- relayExitSignal,
@@ -611,28 +608,6 @@ func runUpstreamToClient(
 			}
 		}
 		emitTurnComplete(onTurnComplete, state, observedEvent)
-		if dropDownstreamWrites != nil && dropDownstreamWrites.Load() {
-			if droppedFrames != nil {
-				droppedFrames.Add(1)
-			}
-			emitRelayTrace(onTrace, RelayTraceEvent{
-				Stage:           "drop_downstream_frame",
-				Direction:       "upstream_to_client",
-				MessageType:     relayMessageTypeString(msgType),
-				PayloadBytes:    len(payload),
-				WroteDownstream: wroteDownstream,
-			})
-			if observedEvent.terminal {
-				exitCh <- relayExitSignal{
-					stage:           "drain_terminal",
-					graceful:        true,
-					wroteDownstream: wroteDownstream,
-				}
-				return
-			}
-			markActivity()
-			continue
-		}
 		if beforeClientWrite != nil {
 			beforeClientWrite(msgType, payload)
 		}
@@ -726,7 +701,7 @@ func relayDirectionFromStage(stage string) string {
 	switch stage {
 	case "read_client", "write_upstream":
 		return "client_to_upstream"
-	case "read_upstream", "write_client", "drain_terminal":
+	case "read_upstream", "write_client":
 		return "upstream_to_client"
 	case "idle_timeout":
 		return "watchdog"
@@ -799,6 +774,11 @@ func observeUpstreamMessage(
 	}
 	observeRelayTurnResponseModel(turnTiming, firstRelayResponseModel(message), isTerminalEvent(eventType))
 	if !isTerminalEvent(eventType) {
+		// Keep what the upstream produced, in case the turn is abandoned.
+		if state.output == nil {
+			state.output = apicompat.NewBufferedResponseAccumulator()
+		}
+		ObserveOutputEvent(state.output, eventType, message)
 		return observed
 	}
 	observeRelayTurnResponseServiceTier(turnTiming, firstRelayResponseServiceTier(message))
@@ -848,10 +828,74 @@ func finalizePendingBareError(state *relayState, now time.Time) observedUpstream
 	return finalizeObservedRelayTerminal(state, observed, now)
 }
 
+// relayClientGone reports whether the first exit means the client left: its reader
+// ended cleanly, or a write to it failed the way a closed connection does. A write
+// that merely timed out does not qualify; the client may still be there.
+func relayClientGone(exit relayExitSignal) bool {
+	switch exit.stage {
+	case "read_client":
+		return exit.graceful
+	case "write_client":
+		return isDisconnectError(exit.err)
+	default:
+		return false
+	}
+}
+
+// emitAbandonedTurn settles the turn that was in flight when the client left. The
+// upstream connection is already closed, so no terminal event will ever arrive: the
+// callback gets what was observed (usage the upstream reported before, the content it
+// produced) and the caller estimates the rest. It does nothing when no turn was in
+// flight, so a client leaving between two turns costs nothing.
+func emitAbandonedTurn(onTurnComplete func(turn RelayTurnResult), state *relayState, now time.Time) {
+	if state == nil || !state.hasUnfinishedTurn() {
+		return
+	}
+	startedAt := time.Time{}
+	var firstToken *int
+	responseModel, responseConflict := "", false
+	requestID := openAIWSRelayActiveTurnID(state)
+	if active := state.activeTurn; active != nil {
+		startedAt = active.startAt
+		firstToken = openAIWSRelayCloneIntPtr(active.firstTokenMs)
+		responseModel = relayTurnResponseModel(active)
+		responseConflict = active.responseModelConflict
+	}
+	if pending := state.consumePendingTurnStartedAt(); startedAt.IsZero() {
+		startedAt = pending
+	}
+	duration := time.Duration(0)
+	if !startedAt.IsZero() && now.After(startedAt) {
+		duration = now.Sub(startedAt)
+	}
+	// Nothing the upstream reported counts as final: the turn never completed.
+	partial := state.turnUsage
+	state.turnUsage = Usage{}
+	output := state.output
+	state.output = nil
+	openAIWSRelayDiscardActiveTurnTiming(state)
+	if onTurnComplete == nil {
+		return
+	}
+	onTurnComplete(RelayTurnResult{
+		RequestModel:          state.currentRequestModel(),
+		ResponseModel:         responseModel,
+		ResponseModelConflict: responseConflict,
+		Usage:                 partial,
+		RequestID:             requestID,
+		StartedAt:             startedAt,
+		Duration:              duration,
+		FirstTokenMs:          firstToken,
+		Abandoned:             true,
+		Output:                output,
+	})
+}
+
 func finalizeObservedRelayTerminal(state *relayState, observed observedUpstreamEvent, now time.Time) observedUpstreamEvent {
 	if state == nil || strings.TrimSpace(observed.eventType) == "" {
 		return observedUpstreamEvent{}
 	}
+	state.output = nil
 	observed.usage = finalizeRelayTurnUsage(state)
 	observed.terminal = true
 	responseID := strings.TrimSpace(observed.responseID)
@@ -1289,7 +1333,9 @@ func isDisconnectError(err error) bool {
 		strings.Contains(message, "unexpected eof") ||
 		strings.Contains(message, "use of closed network connection") ||
 		strings.Contains(message, "connection reset by peer") ||
-		strings.Contains(message, "broken pipe")
+		strings.Contains(message, "broken pipe") ||
+		strings.Contains(message, "an existing connection was forcibly closed by the remote host") ||
+		strings.Contains(message, "an established connection was aborted")
 }
 
 func isTerminalEvent(eventType string) bool {

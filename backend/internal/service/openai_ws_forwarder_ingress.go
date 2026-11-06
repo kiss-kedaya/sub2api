@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -726,6 +728,21 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if result == nil {
 				return errors.New("websocket http bridge turn result is nil")
 			}
+			if result.ClientDisconnect {
+				// The client left during this turn and the upstream request was ended: there
+				// is no next turn to prepare. A response that did reach its terminal event
+				// stays resumable on this account.
+				if abandonedID := strings.TrimSpace(result.RequestID); abandonedID != "" && result.UpstreamTerminalEvent != "" && stateStore != nil {
+					logOpenAIWSBindResponseAccountWarn(groupID, account.ID, abandonedID, stateStore.BindResponseAccount(ctx, groupID, abandonedID, account.ID, s.openAIWSResponseStickyTTL()))
+				}
+				logOpenAIWSModeInfo(
+					"ingress_ws_http_bridge_client_closed_mid_turn account_id=%d turn=%d terminal_event=%s",
+					account.ID,
+					turn,
+					normalizeOpenAIWSLogValue(result.UpstreamTerminalEvent),
+				)
+				return nil
+			}
 			// turnReplayInput/turnAccountFailoverInput 可能共享同一头数组（转移自
 			// bridgeCurrentItems），保存历史必须经 combine 新建头，禁止就地 append。
 			bridgeReplayInput = turnReplayInput
@@ -1005,6 +1022,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		tokenEventCount := 0
 		terminalEventCount := 0
 		replayCollector := &openAIWSToolCallReplayCollector{}
+		// What the upstream produced for this turn, kept in case the client leaves before
+		// the terminal event and the turn has to be billed from an estimate.
+		turnOutput := apicompat.NewBufferedResponseAccumulator()
 		firstEventType := ""
 		lastEventType := ""
 		needModelReplace := false
@@ -1020,6 +1040,61 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if needModelReplace {
 				mappedModelBytes = []byte(mappedModel)
 			}
+		}
+		buildTurnResult := func(terminalEvent string) *OpenAIForwardResult {
+			imageCount := imageCounter.Count()
+			result := &OpenAIForwardResult{
+				RequestID:                     responseID,
+				Usage:                         usage,
+				Model:                         originalModel,
+				UpstreamModel:                 mappedModel,
+				UpstreamResponseModel:         responseModelObserver.Model(),
+				UpstreamResponseModelConflict: responseModelObserver.Conflict(),
+				UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
+				ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(payload)),
+				ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel),
+				Stream:                        reqStream,
+				OpenAIWSMode:                  true,
+				UpstreamTerminalEvent:         terminalEvent,
+				ResponseHeaders:               lease.HandshakeHeaders(),
+				Duration:                      time.Since(turnStart),
+				FirstTokenMs:                  firstTokenMs,
+			}
+			if replayInput := replayCollector.Items(); len(replayInput) > 0 {
+				result.wsReplayInput = replayInput
+				result.wsReplayInputExists = true
+			}
+			if imageCount > 0 {
+				result.ImageCount = imageCount
+				result.ImageSize = imageSizeTier
+				result.ImageInputSize = imageInputSize
+				result.ImageOutputSizes = imageCounter.Sizes()
+				result.BillingModel = imageBillingModel
+			}
+			return result
+		}
+		// abandonTurn ends a turn whose client left before the terminal event. Nobody will read
+		// the rest of the upstream stream and the caller has already taken the connection out of
+		// the pool; what is left is to bill what the upstream had produced from an estimate.
+		abandonTurn := func(atEvent string) (*OpenAIForwardResult, error) {
+			if atEvent == "error" && !turnOutput.HasContent() {
+				// The upstream rejected the request and produced nothing. That is not billable
+				// whether or not the client was still there to see it, and the client leaving
+				// is not a fault of the account.
+				return nil, wrapOpenAIWSIngressTurnError(
+					"write_client",
+					fmt.Errorf("client left after an upstream error event: %w", context.Canceled),
+					wroteDownstream,
+				)
+			}
+			result := buildTurnResult("")
+			result.ClientDisconnect = true
+			applyIncompleteOpenAIWSTurnUsage(account, &result.Usage, turnOutput, payload, incompleteOpenAIWSTurn{
+				mode:       "ctx_pool",
+				model:      mappedModel,
+				responseID: responseID,
+			})
+			return result, nil
 		}
 		for {
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
@@ -1037,6 +1112,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 			eventType, eventResponseID, _ := parseOpenAIWSEventEnvelope(upstreamMessage)
 			responseModelObserver.ObserveOpenAI(upstreamMessage, eventType)
+			openaiwsv2.ObserveOutputEvent(turnOutput, eventType, upstreamMessage)
 			if responseID == "" && eventResponseID != "" {
 				responseID = eventResponseID
 			}
@@ -1210,13 +1286,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						clientDisconnected = true
 						closeStatus, closeReason := summarizeOpenAIWSReadCloseError(err)
 						logOpenAIWSModeInfo(
-							"ingress_ws_client_disconnected_drain account_id=%d turn=%d conn_id=%s close_status=%s close_reason=%s",
+							"ingress_ws_client_disconnected account_id=%d turn=%d conn_id=%s terminal=%v close_status=%s close_reason=%s",
 							account.ID,
 							turn,
 							truncateOpenAIWSLogValue(lease.ConnID(), openAIWSIDValueMaxLen),
+							isTerminalEvent,
 							closeStatus,
 							truncateOpenAIWSLogValue(closeReason, openAIWSHeaderValueMaxLen),
 						)
+						// With the client gone, the connection's state is no longer trustworthy (a turn may
+						// be half read), so it never goes back to the pool: drop and close it now.
+						lease.MarkBroken()
+						if !isTerminalEvent {
+							return abandonTurn(eventType)
+						}
 					} else {
 						return nil, wrapOpenAIWSIngressTurnError(
 							"write_client",
@@ -1231,10 +1314,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if isTerminalEvent {
 				terminalEvent := s.handleOpenAIWSTerminalTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), upstreamMessage)
-				// 客户端已断连时，上游连接的 session 状态不可信，标记 broken 避免回池复用。
-				if clientDisconnected {
-					lease.MarkBroken()
-				}
+				// A client that left was handled where the write failed: the connection is already
+				// out of the pool.
 				firstTokenMsValue := -1
 				if firstTokenMs != nil {
 					firstTokenMsValue = *firstTokenMs
@@ -1256,35 +1337,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						clientDisconnected,
 					)
 				}
-				imageCount := imageCounter.Count()
-				result := &OpenAIForwardResult{
-					RequestID:                     responseID,
-					Usage:                         usage,
-					Model:                         originalModel,
-					UpstreamModel:                 mappedModel,
-					UpstreamResponseModel:         responseModelObserver.Model(),
-					UpstreamResponseModelConflict: responseModelObserver.Conflict(),
-					UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
-					ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(payload)),
-					ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel),
-					Stream:                        reqStream,
-					OpenAIWSMode:                  true,
-					UpstreamTerminalEvent:         terminalEvent,
-					ResponseHeaders:               lease.HandshakeHeaders(),
-					Duration:                      time.Since(turnStart),
-					FirstTokenMs:                  firstTokenMs,
-				}
-				if replayInput := replayCollector.Items(); len(replayInput) > 0 {
-					result.wsReplayInput = replayInput
-					result.wsReplayInputExists = true
-				}
-				if imageCount > 0 {
-					result.ImageCount = imageCount
-					result.ImageSize = imageSizeTier
-					result.ImageInputSize = imageInputSize
-					result.ImageOutputSizes = imageCounter.Sizes()
-					result.BillingModel = imageBillingModel
-				}
+				result := buildTurnResult(terminalEvent)
+				result.ClientDisconnect = clientDisconnected
 				return result, nil
 			}
 		}
@@ -1884,12 +1938,30 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		turnRetryStartedAt = time.Time{}
 		turnPrevRecoveryTried = false
 		lastTurnFinishedAt = time.Now()
-		lastTurnClean = true
+		// A turn the client walked away from leaves the connection unusable, so it is not clean.
+		lastTurnClean = result == nil || !result.ClientDisconnect
 		if hooks != nil && hooks.AfterTurn != nil {
 			hooks.AfterTurn(turn, result, nil)
 		}
 		if result == nil {
 			return errors.New("websocket turn result is nil")
+		}
+		if result.ClientDisconnect {
+			// The client left during this turn and sendAndRelay already took the upstream
+			// connection out of the pool: there is no connection to remember and no next turn
+			// to prepare. A response that did reach its terminal event stays resumable on this
+			// account.
+			if abandonedID := strings.TrimSpace(result.RequestID); abandonedID != "" && result.UpstreamTerminalEvent != "" && stateStore != nil {
+				logOpenAIWSBindResponseAccountWarn(groupID, account.ID, abandonedID, stateStore.BindResponseAccount(ctx, groupID, abandonedID, account.ID, s.openAIWSResponseStickyTTL()))
+			}
+			logOpenAIWSModeInfo(
+				"ingress_ws_client_closed_mid_turn account_id=%d turn=%d conn_id=%s terminal_event=%s",
+				account.ID,
+				turn,
+				truncateOpenAIWSLogValue(connID, openAIWSIDValueMaxLen),
+				normalizeOpenAIWSLogValue(result.UpstreamTerminalEvent),
+			)
+			return nil
 		}
 		responseID := strings.TrimSpace(result.RequestID)
 		lastTurnResponseID = responseID

@@ -3,22 +3,22 @@ package service
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
-// TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure
-// reproduces the HTTP/SSE ingress bug: the client cancels after partial output,
-// while the upstream WS still has a terminal event available for usage billing.
-func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *testing.T) {
+// TestForwardOpenAIWSV2_ClientCancellationClosesUpstreamAndEstimates covers the HTTP/SSE
+// ingress: the client cancels after partial output while the upstream still has a
+// terminal event queued. The upstream is closed at once and the queued terminal event
+// is never read, so the turn is billed from an estimate of what was produced instead
+// of the usage that event would have carried.
+func TestForwardOpenAIWSV2_ClientCancellationClosesUpstreamAndEstimates(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -28,14 +28,13 @@ func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *te
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
 	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
 
-	captureConn := &openAIWSCancelSafeConn{openAIWSCaptureConn: &openAIWSCaptureConn{
+	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
 			[]byte(`{"type":"response.created","response":{"id":"resp_cancel_1","model":"gpt-5.5"}}`),
 			[]byte(`{"type":"response.output_text.delta","delta":"partial"}`),
 			[]byte(`{"type":"response.completed","response":{"id":"resp_cancel_1","model":"gpt-5.5","usage":{"input_tokens":3,"output_tokens":5}}}`),
 		},
-		readDelays: []time.Duration{0, 0, 50 * time.Millisecond},
-	}}
+	}
 
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
@@ -54,7 +53,7 @@ func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *te
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
 	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(&openAIWSClientConnCancelDialer{conn: captureConn})
+	pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn})
 	svc := &OpenAIGatewayService{
 		cfg:              cfg,
 		httpUpstream:     &httpUpstreamRecorder{},
@@ -77,15 +76,25 @@ func TestForwardOpenAIWSV2_ClientCancellationDrainsWithoutSyntheticFailure(t *te
 		},
 	}
 
-	result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"input_text","text":"hello"}]}`))
+	result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"Please write a long story about a fox who learns to code."}`))
 
-	require.NoError(t, err, "client cancellation must not surface as an upstream failure")
-	require.NotNil(t, result)
+	require.ErrorIs(t, err, context.Canceled, "the client leaving is reported as a cancellation, not an upstream failure")
+	require.NotNil(t, result, "what was observed must still reach billing")
 	require.True(t, result.ClientDisconnect)
 	require.Equal(t, "resp_cancel_1", result.RequestID)
-	require.Equal(t, 3, result.Usage.InputTokens)
-	require.Equal(t, 5, result.Usage.OutputTokens)
+	require.Empty(t, result.UpstreamTerminalEvent)
 	require.NotContains(t, writer.body.String(), "response.failed")
+
+	require.Positive(t, result.Usage.InputTokens, "input is estimated from the request body")
+	require.Equal(t, incompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
+	require.True(t, result.Usage.CacheReadEstimated)
+	require.Equal(t, estimateTokensForText("partial"), result.Usage.OutputTokens, "output is estimated from the streamed content")
+
+	captureConn.mu.Lock()
+	closed, unread := captureConn.closed, len(captureConn.events)
+	captureConn.mu.Unlock()
+	require.True(t, closed, "the upstream connection is closed, not returned to the pool")
+	require.Equal(t, 1, unread, "the terminal event was left unread: nothing is drained")
 }
 
 type cancelOnFirstWriteResponseWriter struct {
@@ -119,66 +128,3 @@ func (w *cancelOnFirstWriteResponseWriter) Write(p []byte) (int, error) {
 }
 
 func (w *cancelOnFirstWriteResponseWriter) Flush() {}
-
-type openAIWSClientConnCancelDialer struct {
-	conn openAIWSClientConn
-}
-
-func (d *openAIWSClientConnCancelDialer) Dial(
-	ctx context.Context,
-	wsURL string,
-	headers http.Header,
-	proxyURL string,
-) (openAIWSClientConn, int, http.Header, error) {
-	return d.conn, 0, nil, nil
-}
-
-// openAIWSCancelSafeConn leaves a delayed event queued when its read context is
-// canceled, matching websocket frame semantics and allowing the drain read to
-// consume that event with a detached context.
-type openAIWSCancelSafeConn struct {
-	*openAIWSCaptureConn
-}
-
-func (c *openAIWSCancelSafeConn) ReadMessage(ctx context.Context) ([]byte, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return nil, errOpenAIWSConnClosed
-	}
-	if len(c.events) == 0 {
-		c.mu.Unlock()
-		return nil, io.EOF
-	}
-	delay := time.Duration(0)
-	if len(c.readDelays) > 0 {
-		delay = c.readDelays[0]
-	}
-	event := c.events[0]
-	c.mu.Unlock()
-	if delay > 0 {
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil, errOpenAIWSConnClosed
-	}
-	if len(c.events) == 0 {
-		return nil, io.EOF
-	}
-	c.events = c.events[1:]
-	if len(c.readDelays) > 0 {
-		c.readDelays = c.readDelays[1:]
-	}
-	return event, nil
-}

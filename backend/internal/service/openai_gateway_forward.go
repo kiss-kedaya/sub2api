@@ -1104,6 +1104,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return wsResult, nil
 		}
 		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
+		if wsResult != nil && wsResult.ClientDisconnect {
+			// The client left mid-turn: hand what was observed to billing together with the
+			// error, the way the SSE path does.
+			wsResult.UpstreamModel = upstreamModel
+			if wsResult.BillingModel == "" {
+				wsResult.BillingModel = billingModel
+			}
+			return wsResult, wsErr
+		}
 		return nil, wsErr
 	}
 
