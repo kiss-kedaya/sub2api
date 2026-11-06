@@ -60,7 +60,7 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 	// acquisition and cookie injection must never run on this request.
 	upstreamStart := time.Now()
 	request := prepared.Request.WithContext(WithHTTPUpstreamProfile(upstreamCtx, HTTPUpstreamProfileOpenAI))
-	resp, err := s.doOpenAIRequestWithHeaderCancel(clientCtx, request, false, func(req *http.Request) (*http.Response, error) {
+	resp, err := s.doOpenAIRequestWithHeaderCancel(clientCtx, request, func(req *http.Request) (*http.Response, error) {
 		return s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
 	})
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
@@ -69,8 +69,20 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-		if clientCtx.Err() != nil {
-			return nil, true, clientCtx.Err()
+		if clientErr := clientCtx.Err(); clientErr != nil {
+			if errors.Is(err, errOpenAIRequestNotSent) {
+				return nil, true, clientErr
+			}
+			// Dispatched, then the client left: the input is billed from the estimate.
+			model := gjson.GetBytes(body, "model").String()
+			gone := newClientGoneOpenAIForwardResult(
+				c, account, body, firstNonEmptyString(clientModel, model), "", model,
+				extractOpenAIReasoningEffortFromBody(body, model), gjson.GetBytes(body, "stream").Bool(), start,
+			)
+			if gone != nil {
+				gone.UpstreamEndpoint = "/basispoints/api/responses"
+			}
+			return gone, true, clientErr
 		}
 		s.recordOpenAIStreamUpstreamError(c, account, true, "", "transport_error", nil, "Excel upstream transport failed")
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel upstream transport failed; turn was not replayed"}})
@@ -144,6 +156,14 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 		result.UpstreamResponseModel = observer.Model()
 		result.UpstreamResponseModelConflict = observer.Conflict()
 		result.UpstreamResponseServiceTier = observer.ServiceTier()
+	}
+	if err != nil && clientCtx.Err() != nil {
+		// The client left mid-turn and the upstream body was closed with it. What the
+		// upstream already reported is kept; an input side it never reported is
+		// estimated from the request (95% as cache read). Output is not invented here.
+		result.ClientDisconnect = true
+		fillIncompleteStreamUsage(&result.Usage, 0, body)
+		err = errors.Join(context.Canceled, err)
 	}
 	if err != nil {
 		if !c.Writer.Written() && !IsResponseCommitted(c) {

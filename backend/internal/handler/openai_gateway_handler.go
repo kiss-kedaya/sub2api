@@ -995,6 +995,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					zap.Error(err),
 				)
 				submitResponsesUsage(result)
+				// A client that left before anything was written is classified 499, and
+				// a compact heartbeat is stopped, exactly as for a result-less disconnect.
+				failoverClientGone(c)
 				return
 			}
 			if failoverClientGone(c) {
