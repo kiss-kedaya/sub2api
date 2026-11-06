@@ -2256,14 +2256,44 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSONGIFAnimation(t *testin
 	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
 }
 
-func TestOpenAIGatewayServiceParseOpenAIImagesRequest_RejectsInvalidGIFAnimationFieldTypes(t *testing.T) {
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSONGIFAnimationAcceptsNumericStrings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2.6-sunburst","prompt":"a looping lantern","size":"864x864","quality":"high","output_format":"gif","frame_count":"8","frame_duration_ms":" 200 "}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	require.Equal(t, "gif", parsed.OutputFormat)
+	require.NotNil(t, parsed.FrameCount)
+	require.Equal(t, 8, *parsed.FrameCount)
+	require.NotNil(t, parsed.FrameDurationMS)
+	require.Equal(t, 200, *parsed.FrameDurationMS)
+	require.True(t, parsed.HasNativeOptions)
+	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
+}
+
+func TestOpenAIGatewayServiceParseOpenAIImagesRequest_RejectsInvalidGIFAnimationFieldValues(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name string
 		body string
 	}{
-		{name: "frame_count string", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":"16"}`},
-		{name: "frame_duration_ms string", body: `{"prompt":"draw a cat","output_format":"gif","frame_duration_ms":"120"}`},
+		{name: "frame_count word", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":"many"}`},
+		{name: "frame_count decimal string", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":"8.5"}`},
+		{name: "frame_count empty string", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":""}`},
+		{name: "frame_count too large for int", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":"99999999999999999999"}`},
+		{name: "frame_count bool", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":true}`},
+		{name: "frame_count null", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":null}`},
+		{name: "frame_count array", body: `{"prompt":"draw a cat","output_format":"gif","frame_count":[8]}`},
+		{name: "frame_duration_ms word", body: `{"prompt":"draw a cat","output_format":"gif","frame_duration_ms":"fast"}`},
+		{name: "frame_duration_ms object", body: `{"prompt":"draw a cat","output_format":"gif","frame_duration_ms":{"ms":120}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := []byte(tc.body)
@@ -2278,6 +2308,103 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_RejectsInvalidGIFAnimation
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestOpenAIGatewayServiceForwardImages_APIKeySendsGIFAnimationFieldsAsNumbers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "quoted numbers become numbers",
+			body: `{"model":"gpt-image-2.6-sunburst","prompt":"a looping lantern","size":"864x864","quality":"high","output_format":"gif","frame_count":"8","frame_duration_ms":"200"}`,
+		},
+		{
+			name: "numbers stay numbers",
+			body: `{"model":"gpt-image-2.6-sunburst","prompt":"a looping lantern","size":"864x864","quality":"high","output_format":"gif","frame_count":8,"frame_duration_ms":200}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(tc.body)
+			req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = req
+
+			svc := &OpenAIGatewayService{
+				cfg: &config.Config{},
+				httpUpstream: &httpUpstreamRecorder{
+					resp: &http.Response{
+						StatusCode: http.StatusOK,
+						Header: http.Header{
+							"Content-Type": []string{"application/json"},
+							"X-Request-Id": []string{"req_img_gif_numbers"},
+						},
+						Body: io.NopCloser(strings.NewReader(`{"created":1710000007,"data":[{"b64_json":"aGVsbG8="}]}`)),
+					},
+				},
+			}
+			parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+			require.NoError(t, err)
+
+			account := &Account{
+				ID:       6,
+				Name:     "openai-apikey",
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key":  "test-api-key",
+					"base_url": "https://image-upstream.example/v1",
+				},
+			}
+
+			_, err = svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+			require.NoError(t, err)
+
+			upstream, ok := svc.httpUpstream.(*httpUpstreamRecorder)
+			require.True(t, ok)
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, gjson.Number, gjson.GetBytes(upstream.lastBody, "frame_count").Type)
+			require.Equal(t, int64(8), gjson.GetBytes(upstream.lastBody, "frame_count").Int())
+			require.Equal(t, gjson.Number, gjson.GetBytes(upstream.lastBody, "frame_duration_ms").Type)
+			require.Equal(t, int64(200), gjson.GetBytes(upstream.lastBody, "frame_duration_ms").Int())
+			require.Equal(t, "gif", gjson.GetBytes(upstream.lastBody, "output_format").String())
+			require.Equal(t, "864x864", gjson.GetBytes(upstream.lastBody, "size").String())
+			require.Equal(t, "high", gjson.GetBytes(upstream.lastBody, "quality").String())
+		})
+	}
+}
+
+func TestNormalizeOpenAIImagesAnimationFields(t *testing.T) {
+	t.Run("quoted numbers are rewritten and other fields kept", func(t *testing.T) {
+		out, err := normalizeOpenAIImagesAnimationFields(
+			[]byte(`{"model":"m","frame_count":"8","frame_duration_ms":" 200 ","size":"864x864"}`), "application/json")
+		require.NoError(t, err)
+		require.Equal(t, gjson.Number, gjson.GetBytes(out, "frame_count").Type)
+		require.Equal(t, int64(8), gjson.GetBytes(out, "frame_count").Int())
+		require.Equal(t, gjson.Number, gjson.GetBytes(out, "frame_duration_ms").Type)
+		require.Equal(t, int64(200), gjson.GetBytes(out, "frame_duration_ms").Int())
+		require.Equal(t, "864x864", gjson.GetBytes(out, "size").String())
+		require.Equal(t, "m", gjson.GetBytes(out, "model").String())
+	})
+	t.Run("numbers and absent fields are returned byte for byte", func(t *testing.T) {
+		in := []byte(`{"model":"m",  "frame_count":8,"size":"864x864"}`)
+		out, err := normalizeOpenAIImagesAnimationFields(in, "application/json")
+		require.NoError(t, err)
+		require.Equal(t, string(in), string(out))
+	})
+	t.Run("multipart is returned untouched", func(t *testing.T) {
+		in := []byte("--b\r\nContent-Disposition: form-data; name=\"frame_count\"\r\n\r\n8\r\n--b--\r\n")
+		out, err := normalizeOpenAIImagesAnimationFields(in, "multipart/form-data; boundary=b")
+		require.NoError(t, err)
+		require.Equal(t, string(in), string(out))
+	})
+	t.Run("a non numeric string is an error", func(t *testing.T) {
+		_, err := normalizeOpenAIImagesAnimationFields([]byte(`{"frame_count":"many"}`), "application/json")
+		require.Error(t, err)
+	})
 }
 
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartGIFAnimation(t *testing.T) {
