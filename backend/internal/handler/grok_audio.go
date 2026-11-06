@@ -420,21 +420,8 @@ func readGrokVoiceGatewayBody(c *gin.Context) ([]byte, error) {
 	return io.ReadAll(c.Request.Body)
 }
 
-// extractGrokTTSInputText pulls the primary spoken text from a TTS JSON body.
+// extractGrokTTSInputText pulls the text xAI actually speaks from a TTS JSON
+// body, so moderation and in-flight reservation use the same field as billing.
 func extractGrokTTSInputText(body []byte) string {
-	if len(body) == 0 {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return ""
-	}
-	for _, key := range []string{"input", "text", "prompt"} {
-		if v, ok := payload[key]; ok {
-			if s, ok := v.(string); ok {
-				return strings.TrimSpace(s)
-			}
-		}
-	}
-	return ""
+	return service.GrokTTSText(body)
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/stretchr/testify/require"
@@ -52,6 +53,42 @@ func TestBuildGrokVoiceURL_EncodesCustomVoicePathSegments(t *testing.T) {
 
 	_, err = buildGrokVoiceURL(account, nil, "custom-voices/../audio")
 	require.Error(t, err)
+}
+
+func TestGrokTTSTextPrefersUpstreamTextField(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "text only", body: `{"text":"hello"}`, want: "hello"},
+		{name: "mixed prefers text", body: `{"input":"x","text":"0123456789"}`, want: "0123456789"},
+		{name: "mixed never overbills input", body: `{"input":"0123456789","text":"x"}`, want: "x"},
+		{name: "input fallback", body: `{"input":"short"}`, want: "short"},
+		{name: "prompt fallback", body: `{"prompt":"narration"}`, want: "narration"},
+		{name: "blank text falls back to input", body: `{"text":"   ","input":"spoken"}`, want: "spoken"},
+		{name: "non-string text falls back", body: `{"text":123,"input":"spoken"}`, want: "spoken"},
+		{name: "multibyte text", body: `{"text":"你好世界"}`, want: "你好世界"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, GrokTTSText([]byte(tc.body)))
+		})
+	}
+}
+
+func TestEstimateGrokVoiceAudioUsageTTSUsesUpstreamText(t *testing.T) {
+	const spoken = "0123456789"
+	usage := estimateGrokVoiceAudioUsage("tts", []byte(`{"input":"x","text":"`+spoken+`"}`), "application/json", nil, time.Millisecond)
+	require.NotNil(t, usage)
+	require.Equal(t, "tts", usage.Mode)
+	require.InDelta(t, float64(len(spoken))/1_000_000.0, usage.DurationOrUnits, 1e-12)
+
+	// The inverse mix must not charge the longer compatibility field that xAI
+	// never speaks; billing follows "text" in both directions.
+	usage = estimateGrokVoiceAudioUsage("tts", []byte(`{"input":"0123456789","text":"x"}`), "application/json", nil, time.Millisecond)
+	require.NotNil(t, usage)
+	require.InDelta(t, 1/1_000_000.0, usage.DurationOrUnits, 1e-12)
 }
 
 func TestForwardGrokVoice_RejectsNonGrok(t *testing.T) {

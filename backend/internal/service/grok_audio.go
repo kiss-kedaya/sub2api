@@ -346,22 +346,35 @@ func grokRealtimeEventHasAudio(msg []byte) bool {
 	return false
 }
 
+// GrokTTSText returns the text xAI actually synthesizes from a native /tts
+// JSON body. xAI reads the top-level "text" field; "input" and "prompt" are
+// compatibility fallbacks only. Preferring a fallback over "text" lets a mixed
+// request (short "input" + long "text") underbill the audio upstream produces.
+func GrokTTSText(body []byte) string {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return ""
+	}
+	for _, key := range []string{"text", "input", "prompt"} {
+		value := gjson.GetBytes(body, key)
+		if value.Type != gjson.String {
+			continue
+		}
+		if text := strings.TrimSpace(value.String()); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
 // estimateGrokVoiceAudioUsage derives billing units from the request/response.
 // TTS: million characters of input text; STT: hours approximated from request body size
 // when duration is unknown; custom-voices: no units (nil).
 func estimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType string, respBody []byte, elapsed time.Duration) *AudioUsage {
 	switch strings.TrimSpace(endpoint) {
 	case "tts":
-		// Prefer JSON "input" / "text" fields; fallback to raw body length.
-		chars := 0
-		if gjson.ValidBytes(reqBody) {
-			for _, key := range []string{"input", "text", "prompt"} {
-				if s := strings.TrimSpace(gjson.GetBytes(reqBody, key).String()); s != "" {
-					chars = len([]rune(s))
-					break
-				}
-			}
-		}
+		// Bill the same "text" field xAI synthesizes from; fallback to raw body
+		// length only when the body carries no recognizable text field.
+		chars := len([]rune(GrokTTSText(reqBody)))
 		if chars <= 0 {
 			chars = len(reqBody)
 		}
