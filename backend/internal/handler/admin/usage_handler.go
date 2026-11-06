@@ -22,6 +22,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// maxAdminUsageInflightRows caps the in-flight rows merged into the first page
+// of the admin usage list. It is a supplement to the page, not a second paging
+// window; without a cap a page_size=1 request could still return hundreds of
+// rows to an observer.
+const maxAdminUsageInflightRows = 50
+
 // UsageHandler handles admin usage-related requests
 type UsageHandler struct {
 	trafficDelivery           *service.TrafficDelivery
@@ -257,6 +263,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 		}
 		now := time.Now()
 		live := visibleAdminUsageInflight(c.Request.Context(), filters, finished)
+		// 在途快照是「当前页的补充」，不是第二个分页：不设上限时 page_size=1
+		// 也能一次带出几百行（审计 finding #12）。只读观察员不该借此整表导出。
+		if len(live) > maxAdminUsageInflightRows {
+			live = live[:maxAdminUsageInflightRows]
+		}
 		if len(live) > 0 {
 			head := make([]dto.AdminUsageLog, 0, len(live))
 			for _, row := range live {
