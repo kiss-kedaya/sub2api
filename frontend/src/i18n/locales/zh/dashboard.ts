@@ -328,8 +328,13 @@ export default {
       openclaw: 'OpenClaw',
       hermes: 'Hermes',
       pi: 'Pi',
+      mcode: 'MiniMax Code',
+      kimi: 'Kimi Code',
+      dsh: 'DeepSeek Harness',
+      agy: 'Antigravity',
+      omp: 'Oh My Pi',
       deeplinkUnsupported:
-        'CC Switch 当前不允许通过深链导入该平台（会报 Invalid provider app type）。Pi 需要在 CC Switch 的 Pi 页面手动添加；Claude Desktop 的供应商导入尚未开放。'
+        'CC Switch 版本过旧，会拒绝这个平台的深链导入。请先升级 CC Switch 再试。'
     },
     // 配额和有效期
     quotaLimit: '额度限制',
