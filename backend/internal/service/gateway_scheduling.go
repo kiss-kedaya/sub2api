@@ -789,8 +789,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 			// 3. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
-			// 4. LRU 选择最久未用的账号
-			selected := selectByLRU(candidates, preferOAuth)
+			// 4. 同优先级、同负载时，按运行时健康度挑（未知账号中性），平局仍走 LRU
+			selected := s.selectByRuntimeQuality(candidates, preferOAuth)
 			if selected == nil {
 				break
 			}

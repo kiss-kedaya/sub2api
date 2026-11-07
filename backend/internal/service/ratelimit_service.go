@@ -38,6 +38,8 @@ type RateLimitService struct {
 	// faults (5xx/timeouts). It is in-memory by design; durable model limits
 	// already cover 429 responses.
 	modelTransient *ModelTransientCooldown
+	// accountRuntime orders otherwise-tied candidates by observed health.
+	accountRuntime *AccountRuntimeQuality
 
 	// OpenAI Team 联动熔断的进程内去重：teamID → 去重窗口截止时间
 	openaiTeamLinkedMu     sync.Mutex
@@ -106,6 +108,7 @@ func NewRateLimitService(accountRepo AccountRepository, usageRepo UsageLogReposi
 		tempUnschedCache:   tempUnschedCache,
 		usageCache:         make(map[int64]*geminiUsageCacheEntry),
 		modelTransient:     NewModelTransientCooldown(),
+		accountRuntime:     NewAccountRuntimeQuality(),
 	}
 }
 
@@ -2932,8 +2935,14 @@ func (s *RateLimitService) recordModelTransientOutcome(account *Account, statusC
 	switch {
 	case statusCode == 0 || statusCode >= 500:
 		s.modelTransient.ObserveFailure(account.ID, model)
+		if s.accountRuntime != nil {
+			s.accountRuntime.ObserveFailure(account.ID)
+		}
 	case statusCode < 400:
 		s.modelTransient.ObserveSuccess(account.ID, model)
+		if s.accountRuntime != nil {
+			s.accountRuntime.ObserveSuccess(account.ID)
+		}
 	}
 }
 
