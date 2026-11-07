@@ -89,6 +89,44 @@ func (p *Pool) Endpoints() []string {
 	return append([]string(nil), p.endpoints...)
 }
 
+// MaxBlockNumber returns the highest head reported by any configured
+// endpoint. Confirmation checks must not stall because one node in the pool
+// lags behind the chain tip.
+func (p *Pool) MaxBlockNumber(ctx context.Context) (uint64, error) {
+	p.mu.RLock()
+	endpoints := append([]string(nil), p.endpoints...)
+	p.mu.RUnlock()
+	if len(endpoints) == 0 {
+		return 0, fmt.Errorf("no rpc endpoints configured")
+	}
+	var best uint64
+	var lastErr error
+	for _, endpoint := range endpoints {
+		result, err := p.callOne(ctx, endpoint, "eth_blockNumber", nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var raw string
+		if err := json.Unmarshal(result, &raw); err != nil {
+			lastErr = err
+			continue
+		}
+		head, err := hexutil.DecodeUint64(raw)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if head > best {
+			best = head
+		}
+	}
+	if best == 0 && lastErr != nil {
+		return 0, lastErr
+	}
+	return best, nil
+}
+
 // healthTracker lazily initialises the endpoint health state so pools built
 // before this field existed keep working (and tests can construct literals).
 func (p *Pool) healthTracker() *endpointHealthTracker {

@@ -72,16 +72,16 @@ func TestBSCGasFundingUsesShortfallInsteadOfFullLimit(t *testing.T) {
 	price := big.NewInt(50_000_000) // 0.05 gwei
 	config := Config{GasTopUp: map[string]float64{"bsc": 0.002}}
 	budget := transferGasBudget(price)
-	if budget.String() != "4875000000000" {
+	if budget.String() != "6750000000000" {
 		t.Fatalf("unexpected buffered transfer cost: %s", budget)
 	}
 	if got := gasTopUpAmount(config, "bsc", budget, big.NewInt(0)); got.Cmp(budget) != 0 {
 		t.Fatalf("funded %s instead of the required %s", got, budget)
 	}
-	if got := gasTopUpAmount(config, "bsc", budget, big.NewInt(2_000_000_000_000)); got.String() != "2875000000000" {
+	if got := gasTopUpAmount(config, "bsc", budget, big.NewInt(2_000_000_000_000)); got.String() != "4750000000000" {
 		t.Fatalf("existing child balance was ignored: %s", got)
 	}
-	if got := GasWalletRequirement(price); got.String() != "5925000000000" {
+	if got := GasWalletRequirement(price); got.String() != "7800000000000" {
 		t.Fatalf("gas wallet readiness must include its own funding fee: %s", got)
 	}
 }

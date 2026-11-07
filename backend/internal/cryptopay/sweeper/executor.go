@@ -34,7 +34,14 @@ type TokenSpec struct {
 }
 
 const selBalanceOf = "0x70a08231"
-const transferGasLimit = 65000
+const (
+	// legacyTransferGasLimit is the limit used by transactions signed before
+	// the 2026-11 incident. Native stablecoin transfers can need roughly
+	// 70-80k when the recipient's balance slot is first initialized, so new
+	// sweeps sign with more headroom while legacy bytes stay verifiable.
+	legacyTransferGasLimit = 65000
+	transferGasLimit       = 90000
+)
 
 // maxConsecutiveStorageFailures bounds how many persisted-state failures a
 // single run tolerates before giving up: one bad row must not abort the run,
