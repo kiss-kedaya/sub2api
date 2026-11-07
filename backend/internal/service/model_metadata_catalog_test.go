@@ -489,3 +489,21 @@ func TestModelMetadataCatalogResolveDoesNotBlockOnRegistryFetch(t *testing.T) {
 	require.Less(t, time.Since(started), time.Second, "resolving must not wait for the registry")
 	require.Equal(t, "DeepSeek V4 Pro", metadata.DisplayName)
 }
+
+// K2.7-pro and K2.8 are not in the models.dev registry yet; the builtin
+// catalogue must still describe them instead of falling back to a bare id.
+func TestBuiltinCatalogMetadataCoversKimiK27ProAndK28(t *testing.T) {
+	for _, modelID := range []string{"kimi-k2.7-pro", "kimi-k2.8"} {
+		entry, ok := builtinCatalogModelMetadata(modelID)
+		require.True(t, ok, modelID)
+		require.NotEmpty(t, entry.DisplayName, modelID)
+		require.NotEmpty(t, entry.Description, modelID)
+		require.Equal(t, int64(262144), entry.ContextWindow, modelID)
+		require.Equal(t, int64(65536), entry.MaxOutputTokens, modelID)
+		require.NotNil(t, entry.ToolCall, modelID)
+		require.True(t, *entry.ToolCall, modelID)
+		require.NotNil(t, entry.Reasoning, modelID)
+	}
+	_, ok := builtinCatalogModelMetadata("kimi-k9-unlisted")
+	require.False(t, ok)
+}

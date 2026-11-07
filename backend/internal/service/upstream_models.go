@@ -905,6 +905,23 @@ func builtinCatalogModelMetadata(modelID string) (UpstreamModelMetadata, bool) {
 			ContextWindow:   grokImagineCatalogContextWindow(id),
 			MaxOutputTokens: grokImagineCatalogMaxOutput(id),
 		}, true
+	case kimiCatalogModelID(id):
+		reasoning, toolCall := true, true
+		display, description, family := kimiCatalogFields(id)
+		return UpstreamModelMetadata{
+			ID:               strings.TrimSpace(modelID),
+			DisplayName:      display,
+			Description:      description,
+			Reasoning:        &reasoning,
+			ToolCall:         &toolCall,
+			InputModalities:  []string{"text", "image"},
+			OutputModalities: []string{"text"},
+			// K2.7-pro / K2.8 are not published on models.dev yet; use the K2
+			// family envelope (256K context) shared by every K2.5/2.6/2.7 entry.
+			ContextWindow:   262144,
+			MaxOutputTokens: 65536,
+			Family:          family,
+		}, true
 	case id == "gemini-3.6-flash-tiered":
 		reasoning := true
 		return UpstreamModelMetadata{
@@ -919,6 +936,26 @@ func builtinCatalogModelMetadata(modelID string) (UpstreamModelMetadata, bool) {
 	default:
 		return UpstreamModelMetadata{}, false
 	}
+}
+
+// kimiCatalogModelID covers Kimi variants that are not in the models.dev
+// registry yet (the K2.7-pro / K2.8 ids used by this gateway).
+func kimiCatalogModelID(id string) bool {
+	return strings.HasPrefix(id, "kimi-k2.7-pro") || strings.HasPrefix(id, "kimi-k2.8")
+}
+
+func kimiCatalogFields(id string) (display, description, family string) {
+	switch {
+	case strings.HasPrefix(id, "kimi-k2.7-pro"):
+		return "Kimi K2.7 Pro",
+			"Kimi K2.7 Pro is a high-capability Kimi K2.7 variant for long-context coding, tool use and reasoning.",
+			"kimi-k2.7"
+	case strings.HasPrefix(id, "kimi-k2.8"):
+		return "Kimi K2.8",
+			"Kimi K2.8 is the next Kimi K2-series model for long-context coding, tool use and reasoning.",
+			"kimi-k2.8"
+	}
+	return "", "", ""
 }
 
 func gptImageCatalogDisplayName(id string) string {
