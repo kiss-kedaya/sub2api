@@ -805,6 +805,7 @@ type GatewayService struct {
 	digestStore           *DigestSessionStore
 	cfg                   *config.Config
 	schedulerSnapshot     *SchedulerSnapshotService
+	routeQuality          *GroupRouteQualityCache
 	billingService        *BillingService
 	rateLimitService      *RateLimitService
 	billingCacheService   *BillingCacheService
