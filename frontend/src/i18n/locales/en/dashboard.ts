@@ -800,7 +800,17 @@ export default {
       perUnitRequest: '/ request',
       perUnitImage: '/ image',
       perRequest: 'Per request',
-      perImage: 'Per image'
+      perImage: 'Per image',
+      contextLabel: 'Context',
+      contextHint: 'Maximum context window per request (tokens)',
+      maxOutputLabel: 'Output',
+      maxOutputHint: 'Maximum output tokens per response',
+      reasoning: 'Thinking',
+      imageInput: 'Image input',
+      videoInput: 'Video input',
+      toolCall: 'Tool calls',
+      descriptionToggle: 'Details',
+      descriptionHide: 'Hide'
     },
     nav: {
       login: 'Sign In',

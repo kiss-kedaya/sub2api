@@ -175,10 +175,10 @@ func TestModelMetadataCatalogResolveExactMatch(t *testing.T) {
 	require.Equal(t, "DeepSeek V4.1 Flash", metadata.DisplayName)
 	require.Equal(t, "DeepSeek V4.1 Flash with 1M context.", metadata.Description)
 	require.Equal(t, int64(1_048_576), metadata.ContextWindow)
-	require.Equal(t, int64(384_000), metadata.MaxOutputTokens)
+	require.Equal(t, int64(393_216), metadata.MaxOutputTokens, "the built-in 384K (=393216) beats the registry's rounded 384000")
 	require.Equal(t, []string{"text", "image"}, metadata.InputModalities)
 	require.Equal(t, []string{"text"}, metadata.OutputModalities)
-	require.Equal(t, "deepseek-flash", metadata.Family)
+	require.Equal(t, "deepseek-v4.1", metadata.Family, "authoritative first-party family wins")
 	require.Equal(t, "2026-10-17", metadata.ReleaseDate)
 	require.Equal(t, "2025-05", metadata.Knowledge)
 	require.NotNil(t, metadata.OpenWeights)
@@ -211,18 +211,20 @@ func TestModelMetadataCatalogDerivesDisplayNameWhenRegistryEchoesID(t *testing.T
 
 func TestModelMetadataCatalogResolveNormalizedMatches(t *testing.T) {
 	catalog := newTestModelMetadataCatalog(testModelsDevRegistry())
-	for _, modelID := range []string{
-		"deepseek-v4.1-flash-expires-on-0910",
-		"deepseek-v4.1-flash-0910",
-		"deepseek-v4.1-flash-high",
-		"DeepSeek-V4.1-Flash",
-		"deepseek/deepseek-v4.1-flash",
-	} {
+	displayNames := map[string]string{
+		"deepseek-v4.1-flash-expires-on-0910": "DeepSeek V4.1 Flash",
+		"deepseek-v4.1-flash-0910":            "DeepSeek V4.1 Flash 0910",
+		"deepseek-v4.1-flash-high":            "DeepSeek V4.1 Flash",
+		"DeepSeek-V4.1-Flash":                 "DeepSeek V4.1 Flash",
+		"deepseek/deepseek-v4.1-flash":        "DeepSeek V4.1 Flash",
+	}
+	for modelID, wantDisplay := range displayNames {
 		t.Run(modelID, func(t *testing.T) {
 			metadata := catalog.Resolve(context.Background(), modelID, PlatformOpenAI, nil)
 			require.Equal(t, ModelMetadataSourceModelsDev, metadata.Source, modelID)
-			require.Equal(t, "DeepSeek V4.1 Flash", metadata.DisplayName, modelID)
+			require.Equal(t, wantDisplay, metadata.DisplayName, modelID)
 			require.Equal(t, int64(1_048_576), metadata.ContextWindow, modelID)
+			require.Equal(t, int64(393_216), metadata.MaxOutputTokens, modelID)
 			require.NotNil(t, metadata.ReferencePricing, modelID)
 		})
 	}
@@ -359,7 +361,7 @@ func TestModelMetadataCatalogEnrichModelsListBody(t *testing.T) {
 	require.Equal(t, "DeepSeek V4.1 Flash", known.DisplayName)
 	require.NotEmpty(t, known.Description)
 	require.EqualValues(t, 1_048_576, known.ContextWindow)
-	require.EqualValues(t, 384_000, known.MaxOutputTokens)
+	require.EqualValues(t, 393_216, known.MaxOutputTokens)
 	require.Equal(t, []string{"text", "image"}, known.InputModalities)
 	require.Equal(t, []string{"text"}, known.OutputModalities)
 	require.NotNil(t, known.Capabilities)
@@ -367,7 +369,7 @@ func TestModelMetadataCatalogEnrichModelsListBody(t *testing.T) {
 	require.NotNil(t, known.Pricing)
 	require.InDelta(t, 0.15, *known.Pricing.Input, 1e-9)
 	require.NotNil(t, known.ReferencePricing)
-	require.Equal(t, "deepseek-flash", known.Family)
+	require.Equal(t, "deepseek-v4.1", known.Family)
 	require.Equal(t, "2026-10-17", known.ReleaseDate)
 
 	unknown := catalogBody.Data[1]
@@ -503,7 +505,163 @@ func TestBuiltinCatalogMetadataCoversKimiK27ProAndK28(t *testing.T) {
 		require.NotNil(t, entry.ToolCall, modelID)
 		require.True(t, *entry.ToolCall, modelID)
 		require.NotNil(t, entry.Reasoning, modelID)
+		require.True(t, entry.Authoritative, modelID)
 	}
 	_, ok := builtinCatalogModelMetadata("kimi-k9-unlisted")
 	require.False(t, ok)
+}
+
+// models.dev can carry a reseller copy of a DeepSeek ID whose limits were
+// rounded or forwarded (1050K context, output = context). First-party values
+// verified against api-docs.deepseek.com are authoritative and must win, while
+// the registry cost stays a reference price.
+func TestModelMetadataCatalogAuthoritativeDeepSeekOverridesResellerLimits(t *testing.T) {
+	registry := map[string]modelsDevProvider{
+		"reseller": {
+			ID:   "reseller",
+			Name: "Reseller",
+			Models: map[string]modelsDevModel{
+				"deepseek-v4.1-flash-1017": {
+					ID:          "deepseek-v4.1-flash-1017",
+					Name:        "Reseller DeepSeek Flash",
+					Description: "Reseller copy with forwarded limits.",
+					Reasoning:   testBoolPointer(false),
+					ToolCall:    testBoolPointer(false),
+					Modalities:  modelsDevModalities{Input: []string{"text"}, Output: []string{"text"}},
+					Limit:       modelsDevLimit{Context: 1_050_000, Output: 1_050_000},
+					Cost:        modelsDevCost{Input: testFloatPointer(9.99)},
+				},
+				"deepseek-v4-pro-0813": {
+					ID:         "deepseek-v4-pro-0813",
+					Name:       "Reseller DeepSeek Pro",
+					Reasoning:  testBoolPointer(false),
+					ToolCall:   testBoolPointer(false),
+					Modalities: modelsDevModalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+					Limit:      modelsDevLimit{Context: 1_050_000, Output: 1_050_000},
+				},
+			},
+		},
+	}
+	catalog := newTestModelMetadataCatalog(registry)
+	ctx := context.Background()
+
+	flash := catalog.Resolve(ctx, "deepseek-v4.1-flash-1017", PlatformOpenAI, nil)
+	require.Equal(t, ModelMetadataSourceModelsDev, flash.Source, "the registry still matched; only the values are overridden")
+	require.Equal(t, "DeepSeek V4.1 Flash 1017", flash.DisplayName)
+	require.Equal(t, "Reseller copy with forwarded limits.", flash.Description, "registry description is preserved")
+	require.Equal(t, int64(1_048_576), flash.ContextWindow)
+	require.Equal(t, int64(393_216), flash.MaxOutputTokens)
+	require.Equal(t, []string{"text", "image"}, flash.InputModalities, "flash understands images")
+	require.Equal(t, []string{"text"}, flash.OutputModalities)
+	require.Equal(t, "deepseek-v4.1", flash.Family)
+	require.NotNil(t, flash.Capabilities)
+	require.True(t, flash.Capabilities.Reasoning)
+	require.True(t, flash.Capabilities.ToolCall)
+	require.NotNil(t, flash.ReferencePricing, "models.dev cost stays a reference price")
+	require.InDelta(t, 9.99, *flash.ReferencePricing.Input, 1e-9)
+	require.Nil(t, flash.Pricing, "no price card was configured")
+
+	pro := catalog.Resolve(ctx, "deepseek-v4-pro-0813", PlatformOpenAI, nil)
+	require.Equal(t, "DeepSeek V4 Pro 0813", pro.DisplayName)
+	require.Equal(t, int64(1_048_576), pro.ContextWindow)
+	require.Equal(t, int64(393_216), pro.MaxOutputTokens)
+	require.Equal(t, []string{"text"}, pro.InputModalities, "Pro has no vision support")
+	require.Equal(t, "deepseek-v4-pro", pro.Family)
+	require.True(t, pro.Capabilities.Reasoning)
+
+	// The primary alias has no registry entry at all; the built-in entry alone
+	// must still describe it completely.
+	alias := catalog.Resolve(ctx, "deepseek-flash", PlatformOpenAI, nil)
+	require.Equal(t, ModelMetadataSourceBuiltin, alias.Source)
+	require.Equal(t, "DeepSeek V4.1 Flash", alias.DisplayName)
+	require.Equal(t, int64(1_048_576), alias.ContextWindow)
+	require.Equal(t, int64(393_216), alias.MaxOutputTokens)
+	require.Equal(t, []string{"text", "image"}, alias.InputModalities)
+	require.NotNil(t, alias.Capabilities)
+	require.True(t, alias.Capabilities.Reasoning)
+	require.True(t, alias.Capabilities.ToolCall)
+}
+
+// Dotted aliases (claude-opus-4.5) must reach the dashed registry ID
+// (claude-opus-4-5); without the rewrite the plaza falls back to a bare name.
+func TestModelMetadataCatalogDottedAliasMatchesDashedRegistryID(t *testing.T) {
+	registry := map[string]modelsDevProvider{
+		"anthropic": {
+			ID: "anthropic",
+			Models: map[string]modelsDevModel{
+				"claude-opus-4-5": {
+					ID:               "claude-opus-4-5",
+					Name:             "Claude Opus 4.5",
+					Reasoning:        testBoolPointer(true),
+					ToolCall:         testBoolPointer(true),
+					Modalities:       modelsDevModalities{Input: []string{"text", "image"}, Output: []string{"text"}},
+					Limit:            modelsDevLimit{Context: 1_000_000, Output: 128_000},
+					Family:           "claude-opus",
+					StructuredOutput: testBoolPointer(true),
+				},
+			},
+		},
+	}
+	catalog := newTestModelMetadataCatalog(registry)
+	metadata := catalog.Resolve(context.Background(), "claude-opus-4.5", PlatformAnthropic, nil)
+	require.Equal(t, ModelMetadataSourceModelsDev, metadata.Source)
+	require.Equal(t, "Claude Opus 4.5", metadata.DisplayName)
+	require.Equal(t, int64(1_000_000), metadata.ContextWindow)
+	require.Equal(t, int64(128_000), metadata.MaxOutputTokens)
+	require.Equal(t, []string{"text", "image"}, metadata.InputModalities)
+	require.NotNil(t, metadata.Capabilities)
+	require.True(t, metadata.Capabilities.Reasoning)
+	require.True(t, metadata.Capabilities.ToolCall)
+}
+
+// Kimi K2.7-pro / K2.8 are still absent from models.dev; a same-name reseller
+// listing must not shadow the built-in K2 envelope.
+func TestModelMetadataCatalogAuthoritativeKimiOverridesReseller(t *testing.T) {
+	registry := map[string]modelsDevProvider{
+		"reseller": {
+			ID: "reseller",
+			Models: map[string]modelsDevModel{
+				"kimi-k2.7-pro": {
+					ID:         "kimi-k2.7-pro",
+					Name:       "Reseller Kimi K2.7 Pro",
+					Reasoning:  testBoolPointer(false),
+					ToolCall:   testBoolPointer(false),
+					Modalities: modelsDevModalities{Input: []string{"text"}, Output: []string{"text"}},
+					Limit:      modelsDevLimit{Context: 1_050_000, Output: 1_050_000},
+				},
+				"kimi-k2.8": {
+					ID:         "kimi-k2.8",
+					Name:       "Reseller Kimi K2.8",
+					Reasoning:  testBoolPointer(false),
+					Modalities: modelsDevModalities{Input: []string{"text"}, Output: []string{"text"}},
+					Limit:      modelsDevLimit{Context: 1_050_000, Output: 1_050_000},
+				},
+			},
+		},
+	}
+	catalog := newTestModelMetadataCatalog(registry)
+	ctx := context.Background()
+
+	cases := []struct {
+		id      string
+		display string
+		family  string
+	}{
+		{"kimi-k2.7-pro", "Kimi K2.7 Pro", "kimi-k2.7"},
+		{"kimi-k2.8", "Kimi K2.8", "kimi-k2.8"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			metadata := catalog.Resolve(ctx, tc.id, PlatformOpenAI, nil)
+			require.Equal(t, tc.display, metadata.DisplayName)
+			require.Equal(t, int64(256*1024), metadata.ContextWindow)
+			require.Equal(t, int64(65_536), metadata.MaxOutputTokens)
+			require.Equal(t, []string{"text", "image"}, metadata.InputModalities)
+			require.Equal(t, []string{"text"}, metadata.OutputModalities)
+			require.Equal(t, tc.family, metadata.Family)
+			require.NotNil(t, metadata.Capabilities)
+			require.True(t, metadata.Capabilities.Reasoning)
+			require.True(t, metadata.Capabilities.ToolCall)
+		})
+	}
 }

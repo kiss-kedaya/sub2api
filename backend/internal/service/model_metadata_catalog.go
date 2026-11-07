@@ -863,6 +863,10 @@ func normalizedModelIdentifiers(modelID string) []string {
 		add(dotted)
 		add(stripVendorPrefix(dotted))
 	}
+	for _, dashed := range dashedVersionSpelling(trimmed) {
+		add(dashed)
+		add(stripVendorPrefix(dashed))
+	}
 	return candidates
 }
 
@@ -953,6 +957,22 @@ func flattenDottedVersion(modelID string) []string {
 	return []string{flattened}
 }
 
+// dashedVersionSpelling appends a dashed-version spelling for IDs that encode a
+// trailing numeric version with a dot ("claude-opus-4.5" -> "claude-opus-4-5").
+// The registry and the vendor APIs spell that model with a dash, so the dotted
+// alias used by some clients would otherwise miss the registry entry entirely.
+func dashedVersionSpelling(modelID string) []string {
+	dash := strings.LastIndexByte(modelID, '-')
+	if dash < 0 || dash == len(modelID)-1 {
+		return nil
+	}
+	token := modelID[dash+1:]
+	if !strings.Contains(token, ".") || !isNumericToken(strings.ReplaceAll(token, ".", "")) {
+		return nil
+	}
+	return []string{modelID[:dash+1] + strings.ReplaceAll(token, ".", "-")}
+}
+
 func isNumericToken(token string) bool {
 	if token == "" {
 		return false
@@ -986,8 +1006,20 @@ func builtinModelCatalogMetadata(modelID string) (UpstreamModelMetadata, bool) {
 	return builtinCatalogModelMetadata(modelID)
 }
 
+// mergeBuiltinModelMetadata folds first-party knowledge into catalogue metadata.
+//
+// A models.dev hit normally wins because it is the broadest source; a built-in
+// entry only fills the fields the registry omits. Entries marked Authoritative
+// are the exception: their values were verified against the vendor's own docs,
+// so they replace what a registry (often a reseller copy: 1050K context, output
+// equal to context) published. Reference prices are never touched — models.dev
+// cost stays in reference_pricing, billed prices stay on the configured card.
 func mergeBuiltinModelMetadata(metadata *ModelMetadata, builtin UpstreamModelMetadata) {
 	if metadata == nil {
+		return
+	}
+	if builtin.Authoritative {
+		overrideModelMetadataWithBuiltin(metadata, builtin)
 		return
 	}
 	if metadata.Source != ModelMetadataSourceModelsDev && strings.TrimSpace(builtin.DisplayName) != "" {
@@ -1007,6 +1039,50 @@ func mergeBuiltinModelMetadata(metadata *ModelMetadata, builtin UpstreamModelMet
 	}
 	if metadata.Capabilities == nil && builtin.Reasoning != nil {
 		metadata.Capabilities = &ModelCapabilities{Reasoning: *builtin.Reasoning}
+	}
+}
+
+// overrideModelMetadataWithBuiltin applies first-party values over a registry
+// hit. Only the fields the vendor documents are overridden (name, context,
+// output, modalities, reasoning/tool-call, family); registry-only facts such as
+// description, release date, open weights and reference pricing are preserved.
+func overrideModelMetadataWithBuiltin(metadata *ModelMetadata, builtin UpstreamModelMetadata) {
+	if name := strings.TrimSpace(builtin.DisplayName); name != "" {
+		metadata.DisplayName = name
+	}
+	if metadata.Description == "" {
+		metadata.Description = strings.TrimSpace(builtin.Description)
+	}
+	if builtin.ContextWindow > 0 {
+		metadata.ContextWindow = builtin.ContextWindow
+	}
+	if builtin.MaxOutputTokens > 0 {
+		metadata.MaxOutputTokens = builtin.MaxOutputTokens
+	}
+	if len(builtin.InputModalities) > 0 {
+		metadata.InputModalities = append([]string(nil), builtin.InputModalities...)
+	}
+	if len(builtin.OutputModalities) > 0 {
+		metadata.OutputModalities = append([]string(nil), builtin.OutputModalities...)
+	}
+	if family := strings.TrimSpace(builtin.Family); family != "" {
+		metadata.Family = family
+	}
+	if builtin.Reasoning != nil || builtin.ToolCall != nil {
+		capabilities := ModelCapabilities{}
+		if metadata.Capabilities != nil {
+			capabilities = *metadata.Capabilities
+		}
+		if builtin.Reasoning != nil {
+			capabilities.Reasoning = *builtin.Reasoning
+		}
+		if builtin.ToolCall != nil {
+			capabilities.ToolCall = *builtin.ToolCall
+		}
+		metadata.Capabilities = &capabilities
+	}
+	if metadata.ReleaseDate == "" {
+		metadata.ReleaseDate = strings.TrimSpace(builtin.ReleaseDate)
 	}
 }
 

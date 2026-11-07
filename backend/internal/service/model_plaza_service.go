@@ -35,6 +35,10 @@ type PlazaModel struct {
 	LongContextBasis ContextPricingBasis
 	// TimePricing 计费会生效的分时倍率时段；无分时为 nil。
 	TimePricing *TimePricingSchedule
+	// Metadata 描述性元数据（上下文、最大输出、模态、思考/工具能力），与
+	// /v1/models 走同一份 ModelMetadataCatalog；nil 表示目录不可用或解析不到，
+	// 此时前端只展示定价，不报错。
+	Metadata *ModelMetadata
 }
 
 // PlazaGroup 模型广场中以分组为顶层的条目。
@@ -74,6 +78,8 @@ type ModelPlazaService struct {
 	billingService *BillingService
 	resolver       *ModelPricingResolver
 	listedModels   plazaListedModelCatalog
+	// metadata 与 /v1/models 共用同一份懒加载目录（models.dev 6h 缓存）。
+	metadata *ModelMetadataCatalog
 }
 
 // NewModelPlazaService 创建模型广场服务。
@@ -101,7 +107,7 @@ func NewModelPlazaService(
 //   - 同分组同名模型「先见者胜」，仅当已存条目无定价而新条目有定价时升级替换；
 //   - token 模型的单价与阶梯按实收口径合成（见 ResolveContextPricingSchedule），
 //     图片计费模型的档位价按实收口径合成（见 plazaImageDisplayPricing）；
-//   - 每个模型附带官方参考价（查不到为 nil）；
+//   - 每个模型附带官方参考价（查不到为 nil）和描述性元数据（目录不可用为 nil）；
 //   - 只返回 Models 非空的分组；分组按 RateMultiplier 升序（同倍率按名称），
 //     组内模型按名称排序。
 //
@@ -198,6 +204,7 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 	}
 
 	officialMemo := make(map[string]*PlazaOfficialPricing)
+	metadataMemo := make(map[string]*ModelMetadata)
 	out := make([]PlazaGroup, 0, len(order))
 	for _, gid := range order {
 		pg := byGroup[gid]
@@ -225,6 +232,7 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 			sched := s.fillDisplayPricing(ctx, &pg.Models[j], g)
 			official := s.lookupOfficialPricing(ctx, pg.Models[j].Name, officialMemo)
 			pg.Models[j].OfficialPricing = configuredReferencePricing(official, sched)
+			pg.Models[j].Metadata = s.resolvePlazaMetadata(ctx, pg.Models[j].Platform, pg.Models[j].Name, metadataMemo)
 		}
 		out = append(out, *pg)
 	}
@@ -236,6 +244,30 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 		return out[i].Name < out[j].Name
 	})
 	return out, nil
+}
+
+// resolvePlazaMetadata resolves descriptive metadata through the shared
+// catalogue, memoized per platform+model because the same model shows up in
+// several groups. Resolution never errors: an unavailable catalogue (or a model
+// the registry and built-in tables cannot describe) yields nil and the plaza
+// keeps showing pricing only instead of failing the request.
+func (s *ModelPlazaService) resolvePlazaMetadata(ctx context.Context, platform, modelName string, memo map[string]*ModelMetadata) *ModelMetadata {
+	if s == nil || s.metadata == nil {
+		return nil
+	}
+	key := plazaModelKey(platform, modelName)
+	if cached, ok := memo[key]; ok {
+		return cached
+	}
+	metadata := s.metadata.Resolve(ctx, modelName, platform, nil)
+	var resolved *ModelMetadata
+	// A bare ID with no descriptive field carries nothing the plaza can render.
+	if metadata.DisplayName != "" || metadata.ContextWindow > 0 || metadata.MaxOutputTokens > 0 ||
+		len(metadata.InputModalities) > 0 || metadata.Capabilities != nil {
+		resolved = &metadata
+	}
+	memo[key] = resolved
+	return resolved
 }
 
 // fillDisplayPricing 把模型的展示定价换成实收口径：
