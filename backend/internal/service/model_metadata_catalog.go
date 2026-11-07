@@ -38,6 +38,9 @@ const (
 	ModelMetadataSourceFamily = "family"
 	// ModelMetadataSourceNone marks entries that only carry a generated display name.
 	ModelMetadataSourceNone = "none"
+	// ModelMetadataSourceCatalog marks values taken from the curated
+	// catalog/models.json published with the repository (no release needed).
+	ModelMetadataSourceCatalog = "catalog"
 
 	modelCatalogPricingUnit = "USD/1M tokens"
 	modelCatalogRequestUnit = "USD/request"
@@ -102,9 +105,13 @@ type ModelPricingResolverFunc func(modelID string) *ChannelModelPricing
 
 // ModelMetadataSyncResult is the admin refresh response.
 type ModelMetadataSyncResult struct {
-	Providers int    `json:"providers"`
-	Models    int    `json:"models"`
-	FetchedAt string `json:"fetched_at"`
+	Providers        int    `json:"providers"`
+	Models           int    `json:"models"`
+	FetchedAt        string `json:"fetched_at"`
+	CatalogURL       string `json:"catalog_url,omitempty"`
+	CatalogModels    int    `json:"catalog_models,omitempty"`
+	CatalogFetchedAt string `json:"catalog_fetched_at,omitempty"`
+	CatalogError     string `json:"catalog_error,omitempty"`
 }
 
 type modelsDevModelIndexEntry struct {
@@ -125,6 +132,7 @@ type ModelMetadataCatalog struct {
 	client      *http.Client
 	now         func() time.Time
 	registryURL string
+	fileCatalog *ModelCatalogFileSource
 
 	mu            sync.RWMutex
 	registry      map[string]modelsDevProvider
@@ -151,6 +159,7 @@ func NewModelMetadataCatalog(client *http.Client) *ModelMetadataCatalog {
 		client:      client,
 		now:         time.Now,
 		registryURL: modelsDevRegistryURL,
+		fileCatalog: NewModelCatalogFileSource(modelCatalogFileURLFromEnv(), client),
 		index:       map[string][]modelsDevModelIndexEntry{},
 		familyIndex: map[string][]modelsDevModelIndexEntry{},
 	}
@@ -220,11 +229,26 @@ func (c *ModelMetadataCatalog) Sync(ctx context.Context) (*ModelMetadataSyncResu
 	}
 	c.SeedRegistry(registry, c.clock())
 	providers, models, fetchedAt := c.RegistryStats()
-	return &ModelMetadataSyncResult{
+	result := &ModelMetadataSyncResult{
 		Providers: providers,
 		Models:    models,
 		FetchedAt: fetchedAt.UTC().Format(time.RFC3339),
-	}, nil
+	}
+	if c.fileCatalog != nil && c.fileCatalog.enabled() {
+		// The curated file is smaller and independent; a failure here must not
+		// fail the registry sync the admin asked for.
+		if err := c.fileCatalog.Refresh(ctx); err != nil {
+			slog.Warn("model catalogue file refresh failed during sync", "error", err)
+		}
+		url, fileModels, fileFetchedAt, fileErr, _ := c.fileCatalog.Status()
+		result.CatalogURL = url
+		result.CatalogModels = fileModels
+		if !fileFetchedAt.IsZero() {
+			result.CatalogFetchedAt = fileFetchedAt.UTC().Format(time.RFC3339)
+		}
+		result.CatalogError = fileErr
+	}
+	return result, nil
 }
 
 func (c *ModelMetadataCatalog) fetchRegistry(ctx context.Context) (map[string]modelsDevProvider, error) {
@@ -347,7 +371,44 @@ func (c *ModelMetadataCatalog) Resolve(ctx context.Context, modelID, platform st
 		index, familyIndex = c.index, c.familyIndex
 		c.mu.RUnlock()
 	}
-	return resolveModelMetadata(index, familyIndex, modelID, platform, resolvePricing)
+	metadata := resolveModelMetadata(index, familyIndex, modelID, platform, resolvePricing)
+	if c != nil {
+		c.ensureCatalogFileAsync(ctx)
+		if entry, ok := c.fileCatalog.Lookup(modelID); ok {
+			applyModelCatalogFileOverride(&metadata, entry)
+		}
+	}
+	return metadata
+}
+
+// ensureCatalogFileAsync refreshes the curated catalogue in the background; it
+// never blocks a request and a failure keeps the last good snapshot.
+func (c *ModelMetadataCatalog) ensureCatalogFileAsync(ctx context.Context) {
+	if c == nil || c.fileCatalog == nil {
+		return
+	}
+	c.fileCatalog.ensureAsync(ctx)
+}
+
+// applyModelCatalogFileOverride lets the repository catalogue correct any
+// source (registry, reseller copy, or embedded built-in). Reference pricing
+// from the file is display-only; billed prices are still resolved from the
+// configured price card afterwards by the caller.
+func applyModelCatalogFileOverride(metadata *ModelMetadata, entry UpstreamModelMetadata) {
+	if metadata == nil {
+		return
+	}
+	overrideModelMetadataWithBuiltin(metadata, entry)
+	if description := strings.TrimSpace(entry.Description); description != "" {
+		metadata.Description = description
+	}
+	if releaseDate := strings.TrimSpace(entry.ReleaseDate); releaseDate != "" {
+		metadata.ReleaseDate = releaseDate
+	}
+	if entry.ReferencePricing != nil {
+		metadata.ReferencePricing = entry.ReferencePricing
+	}
+	metadata.Source = ModelMetadataSourceCatalog
 }
 
 // EnrichModelsListBody merges catalogue metadata into a model-list body shaped

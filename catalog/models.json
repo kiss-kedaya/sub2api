@@ -1,0 +1,266 @@
+{
+  "schema": 1,
+  "updated_at": "2026-11-07",
+  "models": {
+    "deepseek-flash": {
+      "display_name": "DeepSeek V4.1 Flash",
+      "description": "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4.1"
+    },
+    "deepseek-v4.1-flash": {
+      "display_name": "DeepSeek V4.1 Flash",
+      "description": "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4.1"
+    },
+    "deepseek-v4.1-flash-0910": {
+      "display_name": "DeepSeek V4.1 Flash 0910",
+      "description": "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4.1"
+    },
+    "deepseek-v4.1-flash-1017": {
+      "display_name": "DeepSeek V4.1 Flash 1017",
+      "description": "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4.1"
+    },
+    "deepseek-v4.1-flash-expires-on-0910": {
+      "display_name": "DeepSeek V4.1 Flash (expires 0910)",
+      "description": "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4.1"
+    },
+    "deepseek-v4-flash": {
+      "display_name": "DeepSeek V4 Flash",
+      "description": "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4.1"
+    },
+    "deepseek-v4-flash-0731": {
+      "display_name": "DeepSeek V4 Flash 0731",
+      "description": "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4.1"
+    },
+    "deepseek-v4-flash-vision-exp": {
+      "display_name": "DeepSeek V4 Flash Vision Exp",
+      "description": "DeepSeek-V4.1-Flash with 1M context, 384K max output, thinking/non-thinking modes, and image understanding. Official model name is deepseek-flash.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4.1"
+    },
+    "deepseek-v4-pro": {
+      "display_name": "DeepSeek V4 Pro",
+      "description": "DeepSeek V4 Pro with million-token context and support for thinking and non-thinking modes. Vision is not supported.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4-pro"
+    },
+    "deepseek-v4-pro-0813": {
+      "display_name": "DeepSeek V4 Pro 0813",
+      "description": "DeepSeek V4 Pro with million-token context and support for thinking and non-thinking modes. Vision is not supported.",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "none",
+        "low",
+        "high",
+        "max"
+      ],
+      "family": "deepseek-v4-pro"
+    },
+    "kimi-k2.7-pro": {
+      "display_name": "Kimi K2.7 Pro",
+      "description": "Kimi K2.7 Pro is a high-capability Kimi K2.7 variant for long-context coding, tool use and reasoning.",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "family": "kimi-k2.7"
+    },
+    "kimi-k2.8": {
+      "display_name": "Kimi K2.8",
+      "description": "Kimi K2.8 is the next Kimi K2-series model for long-context coding, tool use and reasoning.",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "family": "kimi-k2.8"
+    }
+  }
+}
