@@ -1276,6 +1276,9 @@ func (s *GatewayService) isAccountSchedulableForModelSelection(ctx context.Conte
 	if account == nil {
 		return false
 	}
+	if s.rateLimitService != nil && !s.rateLimitService.ModelTransientAllowed(account.ID, requestedModel) {
+		return false
+	}
 	return account.IsSchedulableForModelWithContext(ctx, requestedModel)
 }
 

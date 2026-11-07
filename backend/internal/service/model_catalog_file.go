@@ -98,9 +98,11 @@ func (s *ModelCatalogFileSource) Seed(payload modelCatalogFilePayload, fetchedAt
 // Lookup resolves a model id against the last good snapshot. Callers get the
 // entry plus true only for a real hit; a miss is not an error.
 func (s *ModelCatalogFileSource) Lookup(modelID string) (UpstreamModelMetadata, bool) {
-	if !s.enabled() {
+	if s == nil {
 		return UpstreamModelMetadata{}, false
 	}
+	// A disabled source means "do not fetch"; a seeded snapshot (tests, warm
+	// starts) is still usable.
 	base := strings.ToLower(strings.TrimSpace(modelID))
 	if slash := strings.LastIndexByte(base, '/'); slash >= 0 {
 		base = strings.TrimSpace(base[slash+1:])

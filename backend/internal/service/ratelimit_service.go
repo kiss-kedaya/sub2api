@@ -34,6 +34,10 @@ type RateLimitService struct {
 	runtimeBlocker        AccountRuntimeBlocker
 	usageCacheMu          sync.RWMutex
 	usageCache            map[int64]*geminiUsageCacheEntry
+	// modelTransient pauses an (account, model) pair after repeated provider
+	// faults (5xx/timeouts). It is in-memory by design; durable model limits
+	// already cover 429 responses.
+	modelTransient *ModelTransientCooldown
 
 	// OpenAI Team 联动熔断的进程内去重：teamID → 去重窗口截止时间
 	openaiTeamLinkedMu     sync.Mutex
@@ -101,6 +105,7 @@ func NewRateLimitService(accountRepo AccountRepository, usageRepo UsageLogReposi
 		geminiQuotaService: geminiQuotaService,
 		tempUnschedCache:   tempUnschedCache,
 		usageCache:         make(map[int64]*geminiUsageCacheEntry),
+		modelTransient:     NewModelTransientCooldown(),
 	}
 }
 
@@ -357,6 +362,7 @@ func (s *RateLimitService) disableIfUpstreamUsageLimitExhausted(ctx context.Cont
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
 	ctx = s.observeAccountOps(ctx, account, statusCode, headers, responseBody)
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	s.recordModelTransientOutcome(account, statusCode, requestedModel)
 	// Team 联动熔断必须先于池模式/自定义错误码/临时不可调度的各类早退；
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
 	s.maybeHandleOpenAITeamLinkedError(ctx, account, statusCode, responseBody)
@@ -2909,4 +2915,33 @@ func (s *RateLimitService) triggerStreamTimeoutError(ctx context.Context, accoun
 
 	slog.Warn("stream_timeout_account_error", "account_id", account.ID, "model", model)
 	return true
+}
+
+// recordModelTransientOutcome feeds the in-memory (account, model) cooldown
+// with provider faults. Only upstream/model failures count: 429 already has a
+// durable model rate limit, and 4xx client or policy errors are not the
+// provider's fault.
+func (s *RateLimitService) recordModelTransientOutcome(account *Account, statusCode int, requestedModel []string) {
+	if s == nil || s.modelTransient == nil || account == nil || len(requestedModel) == 0 {
+		return
+	}
+	model := strings.TrimSpace(requestedModel[0])
+	if model == "" {
+		return
+	}
+	switch {
+	case statusCode == 0 || statusCode >= 500:
+		s.modelTransient.ObserveFailure(account.ID, model)
+	case statusCode < 400:
+		s.modelTransient.ObserveSuccess(account.ID, model)
+	}
+}
+
+// ModelTransientAllowed reports whether the (account, model) pair is outside a
+// transient cooldown window. A nil receiver or nil state allows selection.
+func (s *RateLimitService) ModelTransientAllowed(accountID int64, model string) bool {
+	if s == nil || s.modelTransient == nil {
+		return true
+	}
+	return s.modelTransient.Allow(accountID, model)
 }
