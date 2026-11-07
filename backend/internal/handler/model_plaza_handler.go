@@ -77,6 +77,18 @@ type modelPlazaModel struct {
 	LongContextBasis string `json:"long_context_basis,omitempty"`
 	// TimePricing 分时倍率时段，落在时段内的请求整单乘倍率；无分时省略。
 	TimePricing *modelPlazaTimePricing `json:"time_pricing,omitempty"`
+
+	// 描述性元数据：与 /v1/models 同源（models.dev + 首方权威覆盖）。
+	// 元数据目录不可用或模型无法解析时整块省略，前端只展示定价（不报错）。
+	Description      string   `json:"description,omitempty"`
+	ContextWindow    int64    `json:"context_window,omitempty"`
+	MaxOutputTokens  int64    `json:"max_output_tokens,omitempty"`
+	InputModalities  []string `json:"input_modalities,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
+	Reasoning        *bool    `json:"reasoning,omitempty"`
+	ToolCall         *bool    `json:"tool_call,omitempty"`
+	Family           string   `json:"family,omitempty"`
+	ReleaseDate      string   `json:"release_date,omitempty"`
 }
 
 // modelPlazaGroup 广场分组条目（白名单字段）。
@@ -237,14 +249,16 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64, qu
 	models := make([]modelPlazaModel, 0, len(g.Models))
 	for i := range g.Models {
 		m := &g.Models[i]
-		models = append(models, modelPlazaModel{
+		dto := modelPlazaModel{
 			Name:             m.Name,
 			Platform:         m.Platform,
 			Pricing:          toUserPricing(m.Pricing),
 			OfficialPricing:  toModelPlazaOfficialPricing(m.OfficialPricing),
 			LongContextBasis: string(m.LongContextBasis),
 			TimePricing:      toModelPlazaTimePricing(m.TimePricing),
-		})
+		}
+		applyPlazaModelMetadata(&dto, m.Metadata)
+		models = append(models, dto)
 	}
 	dto := modelPlazaGroup{
 		ID:                        g.ID,
@@ -270,6 +284,27 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64, qu
 		dto.QualityStatus = status.Status
 	}
 	return dto
+}
+
+// applyPlazaModelMetadata 把目录元数据摊平到模型 DTO。nil 目录或条目保持零值，
+// 由 omitempty 省略字段，调用方无需区分“没有元数据”和“解析失败”。
+func applyPlazaModelMetadata(dto *modelPlazaModel, metadata *service.ModelMetadata) {
+	if dto == nil || metadata == nil {
+		return
+	}
+	dto.Description = metadata.Description
+	dto.ContextWindow = metadata.ContextWindow
+	dto.MaxOutputTokens = metadata.MaxOutputTokens
+	dto.InputModalities = metadata.InputModalities
+	dto.OutputModalities = metadata.OutputModalities
+	dto.Family = metadata.Family
+	dto.ReleaseDate = metadata.ReleaseDate
+	if capabilities := metadata.Capabilities; capabilities != nil {
+		reasoning := capabilities.Reasoning
+		toolCall := capabilities.ToolCall
+		dto.Reasoning = &reasoning
+		dto.ToolCall = &toolCall
+	}
 }
 
 // toModelPlazaTimePricing 转换分时倍率；nil 透传（JSON 省略）。

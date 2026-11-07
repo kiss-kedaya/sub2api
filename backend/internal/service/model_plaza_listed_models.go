@@ -20,6 +20,15 @@ func (s *ModelPlazaService) SetListedModelCatalog(catalog plazaListedModelCatalo
 	s.listedModels = catalog
 }
 
+// SetModelMetadataCatalog attaches the model metadata catalogue shared with
+// /v1/models. A nil catalogue keeps the plaza on pricing only.
+func (s *ModelPlazaService) SetModelMetadataCatalog(catalog *ModelMetadataCatalog) {
+	if s == nil {
+		return
+	}
+	s.metadata = catalog
+}
+
 // ProvideModelPlazaService 创建模型广场，并接上 /v1/models 同一份账号模型列表。
 // 渠道里已经有的模型不在这里覆盖；没渠道价的稍后用官方目录价展示。
 func ProvideModelPlazaService(
@@ -32,6 +41,11 @@ func ProvideModelPlazaService(
 ) *ModelPlazaService {
 	svc := NewModelPlazaService(channelRepo, groupRepo, pricingService, billingService, resolver)
 	svc.SetListedModelCatalog(gateway)
+	if gateway != nil {
+		// Same catalogue as /v1/models: lazily created and fed by the shared
+		// models.dev snapshot, so the plaza never starts a second registry fetch.
+		svc.SetModelMetadataCatalog(gateway.ModelMetadataCatalog())
+	}
 	return svc
 }
 

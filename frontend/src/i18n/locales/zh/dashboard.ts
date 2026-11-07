@@ -804,7 +804,17 @@ export default {
       perUnitRequest: '/ 次',
       perUnitImage: '/ 张',
       perRequest: '按次计费',
-      perImage: '按图片计费'
+      perImage: '按图片计费',
+      contextLabel: '上下文',
+      contextHint: '模型单次请求可容纳的上下文长度（tokens）',
+      maxOutputLabel: '输出',
+      maxOutputHint: '单次回复的最大输出长度（tokens）',
+      reasoning: '思考',
+      imageInput: '图片输入',
+      videoInput: '视频输入',
+      toolCall: '工具调用',
+      descriptionToggle: '简介',
+      descriptionHide: '收起'
     },
     nav: {
       login: '登录',

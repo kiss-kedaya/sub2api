@@ -103,6 +103,40 @@
                 {{ t('modelPlaza.table.maxReasoningMultiplierBadge', { multiplier: m.pricing.max_reasoning_effort_multiplier }) }}
               </span>
             </div>
+            <!-- 元数据:上下文/最大输出 + 能力芯片;描述默认收起,点击展开 -->
+            <div
+              v-if="hasModelMetadata(m)"
+              class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-4 text-gray-500 dark:text-dark-400"
+            >
+              <span v-if="m.context_window" :title="t('modelPlaza.table.contextHint')">
+                {{ t('modelPlaza.table.contextLabel') }}
+                <span class="font-mono font-medium text-gray-600 dark:text-dark-300">{{ formatContextSize(m.context_window) }}</span>
+              </span>
+              <span v-if="m.max_output_tokens" :title="t('modelPlaza.table.maxOutputHint')">
+                {{ t('modelPlaza.table.maxOutputLabel') }}
+                <span class="font-mono font-medium text-gray-600 dark:text-dark-300">{{ formatContextSize(m.max_output_tokens) }}</span>
+              </span>
+              <span
+                v-for="chip in capabilityChips(m)"
+                :key="chip.key"
+                class="inline-flex items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-dark-700/70 dark:text-dark-300"
+              >
+                {{ chip.label }}
+              </span>
+              <button
+                v-if="m.description"
+                type="button"
+                class="plaza-meta-toggle"
+                :title="m.description"
+                :aria-expanded="isDescriptionOpen(m)"
+                @click="toggleDescription(m)"
+              >
+                {{ isDescriptionOpen(m) ? t('modelPlaza.table.descriptionHide') : t('modelPlaza.table.descriptionToggle') }}
+              </button>
+            </div>
+            <p v-if="isDescriptionOpen(m)" class="plaza-model-description">
+              {{ m.description }}
+            </p>
             <!-- 分时倍率:相同倍率的时段合并成一个芯片,价格列只展示标准价;高于标准价用玫红,低于用翠绿 -->
             <div v-if="timeGroups(m).length" class="mt-1.5 flex flex-wrap gap-1">
               <span
@@ -312,7 +346,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatScaled, resolveIntervalPrices } from '@/utils/pricing'
 import { platformAccentColor, platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
@@ -345,6 +379,60 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+
+/** 已展开简介的行(默认收起),key 与表格 v-for 一致。 */
+const openDescriptions = ref<Set<string>>(new Set())
+
+function modelRowKey(m: PlazaModel): string {
+  return `${m.platform}:${m.name}`
+}
+
+function isDescriptionOpen(m: PlazaModel): boolean {
+  return openDescriptions.value.has(modelRowKey(m))
+}
+
+function toggleDescription(m: PlazaModel): void {
+  const next = new Set(openDescriptions.value)
+  const key = modelRowKey(m)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  openDescriptions.value = next
+}
+
+/** 有任一可展示字段才渲染元数据行(旧后端不返回元数据时整行隐藏)。 */
+function hasModelMetadata(m: PlazaModel): boolean {
+  return Boolean(
+    m.context_window ||
+      m.max_output_tokens ||
+      m.reasoning != null ||
+      m.tool_call != null ||
+      m.input_modalities?.length ||
+      m.description
+  )
+}
+
+interface CapabilityChip {
+  key: string
+  label: string
+}
+
+/** 能力芯片只展示明确的布尔能力;未知模态不猜。 */
+function capabilityChips(m: PlazaModel): CapabilityChip[] {
+  const chips: CapabilityChip[] = []
+  if (m.reasoning) chips.push({ key: 'reasoning', label: t('modelPlaza.table.reasoning') })
+  const input = m.input_modalities ?? []
+  if (input.includes('image')) chips.push({ key: 'image', label: t('modelPlaza.table.imageInput') })
+  if (input.includes('video')) chips.push({ key: 'video', label: t('modelPlaza.table.videoInput') })
+  if (m.tool_call) chips.push({ key: 'tools', label: t('modelPlaza.table.toolCall') })
+  return chips
+}
+
+/** 上下文/输出按 1024 进制展示:1048576 → 1M,262144 → 256K,393216 → 384K。 */
+function formatContextSize(n: number): string {
+  if (n >= 1024 * 1024) return `${Math.round((n / (1024 * 1024)) * 10) / 10}M`
+  if (n >= 1024) return `${Math.round((n / 1024) * 10) / 10}K`
+  return String(n)
+}
 
 /** 实付分区只从平台拿一个主色,浅底/标题/下划线全部由 scoped CSS 用 color-mix 派生。 */
 const accentStyle = computed(() => ({ '--plaza-accent': platformAccentColor(props.platform ?? '') }))
@@ -575,5 +663,28 @@ tbody tr:hover .pz-cell {
 
 .pz-unit {
   color: color-mix(in srgb, var(--pz-title) 62%, transparent);
+}
+
+.plaza-meta-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--signal-muted, #63636c);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.plaza-meta-toggle:hover {
+  color: var(--signal-text, #1c1c1e);
+}
+
+.plaza-model-description {
+  margin-top: 6px;
+  max-width: 42ch;
+  color: var(--signal-muted, #63636c);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: normal;
 }
 </style>

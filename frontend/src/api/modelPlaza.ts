@@ -55,6 +55,25 @@ export interface PlazaModel {
   long_context_basis?: PlazaLongContextBasis
   /** 仅配置了分时倍率的模型返回。 */
   time_pricing?: PlazaTimePricing
+
+  /**
+   * 描述性元数据（与 /v1/models 同源：models.dev + 首方权威覆盖）。
+   * 元数据目录不可用时整块缺失，页面只展示定价。
+   */
+  description?: string
+  /** 上下文窗口（token）。 */
+  context_window?: number
+  /** 单次回复最大输出（token）。 */
+  max_output_tokens?: number
+  /** 输入模态，如 ['text', 'image', 'video']。 */
+  input_modalities?: string[]
+  output_modalities?: string[]
+  reasoning?: boolean
+  tool_call?: boolean
+  /** 模型家族，如 deepseek-v4.1。 */
+  family?: string
+  /** 官方发布日期（YYYY-MM-DD），有则给。 */
+  release_date?: string
 }
 
 export interface ModelPlazaGroup {

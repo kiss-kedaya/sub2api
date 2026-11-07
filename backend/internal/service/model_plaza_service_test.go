@@ -618,3 +618,46 @@ func TestListPlazaGroups_AccountListedModelsShowWithoutChannelPrice(t *testing.T
 	require.Equal(t, []string{"typesafe/jev"}, []string{out[0].Models[0].Name})
 	require.Nil(t, out[0].Models[0].Pricing)
 }
+
+func TestListPlazaGroups_AttachesCatalogMetadata(t *testing.T) {
+	channels := []Channel{plazaPricedChannel(1, "ch", []int64{10}, PlatformOpenAI, "deepseek-v4.1-flash", "acme-unknown-9")}
+	groups := []Group{{ID: 10, Name: "openai", Platform: PlatformOpenAI, RateMultiplier: 1}}
+	svc := newPlazaService(channels, groups, nil)
+	svc.SetModelMetadataCatalog(newTestModelMetadataCatalog(testModelsDevRegistry()))
+
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	byName := map[string]PlazaModel{}
+	for _, m := range out[0].Models {
+		byName[m.Name] = m
+	}
+
+	flash := byName["deepseek-v4.1-flash"].Metadata
+	require.NotNil(t, flash)
+	require.Equal(t, int64(1_048_576), flash.ContextWindow)
+	require.Equal(t, int64(393_216), flash.MaxOutputTokens, "authoritative output wins over the registry's 384000")
+	require.Equal(t, []string{"text", "image"}, flash.InputModalities)
+	require.Equal(t, []string{"text"}, flash.OutputModalities)
+	require.Equal(t, "deepseek-v4.1", flash.Family)
+	require.NotNil(t, flash.Capabilities)
+	require.True(t, flash.Capabilities.Reasoning)
+	require.True(t, flash.Capabilities.ToolCall)
+
+	unknown := byName["acme-unknown-9"].Metadata
+	require.NotNil(t, unknown, "a derived display name is still renderable")
+	require.Zero(t, unknown.ContextWindow, "unknown models must not get fabricated limits")
+}
+
+func TestListPlazaGroups_WithoutCatalogKeepsPricingOnly(t *testing.T) {
+	channels := []Channel{plazaPricedChannel(1, "ch", []int64{10}, PlatformOpenAI, "deepseek-v4.1-flash")}
+	groups := []Group{{ID: 10, Name: "openai", Platform: PlatformOpenAI, RateMultiplier: 1}}
+	svc := newPlazaService(channels, groups, nil)
+
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Len(t, out[0].Models, 1)
+	require.Nil(t, out[0].Models[0].Metadata, "a nil catalogue degrades to pricing only")
+	require.NotNil(t, out[0].Models[0].Pricing)
+}

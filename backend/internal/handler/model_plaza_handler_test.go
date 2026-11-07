@@ -272,3 +272,68 @@ func TestFilterPlazaVisibleGroups_SubscribedExclusiveGroup(t *testing.T) {
 		require.Equal(t, int64(42), visible[0].ID)
 	}
 }
+
+func TestToModelPlazaGroupDTO_ModelMetadataFields(t *testing.T) {
+	reasoning, toolCall := false, true
+	g := service.PlazaGroup{
+		ID: 5, Name: "images", Platform: "openai", RateMultiplier: 1,
+		Models: []service.PlazaModel{{
+			Name:     "gpt-image-2",
+			Platform: "openai",
+			Pricing: &service.ChannelModelPricing{
+				BillingMode:     service.BillingModeImage,
+				PerRequestPrice: testPtr(0.04),
+			},
+			Metadata: &service.ModelMetadata{
+				DisplayName:      "GPT Image 2",
+				Description:      "Image generation model.",
+				ContextWindow:    16384,
+				MaxOutputTokens:  16384,
+				InputModalities:  []string{"text", "image"},
+				OutputModalities: []string{"image"},
+				Capabilities:     &service.ModelCapabilities{Reasoning: reasoning, ToolCall: toolCall},
+				Family:           "gpt-image",
+				ReleaseDate:      "2026-04-21",
+			},
+		}},
+	}
+
+	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
+	require.NoError(t, err)
+	var decoded struct {
+		Models []map[string]any `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Len(t, decoded.Models, 1)
+	model := decoded.Models[0]
+	require.Equal(t, "Image generation model.", model["description"])
+	require.EqualValues(t, 16384, model["context_window"])
+	require.EqualValues(t, 16384, model["max_output_tokens"])
+	require.Equal(t, []any{"text", "image"}, model["input_modalities"])
+	require.Equal(t, []any{"image"}, model["output_modalities"])
+	require.Equal(t, false, model["reasoning"], "false must be emitted, not omitted")
+	require.Equal(t, true, model["tool_call"])
+	require.Equal(t, "gpt-image", model["family"])
+	require.Equal(t, "2026-04-21", model["release_date"])
+	// 定价字段不受元数据影响。
+	require.Contains(t, model, "pricing")
+	require.Contains(t, model, "official_pricing")
+
+	// 目录不可用/解析不到：元数据字段整块省略，定价照常输出，不报错。
+	g.Models[0].Metadata = nil
+	raw, err = json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
+	require.NoError(t, err)
+	var degraded struct {
+		Models []map[string]any `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &degraded))
+	require.Len(t, degraded.Models, 1)
+	for _, key := range []string{
+		"description", "context_window", "max_output_tokens", "input_modalities",
+		"output_modalities", "reasoning", "tool_call", "family", "release_date",
+	} {
+		_, exists := degraded.Models[0][key]
+		require.Falsef(t, exists, "nil metadata must omit %q", key)
+	}
+	require.Contains(t, degraded.Models[0], "pricing")
+}

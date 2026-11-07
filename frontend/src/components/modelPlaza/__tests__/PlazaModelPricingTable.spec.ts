@@ -68,6 +68,49 @@ describe('PlazaModelPricingTable', () => {
     expect(text).toContain('1x')
   })
 
+  it('展示上下文/最大输出与能力芯片', () => {
+    const model = tokenModel({
+      context_window: 1048576,
+      max_output_tokens: 393216,
+      input_modalities: ['text', 'image'],
+      reasoning: true,
+      tool_call: true
+    })
+    const wrapper = mountTable([model], 1)
+    const text = wrapper.text()
+    expect(text).toContain('modelPlaza.table.contextLabel')
+    expect(text).toContain('1M')
+    expect(text).toContain('modelPlaza.table.maxOutputLabel')
+    expect(text).toContain('384K')
+    expect(text).toContain('modelPlaza.table.reasoning')
+    expect(text).toContain('modelPlaza.table.imageInput')
+    expect(text).toContain('modelPlaza.table.toolCall')
+    expect(text).not.toContain('modelPlaza.table.videoInput')
+  })
+
+  it('简介默认收起，点击展开再收起', async () => {
+    const wrapper = mountTable([tokenModel({ description: 'A long-context model.' })], 1)
+    expect(wrapper.text()).not.toContain('A long-context model.')
+    const toggle = wrapper.find('.plaza-meta-toggle')
+    expect(toggle.exists()).toBe(true)
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+
+    await toggle.trigger('click')
+    expect(wrapper.text()).toContain('A long-context model.')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+
+    await toggle.trigger('click')
+    expect(wrapper.text()).not.toContain('A long-context model.')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('没有元数据时不渲染元数据行（旧后端兼容）', () => {
+    const wrapper = mountTable([tokenModel()], 1)
+    expect(wrapper.find('.plaza-meta-toggle').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('modelPlaza.table.contextLabel')
+    expect(wrapper.text()).not.toContain('modelPlaza.table.reasoning')
+  })
+
   it('shows the Max reasoning billing multiplier', () => {
     const model = tokenModel()
     model.pricing!.max_reasoning_effort_multiplier = 3

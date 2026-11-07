@@ -54,6 +54,11 @@ type UpstreamModelMetadata struct {
 	ReleaseDate      string               `json:"release_date,omitempty"`
 	Knowledge        string               `json:"knowledge,omitempty"`
 	ReferencePricing *ModelCatalogPricing `json:"reference_pricing,omitempty"`
+
+	// Authoritative marks first-party values verified against the vendor's own
+	// documentation. The catalogue lets these override a models.dev/reseller
+	// entry instead of only filling its gaps.
+	Authoritative bool `json:"authoritative,omitempty"`
 }
 
 type UpstreamModelMetadataSnapshot struct {
@@ -752,7 +757,15 @@ func upstreamModelRegistryBaseURL(account *Account) string {
 
 const (
 	deepSeekV4ContextWindow int64 = 1_048_576
-	deepSeekV4MaxOutput     int64 = 384_000
+	// 384K in the vendor docs means 384 KiB, and both GET /models and the chat
+	// completions max_tokens cap report 393216. Registries that publish 384000
+	// (or the reseller 1050000 context) are rounded/forwarded copies, not the
+	// first-party values, so the built-in entry is authoritative.
+	deepSeekV4MaxOutput int64 = 393_216
+	// Flash-family aliases (including the old deepseek-v4-flash* IDs) are served
+	// by DeepSeek-V4.1-Flash-1017; Pro keeps its own family for client grouping.
+	deepSeekV4FlashFamily = "deepseek-v4.1"
+	deepSeekV4ProFamily   = "deepseek-v4-pro"
 )
 
 func builtinDeepSeekModelMetadataForIDs(modelIDs []string) map[string]UpstreamModelMetadata {
@@ -793,9 +806,16 @@ func builtinDeepSeekModelMetadata(modelID string) (UpstreamModelMetadata, bool) 
 		display = "DeepSeek V4 Pro 0813"
 	case id == "deepseek-v4.1-flash-0910":
 		display = "DeepSeek V4.1 Flash 0910"
+	case id == "deepseek-v4.1-flash-1017":
+		display = "DeepSeek V4.1 Flash 1017"
+	case id == "deepseek-v4.1-flash-expires-on-0910":
+		// Alias with a registry expiry marker: the readable name stays the model name.
+		display = "DeepSeek V4.1 Flash"
 	case id == "deepseek-v4-flash":
 		display = "DeepSeek V4 Flash"
 	case id == "deepseek-v4.1-flash" || id == "deepseek-flash":
+		display = "DeepSeek V4.1 Flash"
+	case strings.Contains(id, "v4.1"):
 		display = "DeepSeek V4.1 Flash"
 	case strings.Contains(id, "pro"):
 		display = "DeepSeek V4 Pro"
@@ -808,10 +828,14 @@ func builtinDeepSeekModelMetadata(modelID string) (UpstreamModelMetadata, bool) 
 	// Pro has no vision. Flash family (including dated/old aliases) is served by V4.1-Flash.
 	vision := !strings.Contains(id, "pro")
 
-	reasoning := true
+	reasoning, toolCall := true, true
 	modalities := []string{"text"}
 	if vision {
 		modalities = append(modalities, "image")
+	}
+	family := deepSeekV4FlashFamily
+	if !vision {
+		family = deepSeekV4ProFamily
 	}
 	return UpstreamModelMetadata{
 		ID:                       strings.TrimSpace(modelID),
@@ -821,8 +845,14 @@ func builtinDeepSeekModelMetadata(modelID string) (UpstreamModelMetadata, bool) 
 		DefaultReasoningLevel:    "high",
 		SupportedReasoningLevels: []string{"none", "low", "high", "max"},
 		InputModalities:          modalities,
+		OutputModalities:         []string{"text"},
 		ContextWindow:            deepSeekV4ContextWindow,
 		MaxOutputTokens:          deepSeekV4MaxOutput,
+		ToolCall:                 &toolCall,
+		Family:                   family,
+		// First-party values verified against api-docs.deepseek.com; a models.dev
+		// reseller copy (1050K context / output) must not shadow them.
+		Authoritative: true,
 	}, true
 }
 
@@ -921,6 +951,10 @@ func builtinCatalogModelMetadata(modelID string) (UpstreamModelMetadata, bool) {
 			ContextWindow:   262144,
 			MaxOutputTokens: 65536,
 			Family:          family,
+			// These IDs are absent from models.dev today. Marking them authoritative
+			// stops a future same-name reseller entry from shadowing the built-in
+			// K2 family envelope.
+			Authoritative: true,
 		}, true
 	case id == "gemini-3.6-flash-tiered":
 		reasoning := true
@@ -974,6 +1008,8 @@ func gptImageCatalogDisplayName(id string) string {
 		return "GPT Image 2.5"
 	case strings.HasPrefix(id, "gpt-image-2-exact"):
 		return "GPT Image 2 Exact"
+	case strings.HasPrefix(id, "gpt-image-medium"):
+		return "GPT Image Medium"
 	case strings.HasPrefix(id, "gpt-image-1k-th"):
 		return "GPT Image 1K TH"
 	case strings.HasPrefix(id, "gpt-image-1.5"):

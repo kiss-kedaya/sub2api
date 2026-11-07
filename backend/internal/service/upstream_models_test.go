@@ -1226,6 +1226,8 @@ func TestBuiltinDeepSeekModelMetadataCompletesV4IDs(t *testing.T) {
 		{"deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision Exp", true},
 		{"deepseek-v4-pro-0813", "DeepSeek V4 Pro 0813", false},
 		{"deepseek-v4.1-flash-0910", "DeepSeek V4.1 Flash 0910", true},
+		{"deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash 1017", true},
+		{"deepseek-v4.1-flash-expires-on-0910", "DeepSeek V4.1 Flash", true},
 		{"deepseek-flash", "DeepSeek V4.1 Flash", true},
 		{"deepseek-v4-flash", "DeepSeek V4 Flash", true},
 		{"deepseek-v4-pro", "DeepSeek V4 Pro", false},
@@ -1237,13 +1239,19 @@ func TestBuiltinDeepSeekModelMetadataCompletesV4IDs(t *testing.T) {
 			require.True(t, upstreamModelMetadataIsComplete(got), "builtin entry must be persistable")
 			require.Equal(t, tc.name, got.DisplayName)
 			require.Equal(t, int64(1_048_576), got.ContextWindow)
-			require.Equal(t, int64(384_000), got.MaxOutputTokens)
+			require.Equal(t, int64(393_216), got.MaxOutputTokens, "384K means 384*1024; GET /models reports 393216")
 			require.Equal(t, "high", got.DefaultReasoningLevel)
 			require.Equal(t, []string{"none", "low", "high", "max"}, got.SupportedReasoningLevels)
+			require.Equal(t, []string{"text"}, got.OutputModalities)
+			require.NotNil(t, got.ToolCall)
+			require.True(t, *got.ToolCall)
+			require.True(t, got.Authoritative)
 			if tc.vision {
 				require.Equal(t, []string{"text", "image"}, got.InputModalities)
+				require.Equal(t, "deepseek-v4.1", got.Family)
 			} else {
 				require.Equal(t, []string{"text"}, got.InputModalities)
+				require.Equal(t, "deepseek-v4-pro", got.Family)
 			}
 			require.NotEmpty(t, got.Description)
 		})
@@ -1274,6 +1282,7 @@ func TestBuiltinCatalogModelMetadataCompletesMissingOfficialIDs(t *testing.T) {
 		{"gpt-image-2.6-flare", "GPT Image 2.6 Flare", false, []string{"text", "image"}, 16384, 16384, "", nil},
 		{"gpt-image-2.6-sunburst", "GPT Image 2.6 Sunburst", false, []string{"text", "image"}, 16384, 16384, "", nil},
 		{"gpt-image-1k-th", "GPT Image 1K TH", false, []string{"text", "image"}, 16384, 16384, "", nil},
+		{"gpt-image-medium", "GPT Image Medium", false, []string{"text", "image"}, 16384, 16384, "", nil},
 		{"grok-imagine-image-2.0", "Grok Imagine Image 2.0", false, []string{"text", "image"}, 64000, 16384, "", nil},
 		{"grok-imagine-video-1.5", "Grok Imagine Video 1.5", false, []string{"text", "image"}, 1024, 1024, "", nil},
 	}
