@@ -357,6 +357,9 @@
                   t('admin.accounts.supportsAllModels')
                 }}</span>
               </p>
+              <p v-if="modelMappings.length > 0" class="text-xs text-warning">
+                {{ t('admin.accounts.hiddenMappingsHint', { count: modelMappings.length }) }}
+              </p>
             </div>
   
             <!-- Mapping Mode -->
@@ -551,6 +554,9 @@
                     t('admin.accounts.supportsAllModels')
                   }}</span>
                 </p>
+                <p v-if="modelMappings.length > 0" class="text-xs text-warning">
+                  {{ t('admin.accounts.hiddenMappingsHint', { count: modelMappings.length }) }}
+                </p>
               </div>
   
               <!-- Mapping Mode -->
@@ -651,6 +657,9 @@
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
               </p>
+              <p v-if="modelMappings.length > 0" class="text-xs text-warning">
+                {{ t('admin.accounts.hiddenMappingsHint', { count: modelMappings.length }) }}
+              </p>
             </div>
   
             <!-- Mapping Mode -->
@@ -738,6 +747,9 @@
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
                   t('admin.accounts.supportsAllModels')
                 }}</span>
+              </p>
+              <p v-if="modelMappings.length > 0" class="text-xs text-warning">
+                {{ t('admin.accounts.hiddenMappingsHint', { count: modelMappings.length }) }}
               </p>
             </div>
   
@@ -2305,6 +2317,7 @@ import {
   buildModelMappingObject,
   splitModelMappingObject,
   mergeUpstreamIdentityMappings,
+  dropMappingsShadowedByWhitelist,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 import { getActivePinia } from 'pinia'
@@ -3230,7 +3243,11 @@ const loadModelRestrictionFromMapping = (rawMapping?: Record<string, unknown>) =
 }
 
 const buildModelRestrictionMapping = () =>
-  buildModelMappingObject('combined', allowedModels.value, modelMappings.value)
+  buildModelMappingObject(
+    'combined',
+    allowedModels.value,
+    dropMappingsShadowedByWhitelist(allowedModels.value, modelMappings.value)
+  )
 
 const applyOpenAIModelMappingCredentials = (credentials: Record<string, unknown>) => {
   const shouldApplyModelMapping = !openaiPassthroughEnabled.value

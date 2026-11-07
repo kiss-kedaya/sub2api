@@ -566,6 +566,20 @@ export function buildModelMappingObject(
   return Object.keys(mapping).length > 0 ? mapping : null
 }
 
+// dropMappingsShadowedByWhitelist keeps the visible whitelist authoritative: when a
+// model is explicitly whitelisted, a stale mapping with the same `from` (for
+// example claude-opus-4-5 -> claude-opus-4-5-20251101 left by an earlier
+// mapping-mode edit) must not override its identity entry. Mapping entries for
+// other models are preserved, so nothing disappears from the hidden side.
+export function dropMappingsShadowedByWhitelist(
+  allowedModels: string[],
+  mappings: ModelMappingEntry[]
+): ModelMappingEntry[] {
+  if (mappings.length === 0 || allowedModels.length === 0) return mappings
+  const whitelisted = new Set(allowedModels.map((model) => model.trim()).filter(Boolean))
+  return mappings.filter((entry) => !whitelisted.has(entry.from.trim()))
+}
+
 export function mergeUpstreamIdentityMappings(
   existing: ModelMappingEntry[],
   upstreamModels: string[]

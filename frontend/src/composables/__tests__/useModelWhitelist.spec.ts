@@ -4,7 +4,7 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn()
 }))
 
-import { buildModelMappingObject, getModelsByPlatform, getPresetMappingsByPlatform, mergeUpstreamIdentityMappings, splitModelMappingObject } from '../useModelWhitelist'
+import { buildModelMappingObject, dropMappingsShadowedByWhitelist, getModelsByPlatform, getPresetMappingsByPlatform, mergeUpstreamIdentityMappings, splitModelMappingObject } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
   it('openai 模型列表包含 GPT-5.4 官方快照', () => {
@@ -187,5 +187,22 @@ describe('useModelWhitelist', () => {
       { from: 'gpt-5.4', to: 'gpt-5.4' },
       { from: 'gemini-3.8-flash', to: 'gemini-3.8-flash' }
     ])
+  })
+})
+
+describe('dropMappingsShadowedByWhitelist', () => {
+  it('keeps the visible whitelist authoritative when a stale mapping shares its key', () => {
+    const mappings = [
+      { from: 'claude-opus-4-5', to: 'claude-opus-4-5-20251101' },
+      { from: 'claude-sonnet-4-6', to: 'claude-sonnet-5' }
+    ]
+    expect(dropMappingsShadowedByWhitelist(['claude-opus-4-5'], mappings)).toEqual([
+      { from: 'claude-sonnet-4-6', to: 'claude-sonnet-5' }
+    ])
+  })
+
+  it('returns the mappings untouched when the whitelist is empty', () => {
+    const mappings = [{ from: 'claude-opus-4-5', to: 'claude-opus-4-5-20251101' }]
+    expect(dropMappingsShadowedByWhitelist([], mappings)).toBe(mappings)
   })
 })
