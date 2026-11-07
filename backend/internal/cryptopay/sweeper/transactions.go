@@ -94,7 +94,7 @@ func validateSigned(raw, chain, from, to, token string, amount *big.Int, nonce, 
 	}
 	chainID := ChainIDs[chain]
 	if chainID <= 0 || tx.ChainId().Cmp(big.NewInt(chainID)) != 0 ||
-		tx.Nonce() != nonce || tx.Gas() != gas || tx.To() == nil ||
+		tx.Nonce() != nonce || !gasLimitMatches(tx.Gas(), gas) || tx.To() == nil ||
 		!common.IsHexAddress(from) || !common.IsHexAddress(to) || amount == nil || amount.Sign() <= 0 ||
 		(tx.Type() != types.DynamicFeeTxType && tx.Type() != types.LegacyTxType) {
 		return "", fmt.Errorf("signed transaction does not match reserved chain/nonce/gas")
@@ -174,7 +174,7 @@ func checkReceipt(ctx context.Context, pool *rpc.Pool, hash string, required uin
 	if !strings.EqualFold(header.Hash, r.BlockHash) {
 		return receiptWaiting, fmt.Errorf("receipt block is no longer canonical")
 	}
-	head, err := pool.BlockNumber(ctx)
+	head, err := pool.MaxBlockNumber(ctx)
 	if err != nil {
 		return receiptWaiting, err
 	}
@@ -191,7 +191,9 @@ func checkReceipt(ctx context.Context, pool *rpc.Pool, hash string, required uin
 // successful receipt query says absent. RPC failures never authorize a new tx.
 func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas bool, required uint64) (bool, error) {
 	raw, hash, nonceStr := j.SweepRaw, j.SweepHash, j.SweepNonce
-	from, to, token, amount, limit := j.Address, j.Destination, j.Token, j.RawAmount, uint64(transferGasLimit)
+	// A zero limit means "accept either the legacy or the current sweep gas
+	// limit"; signed bytes from before the raise must stay verifiable.
+	from, to, token, amount, limit := j.Address, j.Destination, j.Token, j.RawAmount, uint64(0)
 	if gas {
 		raw, hash, nonceStr = j.GasRaw, j.GasHash, j.GasNonce
 		from, to, token, limit = j.GasPayer, j.Address, "native", 21000
@@ -247,6 +249,16 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		return false, joinErrors(err, e.saveJob(ctx, j))
 	}
 	if state == receiptReverted {
+		if shouldRetrySweepRevert(gas, j.SweepRaw) {
+			// The legacy 65k limit is below what some stablecoin transfers
+			// need. Re-sign once with the larger limit instead of parking the
+			// job for manual review; the retried tx is distinguishable because
+			// it carries the new gas limit.
+			j.Status = "gas_confirmed"
+			j.SweepRaw, j.SweepHash, j.SweepNonce = "", "", ""
+			j.Error = "sweep reverted under the legacy gas limit; retrying with a larger limit"
+			return false, e.saveJob(ctx, j)
+		}
 		j.Status, j.Error = "manual_review", "confirmed transaction reverted; automatic replacement/funding refused"
 		return false, e.saveJob(ctx, j)
 	}
@@ -264,4 +276,39 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		return false, err
 	}
 	return true, nil
+}
+
+// gasLimitMatches validates the gas field of a signed transaction. A zero
+// expected value accepts the legacy and current sweep limits (used for bytes
+// signed before the limit was raised); every other caller keeps exact equality.
+func gasLimitMatches(actual, expected uint64) bool {
+	if expected == 0 {
+		return actual == legacyTransferGasLimit || actual == transferGasLimit
+	}
+	return actual == expected
+}
+
+// signedGasLimit decodes the gas limit stored in persisted raw bytes.
+func signedGasLimit(raw string) uint64 {
+	encoded, err := hex.DecodeString(strings.TrimPrefix(raw, "0x"))
+	if err != nil {
+		return 0
+	}
+	var tx types.Transaction
+	if err := tx.UnmarshalBinary(encoded); err != nil {
+		return 0
+	}
+	return tx.Gas()
+}
+
+// shouldRetrySweepRevert reports whether a reverted token transfer was signed
+// with the legacy gas limit and therefore deserves one automatic retry with the
+// larger limit. Gas top-ups and retries that already used the new limit stay in
+// manual review.
+func shouldRetrySweepRevert(gas bool, raw string) bool {
+	if gas {
+		return false
+	}
+	limit := signedGasLimit(raw)
+	return limit > 0 && limit <= legacyTransferGasLimit
 }
