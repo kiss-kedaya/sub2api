@@ -24,7 +24,17 @@ import (
 // 而生产默认拒绝私网/回环（见 smtpCheckDialAddr）。
 func TestMain(m *testing.M) {
 	SetSMTPAllowPrivateTargetsForTest(true)
+	// Keep catalogue tests deterministic: the curated catalogue is fetched from
+	// GitHub by default, and a reachable network must not change assertions
+	// about models.dev sources. Individual tests seed their own source.
+	previousCatalogURL, hadCatalogURL := os.LookupEnv("SUB2API_MODEL_CATALOG_URL")
+	_ = os.Setenv("SUB2API_MODEL_CATALOG_URL", "off")
 	code := m.Run()
+	if hadCatalogURL {
+		_ = os.Setenv("SUB2API_MODEL_CATALOG_URL", previousCatalogURL)
+	} else {
+		_ = os.Unsetenv("SUB2API_MODEL_CATALOG_URL")
+	}
 	SetSMTPAllowPrivateTargetsForTest(false)
 	os.Exit(code)
 }

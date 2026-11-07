@@ -114,8 +114,17 @@ func testModelsDevRegistry() map[string]modelsDevProvider {
 
 // newTestModelMetadataCatalog seeds a registry and marks the snapshot fresh so
 // tests never start a registry fetch.
+// newTestModelMetadataCatalogWithClient keeps unit tests off the network: the
+// curated catalogue is fetched from GitHub by default, and a reachable network
+// must not change assertions about models.dev sources.
+func newTestModelMetadataCatalogWithClient(client *http.Client) *ModelMetadataCatalog {
+	catalog := NewModelMetadataCatalog(client)
+	catalog.fileCatalog = NewModelCatalogFileSource("", nil)
+	return catalog
+}
+
 func newTestModelMetadataCatalog(registry map[string]modelsDevProvider) *ModelMetadataCatalog {
-	catalog := NewModelMetadataCatalog(nil)
+	catalog := newTestModelMetadataCatalogWithClient(nil)
 	catalog.SeedRegistry(registry, time.Now())
 	return catalog
 }
@@ -393,7 +402,7 @@ func TestModelMetadataCatalogEnrichKeepsExistingUpstreamFields(t *testing.T) {
 }
 
 func TestModelMetadataCatalogEnrichWithoutRegistryIsSafe(t *testing.T) {
-	catalog := NewModelMetadataCatalog(nil)
+	catalog := newTestModelMetadataCatalogWithClient(nil)
 	catalog.mu.Lock()
 	catalog.lastAttempt = time.Now() // suppress the background fetch
 	catalog.mu.Unlock()
@@ -427,7 +436,7 @@ func TestModelMetadataCatalogSyncFetchesRegistry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	catalog := NewModelMetadataCatalog(server.Client())
+	catalog := newTestModelMetadataCatalogWithClient(server.Client())
 	catalog.registryURL = server.URL
 	result, err := catalog.Sync(context.Background())
 	require.NoError(t, err)
@@ -465,7 +474,7 @@ func TestModelMetadataCatalogSyncHonorsContextTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	catalog := NewModelMetadataCatalog(server.Client())
+	catalog := newTestModelMetadataCatalogWithClient(server.Client())
 	catalog.registryURL = server.URL
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -484,7 +493,7 @@ func TestModelMetadataCatalogResolveDoesNotBlockOnRegistryFetch(t *testing.T) {
 		server.Close()
 	}()
 
-	catalog := NewModelMetadataCatalog(server.Client())
+	catalog := newTestModelMetadataCatalogWithClient(server.Client())
 	catalog.registryURL = server.URL
 	started := time.Now()
 	metadata := catalog.Resolve(context.Background(), "deepseek-v4-pro", PlatformOpenAI, nil)
