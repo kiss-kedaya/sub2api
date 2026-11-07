@@ -837,6 +837,7 @@ export default {
       mapRequestModels:
         'Map request models to actual models. Left is the requested model, right is the actual model sent to API.',
       selectedModels: 'Selected {count} model(s)',
+      hiddenMappingsHint: '{count} model mapping(s) are active in mapping mode; switch to Mapping to review them',
       supportsAllModels: '(supports all models)',
       requestModel: 'Request model',
       actualModel: 'Actual model',
