@@ -1100,6 +1100,9 @@ func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingServ
 	svc := NewChannelMonitorV2Service(repo)
 	svc.SetRuntimeReader(settingService)
 	svc.SetGroupQualityCheckService(quality)
+	// Smart routing consumes this cache when several groups can serve the same
+	// model; the monitor remains the single source of truth for the signals.
+	SetDefaultGroupRouteQualityCache(NewGroupRouteQualityCache(NewChannelMonitorRouteQualitySource(svc)))
 	return svc
 }
 
