@@ -175,3 +175,49 @@ func (c *emailCache) GetNotifyCodeUserRate(ctx context.Context, userID int64) (i
 	}
 	return count, nil
 }
+
+// consumeVerifyCodeScript atomically compares the code, increments the attempt
+// counter and deletes the code on success. The previous read-modify-write in
+// the service allowed concurrent guesses to bypass the attempt limit.
+var consumeVerifyCodeScript = redis.NewScript(`
+local key = KEYS[1]
+local code = ARGV[1]
+local maxAttempts = tonumber(ARGV[2])
+local raw = redis.call('GET', key)
+if not raw then
+  return {-1, 0}
+end
+local data = cjson.decode(raw)
+local attempts = tonumber(data.Attempts) or 0
+if attempts >= maxAttempts then
+  return {-2, attempts}
+end
+if tostring(data.Code) == code then
+  redis.call('DEL', key)
+  return {1, 0}
+end
+attempts = attempts + 1
+data.Attempts = attempts
+local ttl = redis.call('PTTL', key)
+if ttl <= 0 then
+  ttl = 900000
+end
+redis.call('SET', key, cjson.encode(data), 'PX', ttl)
+if attempts >= maxAttempts then
+  return {-2, attempts}
+end
+return {0, attempts}
+`)
+
+// ConsumeVerificationCode returns 1 on success, 0 on mismatch, -1 when the
+// code is absent and -2 when the attempt limit is reached.
+func (c *emailCache) ConsumeVerificationCode(ctx context.Context, email, code string, maxAttempts int) (int, int, error) {
+	result, err := consumeVerifyCodeScript.Run(ctx, c.rdb, []string{verifyCodeKey(email)}, code, maxAttempts).Int64Slice()
+	if err != nil {
+		return -1, 0, err
+	}
+	if len(result) != 2 {
+		return -1, 0, fmt.Errorf("unexpected verify-code script result")
+	}
+	return int(result[0]), int(result[1]), nil
+}

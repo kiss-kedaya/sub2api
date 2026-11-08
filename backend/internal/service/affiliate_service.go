@@ -384,6 +384,27 @@ func (s *AffiliateService) BindInviterByCode(ctx context.Context, userID int64, 
 	return nil
 }
 
+// affiliateRebateReverser is the optional repository capability used by
+// refunds to claw back a rebate. Repositories without it are a no-op.
+type affiliateRebateReverser interface {
+	ReverseQuotaForOrder(ctx context.Context, sourceOrderID int64, ratio float64) (float64, error)
+}
+
+// ReverseInviteRebateForOrder reverses the rebate accrued for a refunded order.
+func (s *AffiliateService) ReverseInviteRebateForOrder(ctx context.Context, sourceOrderID int64, ratio float64) (float64, error) {
+	if s == nil || s.repo == nil || sourceOrderID <= 0 || ratio <= 0 {
+		return 0, nil
+	}
+	if !s.IsEnabled(ctx) {
+		return 0, nil
+	}
+	reverser, ok := s.repo.(affiliateRebateReverser)
+	if !ok {
+		return 0, nil
+	}
+	return reverser.ReverseQuotaForOrder(ctx, sourceOrderID, ratio)
+}
+
 func (s *AffiliateService) AccrueInviteRebate(ctx context.Context, inviteeUserID int64, baseRechargeAmount float64) (float64, error) {
 	return s.AccrueInviteRebateForOrder(ctx, inviteeUserID, baseRechargeAmount, nil)
 }

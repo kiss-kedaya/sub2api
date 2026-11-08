@@ -81,6 +81,19 @@ func (h *CryptoHandler) GetDepositAddresses(c *gin.Context) {
 		response.ErrorFrom(c, errCryptoDisabled)
 		return
 	}
+	if h.addresses != nil {
+		families := make([]string, 0, 2)
+		for _, chain := range cfg.Chains {
+			if chain == cryptopay.ChainSolana {
+				families = append(families, addresses.FamilySolana)
+				continue
+			}
+			if cryptopay.IsEVMChain(chain) {
+				families = append(families, addresses.FamilyEVM)
+			}
+		}
+		h.addresses.SetFamilies(families)
+	}
 	assigned, err := h.addresses.GetOrAssign(c.Request.Context(), subject.UserID)
 	if err != nil {
 		response.ErrorFrom(c, err)

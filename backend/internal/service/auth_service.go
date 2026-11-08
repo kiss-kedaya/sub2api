@@ -71,6 +71,17 @@ type JWTClaims struct {
 }
 
 // AuthService 认证服务
+// AccessTokenRevocationStore is optionally implemented by the refresh-token
+// cache. It records the instant before which access tokens must be rejected,
+// so "revoke all sessions" also invalidates stateless JWTs instead of only
+// dropping refresh tokens.
+type AccessTokenRevocationStore interface {
+	RevokeAccessTokensBefore(ctx context.Context, userID int64, before time.Time, ttl time.Duration) error
+	AccessTokensRevokedBefore(ctx context.Context, userID int64) (time.Time, error)
+}
+
+const accessTokenRevocationTTL = 48 * time.Hour
+
 type AuthService struct {
 	entClient             *dbent.Client
 	userRepo              UserRepository
@@ -334,7 +345,11 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 		return ErrServiceUnavailable
 	}
 	if existsEmail {
-		return ErrEmailExists
+		// Do not disclose registration state from this unauthenticated endpoint:
+		// an attacker could enumerate accounts. Pretend the code was sent and
+		// skip the actual mail (the address owner can use login/password reset).
+		logger.LegacyPrintf("service.auth", "[Auth] Verification code suppressed for existing email")
+		return nil
 	}
 	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
 		return err
@@ -377,8 +392,10 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 		return nil, ErrServiceUnavailable
 	}
 	if existsEmail {
-		logger.LegacyPrintf("service.auth", "[Auth] Email already exists: %s", email)
-		return nil, ErrEmailExists
+		// Same anti-enumeration rule as SendVerifyCode: answer success without
+		// sending, so registered and unregistered addresses are indistinguishable.
+		logger.LegacyPrintf("service.auth", "[Auth] Verification code suppressed for existing email")
+		return &SendVerifyCodeResult{Countdown: 60}, nil
 	}
 	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
 		return nil, err
@@ -1946,7 +1963,45 @@ func (s *AuthService) RevokeAllUserTokens(ctx context.Context, userID int64) err
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke refresh sessions after token invalidation for user %d: %v", userID, err)
 		return fmt.Errorf("revoke user sessions: %w", err)
 	}
+	// Refresh tokens alone do not stop a leaked access token: JWTs stay valid
+	// until they expire. Record the revocation instant so the auth middleware
+	// rejects every token issued at or before now.
+	if err := s.RevokeAccessTokensBefore(ctx, userID, time.Now().UTC()); err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke access tokens for user %d: %v", userID, err)
+		return fmt.Errorf("revoke access tokens: %w", err)
+	}
 	return nil
+}
+
+// RevokeAccessTokensBefore rejects access tokens issued before the given time.
+// It is a no-op when the cache does not support revocation.
+func (s *AuthService) RevokeAccessTokensBefore(ctx context.Context, userID int64, before time.Time) error {
+	if s == nil || userID <= 0 || before.IsZero() {
+		return nil
+	}
+	store, ok := s.refreshTokenCache.(AccessTokenRevocationStore)
+	if !ok {
+		return nil
+	}
+	return store.RevokeAccessTokensBefore(ctx, userID, before, accessTokenRevocationTTL)
+}
+
+// IsAccessTokenRevoked reports whether the token's iat falls at or before the
+// last "revoke all sessions" instant. Read errors fail open (the token already
+// passed signature/expiry/version checks); an outage must not lock everyone out.
+func (s *AuthService) IsAccessTokenRevoked(ctx context.Context, userID int64, issuedAt time.Time) bool {
+	if s == nil || userID <= 0 || issuedAt.IsZero() {
+		return false
+	}
+	store, ok := s.refreshTokenCache.(AccessTokenRevocationStore)
+	if !ok {
+		return false
+	}
+	revokedBefore, err := store.AccessTokensRevokedBefore(ctx, userID)
+	if err != nil || revokedBefore.IsZero() {
+		return false
+	}
+	return !issuedAt.After(revokedBefore)
 }
 
 // hashToken 计算Token的SHA256哈希

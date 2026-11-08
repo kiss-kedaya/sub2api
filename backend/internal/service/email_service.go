@@ -462,8 +462,30 @@ func (s *EmailService) SendVerifyCode(ctx context.Context, email, siteName strin
 	return nil
 }
 
+// verificationCodeAtomicConsumer is optionally implemented by caches that can
+// compare-and-increment atomically. Falling back to the legacy read-modify-write
+// keeps test fakes and alternative caches working.
+type verificationCodeAtomicConsumer interface {
+	ConsumeVerificationCode(ctx context.Context, email, code string, maxAttempts int) (status int, attempts int, err error)
+}
+
 // VerifyCode 验证验证码
 func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error {
+	if atomic, ok := s.cache.(verificationCodeAtomicConsumer); ok {
+		status, _, err := atomic.ConsumeVerificationCode(ctx, email, code, maxVerifyCodeAttempts)
+		if err != nil {
+			slog.Error("failed to consume verification code", "email", email, "error", err)
+			return ErrInvalidVerifyCode
+		}
+		switch status {
+		case 1:
+			return nil
+		case -2:
+			return ErrVerifyCodeMaxAttempts
+		default:
+			return ErrInvalidVerifyCode
+		}
+	}
 	data, err := s.cache.GetVerificationCode(ctx, email)
 	if err != nil || data == nil {
 		return ErrInvalidVerifyCode

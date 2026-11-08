@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -173,4 +175,37 @@ func (c *refreshTokenCache) GetFamilyTokenHashes(ctx context.Context, familyID s
 func (c *refreshTokenCache) IsTokenInFamily(ctx context.Context, familyID string, tokenHash string) (bool, error) {
 	key := tokenFamilyKey(familyID)
 	return c.rdb.SIsMember(ctx, key, tokenHash).Result()
+}
+
+const accessTokenRevokedBeforeKeyPrefix = "auth:revoked_before:"
+
+func accessTokenRevokedBeforeKey(userID int64) string {
+	return accessTokenRevokedBeforeKeyPrefix + strconv.FormatInt(userID, 10)
+}
+
+// RevokeAccessTokensBefore records the cutoff for stateless access tokens.
+func (c *refreshTokenCache) RevokeAccessTokensBefore(ctx context.Context, userID int64, before time.Time, ttl time.Duration) error {
+	if c == nil || c.rdb == nil || userID <= 0 {
+		return nil
+	}
+	return c.rdb.Set(ctx, accessTokenRevokedBeforeKey(userID), before.UTC().Format(time.RFC3339Nano), ttl).Err()
+}
+
+// AccessTokensRevokedBefore returns the stored cutoff; zero means none.
+func (c *refreshTokenCache) AccessTokensRevokedBefore(ctx context.Context, userID int64) (time.Time, error) {
+	if c == nil || c.rdb == nil || userID <= 0 {
+		return time.Time{}, nil
+	}
+	value, err := c.rdb.Get(ctx, accessTokenRevokedBeforeKey(userID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed, nil
 }

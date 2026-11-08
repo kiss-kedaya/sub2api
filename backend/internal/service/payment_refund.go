@@ -297,6 +297,39 @@ func (s *PaymentService) deductAvailableBalance(ctx context.Context, userID int6
 	return repo.DeductAvailableBalance(ctx, userID, amount)
 }
 
+// refundRollbackMarker returns the amounts recorded by a previous
+// REFUND_ROLLBACK_FAILED attempt. A retry must deduct exactly the same amount:
+// the original deduction already happened, so skipping a larger retry would
+// hand the user an extra refund.
+type refundRollbackMarker struct {
+	BalanceDeducted float64
+	SubDaysDeducted int
+}
+
+func (s *PaymentService) refundRollbackMarker(ctx context.Context, orderID int64) (refundRollbackMarker, bool) {
+	if s == nil || s.entClient == nil || orderID <= 0 {
+		return refundRollbackMarker{}, false
+	}
+	entry, err := s.entClient.PaymentAuditLog.Query().
+		Where(
+			paymentauditlog.OrderIDEQ(strconv.FormatInt(orderID, 10)),
+			paymentauditlog.ActionEQ("REFUND_ROLLBACK_FAILED"),
+		).
+		Order(paymentauditlog.ByCreatedAt(sql.OrderDesc())).
+		First(ctx)
+	if err != nil {
+		return refundRollbackMarker{}, false
+	}
+	var detail struct {
+		BalanceDeducted float64 `json:"balanceDeducted"`
+		SubDaysDeducted int     `json:"subDaysDeducted"`
+	}
+	if err := json.Unmarshal([]byte(entry.Detail), &detail); err != nil {
+		return refundRollbackMarker{}, false
+	}
+	return refundRollbackMarker{BalanceDeducted: detail.BalanceDeducted, SubDaysDeducted: detail.SubDaysDeducted}, true
+}
+
 func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*RefundResult, error) {
 	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(p.OrderID), paymentorder.StatusIn(OrderStatusCompleted, OrderStatusRefundRequested, OrderStatusRefundFailed)).SetStatus(OrderStatusRefunding).Save(ctx)
 	if err != nil {
@@ -308,7 +341,14 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 	if p.DeductionType == payment.DeductionTypeBalance && p.BalanceToDeduct > 0 {
 		// Skip balance deduction on retry if previous attempt already deducted
 		// but failed to roll back (REFUND_ROLLBACK_FAILED in audit log).
-		if !s.hasAuditLog(ctx, p.OrderID, "REFUND_ROLLBACK_FAILED") {
+		if marker, hasMarker := s.refundRollbackMarker(ctx, p.OrderID); hasMarker {
+			if marker.BalanceDeducted > 0 && math.Abs(marker.BalanceDeducted-p.BalanceToDeduct) > 1e-8 {
+				s.restoreStatus(ctx, p)
+				return nil, infraerrors.Conflict("REFUND_RETRY_AMOUNT_MISMATCH", "previous attempt deducted a different amount; retry with the same amount")
+			}
+			slog.Warn("skipping balance deduction on retry (previous rollback failed)", "orderID", p.OrderID, "recorded", marker.BalanceDeducted)
+			p.BalanceToDeduct = 0
+		} else {
 			if p.Force {
 				deducted, err := s.deductAvailableBalance(ctx, p.Order.UserID, p.BalanceToDeduct)
 				if err != nil {
@@ -338,13 +378,17 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 				newLiveBalanceAdjustmentEventID("payment-refund-deduct"),
 				-p.BalanceToDeduct,
 			)
-		} else {
-			slog.Warn("skipping balance deduction on retry (previous rollback failed)", "orderID", p.OrderID)
-			p.BalanceToDeduct = 0
 		}
 	}
 	if p.DeductionType == payment.DeductionTypeSubscription && p.SubDaysToDeduct > 0 && p.SubscriptionID > 0 {
-		if !s.hasAuditLog(ctx, p.OrderID, "REFUND_ROLLBACK_FAILED") {
+		if marker, hasMarker := s.refundRollbackMarker(ctx, p.OrderID); hasMarker {
+			if marker.SubDaysDeducted > 0 && marker.SubDaysDeducted != p.SubDaysToDeduct {
+				s.restoreStatus(ctx, p)
+				return nil, infraerrors.Conflict("REFUND_RETRY_AMOUNT_MISMATCH", "previous attempt deducted a different number of days; retry with the same plan")
+			}
+			slog.Warn("skipping subscription deduction on retry (previous rollback failed)", "orderID", p.OrderID, "recordedDays", marker.SubDaysDeducted)
+			p.SubDaysToDeduct = 0
+		} else {
 			_, err := s.subscriptionSvc.ExtendSubscription(ctx, p.SubscriptionID, -p.SubDaysToDeduct)
 			if err != nil {
 				if errors.Is(err, ErrAdjustWouldExpire) {
@@ -360,9 +404,6 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 					return nil, fmt.Errorf("deduct subscription days: %w", err)
 				}
 			}
-		} else {
-			slog.Warn("skipping subscription deduction on retry (previous rollback failed)", "orderID", p.OrderID)
-			p.SubDaysToDeduct = 0
 		}
 	}
 	resp, err := s.gwRefund(ctx, p)
@@ -537,6 +578,7 @@ func (s *PaymentService) finalizePendingRefundSuccessWithDeduction(ctx context.C
 	if err = tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit refund finalization: %w", err)
 	}
+	s.reverseAffiliateRebateForRefund(ctx, p)
 	if deductAtFinalization && p.DeductionType == payment.DeductionTypeBalance && p.BalanceToDeduct > 0 {
 		syncCommittedLiveBalanceAdjustment(
 			s.liveBalanceBillingCache(),
@@ -782,6 +824,7 @@ func (s *PaymentService) markRefundOk(ctx context.Context, p *RefundPlan) (*Refu
 		return nil, fmt.Errorf("mark refund: %w", err)
 	}
 	s.writeAuditLog(ctx, p.OrderID, "REFUND_SUCCESS", "admin", map[string]any{"refundAmount": p.RefundAmount, "reason": p.Reason, "balanceDeducted": p.BalanceToDeduct, "force": p.Force})
+	s.reverseAffiliateRebateForRefund(ctx, p)
 	return &RefundResult{Success: true, BalanceDeducted: p.BalanceToDeduct, SubDaysDeducted: p.SubDaysToDeduct}, nil
 }
 
@@ -858,6 +901,30 @@ func (s *PaymentService) markRefundPending(ctx context.Context, p *RefundPlan, r
 	}
 
 	return &RefundResult{Success: false, Warning: "gateway refund is pending confirmation"}, nil
+}
+
+// reverseAffiliateRebateForRefund claws back the inviter's rebate for the
+// refunded proportion of the order. Failures are audited, never fail the refund
+// (the money already moved; failing here would leave the order half-settled).
+func (s *PaymentService) reverseAffiliateRebateForRefund(ctx context.Context, p *RefundPlan) {
+	if s == nil || s.affiliateService == nil || p == nil || p.Order == nil || p.Order.Amount <= 0 {
+		return
+	}
+	ratio := p.RefundAmount / p.Order.Amount
+	if ratio <= 0 {
+		return
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	reversed, err := s.affiliateService.ReverseInviteRebateForOrder(ctx, p.OrderID, ratio)
+	if err != nil {
+		s.writeAuditLog(ctx, p.OrderID, "AFFILIATE_REBATE_REVERSAL_FAILED", "system", map[string]any{"error": psErrMsg(err), "ratio": ratio})
+		return
+	}
+	if reversed > 0 {
+		s.writeAuditLog(ctx, p.OrderID, "AFFILIATE_REBATE_REVERSED", "system", map[string]any{"amount": reversed, "ratio": ratio})
+	}
 }
 
 func refundResponseID(resp *payment.RefundResponse) string {

@@ -170,6 +170,66 @@ func TestAffiliateRepository_AccrueQuota_ReusesOuterTransaction(t *testing.T) {
 		"AccrueQuota must propagate the outer tx — found persisted rows after rollback")
 }
 
+func TestAffiliateRepository_ReverseQuotaForOrder(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	txCtx := dbent.NewTxContext(ctx, tx)
+	client := tx.Client()
+
+	inviter := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("affiliate-rev-inviter-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		Concurrency:  5,
+	})
+	invitee := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("affiliate-rev-invitee-%d@example.com", time.Now().UnixNano()+1),
+		PasswordHash: "hash",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		Concurrency:  5,
+	})
+
+	repo := NewAffiliateRepository(client, integrationDB)
+	_, err := repo.EnsureUserAffiliate(txCtx, inviter.ID)
+	require.NoError(t, err)
+	_, err = repo.EnsureUserAffiliate(txCtx, invitee.ID)
+	require.NoError(t, err)
+	_, err = repo.BindInviter(txCtx, invitee.ID, inviter.ID, "")
+	require.NoError(t, err)
+
+	rows, err := client.QueryContext(txCtx, `
+INSERT INTO payment_orders(user_id, amount, pay_amount, out_trade_no, expires_at) VALUES ($1, 10, 10, $2, NOW() + interval '1 hour') RETURNING id`,
+		invitee.ID, fmt.Sprintf("rev-%d", time.Now().UnixNano()))
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	var orderID int64
+	require.NoError(t, rows.Scan(&orderID))
+	require.NoError(t, rows.Close())
+
+	applied, err := repo.AccrueQuota(txCtx, inviter.ID, invitee.ID, 3.5, 0, &orderID)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.InDelta(t, 3.5, querySingleFloat(t, txCtx, client,
+		"SELECT aff_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID), 1e-9)
+
+	reverser := repo.(interface {
+		ReverseQuotaForOrder(context.Context, int64, float64) (float64, error)
+	})
+	reversed, err := reverser.ReverseQuotaForOrder(txCtx, orderID, 0.5)
+	require.NoError(t, err)
+	require.InDelta(t, 1.75, reversed, 1e-9)
+	require.InDelta(t, 1.75, querySingleFloat(t, txCtx, client,
+		"SELECT aff_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID), 1e-9)
+
+	again, err := reverser.ReverseQuotaForOrder(txCtx, orderID, 0.5)
+	require.NoError(t, err)
+	require.Zero(t, again, "reversal must be idempotent")
+	require.InDelta(t, -1.75, querySingleFloat(t, txCtx, client,
+		"SELECT COALESCE(SUM(amount), 0)::double precision FROM user_affiliate_ledger WHERE source_order_id = $1 AND action = 'refund_reversal'", orderID), 1e-9)
+}
+
 func TestAffiliateRepository_TransferQuotaToBalance_EmptyQuota(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)

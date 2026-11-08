@@ -213,6 +213,30 @@ func TestGetOrAssignIsIdempotent(t *testing.T) {
 // The hot/gas wallet lives at index 0. It must never be assigned to a user:
 // sweeping an address to itself is a no-op and the child's credited balance
 // would mix with platform funds.
+func TestGetOrAssignRespectsConfiguredFamilies(t *testing.T) {
+	store := newFakeStore()
+	svc := NewService(store, &fakeDeriver{})
+	ctx := context.Background()
+
+	svc.SetFamilies([]string{FamilyEVM})
+	got, err := svc.GetOrAssign(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got[FamilySolana]; ok {
+		t.Fatalf("disabled family must not be assigned or returned: %v", got)
+	}
+
+	svc.SetFamilies(nil)
+	got, err = svc.GetOrAssign(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[FamilySolana] == "" {
+		t.Fatalf("default families must include solana again: %v", got)
+	}
+}
+
 func TestFirstTopUpSkipsHotWalletIndex(t *testing.T) {
 	store := newFakeStore()
 	svc := NewService(store, &fakeDeriver{})
