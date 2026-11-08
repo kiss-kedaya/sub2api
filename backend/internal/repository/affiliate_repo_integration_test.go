@@ -200,7 +200,7 @@ func TestAffiliateRepository_ReverseQuotaForOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	rows, err := client.QueryContext(txCtx, `
-INSERT INTO payment_orders(user_id, amount, out_trade_no) VALUES ($1, 10, $2) RETURNING id`,
+INSERT INTO payment_orders(user_id, amount, pay_amount, out_trade_no) VALUES ($1, 10, 10, $2) RETURNING id`,
 		invitee.ID, fmt.Sprintf("rev-%d", time.Now().UnixNano()))
 	require.NoError(t, err)
 	require.True(t, rows.Next())
