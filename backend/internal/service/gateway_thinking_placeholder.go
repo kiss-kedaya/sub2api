@@ -42,14 +42,42 @@ func ensureDeepSeekThinkingReplayPlaceholders(body []byte, model string) ([]byte
 		if !content.IsArray() || len(content.Array()) == 0 || !strings.HasPrefix(content.Raw, "[") {
 			continue
 		}
-		hasThinking, hasToolUse := false, false
+		hasThinking, hasEmptyThinking, hasToolUse := false, false, false
 		for _, block := range content.Array() {
 			switch strings.TrimSpace(block.Get("type").String()) {
-			case "thinking", "redacted_thinking":
+			case "thinking":
 				hasThinking = true
-			case "tool_use", "server_tool_use":
+				if strings.TrimSpace(block.Get("thinking").String()) == "" {
+					hasEmptyThinking = true
+				}
+			case "redacted_thinking":
+				hasThinking = true
+			case "tool_use":
 				hasToolUse = true
 			}
+		}
+		if hasEmptyThinking && hasToolUse {
+			// The client kept the thinking slot but blanked its text. Fill the
+			// text instead of adding a second block.
+			blocks := make([]string, 0, len(content.Array()))
+			for _, block := range content.Array() {
+				raw := block.Raw
+				if strings.TrimSpace(block.Get("type").String()) == "thinking" &&
+					strings.TrimSpace(block.Get("thinking").String()) == "" {
+					if fixed, err := sjson.SetBytes([]byte(raw), "thinking", deepSeekThinkingPlaceholderText); err == nil {
+						raw = string(fixed)
+					}
+				}
+				blocks = append(blocks, raw)
+			}
+			rewritten := "[" + strings.Join(blocks, ",") + "]"
+			next, err := sjson.SetRawBytes(updated, fmt.Sprintf("messages.%d.content", i), []byte(rewritten))
+			if err != nil {
+				continue
+			}
+			updated = next
+			changed = true
+			continue
 		}
 		if hasThinking || !hasToolUse {
 			continue

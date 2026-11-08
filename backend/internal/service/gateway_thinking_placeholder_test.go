@@ -34,6 +34,12 @@ func TestEnsureDeepSeekThinkingReplayPlaceholders(t *testing.T) {
 	require.False(t, changed)
 	require.Equal(t, string(textOnly), string(o))
 
+	emptyThinking := []byte(`{"model":"deepseek-v4.1-flash","messages":[` + user + `,{"role":"assistant","content":[{"type":"thinking","thinking":""},{"type":"tool_use","id":"toolu_9","name":"f","input":{}}]},` + toolResult + `]}`)
+	filled, changed := ensureDeepSeekThinkingReplayPlaceholders(emptyThinking, "deepseek-v4.1-flash")
+	require.True(t, changed)
+	require.Equal(t, deepSeekThinkingPlaceholderText, gjson.GetBytes(filled, "messages.1.content.0.thinking").String())
+	require.Len(t, gjson.GetBytes(filled, "messages.1.content").Array(), 2, "must fill the existing block, not insert another")
+
 	claude := []byte(`{"model":"claude-opus-5-5","messages":[` + user + `,` + assistantTool + `,` + toolResult + `]}`)
 	o, changed = ensureDeepSeekThinkingReplayPlaceholders(claude, "claude-opus-5-5")
 	require.False(t, changed)
