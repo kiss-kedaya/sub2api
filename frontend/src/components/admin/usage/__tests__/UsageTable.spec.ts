@@ -318,7 +318,7 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.find('[data-testid="fixed-tool-billing"]').exists()).toBe(false)
   })
 
-  it('shows average output tokens per second beside latency', () => {
+  it('computes output rate over total duration, ignoring first-token latency', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{
@@ -341,10 +341,11 @@ describe('admin UsageTable tooltip', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('57.5 t/s')
+    // 101 Token / 1.938s；首字 180ms 不再从分母里扣除。
+    expect(wrapper.text()).toContain('52.1 t/s')
   })
 
-  it('hides output rate when the generation window is unavailable', () => {
+  it('shows output rate even when first-token latency was not recorded', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{
@@ -366,19 +367,47 @@ describe('admin UsageTable tooltip', () => {
       },
     })
 
-    expect(wrapper.text()).not.toContain('t/s')
+    expect(wrapper.text()).toContain('52.1 t/s')
   })
 
-  it('hides output rate when first-token and total durations round to the same value', () => {
+  it('keeps small and short samples as one-decimal averages', () => {
     const wrapper = mount(UsageTable, {
       props: {
-        data: [{
-          request_id: 'req-throughput-rounded-window',
-          output_tokens: 10,
-          first_token_ms: 2710,
-          duration_ms: 2714,
-          input_tokens: 10,
-        }],
+        data: [
+          { request_id: 'req-throughput-rounded-window', output_tokens: 10, first_token_ms: 2710, duration_ms: 2714, input_tokens: 10 },
+          { request_id: 'req-throughput-tiny-output', output_tokens: 19, first_token_ms: 180, duration_ms: 1938, input_tokens: 10 },
+          { request_id: 'req-throughput-short-window', output_tokens: 100, first_token_ms: 6900, duration_ms: 7390, input_tokens: 10 },
+          { request_id: 'req-throughput-exceeds-output', output_tokens: 100, first_token_ms: 200, duration_ms: 1000, input_tokens: 10 },
+        ],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('3.7 t/s')
+    expect(wrapper.text()).toContain('9.8 t/s')
+    expect(wrapper.text()).toContain('13.5 t/s')
+    expect(wrapper.text()).toContain('100.0 t/s')
+  })
+
+  it('hides output rate for image, video and live requests', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          { request_id: 'req-rate-image-count', output_tokens: 500, duration_ms: 2000, image_count: 1, image_output_tokens: 0, billing_mode: 'token' },
+          { request_id: 'req-rate-image-tokens', output_tokens: 500, duration_ms: 2000, image_count: 0, image_output_tokens: 300, billing_mode: 'token' },
+          { request_id: 'req-rate-image-mode', output_tokens: 500, duration_ms: 2000, image_count: 0, image_output_tokens: 0, billing_mode: 'image' },
+          { request_id: 'req-rate-video-mode', output_tokens: 500, duration_ms: 2000, image_count: 0, image_output_tokens: 0, billing_mode: 'video' },
+          { request_id: 'req-rate-live', output_tokens: 500, duration_ms: 2000, request_type: 'live' },
+        ],
         loading: false,
         columns: [],
       },
@@ -395,68 +424,14 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).not.toContain('t/s')
   })
 
-  it('hides output rate for tiny output samples', () => {
+  it('hides output rate when duration or output tokens are missing', () => {
     const wrapper = mount(UsageTable, {
       props: {
-        data: [{
-          request_id: 'req-throughput-tiny-output',
-          output_tokens: 19,
-          first_token_ms: 180,
-          duration_ms: 1938,
-          input_tokens: 10,
-        }],
-        loading: false,
-        columns: [],
-      },
-      global: {
-        stubs: {
-          DataTable: DataTableStub,
-          EmptyState: true,
-          Icon: true,
-          Teleport: true,
-        },
-      },
-    })
-
-    expect(wrapper.text()).not.toContain('t/s')
-  })
-
-  it('hides output rate for a very short generation window', () => {
-    const wrapper = mount(UsageTable, {
-      props: {
-        data: [{
-          request_id: 'req-throughput-short-window',
-          output_tokens: 100,
-          first_token_ms: 6900,
-          duration_ms: 7390,
-          input_tokens: 10,
-        }],
-        loading: false,
-        columns: [],
-      },
-      global: {
-        stubs: {
-          DataTable: DataTableStub,
-          EmptyState: true,
-          Icon: true,
-          Teleport: true,
-        },
-      },
-    })
-
-    expect(wrapper.text()).not.toContain('t/s')
-  })
-
-  it('hides output rate when it exceeds the output token count', () => {
-    const wrapper = mount(UsageTable, {
-      props: {
-        data: [{
-          request_id: 'req-throughput-exceeds-output',
-          output_tokens: 100,
-          first_token_ms: 200,
-          duration_ms: 1000,
-          input_tokens: 10,
-        }],
+        data: [
+          { request_id: 'req-rate-no-duration', output_tokens: 500, duration_ms: null },
+          { request_id: 'req-rate-zero-duration', output_tokens: 500, duration_ms: 0 },
+          { request_id: 'req-rate-no-output', output_tokens: 0, duration_ms: 2000 },
+        ],
         loading: false,
         columns: [],
       },

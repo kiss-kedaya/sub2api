@@ -1,3 +1,6 @@
+import { BILLING_MODE_IMAGE, BILLING_MODE_VIDEO } from './billingMode'
+import type { UsageLog } from '@/types'
+
 /**
  * 请求延迟健康度分档（用于用量明细"延迟"列的纵向健康扫视）。
  *
@@ -66,4 +69,35 @@ export const LATENCY_BAR_TO_CLASSES: Record<LatencySeverity, string> = {
   warn: 'to-amber-400',
   slow: 'to-orange-500',
   critical: 'to-red-500',
+}
+
+/** 有文本输出可言的请求类型；live 等实时/媒体请求不计算输出速率。 */
+const TEXT_RATE_REQUEST_TYPES = new Set(['sync', 'stream', 'ws_v2', 'cyber', 'unknown'])
+
+export type OutputRateRow = Pick<
+  UsageLog,
+  'output_tokens' | 'duration_ms' | 'image_count' | 'image_output_tokens' | 'billing_mode' | 'request_type'
+>
+
+/**
+ * 单次请求的输出速率：输出 Token ÷ 记录的总耗时，单位 t/s。
+ *
+ * 口径与运维「平均 Tokens/秒」统计一致：
+ * - 使用完整耗时，包含首字等待，不按首字时间切出"生成窗口"；
+ * - 输出 Token 可能包含推理 Token，因此这是平均吞吐而不是模型实际生成速度；
+ * - 图片 / 视频等媒体请求没有文本输出速率，直接不显示。
+ */
+export const formatUsageOutputRate = (row: OutputRateRow): string => {
+  if (
+    row.image_count > 0
+    || row.image_output_tokens > 0
+    || row.billing_mode === BILLING_MODE_IMAGE
+    || row.billing_mode === BILLING_MODE_VIDEO
+    || (row.request_type != null && !TEXT_RATE_REQUEST_TYPES.has(row.request_type))
+  ) return '-'
+  const tokens = row.output_tokens
+  const duration = row.duration_ms
+  if (!Number.isFinite(tokens) || tokens <= 0) return '-'
+  if (duration == null || !Number.isFinite(duration) || duration <= 0) return '-'
+  return `${(tokens * 1000 / duration).toFixed(1)} t/s`
 }

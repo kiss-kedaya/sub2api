@@ -476,7 +476,7 @@ export default {
     latencyFirstToken: '首字',
     latencyDuration: '总耗时',
     outputRate: '输出速率',
-    outputRateHint: '平均每秒输出 Token 数',
+    outputRateHint: '输出 Token ÷ 记录的总耗时（含首字等待），输出 Token 可能包含推理 Token；图片、视频等媒体请求不计算',
     time: '时间',
     ws: 'WS',
     stream: '流式',
