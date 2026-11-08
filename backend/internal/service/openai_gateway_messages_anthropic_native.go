@@ -75,6 +75,13 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 	// 供应商原生 Anthropic 端点也可能代理 Claude 5.x 模型：套用同一条
 	// thinking 协议门（非 Claude 5.x 模型名直接 no-op，不解析 body）。
 	body = sanitizeAnthropicThinkingForModel(body, upstreamModel)
+	// DeepSeek's Anthropic-compatible endpoint requires the assistant turn
+	// that produced a tool call to replay its thinking block. Claude Code drops
+	// it when rewriting history, so fill an empty slot with a neutral
+	// placeholder before the request leaves this path.
+	if rewritten, applied := ensureDeepSeekThinkingReplayPlaceholders(body, upstreamModel); applied {
+		body = rewritten
+	}
 
 	// 记录客户端请求的推理强度：优先 Claude 协议的 output_config.effort；
 	// 缺失且 thinking 已启用时，按国产 passback-required 模型兜底为 high
