@@ -170,15 +170,10 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 		start := int(p.next.Add(1)-1) % len(candidates)
 		for i := 0; i < len(candidates); i++ {
 			endpoint := candidates[(start+i)%len(candidates)]
-			// A public endpoint that accepts the TCP connection but never
-			// answers used to hold the whole sweep (and its advisory lock) for
-			// the run's 30-minute budget. Bound every single attempt instead.
-			callCtx, cancel := context.WithTimeout(ctx, perEndpointCallTimeout)
-			result, err := p.callOne(callCtx, endpoint, method, params)
+			result, err := p.callOne(ctx, endpoint, method, params)
 			if err == nil && policy != nil && needsIndependentEvidence(method) {
-				result, err = p.verifyIndependentEvidence(callCtx, policy, endpoint, method, params, result)
+				result, err = p.verifyIndependentEvidence(ctx, policy, endpoint, method, params, result)
 			}
-			cancel()
 			if err == nil {
 				health.succeed(endpoint)
 				return result, endpoint, nil
@@ -256,6 +251,12 @@ type rpcResponse struct {
 }
 
 func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any) (json.RawMessage, error) {
+	// Every caller (rotation, EndpointHead, ConfirmedNonce, GasPrice, receipts)
+	// must be bounded: a node that accepts the connection but never answers
+	// otherwise holds the sweep and its advisory lock for the whole run budget.
+	callCtx, cancel := context.WithTimeout(ctx, perEndpointCallTimeout)
+	defer cancel()
+	ctx = callCtx
 	host := endpointHost(endpoint)
 	// Pace per endpoint before building anything: a burst that the provider
 	// answers with 429 costs a full round-trip and, because Call rotates on
