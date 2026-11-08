@@ -436,6 +436,7 @@ func safeRecordedBase(message string) string {
 		"wallet vault is unavailable; no new broadcast was sent",
 		"wallet is not configured; no new broadcast was sent",
 		"sweep state persistence failed; reconcile the recorded transaction before retrying",
+		"sweep already running in another instance",
 		"Payment operation canceled; reconcile transaction status before retrying",
 		"Payment operation timed out; reconcile transaction status before retrying":
 		return message

@@ -153,6 +153,8 @@ func (p *Pool) Call(ctx context.Context, method string, params any) (json.RawMes
 // CallEndpoint is Call plus the endpoint that supplied the result. A caller
 // that must not trust an answer from a node that has not caught up can then ask
 // that exact node instead of guessing which member of the rotation replied.
+const perEndpointCallTimeout = 15 * time.Second
+
 func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (json.RawMessage, string, error) {
 	p.mu.RLock()
 	endpoints := append([]string(nil), p.endpoints...)
@@ -168,10 +170,15 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 		start := int(p.next.Add(1)-1) % len(candidates)
 		for i := 0; i < len(candidates); i++ {
 			endpoint := candidates[(start+i)%len(candidates)]
-			result, err := p.callOne(ctx, endpoint, method, params)
+			// A public endpoint that accepts the TCP connection but never
+			// answers used to hold the whole sweep (and its advisory lock) for
+			// the run's 30-minute budget. Bound every single attempt instead.
+			callCtx, cancel := context.WithTimeout(ctx, perEndpointCallTimeout)
+			result, err := p.callOne(callCtx, endpoint, method, params)
 			if err == nil && policy != nil && needsIndependentEvidence(method) {
-				result, err = p.verifyIndependentEvidence(ctx, policy, endpoint, method, params, result)
+				result, err = p.verifyIndependentEvidence(callCtx, policy, endpoint, method, params, result)
 			}
+			cancel()
 			if err == nil {
 				health.succeed(endpoint)
 				return result, endpoint, nil
