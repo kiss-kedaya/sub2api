@@ -4,12 +4,14 @@
     <!-- iframe mode -->
     <iframe
       v-if="isHomeContentUrl"
-      :src="homeContent.trim()"
+      :src="safeHomeUrl"
+      sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+      referrerpolicy="no-referrer"
       class="h-screen w-full border-0"
       allowfullscreen
     ></iframe>
     <!-- HTML mode - SECURITY: homeContent is admin-only setting, XSS risk is acceptable -->
-    <div v-else v-html="homeContent"></div>
+    <div v-else v-html="safeHomeContent"></div>
   </div>
 
   <!-- Compact Home Page -->
@@ -461,6 +463,7 @@ import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import { sanitizeUrl } from '@/utils/url'
+import { sanitizeHtml } from '@/utils/sanitize'
 import { resolveDocsUrl } from '@/utils/docsUrl'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { PROJECT_GITHUB_URL } from '@/constants/project'
@@ -481,6 +484,9 @@ const compactHomeEnabled = computed(() => appStore.cachedPublicSettings?.compact
 const modelPlazaEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.modelPlaza))
 
 // Check if homeContent is a URL (for iframe display)
+const safeHomeContent = computed(() => sanitizeHtml(homeContent.value))
+const safeHomeUrl = computed(() => sanitizeUrl(homeContent.value.trim(), { allowRelative: false, allowDataUrl: false }))
+
 const isHomeContentUrl = computed(() => {
   const content = homeContent.value.trim()
   return content.startsWith('http://') || content.startsWith('https://')
