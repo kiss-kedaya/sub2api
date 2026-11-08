@@ -318,6 +318,18 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	}
 	job, err := e.createJob(ctx, entry)
 	if err != nil {
+		if errors.Is(err, errAddressReserved) {
+			// A reserved address is back-pressure, not a failed payment and not
+			// a database failure. It used to be reported as a persistence error,
+			// so five reserved addresses aborted the run and every address after
+			// them silently stayed unswept. Leave the entry pending (no alert:
+			// the blocking job is already visible in the sweep records) and let
+			// the rest of the plan proceed.
+			slog.Warn("[cryptopay] sweep entry skipped: address already reserved",
+				"chain", entry.Chain, "address", entry.Address, "token", entry.Token)
+			out.Status = "pending"
+			return out, nil
+		}
 		out.Error = rpc.SafeError(err)
 		return out, err
 	}
@@ -433,8 +445,19 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	// untrusted RPC quote may increase. Bound fees even if the child already
 	// has native coin, so a forged gas quote cannot burn that balance either.
 	cap := configuredGasBudget(e.config, job.Chain)
-	if cap.Sign() <= 0 || transferGasBudget(price).Cmp(cap) > 0 {
-		return e.jobError(ctx, job, fmt.Errorf("RPC gas quote exceeds configured native funding budget"))
+	if cap.Sign() <= 0 {
+		// Nothing says this payment is wrong: the operator has not sized the
+		// funding budget for this chain, or the quote is temporarily too high.
+		// Failing a bounded attempt here eventually parked payable sweeps as
+		// `failed`; the job stays retryable instead.
+		slog.Warn("[cryptopay] sweep deferred: no native gas budget configured",
+			"job_id", job.ID, "chain", job.Chain)
+		return e.deferJob(ctx, job, fmt.Errorf("sweep gas budget is not configured for %s", job.Chain))
+	}
+	if transferGasBudget(price).Cmp(cap) > 0 {
+		slog.Warn("[cryptopay] sweep deferred: gas quote above the configured budget",
+			"job_id", job.ID, "chain", job.Chain)
+		return e.deferJob(ctx, job, errGasQuoteExceedsBudget)
 	}
 	native, err := pool.Balance(ctx, job.Address)
 	if err != nil {
@@ -447,7 +470,11 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		// the same failing check forever — the record never advanced and the
 		// chain silently lost this address. Top up the difference like any other
 		// shortfall; prepareGas already caps the amount by the operator budget.
-		if err := e.prepareGas(ctx, pool, job, e.gasTopUpAmount(job.Chain, transferGasBudget(price), native), price); err != nil {
+		amount := e.gasTopUpAmount(job.Chain, transferGasBudget(price), native)
+		if amount.Sign() <= 0 {
+			return e.deferJob(ctx, job, errGasBudgetInsufficient)
+		}
+		if err := e.prepareGas(ctx, pool, job, amount, price); err != nil {
 			if errors.Is(err, errGasPayerPending) {
 				// Another job still owns the gas nonce. This is a deferral,
 				// not a failed transfer, and must not hide partial progress.
@@ -456,6 +483,15 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 					return pendingError(job, saveErr)
 				}
 				return job.outcome(), nil
+			}
+			if errors.Is(err, errGasBudgetInsufficient) || errors.Is(err, errGasPayerUnderfunded) {
+				// Funding is a resource wait, not a payment failure: keep the
+				// bounded-attempt counter untouched so a starved run never
+				// turns this address into a terminal `failed` record.
+				slog.Warn("[cryptopay] sweep deferred: gas funding unavailable",
+					"job_id", job.ID, "chain", job.Chain,
+					"category", rpc.CategoryOf(err), "error", rpc.SafeError(err))
+				return e.deferJob(ctx, job, err)
 			}
 			return e.jobError(ctx, job, err)
 		}
@@ -526,6 +562,26 @@ func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (Sw
 	}
 	err := e.saveJob(ctx, job)
 	return pendingError(job, joinErrors(cause, err))
+}
+
+// deferJob records a wait-for-resources outcome without consuming a sweep
+// attempt. revision doubles as the bounded-attempt counter (see jobError), so a
+// job that is merely waiting for gas must not advance it: doing so pushed a
+// starved address towards `failed` once per run and finally parked a payment
+// that was never wrong. Only the readable reason is updated; the durable
+// transaction state is left exactly as it was.
+func (e *Executor) deferJob(ctx context.Context, job *sweepJob, cause error) (SweepEntry, error) {
+	job.Error = rpc.SafeError(cause)
+	if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET error=$2, updated_at=NOW()
+		WHERE id=$1 AND job_version=1 AND revision=$3`, job.ID, job.Error, job.Revision); err != nil {
+		// The reason is diagnostics; the payment state is untouched either way.
+		slog.Warn("[cryptopay] could not record sweep deferral",
+			"job_id", job.ID, "error", rpc.SafeError(err))
+	}
+	out := job.outcome()
+	out.Status = "pending"
+	out.Error = job.Error
+	return out, nil
 }
 
 func pendingError(job *sweepJob, err error) (SweepEntry, error) {

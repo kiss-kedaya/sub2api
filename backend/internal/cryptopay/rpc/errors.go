@@ -331,6 +331,12 @@ var safeBusinessPrefixes = []string{
 	"sweep refused:",
 	"confirmed gas top-up is insufficient",
 	"RPC gas quote exceeds",
+	// Gas funding waits written by the sweeper. They are fixed sentences (no
+	// endpoint, key or node text) and name an operator action, so a sweep record
+	// must keep them instead of collapsing into the generic payment sentence.
+	"insufficient native gas budget",
+	"gas wallet native balance cannot cover",
+	"sweep gas budget is not configured",
 	"address has another unresolved transaction",
 	"unfinished job ",
 	"reserved transaction bytes are missing",
