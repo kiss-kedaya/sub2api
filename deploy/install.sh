@@ -79,6 +79,8 @@ declare -A MSG_ZH=(
     ["checksum_verified"]="校验通过"
     ["checksum_failed"]="校验失败"
     ["checksum_not_found"]="无法验证校验和（checksums.txt 未找到）"
+    ["checksum_required"]="校验和缺失时一律中止安装，不使用未经验证的二进制"
+    ["checksum_entry_missing"]="checksums.txt 中没有该文件的记录"
     ["extracting"]="正在解压..."
     ["binary_installed"]="二进制文件已安装到"
     ["user_exists"]="用户已存在"
@@ -204,6 +206,8 @@ declare -A MSG_EN=(
     ["checksum_verified"]="Checksum verified"
     ["checksum_failed"]="Checksum verification failed"
     ["checksum_not_found"]="Could not verify checksum (checksums.txt not found)"
+    ["checksum_required"]="Aborting: an unverified binary is never installed as root"
+    ["checksum_entry_missing"]="checksums.txt has no entry for this file"
     ["extracting"]="Extracting..."
     ["binary_installed"]="Binary installed to"
     ["user_exists"]="User already exists"
@@ -627,27 +631,41 @@ download_and_extract() {
     trap "rm -rf $TEMP_DIR" EXIT
 
     # Download archive
-    if ! curl -sL "$download_url" -o "$TEMP_DIR/$archive_name"; then
+    if ! curl -fsSL "$download_url" -o "$TEMP_DIR/$archive_name"; then
         print_error "$(msg 'download_failed')"
+        print_error "URL: $download_url"
         exit 1
     fi
 
-    # Download and verify checksum
+    # Download and verify checksum.
+    # Fail closed: a missing/unreachable checksums.txt must abort the install.
+    # Warning-and-continue let an unverified archive get installed as root.
     print_info "$(msg 'verifying_checksum')"
-    if curl -sL "$checksum_url" -o "$TEMP_DIR/checksums.txt" 2>/dev/null; then
-        local expected_checksum=$(grep "$archive_name" "$TEMP_DIR/checksums.txt" | awk '{print $1}')
-        local actual_checksum=$(sha256sum "$TEMP_DIR/$archive_name" | awk '{print $1}')
-
-        if [ "$expected_checksum" != "$actual_checksum" ]; then
-            print_error "$(msg 'checksum_failed')"
-            print_error "Expected: $expected_checksum"
-            print_error "Actual: $actual_checksum"
-            exit 1
-        fi
-        print_success "$(msg 'checksum_verified')"
-    else
-        print_warning "$(msg 'checksum_not_found')"
+    if ! curl -fsSL "$checksum_url" -o "$TEMP_DIR/checksums.txt"; then
+        print_error "$(msg 'checksum_not_found')"
+        print_error "URL: $checksum_url"
+        print_error "$(msg 'checksum_required')"
+        exit 1
     fi
+
+    local expected_checksum
+    expected_checksum=$(awk -v name="$archive_name" '$2 == name || $2 == "*" name { print $1; exit }' "$TEMP_DIR/checksums.txt")
+    if [ -z "$expected_checksum" ]; then
+        print_error "$(msg 'checksum_entry_missing'): $archive_name"
+        print_error "File: $checksum_url"
+        print_error "$(msg 'checksum_required')"
+        exit 1
+    fi
+
+    local actual_checksum
+    actual_checksum=$(sha256sum "$TEMP_DIR/$archive_name" | awk '{print $1}')
+    if [ "$expected_checksum" != "$actual_checksum" ]; then
+        print_error "$(msg 'checksum_failed')"
+        print_error "Expected: $expected_checksum"
+        print_error "Actual:   $actual_checksum"
+        exit 1
+    fi
+    print_success "$(msg 'checksum_verified')"
 
     # Extract
     print_info "$(msg 'extracting')"
@@ -706,6 +724,16 @@ setup_directories() {
     # Set ownership
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
+
+    # /etc/sub2api holds the systemd EnvironmentFile (JWT signing key, database
+    # password). Ownership alone is not enough: the default umask left it 0755,
+    # so any local account could read those secrets. Restrict it to the owner.
+    # systemd reads EnvironmentFile as root during startup, so 0700 does not
+    # block the service.
+    chmod 0700 "$CONFIG_DIR"
+    if [ -f "$CONFIG_DIR/sub2api.env" ]; then
+        chmod 0600 "$CONFIG_DIR/sub2api.env"
+    fi
 
     print_success "$(msg 'dirs_configured')"
 }
