@@ -725,6 +725,16 @@ setup_directories() {
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
 
+    # /etc/sub2api holds the systemd EnvironmentFile (JWT signing key, database
+    # password). Ownership alone is not enough: the default umask left it 0755,
+    # so any local account could read those secrets. Restrict it to the owner.
+    # systemd reads EnvironmentFile as root during startup, so 0700 does not
+    # block the service.
+    chmod 0700 "$CONFIG_DIR"
+    if [ -f "$CONFIG_DIR/sub2api.env" ]; then
+        chmod 0600 "$CONFIG_DIR/sub2api.env"
+    fi
+
     print_success "$(msg 'dirs_configured')"
 }
 
