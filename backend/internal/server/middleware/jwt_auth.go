@@ -92,6 +92,12 @@ func jwtAuth(
 			return
 		}
 
+		// "Revoke all sessions" must also invalidate stateless access tokens.
+		if claims.IssuedAt != nil && authService.IsAccessTokenRevoked(c.Request.Context(), claims.UserID, claims.IssuedAt.Time) {
+			AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked")
+			return
+		}
+
 		// 会话绑定校验：IP/UA 任一变化即撤销会话（功能可在系统设置中关闭）
 		if !enforceSessionBinding(c, authService, settingService, auditService, claims) {
 			return
