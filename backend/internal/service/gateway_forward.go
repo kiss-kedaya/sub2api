@@ -389,6 +389,18 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		}
 	}
 
+	// DeepSeek 的 Anthropic 兼容端点要求「产生过工具调用的 assistant 回合」把
+	// thinking block 原样回传；客户端改写历史时经常丢掉它。补单空格占位，
+	// 真实 thinking 不动，非 DeepSeek 模型不动。
+	if ResolveThinkingProtocol(reqModel) == ThinkingProtocolPassbackRequired {
+		if rewritten, applied := ensureDeepSeekThinkingReplayPlaceholders(body, reqModel); applied {
+			if err := replaceBody(rewritten); err != nil {
+				return nil, err
+			}
+			logger.LegacyPrintf("service.gateway", "Account %d: injected thinking replay placeholder for %s", account.ID, reqModel)
+		}
+	}
+
 	// 重试循环
 	var resp *http.Response
 	lastWireBody := body
