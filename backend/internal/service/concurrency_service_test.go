@@ -190,10 +190,19 @@ func TestCleanupStaleProcessSlots_NilCache(t *testing.T) {
 }
 
 func TestCleanupStaleProcessSlots_DelegatesPrefix(t *testing.T) {
+	t.Setenv("SUB2API_STARTUP_SLOT_CLEANUP", "enabled")
 	cache := &trackingConcurrencyCache{}
 	svc := NewConcurrencyService(cache)
 	require.NoError(t, svc.CleanupStaleProcessSlots(context.Background()))
 	require.Equal(t, RequestIDPrefix(), cache.cleanupPrefix)
+}
+
+func TestCleanupStaleProcessSlots_DefaultSkips(t *testing.T) {
+	t.Setenv("SUB2API_STARTUP_SLOT_CLEANUP", "")
+	cache := &trackingConcurrencyCache{}
+	svc := NewConcurrencyService(cache)
+	require.NoError(t, svc.CleanupStaleProcessSlots(context.Background()))
+	require.Empty(t, cache.cleanupPrefix, "multi-instance default must not sweep peer slots")
 }
 
 func TestAcquireAccountSlot_Success(t *testing.T) {

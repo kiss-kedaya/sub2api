@@ -210,8 +210,16 @@ func generateRequestID() string {
 	return requestIDPrefix + "-" + strconv.FormatUint(seq, 36)
 }
 
+// CleanupStaleProcessSlots sweeps slots whose owning process is gone. It is
+// opt-in: with several instances sharing Redis, the prefix sweep cannot tell a
+// crashed process from a healthy peer and silently resets their concurrency
+// counters, which is worse than waiting for the slot TTL. Expired slots are
+// still reclaimed by the acquire/get-count scripts.
 func (s *ConcurrencyService) CleanupStaleProcessSlots(ctx context.Context) error {
 	if s == nil || s.cache == nil {
+		return nil
+	}
+	if os.Getenv("SUB2API_STARTUP_SLOT_CLEANUP") != "enabled" {
 		return nil
 	}
 	return s.cache.CleanupStaleProcessSlots(ctx, RequestIDPrefix())

@@ -53,18 +53,31 @@ func TestReleaseAccountSession_ReleasesRegisteredSlot(t *testing.T) {
 		"应立即移除注册的会话槽")
 }
 
+// TestReleaseAccountSession_ReleasesPooledAPIKeySlot 验证：
+// 配置了 max_sessions 的池化 API Key 账号与 Anthropic OAuth 一样注册了会话槽，
+// 失败路径释放时必须同样移除，否则 max_sessions 会被失败请求占满。
+func TestReleaseAccountSession_ReleasesPooledAPIKeySlot(t *testing.T) {
+	cache := newSessionLimitReleaseCacheStub()
+	svc := &GatewayService{sessionLimitCache: cache}
+	acc := &Account{
+		ID:       43,
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Extra:    map[string]any{"max_sessions": 1},
+	}
+
+	svc.ReleaseAccountSession(context.Background(), acc, "session-hash")
+
+	require.Equal(t, []string{"session-hash"}, cache.unregistered[43],
+		"池化 API Key 账号应立即移除注册的会话槽")
+}
+
 // TestReleaseAccountSession_NoOpForInapplicableAccounts 验证：
 // - 非 Anthropic OAuth/SetupToken 账号
 // - 未启用 max_sessions 的账号
 // - 空 sessionID
 // 以上场景均为 no-op，不得触发 UnregisterSession。
 func TestReleaseAccountSession_NoOpForInapplicableAccounts(t *testing.T) {
-	apiKeyAcc := &Account{
-		ID:       43,
-		Platform: PlatformAnthropic,
-		Type:     AccountTypeAPIKey,
-		Extra:    map[string]any{"max_sessions": 1},
-	}
 	noLimitAcc := &Account{
 		ID:       44,
 		Platform: PlatformAnthropic,
@@ -77,7 +90,6 @@ func TestReleaseAccountSession_NoOpForInapplicableAccounts(t *testing.T) {
 		account   *Account
 		sessionID string
 	}{
-		{"api_key_account", apiKeyAcc, "session-hash"},
 		{"max_sessions_disabled", noLimitAcc, "session-hash"},
 		{"empty_session_id", enabledAcc, ""},
 		{"nil_account", nil, "session-hash"},

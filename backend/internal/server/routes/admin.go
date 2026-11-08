@@ -106,7 +106,7 @@ func RegisterAdminRoutes(
 		channel.POST("/channels/:id/api-keys", h.Admin.UpstreamChannel.CreateAPIKey)
 		channel.PUT("/channels/:id/api-keys/:key_id", h.Admin.UpstreamChannel.UpdateAPIKey)
 		channel.DELETE("/channels/:id/api-keys/:key_id", h.Admin.UpstreamChannel.DeleteAPIKey)
-		channel.POST("/channels/:id/api-keys/:key_id/reveal", h.Admin.UpstreamChannel.RevealAPIKey)
+		channel.POST("/channels/:id/api-keys/:key_id/reveal", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.RevealAPIKey)
 		channel.GET("/channels/:id/recharge", h.Admin.UpstreamChannel.RechargeInfo)
 		channel.POST("/channels/:id/recharge", h.Admin.UpstreamChannel.CreateRecharge)
 		channel.POST("/channels/:id/redeem", h.Admin.UpstreamChannel.Redeem)
