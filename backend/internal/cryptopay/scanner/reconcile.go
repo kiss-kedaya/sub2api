@@ -22,6 +22,16 @@ const missingReceiptThreshold = 3
 const reconcileRPCBudget = 2 * time.Second
 const reconcilePersistenceReserve = 500 * time.Millisecond
 
+// A pending observation whose chain or token left the configuration can never
+// be verified again: no pool would answer for it and no decimals would make its
+// amount meaningful. Rotating its attempt clock forever hides a real deposit
+// from operators, so it is moved once to the terminal dead_letter status with a
+// durable reason instead of being silently re-queued.
+const (
+	deadLetterChainRemoved = "dead_letter:chain_no_longer_configured"
+	deadLetterTokenRemoved = "dead_letter:token_no_longer_watched"
+)
+
 type depositObservation struct {
 	chain, txHash, from, to, token, amount, blockHash string
 	logIndex                                          int
@@ -240,9 +250,35 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 		pool := w.pools[p.chain]
 		chain, configured := w.chainConfig(p.chain)
 		decimals, watched := watchedDecimals(chain, p.token)
-		if pool == nil || !configured || !watched {
+		if !configured || !watched {
 			// Disabled chains/tokens can otherwise occupy the first page
 			// forever and starve every configured chain behind them.
+			if p.status == "pending" {
+				reason := deadLetterTokenRemoved
+				if !configured {
+					reason = deadLetterChainRemoved
+				}
+				changed, err := w.deadLetterObservation(ctx, p, reason)
+				if err != nil {
+					errs = append(errs, err)
+				} else if changed {
+					// One error per row, at the transition: the durable reason is
+					// what an operator acts on, the log is what makes it visible.
+					slog.Error("[cryptopay] pending deposit dead-lettered: chain or token no longer configured",
+						"chain", p.chain, "tx", p.txHash, "log_index", p.logIndex, "reason", reason)
+				}
+				continue
+			}
+			if _, err := w.updateObservation(ctx, p, p.status, p.reason); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		if pool == nil {
+			// The chain is still configured; a missing RPC pool (no endpoint, a
+			// failed reload) is an operator problem that can be fixed, not the
+			// permanent loss of verification that dead_letter records.
+			slog.Warn("[cryptopay] deposit recheck skipped: no RPC pool", "chain", p.chain, "tx", p.txHash)
 			if _, err := w.updateObservation(ctx, p, p.status, p.reason); err != nil {
 				errs = append(errs, err)
 			}
@@ -404,6 +440,23 @@ func (w *Worker) updateObservation(ctx context.Context, p depositObservation, st
 		status, reason, p.chain, p.txHash, p.logIndex, p.status, p.reason)
 	if err != nil {
 		return false, fmt.Errorf("persist deposit recheck: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
+// deadLetterObservation concludes a pending observation that can no longer be
+// verified. The compare-and-set matches updateObservation, so a concurrent
+// credit or a newly re-added chain keeps its row and exactly one pass records
+// the terminal transition.
+func (w *Worker) deadLetterObservation(ctx context.Context, p depositObservation, reason string) (bool, error) {
+	result, err := w.db.ExecContext(ctx, `UPDATE deposit_transactions
+		SET status = 'dead_letter', reason = $1, last_attempt_at = NOW()
+		WHERE chain = $2 AND tx_hash = $3 AND log_index = $4
+		  AND status = 'pending' AND reason = $5`,
+		reason, p.chain, p.txHash, p.logIndex, p.reason)
+	if err != nil {
+		return false, fmt.Errorf("dead-letter deposit observation: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	return affected > 0, err

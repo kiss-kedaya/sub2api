@@ -55,6 +55,10 @@ type localChain struct {
 	native       int64
 	mined        bool
 	head         uint64
+	finalHeight  uint64 // 0 keeps the fixture's finality tag at the head
+	finalityErr  bool   // answers finality tags with an RPC error
+	finalityNull bool   // answers finality tags with JSON null
+	receiptLogs  []any
 	status       string
 	canonical    string
 	sendUnknown  bool
@@ -225,10 +229,33 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 				block = c.blocks[hash]
 			}
 			result = map[string]any{"transactionHash": hash, "status": c.status,
-				"blockNumber": fmt.Sprintf("0x%x", block), "blockHash": testBlockHash}
+				"blockNumber": fmt.Sprintf("0x%x", block), "blockHash": testBlockHash,
+				"logs": c.receiptLogs}
 		}
 	case "eth_getBlockByNumber":
-		result = map[string]string{"hash": c.canonical, "number": param(0)}
+		tag := param(0)
+		finality := tag == "finalized" || tag == "safe"
+		if finality && c.finalityErr {
+			// A node that does not serve the tag at all.
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1,
+				"error": map[string]any{"code": -32602, "message": "invalid block tag"}})
+			return
+		}
+		if finality && c.finalityNull {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": nil})
+			return
+		}
+		number := tag
+		if finality {
+			// Production nodes answer a finality tag with a block. The fixture is
+			// at the tip unless a test lowers finalHeight to force "not final".
+			final := c.head
+			if c.finalHeight != 0 {
+				final = c.finalHeight
+			}
+			number = fmt.Sprintf("0x%x", final)
+		}
+		result = map[string]string{"hash": c.canonical, "number": number}
 	case "eth_blockNumber":
 		result = fmt.Sprintf("0x%x", c.head)
 	default:

@@ -34,7 +34,10 @@ func (l *Ledger) HasRecordedTransfer(ctx context.Context, transfer scanner.Trans
 	if err != nil {
 		return false, fmt.Errorf("invalid recorded transfer amount")
 	}
-	known := status == "pending" || status == "credited" || status == "ignored" || status == "reverted"
+	// dead_letter is terminal: the chain/token left the configuration, so this
+	// exact observation can never be verified or credited again.
+	known := status == "pending" || status == "credited" || status == "ignored" ||
+		status == "reverted" || status == "dead_letter"
 	return known && block == transfer.BlockNumber && strings.EqualFold(blockHash, transfer.BlockHash) &&
 		strings.EqualFold(from, transfer.From) && strings.EqualFold(to, transfer.To) && strings.EqualFold(token, transfer.Token) &&
 		value.Equal(decimal.NewFromBigInt(transfer.Amount, -int32(decimals))), nil

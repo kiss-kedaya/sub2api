@@ -146,12 +146,20 @@ func (p *Pool) healthTracker() *endpointHealthTracker {
 // the whole rotation is retried with exponential backoff (up to maxCallRounds
 // rounds) before the batch reports "all rpc endpoints failed".
 func (p *Pool) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	result, _, err := p.CallEndpoint(ctx, method, params)
+	return result, err
+}
+
+// CallEndpoint is Call plus the endpoint that supplied the result. A caller
+// that must not trust an answer from a node that has not caught up can then ask
+// that exact node instead of guessing which member of the rotation replied.
+func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (json.RawMessage, string, error) {
 	p.mu.RLock()
 	endpoints := append([]string(nil), p.endpoints...)
 	policy := p.verification
 	p.mu.RUnlock()
 	if len(endpoints) == 0 {
-		return nil, fmt.Errorf("no rpc endpoints configured")
+		return nil, "", fmt.Errorf("no rpc endpoints configured")
 	}
 	health := p.healthTracker()
 	var lastErr error
@@ -166,12 +174,12 @@ func (p *Pool) Call(ctx context.Context, method string, params any) (json.RawMes
 			}
 			if err == nil {
 				health.succeed(endpoint)
-				return result, nil
+				return result, endpoint, nil
 			}
 			health.fail(endpoint, err)
 			lastErr = err
 			if ctx.Err() != nil {
-				return nil, fmt.Errorf("all rpc endpoints failed: %w", lastErr)
+				return nil, "", fmt.Errorf("all rpc endpoints failed: %w", lastErr)
 			}
 		}
 		if !isRetryableWithoutResponse(lastErr) || round == maxCallRounds-1 {
@@ -181,7 +189,48 @@ func (p *Pool) Call(ctx context.Context, method string, params any) (json.RawMes
 			break
 		}
 	}
-	return nil, fmt.Errorf("all rpc endpoints failed: %w", lastErr)
+	return nil, "", fmt.Errorf("all rpc endpoints failed: %w", lastErr)
+}
+
+// EndpointHead reads eth_blockNumber from exactly one endpoint, without
+// rotating: the answer is evidence about that node, not about the pool's
+// healthiest member.
+func (p *Pool) EndpointHead(ctx context.Context, endpoint string) (uint64, error) {
+	result, err := p.callOne(ctx, endpoint, "eth_blockNumber", nil)
+	if err != nil {
+		return 0, err
+	}
+	var raw string
+	if err := json.Unmarshal(result, &raw); err != nil {
+		return 0, &Failure{Kind: "response", Host: endpointHost(endpoint)}
+	}
+	head, err := hexutil.DecodeUint64(raw)
+	if err != nil {
+		return 0, &Failure{Kind: "response", Host: endpointHost(endpoint)}
+	}
+	return head, nil
+}
+
+// RequireSyncedTo proves the node that supplied an answer had already reached
+// height when it answered, and returns that observed head.
+//
+// A node behind the tip reports only the blocks it has: eth_getLogs then
+// returns an empty (or short) array for a range it never saw, which is
+// indistinguishable from "no transfers in that range". Placing the node on the
+// normal endpoint cooldown is what makes the rotation move to a peer that has
+// caught up instead of failing the same batch on every pass.
+func (p *Pool) RequireSyncedTo(ctx context.Context, endpoint string, height uint64) (uint64, error) {
+	head, err := p.EndpointHead(ctx, endpoint)
+	if err != nil {
+		p.healthTracker().fail(endpoint, err)
+		return 0, err
+	}
+	if head < height {
+		failure := &Failure{Kind: "stale", Host: endpointHost(endpoint)}
+		p.healthTracker().fail(endpoint, failure)
+		return head, failure
+	}
+	return head, nil
 }
 
 type rpcRequest struct {

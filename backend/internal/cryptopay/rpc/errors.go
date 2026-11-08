@@ -38,7 +38,10 @@ const (
 	CategoryTimeout       = "timeout"
 	CategoryRejectedKnown = "rejected-known"
 	CategoryAuthConfig    = "auth-config"
-	CategoryUnknown       = "unknown"
+	// CategoryStale is a node that answered from behind the block the caller
+	// asked about. It is a health signal, not a statement about the payment.
+	CategoryStale   = "stale"
+	CategoryUnknown = "unknown"
 )
 
 // rejectedKnownReasons are deterministic node rejections of a request. Retrying
@@ -97,6 +100,8 @@ func (e *Failure) Category() string {
 		return CategoryUnknown
 	case "remote":
 		return remoteCategory(e.Reason, e.Message)
+	case "stale":
+		return CategoryStale
 	}
 	return CategoryUnknown
 }
@@ -267,6 +272,8 @@ func (e *Failure) Error() string {
 		return "RPC response is invalid"
 	case "transport":
 		return "RPC connection failed"
+	case "stale":
+		return "RPC endpoint is behind the requested block"
 	default:
 		return "RPC request failed"
 	}
@@ -328,6 +335,9 @@ var safeBusinessPrefixes = []string{
 	// mined and deliberately frees the address. Keep in step with
 	// sweeper.staleReleasePrefix; a test in the sweeper package pins it.
 	"stale pending released:",
+	// Written by the sweeper when a swept transaction is proven off the
+	// canonical chain. Keep in step with sweeper.sweptRollbackPrefix.
+	"swept rollback released:",
 	"sweep refused:",
 	"confirmed gas top-up is insufficient",
 	"RPC gas quote exceeds",

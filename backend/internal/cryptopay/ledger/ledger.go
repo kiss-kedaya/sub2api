@@ -140,7 +140,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, err
 	}
 	switch state.status {
-	case "credited", "ignored", "reverted":
+	case "credited", "ignored", "reverted", "dead_letter":
 		return false, nil
 	case "pending":
 		if state.orderID.Valid {
@@ -194,7 +194,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, err
 	}
 	switch status {
-	case "credited", "ignored", "reverted":
+	case "credited", "ignored", "reverted", "dead_letter":
 		// Already resolved: nothing to do. "pending" falls through so a
 		// transaction that was observed before finality gets credited on a
 		// later pass instead of being dropped when the cursor advances.

@@ -95,7 +95,7 @@ func endpointCooldown(err error) time.Duration {
 	switch CategoryOf(err) {
 	case CategoryAuthConfig:
 		return authEndpointCooldown
-	case CategoryTransport, CategoryTimeout:
+	case CategoryTransport, CategoryTimeout, CategoryStale:
 		return transientEndpointCooldown
 	default:
 		return 0

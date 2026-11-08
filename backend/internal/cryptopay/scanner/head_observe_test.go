@@ -79,8 +79,19 @@ func TestHeadObservationPersistsSuccessfulBatchesDespiteRateLimit(t *testing.T) 
 		var request struct {
 			Method string `json:"method"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Method != "eth_getLogs" {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("invalid RPC request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Method == "eth_blockNumber" {
+			// The empty-result sync proof asks the answering node for its head.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0xffffffff"}`))
+			return
+		}
+		if request.Method != "eth_getLogs" {
+			t.Errorf("invalid RPC request: %q", request.Method)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
