@@ -14,17 +14,27 @@ func (e *Executor) ResetRetryableFailures(ctx context.Context, limit int) (int, 
 		limit = 200
 	}
 	rows, err := e.queries().QueryContext(ctx, `
-		UPDATE sweep_records SET status='planned', error='', revision=0, updated_at=NOW()
-		WHERE id IN (
-			SELECT id FROM sweep_records
-			WHERE status='failed'
-			  AND COALESCE(sweep_tx_hash,'')=''
-			  AND COALESCE(gas_tx_hash,'')=''
-			  AND COALESCE(error,'') NOT ILIKE '%per-address sweep minimum%'
-			ORDER BY updated_at ASC
+		UPDATE sweep_records s SET status='planned', error='', revision=0, updated_at=NOW()
+		WHERE s.id IN (
+			SELECT f.id FROM sweep_records f
+			WHERE f.status='failed'
+			  AND COALESCE(f.sweep_tx_hash,'')=''
+			  AND COALESCE(f.gas_tx_hash,'')=''
+			  AND COALESCE(f.error,'') NOT ILIKE '%per-address sweep minimum%'
+			  -- A live row for the same chain/address/token already owns the
+			  -- partial unique index; resetting a duplicate would abort the whole
+			  -- UPDATE and make every click fail with a generic payment error.
+			  AND NOT EXISTS (
+				SELECT 1 FROM sweep_records a
+				WHERE a.chain=f.chain
+				  AND lower(a.from_address)=lower(f.from_address)
+				  AND lower(a.token)=lower(f.token)
+				  AND a.status NOT IN ('swept','failed')
+			  )
+			ORDER BY f.updated_at ASC
 			LIMIT $1
 		)
-		RETURNING id`, limit)
+		RETURNING s.id`, limit)
 	if err != nil {
 		return 0, err
 	}

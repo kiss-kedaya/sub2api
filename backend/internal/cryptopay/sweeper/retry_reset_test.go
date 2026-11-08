@@ -13,7 +13,7 @@ func TestResetRetryableFailuresMovesOnlyUnbroadcastRows(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	mock.ExpectQuery(`(?s)UPDATE sweep_records SET status='planned'.*RETURNING id`).
+	mock.ExpectQuery(`(?s)UPDATE sweep_records s SET status='planned'.*RETURNING s\.id`).
 		WithArgs(200).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)).AddRow(int64(2)))
 
