@@ -52,11 +52,11 @@ func ensureDeepSeekThinkingReplayPlaceholders(body []byte, model string) ([]byte
 				}
 			case "redacted_thinking":
 				hasThinking = true
-			case "tool_use", "server_tool_use":
+			case "tool_use":
 				hasToolUse = true
 			}
 		}
-		if hasEmptyThinking {
+		if hasEmptyThinking && hasToolUse {
 			// The client kept the thinking slot but blanked its text. Fill the
 			// text instead of adding a second block.
 			blocks := make([]string, 0, len(content.Array()))
