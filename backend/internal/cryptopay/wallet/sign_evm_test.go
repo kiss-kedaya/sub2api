@@ -231,6 +231,7 @@ func TestBasicTransactionValidationRejectsMalformedIntegersAndBounds(t *testing.
 	mutations := map[string]func(*EVMSignRequest){
 		"unsupported chain":     func(r *EVMSignRequest) { r.ChainID = 999 },
 		"wrong sweep gas":       func(r *EVMSignRequest) { r.GasLimit = 21000 },
+		"excessive sweep gas":   func(r *EVMSignRequest) { r.GasLimit = 200001 },
 		"wrong gas topup limit": func(r *EVMSignRequest) { r.Kind = "gas"; r.GasLimit = 65000 },
 		"chain":                 func(r *EVMSignRequest) { r.ChainID = 0 },
 		"index":                 func(r *EVMSignRequest) { r.Index = 1 << 31 },
@@ -256,5 +257,22 @@ func TestBasicTransactionValidationRejectsMalformedIntegersAndBounds(t *testing.
 				t.Fatal("invalid transaction accepted")
 			}
 		})
+	}
+}
+
+func TestSweepGasHeadroomIsAccepted(t *testing.T) {
+	m, mock, raw := residentManager(t)
+	mock.ExpectBegin()
+	expectRead(mock, raw, " FOR SHARE")
+	req := sweepRequest()
+	req.GasLimit = 90_000
+	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("sign_evm", req.Kind, req.Index, req.ChainID, req.To, req.Token, req.Amount, "ok", "").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	signed, err := m.SignEVM(t.Context(), req)
+	if err != nil || signed == "" {
+		t.Fatalf("90k sweep signature was refused: %v", err)
+	}
+	if got := decodeTransaction(t, signed).Gas(); got != 90_000 {
+		t.Fatalf("signed gas = %d, want 90000", got)
 	}
 }
