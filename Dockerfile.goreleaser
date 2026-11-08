@@ -5,7 +5,7 @@
 # It only packages the pre-built binary, no compilation needed.
 # =============================================================================
 
-ARG ALPINE_IMAGE=alpine:3.21
+ARG ALPINE_IMAGE=alpine:3.24
 ARG POSTGRES_IMAGE=postgres:18-alpine
 
 FROM ${POSTGRES_IMAGE} AS pg-client

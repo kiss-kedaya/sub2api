@@ -1,7 +1,7 @@
 # Minimal runtime image for a prebuilt Linux/amd64 Sub2API binary.
 # The binary is built outside Docker so release verification can compare its
 # ELF signature and SHA-256 before it is shipped to a production host.
-FROM alpine:3.20
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata curl su-exec \
     && addgroup -g 1000 sub2api \
