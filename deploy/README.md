@@ -232,6 +232,7 @@ database recovery period is not treated as a permanent process failure.
 - Migrations are applied in lexicographic order (e.g. `001_...sql`, `002_...sql`).
 - `schema_migrations` tracks applied migrations (filename + checksum).
 - Migrations are forward-only; rollback requires a DB backup restore or a manual compensating SQL script.
+- Before any upgrade, take a full database backup. Never let a migration containing `DROP` run through the default auto-apply path (`DATABASE_MIGRATION_MODE=apply`); apply destructive migrations deliberately, out of band.
 
 **Verify `users.allowed_groups` → `user_allowed_groups` backfill**
 

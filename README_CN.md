@@ -166,6 +166,7 @@ docker compose up -d
 - Go 进程绑 `127.0.0.1:8080`，前面用 Nginx（或其它反代）。必须打开 `underscores_in_headers on;`，否则粘性会话头会被丢掉。
 - Node.js 与 pnpm 只用于构建，生产由 Go 或反向代理提供编译后的 SPA。
 - 承接流量的进程用 `DATABASE_MIGRATION_MODE=validate`，不要让 8080 主进程自己 apply 迁移。
+- 升级前必须先做完整数据库备份；禁止让含 `DROP` 的迁移走默认自动 apply 路径（`DATABASE_MIGRATION_MODE=apply`），破坏性迁移必须离线单独执行。
 - 新二进制先挂 canary 端口（例如 8081），Nginx 切流量；主进程还在接流量时不要杀它。
 - 出口代理把 OpenAI WS 搞坏时，可设 `GATEWAY_OPENAI_WS_FORCE_HTTP=true`，上游改 HTTP/SSE，客户端协议不变。
 - 日志、指标和错误页不得出现上游凭据、内部主机名或完整供应商地址。

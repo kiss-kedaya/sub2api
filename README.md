@@ -166,6 +166,7 @@ Templates: [SPA server](deploy/nginx/sub2api-spa-server.conf), [API locations](d
 - Keep the Go process on `127.0.0.1:8080` and put Nginx (or another reverse proxy) in front. Enable `underscores_in_headers on;` so sticky-session headers survive.
 - Node.js and pnpm are build tools only; production serves the compiled SPA through Go or the reverse proxy.
 - Live traffic process: `DATABASE_MIGRATION_MODE=validate`. Do not let the primary 8080 process apply migrations.
+- Before any upgrade, take a full database backup. Never let a migration containing `DROP` run through the default auto-apply path (`DATABASE_MIGRATION_MODE=apply`); apply destructive migrations deliberately, out of band.
 - Canary a new binary on another port (for example 8081), then switch Nginx. Never kill the primary while it still serves traffic.
 - WebSocket / SSE: if an egress proxy breaks OpenAI WS, `GATEWAY_OPENAI_WS_FORCE_HTTP=true` forces upstream HTTP/SSE without changing the client protocol.
 - Logs, metrics, and error pages must not contain upstream credentials, internal hostnames, or full provider endpoints.
