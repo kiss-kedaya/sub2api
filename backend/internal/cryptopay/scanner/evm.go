@@ -123,12 +123,13 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 	// range may be subdivided, but a node failing every request can never turn
 	// one pass into a request storm.
 	budget := newGetLogsBudget(maxGetLogsSplitRequests)
+	witness := newSyncWitness(s.pool)
 	results := make([]batchResult, (len(recipients)+batchSize-1)/batchSize)
 	runBatches(ctx, len(results), s.scanWorkers(), func(index int) {
 		start := index * batchSize
 		end := min(start+batchSize, len(recipients))
 		result := batchResult{done: true}
-		if logs, err := s.getLogsAdaptive(ctx, chain, fromBlock, toBlock, tokens, recipients[start:end], outgoing, index, budget); err != nil {
+		if logs, err := s.getLogsAdaptive(ctx, chain, fromBlock, toBlock, tokens, recipients[start:end], outgoing, index, budget, witness); err != nil {
 			result.err = err
 		} else {
 			result.transfers = logsToTransfers(chain, logs, recipientSet, outgoing)
@@ -333,13 +334,53 @@ func (e *LogsError) Error() string {
 
 func (e *LogsError) Unwrap() error { return e.Err }
 
+// syncWitness proves, once per scanRange, that the node which answered an
+// eth_getLogs query had already reached the range's last block. An endpoint
+// behind the tip answers only for the blocks it has, and that empty answer is
+// indistinguishable from a complete range without transfers. Heads only grow,
+// so a head observed during this range stays a valid lower bound for every
+// later requirement in it; one observation per endpoint keeps the proof from
+// costing more than the scan itself.
+type syncWitness struct {
+	pool  *rpc.Pool
+	mu    sync.Mutex
+	heads map[string]uint64
+}
+
+func newSyncWitness(pool *rpc.Pool) *syncWitness {
+	return &syncWitness{pool: pool, heads: make(map[string]uint64)}
+}
+
+// require reports a stale-endpoint failure unless endpoint is known to have
+// reached height. The first check of an endpoint costs one eth_blockNumber on
+// that exact node; later checks in the same range reuse the observed head.
+func (w *syncWitness) require(ctx context.Context, endpoint string, height uint64) error {
+	w.mu.Lock()
+	head, known := w.heads[endpoint]
+	w.mu.Unlock()
+	if known {
+		if head >= height {
+			return nil
+		}
+		return &rpc.Failure{Kind: "stale"}
+	}
+	observed, err := w.pool.RequireSyncedTo(ctx, endpoint, height)
+	if err != nil {
+		return err
+	}
+	w.mu.Lock()
+	w.heads[endpoint] = observed
+	w.mu.Unlock()
+	return nil
+}
+
 // getLogsAdaptive returns logs only when the complete [from,to] x addresses
 // space was covered. Recoverable remote query rejections are retried as two
 // halves: the block range, then the address filter. Rate limits are not split.
 // Splits are disjoint, so no log repeats. The halves of one batch run one after
 // the other; only the budget is shared with the batches running beside it.
-func (s *EVMScanner) getLogsAdaptive(ctx context.Context, chain string, from, to uint64, tokens, addresses []string, outgoing bool, batch int, budget *getLogsBudget) ([]evmLog, error) {
-	logs, err := s.getLogs(ctx, from, to, tokens, addresses, outgoing)
+func (s *EVMScanner) getLogsAdaptive(ctx context.Context, chain string, from, to uint64, tokens, addresses []string, outgoing bool, batch int, budget *getLogsBudget, witness *syncWitness) ([]evmLog, error) {
+	logs, err := s.getLogs(ctx, from, to, tokens, addresses, outgoing, witness)
 	if err == nil {
 		return logs, nil
 	}
@@ -356,22 +397,22 @@ func (s *EVMScanner) getLogsAdaptive(ctx context.Context, chain string, from, to
 	}
 	if to > from {
 		mid := from + (to-from)/2
-		left, leftErr := s.getLogsAdaptive(ctx, chain, from, mid, tokens, addresses, outgoing, batch, budget)
+		left, leftErr := s.getLogsAdaptive(ctx, chain, from, mid, tokens, addresses, outgoing, batch, budget, witness)
 		if leftErr != nil {
 			return nil, leftErr
 		}
-		right, rightErr := s.getLogsAdaptive(ctx, chain, mid+1, to, tokens, addresses, outgoing, batch, budget)
+		right, rightErr := s.getLogsAdaptive(ctx, chain, mid+1, to, tokens, addresses, outgoing, batch, budget, witness)
 		if rightErr != nil {
 			return nil, rightErr
 		}
 		return append(left, right...), nil
 	}
 	half := len(addresses) / 2
-	left, leftErr := s.getLogsAdaptive(ctx, chain, from, to, tokens, addresses[:half], outgoing, batch, budget)
+	left, leftErr := s.getLogsAdaptive(ctx, chain, from, to, tokens, addresses[:half], outgoing, batch, budget, witness)
 	if leftErr != nil {
 		return nil, leftErr
 	}
-	right, rightErr := s.getLogsAdaptive(ctx, chain, from, to, tokens, addresses[half:], outgoing, batch, budget)
+	right, rightErr := s.getLogsAdaptive(ctx, chain, from, to, tokens, addresses[half:], outgoing, batch, budget, witness)
 	if rightErr != nil {
 		return nil, rightErr
 	}
@@ -379,7 +420,7 @@ func (s *EVMScanner) getLogsAdaptive(ctx context.Context, chain string, from, to
 }
 
 // getLogs issues exactly one eth_getLogs filter for the given addresses.
-func (s *EVMScanner) getLogs(ctx context.Context, from, to uint64, tokens, addresses []string, outgoing bool) ([]evmLog, error) {
+func (s *EVMScanner) getLogs(ctx context.Context, from, to uint64, tokens, addresses []string, outgoing bool, witness *syncWitness) ([]evmLog, error) {
 	// topic0 = Transfer, topic2 = to (any of the watched addresses); outflows
 	// filter topic1 = from instead.
 	topic := make([]any, 0, len(addresses))
@@ -395,7 +436,7 @@ func (s *EVMScanner) getLogs(ctx context.Context, from, to uint64, tokens, addre
 	if outgoing {
 		params.Topics = [][]any{{transferTopic}, topic}
 	}
-	raw, err := s.pool.Call(ctx, "eth_getLogs", []any{params})
+	raw, endpoint, err := s.pool.CallEndpoint(ctx, "eth_getLogs", []any{params})
 	if err != nil {
 		return nil, err
 	}
@@ -405,6 +446,17 @@ func (s *EVMScanner) getLogs(ctx context.Context, from, to uint64, tokens, addre
 	}
 	if logs == nil {
 		return nil, &rpc.Failure{Kind: "response"}
+	}
+	// An empty array is the only answer that cannot be told apart from a node
+	// that has not reached toBlock yet: it would report the blocks it knows and
+	// drop the rest. A caught-up node proving its head first turns that silent
+	// skip into an error, so the range is retried instead of being written down
+	// as scanned. A non-empty answer names real logs at their real heights and
+	// needs no extra request.
+	if len(logs) == 0 {
+		if err := witness.require(ctx, endpoint, to); err != nil {
+			return nil, err
+		}
 	}
 	return logs, nil
 }

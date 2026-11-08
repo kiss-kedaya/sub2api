@@ -29,7 +29,19 @@ func splitLogsPool(t *testing.T, maxBlocks uint64, maxAddresses int, logs []evmL
 			Method string          `json:"method"`
 			Params []getLogsParams `json:"params"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Method != "eth_getLogs" || len(request.Params) != 1 {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("undecodable RPC request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.Method == "eth_blockNumber" {
+			// An empty eth_getLogs result is only trusted after this node proves
+			// it has caught up; the fixture is always at the tip.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0xffffffff"}`))
+			return
+		}
+		if request.Method != "eth_getLogs" || len(request.Params) != 1 {
 			t.Errorf("unexpected RPC request %q", request.Method)
 			w.WriteHeader(http.StatusBadRequest)
 			return

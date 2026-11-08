@@ -38,7 +38,10 @@ const (
 	CategoryTimeout       = "timeout"
 	CategoryRejectedKnown = "rejected-known"
 	CategoryAuthConfig    = "auth-config"
-	CategoryUnknown       = "unknown"
+	// CategoryStale is a node that answered from behind the block the caller
+	// asked about. It is a health signal, not a statement about the payment.
+	CategoryStale   = "stale"
+	CategoryUnknown = "unknown"
 )
 
 // rejectedKnownReasons are deterministic node rejections of a request. Retrying
@@ -97,6 +100,8 @@ func (e *Failure) Category() string {
 		return CategoryUnknown
 	case "remote":
 		return remoteCategory(e.Reason, e.Message)
+	case "stale":
+		return CategoryStale
 	}
 	return CategoryUnknown
 }
@@ -267,6 +272,8 @@ func (e *Failure) Error() string {
 		return "RPC response is invalid"
 	case "transport":
 		return "RPC connection failed"
+	case "stale":
+		return "RPC endpoint is behind the requested block"
 	default:
 		return "RPC request failed"
 	}

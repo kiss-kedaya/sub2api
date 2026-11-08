@@ -752,7 +752,7 @@ func TestGetLogsAdaptiveSpendsBudgetOnlyWhenItSplits(t *testing.T) {
 			fake.reject = func(int) int { return c.code }
 			budget := newGetLogsBudget(c.budget)
 			_, err := NewEVMScanner(fake.pool).getLogsAdaptive(t.Context(), "bsc", c.from, c.to,
-				[]string{splitToken}, fake.recipients[:c.addresses], false, 0, budget)
+				[]string{splitToken}, fake.recipients[:c.addresses], false, 0, budget, newSyncWitness(fake.pool))
 			if err == nil || budget.remaining.Load() != c.wantLeft || fake.calls.Load() != c.wantCalls {
 				t.Fatalf("left=%d calls=%d err=%v, want left=%d calls=%d", budget.remaining.Load(), fake.calls.Load(), err, c.wantLeft, c.wantCalls)
 			}
