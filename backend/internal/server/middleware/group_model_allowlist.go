@@ -133,6 +133,22 @@ func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, bool) {
 		c.Abort()
 		return nil, false
 	}
+	// Normalize exactly like the gateway handlers do. The allowlist must read
+	// the same payload the handler will parse: a UTF-8 BOM (or raw control
+	// bytes) makes gjson see no top-level object, which used to yield an empty
+	// candidate set and silently skip the check while the handler still parsed
+	// the model through NormalizeLenientJSONRequestBody. Multipart bodies are
+	// binary and must not be rewritten.
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	if !strings.Contains(contentType, "multipart/") {
+		normalized, normalizeErr := httputil.NormalizeLenientJSONRequestBody(body, int64(len(body)))
+		if normalizeErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "Failed to normalize request body"}})
+			c.Abort()
+			return nil, false
+		}
+		body = normalized
+	}
 	requestmodel.ResetRequestBody(c.Request, body)
 	return requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), body), true
 }

@@ -170,6 +170,22 @@ func TestGatewayRoutesGroupModelAllowlistBlocksCompositeModelBeforeRewrite(t *te
 	require.Contains(t, w.Body.String(), "grok-4.3")
 }
 
+// A UTF-8 BOM used to make the allowlist see zero candidate models while the
+// handler still parsed the model after trimming the BOM, so a non-allowlisted
+// model slipped through. Both sides must now read the same normalized body.
+func TestGatewayRoutesGroupModelAllowlistBlocksBOMPrefixedModel(t *testing.T) {
+	router := newGatewayRoutesTestRouterWithGroup(allowlistGroup(service.PlatformComposite, true, "claude-*"))
+
+	body := "\xEF\xBB\xBF" + `{"model":"grok-4.3","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code, "BOM-prefixed body must not bypass the allowlist: %s", w.Body.String())
+	require.Contains(t, w.Body.String(), "grok-4.3")
+}
+
 func TestGatewayRoutesGroupModelAllowlistAllowsListedCompositeModel(t *testing.T) {
 	router := newGatewayRoutesTestRouterWithGroup(allowlistGroup(service.PlatformComposite, true, "claude-*"))
 
