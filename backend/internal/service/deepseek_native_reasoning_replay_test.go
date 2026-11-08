@@ -98,7 +98,10 @@ func TestDeepSeekNativeReasoningReplayAcrossInstances(t *testing.T) {
 					if !tc.restore {
 						reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
 						require.True(t, reasoning.Exists(), "another key's reasoning must be preserved, not deleted")
-						require.False(t, reasoning.Get("content").Exists(), "another key's reasoning must not be fabricated")
+						require.Equal(t, "reasoning_text", reasoning.Get("content.0.type").String(),
+							"a denied key gets the neutral placeholder")
+						require.Equal(t, deepSeekReasoningPlaceholderText, reasoning.Get("content.0.text").String(),
+							"a denied key must not receive another key's reasoning")
 						require.Equal(t, "opaque-real", reasoning.Get("encrypted_content").String())
 						require.Len(t, gjson.GetBytes(out, "input").Array(), 4)
 						return
@@ -164,7 +167,10 @@ func TestDeepSeekNativeReasoningReplayPreservesExplicitContentAndOpaqueBinding(t
 			out := svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(tc.request))
 			reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
 			require.True(t, reasoning.Exists(), "the reasoning item must survive a cache miss")
-			require.False(t, reasoning.Get("content").Exists(), "a cache miss must not fabricate reasoning_text")
+			require.Equal(t, "reasoning_text", reasoning.Get("content.0.type").String(),
+				"a cache miss gets the neutral placeholder instead of reaching upstream empty")
+			require.Equal(t, deepSeekReasoningPlaceholderText, reasoning.Get("content.0.text").String(),
+				"the placeholder must not carry another item's text")
 			require.Equal(t, gjson.Get(tc.request, `input.0.encrypted_content`).String(), reasoning.Get("encrypted_content").String())
 			require.Equal(t, gjson.Get(tc.request, `input.0.summary.0.text`).String(), reasoning.Get("summary.0.text").String())
 		})
@@ -210,7 +216,8 @@ func TestDeepSeekNativeReasoningReplayReusedContextRechecksIdentity(t *testing.T
 			if !tc.restore {
 				reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
 				require.True(t, reasoning.Exists(), "a denied key must keep the client item, not delete it")
-				require.False(t, reasoning.Get("content").Exists(), "a denied key must not receive another key's reasoning")
+				require.Equal(t, deepSeekReasoningPlaceholderText, reasoning.Get("content.0.text").String(),
+					"a denied key gets the neutral placeholder, never another key's reasoning")
 				return
 			}
 			require.Equal(t, "this conversation only", gjson.GetBytes(out, "input.0.content.0.text").String())
@@ -246,12 +253,16 @@ func TestDeepSeekNativeReasoningReplayHasTotalRestoreBudget(t *testing.T) {
 	require.NoError(t, err)
 	svc.cache = &reasoningRecordingCache{getResp: getResp}
 	out := svc.prepareDeepSeekNativeReasoningReplay(c, account, request)
-	restored, restoredBytes, reasoningItems := 0, 0, 0
+	restored, placeholders, restoredBytes, reasoningItems := 0, 0, 0, 0
 	for _, item := range gjson.GetBytes(out, "input").Array() {
 		if item.Get("type").String() == "reasoning" {
 			reasoningItems++
 		}
 		if content := item.Get("content"); item.Get("type").String() == "reasoning" && content.IsArray() {
+			if content.Get("0.text").String() == deepSeekReasoningPlaceholderText {
+				placeholders++
+				continue
+			}
 			restored++
 			restoredBytes += len(content.Raw)
 		}
@@ -261,6 +272,7 @@ func TestDeepSeekNativeReasoningReplayHasTotalRestoreBudget(t *testing.T) {
 	require.Equal(t, deepSeekNativeReasoningMaxItems, reasoningItems)
 	require.Positive(t, restored)
 	require.Less(t, restored, deepSeekNativeReasoningMaxItems)
+	require.Equal(t, deepSeekNativeReasoningMaxItems-restored, placeholders)
 	require.LessOrEqual(t, restoredBytes, deepSeekNativeReasoningMaxBytes)
 	require.LessOrEqual(t, len(out)-len(request), deepSeekNativeReasoningMaxBytes)
 	require.Equal(t, "9007199254740993", gjson.GetBytes(out, "opaque").Raw)
@@ -280,7 +292,15 @@ func TestDeepSeekNativeReasoningReplayRequiresConversationAnchor(t *testing.T) {
 		// Even a prior anchored turn on this context cannot authorize an
 		// anonymous model-only turn to access its cache namespace.
 		svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(`{"model":"deepseek-v4.1-flash","input":"real question"}`))
-		require.Equal(t, request, string(svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(request))))
+		out := svc.prepareDeepSeekNativeReasoningReplay(c, account, []byte(request))
+		reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
+		if reasoning.Exists() {
+			require.Equal(t, deepSeekReasoningPlaceholderText, reasoning.Get("content.0.text").String(),
+				"an anonymous turn gets the neutral placeholder, never cached text")
+			require.Equal(t, gjson.GetBytes([]byte(request), `input.#(type=="reasoning").id`).String(), reasoning.Get("id").String())
+		} else {
+			require.Equal(t, request, string(out))
+		}
 		require.Nil(t, svc.newDeepSeekNativeReasoningRecorder(c, account))
 	}
 }
@@ -298,9 +318,8 @@ func TestDeepSeekNativeReasoningReplayDoesNotBackfillMismatchedOpaqueItem(t *tes
 	reasoning := gjson.GetBytes(out, `input.#(type=="reasoning")`)
 	require.True(t, reasoning.Exists(), "foreign opaque reasoning must be preserved, never deleted")
 	require.Equal(t, "invented", reasoning.Get("encrypted_content").String())
-	require.False(t, reasoning.Get("content").Exists(),
-		"foreign opaque reasoning must not be filled with another item's content")
-	require.Equal(t, request, out, "a cache miss must leave the request byte-for-byte intact")
+	require.Equal(t, deepSeekReasoningPlaceholderText, reasoning.Get("content.0.text").String(),
+		"a mismatched opaque value gets the neutral placeholder, not another item's text")
 }
 
 func TestDeepSeekNativeReasoningReplayHostedContinuationKeepsAnchoredScope(t *testing.T) {
@@ -430,7 +449,8 @@ func TestDeepSeekNativeReasoningReplayPreservesUnrecoverableHistory(t *testing.T
 
 	out := svc.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), body)
 
-	require.Equal(t, body, out, "a cache miss must leave the request byte-for-byte intact")
+	require.Equal(t, deepSeekReasoningPlaceholderText, gjson.GetBytes(out, `input.#(type=="reasoning").content.0.text`).String(),
+		"unrecoverable reasoning gets the neutral placeholder")
 	require.True(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists(),
 		"unrecoverable reasoning must not be dropped")
 	require.Equal(t, "assistant", gjson.GetBytes(out, "input.2.role").String(),
@@ -452,7 +472,8 @@ func TestDeepSeekNativeReasoningReplayPreservesReasoningWithoutID(t *testing.T) 
 
 	out := svc.prepareDeepSeekNativeReasoningReplay(c, deepSeekNativeReplayAccount(), body)
 
-	require.Equal(t, body, out, "a reasoning item without id must be forwarded unchanged")
+	require.Equal(t, deepSeekReasoningPlaceholderText, gjson.GetBytes(out, `input.#(type=="reasoning").content.0.text`).String(),
+		"a reasoning item without id still needs a non-empty text")
 	require.True(t, gjson.GetBytes(out, `input.#(type=="reasoning")`).Exists())
 	require.Equal(t, "assistant", gjson.GetBytes(out, "input.2.role").String())
 }

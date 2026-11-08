@@ -98,7 +98,10 @@ func TestDeepSeekNativeForwardPreservesMissingReasoningHistory(t *testing.T) {
 				require.True(t, reasoning.Exists(), "reasoning item must survive a cache miss")
 				require.Equal(t, "rs_missing", reasoning.Get("id").String())
 				require.Equal(t, "opaque-other", reasoning.Get("encrypted_content").String())
-				require.False(t, reasoning.Get("content").Exists(), "missing reasoning must not be fabricated")
+				require.Equal(t, "reasoning_text", reasoning.Get("content.0.type").String(),
+					"an unrecoverable item gets the DeepSeek placeholder instead of a hard 400")
+				require.Equal(t, deepSeekReasoningPlaceholderText, reasoning.Get("content.0.text").String(),
+					"the placeholder must be neutral, never another item's text")
 				require.Equal(t, "assistant", gjson.GetBytes(forwarded, "input.2.role").String(), "assistant role must not be rewritten")
 				require.Equal(t, "output_text", gjson.GetBytes(forwarded, "input.2.content.0.type").String(), "content type must not be rewritten")
 				require.Equal(t, variant.text, gjson.GetBytes(forwarded, "input.2.content.0.text").String())

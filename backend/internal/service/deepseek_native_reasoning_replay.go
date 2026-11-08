@@ -34,7 +34,15 @@ type deepSeekNativeReasoningSource struct {
 // only reasoning that this gateway actually received, in shared Redis, bound
 // to the authenticated key, opaque item id and encrypted digest. Never read the
 // older unscoped Chat fallback cache and never substitute a summary for CoT.
+// prepareDeepSeekNativeReasoningReplay restores reasoning_text from the shared
+// cache and then fills any item that is still empty with the DeepSeek
+// placeholder, so a cache miss degrades to a neutral turn instead of a 400.
 func (s *OpenAIGatewayService) prepareDeepSeekNativeReasoningReplay(c *gin.Context, account *Account, body []byte) []byte {
+	body = s.restoreDeepSeekNativeReasoning(c, account, body)
+	return ensureDeepSeekNativeReasoningPlaceholders(account, body)
+}
+
+func (s *OpenAIGatewayService) restoreDeepSeekNativeReasoning(c *gin.Context, account *Account, body []byte) []byte {
 	if s == nil || c == nil || account == nil || account.Platform != PlatformDeepseek || !account.UsesNativeCNResponses() {
 		if c != nil {
 			c.Set(deepSeekNativeReasoningScopeKey, nil)
