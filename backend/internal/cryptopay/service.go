@@ -812,6 +812,38 @@ func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chain
 	if len(chains) > 0 {
 		exec = exec.WithChains(chains)
 	}
+	if manual && !dryRun {
+		// A single click must clear the whole queue. First put back failures
+		// that never produced a transaction (safe: nothing was broadcast), then
+		// run passes until no new retryable failure appears. Broadcast failures
+		// stay untouched: retrying those needs an on-chain check, not a guess.
+		if _, err := exec.ResetRetryableFailures(ctx, 200); err != nil {
+			return nil, err
+		}
+		merged := &sweeper.Summary{DryRun: false}
+		for round := 0; round < 3; round++ {
+			if round > 0 {
+				n, rerr := exec.ResetRetryableFailures(ctx, 200)
+				if rerr != nil {
+					return merged, rerr
+				}
+				if n == 0 {
+					break
+				}
+				select {
+				case <-time.After(2 * time.Second):
+				case <-ctx.Done():
+					return merged, ctx.Err()
+				}
+			}
+			pass, perr := exec.RunManualAndWait(ctx, dryRun)
+			mergeSweepSummary(merged, pass)
+			if perr != nil {
+				return merged, perr
+			}
+		}
+		return merged, nil
+	}
 	if manual {
 		return exec.RunManualAndWait(ctx, dryRun)
 	}
@@ -1377,4 +1409,16 @@ func (s *Service) reloadIfConfigChanged(ctx context.Context, last *string) (bool
 	s.mu.RUnlock()
 	*last = configFingerprint(applied)
 	return true, nil
+}
+
+func mergeSweepSummary(dst, src *sweeper.Summary) {
+	if dst == nil || src == nil {
+		return
+	}
+	dst.Planned += src.Planned
+	dst.Swept += src.Swept
+	dst.Failed += src.Failed
+	dst.Pending += src.Pending
+	dst.GasTopUp += src.GasTopUp
+	dst.Entries = append(dst.Entries, src.Entries...)
 }
