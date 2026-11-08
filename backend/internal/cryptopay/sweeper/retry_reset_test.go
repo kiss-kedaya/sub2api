@@ -11,7 +11,7 @@ import (
 func TestResetRetryableFailuresMovesOnlyUnbroadcastRows(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectQuery(`(?s)UPDATE sweep_records SET status='planned'.*RETURNING id`).
 		WithArgs(200).

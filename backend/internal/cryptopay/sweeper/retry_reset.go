@@ -28,7 +28,7 @@ func (e *Executor) ResetRetryableFailures(ctx context.Context, limit int) (int, 
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	n := 0
 	for rows.Next() {
 		var id int64
