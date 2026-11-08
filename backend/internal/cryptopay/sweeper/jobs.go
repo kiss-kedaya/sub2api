@@ -52,8 +52,23 @@ func (e *Executor) lock(ctx context.Context) (*sql.Conn, func() error, error) {
 		return nil, nil, fmt.Errorf("acquire sweep lock: %w", err)
 	}
 	if !locked {
-		_ = conn.Close()
-		return nil, nil, fmt.Errorf("sweep already running in another instance")
+		// A run that dies between acquiring the session lock and its deferred
+		// unlock leaves an idle backend holding it forever, and every later
+		// click fails with a misleading generic error. Reclaim only a holder
+		// that has been idle for minutes (a live run is never idle that long
+		// now that each RPC call is bounded), then try once more.
+		_, _ = conn.ExecContext(ctx, `SELECT pg_terminate_backend(l.pid)
+			FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+			WHERE l.locktype='advisory' AND l.granted
+			  AND l.classid=($1::bigint >> 32)::int
+			  AND l.objid=($1::bigint & 4294967295)::int
+			  AND a.state='idle'
+			  AND now()-a.state_change > interval '3 minutes'`, sweepLockKey)
+		var retry bool
+		if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, sweepLockKey).Scan(&retry); err != nil || !retry {
+			_ = conn.Close()
+			return nil, nil, fmt.Errorf("sweep already running in another instance")
+		}
 	}
 	release := func() error {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
