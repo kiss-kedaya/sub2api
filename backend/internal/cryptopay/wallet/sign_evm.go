@@ -170,11 +170,16 @@ func validateEVMRequest(req EVMSignRequest) (*big.Int, *big.Int, error) {
 	if req.GasLimit < 21_000 || req.GasLimit > 1_000_000 {
 		return nil, nil, errors.New("invalid gas limit")
 	}
-	expectedGas := uint64(65_000)
-	if req.Kind == "gas" {
-		expectedGas = 21_000
-	}
-	if req.GasLimit != expectedGas {
+	// Gas top-ups keep the exact intrinsic limit. ERC20 sweeps need headroom:
+	// the first transfer to a fresh recipient can need ~70-80k, so the legacy
+	// 65k floor is kept for bytes signed earlier while current callers may ask
+	// for more. The ceiling stays well below a pathological limit.
+	switch {
+	case req.Kind == "gas":
+		if req.GasLimit != 21_000 {
+			return nil, nil, errors.New("gas limit does not match wallet transaction kind")
+		}
+	case req.GasLimit < 65_000 || req.GasLimit > 200_000:
 		return nil, nil, errors.New("gas limit does not match wallet transaction kind")
 	}
 	fee := new(big.Int).Mul(new(big.Int).SetUint64(req.GasLimit), price)
