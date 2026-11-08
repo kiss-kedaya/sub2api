@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -160,6 +161,113 @@ VALUES ($1, 'accrue', $2, $3, $4, NOW(), NOW())`, inviterID, amount, inviteeUser
 		return false, err
 	}
 	return applied, nil
+}
+
+// ReverseQuotaForOrder claws back the rebate accrued for one payment order.
+// ratio is the refunded share of the order (1 for a full refund). It is
+// idempotent: a second call for the same order returns 0.
+func (r *affiliateRepository) ReverseQuotaForOrder(ctx context.Context, sourceOrderID int64, ratio float64) (float64, error) {
+	if sourceOrderID <= 0 || ratio <= 0 {
+		return 0, nil
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	var reversed float64
+	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		var existing int
+		rows, err := txClient.QueryContext(txCtx,
+			`SELECT COUNT(*) FROM user_affiliate_ledger WHERE source_order_id = $1 AND action = 'refund_reversal'`,
+			sourceOrderID)
+		if err != nil {
+			return fmt.Errorf("check affiliate reversal: %w", err)
+		}
+		if rows.Next() {
+			if err := rows.Scan(&existing); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan affiliate reversal count: %w", err)
+			}
+		}
+		_ = rows.Close()
+		if existing > 0 {
+			return nil
+		}
+
+		var inviterID, inviteeID int64
+		var accrued, frozen float64
+		rows, err = txClient.QueryContext(txCtx, `
+SELECT user_id, source_user_id, COALESCE(SUM(amount), 0)::double precision,
+       COALESCE(SUM(CASE WHEN frozen_until IS NOT NULL AND frozen_until > NOW() THEN amount ELSE 0 END), 0)::double precision
+FROM user_affiliate_ledger
+WHERE source_order_id = $1 AND action = 'accrue'
+GROUP BY user_id, source_user_id
+LIMIT 1`, sourceOrderID)
+		if err != nil {
+			return fmt.Errorf("load affiliate accrual: %w", err)
+		}
+		hasAccrual := rows.Next()
+		if hasAccrual {
+			if err := rows.Scan(&inviterID, &inviteeID, &accrued, &frozen); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan affiliate accrual: %w", err)
+			}
+		}
+		_ = rows.Close()
+		if !hasAccrual || accrued <= 0 {
+			return nil
+		}
+
+		var available, frozenQuota float64
+		rows, err = txClient.QueryContext(txCtx,
+			`SELECT aff_quota, aff_frozen_quota FROM user_affiliates WHERE user_id = $1 FOR UPDATE`,
+			inviterID)
+		if err != nil {
+			return fmt.Errorf("lock affiliate quota: %w", err)
+		}
+		hasAffiliate := rows.Next()
+		if hasAffiliate {
+			if err := rows.Scan(&available, &frozenQuota); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan affiliate quota: %w", err)
+			}
+		}
+		_ = rows.Close()
+		if !hasAffiliate {
+			return nil
+		}
+
+		target := accrued * ratio
+		if target <= 0 {
+			return nil
+		}
+		availableTake := math.Min(target, math.Max(available, 0))
+		frozenTake := math.Min(target-availableTake, math.Max(frozenQuota, 0))
+		reversed = availableTake + frozenTake
+		if reversed <= 0 {
+			return nil
+		}
+		_ = frozen
+
+		if _, err := txClient.ExecContext(txCtx, `
+UPDATE user_affiliates
+SET aff_quota = $2, aff_frozen_quota = $3,
+    aff_history_quota = GREATEST(aff_history_quota - $4, 0), updated_at = NOW()
+WHERE user_id = $1`,
+			inviterID, available-availableTake, frozenQuota-frozenTake, reversed); err != nil {
+			return fmt.Errorf("deduct affiliate quota: %w", err)
+		}
+		if _, err := txClient.ExecContext(txCtx, `
+INSERT INTO user_affiliate_ledger (user_id, action, amount, source_user_id, source_order_id, created_at, updated_at)
+VALUES ($1, 'refund_reversal', $2, $3, $4, NOW(), NOW())`,
+			inviterID, -reversed, inviteeID, sourceOrderID); err != nil {
+			return fmt.Errorf("insert affiliate reversal ledger: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return reversed, nil
 }
 
 func (r *affiliateRepository) GetAccruedRebateFromInvitee(ctx context.Context, inviterID, inviteeUserID int64) (float64, error) {
