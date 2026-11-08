@@ -3,6 +3,8 @@ package sweeper
 import (
 	"math/big"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestSweepWrongChainCannotConfirmPersistedTransaction(t *testing.T) {
@@ -24,10 +26,19 @@ func TestRPCGasQuoteCannotIncreaseConfiguredFundingBudget(t *testing.T) {
 	j := &sweepJob{PlanEntry: entry, ID: 1, Version: 1, Destination: testDestination,
 		Status: "planned", Confirmations: 2}
 	expectAddressClear(mock, entry)
-	expectWrite(mock, "planned", nil, nil)
+	// An over-budget quote is a funding wait: the record keeps the reason but
+	// the bounded-attempt counter must not move, or 25 expensive runs would
+	// park a payable sweep as `failed`.
+	mock.ExpectExec("UPDATE sweep_records SET error=").
+		WithArgs(int64(1), errGasQuoteExceedsBudget.Error(), int64(0)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	out, err := e.resume(t.Context(), j)
-	if err == nil || out.Status != "pending" || len(c.signs) != 0 || len(c.raws) != 0 {
+	if err != nil || out.Status != "pending" || out.Error != errGasQuoteExceedsBudget.Error() ||
+		len(c.signs) != 0 || len(c.raws) != 0 {
 		t.Fatalf("untrusted quote authorized excess funding: out=%+v err=%v signs=%+v", out, err, c.signs)
+	}
+	if j.Status != "planned" || j.Revision != 0 {
+		t.Fatalf("deferral consumed an attempt: status=%q revision=%d", j.Status, j.Revision)
 	}
 }
 

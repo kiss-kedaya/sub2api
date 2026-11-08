@@ -88,6 +88,19 @@ func (e *Executor) replaceUnderpricedGas(ctx context.Context, pool *rpc.Pool, j 
 	if !ok || amount.Sign() <= 0 {
 		return nil
 	}
+	// The replacement must be affordable too. Signing bytes the payer cannot
+	// fund would leave another unmineable gas_pending row behind, which is the
+	// state that blocks every other address on the chain.
+	balance, err := pool.Balance(ctx, j.GasPayer)
+	if err != nil {
+		return nil
+	}
+	required := new(big.Int).Add(amount, new(big.Int).Mul(price, big.NewInt(21000)))
+	if balance.Cmp(required) < 0 {
+		slog.Warn("[cryptopay] stuck gas top-up not replaced: gas wallet cannot cover the higher fee",
+			"job_id", j.ID, "chain", j.Chain)
+		return nil
+	}
 	idx := j.DerivationIndex
 	raw, err := e.wallet.SignEVM(ctx, EVMSignRequest{Index: hot.Index, Kind: "gas", GasIndex: &idx,
 		ChainID: ChainIDs[j.Chain], Token: "native", To: j.Address, Amount: amount.String(),

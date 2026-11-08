@@ -24,6 +24,12 @@ const sweepLockKey int64 = 0x43525950544f5357
 
 func joinErrors(a, b error) error { return errors.Join(a, b) }
 
+// errAddressReserved marks a plan entry whose address already holds a durable
+// reservation. The insert guard returns no row in that case, which is normal
+// back-pressure: the address must wait for the existing job to finish or be
+// reconciled. It is emphatically not a database failure.
+var errAddressReserved = errors.New("address is already reserved by another sweep job")
+
 // The connection holds a SESSION lock. All writes on it are autocommitted;
 // holding an uncommitted transaction across broadcasts would lose the job on
 // a crash. The planner's BalanceReader needs a second pool connection.
@@ -170,6 +176,12 @@ func (e *Executor) createJob(ctx context.Context, entry PlanEntry) (*sweepJob, e
 		entry.Chain, entry.Address, j.Destination, entry.Token, amountString(entry.RawAmount, entry.Decimals),
 		entry.RawAmount.String(), entry.Decimals, int64(entry.DerivationIndex),
 		strconv.FormatUint(j.Confirmations, 10)).Scan(&j.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The guard matched: another job still reserves this address. Returning
+		// a persistence error here made Run treat back-pressure as a broken
+		// database, so a handful of reserved addresses aborted the whole run.
+		return nil, fmt.Errorf("%w (chain %s)", errAddressReserved, entry.Chain)
+	}
 	if err != nil {
 		return nil, &persistenceError{err}
 	}

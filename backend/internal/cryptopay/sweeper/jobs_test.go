@@ -69,6 +69,7 @@ type localChain struct {
 	chainID      string
 	gasPrice     string
 	payerNonce   string // hex; overrides the gas payer's transaction count when set
+	payerNative  int64  // native balance of the gas payer; independent of child gas
 	childNonce   string // hex; overrides the child address's latest (mined) nonce
 	childPending string // hex; overrides the child address's pending nonce
 	sendError    string // when set, eth_sendRawTransaction answers with this JSON-RPC error text
@@ -155,7 +156,13 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 			result = c.gasPrice
 		}
 	case "eth_getBalance":
+		// The gas payer funds top-ups for many children, so its balance is
+		// independent of the child being swept. Keeping it separate lets a test
+		// starve one child without also draining the payer.
 		result = fmt.Sprintf("0x%x", c.native)
+		if strings.EqualFold(param(0), c.payer) {
+			result = fmt.Sprintf("0x%x", c.payerNative)
+		}
 	case "eth_getTransactionCount":
 		address := param(0)
 		c.nonceReads = append(c.nonceReads, address)
@@ -247,7 +254,8 @@ func setupExecutor(t *testing.T) (*Executor, sqlmock.Sqlmock, *localChain, PlanE
 	hot, _ := crypto.HexToECDSA(strings.Repeat("0", 63) + "2")
 	c := &localChain{child: child, hot: hot, address: crypto.PubkeyToAddress(child.PublicKey).Hex(),
 		payer: crypto.PubkeyToAddress(hot.PublicKey).Hex(), live: 15_000_000, native: 1_000_000_000,
-		mined: true, head: 103, status: "0x1", canonical: testBlockHash, txs: map[string]bool{}, chainID: "0x38"}
+		payerNative: 1_000_000_000,
+		mined:       true, head: 103, status: "0x1", canonical: testBlockHash, txs: map[string]bool{}, chainID: "0x38"}
 	server := httptest.NewServer(http.HandlerFunc(c.serve))
 	t.Cleanup(server.Close)
 	wallet := &fixtureWallet{chain: c}

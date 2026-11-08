@@ -75,6 +75,12 @@ func TestRecordedErrorsKeepTheirReasonAndNothingElse(t *testing.T) {
 		"current credited balance is below the per-address sweep minimum",
 		"current credited sweep balance or address assignment is invalid",
 		"live balance 9000000 is below planned amount 10000000",
+		// Gas funding waits written by the sweeper. They name an operator
+		// action, so the sweep record must keep the sentence instead of
+		// replacing it with the generic payment failure.
+		"insufficient native gas budget to fund this sweep; it will be retried when the gas budget allows",
+		"gas wallet native balance cannot cover another top-up; fund the gas wallet and the sweep will resume",
+		"sweep gas budget is not configured for bsc",
 		`chain "bsc" is outside the requested sweep scope`,
 		"RPC node rejected request (code -32000): nonce too low",
 		"signed transaction fee does not match request",

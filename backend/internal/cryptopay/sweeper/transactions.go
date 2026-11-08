@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strconv"
 	"strings"
@@ -16,9 +17,29 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-var errGasPayerPending = errors.New("gas payer has an unresolved transaction; funding deferred")
+var (
+	errGasPayerPending = errors.New("gas payer has an unresolved transaction; funding deferred")
+	// errGasBudgetInsufficient marks a top-up the operator's native budget
+	// cannot cover right now. Waiting for a cheaper quote or a raised budget is
+	// not a failed payment, so the caller defers instead of spending an attempt.
+	errGasBudgetInsufficient = errors.New("insufficient native gas budget to fund this sweep; it will be retried when the gas budget allows")
+	// errGasPayerUnderfunded means the gas wallet cannot pay for the top-up plus
+	// its own transfer fee. Signing anyway produced bytes no node accepts
+	// ("insufficient funds for gas"); the row then stayed gas_pending with a
+	// hash and blocked every other address on the chain, because only a
+	// confirmation releases a payer and an unfundable transaction never
+	// confirms.
+	errGasPayerUnderfunded = errors.New("gas wallet native balance cannot cover another top-up; fund the gas wallet and the sweep will resume")
+	// errGasQuoteExceedsBudget is a temporary market condition, not a failure.
+	errGasQuoteExceedsBudget = errors.New("RPC gas quote exceeds the configured native funding budget")
+)
 
 func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, amount, price *big.Int) error {
+	// A zero (or negative) top-up cannot help the child and would only produce a
+	// signature that validation must reject. Treat it as unfunded, not failed.
+	if amount == nil || amount.Sign() <= 0 || price == nil || price.Sign() <= 0 {
+		return errGasBudgetInsufficient
+	}
 	if e.wallet == nil {
 		return fmt.Errorf("wallet is not initialized")
 	}
@@ -35,6 +56,20 @@ func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, 
 	}
 	if busy {
 		return errGasPayerPending
+	}
+	// The payer also pays the 21000-gas fee of this transfer. Check it here,
+	// before anything is signed or persisted, so a drained gas wallet defers
+	// instead of leaving an unmineable reservation behind.
+	balance, err := pool.Balance(ctx, hot.EVM)
+	if err != nil {
+		return err
+	}
+	required := new(big.Int).Add(amount, new(big.Int).Mul(price, big.NewInt(21000)))
+	if balance.Cmp(required) < 0 {
+		slog.Warn("[cryptopay] gas wallet cannot cover the top-up",
+			"job_id", j.ID, "chain", j.Chain,
+			"shortfall_wei", new(big.Int).Sub(required, balance).String())
+		return errGasPayerUnderfunded
 	}
 	// The receiving address may be a cold wallet. Its nonce is irrelevant.
 	nonce, err := pool.Nonce(ctx, hot.EVM)

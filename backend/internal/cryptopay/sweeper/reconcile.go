@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
@@ -73,6 +74,15 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 	required := e.config.Confirmations[job.Chain]
 	if required == 0 {
 		required = 1
+	}
+	// A record released as stale was deliberately unreserved: the sweeper
+	// proved its bytes could never be mined and a later run may already hold a
+	// new reservation for the same address. Observing it still matters (a late
+	// confirmation corrects the record), but turning it back into
+	// `sweep_pending`/`manual_review` would re-reserve an address the sweeper
+	// already handed to a newer job.
+	if job.Status == "failed" && strings.HasPrefix(job.Error, staleReleasePrefix) {
+		return run.observeReleased(ctx, pool, job, out, required)
 	}
 
 	// A signed token transfer is authoritative once it is mined.
@@ -154,6 +164,34 @@ func (e *Executor) finishReconcile(ctx context.Context, job *sweepJob, out *Reco
 	} else {
 		out.Message = jobErr
 	}
+	return out, nil
+}
+
+// observeReleased inspects a record whose reservation was deliberately released
+// as stale. A late confirmation is a genuine state correction and is recorded;
+// anything else leaves the row exactly as it is, because re-reserving it would
+// collide with any newer job for the same address.
+func (e *Executor) observeReleased(ctx context.Context, pool *rpc.Pool, job *sweepJob,
+	out *ReconcileResult, required uint64) (*ReconcileResult, error) {
+	hash := job.SweepHash
+	if hash == "" {
+		// A confirmed gas top-up does not re-open a released record either: the
+		// address is already free and its next plan must win.
+		hash = job.GasHash
+	}
+	if hash != "" {
+		state, err := checkReceipt(ctx, pool, hash, required)
+		if err != nil {
+			return nil, err
+		}
+		if state == receiptConfirmed && job.SweepHash != "" {
+			return e.finishReconcile(ctx, job, out, "swept", "",
+				ReconcileConfirmed, "released token transfer confirmed on chain")
+		}
+	}
+	out.Action = ReconcileObserved
+	out.Status = job.Status
+	out.Message = "job was released as stale; it stays failed unless its recorded token transfer confirms on chain"
 	return out, nil
 }
 
