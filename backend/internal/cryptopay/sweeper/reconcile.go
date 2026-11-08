@@ -219,7 +219,7 @@ func (e *Executor) observeReleased(ctx context.Context, pool *rpc.Pool, job *swe
 		hash = job.GasHash
 	}
 	if hash != "" {
-		state, err := checkReceipt(ctx, pool, hash, required)
+		state, err := checkReceipt(ctx, pool, job.Chain, hash, required)
 		if err != nil {
 			return nil, err
 		}
