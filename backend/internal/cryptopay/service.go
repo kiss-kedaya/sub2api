@@ -883,6 +883,33 @@ func (s *Service) StartSweepAsync(dryRun bool, chains []string) (*SweepRunState,
 	if !s.sweepMu.TryLock() {
 		return nil, ErrScanBusy
 	}
+	// Run the cheap preflight in the request so a disabled wallet/security lock
+	// is returned to the operator now instead of a 202 followed by an in-memory
+	// error they can never see. The worker repeats it while holding the sweep.
+	if !dryRun {
+		preflightCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		preErr := func() error {
+			if err := mode.CheckWritable(); err != nil {
+				return err
+			}
+			if err := s.checkWalletActivity(preflightCtx); err != nil {
+				return err
+			}
+			if s.wallet != nil {
+				_, revoke, err := s.wallet.AuthorizeSweep(preflightCtx)
+				if err != nil {
+					return err
+				}
+				revoke()
+			}
+			return nil
+		}()
+		cancel()
+		if preErr != nil {
+			s.sweepMu.Unlock()
+			return nil, preErr
+		}
+	}
 	state := &SweepRunState{
 		ID:        "sweep-" + uuid.NewString(),
 		DryRun:    dryRun,
@@ -912,6 +939,10 @@ func (s *Service) StartSweepAsync(dryRun bool, chains []string) (*SweepRunState,
 		state.Summary = summary
 		if err != nil {
 			state.Error = rpc.SafeError(err)
+			// The async route returns 202 before the preflight runs, so without
+			// this line the operator sees "failed" with no server-side evidence.
+			slog.Error("cryptopay.sweep.async_failed", "run_id", state.ID,
+				"chains", state.Chains, "error", rpc.SafeError(err))
 		}
 		sweepRunsMu.Unlock()
 	}()
