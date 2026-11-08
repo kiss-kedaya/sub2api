@@ -378,7 +378,13 @@ func normalizeOrderLookupOutTradeNo(raw string) (string, error) {
 
 func (s *PaymentService) ExpireTimedOutOrders(ctx context.Context) (int, error) {
 	now := time.Now()
-	orders, err := s.entClient.PaymentOrder.Query().Where(paymentorder.StatusEQ(OrderStatusPending), paymentorder.ExpiresAtLTE(now)).All(ctx)
+	// Bound one pass: each order triggers a provider status query, so letting
+	// the whole backlog through at once produces an external-call storm.
+	orders, err := s.entClient.PaymentOrder.Query().
+		Where(paymentorder.StatusEQ(OrderStatusPending), paymentorder.ExpiresAtLTE(now)).
+		Order(paymentorder.ByExpiresAt()).
+		Limit(200).
+		All(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("query expired: %w", err)
 	}

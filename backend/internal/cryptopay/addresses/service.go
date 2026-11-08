@@ -39,6 +39,9 @@ type Service struct {
 	deriver            Deriver
 	topUpBatch         int
 	lowWatermark       int64
+	// families limits which address families are assigned/returned. Defaults to
+	// both; the HTTP handler narrows it to chains the scanner actually watches.
+	families []string
 }
 
 // Guards are attached by the wallet facade, including for the direct address
@@ -58,7 +61,29 @@ func NewService(repo PoolStore, deriver Deriver) *Service {
 		deriver:      deriver,
 		topUpBatch:   50,
 		lowWatermark: 10,
+		families:     []string{FamilyEVM, FamilySolana},
 	}
+}
+
+// SetFamilies narrows assignment to the families the caller can actually scan.
+// Passing an empty list restores the default (both families).
+func (s *Service) SetFamilies(families []string) {
+	s.guardMu.Lock()
+	defer s.guardMu.Unlock()
+	if len(families) == 0 {
+		s.families = []string{FamilyEVM, FamilySolana}
+		return
+	}
+	s.families = append([]string(nil), families...)
+}
+
+func (s *Service) familiesSnapshot() []string {
+	s.guardMu.RLock()
+	defer s.guardMu.RUnlock()
+	if len(s.families) == 0 {
+		return []string{FamilyEVM, FamilySolana}
+	}
+	return append([]string(nil), s.families...)
 }
 
 // GetOrAssign returns the user's addresses, assigning from the pool (with a
@@ -76,7 +101,7 @@ func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]str
 		}
 	}
 	out := map[string]string{}
-	for _, family := range []string{FamilyEVM, FamilySolana} {
+	for _, family := range s.familiesSnapshot() {
 		existing, err := s.repo.ExistingAssignment(ctx, userID, family)
 		if err != nil {
 			return nil, err
