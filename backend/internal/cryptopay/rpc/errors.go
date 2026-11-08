@@ -335,6 +335,9 @@ var safeBusinessPrefixes = []string{
 	// mined and deliberately frees the address. Keep in step with
 	// sweeper.staleReleasePrefix; a test in the sweeper package pins it.
 	"stale pending released:",
+	// Written by the sweeper when a swept transaction is proven off the
+	// canonical chain. Keep in step with sweeper.sweptRollbackPrefix.
+	"swept rollback released:",
 	"sweep refused:",
 	"confirmed gas top-up is insufficient",
 	"RPC gas quote exceeds",

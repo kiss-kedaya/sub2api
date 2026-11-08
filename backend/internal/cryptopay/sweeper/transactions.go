@@ -171,7 +171,7 @@ const (
 
 // No polling loops: a pending job returns control to the rest of the group.
 // Missing confirmation policy permits observation, never finalization.
-func checkReceipt(ctx context.Context, pool *rpc.Pool, hash string, required uint64) (receiptState, error) {
+func checkReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string, required uint64) (receiptState, error) {
 	result, err := pool.Call(ctx, "eth_getTransactionReceipt", []any{hash})
 	if err != nil {
 		return receiptWaiting, err
@@ -216,10 +216,79 @@ func checkReceipt(ctx context.Context, pool *rpc.Pool, hash string, required uin
 	if required == 0 || head < block || head-block < required {
 		return receiptWaiting, nil
 	}
+	// Depth is measured from a head that can itself be reorged, so it is not
+	// finality. When the chain exposes a finality tag the mined block must also
+	// be behind it; only chains that do not serve the tag keep depth alone.
+	final, err := blockIsFinal(ctx, pool, chain, block)
+	if err != nil {
+		return receiptWaiting, err
+	}
+	if !final {
+		return receiptWaiting, nil
+	}
 	if r.Status == "0x0" {
 		return receiptReverted, nil
 	}
 	return receiptConfirmed, nil
+}
+
+// finalityTags lists the block tags that prove finality, strongest first. BSC's
+// safe tag is only its justified head, so it is never used there.
+func finalityTags(chain string) []string {
+	if chain == "bsc" {
+		return []string{"finalized"}
+	}
+	return []string{"finalized", "safe"}
+}
+
+// tagHeight reads one finality tag. ok is false when this node does not serve
+// the tag at all (JSON null, or an explicit RPC rejection): the caller then
+// keeps the configured depth rule that predates the tag check. Transport and
+// malformed answers stay errors so an unreadable chain is never mistaken for a
+// final one.
+func tagHeight(ctx context.Context, pool *rpc.Pool, tag string) (uint64, bool, error) {
+	result, err := pool.Call(ctx, "eth_getBlockByNumber", []any{tag, false})
+	if err != nil {
+		var failure *rpc.Failure
+		// A node rejecting the tag itself (unknown tag, method not supported)
+		// is "does not serve it". A rate limit is not: treating it as
+		// unsupported would silently drop finality while the provider throttles.
+		if errors.As(err, &failure) && failure.Kind == "remote" &&
+			failure.RPCCode != 429 && failure.Reason != "rate limited" {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	if bytes.Equal(bytes.TrimSpace(result), []byte("null")) {
+		return 0, false, nil
+	}
+	var header struct {
+		Number string `json:"number"`
+	}
+	if err := json.Unmarshal(result, &header); err != nil {
+		return 0, false, err
+	}
+	number, err := strconv.ParseUint(strings.TrimPrefix(header.Number, "0x"), 16, 64)
+	if err != nil {
+		return 0, false, fmt.Errorf("invalid finality tag height")
+	}
+	return number, true, nil
+}
+
+// blockIsFinal reports whether the chain considers block final. Chains served
+// by nodes that do not answer any finality tag fall back to the configured
+// depth that already governed confirmation.
+func blockIsFinal(ctx context.Context, pool *rpc.Pool, chain string, block uint64) (bool, error) {
+	for _, tag := range finalityTags(chain) {
+		height, ok, err := tagHeight(ctx, pool, tag)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return block <= height, nil
+		}
+	}
+	return true, nil
 }
 
 // settle only rebroadcasts identical persisted bytes, and only after a
@@ -247,7 +316,7 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		_, saveErr := e.jobError(ctx, j, err)
 		return false, saveErr
 	}
-	state, err := checkReceipt(ctx, pool, hash, required)
+	state, err := checkReceipt(ctx, pool, j.Chain, hash, required)
 	if err == nil && state == receiptAbsent {
 		var returned string
 		if guard, ok := e.wallet.(interface {
@@ -270,11 +339,11 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 			err = fmt.Errorf("broadcast returned a different transaction hash; outcome unknown")
 		}
 		if err == nil {
-			state, err = checkReceipt(ctx, pool, hash, required)
+			state, err = checkReceipt(ctx, pool, j.Chain, hash, required)
 		}
 	}
 	if err == nil {
-		state, err = e.waitForReceipt(ctx, pool, hash, required, state)
+		state, err = e.waitForReceipt(ctx, pool, j.Chain, hash, required, state)
 	}
 	if err != nil {
 		j.Error = rpc.SafeError(err)

@@ -35,6 +35,7 @@ type ReconcileResult struct {
 //	gas tx mined + confirmed   -> gas_confirmed (next run signs the token transfer)
 //	tx reverted                -> manual_review (nonce consumed; no replacement)
 //	tx absent                  -> pending (retain the reservation and exact bytes)
+//	swept tx rolled back       -> failed (address released, the next run plans it again)
 func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult, error) {
 	if err := mode.CheckWritable(); err != nil {
 		return nil, err
@@ -53,14 +54,16 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 	}
 	out := &ReconcileResult{JobID: job.ID, Chain: job.Chain, Status: job.Status}
 	hasTransaction := job.GasHash != "" || job.SweepHash != ""
-	if job.Status == "swept" || (job.Status == "failed" && !hasTransaction) {
-		out.Action = ReconcileObserved
-		out.Message = "job already final; nothing to reconcile"
-		return out, nil
-	}
 	// saveJob only writes version 1 rows, so a reconcile of anything else could
 	// read the chain but never record what it found. Say so up front.
 	if job.Version != 1 {
+		// A legacy swept row cannot be reclassified either, so keep the old
+		// "already final" answer instead of an error.
+		if job.Status == "swept" || !hasTransaction {
+			out.Action = ReconcileObserved
+			out.Message = "job already final; nothing to reconcile"
+			return out, nil
+		}
 		return nil, ErrLegacySweepRecord
 	}
 	pool := e.pools[job.Chain]
@@ -70,6 +73,42 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 	pool, err = pool.ForChain(ctx, uint64(ChainIDs[job.Chain]))
 	if err != nil {
 		return nil, err
+	}
+	if job.Status == "swept" {
+		// "swept" is a claim about the chain, not the chain itself: re-read the
+		// receipt and its canonical block. A proven rollback turns the record
+		// into failed so the address can be planned again.
+		observation, reason, checkErr := run.checkSwept(ctx, pool, job)
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		switch observation {
+		case sweptStillConfirmed:
+			out.Action = ReconcileObserved
+			out.Message = "swept transaction is still canonical on chain; nothing to reconcile"
+			return out, nil
+		case sweptMissingReceipt:
+			out.Action = ReconcileObserved
+			out.Message = "swept receipt is not visible to this node; record retained for the periodic audit"
+			return out, nil
+		}
+		changed, markErr := run.markSweptRolledBack(ctx, job.ID, reason)
+		if markErr != nil {
+			return nil, markErr
+		}
+		if !changed {
+			out.Action = ReconcileObserved
+			out.Message = "sweep record changed during reconcile; re-read it"
+			return out, nil
+		}
+		out.Action, out.Status = ReconcileReleased, "failed"
+		out.Message = "swept transaction rolled back (" + reason + "); address released for a new plan"
+		return out, nil
+	}
+	if job.Status == "failed" && !hasTransaction {
+		out.Action = ReconcileObserved
+		out.Message = "job already final; nothing to reconcile"
+		return out, nil
 	}
 	required := e.config.Confirmations[job.Chain]
 	if required == 0 {
@@ -87,7 +126,7 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 
 	// A signed token transfer is authoritative once it is mined.
 	if job.SweepHash != "" {
-		state, err := checkReceipt(ctx, pool, job.SweepHash, required)
+		state, err := checkReceipt(ctx, pool, job.Chain, job.SweepHash, required)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +156,7 @@ func (e *Executor) Reconcile(ctx context.Context, jobID int64) (*ReconcileResult
 	}
 
 	if job.GasHash != "" {
-		state, err := checkReceipt(ctx, pool, job.GasHash, required)
+		state, err := checkReceipt(ctx, pool, job.Chain, job.GasHash, required)
 		if err != nil {
 			return nil, err
 		}
@@ -246,6 +285,7 @@ func (e *Executor) ListBlocked(ctx context.Context, limit int) ([]BlockedJob, er
 		AND (status <> 'failed' OR gas_tx_hash <> '' OR sweep_tx_hash <> '')
 		AND (gas_tx_hash<>'' OR sweep_tx_hash<>'')
 		AND COALESCE(error,'') NOT LIKE 'stale pending released:%'
+		AND COALESCE(error,'') NOT LIKE 'swept rollback released:%'
 		ORDER BY updated_at ASC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -282,9 +322,13 @@ func (e *Executor) loadJob(ctx context.Context, jobID int64) (*sweepJob, error) 
 		return nil, err
 	}
 	if j.Version == 1 {
-		if amt, ok := new(big.Int).SetString(raw, 10); !ok || amt.Sign() <= 0 {
+		amount, ok := new(big.Int).SetString(raw, 10)
+		if !ok || amount.Sign() <= 0 {
 			return nil, fmt.Errorf("invalid immutable amount for sweep job %d", jobID)
 		}
+		// The sweep audit re-derives the recorded transfer from this amount; a
+		// validated but discarded value would make every receipt look foreign.
+		j.RawAmount = amount
 	}
 	return j, nil
 }

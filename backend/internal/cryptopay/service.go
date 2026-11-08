@@ -511,6 +511,11 @@ func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
 				slog.Info("[cryptopay] config changed in storage; reloaded")
 			}
 		case <-sweepTicker.C:
+			// A swept record is a claim about the chain, not the chain itself.
+			// Re-read the recent window even when automatic sweeps are off: a
+			// manual run's rollback is just as real, and this is the only place
+			// that would notice it.
+			s.auditRecentSweeps(ctx)
 			if !s.Config().SweepAuto {
 				continue
 			}
@@ -526,6 +531,30 @@ func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
 					"swept", summary.Swept, "failed", summary.Failed)
 			}
 		}
+	}
+}
+
+// auditRecentSweeps re-reads the receipts of recently swept jobs against the
+// canonical chain. A proven rollback turns the record into failed so the
+// address can be planned again; an unreadable chain changes nothing.
+func (s *Service) auditRecentSweeps(ctx context.Context) {
+	s.mu.RLock()
+	exec := s.executor
+	s.mu.RUnlock()
+	if exec == nil {
+		return
+	}
+	auditCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	audited, rolledBack, err := exec.AuditSweptRecent(auditCtx)
+	if err != nil {
+		slog.Warn("[cryptopay] swept audit incomplete", "audited", audited,
+			"rolled_back", rolledBack, "error", rpc.SafeError(err))
+		return
+	}
+	if rolledBack > 0 {
+		slog.Error("[cryptopay] swept audit found rolled back jobs", "audited", audited,
+			"rolled_back", rolledBack)
 	}
 }
 

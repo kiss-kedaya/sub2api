@@ -37,7 +37,7 @@ func (e *Executor) RunAndWait(ctx context.Context, dryRun bool) (*Summary, error
 // Polling only observes the existing hash. It never signs, replaces a nonce
 // or rebroadcasts. Receipt errors still stop progress, and the same canonical
 // block, confirmation depth and revert checks apply to every observation.
-func (e *Executor) waitForReceipt(ctx context.Context, pool *rpc.Pool, hash string, required uint64, state receiptState) (receiptState, error) {
+func (e *Executor) waitForReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string, required uint64, state receiptState) (receiptState, error) {
 	if e.confirmationDeadline.IsZero() || (state != receiptAbsent && state != receiptWaiting) {
 		return state, nil
 	}
@@ -58,7 +58,7 @@ func (e *Executor) waitForReceipt(ctx context.Context, pool *rpc.Pool, hash stri
 			return state, nil // wait budget exhausted; funds remain pending
 		case <-timer.C:
 		}
-		observed, err := checkReceipt(waitCtx, pool, hash, required)
+		observed, err := checkReceipt(waitCtx, pool, chain, hash, required)
 		if err != nil {
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 				return state, nil

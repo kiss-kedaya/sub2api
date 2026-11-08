@@ -39,7 +39,7 @@ func (e *Executor) refreshStuckGas(ctx context.Context, pool *rpc.Pool, j *sweep
 	}
 	// Anything other than a clean "no receipt" (mined, reverted, unreadable) is
 	// settle's business.
-	if state, err := checkReceipt(ctx, pool, j.GasHash, 1); err != nil || state != receiptAbsent {
+	if state, err := checkReceipt(ctx, pool, j.Chain, j.GasHash, 1); err != nil || state != receiptAbsent {
 		return nil
 	}
 	confirmed, err := pool.ConfirmedNonce(ctx, j.GasPayer)

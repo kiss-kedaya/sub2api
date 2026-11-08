@@ -366,9 +366,9 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	if required == 0 {
 		var observeErr error
 		if job.SweepHash != "" {
-			_, observeErr = checkReceipt(ctx, pool, job.SweepHash, 0)
+			_, observeErr = checkReceipt(ctx, pool, job.Chain, job.SweepHash, 0)
 		} else if job.GasHash != "" {
-			_, observeErr = checkReceipt(ctx, pool, job.GasHash, 0)
+			_, observeErr = checkReceipt(ctx, pool, job.Chain, job.GasHash, 0)
 		}
 		return e.jobError(ctx, job, joinErrors(fmt.Errorf("confirmation depth is not configured for %s", job.Chain), observeErr))
 	}

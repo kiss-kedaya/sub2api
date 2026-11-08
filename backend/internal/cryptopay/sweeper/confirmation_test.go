@@ -109,7 +109,7 @@ func TestSweepWaitKeepsCallerCancellationAndRPCFailures(t *testing.T) {
 			if canceled {
 				cancel()
 			}
-			state, err := e.waitForReceipt(ctx, e.pools[entry.Chain], "0x123", 2, receiptWaiting)
+			state, err := e.waitForReceipt(ctx, e.pools[entry.Chain], entry.Chain, "0x123", 2, receiptWaiting)
 			if err == nil || state != receiptWaiting || (canceled && !errors.Is(err, context.Canceled)) {
 				t.Fatalf("unsafe wait result: state=%v err=%v", state, err)
 			}
