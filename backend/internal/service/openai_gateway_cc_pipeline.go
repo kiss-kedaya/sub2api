@@ -202,6 +202,9 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	// DeepSeek thinking mode requires reasoning_content on every assistant
 	// message that produced reasoning. Cache-backed replay can miss (eviction,
 	// other key, item never recorded); fill only the still-empty slots.
+	if account.Platform == PlatformDeepseek {
+		body = dropOrphanDeepSeekToolMessages(body)
+	}
 	body = ensureDeepSeekChatReasoningPlaceholders(account, body)
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
