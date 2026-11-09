@@ -394,7 +394,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			return pendingError(job, err)
 		}
 	}
-	if job.SweepRaw == "" && job.SweepHash == "" && job.Status != "swept" && job.Status != "failed" {
+	if job.Revision > 0 && job.SweepRaw == "" && job.SweepHash == "" && job.Status != "swept" && job.Status != "failed" {
 		// A newer job for the same chain/address/token already swept. Keeping
 		// this duplicate reserves the address forever even though the balance
 		// is gone; release it instead of retrying an impossible transfer.
