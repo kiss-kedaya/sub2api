@@ -280,7 +280,7 @@ func tagHeight(ctx context.Context, pool *rpc.Pool, tag string) (uint64, bool, e
 // depth that already governed confirmation.
 func blockIsFinal(ctx context.Context, pool *rpc.Pool, chain string, block uint64) (bool, error) {
 	for _, tag := range finalityTags(chain) {
-		height, ok, err := tagHeight(ctx, pool, tag)
+		height, ok, err := pool.MaxBlockTagHeight(ctx, tag)
 		if err != nil {
 			return false, err
 		}

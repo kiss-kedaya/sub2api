@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -125,6 +126,62 @@ func (p *Pool) MaxBlockNumber(ctx context.Context) (uint64, error) {
 		return 0, lastErr
 	}
 	return best, nil
+}
+
+// MaxBlockTagHeight returns the highest height any endpoint reports for a
+// finality tag. A single lagging node must not keep an old transaction
+// unconfirmed forever, which is what rotating Call would do.
+func (p *Pool) MaxBlockTagHeight(ctx context.Context, tag string) (uint64, bool, error) {
+	p.mu.RLock()
+	endpoints := append([]string(nil), p.endpoints...)
+	p.mu.RUnlock()
+	if len(endpoints) == 0 {
+		return 0, false, fmt.Errorf("no rpc endpoints configured")
+	}
+	var best uint64
+	var answered bool
+	var lastErr error
+	var unsupported bool
+	for _, endpoint := range endpoints {
+		result, err := p.callOne(ctx, endpoint, "eth_getBlockByNumber", []any{tag, false})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if string(result) == "null" {
+			continue
+		}
+		var header struct {
+			Number string `json:"number"`
+		}
+		if err := json.Unmarshal(result, &header); err != nil || header.Number == "" {
+			lastErr = err
+			continue
+		}
+		height, err := hexutil.DecodeUint64(header.Number)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		answered = true
+		if height > best {
+			best = height
+		}
+	}
+	if !answered && lastErr != nil {
+		var failure *Failure
+		if errors.As(lastErr, &failure) && failure.Kind == "remote" &&
+			failure.RPCCode != 429 && failure.Reason != "rate limited" {
+			unsupported = true
+		}
+	}
+	if unsupported {
+		return 0, false, nil
+	}
+	if !answered && lastErr != nil {
+		return 0, false, lastErr
+	}
+	return best, answered, nil
 }
 
 // healthTracker lazily initialises the endpoint health state so pools built
