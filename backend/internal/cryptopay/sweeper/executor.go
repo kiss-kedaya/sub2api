@@ -394,6 +394,26 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			return pendingError(job, err)
 		}
 	}
+	if job.SweepRaw == "" && job.SweepHash == "" && job.Status != "swept" && job.Status != "failed" {
+		// A newer job for the same chain/address/token already swept. Keeping
+		// this duplicate reserves the address forever even though the balance
+		// is gone; release it instead of retrying an impossible transfer.
+		var superseded bool
+		if err := e.queries().QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM sweep_records WHERE id<>$1 AND chain=$2
+			  AND lower(from_address)=lower($3) AND lower(token)=lower($4) AND status='swept')`,
+			job.ID, job.Chain, job.Address, job.Token).Scan(&superseded); err == nil && superseded {
+			job.Status = "failed"
+			job.Error = "stale pending released: superseded by a swept job for the same address/token"
+			if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`, job.ID, job.Error); err != nil {
+				return pendingError(job, err)
+			}
+			out := job.outcome()
+			out.Status = "failed"
+			out.Error = job.Error
+			return out, nil
+		}
+	}
 	if job.SweepRaw == "" && job.SweepHash == "" {
 		// Gas-confirmed rows that made no token progress for half an hour are
 		// stuck (old finality tag, lost persist); release the reservation so the
