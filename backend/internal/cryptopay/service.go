@@ -821,17 +821,21 @@ func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chain
 			return nil, err
 		}
 		merged := &sweeper.Summary{DryRun: false}
-		for round := 0; round < 3; round++ {
+		// Gas top-ups are serialized by the payer nonce, so one pass can only
+		// sweep the addresses whose gas confirmed while it ran. Keep passing
+		// until the queue is empty (or a retryable failure stops being reset),
+		// otherwise a click only ever drains the first handful of addresses.
+		for round := 0; round < 60; round++ {
+			reset, rerr := 0, error(nil)
 			if round > 0 {
-				n, rerr := exec.ResetRetryableFailures(ctx, 200)
+				reset, rerr = exec.ResetRetryableFailures(ctx, 200)
 				if rerr != nil {
 					return merged, rerr
 				}
-				if n == 0 {
-					break
-				}
+				// Give the previous round's gas top-ups time to mine; without
+				// this sleep every extra round just sees the same pending gas.
 				select {
-				case <-time.After(2 * time.Second):
+				case <-time.After(8 * time.Second):
 				case <-ctx.Done():
 					return merged, ctx.Err()
 				}
@@ -840,6 +844,9 @@ func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chain
 			mergeSweepSummary(merged, pass)
 			if perr != nil {
 				return merged, perr
+			}
+			if pass.Pending == 0 && pass.Planned == 0 && reset == 0 {
+				break
 			}
 		}
 		return merged, nil
