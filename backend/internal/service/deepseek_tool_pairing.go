@@ -1,8 +1,10 @@
 package service
 
 import (
+	"encoding/json"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -42,6 +44,31 @@ func dropOrphanDeepSeekToolMessages(body []byte) []byte {
 		return body
 	}
 	out, err := sjson.SetRawBytes(body, "messages", []byte("["+strings.Join(kept, ",")+"]"))
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// normalizeDeepSeekChatMessages rebuilds tool pairs into the exact order
+// DeepSeek requires (assistant tool_calls immediately followed by its tool
+// replies). The orphan-only filter is not enough when another message sits
+// between the assistant and its replies.
+func normalizeDeepSeekChatMessages(body []byte) []byte {
+	raw := gjson.GetBytes(body, "messages")
+	if !raw.IsArray() {
+		return body
+	}
+	var messages []apicompat.ChatMessage
+	if err := json.Unmarshal([]byte(raw.Raw), &messages); err != nil {
+		return body
+	}
+	normalized := apicompat.NormalizeChatMessages(messages)
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return body
+	}
+	out, err := sjson.SetRawBytes(body, "messages", encoded)
 	if err != nil {
 		return body
 	}

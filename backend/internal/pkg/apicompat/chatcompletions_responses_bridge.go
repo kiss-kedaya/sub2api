@@ -885,6 +885,12 @@ func appendAssistantToolCall(messages []ChatMessage, toolCall ChatToolCall, pend
 // (and an assistant left with neither tool_calls nor content is dropped); orphan
 // tool replies and intervening messages are emitted in their natural position
 // but never between an assistant tool_calls message and its replies.
+// NormalizeChatMessages enforces the Chat Completions tool-call invariant:
+// every tool reply immediately follows the assistant that announced it.
+func NormalizeChatMessages(messages []ChatMessage) []ChatMessage {
+	return normalizeChatMessages(messages)
+}
+
 func normalizeChatMessages(messages []ChatMessage) []ChatMessage {
 	return normalizeChatMessagesWithToolOutputMedia(messages, nil)
 }
