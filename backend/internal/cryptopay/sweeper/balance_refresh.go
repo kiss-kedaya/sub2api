@@ -2,6 +2,7 @@ package sweeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -27,10 +28,10 @@ func (e *Executor) refreshUnsignedAmount(ctx context.Context, job *sweepJob) err
 		!strings.EqualFold(balance.Address, job.Address) || !strings.EqualFold(balance.Token, job.Token) ||
 		balance.Decimals != job.Decimals || balance.DerivationIndex != job.DerivationIndex ||
 		balance.Raw == nil || balance.Raw.Sign() <= 0 || balance.Raw.BitLen() > 256 {
-		return fmt.Errorf("current credited sweep balance or address assignment is invalid")
+		return fmt.Errorf("%w: current credited balance or assignment is no longer valid", errStaleSweepPlan)
 	}
 	if toDecimal(balance.Raw, job.Decimals) < e.config.MinPerAddress[job.Chain] {
-		return fmt.Errorf("current credited balance is below the per-address sweep minimum")
+		return fmt.Errorf("%w: current credited balance is below the per-address sweep minimum", errStaleSweepPlan)
 	}
 	if balance.Raw.Cmp(job.RawAmount) == 0 {
 		return nil
@@ -74,3 +75,8 @@ func (e *Executor) checkCurrentSweepBalance(ctx context.Context, pool *rpc.Pool,
 	}
 	return nil
 }
+
+// errStaleSweepPlan means the job no longer matches the credited ledger or the
+// address assignment. It is released rather than retried, so the planner can
+// create a fresh job from the current balance in the same run.
+var errStaleSweepPlan = errors.New("stale sweep plan")
