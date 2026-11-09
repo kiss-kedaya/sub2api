@@ -338,6 +338,20 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 
 func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error) {
 	out := job.outcome()
+	// A reverted transaction consumed its nonce and moved no tokens; keeping
+	// the row in manual_review reserves the address forever. Release it so the
+	// planner can build a fresh transfer from the current balance.
+	if job.Status == "manual_review" && strings.Contains(job.Error, "confirmed transaction reverted") {
+		job.Status = "failed"
+		job.Error = "stale pending released: reverted transfer released for replan"
+		if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`, job.ID, job.Error); err != nil {
+			return pendingError(job, err)
+		}
+		out = job.outcome()
+		out.Status = "failed"
+		out.Error = job.Error
+		return out, nil
+	}
 	if job.Version == 0 || job.Status == "manual_review" {
 		out.Status = "manual_review"
 		if out.Error == "" {
