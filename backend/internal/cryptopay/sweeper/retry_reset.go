@@ -21,6 +21,8 @@ func (e *Executor) ResetRetryableFailures(ctx context.Context, limit int) (int, 
 			  AND COALESCE(f.sweep_tx_hash,'')=''
 			  AND COALESCE(f.gas_tx_hash,'')=''
 			  AND COALESCE(f.error,'') NOT ILIKE '%per-address sweep minimum%'
+			  AND COALESCE(f.error,'') NOT LIKE 'stale pending released:%'
+			  AND COALESCE(f.error,'') NOT LIKE 'swept rollback released:%'
 			  -- A live row for the same chain/address/token already owns the
 			  -- partial unique index; resetting a duplicate would abort the whole
 			  -- UPDATE and make every click fail with a generic payment error.

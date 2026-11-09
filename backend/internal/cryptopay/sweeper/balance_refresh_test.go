@@ -115,9 +115,12 @@ func TestSweepCurrentBalanceCannotChangeAddressAssignment(t *testing.T) {
 			}
 			e.reader = reader
 			expectCreate(mock, entry, nil, nil)
-			expectWrite(mock, "planned", nil, nil)
+			// A stale plan is released (status failed), never retried forever.
+			mock.ExpectExec(`UPDATE sweep_records SET status='failed'`).
+				WithArgs(int64(1), sqlmock.AnyArg()).
+				WillReturnResult(sqlmock.NewResult(0, 1))
 			out, err := e.sweepOne(t.Context(), entry, false)
-			if err == nil || out.Status == "swept" || len(chain.signs) != 0 || len(chain.raws) != 0 {
+			if err != nil || out.Status != "failed" || len(chain.signs) != 0 || len(chain.raws) != 0 {
 				t.Fatalf("changed %s authorized a transaction: %+v %v", field, out, err)
 			}
 		})

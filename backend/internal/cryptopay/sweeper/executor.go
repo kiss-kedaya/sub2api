@@ -532,6 +532,20 @@ func (e *Executor) finishSweep(ctx context.Context, pool *rpc.Pool, job *sweepJo
 const maxSweepAttempts = 25
 
 func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (SweepEntry, error) {
+	if errors.Is(cause, errStaleSweepPlan) {
+		// The recorded amount/assignment no longer matches the credited ledger.
+		// Retrying cannot fix that; release the row so the planner can create a
+		// fresh job from the current balance instead of blocking the address.
+		job.Status = "failed"
+		job.Error = "stale pending released: " + rpc.SafeRecordedError(cause.Error())
+		if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`, job.ID, job.Error); err != nil {
+			return pendingError(job, err)
+		}
+		out := job.outcome()
+		out.Status = "failed"
+		out.Error = job.Error
+		return out, nil
+	}
 	var storage *persistenceError
 	if errors.As(cause, &storage) {
 		return pendingError(job, cause)
