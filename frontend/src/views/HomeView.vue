@@ -5,7 +5,7 @@
     <iframe
       v-if="isHomeContentUrl"
       :src="safeHomeUrl"
-      sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"
       referrerpolicy="no-referrer"
       class="h-screen w-full border-0"
       allowfullscreen
