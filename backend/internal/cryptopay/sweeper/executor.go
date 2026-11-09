@@ -380,6 +380,30 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			return pendingError(job, err)
 		}
 	}
+	if job.SweepRaw == "" && job.SweepHash == "" {
+		// Gas-confirmed rows that made no token progress for half an hour are
+		// stuck (old finality tag, lost persist); release the reservation so the
+		// planner can create a fresh job from the current balance in this run.
+		stuckGas := false
+		if job.Status == "gas_confirmed" {
+			var updated time.Time
+			if err := e.queries().QueryRowContext(ctx, `SELECT updated_at FROM sweep_records WHERE id=$1`, job.ID).Scan(&updated); err == nil && !updated.IsZero() && time.Since(updated) > 30*time.Minute {
+				stuckGas = true
+			}
+		}
+		reverted := job.Status == "manual_review" && strings.Contains(job.Error, "confirmed transaction reverted")
+		if stuckGas || reverted {
+			job.Status = "failed"
+			job.Error = "stale pending released: stuck job made no token progress"
+			if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`, job.ID, job.Error); err != nil {
+				return pendingError(job, err)
+			}
+			out := job.outcome()
+			out.Status = "failed"
+			out.Error = job.Error
+			return out, nil
+		}
+	}
 	if job.SweepRaw != "" {
 		// A signed transfer that no node can see at an already-consumed nonce
 		// can never land. Recover it before replaying the same dead bytes, which
