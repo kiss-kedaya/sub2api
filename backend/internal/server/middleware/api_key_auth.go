@@ -272,6 +272,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			} else {
 				// 非订阅模式 或 订阅模式但 subscriptionService 未注入：回退到余额检查
 				if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
+					notifyBalanceExhausted(c.Request.Context(), apiKey.User)
 					abortWithInsufficientBalance(c)
 					return
 				}
@@ -323,6 +324,20 @@ func abortWithAPIKeyQuotaError(c *gin.Context) {
 		return
 	}
 	AbortWithError(c, http.StatusTooManyRequests, "API_KEY_QUOTA_EXHAUSTED", message)
+}
+
+// balanceExhaustedNotifier is registered at startup so the auth middleware can
+// alert the bound email without depending on the notification service.
+var balanceExhaustedNotifier func(context.Context, *service.User)
+
+func SetBalanceExhaustedNotifier(f func(context.Context, *service.User)) {
+	balanceExhaustedNotifier = f
+}
+
+func notifyBalanceExhausted(ctx context.Context, user *service.User) {
+	if balanceExhaustedNotifier != nil && user != nil {
+		balanceExhaustedNotifier(ctx, user)
+	}
 }
 
 func abortWithInsufficientBalance(c *gin.Context) {

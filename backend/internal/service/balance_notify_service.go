@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -80,6 +81,39 @@ func resolveBalanceThreshold(threshold float64, thresholdType string, totalRecha
 		return totalRecharged * threshold / 100
 	}
 	return threshold
+}
+
+// insufficientBalanceNotify dedupes the "balance exhausted" alert per user.
+var (
+	insufficientBalanceNotifyMu sync.Mutex
+	insufficientBalanceNotifyAt = map[int64]time.Time{}
+)
+
+const insufficientBalanceNotifyInterval = 24 * time.Hour
+
+// NotifyInsufficientBalance emails the bound address when a request is rejected
+// because the balance is already exhausted. Deduction-time notifications never
+// fire for that case: the request is rejected before any cost is applied.
+func (s *BalanceNotifyService) NotifyInsufficientBalance(ctx context.Context, user *User) {
+	if s == nil || user == nil || s.emailService == nil || s.settingRepo == nil {
+		return
+	}
+	if strings.TrimSpace(user.Email) == "" || user.BalanceNotifyPrimaryEmailDisabled {
+		return
+	}
+	enabled, threshold, rechargeURL := s.getBalanceNotifyConfig(ctx)
+	if !enabled {
+		return
+	}
+	now := time.Now()
+	insufficientBalanceNotifyMu.Lock()
+	if last, ok := insufficientBalanceNotifyAt[user.ID]; ok && now.Sub(last) < insufficientBalanceNotifyInterval {
+		insufficientBalanceNotifyMu.Unlock()
+		return
+	}
+	insufficientBalanceNotifyAt[user.ID] = now
+	insufficientBalanceNotifyMu.Unlock()
+	s.dispatchBalanceLowEmail(ctx, user, 0, threshold, rechargeURL)
 }
 
 // CheckBalanceAfterDeduction checks if balance crossed below threshold after deduction.
