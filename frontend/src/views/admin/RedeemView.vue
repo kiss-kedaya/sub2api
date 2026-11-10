@@ -840,6 +840,10 @@ const closeBatchUpdateDialog = () => {
 
 // Same treatment as the generate dialog: the batch dialog is filled in, then a stray veil
 // click would otherwise throw the whole selection away.
+//
+// The signature is the set of selected codes. A draft written for one selection must not be
+// replayed onto another: "disable these" restored over a different set of codes is a bulk
+// edit nobody asked for.
 const batchUpdateDraft = useDialogDraft({
   key: () => 'admin.redeem.batch-update',
   fields: [
@@ -854,7 +858,8 @@ const batchUpdateDraft = useDialogDraft({
     'group_id'
   ] as const,
   state: batchUpdateForm,
-  open: () => showBatchUpdateDialog.value
+  open: () => showBatchUpdateDialog.value,
+  signature: () => Array.from(selectedCodeIds.value).sort((a, b) => a - b).join(',')
 })
 
 const discardGenerateDraft = () => {

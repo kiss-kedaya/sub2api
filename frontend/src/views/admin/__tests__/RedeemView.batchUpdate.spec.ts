@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import RedeemView from '../RedeemView.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import { setDialogDraftUserIdResolver } from '@/composables/useDialogDraft'
 
 const { listRedeemCodes, generateRedeemCodes, batchUpdateRedeemCodes, getAllGroups, showSuccess, showError, showInfo } =
   vi.hoisted(() => ({
@@ -189,6 +191,70 @@ describe('admin RedeemView batch update', () => {
       notes: 'maintenance'
     })
     expect(showSuccess).toHaveBeenCalledWith('admin.redeem.batchUpdateSuccess')
+  })
+
+  // A draft belongs to the selection it was written for. Replaying "disable these" onto a
+  // different set of codes would turn a stray outside click into an unintended bulk edit.
+  it('does not replay a batch draft onto a different selection', async () => {
+    sessionStorage.clear()
+    setDialogDraftUserIdResolver(() => 42)
+    try {
+      const wrapper = mount(RedeemView, {
+        attachTo: document.body,
+        global: {
+          stubs: {
+            AppLayout: { template: '<div><slot /></div>' },
+            TablePageLayout: {
+              template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+            },
+            DataTable: DataTableStub,
+            Pagination: true,
+            ConfirmDialog: true,
+            Select: SelectStub,
+            GroupBadge: true,
+            GroupOptionItem: true,
+            Icon: true,
+            Teleport: true
+          }
+        }
+      })
+      await flushPromises()
+      const rows = () => wrapper.findAll('[data-test="select-code"]')
+      const statusChecked = () => wrapper.get('[data-test="batch-field-status"]').attributes('aria-checked')
+      const closeDialog = async () => {
+        // The page holds several dialogs; close the one that is showing.
+        const open = wrapper.findAllComponents(BaseDialog).find((dialog) => dialog.props('show'))
+        if (!open) throw new Error('no open dialog')
+        open.vm.$emit('close')
+        await flushPromises()
+      }
+
+      // Tick "status" for code 1, then leave without submitting.
+      await rows()[0].trigger('click')
+      await wrapper.get('[data-test="batch-update-open"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-test="batch-field-status"]').trigger('click')
+      await flushPromises()
+      expect(statusChecked()).toBe('true')
+      await closeDialog()
+
+      // Same selection: the draft comes back.
+      await wrapper.get('[data-test="batch-update-open"]').trigger('click')
+      await flushPromises()
+      expect(statusChecked()).toBe('true')
+      await closeDialog()
+
+      // Different selection (code 2 instead of code 1): the form starts clean.
+      await rows()[0].trigger('click')
+      await rows()[1].trigger('click')
+      await wrapper.get('[data-test="batch-update-open"]').trigger('click')
+      await flushPromises()
+      expect(statusChecked()).toBe('false')
+      wrapper.unmount()
+    } finally {
+      setDialogDraftUserIdResolver(null)
+      sessionStorage.clear()
+    }
   })
 
   it('allows generating up to 1000 redeem codes', async () => {

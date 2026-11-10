@@ -69,6 +69,7 @@ function mount(
     userId?: string | number | null
     storage?: MemoryStorage | null
     signature?: () => string | null
+    enabled?: () => boolean
     fields?: readonly (keyof Form & string)[]
   } = {}
 ) {
@@ -82,6 +83,7 @@ function mount(
     state: form,
     open: () => open.value,
     signature: options.signature,
+    enabled: options.enabled,
     userId: () => (options.userId === undefined ? 42 : options.userId),
     storage: () => asStorage(storage)
   })
@@ -91,6 +93,33 @@ function mount(
 describe('useDialogDraft', () => {
   beforeEach(() => {
     vi.useRealTimers()
+  })
+
+  it('neither writes nor restores while the form is in a shape the draft cannot represent', async () => {
+    const storage = new MemoryStorage()
+    const form = makeForm()
+    const open = ref(false)
+    const enabled = ref(true)
+    mount(form, { storage, open, enabled: () => enabled.value })
+
+    // A draft exists from an earlier, representable edit.
+    open.value = true
+    await nextTick()
+    form.amount = 25
+    open.value = false
+    await nextTick()
+    expect(storage.length).toBe(1)
+
+    // The dialog is now in the other mode: closing it must remove the draft, not refresh it.
+    enabled.value = false
+    form.amount = null
+    open.value = true
+    await nextTick()
+    expect(form.amount).toBeNull()
+    form.note = 'typed in the other mode'
+    open.value = false
+    await nextTick()
+    expect(storage.length).toBe(0)
   })
 
   it('restores a draft after the dialog is closed without submitting', async () => {

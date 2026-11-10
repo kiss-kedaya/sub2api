@@ -452,11 +452,17 @@ function closeForm() { expanded.value = false; preview.value = null; confirmed.v
 // The timer dialog closes on an outside click, so a half-filled schedule survives it. The
 // key carries the account id, and the signature is the schedule version we started from: a
 // timer saved elsewhere in the meantime invalidates the draft instead of overwriting it.
+//
+// Only one-shot timers are drafted. A recurring schedule keeps its periods and weekday scope
+// outside `form` (in `recurringPeriods` and `weekdaysOnly`), so a draft could bring back the
+// timezone but not the periods, and the dialog would claim to have restored input it had lost.
+const isOneShotDraft = () => action.value !== 'recurring' && form.mode !== 'recurring'
 const timerDraft = useDialogDraft({
   key: () => `admin.accounts.timer:${props.accountId}:${action.value}`,
   fields: ['mode', 'hours', 'minutes', 'date', 'time', 'timezone'] as const,
   state: form,
   open: () => expanded.value,
+  enabled: isOneShotDraft,
   signature: () => `${action.value}:${editVersion.value}`
 })
 

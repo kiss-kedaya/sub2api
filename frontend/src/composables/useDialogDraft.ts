@@ -39,6 +39,12 @@ export interface DialogDraftOptions<T extends object> {
   open: () => boolean
   /** Version marker of the edited object (for example a version counter or `updated_at`). */
   signature?: () => string | number | null | undefined
+  /**
+   * Whether the form is in a shape this draft can represent. While it returns false nothing
+   * is written or restored and any stored draft under the current key is removed — for a
+   * dialog mode whose real input lives outside the whitelisted fields.
+   */
+  enabled?: () => boolean
   /** Explicit user id, mainly for tests; defaults to the auth store. */
   userId?: () => string | number | null | undefined
   /** Explicit storage, mainly for tests; defaults to `window.sessionStorage`. */
@@ -192,7 +198,13 @@ export function useDialogDraft<T extends object>(options: DialogDraftOptions<T>)
     }
   }
 
+  const draftable = () => (options.enabled ? options.enabled() : true)
+
   function save(): void {
+    if (!draftable()) {
+      drop()
+      return
+    }
     const userId = resolveUserId()
     // Without an identity the key cannot separate accounts, so nothing is written.
     if (!hasIdentity(userId)) return
@@ -215,6 +227,10 @@ export function useDialogDraft<T extends object>(options: DialogDraftOptions<T>)
   }
 
   function restore(): boolean {
+    if (!draftable()) {
+      drop()
+      return false
+    }
     const stored = readStored()
     if (!stored) {
       restored.value = false
