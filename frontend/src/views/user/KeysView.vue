@@ -155,7 +155,7 @@
             <div
               :ref="(el) => setGroupButtonRef(row.id, el)"
               data-group-cell
-              class="group/dropdown relative -mx-2 -my-1 flex w-fit max-w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
+              class="group/dropdown relative -mx-2 -my-1 flex w-fit max-w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-colors duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
               @click="onGroupCellClick($event, row)"
             >
               <button
@@ -253,7 +253,7 @@
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
+                      'h-full rounded-full transition-[width,background-color]',
                       row.quota_used >= row.quota ? 'bg-red-500' :
                       row.quota_used >= row.quota * 0.8 ? 'bg-yellow-500' :
                       'bg-primary-500'
@@ -284,7 +284,7 @@
                   </span>
                 </div>
                 <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div :class="['h-full rounded-full transition-all', RATE_LIMIT_BAR_CLASS[w.tone]]" :style="{ width: w.percent + '%' }" />
+                  <div :class="['h-full rounded-full transition-[width,background-color]', RATE_LIMIT_BAR_CLASS[w.tone]]" :style="{ width: w.percent + '%' }" />
                 </div>
                 <div v-if="w.resetAt && formatResetTime(w.resetAt)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
                   ⟳ {{ formatResetTime(w.resetAt) }}
@@ -779,7 +779,7 @@
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
+                      'h-full rounded-full transition-[width,background-color]',
                       selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'bg-red-500' :
                       selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
                       'bg-green-500'
@@ -814,7 +814,7 @@
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
+                      'h-full rounded-full transition-[width,background-color]',
                       selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'bg-red-500' :
                       selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
                       'bg-green-500'
@@ -849,7 +849,7 @@
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
                   <div
                     :class="[
-                      'h-full rounded-full transition-all',
+                      'h-full rounded-full transition-[width,background-color]',
                       selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'bg-red-500' :
                       selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
                       'bg-green-500'
