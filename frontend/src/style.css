@@ -38,6 +38,62 @@ html[data-platform='ios'] .console-search-trigger kbd {
   font-variant-ligatures: none;
 }
 
+/* ---- Platform layer (mobile-native baseline) ----
+   Touch, scroll and browser-chrome behaviour belongs to the device, not to the console skin,
+   so these are plain capability queries rather than platform classes. */
+
+/* iOS Safari and Android Chrome paint a translucent grey over any tapped element that has a
+   click handler. It is the loudest "this is a website" tell and it fights the :active feedback
+   below. Set once here; every tappable element then owns its own press state. */
+html {
+  -webkit-tap-highlight-color: transparent;
+  /* No font inflation when the phone turns landscape. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Pull-to-refresh and the whole-page rubber band are welcome on the marketing and legal
+   documents but wrong inside the console, which is an app shell with its own scroll areas.
+   So the root stays untouched and the shell opts out instead (see the console rule below). */
+
+/* Inputs under 16px make iOS Safari zoom the page on focus and never zoom back, which is why
+   projects reach for maximum-scale=1. This is the real fix. The data-platform rules at the top
+   of this file stay for desktop emulation; a coarse pointer is the device actually telling us.
+   Input font size is the one thing that stays gated: desktop keeps the smaller design size. */
+@media (pointer: coarse) {
+  :is(input, textarea, select):not([type='checkbox']):not([type='radio']):not([type='range']) {
+    font-size: max(16px, 1rem);
+  }
+}
+
+/* A tap never double-tap-zooms on a control, so the browser fires click immediately instead of
+   waiting 300ms to see whether a second tap arrives. Not gated by pointer type: a touchscreen
+   laptop reports a fine primary pointer and still gets tapped, and this is inert for a mouse. */
+:is(button, a, [role='button'], [role='option'], [role='menuitem'], [role='tab'], .btn, .tappable) {
+  touch-action: manipulation;
+}
+
+/* Text that is a control must not be selectable — a long-press otherwise raises the copy/share
+   callout. Body text, table cells, order numbers, keys and error messages stay selectable, so
+   this is never applied to body or to content elements. */
+:is(button, [role='button'], [role='tab'], [role='menuitem'], [role='option'], .btn, .tab, .tappable) {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The console is an app shell: no pull-to-refresh hijacking its scroll, and a scroll area that
+   ends keeps the bounce inside itself instead of dragging the page behind it. */
+.console-signal,
+.console-frame,
+.console-shell {
+  overscroll-behavior: none;
+}
+
+.console-signal :is(.table-scroll-container, .signal-main, .tickets-list, .chat-messages, [data-scroll-container]) {
+  overscroll-behavior: contain;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
@@ -99,17 +155,19 @@ html[data-theme-switching]::view-transition-new(root) {
   to { opacity: 1; }
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]) {
-    transition: transform var(--cb-t-fast) var(--cb-ease-press), box-shadow var(--cb-t-fast) var(--cb-ease-out), background-color var(--cb-t-fast) ease, color var(--cb-t-fast) ease, border-color var(--cb-t-fast) ease;
-  }
+/* Press feedback belongs to every input type: a native control reacts when the finger lands, not
+   when it lifts. Kept outside the hover query below so touch devices get it too. */
+.console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]) {
+  transition: transform var(--cb-t-fast) var(--cb-ease-press), box-shadow var(--cb-t-fast) var(--cb-ease-out), background-color var(--cb-t-fast) ease, color var(--cb-t-fast) ease, border-color var(--cb-t-fast) ease;
+}
 
+.console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]):active {
+  transform: scale(var(--cb-press));
+}
+
+@media (hover: hover) and (pointer: fine) {
   .console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]):hover {
     transform: translateY(var(--cb-lift));
-  }
-
-  .console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]):active {
-    transform: scale(var(--cb-press));
   }
 }
 
@@ -644,7 +702,9 @@ html[data-theme-switching]::view-transition-new(root) {
 
 @utility modal-content {
   @apply w-full;
-  @apply max-h-[95vh] sm:max-h-[90vh];
+  /* dvh, not vh: with the URL bar showing, 95vh is taller than the visible area, so a tall dialog's
+     own footer sat under the browser chrome. max-height only clamps, so nothing shifts. */
+  @apply max-h-[95dvh] sm:max-h-[90dvh];
   @apply bg-default;
   @apply rounded-lg;
   @apply ring ring-default;
@@ -828,7 +888,7 @@ html[data-theme-switching]::view-transition-new(root) {
 
 @utility dialog-container {
   @apply flex w-full flex-col;
-  @apply max-h-[90vh];
+  @apply max-h-[90dvh];
   @apply rounded-lg bg-default ring ring-default;
   @apply shadow-lg;
 }
@@ -947,7 +1007,10 @@ html[data-theme-switching]::view-transition-new(root) {
 
 @utility progress-bar {
   @apply h-full bg-primary;
-  @apply transition-all duration-300;
+  /* `transition-all` re-resolved every property on each frame of the fill; width is the only
+     thing that moves. */
+  transition-property: width;
+  transition-duration: 300ms;
 }
 
 @utility switch {
@@ -1107,7 +1170,9 @@ html[data-theme-switching]::view-transition-new(root) {
   }
 
   body {
-    @apply min-h-screen text-default;
+    /* svh, not vh: 100vh is the tallest viewport (browser chrome collapsed), so on a phone the body
+       is taller than the visible area on load and the page scrolls a few pixels for no reason. */
+    @apply min-h-svh text-default;
     background: var(--app-page-bg);
   }
 
@@ -1118,14 +1183,36 @@ html[data-theme-switching]::view-transition-new(root) {
       scrollbar-color: transparent transparent;
     }
 
-    *:hover,
+    /* Focus reveals the thumb on every device — a touchscreen with a keyboard in use needs it,
+       and it says nothing about hovering. */
     *:focus-within {
       scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
     }
 
-    .dark *:hover,
     .dark *:focus-within {
       scrollbar-color: rgba(75, 85, 99, 0.5) transparent;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      *:hover {
+        scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+      }
+
+      .dark *:hover {
+        scrollbar-color: rgba(75, 85, 99, 0.5) transparent;
+      }
+    }
+
+    /* Touch has no hovering pointer to reveal the thumb, so the bar stays visible there
+       instead of leaving an invisible scrollbar. */
+    @media (hover: none) {
+      * {
+        scrollbar-color: rgba(156, 163, 175, 0.45) transparent;
+      }
+
+      .dark * {
+        scrollbar-color: rgba(75, 85, 99, 0.45) transparent;
+      }
     }
   }
 
@@ -1144,12 +1231,14 @@ html[data-theme-switching]::view-transition-new(root) {
 
   /* `dark:` cannot be applied inside a pseudo-element rule in v4 (it emits `::x:is(.dark *)`,
      which browsers drop), so the dark rules are written out the way v3 compiled them. */
-  *:hover::-webkit-scrollbar-thumb {
-    @apply bg-accented/60;
-  }
+  @media (hover: hover) and (pointer: fine) {
+    *:hover::-webkit-scrollbar-thumb {
+      @apply bg-accented/60;
+    }
 
-  *:hover::-webkit-scrollbar-thumb:hover {
-    background-color: var(--ui-border-accented);
+    *:hover::-webkit-scrollbar-thumb:hover {
+      background-color: var(--ui-border-accented);
+    }
   }
 
   /* 选中文本样式 */

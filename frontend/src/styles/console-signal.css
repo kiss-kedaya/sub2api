@@ -31,13 +31,17 @@
   border-color: var(--signal-line);
 }
 
-.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary:hover:not(:disabled) {
-  border-color: var(--signal-control-line);
-  background: var(--signal-hover);
-}
+/* Hover only where a pointer can actually hover. Touch leaves these stuck: the first tap applies
+   `:hover` and it stays until something else is tapped. */
+@media (hover: hover) and (pointer: fine) {
+  .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary:hover:not(:disabled) {
+    border-color: var(--signal-control-line);
+    background: var(--signal-hover);
+  }
 
-.dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled) {
-  background: var(--signal-command-hover);
+  .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-primary:hover:not(:disabled) {
+    background: var(--signal-command-hover);
+  }
 }
 
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-ghost {
@@ -110,8 +114,10 @@
   background: var(--signal-surface);
 }
 
-.console-signal .signal-main .table-wrapper tbody tr:hover .sticky-col {
-  background: var(--signal-hover);
+@media (hover: hover) and (pointer: fine) {
+  .console-signal .signal-main .table-wrapper tbody tr:hover .sticky-col {
+    background: var(--signal-hover);
+  }
 }
 
 .console-signal .signal-main .table-wrapper tbody tr:has(input[data-test='select-row']:checked),
@@ -139,8 +145,10 @@
   accent-color: var(--signal-accent);
 }
 
-.console-signal :is(.table tbody tr, .table-body tr):hover {
-  background: var(--signal-hover);
+@media (hover: hover) and (pointer: fine) {
+  .console-signal :is(.table tbody tr, .table-body tr):hover {
+    background: var(--signal-hover);
+  }
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.dropdown, .modal-content, .dialog-container) {
@@ -150,8 +158,10 @@
   color: var(--signal-text);
 }
 
-:is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .dropdown-item:hover {
-  background: var(--signal-hover);
+@media (hover: hover) and (pointer: fine) {
+  :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .dropdown-item:hover {
+    background: var(--signal-hover);
+  }
 }
 
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) :is(.modal-header, .modal-footer, .dialog-header, .dialog-footer) {
@@ -196,7 +206,15 @@ body:has(.console-signal) > .select-dropdown-portal :is(.select-search, .select-
   letter-spacing: 0;
 }
 
-body:has(.console-signal) > .select-dropdown-portal :is(.select-option:hover, .select-option-focused) {
+/* The keyboard highlight (.select-option-focused) stays outside the query: it is driven by arrow
+   keys, not by a pointer, and must still show on touch hardware. */
+@media (hover: hover) and (pointer: fine) {
+  body:has(.console-signal) > .select-dropdown-portal .select-option:hover {
+    background: var(--signal-hover);
+  }
+}
+
+body:has(.console-signal) > .select-dropdown-portal .select-option-focused {
   background: var(--signal-hover);
 }
 

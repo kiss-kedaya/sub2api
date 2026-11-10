@@ -87,8 +87,13 @@
   align-items: center !important;
   justify-content: center !important;
 }
-.theme-tour-popover .driver-popover-close-btn:hover { background-color: #f3f4f6 !important; color: #4b5563 !important; }
-.dark .theme-tour-popover .driver-popover-close-btn:hover { background-color: #3f2f37 !important; }
+/* Hover only on devices that can hover; :active gives touch the same feedback on press. */
+@media (hover: hover) and (pointer: fine) {
+  .theme-tour-popover .driver-popover-close-btn:hover { background-color: #f3f4f6 !important; color: #4b5563 !important; }
+  .dark .theme-tour-popover .driver-popover-close-btn:hover { background-color: #3f2f37 !important; }
+}
+.theme-tour-popover .driver-popover-close-btn:active { background-color: #f3f4f6 !important; color: #4b5563 !important; }
+.dark .theme-tour-popover .driver-popover-close-btn:active { background-color: #3f2f37 !important; }
 
 /* 4. Body Content */
 .theme-tour-popover .driver-popover-description {
@@ -194,7 +199,11 @@
   text-shadow: none !important;
   border-radius: 6px !important;
   cursor: pointer !important;
-  transition: all 0.2s !important;
+  /* Only the three properties the hover/active states change; `all` also animated layout props. */
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s !important;
+  touch-action: manipulation !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
   border: 1px solid transparent !important;
   line-height: 1.2 !important;
   white-space: nowrap !important; /* Force no wrap */
@@ -205,9 +214,15 @@
   color: #ffffff !important;
   box-shadow: none !important;
 }
-.theme-tour-popover .driver-popover-next-btn:hover { background-color: #262626 !important; }
+@media (hover: hover) and (pointer: fine) {
+  .theme-tour-popover .driver-popover-next-btn:hover { background-color: #262626 !important; }
+}
+.theme-tour-popover .driver-popover-next-btn:active { background-color: #262626 !important; }
 .dark .theme-tour-popover .driver-popover-next-btn { background-color: #ad4467 !important; color: #ffffff !important; }
-.dark .theme-tour-popover .driver-popover-next-btn:hover { background-color: #963a59 !important; }
+@media (hover: hover) and (pointer: fine) {
+  .dark .theme-tour-popover .driver-popover-next-btn:hover { background-color: #963a59 !important; }
+}
+.dark .theme-tour-popover .driver-popover-next-btn:active { background-color: #963a59 !important; }
 
 .theme-tour-popover .driver-popover-prev-btn {
   background-color: white !important;
@@ -215,7 +230,10 @@
   border: 1px solid #e5e7eb !important;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
 }
-.theme-tour-popover .driver-popover-prev-btn:hover { background-color: #f9fafb !important; color: #374151 !important; }
+@media (hover: hover) and (pointer: fine) {
+  .theme-tour-popover .driver-popover-prev-btn:hover { background-color: #f9fafb !important; color: #374151 !important; }
+}
+.theme-tour-popover .driver-popover-prev-btn:active { background-color: #f9fafb !important; color: #374151 !important; }
 .dark .theme-tour-popover .driver-popover-prev-btn { 
   background-color: #261c21 !important; 
   border-color: #5e4651 !important; 

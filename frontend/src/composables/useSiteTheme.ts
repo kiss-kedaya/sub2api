@@ -171,6 +171,34 @@ function savedVisitorMode(): ThemeMode | null {
 
 const DARK_QUERY = '(prefers-color-scheme: dark)'
 
+/**
+ * The browser chrome takes its colour from `theme-color`, and the console is class-themed
+ * (`.dark` on <html>) rather than following the OS, so the two `prefers-color-scheme` tags in
+ * index.html are only a first-paint guess. Rewrite them from the resolved background instead:
+ * the top of the page is the frame surface, i.e. --app-page-bg in nuxt-ui-theme.css. Both tags
+ * get the same value because the class, not the media query, decides what is on screen.
+ */
+const DEFAULT_THEME_COLOR_LIGHT = '#ffffff'
+const DEFAULT_THEME_COLOR_DARK = '#1b181f'
+
+export function syncThemeColor(darkMode?: boolean): void {
+  if (typeof document === 'undefined') return
+  const dark = darkMode ?? document.documentElement.classList.contains('dark')
+  const fallback = dark ? DEFAULT_THEME_COLOR_DARK : DEFAULT_THEME_COLOR_LIGHT
+  const resolved = getComputedStyle(document.documentElement).getPropertyValue('--app-page-bg').trim()
+  const color = resolved || fallback
+  let tags = document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+  if (tags.length === 0) {
+    const tag = document.createElement('meta')
+    tag.name = 'theme-color'
+    document.head.appendChild(tag)
+    tags = document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+  }
+  tags.forEach((tag) => {
+    if (tag.content !== color) tag.content = color
+  })
+}
+
 function systemPrefersDark(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(DARK_QUERY).matches
 }
@@ -213,6 +241,7 @@ function prefersReducedMotion(): boolean {
 function applyDarkClass(dark: boolean): void {
   document.documentElement.classList.toggle('dark', dark)
   htmlDark.value = dark
+  syncThemeColor(dark)
 }
 
 function effectiveDark(): boolean {
@@ -264,9 +293,11 @@ function watchColorMode(): void {
   colorModeWatched = true
   const root = document.documentElement
   htmlDark.value = root.classList.contains('dark')
+  syncThemeColor(htmlDark.value)
   if (typeof MutationObserver === 'function') {
     new MutationObserver(() => {
       htmlDark.value = root.classList.contains('dark')
+      syncThemeColor(htmlDark.value)
     }).observe(root, { attributes: true, attributeFilter: ['class'] })
   }
   // With "system" in force, follow the OS switching between light and dark.

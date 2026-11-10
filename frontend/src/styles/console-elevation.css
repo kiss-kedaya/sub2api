@@ -25,11 +25,15 @@ html:not(.dark) .auth-paper .btn-primary {
   transition: background 150ms var(--elev-ease), box-shadow 150ms var(--elev-ease), transform 150ms var(--elev-ease), translate 150ms var(--elev-ease), scale 150ms var(--elev-ease);
 }
 
-html:not(.dark) .auth-paper .btn-primary:hover:not(:disabled) {
-  border-color: #171717;
-  background: var(--elev-btn-hover);
-  color: #ffffff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), var(--elev-shadow-md);
+/* Hover is a mouse affordance; the press state lives under prefers-reduced-motion below and
+   belongs to both input types. */
+@media (hover: hover) and (pointer: fine) {
+  html:not(.dark) .auth-paper .btn-primary:hover:not(:disabled) {
+    border-color: #171717;
+    background: var(--elev-btn-hover);
+    color: #ffffff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), var(--elev-shadow-md);
+  }
 }
 
 html:not(.dark) .auth-paper .input {

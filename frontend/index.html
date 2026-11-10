@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <!-- The browser chrome / status bar follows the page background, not the brand colour. The theme is
+         class-based (.dark on <html>, useSiteTheme.ts), so these two are only a first-paint guess for the
+         moment before JS runs; useSiteTheme rewrites the tag from the resolved --app-page-bg on every switch. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1b181f" />
+    <meta name="color-scheme" content="light dark" />
     <title>Sub2API - AI API Gateway</title>
   </head>
   <body>

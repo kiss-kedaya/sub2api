@@ -195,7 +195,13 @@
   color: var(--signal-accent);
 }
 
-.console-signal .signal-main .signal-pagination button:hover:not(:disabled) {
+@media (hover: hover) and (pointer: fine) {
+  .console-signal .signal-main .signal-pagination button:hover:not(:disabled) {
+    background: var(--signal-hover);
+  }
+}
+
+.console-signal .signal-main .signal-pagination button:active:not(:disabled) {
   background: var(--signal-hover);
 }
 
