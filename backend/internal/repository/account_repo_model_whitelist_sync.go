@@ -145,8 +145,11 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, ac
 			AND type = 'apikey'
 			AND COALESCE(credentials, '{}'::jsonb) = $3::jsonb
 			AND COALESCE(credentials -> 'model_mapping', '{}'::jsonb) = $4::jsonb
-			AND extra -> 'model_whitelist_auto_sync' = $5::jsonb
-			AND COALESCE(extra @> '{"model_whitelist_auto_sync":{"enabled":true}}'::jsonb, FALSE)
+			AND (
+				(extra -> 'model_whitelist_auto_sync' IS NULL AND $5::jsonb = 'null'::jsonb)
+				OR extra -> 'model_whitelist_auto_sync' = $5::jsonb
+			)
+			AND COALESCE(extra #>> '{model_whitelist_auto_sync,enabled}', 'true') <> 'false' 
 	`, string(nextPayload), id, string(expectedCredentialsPayload), string(expectedPayload), string(expectedConfigPayload))
 	if err != nil {
 		return false, err
