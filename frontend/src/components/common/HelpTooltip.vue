@@ -67,7 +67,7 @@ function onLeave(event: MouseEvent) {
   closeTooltip()
 }
 
-function onTriggerEnter(event: MouseEvent) {
+function onTriggerEnter() {
   if (props.trigger === 'auto') {
     // Touch also emits an emulated mouse enter right before the click that follows it; opening here is what
     // makes the tap feel immediate, and the click then pins it.
