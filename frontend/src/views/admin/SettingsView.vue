@@ -3431,8 +3431,9 @@
             :title="t('admin.settings.gatewayForwarding.title')"
             :description="t('admin.settings.gatewayForwarding.description')"
           >
-            <div class="grid gap-5 border-b border-default pb-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+            <div class="grid gap-5 border-b border-default pb-5 md:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] md:items-end">
               <UFormField
+                class="min-w-0"
                 :label="t('admin.settings.gatewayForwarding.grokDefaultTextModel')"
                 :description="t('admin.settings.gatewayForwarding.grokDefaultTextModelHint')"
               >
@@ -3454,7 +3455,7 @@
               <UFormField
                 :label="t('admin.settings.gatewayForwarding.grokCrossClientMap')"
                 :description="t('admin.settings.gatewayForwarding.grokCrossClientMapHint')"
-                class="flex items-center justify-between gap-4"
+                class="flex min-w-0 items-center justify-between gap-4"
               >
                 <Toggle
                   v-model="form.grok_cross_client_model_map_enabled"
