@@ -21,7 +21,7 @@
             <div class="flex items-center">
               <div
                 :class="[
-                  'flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold transition-all',
+                  'flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold transition-colors',
                   currentStep > index
                     ? 'bg-primary-500 text-white'
                     : currentStep === index

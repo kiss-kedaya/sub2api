@@ -997,7 +997,7 @@ function handleToolbarRefresh() {
         <div class="grid h-full grid-cols-1 gap-6 md:grid-cols-[200px_1fr] md:items-center">
           <!-- 1) Health Score -->
           <div
-            class="group relative flex cursor-pointer flex-col items-center justify-center rounded-xl py-2 transition-all hover:bg-white/60 dark:hover:bg-dark-800/60 md:border-r md:border-gray-200 md:pr-6 dark:md:border-dark-700"
+            class="group relative flex cursor-pointer flex-col items-center justify-center rounded-xl py-2 transition-colors hover:bg-white/60 dark:hover:bg-dark-800/60 md:border-r md:border-gray-200 md:pr-6 dark:md:border-dark-700"
           >
             <!-- Diagnosis Popover (hover) -->
             <div
@@ -1072,7 +1072,7 @@ function handleToolbarRefresh() {
                   stroke-linecap="round"
                   :stroke-dasharray="circumference"
                   :stroke-dashoffset="dashOffset"
-                  class="transition-all duration-1000 ease-out"
+                  class="transition-[stroke-dashoffset] duration-[250ms] ease-out"
                 />
               </svg>
 
@@ -1265,7 +1265,7 @@ function handleToolbarRefresh() {
             {{ slaPercent == null ? '-' : `${slaPercent.toFixed(3)}%` }}
           </div>
           <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
-            <div class="h-full transition-all" :class="getSLAThresholdLevel(slaPercent) === 'critical' ? 'bg-red-500' : getSLAThresholdLevel(slaPercent) === 'warning' ? 'bg-yellow-500' : 'bg-green-500'" :style="{ width: `${Math.max((slaPercent ?? 0) - 90, 0) * 10}%` }"></div>
+            <div class="h-full transition-[width,background-color]" :class="getSLAThresholdLevel(slaPercent) === 'critical' ? 'bg-red-500' : getSLAThresholdLevel(slaPercent) === 'warning' ? 'bg-yellow-500' : 'bg-green-500'" :style="{ width: `${Math.max((slaPercent ?? 0) - 90, 0) * 10}%` }"></div>
           </div>
           <div class="mt-3 text-xs">
             <div class="flex justify-between">

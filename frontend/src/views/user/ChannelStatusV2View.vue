@@ -65,7 +65,7 @@
             :aria-label="t('channelMonitorV2.bootstrap.working')"
           >
             <div
-              class="h-full rounded-full bg-blue-500 transition-[width] duration-500 ease-out dark:bg-blue-400"
+              class="h-full rounded-full bg-blue-500 transition-[width] duration-[250ms] ease-out dark:bg-blue-400"
               :style="{ width: `${bootstrapPercent}%` }"
             />
           </div>

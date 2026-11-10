@@ -134,7 +134,7 @@
       <div class="flex min-h-full items-center justify-center p-4">
         <div class="fixed inset-0 bg-black/50 transition-opacity" @click="closeDeleteDialog"></div>
         <div
-          class="relative w-full max-w-md transform rounded-xl bg-white p-6 shadow-xl transition-all dark:bg-dark-800"
+          class="relative w-full max-w-md transform rounded-xl bg-white p-6 shadow-xl dark:bg-dark-800"
         >
           <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
             {{ t('profile.passkey.deleteTitle') }}

@@ -288,7 +288,7 @@
         <div class="mb-12 grid gap-6 md:grid-cols-3">
           <!-- Feature 1: Unified Gateway -->
           <div
-            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-all duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
+            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-[border-color,box-shadow] duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
           >
             <div
               class="home-feature-mark home-feature-mark--blue"
@@ -305,7 +305,7 @@
 
           <!-- Feature 2: Account Pool -->
           <div
-            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-all duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
+            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-[border-color,box-shadow] duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
           >
             <div
               class="home-feature-mark home-feature-mark--green"
@@ -334,7 +334,7 @@
 
           <!-- Feature 3: Billing & Quota -->
           <div
-            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-all duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
+            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-[border-color,box-shadow] duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
           >
             <div
               class="home-feature-mark home-feature-mark--violet"
@@ -566,7 +566,6 @@ onMounted(() => {
   background-size: 48px 48px;
   mask-image: linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 0.56) 52%, transparent 100%);
   opacity: 0.72;
-  animation: home-grid-drift 22s linear infinite;
 }
 
 .home-provider-heading {
@@ -700,13 +699,7 @@ onMounted(() => {
 .home-surface--dark .home-provider-name { color: #e3eaf4; }
 .home-surface--dark .home-provider-status { color: #9aa9bb; }
 
-@keyframes home-grid-drift {
-  from { background-position: 0 0; }
-  to { background-position: 48px 48px; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .home-grid { animation: none; }
   .home-provider-item { transition: none; }
 }
 

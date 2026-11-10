@@ -58,7 +58,7 @@
               v-model="apiKey"
               :type="keyVisible ? 'text' : 'password'"
               :placeholder="t('keyUsage.placeholder')"
-              class="input-ring w-full h-12 pl-12 pr-12 rounded-xl border border-gray-200 bg-white text-sm text-gray-900 placeholder:text-gray-400 transition-all dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-dark-500"
+              class="input-ring w-full h-12 pl-12 pr-12 rounded-xl border border-gray-200 bg-white text-sm text-gray-900 placeholder:text-gray-400 dark:border-dark-700 dark:bg-dark-900 dark:text-white dark:placeholder:text-dark-500"
               @keydown.enter="queryKey"
             />
             <button
@@ -77,7 +77,7 @@
           <button
             @click="queryKey"
             :disabled="isQuerying"
-            class="h-12 px-7 rounded-xl bg-primary-500 hover:bg-primary-600 text-white font-medium text-sm transition-all active:scale-[0.97] flex items-center gap-2 whitespace-nowrap disabled:opacity-60"
+            class="h-12 px-7 rounded-xl bg-primary-500 hover:bg-primary-600 text-white font-medium text-sm transition-[background-color,transform,scale] active:scale-[0.97] flex items-center gap-2 whitespace-nowrap disabled:opacity-60"
           >
             <svg v-if="isQuerying" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25"/>
@@ -101,7 +101,7 @@
               v-for="range in dateRanges"
               :key="range.key"
               @click="setDateRange(range.key)"
-              class="text-xs px-3 py-1.5 rounded-lg border transition-all"
+              class="text-xs px-3 py-1.5 rounded-lg border transition-colors"
               :class="currentRange === range.key
                 ? 'bg-primary-500 text-white border-primary-500'
                 : 'border-gray-200 bg-white text-gray-700 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-200 hover:border-primary-300 dark:hover:border-dark-600'"
@@ -155,10 +155,10 @@
         <!-- Result Content -->
         <div v-else-if="resultData" class="space-y-6">
           <!-- Status Badge -->
-          <div v-if="statusInfo" class="fade-up flex items-center justify-center mb-2">
+          <div v-if="statusInfo" class="flex items-center justify-center mb-2">
             <div class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-gray-200 bg-white/90 shadow-xs backdrop-blur-xs dark:border-dark-700 dark:bg-dark-900/90">
               <span
-                class="w-2.5 h-2.5 rounded-full pulse-dot"
+                class="w-2.5 h-2.5 rounded-full"
                 :class="statusInfo.isActive ? 'bg-emerald-500' : 'bg-rose-500'"
               ></span>
               <span class="text-sm font-medium text-gray-900 dark:text-white">{{ statusInfo.label }}</span>
@@ -172,8 +172,7 @@
             <div
               v-for="(ring, i) in ringItems"
               :key="i"
-              class="fade-up rounded-2xl border border-gray-200 bg-white/90 p-8 backdrop-blur-xs transition-all duration-300 hover:shadow-lg dark:border-dark-700 dark:bg-dark-900/90"
-              :class="`fade-up-delay-${Math.min(i + 1, 4)}`"
+              class="rounded-2xl border border-gray-200 bg-white/90 p-8 backdrop-blur-xs transition-shadow duration-300 hover:shadow-lg dark:border-dark-700 dark:bg-dark-900/90"
             >
               <div class="flex items-center justify-between mb-6">
                 <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">
@@ -219,7 +218,7 @@
                     </template>
                     <template v-else>
                       <span class="text-3xl font-bold tabular-nums text-gray-900 dark:text-white">
-                        {{ displayPcts[i] ?? 0 }}%
+                        {{ ring.pct }}%
                       </span>
                       <span class="text-xs text-gray-500 dark:text-dark-400 mt-0.5">{{ t('keyUsage.used') }}</span>
                       <span
@@ -239,7 +238,7 @@
           <!-- Detail Card -->
           <div
             v-if="detailRows.length > 0"
-            class="fade-up fade-up-delay-3 rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-xs overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
+            class="rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-xs overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
           >
             <div class="px-8 py-5 border-b border-gray-200 dark:border-dark-700">
               <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.detailInfo') }}</h3>
@@ -272,7 +271,7 @@
           <!-- Usage Stats Card -->
           <div
             v-if="usageStatCells.length > 0"
-            class="fade-up fade-up-delay-3 rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-xs overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
+            class="rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-xs overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
           >
             <div class="px-8 py-5 border-b border-gray-200 dark:border-dark-700">
               <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.tokenStats') }}</h3>
@@ -292,7 +291,7 @@
           <!-- Daily Usage Table -->
           <div
             v-if="showDailyUsage"
-            class="fade-up fade-up-delay-4 rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-xs overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
+            class="rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-xs overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
           >
             <div class="flex flex-col gap-3 px-8 py-5 border-b border-gray-200 dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
               <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.dailyDetail') }}</h3>
@@ -348,7 +347,7 @@
           <!-- Model Stats Table -->
           <div
             v-if="modelStats.length > 0"
-            class="fade-up fade-up-delay-4 rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-xs overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
+            class="rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-xs overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
           >
             <div class="px-8 py-5 border-b border-gray-200 dark:border-dark-700">
               <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.modelStats') }}</h3>
@@ -417,7 +416,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import { toggleColorMode, useSiteColorMode } from '@/composables/useSiteTheme'
@@ -539,9 +538,6 @@ const RING_GRADIENTS = [
   { from: '#F59E0B', to: '#FCD34D' },
 ]
 
-const ringAnimated = ref(false)
-const displayPcts = ref<number[]>([])
-
 const ringTrackColor = computed(() => isDark.value ? '#222222' : '#F0F0EE')
 
 interface RingItem {
@@ -554,36 +550,8 @@ interface RingItem {
 }
 
 function getRingOffset(ring: RingItem): number {
-  if (!ringAnimated.value) return CIRCUMFERENCE
   if (ring.isBalance) return 0
   return CIRCUMFERENCE - (Math.min(ring.pct, 100) / 100) * CIRCUMFERENCE
-}
-
-function triggerRingAnimation(items: RingItem[]) {
-  ringAnimated.value = false
-  displayPcts.value = items.map(() => 0)
-
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        ringAnimated.value = true
-
-        // Animate percentage numbers
-        const duration = 1000
-        const startTime = performance.now()
-        const targets = items.map(item => item.isBalance ? 0 : item.pct)
-
-        function tick() {
-          const elapsed = performance.now() - startTime
-          const p = Math.min(elapsed / duration, 1)
-          const ease = 1 - Math.pow(1 - p, 3)
-          displayPcts.value = targets.map(target => Math.round(ease * target))
-          if (p < 1) requestAnimationFrame(tick)
-        }
-        requestAnimationFrame(tick)
-      }, 50)
-    })
-  })
 }
 
 // ==================== Computed Data ====================
@@ -895,11 +863,6 @@ async function queryKey() {
     showLoading.value = false
     showDatePicker.value = true
 
-    // Trigger ring animations after DOM update
-    nextTick(() => {
-      triggerRingAnimation(ringItems.value)
-    })
-
     appStore.showSuccess(t('keyUsage.querySuccess'))
   } catch (err) {
     showResults.value = false
@@ -959,7 +922,6 @@ onUnmounted(() => {
 
 /* Ring animation */
 .progress-ring {
-  transition: stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1);
   transform: rotate(-90deg);
   transform-origin: 50% 50%;
 }
@@ -978,28 +940,6 @@ onUnmounted(() => {
 :global(.dark) .skeleton {
   background: linear-gradient(90deg, #334155 25%, #1e293b 50%, #334155 75%);
   background-size: 200% 100%;
-}
-
-/* Fade up animation */
-@keyframes fade-up-kv {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.fade-up {
-  animation: fade-up-kv 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-.fade-up-delay-1 { animation-delay: 0.1s; opacity: 0; }
-.fade-up-delay-2 { animation-delay: 0.2s; opacity: 0; }
-.fade-up-delay-3 { animation-delay: 0.3s; opacity: 0; }
-.fade-up-delay-4 { animation-delay: 0.4s; opacity: 0; }
-
-/* Pulse dot */
-@keyframes pulse-dot-kv {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
-  50% { opacity: 0.6; box-shadow: 0 0 8px 2px currentColor; }
-}
-.pulse-dot {
-  animation: pulse-dot-kv 2s ease-in-out infinite;
 }
 
 /* Tabular nums */
