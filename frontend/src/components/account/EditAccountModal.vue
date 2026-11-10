@@ -351,6 +351,9 @@
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
               <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
+              <div class="mt-2">
+                <UCheckbox v-model="modelAutoSyncEnabled" label="自动同步上游最新模型（默认开启；失败自动重试，仍失败则清空模型限制）" />
+              </div>
               <p class="text-xs text-muted">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -548,6 +551,9 @@
               <!-- Whitelist Mode -->
               <div v-if="modelRestrictionMode === 'whitelist'">
                 <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
+              <div class="mt-2">
+                <UCheckbox v-model="modelAutoSyncEnabled" label="自动同步上游最新模型（默认开启；失败自动重试，仍失败则清空模型限制）" />
+              </div>
                 <p class="text-xs text-muted">
                   {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                   <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -742,6 +748,9 @@
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
               <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
+              <div class="mt-2">
+                <UCheckbox v-model="modelAutoSyncEnabled" label="自动同步上游最新模型（默认开启；失败自动重试，仍失败则清空模型限制）" />
+              </div>
               <p class="text-xs text-muted">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -2680,6 +2689,7 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+const modelAutoSyncEnabled = ref(true)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
@@ -3614,6 +3624,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
+    const autoSyncConfig = (newAccount.extra as Record<string, unknown> | undefined)?.['model_whitelist_auto_sync'] as Record<string, unknown> | undefined
+    modelAutoSyncEnabled.value = autoSyncConfig ? autoSyncConfig.enabled !== false : true
 
     // Load pool mode
     poolModeEnabled.value = credentials.pool_mode === true
@@ -4994,6 +5006,18 @@ const handleSubmit = async () => {
         delete newExtra.upstream_request_id_header
       }
       updatePayload.extra = newExtra
+    }
+
+    {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
+      updatePayload.extra = {
+        ...currentExtra,
+        model_whitelist_auto_sync: {
+          enabled: modelAutoSyncEnabled.value,
+          interval_hours: 24,
+          mode: 'whitelist',
+        },
+      }
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {

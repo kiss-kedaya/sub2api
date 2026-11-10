@@ -29,11 +29,12 @@ func TestModelWhitelistAutoSyncConfigReadsUIObject(t *testing.T) {
 }
 
 func TestModelWhitelistAutoSyncConfigMissingOrDisabled(t *testing.T) {
-	enabled, _, ok := modelWhitelistAutoSyncConfig(nil)
-	require.False(t, ok)
-	require.False(t, enabled)
+	enabled, interval, ok := modelWhitelistAutoSyncConfig(nil)
+	require.True(t, ok, "missing config defaults to enabled")
+	require.True(t, enabled)
+	require.Equal(t, 24*time.Hour, interval)
 
-	enabled, interval, ok := modelWhitelistAutoSyncConfig(map[string]any{
+	enabled, interval, ok = modelWhitelistAutoSyncConfig(map[string]any{
 		ModelWhitelistAutoSyncExtraKey: map[string]any{"enabled": false},
 	})
 	require.True(t, ok)

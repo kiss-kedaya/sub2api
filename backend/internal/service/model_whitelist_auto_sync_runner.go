@@ -394,9 +394,35 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 	// SyncUpstreamModelCatalog intentionally falls back to configured models for
 	// unsupported /models endpoints, which is useful for capability hydration but
 	// would make an auto-sync silently re-apply a stale whitelist.
-	models, fetchErr := s.accountTestService.FetchUpstreamSupportedModels(ctx, account)
+	var models []string
+	var fetchErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt) * 3 * time.Second
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				fetchErr = ctx.Err()
+			}
+			if fetchErr != nil {
+				break
+			}
+		}
+		models, fetchErr = s.accountTestService.FetchUpstreamSupportedModels(ctx, account)
+		if fetchErr == nil {
+			break
+		}
+	}
 	if fetchErr != nil {
-		return s.finishWithError(ctx, account, interval, now, result, fetchErr)
+		// Persistent upstream failure: an unreachable model list must never keep
+		// a stale/closed whitelist. Clear the mapping so the account passes any
+		// model through, then record the error for the operator.
+		if writer, ok := s.accountRepo.(modelWhitelistAutoSyncMappingWriter); ok {
+			if baseline, _, baseErr := modelWhitelistBaselineMapping(account); baseErr == nil {
+				_, _ = writer.UpdateAccountModelMappingCAS(ctx, account, baseline, map[string]string{}, autoSyncConfigSnapshot(account.Extra))
+			}
+		}
+		return s.finishWithError(ctx, account, interval, now, result, fmt.Errorf("upstream model sync failed after 3 attempts: %w", fetchErr))
 	}
 	models = normalizeModelIDs(models)
 	if len(models) == 0 {
@@ -574,12 +600,14 @@ func (s *ModelWhitelistAutoSyncService) tryAcquireLeaderLock(ctx context.Context
 // ok=false means "no usable config" (absent or malformed), which the runner
 // treats as disabled.
 func modelWhitelistAutoSyncConfig(extra map[string]any) (enabled bool, interval time.Duration, ok bool) {
+	// Default-on: an account without an explicit config participates in the
+	// automatic upstream model sync. Only {"enabled": false} opts out.
 	if extra == nil {
-		return false, 0, false
+		return true, time.Duration(modelWhitelistAutoSyncDefaultIntervalHours) * time.Hour, true
 	}
 	raw, exists := extra[ModelWhitelistAutoSyncExtraKey]
 	if !exists || raw == nil {
-		return false, 0, false
+		return true, time.Duration(modelWhitelistAutoSyncDefaultIntervalHours) * time.Hour, true
 	}
 	config, isMap := raw.(map[string]any)
 	if !isMap {
