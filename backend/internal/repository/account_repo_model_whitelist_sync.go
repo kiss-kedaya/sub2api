@@ -103,10 +103,6 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, ac
 		return false, err
 	}
 
-	expectedCredentialsPayload, err := json.Marshal(normalizeJSONMap(account.Credentials))
-	if err != nil {
-		return false, err
-	}
 	expectedConfigPayload, err := json.Marshal(normalizeJSONMap(expectedConfig))
 	if err != nil {
 		return false, err
@@ -143,14 +139,13 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, ac
 			AND deleted_at IS NULL
 			AND status = 'active'
 			AND type = 'apikey'
-			AND COALESCE(credentials, '{}'::jsonb) = $3::jsonb
-			AND COALESCE(credentials -> 'model_mapping', '{}'::jsonb) = $4::jsonb
+			AND COALESCE(credentials -> 'model_mapping', '{}'::jsonb) = $3::jsonb
 			AND (
-				(extra -> 'model_whitelist_auto_sync' IS NULL AND $5::jsonb = 'null'::jsonb)
-				OR extra -> 'model_whitelist_auto_sync' = $5::jsonb
+				(extra -> 'model_whitelist_auto_sync' IS NULL AND $4::jsonb = 'null'::jsonb)
+				OR extra -> 'model_whitelist_auto_sync' = $4::jsonb
 			)
 			AND COALESCE(extra #>> '{model_whitelist_auto_sync,enabled}', 'true') <> 'false' 
-	`, string(nextPayload), id, string(expectedCredentialsPayload), string(expectedPayload), string(expectedConfigPayload))
+	`, string(nextPayload), id, string(expectedPayload), string(expectedConfigPayload))
 	if err != nil {
 		return false, err
 	}
