@@ -35,6 +35,28 @@
           <slot name="description"></slot>
         </template>
         <template #body>
+          <!-- Quiet one-liner after an autosaved draft was put back (see useDialogDraft). -->
+          <div
+            v-if="draftNotice"
+            class="base-dialog-draft-notice mb-3 flex items-center justify-between gap-3 text-xs text-muted"
+            data-test="dialog-draft-notice"
+            role="status"
+          >
+            <span class="inline-flex items-center gap-1.5">
+              <UIcon name="i-lucide-history" class="size-3.5 shrink-0" />
+              {{ draftNotice }}
+            </span>
+            <UButton
+              v-if="draftDiscardLabel"
+              size="xs"
+              color="neutral"
+              variant="link"
+              class="p-0"
+              data-test="dialog-draft-discard"
+              :label="draftDiscardLabel"
+              @click="emit('discard-draft')"
+            />
+          </div>
           <slot></slot>
         </template>
         <template v-if="$slots.footer" #footer>
@@ -88,10 +110,18 @@ interface Props {
   closeOnClickOutside?: boolean
   showCloseButton?: boolean
   zIndex?: number
+  /**
+   * Text of the quiet "restored your unsubmitted input" line (see useDialogDraft); empty hides
+   * it. The caller passes translated text so the base dialog stays free of i18n.
+   */
+  draftNotice?: string
+  /** Label of the discard action next to the notice. */
+  draftDiscardLabel?: string
 }
 
 interface Emits {
   (e: 'close'): void
+  (e: 'discard-draft'): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -99,7 +129,9 @@ const props = withDefaults(defineProps<Props>(), {
   closeOnEscape: true,
   closeOnClickOutside: false,
   showCloseButton: true,
-  zIndex: 50
+  zIndex: 50,
+  draftNotice: '',
+  draftDiscardLabel: ''
 })
 
 const emit = defineEmits<Emits>()

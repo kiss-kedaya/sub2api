@@ -7,6 +7,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, readonly } from 'vue'
 import { getAppRuntimeContext } from '@runtime/context'
 import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
+import { clearUserDialogDrafts, setDialogDraftUserIdResolver } from '@/composables/useDialogDraft'
 import type {
   User,
   LoginRequest,
@@ -90,6 +91,11 @@ export const useAuthStore = defineStore('auth', () => {
   const pendingAuthSession = ref<PendingAuthSessionSummary | null>(null)
   let refreshIntervalId: ReturnType<typeof setInterval> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+  // Dialog drafts are keyed by user id so one account never reads another's half-typed
+  // form. The composable cannot import this store (that would drag the API client into
+  // every dialog spec), so the resolver is pushed into it here instead.
+  setDialogDraftUserIdResolver(() => user.value?.id ?? null)
 
   // ==================== Computed ====================
 
@@ -467,6 +473,9 @@ export const useAuthStore = defineStore('auth', () => {
    * Clears all authentication state and persisted data
    */
   async function logout(): Promise<void> {
+    // Signing out drops this account's dialog drafts too, so a shared browser never shows
+    // the previous operator's half-typed form to the next one.
+    const signingOutUserId = user.value?.id ?? null
     try {
       // Call API logout (revokes refresh token on server)
       await authAPI.logout()
@@ -476,6 +485,7 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       // Always clear local state (tokens, user data, refresh timers)
       clearAuth()
+      clearUserDialogDrafts(signingOutUserId)
     }
   }
 

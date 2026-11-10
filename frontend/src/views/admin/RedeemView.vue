@@ -209,6 +209,9 @@
       :title="t('admin.redeem.generateCodesTitle')"
       width="normal"
       close-on-click-outside
+      :draft-notice="generateDraft.restored.value ? t('common.draftRestored') : ''"
+      :draft-discard-label="t('common.draftDiscard')"
+      @discard-draft="discardGenerateDraft"
       @close="showGenerateDialog = false"
     >
       <UForm id="redeem-generate-form" data-test="generate-form" :state="generateForm" class="space-y-4" @submit="handleGenerateCodes">
@@ -323,6 +326,9 @@
       :title="t('admin.redeem.batchUpdateTitle')"
       width="normal"
       close-on-click-outside
+      :draft-notice="batchUpdateDraft.restored.value ? t('common.draftRestored') : ''"
+      :draft-discard-label="t('common.draftDiscard')"
+      @discard-draft="discardBatchUpdateDraft"
       @close="closeBatchUpdateDialog"
     >
       <p class="mb-4 text-sm text-muted">{{ t('admin.redeem.selectedCount', { count: selectedCount }) }}</p>
@@ -415,6 +421,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useClipboard } from '@/composables/useClipboard'
+import { useDialogDraft } from '@/composables/useDialogDraft'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { adminAPI } from '@/api/admin'
@@ -673,6 +680,23 @@ watch(
   }
 )
 
+// The generate dialog dismisses on an outside click, so keep what was typed. Only these
+// fields are persisted: no credential ever appears in this form.
+const generateDraft = useDialogDraft({
+  key: () => 'admin.redeem.generate',
+  fields: [
+    'type',
+    'value',
+    'count',
+    'group_id',
+    'validity_days',
+    'expiry_option',
+    'custom_expiry_days'
+  ] as const,
+  state: generateForm,
+  open: () => showGenerateDialog.value
+})
+
 const buildRedeemQueryFilters = () => ({
   type: (filters.type || undefined) as RedeemCodeType | undefined,
   status: (filters.status || undefined) as 'used' | 'expired' | 'unused' | 'disabled' | undefined,
@@ -814,6 +838,41 @@ const closeBatchUpdateDialog = () => {
   showBatchUpdateDialog.value = false
 }
 
+// Same treatment as the generate dialog: the batch dialog is filled in, then a stray veil
+// click would otherwise throw the whole selection away.
+const batchUpdateDraft = useDialogDraft({
+  key: () => 'admin.redeem.batch-update',
+  fields: [
+    'update_status',
+    'status',
+    'update_expires_at',
+    'expires_mode',
+    'expires_at_local',
+    'update_notes',
+    'notes',
+    'update_group_id',
+    'group_id'
+  ] as const,
+  state: batchUpdateForm,
+  open: () => showBatchUpdateDialog.value
+})
+
+const discardGenerateDraft = () => {
+  generateDraft.discard()
+  generateForm.type = 'balance'
+  generateForm.value = 10
+  generateForm.count = 1
+  generateForm.group_id = null
+  generateForm.validity_days = 30
+  generateForm.expiry_option = 'never'
+  generateForm.custom_expiry_days = 7
+}
+
+const discardBatchUpdateDraft = () => {
+  batchUpdateDraft.discard()
+  resetBatchUpdateForm()
+}
+
 const buildBatchUpdateFields = (): BatchUpdateRedeemCodeFields | null => {
   const fields: BatchUpdateRedeemCodeFields = {}
 
@@ -867,6 +926,8 @@ const handleGenerateCodes = async () => {
       expiresInDays
     )
     showGenerateDialog.value = false
+    // Submitted, not abandoned: the draft must not come back on the next open.
+    generateDraft.markSubmitted()
     generatedCodes.value = result
     showResultDialog.value = true
     // 重置表单
@@ -984,6 +1045,8 @@ const handleBatchUpdate = async () => {
   try {
     const result = await adminAPI.redeem.batchUpdate(ids, fields)
     appStore.showSuccess(t('admin.redeem.batchUpdateSuccess', { count: result.updated }))
+    // Submitted successfully: clear the draft instead of keeping it for the next open.
+    batchUpdateDraft.markSubmitted()
     showBatchUpdateDialog.value = false
     clearSelectedCodes()
     loadCodes()

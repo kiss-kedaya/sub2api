@@ -4,6 +4,9 @@
     :title="t('admin.accounts.syncFromCrsTitle')"
     width="normal"
     close-on-click-outside
+    :draft-notice="draft.restored.value && currentStep === 'input' ? t('common.draftRestored') : ''"
+    :draft-discard-label="t('common.draftDiscard')"
+    @discard-draft="discardDraft"
     @close="handleClose"
   >
     <!-- Step 1: Input credentials -->
@@ -181,6 +184,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { useAppStore } from '@/stores/app'
+import { useDialogDraft } from '@/composables/useDialogDraft'
 import { adminAPI } from '@/api/admin'
 import type { PreviewFromCRSResult } from '@/api/admin/accounts'
 
@@ -241,6 +245,22 @@ watch(
     }
   }
 )
+
+// Registered after the reset watcher above, so on open the form is cleared first and the
+// draft is applied on top of it. Only the address and the proxy option survive: the CRS
+// username and password are credentials for another system and are never persisted.
+const draft = useDialogDraft({
+  key: () => 'admin.accounts.sync-from-crs',
+  fields: ['base_url', 'sync_proxies'] as const,
+  state: form,
+  open: () => props.show
+})
+
+const discardDraft = () => {
+  draft.discard()
+  form.base_url = ''
+  form.sync_proxies = true
+}
 
 const handleClose = () => {
   if (syncing.value || previewing.value) {
@@ -315,6 +335,8 @@ const handleSync = async () => {
     })
     result.value = res
     currentStep.value = 'result'
+    // The sync ran: the next open starts clean.
+    draft.markSubmitted()
 
     if (res.failed > 0) {
       appStore.showError(t('admin.accounts.syncCompletedWithErrors', res))
