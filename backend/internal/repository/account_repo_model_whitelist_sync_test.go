@@ -20,7 +20,7 @@ func TestUpdateAccountModelMappingCASWritesOnlyWhenUnchanged(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE accounts").
-		WithArgs(`{"gpt-5":"gpt-5","gpt-5-mini":"gpt-5-mini"}`, int64(7), `{}`, `{"gpt-5":"gpt-5"}`, `{}`).
+		WithArgs(`{"gpt-5":"gpt-5","gpt-5-mini":"gpt-5-mini"}`, int64(7), `{"gpt-5":"gpt-5"}`, `{}`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO scheduler_outbox").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -48,7 +48,7 @@ func TestUpdateAccountModelMappingCASReportsConcurrentEdit(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE accounts").
-		WithArgs(sqlmock.AnyArg(), int64(7), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), int64(7), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
 
