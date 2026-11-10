@@ -101,6 +101,12 @@ func (s *BalanceNotifyService) NotifyInsufficientBalance(ctx context.Context, us
 	if strings.TrimSpace(user.Email) == "" || user.BalanceNotifyPrimaryEmailDisabled {
 		return
 	}
+	// Respect the per-user opt-out. The deduction path already checks this via
+	// canNotifyBalance; the rejection path used to bypass it and kept emailing
+	// users who had turned balance alerts off.
+	if !user.BalanceNotifyEnabled {
+		return
+	}
 	enabled, threshold, rechargeURL := s.getBalanceNotifyConfig(ctx)
 	if !enabled {
 		return
