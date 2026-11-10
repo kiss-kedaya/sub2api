@@ -32,7 +32,7 @@ func (r *accountRepository) ListDueModelWhitelistAutoSyncAccounts(ctx context.Co
 		WHERE deleted_at IS NULL
 			AND status = 'active'
 			AND type = 'apikey'
-			AND extra @> '{"model_whitelist_auto_sync":{"enabled":true}}'::jsonb
+			AND COALESCE(extra #>> '{model_whitelist_auto_sync,enabled}', 'true') <> 'false' 
 			AND (
 				extra #>> '{model_whitelist_auto_sync_state,next_run_at}' IS NULL
 				OR extra #>> '{model_whitelist_auto_sync_state,next_run_at}' = ''

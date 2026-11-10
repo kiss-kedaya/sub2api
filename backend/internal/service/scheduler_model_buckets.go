@@ -32,7 +32,15 @@ func accountsSupportingRequestedModel(accounts []Account, requestedModel string)
 		}
 		if len(mapping) == 0 {
 			if supported {
-				unmapped = append(unmapped, account)
+				// An empty whitelist means "no restriction": it must compete
+				// with mapped siblings instead of only being a last resort.
+				// OpenAI keeps the fallback rule so an unrestricted OpenAI
+				// account cannot steal traffic from a mapped sibling.
+				if account.Platform == PlatformOpenAI {
+					unmapped = append(unmapped, account)
+				} else {
+					matched = append(matched, account)
+				}
 			}
 			continue
 		}
