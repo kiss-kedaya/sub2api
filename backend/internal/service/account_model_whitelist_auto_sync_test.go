@@ -33,7 +33,7 @@ func TestValidateModelWhitelistAutoSyncExtraAppliesDefaults(t *testing.T) {
 
 	config, ok := extra[ModelWhitelistAutoSyncExtraKey].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, 24, config["interval_hours"])
+	require.Equal(t, 1, config["interval_hours"])
 	require.Equal(t, "whitelist", config["mode"])
 }
 
