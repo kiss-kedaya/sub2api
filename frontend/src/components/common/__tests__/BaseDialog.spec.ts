@@ -129,8 +129,7 @@ describe('BaseDialog', () => {
     expect(document.body.classList.contains('modal-open')).toBe(false)
   })
 
-  it('keeps keyboard focus within the top dialog', async () => {
-    mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Verify', showCloseButton: false }, slots: { default: '<input aria-label="Code" /><button>Cancel</button>' } })
+  it('keeps keyboard focus within the top dialog', async () => {    mount(BaseDialog, { attachTo: document.body, props: { show: true, title: 'Verify', showCloseButton: false }, slots: { default: '<input aria-label="Code" /><button>Cancel</button>' } })
     await flushPromises()
     const input = document.querySelector<HTMLInputElement>('input')!
     const button = document.querySelector<HTMLButtonElement>('.base-dialog-body button')!
@@ -139,5 +138,37 @@ describe('BaseDialog', () => {
     expect(document.activeElement).toBe(input)
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }))
     expect(document.activeElement).toBe(button)
+  })
+
+  it('shows the restored-draft notice and emits discard-draft', async () => {
+    const wrapper = mount(BaseDialog, {
+      attachTo: document.body,
+      props: { show: true, title: 'Draft', draftNotice: 'Restored' },
+      slots: { default: '<input aria-label="Note" />' }
+    })
+    await flushPromises()
+
+    const notice = document.body.querySelector<HTMLElement>('[data-test="dialog-draft-notice"]')
+    expect(notice?.textContent).toContain('Restored')
+
+    // Without a label the discard action is not rendered, so a generic dialog stays clean.
+    expect(document.body.querySelector('[data-test="dialog-draft-discard"]')).toBeNull()
+
+    await wrapper.setProps({ draftDiscardLabel: 'Discard' })
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[data-test="dialog-draft-discard"]')!.click()
+    expect(wrapper.emitted('discard-draft')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('hides the restored-draft notice when no text is given', async () => {
+    const wrapper = mount(BaseDialog, {
+      attachTo: document.body,
+      props: { show: true, title: 'Plain' },
+      slots: { default: '<input aria-label="Note" />' }
+    })
+    await flushPromises()
+    expect(document.body.querySelector('[data-test="dialog-draft-notice"]')).toBeNull()
+    wrapper.unmount()
   })
 })

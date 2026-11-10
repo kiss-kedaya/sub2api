@@ -33,7 +33,10 @@
     <p v-if="error && !expanded" class="max-w-80 basis-full whitespace-normal text-error" role="alert">{{ error }}</p>
     <UButton v-if="loadFailed" variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.reload')" @click="load" />
     <BaseDialog :show="expanded" :title="t('admin.accounts.timer.title')" width="narrow"
-      :close-on-escape="!busy" :close-on-click-outside="!busy" :show-close-button="!busy" @close="expanded = false">
+      :close-on-escape="!busy" :close-on-click-outside="!busy" :show-close-button="!busy"
+      :draft-notice="timerDraft.restored.value ? t('common.draftRestored') : ''"
+      :draft-discard-label="t('common.draftDiscard')"
+      @discard-draft="discardTimerDraft" @close="expanded = false">
     <div v-if="expanded" data-test="timer-form" class="max-w-full space-y-4 whitespace-normal">
       <fieldset :disabled="busy" class="min-w-0 space-y-4">
         <UFormField :label="t('admin.accounts.timer.mode')">
@@ -163,6 +166,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
+import { useDialogDraft } from '@/composables/useDialogDraft'
 import timerZh from './schedulableTimer.zh'
 import timerEn from './schedulableTimer.en'
 import { schedulableTimersAPI, type SchedulableTimer, type TimerAction, type TimerAudit, type TimerInput, type TimerPreview, type TimerSnapshot } from '@/api/admin/schedulableTimers'
@@ -444,6 +448,33 @@ function validateRecurring() {
   return true
 }
 function closeForm() { expanded.value = false; preview.value = null; confirmed.value = false; error.value = '' }
+
+// The timer dialog closes on an outside click, so a half-filled schedule survives it. The
+// key carries the account id, and the signature is the schedule version we started from: a
+// timer saved elsewhere in the meantime invalidates the draft instead of overwriting it.
+//
+// Only one-shot timers are drafted. A recurring schedule keeps its periods and weekday scope
+// outside `form` (in `recurringPeriods` and `weekdaysOnly`), so a draft could bring back the
+// timezone but not the periods, and the dialog would claim to have restored input it had lost.
+const isOneShotDraft = () => action.value !== 'recurring' && form.mode !== 'recurring'
+const timerDraft = useDialogDraft({
+  key: () => `admin.accounts.timer:${props.accountId}:${action.value}`,
+  fields: ['mode', 'hours', 'minutes', 'date', 'time', 'timezone'] as const,
+  state: form,
+  open: () => expanded.value,
+  enabled: isOneShotDraft,
+  signature: () => `${action.value}:${editVersion.value}`
+})
+
+function discardTimerDraft() {
+  timerDraft.discard()
+  preview.value = null
+  confirmed.value = false
+  error.value = ''
+  Object.assign(form, { mode: 'relative', hours: 8, minutes: 0, date: '', time: '08:00', timezone: 'Asia/Shanghai', weekdays_only: false, periods: [{ start: '08:00', end: '18:00' }] })
+  weekdaysOnly.value = false
+  recurringPeriods.value = [{ start: '08:00', end: '18:00' }]
+}
 async function previewTime() {
   const request = input()
   if (request.mode === 'recurring' && !validateRecurring()) return
@@ -464,6 +495,8 @@ async function save() {
     const request = input()
     if (request.mode === 'absolute') request.date = preview.value.local_date
     await schedulableTimersAPI.save(props.accountId, { ...request, action: action.value, expected_version: editVersion.value, confirmed_at: request.mode === 'absolute' ? preview.value.execute_at : undefined })
+    // Saved: the draft must not reappear next time the dialog is opened.
+    timerDraft.markSubmitted()
     app.showSuccess(t('admin.accounts.timer.saved')); expanded.value = false; await load()
   } catch (err) { showError(err) }
   finally { busy.value = false }

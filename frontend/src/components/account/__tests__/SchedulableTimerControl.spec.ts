@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import USelect from '@nuxt/ui/components/Select.vue'
 import SchedulableTimerControl from '../SchedulableTimerControl.vue'
+import { setDialogDraftUserIdResolver } from '@/composables/useDialogDraft'
 
 const { api, toast, SelectStub } = vi.hoisted(() => ({
   api: { list: vi.fn(), preview: vi.fn(), save: vi.fn(), cancel: vi.fn() },
@@ -248,6 +249,55 @@ describe('one-shot schedulable timer', () => {
     await flushPromises()
     expect(wrapper.find('[data-test="timer-save"]').exists()).toBe(false)
     expect(api.list).toHaveBeenLastCalledWith(8)
+  })
+
+  // The periods and the weekday scope of a recurring schedule live outside the drafted form,
+  // so a recurring edit must leave no draft behind: restoring only its timezone would show
+  // "restored" over periods that had silently gone back to the default.
+  it('does not keep a draft for a recurring schedule', async () => {
+    const drafts = () => Object.keys(sessionStorage).filter((key) => key.startsWith('sub2api:dialog-draft:'))
+    sessionStorage.clear()
+    setDialogDraftUserIdResolver(() => 42)
+    try {
+      wrapper = mountTimer({ accountId: 7 })
+      await flushPromises()
+      await wrapper.get('[data-test="timer-entry"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-test="timer-mode-recurring"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-test="timer-period-start"]').setValue('09:30')
+      await flushPromises()
+      // Leave without saving, the way an outside click does.
+      await wrapper.get('[data-test="timer-form-cancel"]').trigger('click')
+      await flushPromises()
+      await new Promise((resolve) => setTimeout(resolve, 350)) // past the autosave throttle
+      expect(wrapper.find('[data-test="timer-form"]').exists()).toBe(false)
+      expect(drafts()).toEqual([])
+    } finally {
+      setDialogDraftUserIdResolver(null)
+      sessionStorage.clear()
+    }
+  })
+
+  it('still keeps a draft for a one-shot timer', async () => {
+    const drafts = () => Object.keys(sessionStorage).filter((key) => key.startsWith('sub2api:dialog-draft:'))
+    sessionStorage.clear()
+    setDialogDraftUserIdResolver(() => 42)
+    try {
+      wrapper = mountTimer({ accountId: 7 })
+      await flushPromises()
+      await wrapper.get('[data-test="timer-entry"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-test="timer-mode-absolute"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-test="timer-entry"]').trigger('click')
+      await flushPromises()
+      expect(drafts()).toHaveLength(1)
+      expect(JSON.parse(sessionStorage.getItem(drafts()[0])!).fields.mode).toBe('absolute')
+    } finally {
+      setDialogDraftUserIdResolver(null)
+      sessionStorage.clear()
+    }
   })
 
 })

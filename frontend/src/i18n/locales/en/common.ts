@@ -19,6 +19,8 @@ export default {
     required: 'Required',
     sending: 'Sending...',
     tryAgain: 'Please try again',
+    draftRestored: 'Restored your unsubmitted input',
+    draftDiscard: 'Discard',
     update: 'Update',
     confirm: 'Confirm',
     reset: 'Reset',
