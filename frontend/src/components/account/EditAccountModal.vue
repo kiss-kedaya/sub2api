@@ -5014,7 +5014,7 @@ const handleSubmit = async () => {
         ...currentExtra,
         model_whitelist_auto_sync: {
           enabled: modelAutoSyncEnabled.value,
-          interval_hours: 24,
+          interval_hours: 1,
           mode: 'whitelist',
         },
       }

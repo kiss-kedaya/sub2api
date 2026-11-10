@@ -32,14 +32,14 @@ func TestModelWhitelistAutoSyncConfigMissingOrDisabled(t *testing.T) {
 	enabled, interval, ok := modelWhitelistAutoSyncConfig(nil)
 	require.True(t, ok, "missing config defaults to enabled")
 	require.True(t, enabled)
-	require.Equal(t, 24*time.Hour, interval)
+	require.Equal(t, time.Hour, interval)
 
 	enabled, interval, ok = modelWhitelistAutoSyncConfig(map[string]any{
 		ModelWhitelistAutoSyncExtraKey: map[string]any{"enabled": false},
 	})
 	require.True(t, ok)
 	require.False(t, enabled)
-	require.Equal(t, 24*time.Hour, interval, "default interval applies when omitted")
+	require.Equal(t, time.Hour, interval, "default interval applies when omitted")
 }
 
 // A non-identity mapping is an administrator's routing and must block the job.
