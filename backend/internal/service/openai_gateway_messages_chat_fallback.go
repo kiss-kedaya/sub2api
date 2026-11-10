@@ -52,6 +52,26 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	applyOpenAICompatModelNormalization(&anthropicReq)
 	clientStream := anthropicReq.Stream
 
+	// A Sol/Terra tool request needs the Responses API, so a Chat-Completions-only
+	// account cannot serve it. Resolve the upstream model and detect the mismatch
+	// before the lossy Anthropic→Chat conversion: a managed gateway returns a
+	// request-scoped failover error so another account can answer, while a
+	// direct/single-account caller (no selector) keeps the committed 400.
+	billingModel := resolveOpenAIForwardModel(account, anthropicReq.Model, defaultMappedModel)
+	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+	if openai.RequiresResponsesForToolCalls(upstreamModel) && len(anthropicReq.Tools) > 0 {
+		if s.accountRepo != nil {
+			return nil, newOpenAIResponsesToolsUnsupportedFailoverError(upstreamModel)
+		}
+		err := fmt.Errorf("%s", openAIResponsesToolsUnsupportedMessage(upstreamModel))
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+
 	// 2. Anthropic → Chat Completions (direct, no Responses intermediary)
 	// DeepSeek's thinking-mode Chat API requires every echoed assistant
 	// thinking block to be sent back as reasoning_content, including a plain
@@ -65,17 +85,6 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 		return nil, fmt.Errorf("convert anthropic to chat completions: %w", err)
 	}
 
-	billingModel := resolveOpenAIForwardModel(account, anthropicReq.Model, defaultMappedModel)
-	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
-	if err := validateGPT61SolCompatRequest(body, upstreamModel); err != nil {
-		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
-		return nil, err
-	}
-	if openai.RequiresResponsesForToolCalls(upstreamModel) && len(anthropicReq.Tools) > 0 {
-		err := fmt.Errorf("%s requires Responses for tool calls; this account only supports Chat Completions", normalizeKnownOpenAICodexModel(upstreamModel))
-		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
-		return nil, err
-	}
 	chatReq.Model = upstreamModel
 	chatReq.ReasoningEffort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, chatReq.ReasoningEffort)
 	if account.Platform == PlatformDeepseek && anthropicReq.Thinking != nil {

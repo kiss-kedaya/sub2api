@@ -460,7 +460,35 @@ const (
 	// OpenAIHTTPContinuationUnsupportedReason identifies accounts that cannot
 	// preserve an official Responses HTTP continuation without dropping state.
 	OpenAIHTTPContinuationUnsupportedReason = GatewayFailureReason("openai_http_continuation_unsupported")
+	// OpenAIResponsesToolsUnsupportedReason marks a request/account capability
+	// mismatch: the requested Sol/Terra model only offers tool calls through the
+	// Responses API, but the selected account was downgraded to Chat Completions.
+	// A managed gateway can retry on a Responses-capable account; the mismatch is
+	// local and must not count against the selected account's health.
+	OpenAIResponsesToolsUnsupportedReason = GatewayFailureReason("openai_responses_tools_unsupported")
 )
+
+// openAIResponsesToolsUnsupportedMessage is the client-visible explanation for
+// a Sol/Terra tool request that landed on a Chat-Completions-only account.
+func openAIResponsesToolsUnsupportedMessage(upstreamModel string) string {
+	return fmt.Sprintf("%s requires Responses for tool calls; this account only supports Chat Completions", normalizeKnownOpenAICodexModel(upstreamModel))
+}
+
+// newOpenAIResponsesToolsUnsupportedFailoverError builds the request-scoped
+// failover error used instead of a committed 400 when a managed gateway may
+// still select a Responses-capable account. No upstream call has happened yet,
+// so the error is never attributed to account health.
+func newOpenAIResponsesToolsUnsupportedFailoverError(upstreamModel string) *UpstreamFailoverError {
+	return &UpstreamFailoverError{
+		StatusCode:        http.StatusBadRequest,
+		Stage:             GatewayFailureStageRequestCompatibility,
+		Scope:             GatewayFailureScopeRequest,
+		Reason:            OpenAIResponsesToolsUnsupportedReason,
+		NextAccountAction: NextAccountRetry,
+		ClientStatusCode:  http.StatusBadRequest,
+		ClientMessage:     openAIResponsesToolsUnsupportedMessage(upstreamModel),
+	}
+}
 
 // isOpenAIUpstreamAccessStateError recognizes provider-side credential state
 // failures only from explicit structured codes. Free-form messages may contain
