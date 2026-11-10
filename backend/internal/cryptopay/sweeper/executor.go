@@ -400,7 +400,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		// is gone; release it instead of retrying an impossible transfer.
 		var superseded bool
 		if err := e.queries().QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM sweep_records WHERE id<>$1 AND chain=$2
+			SELECT 1 FROM sweep_records WHERE id>$1 AND chain=$2
 			  AND lower(from_address)=lower($3) AND lower(token)=lower($4) AND status='swept')`,
 			job.ID, job.Chain, job.Address, job.Token).Scan(&superseded); err == nil && superseded {
 			job.Status = "failed"
