@@ -15,9 +15,15 @@
 .ticket-button > svg, .ticket-text-button > svg { flex-shrink: 0; }
 .ticket-button-primary { background: var(--signal-accent); border-color: var(--signal-accent); color: var(--signal-on-accent); }
 .ticket-text-button { padding: 5px 2px; color: var(--signal-accent); min-height: 30px; }
-.ticket-icon-button:hover:not(:disabled), .ticket-button:hover:not(:disabled):not(.ticket-button-primary) { background: var(--signal-hover); }
-.ticket-button-primary:hover:not(:disabled) { filter: brightness(.95); }
-.ticket-text-button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+/* Hover only on hover-capable pointers; touch keeps a press state instead of a stuck highlight. */
+@media (hover: hover) and (pointer: fine) {
+  .ticket-icon-button:hover:not(:disabled), .ticket-button:hover:not(:disabled):not(.ticket-button-primary) { background: var(--signal-hover); }
+  .ticket-button-primary:hover:not(:disabled) { filter: brightness(.95); }
+  .ticket-text-button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+}
+.ticket-icon-button:active:not(:disabled), .ticket-button:active:not(:disabled):not(.ticket-button-primary) { background: var(--signal-hover); }
+.ticket-button-primary:active:not(:disabled) { filter: brightness(.95); }
+.ticket-text-button:active:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
 .tickets-page :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--signal-accent); outline-offset: 2px; }
 .tickets-page :is(button, select):disabled { cursor: not-allowed; opacity: .48; }
 .tickets-quota { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--signal-muted); font-size: 12px; margin: -3px 0 17px; }
@@ -26,7 +32,10 @@
 .tickets-quota-used { color: var(--signal-amber); }
 .tickets-status-tabs { display: flex; gap: 22px; overflow-x: auto; border-bottom: 1px solid var(--signal-line); scrollbar-width: none; }
 .tickets-status-tabs button { display: flex; align-items: center; gap: 8px; flex-shrink: 0; border-bottom: 2px solid transparent; padding: 10px 0 13px; color: var(--signal-muted); font-size: 13px; white-space: nowrap; }
-.tickets-status-tabs button:hover, .tickets-status-tabs button.active { color: var(--signal-accent); }
+@media (hover: hover) and (pointer: fine) {
+  .tickets-status-tabs button:hover { color: var(--signal-accent); }
+}
+.tickets-status-tabs button.active, .tickets-status-tabs button:active { color: var(--signal-accent); }
 .tickets-status-tabs button.active { border-color: var(--signal-accent); font-weight: 600; }
 .tickets-status-tabs button span { background: var(--signal-hover); min-width: 21px; padding: 1px 5px; border-radius: 4px; font-size: 11px; font-variant-numeric: tabular-nums; }
 .tickets-status-tabs button.active span { background: var(--signal-accent-soft); }
@@ -43,7 +52,9 @@
 .tickets-list-filters .ticket-select { flex: 1 1 90px; }
 .tickets-list { overflow-y: auto; flex: 1; min-height: 0; overscroll-behavior: contain; }
 .ticket-list-item { position: relative; display: block; width: 100%; min-width: 0; padding: 16px; text-align: left; border-bottom: 1px solid var(--signal-line); border-left: 3px solid transparent; transition: background-color 140ms; }
-.ticket-list-item:hover { background: var(--signal-bg); }
+@media (hover: hover) and (pointer: fine) {
+  .ticket-list-item:hover { background: var(--signal-bg); }
+}
 .ticket-list-item.selected { border-left-color: var(--signal-accent); background: var(--signal-accent-soft); }
 .ticket-item-top, .ticket-item-subject, .ticket-item-bottom { display: flex; align-items: center; gap: 8px; }
 .ticket-item-top { justify-content: space-between; color: var(--signal-muted); font-size: 11px; }

@@ -142,7 +142,14 @@ body:has(.console-signal) > .select-dropdown-portal {
   box-shadow: inset 0 -2px var(--signal-accent);
 }
 
-.console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):hover:not(:disabled):not([aria-pressed='true']) {
+@media (hover: hover) and (pointer: fine) {
+  .console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):hover:not(:disabled):not([aria-pressed='true']) {
+    border-color: var(--signal-control-line);
+  }
+}
+
+/* Touch and mouse both get a press state; the selected option is styled separately by [aria-pressed]. */
+.console-signal .signal-payment :is(.payment-method-selector__option, .payment-amount-input__option):active:not(:disabled):not([aria-pressed='true']) {
   border-color: var(--signal-control-line);
 }
 
@@ -169,8 +176,10 @@ body:has(.console-signal) > .select-dropdown-portal {
   font-size: 13px;
 }
 
-.console-signal.signal-admin .table-scroll-container tr:hover td {
-  background-color: var(--signal-hover);
+@media (hover: hover) and (pointer: fine) {
+  .console-signal.signal-admin .table-scroll-container tr:hover td {
+    background-color: var(--signal-hover);
+  }
 }
 
 .console-signal.signal-admin .table-scroll-container tbody tr:has(input[data-test='select-row']:checked) td,
@@ -215,7 +224,14 @@ body:has(.console-signal) > .select-dropdown-portal {
   color: var(--signal-muted);
 }
 
-.console-signal .table-pagination button:hover:not(:disabled) {
+@media (hover: hover) and (pointer: fine) {
+  .console-signal .table-pagination button:hover:not(:disabled) {
+    background: var(--signal-hover);
+    color: var(--signal-text);
+  }
+}
+
+.console-signal .table-pagination button:active:not(:disabled) {
   background: var(--signal-hover);
   color: var(--signal-text);
 }
@@ -299,8 +315,10 @@ body:has(.console-signal) > .select-dropdown-portal {
   border-color: var(--signal-line);
 }
 
-.console-signal .plaza-pricing-table tbody tr:hover {
-  background: var(--signal-hover);
+@media (hover: hover) and (pointer: fine) {
+  .console-signal .plaza-pricing-table tbody tr:hover {
+    background: var(--signal-hover);
+  }
 }
 
 .console-signal .plaza-pricing-table :is(.text-gray-400, .text-gray-500, .pz-unit) {

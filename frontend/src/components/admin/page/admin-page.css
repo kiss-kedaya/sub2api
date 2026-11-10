@@ -18,8 +18,17 @@ html:not(.dark) .admin-menu .admin-menu-item {
   font-size: 14px;
 }
 
-html:not(.dark) .admin-menu .admin-menu-item:hover:not(:disabled) {
-  background: var(--ui-bg-elevated);
+/* Hover, not touch: without the query a tap leaves the row highlighted until the visitor taps
+   somewhere else. */
+@media (hover: hover) and (pointer: fine) {
+  html:not(.dark) .admin-menu .admin-menu-item:hover:not(:disabled) {
+    background: var(--ui-bg-elevated);
+    color: var(--ui-text-highlighted);
+  }
+}
+
+html:not(.dark) .admin-menu .admin-menu-item:active:not(:disabled) {
+  background: var(--ui-bg-accented);
   color: var(--ui-text-highlighted);
 }
 

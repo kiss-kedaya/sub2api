@@ -11,6 +11,7 @@ import {
   previewSiteTheme,
   previewSiteThemeMode,
   restoreSiteTheme,
+  syncThemeColor,
   toggleColorMode,
   useSiteColorMode,
   useSiteTheme
@@ -237,6 +238,68 @@ describe('useSiteTheme', () => {
     await Promise.resolve()
     expect(mode.isDark.value).toBe(true)
     expect(useSiteColorMode().preference.value).toBe('dark')
+  })
+})
+
+describe('theme-color meta', () => {
+  const root = document.documentElement
+  const tags = () => Array.from(document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'))
+  // jsdom loads no stylesheet, so --app-page-bg resolves to '' and the built-in fallbacks apply.
+  const LIGHT = '#ffffff'
+  const DARK = '#1b181f'
+
+  // Earlier suites leave the module's class observer on <html>. Removing `.dark` queues one more
+  // sync, which would re-create the tag after it was cleared, so let that run before clearing.
+  const settleClassObserver = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  beforeEach(async () => {
+    localStorage.clear()
+    root.classList.remove('dark')
+    await settleClassObserver()
+    tags().forEach((tag) => tag.remove())
+  })
+
+  afterEach(async () => {
+    root.classList.remove('dark')
+    await settleClassObserver()
+    tags().forEach((tag) => tag.remove())
+    vi.restoreAllMocks()
+  })
+
+  it('creates the tag when the page did not ship one', () => {
+    expect(tags()).toHaveLength(0)
+    syncThemeColor(false)
+    expect(tags()).toHaveLength(1)
+    expect(tags()[0].content).toBe(LIGHT)
+  })
+
+  it('rewrites both prefers-color-scheme variants to the one colour in force', () => {
+    // index.html ships a light and a dark tag; the class, not the media query, decides what is on screen.
+    for (const media of ['(prefers-color-scheme: light)', '(prefers-color-scheme: dark)']) {
+      const tag = document.createElement('meta')
+      tag.name = 'theme-color'
+      tag.media = media
+      tag.content = '#ff00ff'
+      document.head.appendChild(tag)
+    }
+    syncThemeColor(true)
+    expect(tags().map((tag) => tag.content)).toEqual([DARK, DARK])
+    syncThemeColor(false)
+    expect(tags().map((tag) => tag.content)).toEqual([LIGHT, LIGHT])
+  })
+
+  it('follows a day/night toggle', () => {
+    const mode = useSiteColorMode()
+    syncThemeColor(false)
+    expect(tags()[0].content).toBe(LIGHT)
+
+    toggleColorMode()
+    expect(mode.isDark.value).toBe(true)
+    expect(tags()[0].content).toBe(DARK)
+
+    toggleColorMode()
+    expect(mode.isDark.value).toBe(false)
+    expect(tags()[0].content).toBe(LIGHT)
   })
 })
 
