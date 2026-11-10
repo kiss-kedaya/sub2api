@@ -160,6 +160,14 @@ const popoverContent = {
   onPointerDownOutside: (event: CustomEvent<{ originalEvent: PointerEvent }>) => {
     if (isInside(triggerRef.value, event.detail?.originalEvent?.target ?? null)) event.preventDefault()
   },
+  // The bubble is rendered outside the trigger, so while the trigger holds keyboard focus the
+  // popover sees that focus as "outside" and closes itself the moment it opens. Focus on our
+  // own trigger is what opened it; only focus that goes somewhere else should dismiss.
+  // jsdom does not raise this event, so HintFormField.spec.ts cannot cover it: it was found and
+  // checked in a real browser (Tab onto the icon, the bubble must still be there 500ms later).
+  onFocusOutside: (event: CustomEvent<{ originalEvent: FocusEvent }>) => {
+    if (isInside(triggerRef.value, event.detail?.originalEvent?.target ?? null)) event.preventDefault()
+  },
 }
 
 onMounted(() => {

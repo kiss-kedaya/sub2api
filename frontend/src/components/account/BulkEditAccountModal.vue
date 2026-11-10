@@ -207,7 +207,8 @@
             
             <div v-if="modelSyncState.total > 0" class="mt-3 space-y-2">
               <UProgress :model-value="modelSyncPercent" size="sm" />
-              
+              <!-- Live progress of the running sync, not a field hint: it stays on the page. -->
+              <p data-testid="bulk-edit-auto-sync-progress" class="text-xs text-muted tabular-nums">{{ t('admin.accounts.bulkEdit.autoSyncProgress', { done: modelSyncState.completed, total: modelSyncState.total }) }}</p>
               <p v-if="modelSyncState.failedIds.length" class="text-xs text-error">{{ t('admin.accounts.bulkEdit.autoSyncFailedIds', { ids: modelSyncState.failedIds.join(', ') }) }}</p>
             </div>
           </div>

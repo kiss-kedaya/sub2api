@@ -350,7 +350,10 @@
             <div v-if="modelRestrictionMode === 'whitelist'">
               <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
               <div class="mt-2">
-                <UCheckbox v-model="modelAutoSyncEnabled" label="自动同步上游最新模型（默认开启；失败自动重试，仍失败则清空模型限制）" />
+                <div class="flex items-center">
+                  <UCheckbox v-model="modelAutoSyncEnabled" :label="t('admin.accounts.modelAutoSync.label')" />
+                  <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.modelAutoSync.label')" width-class="w-72">{{ t('admin.accounts.modelAutoSync.hint') }}</HelpTooltip>
+                </div>
               </div>
               <p class="text-xs text-muted">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
@@ -550,7 +553,10 @@
               <div v-if="modelRestrictionMode === 'whitelist'">
                 <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
               <div class="mt-2">
-                <UCheckbox v-model="modelAutoSyncEnabled" label="自动同步上游最新模型（默认开启；失败自动重试，仍失败则清空模型限制）" />
+                <div class="flex items-center">
+                  <UCheckbox v-model="modelAutoSyncEnabled" :label="t('admin.accounts.modelAutoSync.label')" />
+                  <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.modelAutoSync.label')" width-class="w-72">{{ t('admin.accounts.modelAutoSync.hint') }}</HelpTooltip>
+                </div>
               </div>
                 <p class="text-xs text-muted">
                   {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
@@ -747,7 +753,10 @@
             <div v-if="modelRestrictionMode === 'whitelist'">
               <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" @upstream-models="importUpstreamModelsToMapping" />
               <div class="mt-2">
-                <UCheckbox v-model="modelAutoSyncEnabled" label="自动同步上游最新模型（默认开启；失败自动重试，仍失败则清空模型限制）" />
+                <div class="flex items-center">
+                  <UCheckbox v-model="modelAutoSyncEnabled" :label="t('admin.accounts.modelAutoSync.label')" />
+                  <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.modelAutoSync.label')" width-class="w-72">{{ t('admin.accounts.modelAutoSync.hint') }}</HelpTooltip>
+                </div>
               </div>
               <p class="text-xs text-muted">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
