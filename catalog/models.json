@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-11-07",
+  "updated_at": "2026-11-11",
   "models": {
     "deepseek-flash": {
       "display_name": "DeepSeek V4.1 Flash",
@@ -261,6 +261,93 @@
       "reasoning": true,
       "tool_call": true,
       "family": "kimi-k2.8"
+    },
+    "gemini-4-argon": {
+      "display_name": "Gemini 4 Argon",
+      "description": "Gemini multimodal model for text, image, audio, video and document tasks.",
+      "context_window": 1048576,
+      "max_output_tokens": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "attachment": true,
+      "temperature": false,
+      "family": "gemini",
+      "release_date": "2026-10-13",
+      "knowledge": "2026-03",
+      "open_weights": false,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "high"
+      ],
+      "reference_pricing": {
+        "unit": "USD/1M tokens",
+        "input": 4,
+        "output": 20,
+        "cache_read": 0.2,
+        "cache_write": 0.375
+      }
+    },
+    "gemini-4-carbon": {
+      "display_name": "Gemini 4 Carbon",
+      "description": "Gemini 4 Carbon multimodal model for text, image and document tasks.",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "attachment": true,
+      "temperature": false,
+      "family": "gemini",
+      "release_date": "2026-11-10",
+      "open_weights": false,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "gemini-3.8-flash": {
+      "display_name": "Gemini 3.8 Flash",
+      "description": "Gemini 3.8 Flash multimodal model for fast text, image and document tasks.",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "attachment": true,
+      "temperature": false,
+      "family": "gemini",
+      "release_date": "2026-11-10",
+      "open_weights": false,
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        "high",
+        "medium",
+        "low"
+      ]
     }
   }
 }
