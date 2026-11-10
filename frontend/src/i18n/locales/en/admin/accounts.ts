@@ -1070,7 +1070,7 @@ export default {
         },
         cacheTTLOverride: {
           label: 'Cache TTL Override',
-          hint: 'Force all cache creation tokens to be billed as the selected TTL tier (5m or 1h)',
+          hint: 'Force all cache creation tokens to be billed as the selected TTL tier (5m or 1h). Billing only; the request is not rewritten. An API key set to force 1h / force 5m / off takes precedence. Priority: API key, then account, then the global switch.',
           target: 'Target TTL',
           targetHint: 'Select the TTL tier for billing'
         },
