@@ -1859,6 +1859,20 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 	if failoverErr != nil {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
+	if failoverErr != nil && failoverErr.Reason == service.OpenAIResponsesToolsUnsupportedReason {
+		// The request/account capability mismatch was detected locally before any
+		// upstream call, so it must not be recorded as an upstream HTTP failure.
+		status := failoverErr.ClientStatusCode
+		if status <= 0 {
+			status = http.StatusBadRequest
+		}
+		message := strings.TrimSpace(failoverErr.ClientMessage)
+		if message == "" {
+			message = "This model requires the Responses API for tool calls; this account only supports Chat Completions"
+		}
+		h.anthropicStreamingAwareError(c, status, "invalid_request_error", message, streamStarted)
+		return
+	}
 	if failoverErr != nil && failoverErr.IsOpenAICapacityShed() && strings.TrimSpace(failoverErr.ClientMessage) != "" {
 		status := failoverErr.ClientStatusCode
 		if status <= 0 {
@@ -3547,6 +3561,20 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	}
 	if failoverErr == nil {
 		h.handleFailoverExhaustedSimple(c, http.StatusBadGateway, streamStarted)
+		return
+	}
+	if failoverErr.Reason == service.OpenAIResponsesToolsUnsupportedReason {
+		// The request/account capability mismatch was detected locally before any
+		// upstream call, so it must not be recorded as an upstream HTTP failure.
+		status := failoverErr.ClientStatusCode
+		if status <= 0 {
+			status = http.StatusBadRequest
+		}
+		message := strings.TrimSpace(failoverErr.ClientMessage)
+		if message == "" {
+			message = "This model requires the Responses API for tool calls; this account only supports Chat Completions"
+		}
+		h.handleStreamingAwareError(c, status, "invalid_request_error", message, streamStarted)
 		return
 	}
 	if failoverErr.Reason == service.GrokImageQualityUnsupportedReason {

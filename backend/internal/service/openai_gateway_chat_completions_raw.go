@@ -88,7 +88,12 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		grokCacheIdentity = resolveGrokCacheIdentity(c, body, "", upstreamModel)
 	}
 	if openai.RequiresResponsesForToolCalls(upstreamModel) && (len(gjson.GetBytes(body, "tools").Array()) > 0 || len(gjson.GetBytes(body, "functions").Array()) > 0) {
-		err := fmt.Errorf("%s requires Responses for tool calls; this account only supports Chat Completions", normalizeKnownOpenAICodexModel(upstreamModel))
+		// Managed gateways can retry on a Responses-capable account; a direct /
+		// single-account caller keeps the committed 400.
+		if s.accountRepo != nil {
+			return nil, newOpenAIResponsesToolsUnsupportedFailoverError(upstreamModel)
+		}
+		err := fmt.Errorf("%s", openAIResponsesToolsUnsupportedMessage(upstreamModel))
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
 	}
