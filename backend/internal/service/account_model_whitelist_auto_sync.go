@@ -31,7 +31,7 @@ const ModelWhitelistAutoSyncExtraKey = "model_whitelist_auto_sync"
 const ModelWhitelistAutoSyncModeWhitelist = "whitelist"
 
 const (
-	modelWhitelistAutoSyncDefaultIntervalHours = 24
+	modelWhitelistAutoSyncDefaultIntervalHours = 1
 	modelWhitelistAutoSyncMinIntervalHours     = 1
 	modelWhitelistAutoSyncMaxIntervalHours     = 720
 )
