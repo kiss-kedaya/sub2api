@@ -1084,6 +1084,21 @@ describe('BulkEditAccountModal', () => {
     expect(showSuccess).toHaveBeenCalledWith('admin.accounts.bulkEdit.autoSyncSuccess')
   })
 
+  // The "n / total" line is the live result of the sync the operator just started, not a
+  // field hint, so it stays on the page next to the progress bar.
+  it('立即同步后在进度条旁显示已完成数量', async () => {
+    vi.mocked(syncUpstreamModels).mockResolvedValue({ models: ['model-a'] } as any)
+    vi.mocked(updateAccount).mockResolvedValue({} as any)
+
+    const wrapper = mountModal()
+    expect(wrapper.find('[data-testid="bulk-edit-auto-sync-progress"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="bulk-edit-auto-sync-run"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="bulk-edit-auto-sync-progress"]').text()).toBe('admin.accounts.bulkEdit.autoSyncProgress')
+    expect(translate).toHaveBeenCalledWith('admin.accounts.bulkEdit.autoSyncProgress', { done: 2, total: 2 })
+  })
+
   it('上游返回空模型列表时不覆盖已有白名单', async () => {
     vi.mocked(syncUpstreamModels).mockResolvedValue({ models: [] } as any)
 

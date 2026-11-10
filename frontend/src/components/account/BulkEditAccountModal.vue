@@ -19,7 +19,7 @@
             for="bulk-edit-base-url-enabled"
           >
             {{ t('admin.accounts.baseUrl') }}
-          </label>
+          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.baseUrl')"><span class="block">{{ t('admin.accounts.bulkEdit.baseUrlNotice') }}</span></HelpTooltip></label>
           <UCheckbox v-model="enableBaseUrl" id="bulk-edit-base-url-enabled" aria-controls="bulk-edit-base-url" />
         </div>
         <UInput v-model="baseUrl" id="bulk-edit-base-url" type="text" :disabled="!enableBaseUrl" :placeholder="t('admin.accounts.bulkEdit.baseUrlPlaceholder')" aria-labelledby="bulk-edit-base-url-label" class="w-full" />
@@ -28,9 +28,7 @@
           class="mt-2"
           @select="baseUrl = $event; enableBaseUrl = true"
         />
-        <p class="mt-1.5 text-xs text-muted">
-          {{ t('admin.accounts.bulkEdit.baseUrlNotice') }}
-        </p>
+        
       </div>
 
       <!-- Model restriction -->
@@ -174,6 +172,7 @@
           aria-labelledby="bulk-edit-auto-sync-label"
         >
           <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.bulkEdit.autoSyncHint')" class="mb-3" />
+          <p v-if="targetMode === 'filtered'" class="mb-3 text-xs text-muted">{{ t('admin.accounts.bulkEdit.autoSyncSelectOnly') }}</p>
 
           <div class="mb-3 flex items-center justify-between gap-3 rounded-lg border border-default px-3 py-2">
             <span class="text-sm text-default">{{ t('admin.accounts.bulkEdit.autoSyncEnabledLabel') }}</span>
@@ -205,10 +204,11 @@
                 @click="runSerialModelSync"
               >{{ t('admin.accounts.bulkEdit.autoSyncRunNow') }}</UButton>
             </div>
-            <p v-if="targetMode === 'filtered'" class="mt-2 text-xs text-muted">{{ t('admin.accounts.bulkEdit.autoSyncSelectOnly') }}</p>
+            
             <div v-if="modelSyncState.total > 0" class="mt-3 space-y-2">
               <UProgress :model-value="modelSyncPercent" size="sm" />
-              <p class="text-xs text-muted">{{ t('admin.accounts.bulkEdit.autoSyncProgress', { done: modelSyncState.completed, total: modelSyncState.total }) }}</p>
+              <!-- Live progress of the running sync, not a field hint: it stays on the page. -->
+              <p data-testid="bulk-edit-auto-sync-progress" class="text-xs text-muted tabular-nums">{{ t('admin.accounts.bulkEdit.autoSyncProgress', { done: modelSyncState.completed, total: modelSyncState.total }) }}</p>
               <p v-if="modelSyncState.failedIds.length" class="text-xs text-error">{{ t('admin.accounts.bulkEdit.autoSyncFailedIds', { ids: modelSyncState.failedIds.join(', ') }) }}</p>
             </div>
           </div>
@@ -259,11 +259,11 @@
               for="bulk-edit-load-factor-enabled"
             >
               {{ t('admin.accounts.loadFactor') }}
-            </label>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.loadFactor')"><span class="block">{{ t('admin.accounts.loadFactorHint') }}</span></HelpTooltip></label>
             <UCheckbox v-model="enableLoadFactor" id="bulk-edit-load-factor-enabled" aria-controls="bulk-edit-load-factor" />
           </div>
           <UInput v-model.number="loadFactor" id="bulk-edit-load-factor" type="number" min="1" :disabled="!enableLoadFactor" aria-labelledby="bulk-edit-load-factor-label" @input="loadFactor = (loadFactor &amp;&amp; loadFactor >= 1) ? loadFactor : null" class="w-full" />
-          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.loadFactorHint') }}</p>
+          
         </div>
         <div>
           <div class="mb-3 flex items-center justify-between">
@@ -286,11 +286,11 @@
               for="bulk-edit-rate-multiplier-enabled"
             >
               {{ t('admin.accounts.billingRateMultiplier') }}
-            </label>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.billingRateMultiplier')"><span class="block">{{ t('admin.accounts.billingRateMultiplierHint') }}</span></HelpTooltip></label>
             <UCheckbox v-model="enableRateMultiplier" id="bulk-edit-rate-multiplier-enabled" aria-controls="bulk-edit-rate-multiplier" />
           </div>
           <UInput v-model.number="rateMultiplier" id="bulk-edit-rate-multiplier" type="number" min="0" step="0.01" :disabled="!enableRateMultiplier" aria-labelledby="bulk-edit-rate-multiplier-label" class="w-full" />
-          <p class="mt-1.5 text-xs text-muted">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
+          
           <p
             v-if="enableRateMultiplier"
             class="mt-2 flex items-start gap-1 text-xs text-warning"
@@ -339,10 +339,8 @@
               for="bulk-edit-openai-passthrough-enabled"
             >
               {{ t('admin.accounts.openai.oauthPassthrough') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.oauthPassthroughDesc') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.oauthPassthrough')"><span class="block">{{ t('admin.accounts.openai.oauthPassthroughDesc') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableOpenAIPassthrough" id="bulk-edit-openai-passthrough-enabled" aria-controls="bulk-edit-openai-passthrough-body" />
         </div>
@@ -369,10 +367,8 @@
               for="bulk-edit-openai-flatten-namespaces-enabled"
             >
               {{ t('admin.accounts.openai.flattenNamespaces') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.flattenNamespacesDesc') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.flattenNamespaces')"><span class="block">{{ t('admin.accounts.openai.flattenNamespacesDesc') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableOpenAIFlattenNamespaces" id="bulk-edit-openai-flatten-namespaces-enabled" aria-controls="bulk-edit-openai-flatten-namespaces-body" />
         </div>
@@ -399,10 +395,8 @@
               for="bulk-edit-openai-long-context-billing-enabled"
             >
               {{ t('admin.accounts.openai.longContextBilling') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.longContextBillingDesc') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.longContextBilling')"><span class="block">{{ t('admin.accounts.openai.longContextBillingDesc') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableOpenAILongContextBilling" id="bulk-edit-openai-long-context-billing-enabled" aria-controls="bulk-edit-openai-long-context-billing-body" />
         </div>
@@ -432,10 +426,8 @@
               for="bulk-edit-custom-error-codes-enabled"
             >
               {{ t('admin.accounts.customErrorCodes') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.customErrorCodesHint') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.customErrorCodes')"><span class="block">{{ t('admin.accounts.customErrorCodesHint') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableCustomErrorCodes" id="bulk-edit-custom-error-codes-enabled" aria-controls="bulk-edit-custom-error-codes-body" />
         </div>
@@ -511,10 +503,8 @@
               for="bulk-edit-intercept-warmup-enabled"
             >
               {{ t('admin.accounts.interceptWarmupRequests') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.interceptWarmupRequestsDesc') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.interceptWarmupRequests')"><span class="block">{{ t('admin.accounts.interceptWarmupRequestsDesc') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableInterceptWarmup" id="bulk-edit-intercept-warmup-enabled" aria-controls="bulk-edit-intercept-warmup-body" />
         </div>
@@ -533,10 +523,8 @@
               for="bulk-edit-header-override-enabled"
             >
               {{ t('admin.accounts.headerOverride.title') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.headerOverride.hint') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.headerOverride.title')"><span class="block">{{ t('admin.accounts.headerOverride.hint') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableHeaderOverride" id="bulk-edit-header-override-enabled" aria-controls="bulk-edit-header-override-body" />
         </div>
@@ -570,19 +558,15 @@
             for="bulk-edit-openai-ws-mode-enabled"
           >
             {{ t('admin.accounts.openai.wsMode') }}
-          </label>
+          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t('admin.accounts.openai.wsModeDesc') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t(openAIWSModeConcurrencyHintKey) }}</span></HelpTooltip></label>
           <UCheckbox v-model="enableOpenAIWSMode" id="bulk-edit-openai-ws-mode-enabled" aria-controls="bulk-edit-openai-ws-mode" />
         </div>
         <div
           id="bulk-edit-openai-ws-mode"
           :class="!enableOpenAIWSMode && 'pointer-events-none opacity-50'"
         >
-          <p class="mb-3 text-xs text-muted">
-            {{ t('admin.accounts.openai.wsModeDesc') }}
-          </p>
-          <p class="mb-3 text-xs text-muted">
-            {{ t(openAIWSModeConcurrencyHintKey) }}
-          </p>
+          
+          
           <Select
             v-model="openaiOAuthResponsesWebSocketV2Mode"
             data-testid="bulk-edit-openai-ws-mode-select"
@@ -601,16 +585,14 @@
             for="bulk-edit-openai-codex-cli-only-enabled"
           >
             {{ t('admin.accounts.openai.codexCLIOnly') }}
-          </label>
+          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexCLIOnly')"><span class="block">{{ t('admin.accounts.openai.codexCLIOnlyDesc') }}</span></HelpTooltip></label>
           <UCheckbox v-model="enableCodexCLIOnly" id="bulk-edit-openai-codex-cli-only-enabled" aria-controls="bulk-edit-openai-codex-cli-only" />
         </div>
         <div
           id="bulk-edit-openai-codex-cli-only"
           :class="!enableCodexCLIOnly && 'pointer-events-none opacity-50'"
         >
-          <p class="mb-3 text-xs text-muted">
-            {{ t('admin.accounts.openai.codexCLIOnlyDesc') }}
-          </p>
+          
           <Toggle v-model="codexCLIOnlyEnabled" id="bulk-edit-openai-codex-cli-only-toggle" />
         </div>
       </div>
@@ -624,16 +606,14 @@
             for="bulk-edit-openai-codex-app-server-enabled"
           >
             {{ t('admin.accounts.openai.codexCLIOnlyAppServer') }}
-          </label>
+          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexCLIOnlyAppServer')"><span class="block">{{ t('admin.accounts.openai.codexCLIOnlyAppServerDesc') }}</span></HelpTooltip></label>
           <UCheckbox v-model="enableCodexCLIOnlyAppServer" id="bulk-edit-openai-codex-app-server-enabled" aria-controls="bulk-edit-openai-codex-app-server" />
         </div>
         <div
           id="bulk-edit-openai-codex-app-server"
           :class="!enableCodexCLIOnlyAppServer && 'pointer-events-none opacity-50'"
         >
-          <p class="mb-3 text-xs text-muted">
-            {{ t('admin.accounts.openai.codexCLIOnlyAppServerDesc') }}
-          </p>
+          
           <Toggle v-model="codexCLIOnlyAppServerEnabled" id="bulk-edit-openai-codex-app-server-toggle" />
         </div>
       </div>
@@ -641,13 +621,11 @@
       <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
       <div v-if="allOpenAIOAuth" class="pt-2">
         <div class="mb-3 flex items-center justify-between">
-          <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}</label>
+          <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexFingerprintMode')"><span class="block">{{ t('admin.accounts.openai.codexFingerprintModeDesc') }}</span></HelpTooltip></label>
           <UCheckbox id="bulk-edit-openai-codex-fingerprint-mode-enabled" v-model="enableCodexFingerprintMode" />
         </div>
         <div :class="!enableCodexFingerprintMode && 'pointer-events-none opacity-50'">
-          <p class="mb-2 text-xs text-muted">
-            {{ t('admin.accounts.openai.codexFingerprintModeDesc') }}
-          </p>
+          
           <Select v-model="codexFingerprintMode" data-testid="bulk-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
         </div>
       </div>
@@ -662,10 +640,8 @@
               for="bulk-edit-upstream-billing-auto-probe-enabled"
             >
               {{ t('admin.accounts.upstreamBilling.autoProbe') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.upstreamBilling.autoProbeHint') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.upstreamBilling.autoProbe')"><span class="block">{{ t('admin.accounts.upstreamBilling.autoProbeHint') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableUpstreamBillingAutoProbe" id="bulk-edit-upstream-billing-auto-probe-enabled" aria-controls="bulk-edit-upstream-billing-auto-probe" />
         </div>
@@ -695,10 +671,8 @@
               for="bulk-edit-openai-endpoint-capabilities-enabled"
             >
               {{ t('admin.accounts.openai.endpointCapabilities') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.endpointCapabilities')"><span class="block">{{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableOpenAIEndpointCapabilities" id="bulk-edit-openai-endpoint-capabilities-enabled" aria-controls="bulk-edit-openai-endpoint-capabilities-body" />
         </div>
@@ -732,10 +706,8 @@
               for="bulk-edit-openai-responses-mode-enabled"
             >
               {{ t('admin.accounts.openai.responsesMode') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.responsesModeDesc') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.responsesMode')"><span class="block">{{ t('admin.accounts.openai.responsesModeDesc') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableOpenAIResponsesMode" id="bulk-edit-openai-responses-mode-enabled" aria-controls="bulk-edit-openai-responses-mode-body" />
         </div>
@@ -771,19 +743,15 @@
             for="bulk-edit-openai-apikey-ws-mode-enabled"
           >
             {{ t('admin.accounts.openai.wsMode') }}
-          </label>
+          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t('admin.accounts.openai.wsModeDesc') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t(openAIAPIKeyWSModeConcurrencyHintKey) }}</span></HelpTooltip></label>
           <UCheckbox v-model="enableOpenAIAPIKeyWSMode" id="bulk-edit-openai-apikey-ws-mode-enabled" aria-controls="bulk-edit-openai-apikey-ws-mode" />
         </div>
         <div
           id="bulk-edit-openai-apikey-ws-mode"
           :class="!enableOpenAIAPIKeyWSMode && 'pointer-events-none opacity-50'"
         >
-          <p class="mb-3 text-xs text-muted">
-            {{ t('admin.accounts.openai.wsModeDesc') }}
-          </p>
-          <p class="mb-3 text-xs text-muted">
-            {{ t(openAIAPIKeyWSModeConcurrencyHintKey) }}
-          </p>
+          
+          
           <Select
             v-model="openaiAPIKeyResponsesWebSocketV2Mode"
             data-testid="bulk-edit-openai-apikey-ws-mode-select"
@@ -803,10 +771,8 @@
               for="bulk-edit-openai-compact-mode-enabled"
             >
               {{ t('admin.accounts.openai.compactMode') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.compactModeDesc') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactMode')"><span class="block">{{ t('admin.accounts.openai.compactModeDesc') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableOpenAICompactMode" id="bulk-edit-openai-compact-mode-enabled" aria-controls="bulk-edit-openai-compact-mode" />
         </div>
@@ -833,10 +799,8 @@
               for="bulk-edit-openai-compact-model-mapping-enabled"
             >
               {{ t('admin.accounts.openai.compactModelMapping') }}
-            </label>
-            <p class="mt-1 text-xs text-muted">
-              {{ t('admin.accounts.openai.compactModelMappingDesc') }}
-            </p>
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactModelMapping')"><span class="block">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</span></HelpTooltip></label>
+            
           </div>
           <UCheckbox v-model="enableOpenAICompactModelMapping" id="bulk-edit-openai-compact-model-mapping-enabled" aria-controls="bulk-edit-openai-compact-model-mapping" />
         </div>
@@ -917,7 +881,7 @@
           </div>
 
           <div v-if="rpmLimitEnabled" class="space-y-3">
-            <UFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :help="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
+            <HintFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :hint="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
               <UInput
                 v-model.number="bulkBaseRpm"
                 type="number"
@@ -927,7 +891,7 @@
                 :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
                 class="w-full"
               />
-            </UFormField>
+            </HintFormField>
 
             <div>
               <label class="mb-1.5 block text-sm font-medium text-default text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
@@ -953,7 +917,7 @@
               </div>
             </div>
 
-            <UFormField v-if="bulkRpmStrategy === 'tiered'" :label="t('admin.accounts.quotaControl.rpmLimit.stickyBuffer')" :help="t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint')">
+            <HintFormField v-if="bulkRpmStrategy === 'tiered'" :label="t('admin.accounts.quotaControl.rpmLimit.stickyBuffer')" :hint="t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint')">
               <UInput
                 v-model.number="bulkRpmStickyBuffer"
                 type="number"
@@ -962,17 +926,15 @@
                 :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
                 class="w-full"
               />
-            </UFormField>
+            </HintFormField>
 
             </div>
           </div>
 
         <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
         <div class="mt-4">
-          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}</label>
-          <p class="mt-1 text-xs text-muted mb-2">
-            {{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}
-          </p>
+          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')"><span class="block">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}</span></HelpTooltip></label>
+          
           <div class="flex space-x-2">
             <UButton
               :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
@@ -1060,6 +1022,8 @@ import type {
   OpenAIResponsesMode
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import HintFormField from '@/components/common/HintFormField.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'

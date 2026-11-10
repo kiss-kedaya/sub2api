@@ -350,7 +350,20 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
   })
 }
 
+// Field hints live in a HelpTooltip bubble now. The trigger carries the field label as its aria-label, so open it
+// by that and read the popover it renders into <body>.
+async function helpTextFor(wrapper: ReturnType<typeof mountModal>, fieldLabelKey: string): Promise<string> {
+  const trigger = wrapper.get(`[data-hint-trigger][aria-label="${fieldLabelKey}"]`)
+  await trigger.trigger('click')
+  await flushPromises()
+  const tooltip = document.body.querySelector<HTMLElement>('[role="tooltip"]')
+  return tooltip?.textContent ?? ''
+}
+
 describe('EditAccountModal', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
   beforeEach(() => {
     authIsSimpleMode.value = true
     revealAPIKeyMock.mockReset()
@@ -1138,15 +1151,16 @@ describe('EditAccountModal', () => {
     expect(syncToggle.attributes('aria-checked')).toBe('false')
     expect(probeToggle.attributes('aria-checked')).toBe('false')
     expect(rateInput.element.disabled).toBe(false)
-    expect(wrapper.text()).toContain('admin.accounts.billingRateMultiplierHint')
-    expect(wrapper.text()).not.toContain('admin.accounts.upstreamBilling.syncRateManagedHint')
+    // The rate hint moved from permanent copy under the field into the label's help bubble.
+    expect(await helpTextFor(wrapper, 'admin.accounts.billingRateMultiplier')).toContain('admin.accounts.billingRateMultiplierHint')
+    expect(await helpTextFor(wrapper, 'admin.accounts.billingRateMultiplier')).not.toContain('admin.accounts.upstreamBilling.syncRateManagedHint')
 
     await syncToggle.trigger('click')
     expect(syncToggle.attributes('aria-checked')).toBe('true')
     expect(probeToggle.attributes('aria-checked')).toBe('true')
     expect(rateInput.element.disabled).toBe(true)
-    expect(wrapper.text()).toContain('admin.accounts.upstreamBilling.syncRateManagedHint')
-    expect(wrapper.text()).not.toContain('admin.accounts.billingRateMultiplierHint')
+    expect(await helpTextFor(wrapper, 'admin.accounts.billingRateMultiplier')).toContain('admin.accounts.upstreamBilling.syncRateManagedHint')
+    expect(await helpTextFor(wrapper, 'admin.accounts.billingRateMultiplier')).not.toContain('admin.accounts.billingRateMultiplierHint')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     const payload = updateAccountMock.mock.calls[0]?.[1]
@@ -1375,7 +1389,7 @@ describe('EditAccountModal', () => {
     const wrapper = mountModal(account)
 
     expect(wrapper.text()).toContain('admin.accounts.openai.codexImageTool')
-    expect(wrapper.text()).toContain('admin.accounts.openai.codexImageToolDesc')
+    expect(await helpTextFor(wrapper, 'admin.accounts.openai.codexImageTool')).toContain('admin.accounts.openai.codexImageToolDesc')
     expect(wrapper.text()).toContain('admin.accounts.openai.codexImageToolEnabledDesc')
 
     await wrapper.get('button[data-testid="codex-image-tool-enabled"]').trigger('click')
