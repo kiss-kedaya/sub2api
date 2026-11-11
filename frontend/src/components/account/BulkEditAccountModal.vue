@@ -10,40 +10,66 @@
       <!-- Mixed platform warning -->
       <UAlert v-if="isMixedPlatform" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.bulkEdit.mixedPlatformWarning', { platforms: targetSelectedPlatforms.join(', ') })" />
 
+      <SettingPanel summary-count-key="common.settingsSummary.willChange" summary-empty-key="common.settingsSummary.noneSelected">
+      <SettingGroup :title="t('admin.accounts.formSections.network')">
       <!-- Base URL (API Key only) -->
-      <div class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-base-url-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-base-url-enabled"
-          >
-            {{ t('admin.accounts.baseUrl') }}
-          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.baseUrl')"><span class="block">{{ t('admin.accounts.bulkEdit.baseUrlNotice') }}</span></HelpTooltip></label>
-          <UCheckbox v-model="enableBaseUrl" id="bulk-edit-base-url-enabled" aria-controls="bulk-edit-base-url" />
-        </div>
+      <SettingRow
+        :label="t('admin.accounts.baseUrl')"
+        :hint="t('admin.accounts.bulkEdit.baseUrlNotice')"
+        :summary="baseUrl || undefined"
+        :on="enableBaseUrl"
+        test-id="bulk-edit-row-base-url"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableBaseUrl" id="bulk-edit-base-url-enabled" aria-controls="bulk-edit-base-url" aria-labelledby="bulk-edit-base-url-label" />
+        </template>
+        <template #title><span id="bulk-edit-base-url-label" class="setting-row__label-text">{{ t('admin.accounts.baseUrl') }}</span></template>
+        <template #fields>
         <UInput v-model="baseUrl" id="bulk-edit-base-url" type="text" :disabled="!enableBaseUrl" :placeholder="t('admin.accounts.bulkEdit.baseUrlPlaceholder')" aria-labelledby="bulk-edit-base-url-label" class="w-full" />
         <GrokBaseUrlPresets
           v-if="allTargetsGrok"
-          class="mt-2"
           @select="baseUrl = $event; enableBaseUrl = true"
         />
-        
-      </div>
+        </template>
+      </SettingRow>
 
-      <!-- Model restriction -->
-      <div class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-model-restriction-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-model-restriction-enabled"
-          >
-            {{ t('admin.accounts.modelRestriction') }}
-          </label>
-          <UCheckbox v-model="enableModelRestriction" id="bulk-edit-model-restriction-enabled" aria-controls="bulk-edit-model-restriction-body" />
+      <!-- Proxy -->
+      <SettingRow
+        :label="t('admin.accounts.proxy')"
+        :summary="proxyId == null ? t('admin.accounts.noProxy') : (proxies.find((p) => p.id === proxyId)?.name ?? `#${proxyId}`)"
+        :on="enableProxy"
+        test-id="bulk-edit-row-proxy"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableProxy" id="bulk-edit-proxy-enabled" aria-controls="bulk-edit-proxy-body" aria-labelledby="bulk-edit-proxy-label" />
+        </template>
+        <template #title><span id="bulk-edit-proxy-label" class="setting-row__label-text">{{ t('admin.accounts.proxy') }}</span></template>
+        <template #fields>
+        <div id="bulk-edit-proxy-body" :class="!enableProxy && 'pointer-events-none opacity-50'">
+          <ProxySelector
+            v-model="proxyId"
+            :proxies="proxies"
+            aria-labelledby="bulk-edit-proxy-label"
+          />
         </div>
+        </template>
+      </SettingRow>
 
+      </SettingGroup>
+
+      <SettingGroup :title="t('admin.accounts.formSections.models')">
+      <!-- Model restriction -->
+      <SettingRow
+        :label="t('admin.accounts.modelRestriction')"
+        :summary="modelRestrictionMode === 'whitelist' ? t('admin.accounts.selectedModels', { count: allowedModels.length }) : t('admin.accounts.modelMapping')"
+        :on="enableModelRestriction"
+        test-id="bulk-edit-row-model-restriction"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableModelRestriction" id="bulk-edit-model-restriction-enabled" aria-controls="bulk-edit-model-restriction-body" aria-labelledby="bulk-edit-model-restriction-label" />
+        </template>
+        <template #title><span id="bulk-edit-model-restriction-label" class="setting-row__label-text">{{ t('admin.accounts.modelRestriction') }}</span></template>
+        <template #fields>
         <div
           id="bulk-edit-model-restriction-body"
           :class="!enableModelRestriction && 'pointer-events-none opacity-50'"
@@ -150,21 +176,21 @@
             </div>
           </template>
         </div>
-      </div>
+        </template>
+      </SettingRow>
 
       <!-- Upstream model auto-sync -->
-      <div class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-auto-sync-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-auto-sync-enabled"
-          >
-            {{ t('admin.accounts.bulkEdit.autoSyncTitle') }}
-          </label>
-          <UCheckbox v-model="enableModelAutoSync" id="bulk-edit-auto-sync-enabled" aria-controls="bulk-edit-auto-sync-body" />
-        </div>
-
+      <SettingRow
+        :label="t('admin.accounts.bulkEdit.autoSyncTitle')"
+        :summary="modelAutoSyncEnabled ? autoSyncIntervalOptions.find((o) => o.value === modelAutoSyncInterval)?.label : undefined"
+        :on="enableModelAutoSync"
+        test-id="bulk-edit-row-auto-sync"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableModelAutoSync" id="bulk-edit-auto-sync-enabled" aria-controls="bulk-edit-auto-sync-body" aria-labelledby="bulk-edit-auto-sync-label" />
+        </template>
+        <template #title><span id="bulk-edit-auto-sync-label" class="setting-row__label-text">{{ t('admin.accounts.bulkEdit.autoSyncTitle') }}</span></template>
+        <template #fields>
         <div
           id="bulk-edit-auto-sync-body"
           :class="!enableModelAutoSync && 'pointer-events-none opacity-50'"
@@ -213,107 +239,71 @@
             </div>
           </div>
         </div>
-      </div>
+        </template>
+      </SettingRow>
+      </SettingGroup>
 
-      <!-- Proxy -->
-      <div class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-proxy-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-proxy-enabled"
-          >
-            {{ t('admin.accounts.proxy') }}
-          </label>
-          <UCheckbox v-model="enableProxy" id="bulk-edit-proxy-enabled" aria-controls="bulk-edit-proxy-body" />
-        </div>
-        <div id="bulk-edit-proxy-body" :class="!enableProxy && 'pointer-events-none opacity-50'">
-          <ProxySelector
-            v-model="proxyId"
-            :proxies="proxies"
-            aria-labelledby="bulk-edit-proxy-label"
-          />
-        </div>
-      </div>
-
+      <SettingGroup :title="t('admin.accounts.formSections.scheduling')">
       <!-- Concurrency & Priority -->
-      <div class="grid grid-cols-2 gap-4 pt-2 lg:grid-cols-4">
-        <div>
-          <div class="mb-3 flex items-center justify-between">
-            <label
-              id="bulk-edit-concurrency-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-concurrency-enabled"
-            >
-              {{ t('admin.accounts.concurrency') }}
-            </label>
-            <UCheckbox v-model="enableConcurrency" id="bulk-edit-concurrency-enabled" aria-controls="bulk-edit-concurrency" />
-          </div>
-          <UInput v-model.number="concurrency" id="bulk-edit-concurrency" type="number" min="1" :disabled="!enableConcurrency" aria-labelledby="bulk-edit-concurrency-label" @input="concurrency = Math.max(1, concurrency || 1)" class="w-full" />
-        </div>
-        <div>
-          <div class="mb-3 flex items-center justify-between">
-            <label
-              id="bulk-edit-load-factor-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-load-factor-enabled"
-            >
-              {{ t('admin.accounts.loadFactor') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.loadFactor')"><span class="block">{{ t('admin.accounts.loadFactorHint') }}</span></HelpTooltip></label>
-            <UCheckbox v-model="enableLoadFactor" id="bulk-edit-load-factor-enabled" aria-controls="bulk-edit-load-factor" />
-          </div>
-          <UInput v-model.number="loadFactor" id="bulk-edit-load-factor" type="number" min="1" :disabled="!enableLoadFactor" aria-labelledby="bulk-edit-load-factor-label" @input="loadFactor = (loadFactor &amp;&amp; loadFactor >= 1) ? loadFactor : null" class="w-full" />
-          
-        </div>
-        <div>
-          <div class="mb-3 flex items-center justify-between">
-            <label
-              id="bulk-edit-priority-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-priority-enabled"
-            >
-              {{ t('admin.accounts.priority') }}
-            </label>
-            <UCheckbox v-model="enablePriority" id="bulk-edit-priority-enabled" aria-controls="bulk-edit-priority" />
-          </div>
-          <UInput v-model.number="priority" id="bulk-edit-priority" type="number" min="0" step="1" :disabled="!enablePriority" aria-labelledby="bulk-edit-priority-label" class="w-full" />
-        </div>
-        <div>
-          <div class="mb-3 flex items-center justify-between">
-            <label
-              id="bulk-edit-rate-multiplier-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-rate-multiplier-enabled"
-            >
-              {{ t('admin.accounts.billingRateMultiplier') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.billingRateMultiplier')"><span class="block">{{ t('admin.accounts.billingRateMultiplierHint') }}</span></HelpTooltip></label>
-            <UCheckbox v-model="enableRateMultiplier" id="bulk-edit-rate-multiplier-enabled" aria-controls="bulk-edit-rate-multiplier" />
-          </div>
-          <UInput v-model.number="rateMultiplier" id="bulk-edit-rate-multiplier" type="number" min="0" step="0.01" :disabled="!enableRateMultiplier" aria-labelledby="bulk-edit-rate-multiplier-label" class="w-full" />
-          
+      <SettingRow :label="t('admin.accounts.concurrency')" :on="enableConcurrency" test-id="bulk-edit-row-concurrency">
+        <template #leading>
+          <UCheckbox v-model="enableConcurrency" id="bulk-edit-concurrency-enabled" aria-controls="bulk-edit-concurrency" aria-labelledby="bulk-edit-concurrency-label" />
+        </template>
+        <template #title><span id="bulk-edit-concurrency-label" class="setting-row__label-text">{{ t('admin.accounts.concurrency') }}</span></template>
+        <template #control>
+          <UInput v-model.number="concurrency" id="bulk-edit-concurrency" type="number" min="1" :disabled="!enableConcurrency" aria-labelledby="bulk-edit-concurrency-label" @input="concurrency = Math.max(1, concurrency || 1)" class="w-28" />
+        </template>
+      </SettingRow>
+      <SettingRow :label="t('admin.accounts.loadFactor')" :hint="t('admin.accounts.loadFactorHint')" :on="enableLoadFactor" test-id="bulk-edit-row-load-factor">
+        <template #leading>
+          <UCheckbox v-model="enableLoadFactor" id="bulk-edit-load-factor-enabled" aria-controls="bulk-edit-load-factor" aria-labelledby="bulk-edit-load-factor-label" />
+        </template>
+        <template #title><span id="bulk-edit-load-factor-label" class="setting-row__label-text">{{ t('admin.accounts.loadFactor') }}</span></template>
+        <template #control>
+          <UInput v-model.number="loadFactor" id="bulk-edit-load-factor" type="number" min="1" :disabled="!enableLoadFactor" aria-labelledby="bulk-edit-load-factor-label" @input="loadFactor = (loadFactor &amp;&amp; loadFactor >= 1) ? loadFactor : null" class="w-28" />
+        </template>
+      </SettingRow>
+      <SettingRow :label="t('admin.accounts.priority')" :on="enablePriority" test-id="bulk-edit-row-priority">
+        <template #leading>
+          <UCheckbox v-model="enablePriority" id="bulk-edit-priority-enabled" aria-controls="bulk-edit-priority" aria-labelledby="bulk-edit-priority-label" />
+        </template>
+        <template #title><span id="bulk-edit-priority-label" class="setting-row__label-text">{{ t('admin.accounts.priority') }}</span></template>
+        <template #control>
+          <UInput v-model.number="priority" id="bulk-edit-priority" type="number" min="0" step="1" :disabled="!enablePriority" aria-labelledby="bulk-edit-priority-label" class="w-28" />
+        </template>
+      </SettingRow>
+      <SettingRow :label="t('admin.accounts.billingRateMultiplier')" :hint="t('admin.accounts.billingRateMultiplierHint')" :on="enableRateMultiplier" test-id="bulk-edit-row-rate-multiplier">
+        <template #leading>
+          <UCheckbox v-model="enableRateMultiplier" id="bulk-edit-rate-multiplier-enabled" aria-controls="bulk-edit-rate-multiplier" aria-labelledby="bulk-edit-rate-multiplier-label" />
+        </template>
+        <template #title><span id="bulk-edit-rate-multiplier-label" class="setting-row__label-text">{{ t('admin.accounts.billingRateMultiplier') }}</span></template>
+        <template #control>
+          <UInput v-model.number="rateMultiplier" id="bulk-edit-rate-multiplier" type="number" min="0" step="0.01" :disabled="!enableRateMultiplier" aria-labelledby="bulk-edit-rate-multiplier-label" class="w-28" />
+        </template>
+        <template #status>
           <p
             v-if="enableRateMultiplier"
-            class="mt-2 flex items-start gap-1 text-xs text-warning"
+            class="mb-2 flex items-start gap-1 text-xs text-warning"
             data-testid="bulk-rate-sync-warning"
           >
             <Icon name="exclamationTriangle" size="xs" class="mt-0.5 flex-shrink-0" />
             <span>{{ t('admin.accounts.bulkEdit.rateSyncWarning') }}</span>
           </p>
-        </div>
-      </div>
+        </template>
+      </SettingRow>
 
       <!-- Status -->
-      <div class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-status-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-status-enabled"
-          >
-            {{ t('common.status') }}
-          </label>
-          <UCheckbox v-model="enableStatus" id="bulk-edit-status-enabled" aria-controls="bulk-edit-status" />
-        </div>
+      <SettingRow
+        :label="t('common.status')"
+        :summary="statusOptions.find((o) => o.value === status)?.label"
+        :on="enableStatus"
+        test-id="bulk-edit-row-status"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableStatus" id="bulk-edit-status-enabled" aria-controls="bulk-edit-status" aria-labelledby="bulk-edit-status-label" />
+        </template>
+        <template #title><span id="bulk-edit-status-label" class="setting-row__label-text">{{ t('common.status') }}</span></template>
+        <template #fields>
         <div id="bulk-edit-status" :class="!enableStatus && 'pointer-events-none opacity-50'">
           <Select
             v-model="status"
@@ -321,29 +311,27 @@
             aria-labelledby="bulk-edit-status-label"
           />
         </div>
-      </div>
+        </template>
+      </SettingRow>
+      </SettingGroup>
 
       <UCollapsible :unmount-on-hide="false">
         <UButton type="button" color="neutral" variant="ghost" :label="t('admin.accounts.advancedOptions')" trailing-icon="i-lucide-chevron-down" class="group -ms-2.5 font-semibold text-highlighted" :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }" />
         <template #content>
           <div class="space-y-6 pt-4">
-            <div
+      <SettingGroup :title="t('admin.accounts.formSections.forwarding')">
+      <SettingRow
         v-if="allOpenAIPassthroughCapable"
-        class="pt-2"
+        :label="t('admin.accounts.openai.oauthPassthrough')"
+        :hint="t('admin.accounts.openai.oauthPassthroughDesc')"
+        :on="enableOpenAIPassthrough"
+        test-id="bulk-edit-row-openai-passthrough"
       >
-        <div class="mb-3 flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-openai-passthrough-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-openai-passthrough-enabled"
-            >
-              {{ t('admin.accounts.openai.oauthPassthrough') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.oauthPassthrough')"><span class="block">{{ t('admin.accounts.openai.oauthPassthroughDesc') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableOpenAIPassthrough" id="bulk-edit-openai-passthrough-enabled" aria-controls="bulk-edit-openai-passthrough-body" />
-        </div>
+        <template #leading>
+          <UCheckbox v-model="enableOpenAIPassthrough" id="bulk-edit-openai-passthrough-enabled" aria-controls="bulk-edit-openai-passthrough-body" aria-labelledby="bulk-edit-openai-passthrough-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-passthrough-label" class="setting-row__label-text">{{ t('admin.accounts.openai.oauthPassthrough') }}</span></template>
+        <template #control>
         <div
           id="bulk-edit-openai-passthrough-body"
           :class="!enableOpenAIPassthrough && 'pointer-events-none opacity-50'"
@@ -352,26 +340,22 @@
         >
           <Toggle v-model="openaiPassthroughEnabled" id="bulk-edit-openai-passthrough-toggle" />
         </div>
-      </div>
+        </template>
+      </SettingRow>
 
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
-      <div
+      <SettingRow
         v-if="allOpenAIOAuthOnly"
-        class="pt-2"
+        :label="t('admin.accounts.openai.flattenNamespaces')"
+        :hint="t('admin.accounts.openai.flattenNamespacesDesc')"
+        :on="enableOpenAIFlattenNamespaces"
+        test-id="bulk-edit-row-openai-flatten-namespaces"
       >
-        <div class="mb-3 flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-openai-flatten-namespaces-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-openai-flatten-namespaces-enabled"
-            >
-              {{ t('admin.accounts.openai.flattenNamespaces') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.flattenNamespaces')"><span class="block">{{ t('admin.accounts.openai.flattenNamespacesDesc') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableOpenAIFlattenNamespaces" id="bulk-edit-openai-flatten-namespaces-enabled" aria-controls="bulk-edit-openai-flatten-namespaces-body" />
-        </div>
+        <template #leading>
+          <UCheckbox v-model="enableOpenAIFlattenNamespaces" id="bulk-edit-openai-flatten-namespaces-enabled" aria-controls="bulk-edit-openai-flatten-namespaces-body" aria-labelledby="bulk-edit-openai-flatten-namespaces-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-flatten-namespaces-label" class="setting-row__label-text">{{ t('admin.accounts.openai.flattenNamespaces') }}</span></template>
+        <template #control>
         <div
           id="bulk-edit-openai-flatten-namespaces-body"
           :class="!enableOpenAIFlattenNamespaces && 'pointer-events-none opacity-50'"
@@ -380,26 +364,396 @@
         >
           <Toggle v-model="openaiFlattenNamespacesEnabled" id="bulk-edit-openai-flatten-namespaces-toggle" />
         </div>
-      </div>
-
-      <!-- OpenAI API long-context billing -->
-      <div
-        v-if="allOpenAIPassthroughCapable"
-        class="pt-2"
+        </template>
+      </SettingRow>
+      <!-- Intercept warmup requests (Anthropic only) -->
+      <SettingRow
+        :label="t('admin.accounts.interceptWarmupRequests')"
+        :hint="t('admin.accounts.interceptWarmupRequestsDesc')"
+        :on="enableInterceptWarmup"
+        test-id="bulk-edit-row-intercept-warmup"
       >
-        <div class="mb-3 flex items-center justify-between gap-4">
-          <div class="flex-1">
-            <label
-              id="bulk-edit-openai-long-context-billing-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-openai-long-context-billing-enabled"
-            >
-              {{ t('admin.accounts.openai.longContextBilling') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.longContextBilling')"><span class="block">{{ t('admin.accounts.openai.longContextBillingDesc') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableOpenAILongContextBilling" id="bulk-edit-openai-long-context-billing-enabled" aria-controls="bulk-edit-openai-long-context-billing-body" />
+        <template #leading>
+          <UCheckbox v-model="enableInterceptWarmup" id="bulk-edit-intercept-warmup-enabled" aria-controls="bulk-edit-intercept-warmup-body" aria-labelledby="bulk-edit-intercept-warmup-label" />
+        </template>
+        <template #title><span id="bulk-edit-intercept-warmup-label" class="setting-row__label-text">{{ t('admin.accounts.interceptWarmupRequests') }}</span></template>
+        <template #control>
+        <div v-if="enableInterceptWarmup" id="bulk-edit-intercept-warmup-body" class="inline-flex">
+          <Toggle v-model="interceptWarmupRequests" />
         </div>
+        </template>
+      </SettingRow>
+
+      <!-- Header Override (eligible API-key platforms + grok OAuth) -->
+      <SettingRow
+        v-if="allHeaderOverrideCapable"
+        :label="t('admin.accounts.headerOverride.title')"
+        :hint="t('admin.accounts.headerOverride.hint')"
+        :on="enableHeaderOverride"
+        test-id="bulk-edit-row-header-override"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableHeaderOverride" id="bulk-edit-header-override-enabled" aria-controls="bulk-edit-header-override-body" aria-labelledby="bulk-edit-header-override-label" />
+        </template>
+        <template #title><span id="bulk-edit-header-override-label" class="setting-row__label-text">{{ t('admin.accounts.headerOverride.title') }}</span></template>
+        <template #control>
+          <Toggle v-if="enableHeaderOverride" v-model="headerOverrideEnabled" />
+        </template>
+        <template #fields>
+        <div v-if="enableHeaderOverride" id="bulk-edit-header-override-body" class="space-y-3">
+          <div v-if="headerOverrideEnabled" class="space-y-3">
+            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
+
+            <p class="text-xs text-warning">
+              {{ t('admin.accounts.headerOverride.bulkReplaceHint') }}
+            </p>
+
+            <HeaderOverrideEditor
+              :rows="headerOverrideRows"
+              @update:rows="headerOverrideRows = $event"
+            />
+          </div>
+          <p v-else class="text-xs text-muted">
+            {{ t('admin.accounts.headerOverride.bulkDisableHint') }}
+          </p>
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- OpenAI OAuth WS mode -->
+      <SettingRow
+        v-if="allOpenAIOAuth"
+        :label="t('admin.accounts.openai.wsMode')"
+        :hint="[t('admin.accounts.openai.wsModeDesc'), t(openAIWSModeConcurrencyHintKey)]"
+        :summary="openAIWSModeOptions.find((o) => o.value === openaiOAuthResponsesWebSocketV2Mode)?.label"
+        :on="enableOpenAIWSMode"
+        test-id="bulk-edit-row-openai-ws-mode"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableOpenAIWSMode" id="bulk-edit-openai-ws-mode-enabled" aria-controls="bulk-edit-openai-ws-mode" aria-labelledby="bulk-edit-openai-ws-mode-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-ws-mode-label" class="setting-row__label-text">{{ t('admin.accounts.openai.wsMode') }}</span></template>
+        <template #fields>
+        <div
+          id="bulk-edit-openai-ws-mode"
+          :class="!enableOpenAIWSMode && 'pointer-events-none opacity-50'"
+        >
+          <Select
+            v-model="openaiOAuthResponsesWebSocketV2Mode"
+            data-testid="bulk-edit-openai-ws-mode-select"
+            :options="openAIWSModeOptions"
+            aria-labelledby="bulk-edit-openai-ws-mode-label"
+          />
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- OpenAI OAuth Codex CLI only -->
+      <SettingRow
+        v-if="allOpenAIOAuth"
+        :label="t('admin.accounts.openai.codexCLIOnly')"
+        :hint="t('admin.accounts.openai.codexCLIOnlyDesc')"
+        :on="enableCodexCLIOnly"
+        test-id="bulk-edit-row-openai-codex-cli-only"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableCodexCLIOnly" id="bulk-edit-openai-codex-cli-only-enabled" aria-controls="bulk-edit-openai-codex-cli-only" aria-labelledby="bulk-edit-openai-codex-cli-only-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-codex-cli-only-label" class="setting-row__label-text">{{ t('admin.accounts.openai.codexCLIOnly') }}</span></template>
+        <template #control>
+        <div
+          id="bulk-edit-openai-codex-cli-only"
+          :class="!enableCodexCLIOnly && 'pointer-events-none opacity-50'"
+        >
+          <Toggle v-model="codexCLIOnlyEnabled" id="bulk-edit-openai-codex-cli-only-toggle" />
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- OpenAI OAuth: Codex app-server -->
+      <SettingRow
+        v-if="allOpenAIOAuth"
+        :label="t('admin.accounts.openai.codexCLIOnlyAppServer')"
+        :hint="t('admin.accounts.openai.codexCLIOnlyAppServerDesc')"
+        :on="enableCodexCLIOnlyAppServer"
+        test-id="bulk-edit-row-openai-codex-app-server"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableCodexCLIOnlyAppServer" id="bulk-edit-openai-codex-app-server-enabled" aria-controls="bulk-edit-openai-codex-app-server" aria-labelledby="bulk-edit-openai-codex-app-server-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-codex-app-server-label" class="setting-row__label-text">{{ t('admin.accounts.openai.codexCLIOnlyAppServer') }}</span></template>
+        <template #control>
+        <div
+          id="bulk-edit-openai-codex-app-server"
+          :class="!enableCodexCLIOnlyAppServer && 'pointer-events-none opacity-50'"
+        >
+          <Toggle v-model="codexCLIOnlyAppServerEnabled" id="bulk-edit-openai-codex-app-server-toggle" />
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
+      <SettingRow
+        v-if="allOpenAIOAuth"
+        :label="t('admin.accounts.openai.codexFingerprintMode')"
+        :hint="t('admin.accounts.openai.codexFingerprintModeDesc')"
+        :summary="codexFingerprintModeOptions.find((o) => o.value === codexFingerprintMode)?.label"
+        :on="enableCodexFingerprintMode"
+        test-id="bulk-edit-row-openai-codex-fingerprint-mode"
+      >
+        <template #leading>
+          <UCheckbox id="bulk-edit-openai-codex-fingerprint-mode-enabled" v-model="enableCodexFingerprintMode" aria-labelledby="bulk-edit-openai-codex-fingerprint-mode-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-codex-fingerprint-mode-label" class="setting-row__label-text">{{ t('admin.accounts.openai.codexFingerprintMode') }}</span></template>
+        <template #fields>
+        <div :class="!enableCodexFingerprintMode && 'pointer-events-none opacity-50'">
+          <Select v-model="codexFingerprintMode" data-testid="bulk-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" aria-labelledby="bulk-edit-openai-codex-fingerprint-mode-label" />
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- Upstream billing auto probe (any API-key platform) -->
+      <SettingRow
+        v-if="allBillingProbeCapable"
+        :label="t('admin.accounts.upstreamBilling.autoProbe')"
+        :hint="t('admin.accounts.upstreamBilling.autoProbeHint')"
+        :summary="upstreamBillingAutoProbeOptions.find((o) => o.value === upstreamBillingAutoProbeMode)?.label"
+        :on="enableUpstreamBillingAutoProbe"
+        test-id="bulk-edit-row-upstream-billing-auto-probe"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableUpstreamBillingAutoProbe" id="bulk-edit-upstream-billing-auto-probe-enabled" aria-controls="bulk-edit-upstream-billing-auto-probe" aria-labelledby="bulk-edit-upstream-billing-auto-probe-label" />
+        </template>
+        <template #title><span id="bulk-edit-upstream-billing-auto-probe-label" class="setting-row__label-text">{{ t('admin.accounts.upstreamBilling.autoProbe') }}</span></template>
+        <template #fields>
+        <div
+          id="bulk-edit-upstream-billing-auto-probe"
+          :class="!enableUpstreamBillingAutoProbe && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-upstream-billing-auto-probe-label"
+        >
+          <Select
+            v-model="upstreamBillingAutoProbeMode"
+            :disabled="!enableUpstreamBillingAutoProbe"
+            data-testid="bulk-edit-upstream-billing-auto-probe-select"
+            :options="upstreamBillingAutoProbeOptions"
+            aria-labelledby="bulk-edit-upstream-billing-auto-probe-label"
+          />
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- OpenAI API Key endpoint capabilities -->
+      <SettingRow
+        v-if="allOpenAIAPIKey"
+        :label="t('admin.accounts.openai.endpointCapabilities')"
+        :hint="t('admin.accounts.openai.endpointCapabilitiesDesc')"
+        :summary="openAIEndpointCapabilityOptions.filter((o) => openAIEndpointCapabilities.includes(o.value)).map((o) => o.label).join(' · ') || undefined"
+        :on="enableOpenAIEndpointCapabilities"
+        test-id="bulk-edit-row-openai-endpoint-capabilities"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableOpenAIEndpointCapabilities" id="bulk-edit-openai-endpoint-capabilities-enabled" aria-controls="bulk-edit-openai-endpoint-capabilities-body" aria-labelledby="bulk-edit-openai-endpoint-capabilities-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-endpoint-capabilities-label" class="setting-row__label-text">{{ t('admin.accounts.openai.endpointCapabilities') }}</span></template>
+        <template #fields>
+        <div
+          id="bulk-edit-openai-endpoint-capabilities-body"
+          :class="!enableOpenAIEndpointCapabilities && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-endpoint-capabilities-label"
+        >
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <UCheckbox
+              v-for="option in openAIEndpointCapabilityOptions"
+              :key="option.value"
+              :disabled="!enableOpenAIEndpointCapabilities"
+              :data-testid="`bulk-edit-openai-endpoint-capability-${option.value}`"
+              :model-value="openAIEndpointCapabilities.includes(option.value)"
+              @update:model-value="toggleOpenAIEndpointCapability(option.value)"
+              :label="option.label"
+            />
+          </div>
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- OpenAI API Key Responses route -->
+      <SettingRow
+        v-if="allOpenAIAPIKey"
+        :label="t('admin.accounts.openai.responsesMode')"
+        :hint="t('admin.accounts.openai.responsesModeDesc')"
+        :summary="openAIResponsesModeOptions.find((o) => o.value === openAIResponsesMode)?.label"
+        :on="enableOpenAIResponsesMode"
+        test-id="bulk-edit-row-openai-responses-mode"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableOpenAIResponsesMode" id="bulk-edit-openai-responses-mode-enabled" aria-controls="bulk-edit-openai-responses-mode-body" aria-labelledby="bulk-edit-openai-responses-mode-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-responses-mode-label" class="setting-row__label-text">{{ t('admin.accounts.openai.responsesMode') }}</span></template>
+        <template #fields>
+        <div
+          id="bulk-edit-openai-responses-mode-body"
+          :class="!enableOpenAIResponsesMode && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-responses-mode-label"
+        >
+          <Select
+            v-model="openAIResponsesMode"
+            :disabled="!enableOpenAIResponsesMode || !openAIResponsesModeApplicable"
+            data-testid="bulk-edit-openai-responses-mode-select"
+            :options="openAIResponsesModeOptions"
+            aria-labelledby="bulk-edit-openai-responses-mode-label"
+          />
+          <p
+            v-if="enableOpenAIEndpointCapabilities && !openAITextGenerationCapabilityEnabled"
+            class="mt-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
+            data-testid="bulk-edit-openai-responses-mode-not-applicable"
+          >
+            {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
+          </p>
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- OpenAI API Key WS mode -->
+      <SettingRow
+        v-if="allOpenAIAPIKey"
+        :label="t('admin.accounts.openai.wsMode')"
+        :hint="[t('admin.accounts.openai.wsModeDesc'), t(openAIAPIKeyWSModeConcurrencyHintKey)]"
+        :summary="openAIWSModeOptions.find((o) => o.value === openaiAPIKeyResponsesWebSocketV2Mode)?.label"
+        :on="enableOpenAIAPIKeyWSMode"
+        test-id="bulk-edit-row-openai-apikey-ws-mode"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableOpenAIAPIKeyWSMode" id="bulk-edit-openai-apikey-ws-mode-enabled" aria-controls="bulk-edit-openai-apikey-ws-mode" aria-labelledby="bulk-edit-openai-apikey-ws-mode-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-apikey-ws-mode-label" class="setting-row__label-text">{{ t('admin.accounts.openai.wsMode') }}</span></template>
+        <template #fields>
+        <div
+          id="bulk-edit-openai-apikey-ws-mode"
+          :class="!enableOpenAIAPIKeyWSMode && 'pointer-events-none opacity-50'"
+        >
+          <Select
+            v-model="openaiAPIKeyResponsesWebSocketV2Mode"
+            data-testid="bulk-edit-openai-apikey-ws-mode-select"
+            :options="openAIWSModeOptions"
+            aria-labelledby="bulk-edit-openai-apikey-ws-mode-label"
+          />
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- OpenAI Compact mode -->
+      <SettingRow
+        v-if="allOpenAIPassthroughCapable"
+        :label="t('admin.accounts.openai.compactMode')"
+        :hint="t('admin.accounts.openai.compactModeDesc')"
+        :summary="openAICompactModeOptions.find((o) => o.value === openAICompactMode)?.label"
+        :on="enableOpenAICompactMode"
+        test-id="bulk-edit-row-openai-compact-mode"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableOpenAICompactMode" id="bulk-edit-openai-compact-mode-enabled" aria-controls="bulk-edit-openai-compact-mode" aria-labelledby="bulk-edit-openai-compact-mode-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-compact-mode-label" class="setting-row__label-text">{{ t('admin.accounts.openai.compactMode') }}</span></template>
+        <template #fields>
+        <div
+          id="bulk-edit-openai-compact-mode"
+          :class="!enableOpenAICompactMode && 'pointer-events-none opacity-50'"
+        >
+          <Select
+            v-model="openAICompactMode"
+            data-testid="bulk-edit-openai-compact-mode-select"
+            :options="openAICompactModeOptions"
+            aria-labelledby="bulk-edit-openai-compact-mode-label"
+          />
+        </div>
+        </template>
+      </SettingRow>
+
+      <!-- OpenAI Compact model mapping -->
+      <SettingRow
+        v-if="allOpenAIPassthroughCapable"
+        :label="t('admin.accounts.openai.compactModelMapping')"
+        :hint="t('admin.accounts.openai.compactModelMappingDesc')"
+        :summary="t('common.settingsSummary.itemCount', { count: openAICompactModelMappings.length })"
+        :on="enableOpenAICompactModelMapping"
+        test-id="bulk-edit-row-openai-compact-model-mapping"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableOpenAICompactModelMapping" id="bulk-edit-openai-compact-model-mapping-enabled" aria-controls="bulk-edit-openai-compact-model-mapping" aria-labelledby="bulk-edit-openai-compact-model-mapping-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-compact-model-mapping-label" class="setting-row__label-text">{{ t('admin.accounts.openai.compactModelMapping') }}</span></template>
+        <template #fields>
+        <div
+          id="bulk-edit-openai-compact-model-mapping"
+          :class="!enableOpenAICompactModelMapping && 'pointer-events-none opacity-50'"
+        >
+          <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
+            <div
+              v-for="(mapping, index) in openAICompactModelMappings"
+              :key="index"
+              class="flex items-center gap-2"
+            >
+              <UInput
+                v-model="mapping.from"
+                type="text"
+                :placeholder="t('admin.accounts.fromModel')"
+                data-testid="bulk-edit-openai-compact-model-mapping-input"
+                class="flex-1"
+              />
+              <span class="text-muted">→</span>
+              <UInput
+                v-model="mapping.to"
+                type="text"
+                :placeholder="t('admin.accounts.toModel')"
+                data-testid="bulk-edit-openai-compact-model-mapping-input"
+                class="flex-1"
+              />
+              <UButton
+                color="error"
+                variant="ghost"
+                square
+                size="sm"
+                icon="i-lucide-trash-2"
+                :aria-label="t('admin.accounts.formActions.remove')"
+                type="button"
+                @click="removeOpenAICompactModelMapping(index)"
+              />
+            </div>
+          </div>
+          <UButton
+            color="neutral"
+            variant="soft"
+            block
+            icon="i-lucide-plus"
+            class="mb-3"
+            type="button"
+            data-testid="bulk-edit-openai-compact-model-mapping-add"
+            @click="addOpenAICompactModelMapping"
+          >
+            + {{ t('admin.accounts.addMapping') }}
+          </UButton>
+        </div>
+        </template>
+      </SettingRow>
+      </SettingGroup>
+
+      <SettingGroup v-if="allOpenAIPassthroughCapable" :title="t('admin.accounts.formSections.billing')">
+      <!-- OpenAI API long-context billing -->
+      <SettingRow
+        v-if="allOpenAIPassthroughCapable"
+        :label="t('admin.accounts.openai.longContextBilling')"
+        :hint="t('admin.accounts.openai.longContextBillingDesc')"
+        :on="enableOpenAILongContextBilling"
+        test-id="bulk-edit-row-openai-long-context-billing"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableOpenAILongContextBilling" id="bulk-edit-openai-long-context-billing-enabled" aria-controls="bulk-edit-openai-long-context-billing-body" aria-labelledby="bulk-edit-openai-long-context-billing-label" />
+        </template>
+        <template #title><span id="bulk-edit-openai-long-context-billing-label" class="setting-row__label-text">{{ t('admin.accounts.openai.longContextBilling') }}</span></template>
+        <template #control>
         <div
           id="bulk-edit-openai-long-context-billing-body"
           :class="!enableOpenAILongContextBilling && 'pointer-events-none opacity-50'"
@@ -408,30 +762,32 @@
         >
           <Toggle v-model="openAILongContextBillingEnabled" data-testid="bulk-edit-openai-long-context-billing-toggle" :disabled="!enableOpenAILongContextBilling" />
         </div>
+        </template>
+        <template #fields>
         <p
-          class="mt-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
+          class="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
           data-testid="bulk-edit-openai-long-context-shadow-hint"
         >
           {{ t('admin.accounts.bulkEdit.longContextShadowHint') }}
         </p>
-      </div>
+        </template>
+      </SettingRow>
+      </SettingGroup>
 
+      <SettingGroup :title="t('admin.accounts.formSections.errors')">
       <!-- Custom error codes -->
-      <div class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <div>
-            <label
-              id="bulk-edit-custom-error-codes-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-custom-error-codes-enabled"
-            >
-              {{ t('admin.accounts.customErrorCodes') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.customErrorCodes')"><span class="block">{{ t('admin.accounts.customErrorCodesHint') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableCustomErrorCodes" id="bulk-edit-custom-error-codes-enabled" aria-controls="bulk-edit-custom-error-codes-body" />
-        </div>
-
+      <SettingRow
+        :label="t('admin.accounts.customErrorCodes')"
+        :hint="t('admin.accounts.customErrorCodesHint')"
+        :summary="selectedErrorCodes.length ? [...selectedErrorCodes].sort((a, b) => a - b).join(', ') : undefined"
+        :on="enableCustomErrorCodes"
+        test-id="bulk-edit-row-custom-error-codes"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableCustomErrorCodes" id="bulk-edit-custom-error-codes-enabled" aria-controls="bulk-edit-custom-error-codes-body" aria-labelledby="bulk-edit-custom-error-codes-label" />
+        </template>
+        <template #title><span id="bulk-edit-custom-error-codes-label" class="setting-row__label-text">{{ t('admin.accounts.customErrorCodes') }}</span></template>
+        <template #fields>
         <div v-if="enableCustomErrorCodes" id="bulk-edit-custom-error-codes-body" class="space-y-3">
           <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.customErrorCodesWarning')" />
 
@@ -491,395 +847,35 @@
             </span>
           </div>
         </div>
-      </div>
+        </template>
+      </SettingRow>
+      </SettingGroup>
 
-      <!-- Intercept warmup requests (Anthropic only) -->
-      <div class="pt-2">
-        <div class="flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-intercept-warmup-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-intercept-warmup-enabled"
-            >
-              {{ t('admin.accounts.interceptWarmupRequests') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.interceptWarmupRequests')"><span class="block">{{ t('admin.accounts.interceptWarmupRequestsDesc') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableInterceptWarmup" id="bulk-edit-intercept-warmup-enabled" aria-controls="bulk-edit-intercept-warmup-body" />
-        </div>
-        <div v-if="enableInterceptWarmup" id="bulk-edit-intercept-warmup-body" class="mt-3">
-          <Toggle v-model="interceptWarmupRequests" />
-        </div>
-      </div>
-
-      <!-- Header Override (eligible API-key platforms + grok OAuth) -->
-      <div v-if="allHeaderOverrideCapable" class="pt-2">
-        <div class="flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-header-override-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-header-override-enabled"
-            >
-              {{ t('admin.accounts.headerOverride.title') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.headerOverride.title')"><span class="block">{{ t('admin.accounts.headerOverride.hint') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableHeaderOverride" id="bulk-edit-header-override-enabled" aria-controls="bulk-edit-header-override-body" />
-        </div>
-        <div v-if="enableHeaderOverride" id="bulk-edit-header-override-body" class="mt-3 space-y-3">
-          <Toggle v-model="headerOverrideEnabled" />
-
-          <div v-if="headerOverrideEnabled" class="space-y-3">
-            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
-
-            <p class="text-xs text-warning">
-              {{ t('admin.accounts.headerOverride.bulkReplaceHint') }}
-            </p>
-
-            <HeaderOverrideEditor
-              :rows="headerOverrideRows"
-              @update:rows="headerOverrideRows = $event"
-            />
-          </div>
-          <p v-else class="text-xs text-muted">
-            {{ t('admin.accounts.headerOverride.bulkDisableHint') }}
-          </p>
-        </div>
-      </div>
-
-      <!-- OpenAI OAuth WS mode -->
-      <div v-if="allOpenAIOAuth" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-openai-ws-mode-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-openai-ws-mode-enabled"
-          >
-            {{ t('admin.accounts.openai.wsMode') }}
-          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t('admin.accounts.openai.wsModeDesc') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t(openAIWSModeConcurrencyHintKey) }}</span></HelpTooltip></label>
-          <UCheckbox v-model="enableOpenAIWSMode" id="bulk-edit-openai-ws-mode-enabled" aria-controls="bulk-edit-openai-ws-mode" />
-        </div>
-        <div
-          id="bulk-edit-openai-ws-mode"
-          :class="!enableOpenAIWSMode && 'pointer-events-none opacity-50'"
-        >
-          
-          
-          <Select
-            v-model="openaiOAuthResponsesWebSocketV2Mode"
-            data-testid="bulk-edit-openai-ws-mode-select"
-            :options="openAIWSModeOptions"
-            aria-labelledby="bulk-edit-openai-ws-mode-label"
-          />
-        </div>
-      </div>
-
-      <!-- OpenAI OAuth Codex CLI only -->
-      <div v-if="allOpenAIOAuth" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-openai-codex-cli-only-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-openai-codex-cli-only-enabled"
-          >
-            {{ t('admin.accounts.openai.codexCLIOnly') }}
-          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexCLIOnly')"><span class="block">{{ t('admin.accounts.openai.codexCLIOnlyDesc') }}</span></HelpTooltip></label>
-          <UCheckbox v-model="enableCodexCLIOnly" id="bulk-edit-openai-codex-cli-only-enabled" aria-controls="bulk-edit-openai-codex-cli-only" />
-        </div>
-        <div
-          id="bulk-edit-openai-codex-cli-only"
-          :class="!enableCodexCLIOnly && 'pointer-events-none opacity-50'"
-        >
-          
-          <Toggle v-model="codexCLIOnlyEnabled" id="bulk-edit-openai-codex-cli-only-toggle" />
-        </div>
-      </div>
-
-      <!-- OpenAI OAuth: Codex app-server -->
-      <div v-if="allOpenAIOAuth" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-openai-codex-app-server-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-openai-codex-app-server-enabled"
-          >
-            {{ t('admin.accounts.openai.codexCLIOnlyAppServer') }}
-          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexCLIOnlyAppServer')"><span class="block">{{ t('admin.accounts.openai.codexCLIOnlyAppServerDesc') }}</span></HelpTooltip></label>
-          <UCheckbox v-model="enableCodexCLIOnlyAppServer" id="bulk-edit-openai-codex-app-server-enabled" aria-controls="bulk-edit-openai-codex-app-server" />
-        </div>
-        <div
-          id="bulk-edit-openai-codex-app-server"
-          :class="!enableCodexCLIOnlyAppServer && 'pointer-events-none opacity-50'"
-        >
-          
-          <Toggle v-model="codexCLIOnlyAppServerEnabled" id="bulk-edit-openai-codex-app-server-toggle" />
-        </div>
-      </div>
-
-      <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
-      <div v-if="allOpenAIOAuth" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexFingerprintMode')"><span class="block">{{ t('admin.accounts.openai.codexFingerprintModeDesc') }}</span></HelpTooltip></label>
-          <UCheckbox id="bulk-edit-openai-codex-fingerprint-mode-enabled" v-model="enableCodexFingerprintMode" />
-        </div>
-        <div :class="!enableCodexFingerprintMode && 'pointer-events-none opacity-50'">
-          
-          <Select v-model="codexFingerprintMode" data-testid="bulk-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
-        </div>
-      </div>
-
-      <!-- Upstream billing auto probe (any API-key platform) -->
-      <div v-if="allBillingProbeCapable" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-upstream-billing-auto-probe-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-upstream-billing-auto-probe-enabled"
-            >
-              {{ t('admin.accounts.upstreamBilling.autoProbe') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.upstreamBilling.autoProbe')"><span class="block">{{ t('admin.accounts.upstreamBilling.autoProbeHint') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableUpstreamBillingAutoProbe" id="bulk-edit-upstream-billing-auto-probe-enabled" aria-controls="bulk-edit-upstream-billing-auto-probe" />
-        </div>
-        <div
-          id="bulk-edit-upstream-billing-auto-probe"
-          :class="!enableUpstreamBillingAutoProbe && 'pointer-events-none opacity-50'"
-          role="group"
-          aria-labelledby="bulk-edit-upstream-billing-auto-probe-label"
-        >
-          <Select
-            v-model="upstreamBillingAutoProbeMode"
-            :disabled="!enableUpstreamBillingAutoProbe"
-            data-testid="bulk-edit-upstream-billing-auto-probe-select"
-            :options="upstreamBillingAutoProbeOptions"
-            aria-labelledby="bulk-edit-upstream-billing-auto-probe-label"
-          />
-        </div>
-      </div>
-
-      <!-- OpenAI API Key endpoint capabilities -->
-      <div v-if="allOpenAIAPIKey" class="pt-2">
-        <div class="mb-3 flex items-center justify-between gap-4">
-          <div class="flex-1">
-            <label
-              id="bulk-edit-openai-endpoint-capabilities-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-openai-endpoint-capabilities-enabled"
-            >
-              {{ t('admin.accounts.openai.endpointCapabilities') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.endpointCapabilities')"><span class="block">{{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableOpenAIEndpointCapabilities" id="bulk-edit-openai-endpoint-capabilities-enabled" aria-controls="bulk-edit-openai-endpoint-capabilities-body" />
-        </div>
-        <div
-          id="bulk-edit-openai-endpoint-capabilities-body"
-          :class="!enableOpenAIEndpointCapabilities && 'pointer-events-none opacity-50'"
-          role="group"
-          aria-labelledby="bulk-edit-openai-endpoint-capabilities-label"
-        >
-          <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <UCheckbox
-              v-for="option in openAIEndpointCapabilityOptions"
-              :key="option.value"
-              :disabled="!enableOpenAIEndpointCapabilities"
-              :data-testid="`bulk-edit-openai-endpoint-capability-${option.value}`"
-              :model-value="openAIEndpointCapabilities.includes(option.value)"
-              @update:model-value="toggleOpenAIEndpointCapability(option.value)"
-              :label="option.label"
-            />
-          </div>
-        </div>
-      </div>
-
-      <!-- OpenAI API Key Responses route -->
-      <div v-if="allOpenAIAPIKey" class="pt-2">
-        <div class="mb-3 flex items-center justify-between gap-4">
-          <div class="flex-1">
-            <label
-              id="bulk-edit-openai-responses-mode-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-openai-responses-mode-enabled"
-            >
-              {{ t('admin.accounts.openai.responsesMode') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.responsesMode')"><span class="block">{{ t('admin.accounts.openai.responsesModeDesc') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableOpenAIResponsesMode" id="bulk-edit-openai-responses-mode-enabled" aria-controls="bulk-edit-openai-responses-mode-body" />
-        </div>
-        <div
-          id="bulk-edit-openai-responses-mode-body"
-          :class="!enableOpenAIResponsesMode && 'pointer-events-none opacity-50'"
-          role="group"
-          aria-labelledby="bulk-edit-openai-responses-mode-label"
-        >
-          <Select
-            v-model="openAIResponsesMode"
-            :disabled="!enableOpenAIResponsesMode || !openAIResponsesModeApplicable"
-            data-testid="bulk-edit-openai-responses-mode-select"
-            :options="openAIResponsesModeOptions"
-            aria-labelledby="bulk-edit-openai-responses-mode-label"
-          />
-          <p
-            v-if="enableOpenAIEndpointCapabilities && !openAITextGenerationCapabilityEnabled"
-            class="mt-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
-            data-testid="bulk-edit-openai-responses-mode-not-applicable"
-          >
-            {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
-          </p>
-        </div>
-      </div>
-
-      <!-- OpenAI API Key WS mode -->
-      <div v-if="allOpenAIAPIKey" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-openai-apikey-ws-mode-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-openai-apikey-ws-mode-enabled"
-          >
-            {{ t('admin.accounts.openai.wsMode') }}
-          <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t('admin.accounts.openai.wsModeDesc') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t(openAIAPIKeyWSModeConcurrencyHintKey) }}</span></HelpTooltip></label>
-          <UCheckbox v-model="enableOpenAIAPIKeyWSMode" id="bulk-edit-openai-apikey-ws-mode-enabled" aria-controls="bulk-edit-openai-apikey-ws-mode" />
-        </div>
-        <div
-          id="bulk-edit-openai-apikey-ws-mode"
-          :class="!enableOpenAIAPIKeyWSMode && 'pointer-events-none opacity-50'"
-        >
-          
-          
-          <Select
-            v-model="openaiAPIKeyResponsesWebSocketV2Mode"
-            data-testid="bulk-edit-openai-apikey-ws-mode-select"
-            :options="openAIWSModeOptions"
-            aria-labelledby="bulk-edit-openai-apikey-ws-mode-label"
-          />
-        </div>
-      </div>
-
-      <!-- OpenAI Compact mode -->
-      <div v-if="allOpenAIPassthroughCapable" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-openai-compact-mode-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-openai-compact-mode-enabled"
-            >
-              {{ t('admin.accounts.openai.compactMode') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactMode')"><span class="block">{{ t('admin.accounts.openai.compactModeDesc') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableOpenAICompactMode" id="bulk-edit-openai-compact-mode-enabled" aria-controls="bulk-edit-openai-compact-mode" />
-        </div>
-        <div
-          id="bulk-edit-openai-compact-mode"
-          :class="!enableOpenAICompactMode && 'pointer-events-none opacity-50'"
-        >
-          <Select
-            v-model="openAICompactMode"
-            data-testid="bulk-edit-openai-compact-mode-select"
-            :options="openAICompactModeOptions"
-            aria-labelledby="bulk-edit-openai-compact-mode-label"
-          />
-        </div>
-      </div>
-
-      <!-- OpenAI Compact model mapping -->
-      <div v-if="allOpenAIPassthroughCapable" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <div class="flex-1 pr-4">
-            <label
-              id="bulk-edit-openai-compact-model-mapping-label"
-              class="block text-sm font-medium text-default"
-              for="bulk-edit-openai-compact-model-mapping-enabled"
-            >
-              {{ t('admin.accounts.openai.compactModelMapping') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactModelMapping')"><span class="block">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</span></HelpTooltip></label>
-            
-          </div>
-          <UCheckbox v-model="enableOpenAICompactModelMapping" id="bulk-edit-openai-compact-model-mapping-enabled" aria-controls="bulk-edit-openai-compact-model-mapping" />
-        </div>
-        <div
-          id="bulk-edit-openai-compact-model-mapping"
-          :class="!enableOpenAICompactModelMapping && 'pointer-events-none opacity-50'"
-        >
-          <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
-            <div
-              v-for="(mapping, index) in openAICompactModelMappings"
-              :key="index"
-              class="flex items-center gap-2"
-            >
-              <UInput
-                v-model="mapping.from"
-                type="text"
-                :placeholder="t('admin.accounts.fromModel')"
-                data-testid="bulk-edit-openai-compact-model-mapping-input"
-                class="flex-1"
-              />
-              <span class="text-muted">→</span>
-              <UInput
-                v-model="mapping.to"
-                type="text"
-                :placeholder="t('admin.accounts.toModel')"
-                data-testid="bulk-edit-openai-compact-model-mapping-input"
-                class="flex-1"
-              />
-              <UButton
-                color="error"
-                variant="ghost"
-                square
-                size="sm"
-                icon="i-lucide-trash-2"
-                :aria-label="t('admin.accounts.formActions.remove')"
-                type="button"
-                @click="removeOpenAICompactModelMapping(index)"
-              />
-            </div>
-          </div>
-          <UButton
-            color="neutral"
-            variant="soft"
-            block
-            icon="i-lucide-plus"
-            class="mb-3"
-            type="button"
-            data-testid="bulk-edit-openai-compact-model-mapping-add"
-            @click="addOpenAICompactModelMapping"
-          >
-            + {{ t('admin.accounts.addMapping') }}
-          </UButton>
-        </div>
-      </div>
-
+      <SettingGroup v-if="allAnthropicOAuthOrSetupToken" :title="t('admin.accounts.formSections.limits')">
       <!-- RPM Limit (仅全部为 Anthropic OAuth/SetupToken 时显示) -->
-      <div v-if="allAnthropicOAuthOrSetupToken" class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-rpm-limit-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-rpm-limit-enabled"
-          >
-            {{ t('admin.accounts.quotaControl.rpmLimit.label') }}
-          </label>
-          <UCheckbox v-model="enableRpmLimit" id="bulk-edit-rpm-limit-enabled" aria-controls="bulk-edit-rpm-limit-body" />
-        </div>
-
+      <SettingRow
+        :label="t('admin.accounts.quotaControl.rpmLimit.label')"
+        :hint="t('admin.accounts.quotaControl.rpmLimit.hint')"
+        :summary="rpmLimitEnabled && bulkBaseRpm ? `${bulkBaseRpm} RPM` : undefined"
+        :on="enableRpmLimit"
+        test-id="bulk-edit-row-rpm-limit"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableRpmLimit" id="bulk-edit-rpm-limit-enabled" aria-controls="bulk-edit-rpm-limit-body" aria-labelledby="bulk-edit-rpm-limit-label" />
+        </template>
+        <template #title><span id="bulk-edit-rpm-limit-label" class="setting-row__label-text">{{ t('admin.accounts.quotaControl.rpmLimit.label') }}</span></template>
+        <template #control>
+          <span :class="!enableRpmLimit && 'pointer-events-none opacity-50'" class="inline-flex">
+            <Toggle v-model="rpmLimitEnabled" :aria-label="t('admin.accounts.quotaControl.rpmLimit.label')" />
+          </span>
+        </template>
+        <template #fields>
         <div
           id="bulk-edit-rpm-limit-body"
           :class="!enableRpmLimit && 'pointer-events-none opacity-50'"
           role="group"
           aria-labelledby="bulk-edit-rpm-limit-label"
         >
-          <div class="mb-3 flex items-center justify-between">
-            <span class="text-sm text-toned">{{ t('admin.accounts.quotaControl.rpmLimit.hint') }}</span>
-            <Toggle v-model="rpmLimitEnabled" />
-          </div>
-
           <div v-if="rpmLimitEnabled" class="space-y-3">
             <HintFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :hint="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
               <UInput
@@ -895,22 +891,22 @@
 
             <div>
               <label class="mb-1.5 block text-sm font-medium text-default text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
-              <div class="flex gap-1 rounded-lg bg-elevated p-1">
+              <div class="inline-flex gap-0.5 rounded-full bg-accented p-0.5" role="group" :aria-label="t('admin.accounts.quotaControl.rpmLimit.strategy')">
                 <UButton
                   :color="bulkRpmStrategy === 'tiered' ? 'primary' : 'neutral'"
-                  :variant="bulkRpmStrategy === 'tiered' ? 'solid' : 'ghost'"
-                  size="sm"
-                  block
-                  class="flex-1"
+                  :variant="bulkRpmStrategy === 'tiered' ? 'soft' : 'ghost'"
+                  :aria-pressed="bulkRpmStrategy === 'tiered'"
+                  size="xs"
+                  class="rounded-full"
                   type="button"
                   @click="bulkRpmStrategy = 'tiered'"
                 >{{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}</UButton>
                 <UButton
                   :color="bulkRpmStrategy === 'sticky_exempt' ? 'primary' : 'neutral'"
-                  :variant="bulkRpmStrategy === 'sticky_exempt' ? 'solid' : 'ghost'"
-                  size="sm"
-                  block
-                  class="flex-1"
+                  :variant="bulkRpmStrategy === 'sticky_exempt' ? 'soft' : 'ghost'"
+                  :aria-pressed="bulkRpmStrategy === 'sticky_exempt'"
+                  size="xs"
+                  class="rounded-full"
                   type="button"
                   @click="bulkRpmStrategy = 'sticky_exempt'"
                 >{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}</UButton>
@@ -930,40 +926,54 @@
 
             </div>
           </div>
+        </template>
+      </SettingRow>
 
         <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
-        <div class="mt-4">
-          <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')"><span class="block">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}</span></HelpTooltip></label>
-          
-          <div class="flex space-x-2">
+      <SettingRow
+        :label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')"
+        :hint="t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint')"
+        :summary="umqModeOptions.find((o) => o.value === userMsgQueueMode)?.label"
+        :on="userMsgQueueMode != null"
+        test-id="bulk-edit-row-user-msg-queue"
+      >
+        <!-- No "change this field" box: picking a mode is the change, picking it again clears it. The
+             spacer keeps the name on the same axis as the ticked rows above. -->
+        <template #leading><span class="inline-block size-4" aria-hidden="true" /></template>
+        <template #control>
+          <div class="inline-flex flex-wrap justify-end gap-0.5 rounded-2xl bg-accented p-0.5" role="group" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')">
             <UButton
               :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
-              :variant="userMsgQueueMode === opt.value ? 'solid' : 'outline'"
-              size="sm"
+              :variant="userMsgQueueMode === opt.value ? 'soft' : 'ghost'"
+              :aria-pressed="userMsgQueueMode === opt.value"
+              class="rounded-full whitespace-nowrap"
+              size="xs"
               type="button"
               v-for="opt in umqModeOptions"
               :key="opt.value"
               @click="userMsgQueueMode = userMsgQueueMode === opt.value ? null : opt.value"
             >{{ opt.label }}</UButton>
           </div>
-        </div>
-      </div>
+        </template>
+      </SettingRow>
+      </SettingGroup>
           </div>
         </template>
       </UCollapsible>
 
+      <SettingGroup :title="t('nav.groups')">
       <!-- Groups -->
-      <div class="pt-2">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-groups-label"
-            class="block text-sm font-medium text-default"
-            for="bulk-edit-groups-enabled"
-          >
-            {{ t('nav.groups') }}
-          </label>
-          <UCheckbox v-model="enableGroups" id="bulk-edit-groups-enabled" aria-controls="bulk-edit-groups" />
-        </div>
+      <SettingRow
+        :label="t('nav.groups')"
+        :summary="t('common.settingsSummary.itemCount', { count: groupIds.length })"
+        :on="enableGroups"
+        test-id="bulk-edit-row-groups"
+      >
+        <template #leading>
+          <UCheckbox v-model="enableGroups" id="bulk-edit-groups-enabled" aria-controls="bulk-edit-groups" aria-labelledby="bulk-edit-groups-label" />
+        </template>
+        <template #title><span id="bulk-edit-groups-label" class="setting-row__label-text">{{ t('nav.groups') }}</span></template>
+        <template #fields>
         <div id="bulk-edit-groups" :class="!enableGroups && 'pointer-events-none opacity-50'">
           <GroupSelector
             v-model="groupIds"
@@ -971,7 +981,10 @@
             aria-labelledby="bulk-edit-groups-label"
           />
         </div>
-      </div>
+        </template>
+      </SettingRow>
+      </SettingGroup>
+      </SettingPanel>
     </form>
 
     <template #footer>
@@ -1022,8 +1035,10 @@ import type {
   OpenAIResponsesMode
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import HintFormField from '@/components/common/HintFormField.vue'
+import SettingPanel from '@/components/common/SettingPanel.vue'
+import SettingGroup from '@/components/common/SettingGroup.vue'
+import SettingRow from '@/components/common/SettingRow.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'

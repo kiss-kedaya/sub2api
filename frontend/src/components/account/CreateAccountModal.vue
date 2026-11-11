@@ -1522,21 +1522,20 @@
         </div>
       </div>
       <div v-show="showWizardStep(3)" data-wizard-step="3" class="space-y-6">
-        <h4 v-if="[(form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')), (form.type === 'apikey' || form.type === 'cloudflare' || form.type === 'bedrock')].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.limits') }}</h4>
+        <SettingPanel>
+        <SettingGroup v-if="[(form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')), (form.type === 'apikey' || form.type === 'cloudflare' || form.type === 'bedrock')].some(Boolean)" :title="t('admin.accounts.formSections.limits')">
 
         <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
         <div
           v-if="form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')"
-          class="pt-2 space-y-4"
+          class="pb-3"
         >
-          <div class="mb-3">
-            <h3 class="inline-flex items-center text-sm font-medium text-default text-base font-semibold">
-              {{ t('admin.accounts.quotaControl.title') }}
-              <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')" width-class="w-72">
-                <span class="block">{{ t('admin.accounts.quotaControl.hint') }}</span>
-              </HelpTooltip>
-            </h3>
-          </div>
+          <h3 class="inline-flex items-center py-2 text-sm font-semibold text-default">
+            {{ t('admin.accounts.quotaControl.title') }}
+            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')" width-class="w-72">
+              <span class="block">{{ t('admin.accounts.quotaControl.hint') }}</span>
+            </HelpTooltip>
+          </h3>
           <QuotaLimitCard
             :totalLimit="editQuotaLimit"
             :dailyLimit="editQuotaDailyLimit"
@@ -1581,12 +1580,9 @@
         <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
         <div
           v-else-if="form.type === 'apikey' || form.type === 'cloudflare' || form.type === 'bedrock'"
-          class="pt-2 space-y-4"
+          class="pb-3"
         >
-          <div class="mb-3">
-            <h3 class="block text-sm font-medium text-default text-base font-semibold">{{ t('admin.accounts.quotaControl.title') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')"><span class="block">{{ t('admin.accounts.quotaLimitHint') }}</span></HelpTooltip></h3>
-            
-          </div>
+          <h3 class="inline-flex items-center py-2 text-sm font-semibold text-default">{{ t('admin.accounts.quotaControl.title') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')"><span class="block">{{ t('admin.accounts.quotaLimitHint') }}</span></HelpTooltip></h3>
           <QuotaLimitCard
             :totalLimit="editQuotaLimit"
             :dailyLimit="editQuotaDailyLimit"
@@ -1627,21 +1623,27 @@
             @update:resetTimezone="editResetTimezone = $event"
           />
         </div>
+        </SettingGroup>
 
-        <div v-if="(form.type === 'apikey' || form.type === 'cloudflare') && form.platform !== 'antigravity'" class="space-y-4">
+        <div v-if="(form.type === 'apikey' || form.type === 'cloudflare') && form.platform !== 'antigravity'" class="grid min-w-0 gap-[18px]">
           <!-- Pool Mode Section -->
-          <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.errors') }}</h4>
-  
-          <div class="pt-2">
-            <HintFormField :label="t('admin.accounts.poolMode')" :hint="t('admin.accounts.poolModeHint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="poolModeEnabled" />
-            </HintFormField>
+          <SettingGroup :title="t('admin.accounts.formSections.errors')">
+            <SettingRow
+              :label="t('admin.accounts.poolMode')"
+              :hint="t('admin.accounts.poolModeHint')"
+              :on="poolModeEnabled"
+              :summary="poolModeEnabled ? `${t('admin.accounts.poolModeRetryCount')} ${poolModeRetryCount}` : ''"
+            >
+              <template #control>
+                <Toggle v-model="poolModeEnabled" />
+              </template>
+              <template #fields>
             <UAlert v-if="poolModeEnabled" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.poolModeInfo')" />
-            <div v-if="poolModeEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryCount') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.poolModeRetryCount')"><span class="block">{{ t('admin.accounts.poolModeRetryCountHint', {
+            <div v-show="poolModeEnabled" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <HintFormField v-if="poolModeEnabled" :label="t('admin.accounts.poolModeRetryCount')" :hint="t('admin.accounts.poolModeRetryCountHint', {
                     default: DEFAULT_POOL_MODE_RETRY_COUNT,
                     max: MAX_POOL_MODE_RETRY_COUNT
-                  }) }}</span></HelpTooltip></label>
+                  })">
               <UInput
                 v-model.number="poolModeRetryCount"
                 type="number"
@@ -1650,27 +1652,32 @@
                 step="1"
                 class="w-full"
               />
-              
-            </div>
-            <div v-if="poolModeEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryStatusCodes') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.poolModeRetryStatusCodes')"><span class="block">{{ t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') }) }}</span></HelpTooltip></label>
+            </HintFormField>
+            <HintFormField v-if="poolModeEnabled" :label="t('admin.accounts.poolModeRetryStatusCodes')" :hint="t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') })">
               <UInput
                 v-model="poolModeRetryStatusCodesInput"
                 type="text"
                 :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
                 class="w-full"
               />
-              
+            </HintFormField>
             </div>
-          </div>
+              </template>
+            </SettingRow>
   
           <!-- Custom Error Codes Section -->
-          <div class="pt-2">
-            <HintFormField :label="t('admin.accounts.customErrorCodes')" :hint="t('admin.accounts.customErrorCodesHint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="customErrorCodesEnabled" />
-            </HintFormField>
+            <SettingRow
+              :label="t('admin.accounts.customErrorCodes')"
+              :hint="t('admin.accounts.customErrorCodesHint')"
+              :on="customErrorCodesEnabled"
+              :summary="customErrorCodesEnabled && selectedErrorCodes.length ? selectedErrorCodes.slice().sort((a, b) => a - b).join(', ') : ''"
+            >
+              <template #control>
+                <Toggle v-model="customErrorCodesEnabled" />
+              </template>
+            </SettingRow>
   
-            <div v-if="customErrorCodesEnabled" class="space-y-3">
+            <div v-if="customErrorCodesEnabled" class="space-y-3 pb-3 ps-4">
               <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.customErrorCodesWarning')" />
   
               <!-- Error Code Buttons -->
@@ -1727,20 +1734,24 @@
                 </span>
               </div>
             </div>
-          </div>
+          </SettingGroup>
   
           <!-- Header Override Section (eligible API-key platforms) -->
-          <h4 v-if="(isHeaderOverrideCapable(form.platform, 'apikey'))" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.forwarding') }}</h4>
-  
+          <SettingGroup v-if="(isHeaderOverrideCapable(form.platform, 'apikey'))" :title="t('admin.accounts.formSections.forwarding')">
           <div
             v-if="isHeaderOverrideCapable(form.platform, 'apikey')"
-            class="pt-2"
           >
-            <HintFormField :label="t('admin.accounts.headerOverride.title')" :hint="t('admin.accounts.headerOverride.hint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="headerOverrideEnabled" />
-            </HintFormField>
+            <SettingRow
+              :label="t('admin.accounts.headerOverride.title')"
+              :hint="t('admin.accounts.headerOverride.hint')"
+              :on="headerOverrideEnabled"
+            >
+              <template #control>
+                <Toggle v-model="headerOverrideEnabled" />
+              </template>
+            </SettingRow>
   
-            <div v-if="headerOverrideEnabled" class="space-y-3">
+            <div v-if="headerOverrideEnabled" class="space-y-3 pb-3 ps-4">
               <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
   
               <HeaderOverrideEditor
@@ -1749,22 +1760,28 @@
               />
             </div>
           </div>
+          </SettingGroup>
         </div>
 
-        <div v-if="form.platform === 'anthropic' && accountCategory === 'bedrock'" class="space-y-4">
+        <div v-if="form.platform === 'anthropic' && accountCategory === 'bedrock'" class="grid min-w-0 gap-[18px]">
           <!-- Pool Mode Section for Bedrock -->
-          <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.errors') }}</h4>
-  
-          <div class="pt-2">
-            <HintFormField :label="t('admin.accounts.poolMode')" :hint="t('admin.accounts.poolModeHint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="poolModeEnabled" />
-            </HintFormField>
+          <SettingGroup :title="t('admin.accounts.formSections.errors')">
+            <SettingRow
+              :label="t('admin.accounts.poolMode')"
+              :hint="t('admin.accounts.poolModeHint')"
+              :on="poolModeEnabled"
+              :summary="poolModeEnabled ? `${t('admin.accounts.poolModeRetryCount')} ${poolModeRetryCount}` : ''"
+            >
+              <template #control>
+                <Toggle v-model="poolModeEnabled" />
+              </template>
+              <template #fields>
             <UAlert v-if="poolModeEnabled" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.poolModeInfo')" />
-            <div v-if="poolModeEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryCount') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.poolModeRetryCount')"><span class="block">{{ t('admin.accounts.poolModeRetryCountHint', {
+            <div v-show="poolModeEnabled" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <HintFormField v-if="poolModeEnabled" :label="t('admin.accounts.poolModeRetryCount')" :hint="t('admin.accounts.poolModeRetryCountHint', {
                     default: DEFAULT_POOL_MODE_RETRY_COUNT,
                     max: MAX_POOL_MODE_RETRY_COUNT
-                  }) }}</span></HelpTooltip></label>
+                  })">
               <UInput
                 v-model.number="poolModeRetryCount"
                 type="number"
@@ -1773,33 +1790,37 @@
                 step="1"
                 class="w-full"
               />
-              
-            </div>
-            <div v-if="poolModeEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryStatusCodes') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.poolModeRetryStatusCodes')"><span class="block">{{ t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') }) }}</span></HelpTooltip></label>
+            </HintFormField>
+            <HintFormField v-if="poolModeEnabled" :label="t('admin.accounts.poolModeRetryStatusCodes')" :hint="t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') })">
               <UInput
                 v-model="poolModeRetryStatusCodesInput"
                 type="text"
                 :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
                 class="w-full"
               />
-              
+            </HintFormField>
             </div>
-          </div>
+              </template>
+            </SettingRow>
+          </SettingGroup>
         </div>
 
-        <h4 v-if="(form.platform === 'grok' && isOAuthFlow)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.forwarding') }}</h4>
-
         <!-- Grok OAuth Header Override (OAuth 类型没有 apikey 容器，需要独立区域) -->
+        <SettingGroup v-if="(form.platform === 'grok' && isOAuthFlow)" :title="t('admin.accounts.formSections.forwarding')">
         <div
           v-if="form.platform === 'grok' && isOAuthFlow"
-          class="pt-2"
         >
-          <HintFormField :label="t('admin.accounts.headerOverride.title')" :hint="t('admin.accounts.headerOverride.hint')" class="flex items-center justify-between gap-4 mb-3">
-            <Toggle v-model="headerOverrideEnabled" />
-          </HintFormField>
+          <SettingRow
+            :label="t('admin.accounts.headerOverride.title')"
+            :hint="t('admin.accounts.headerOverride.hint')"
+            :on="headerOverrideEnabled"
+          >
+            <template #control>
+              <Toggle v-model="headerOverrideEnabled" />
+            </template>
+          </SettingRow>
   
-          <div v-if="headerOverrideEnabled" class="space-y-3">
+          <div v-if="headerOverrideEnabled" class="space-y-3 pb-3 ps-4">
             <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
   
             <HeaderOverrideEditor
@@ -1808,6 +1829,7 @@
             />
           </div>
         </div>
+        </SettingGroup>
 
         <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.network') }}</h4>
 
@@ -1828,21 +1850,31 @@
         <UCollapsible :unmount-on-hide="false">
           <UButton type="button" color="neutral" variant="ghost" :label="t('admin.accounts.advancedOptions')" trailing-icon="i-lucide-chevron-down" class="group -ms-2.5 font-semibold text-highlighted" :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }" />
           <template #content>
-            <div class="space-y-6 pt-4">
-              <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.scheduling') }}</h4>
+            <div class="grid min-w-0 gap-[18px] pt-4">
+              <SettingGroup :title="t('admin.accounts.formSections.scheduling')">
+          <SettingRow
+            :label="t('admin.accounts.autoPauseOnExpired')"
+            :hint="t('admin.accounts.autoPauseOnExpiredDesc')"
+            :on="autoPauseOnExpired"
+          >
+            <template #control>
+              <Toggle v-model="autoPauseOnExpired" />
+            </template>
+          </SettingRow>
   
               <div>
-          <HintFormField :label="t('admin.accounts.autoPauseOnExpired')" :hint="t('admin.accounts.autoPauseOnExpiredDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="autoPauseOnExpired" />
-          </HintFormField>
-        </div>
+          <SettingRow
+            :label="t('admin.accounts.tempUnschedulable.title')"
+            :hint="t('admin.accounts.tempUnschedulable.hint')"
+            :on="tempUnschedEnabled"
+            :summary="tempUnschedEnabled ? tempUnschedRules.map((rule) => rule.error_code).filter(Boolean).join(', ') : ''"
+          >
+            <template #control>
+              <Toggle v-model="tempUnschedEnabled" />
+            </template>
+          </SettingRow>
   
-              <div class="pt-2 space-y-4">
-          <HintFormField :label="t('admin.accounts.tempUnschedulable.title')" :hint="t('admin.accounts.tempUnschedulable.hint')" class="flex items-center justify-between gap-4 mb-3">
-            <Toggle v-model="tempUnschedEnabled" />
-          </HintFormField>
-  
-          <div v-if="tempUnschedEnabled" class="space-y-3">
+          <div v-if="tempUnschedEnabled" class="space-y-3 pb-3 ps-4">
             <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.tempUnschedulable.notice')" />
   
             <div class="flex flex-wrap gap-2">
@@ -1946,474 +1978,550 @@
             <UButton color="neutral" variant="soft" block icon="i-lucide-plus" type="button" @click="addTempUnschedRule()">{{ t('admin.accounts.tempUnschedulable.addRule') }}</UButton>
           </div>
         </div>
-  
-              <h4 v-if="[(form.platform === 'anthropic' || form.platform === 'antigravity'), (form.platform === 'openai'), (form.platform === 'openai' && form.type === 'oauth'), (form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')), (form.platform === 'anthropic' && accountCategory === 'apikey'), (form.platform === 'anthropic' && accountCategory === 'apikey'), (form.platform === 'anthropic' && accountCategory === 'apikey' && webSearchGlobalEnabled), (form.platform === 'openai' && accountCategory === 'oauth-based'), (form.platform === 'openai' && accountCategory === 'oauth-based'), (form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')), (form.platform === 'openai' && accountCategory === 'apikey'), (form.platform === 'openai' && accountCategory === 'apikey')].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.forwarding') }}</h4>
-  
+              </SettingGroup>
+
+              <SettingGroup v-if="[(form.platform === 'anthropic' || form.platform === 'antigravity'), (form.platform === 'openai'), (form.platform === 'openai' && form.type === 'oauth'), (form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')), (form.platform === 'anthropic' && accountCategory === 'apikey'), (form.platform === 'anthropic' && accountCategory === 'apikey'), (form.platform === 'anthropic' && accountCategory === 'apikey' && webSearchGlobalEnabled), (form.platform === 'openai' && accountCategory === 'oauth-based'), (form.platform === 'openai' && accountCategory === 'oauth-based'), (form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')), (form.platform === 'openai' && accountCategory === 'apikey'), (form.platform === 'openai' && accountCategory === 'apikey')].some(Boolean)" :title="t('admin.accounts.formSections.forwarding')">
               <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
-        <div
-          v-if="form.platform === 'anthropic' || form.platform === 'antigravity'"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.interceptWarmupRequests')" :hint="t('admin.accounts.interceptWarmupRequestsDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="interceptWarmupRequests" />
-          </HintFormField>
-        </div>
-  
+              <div v-if="form.platform === 'anthropic' || form.platform === 'antigravity'">
+                <SettingRow
+                  :label="t('admin.accounts.interceptWarmupRequests')"
+                  :hint="t('admin.accounts.interceptWarmupRequestsDesc')"
+                  :on="interceptWarmupRequests"
+                >
+                  <template #control>
+                    <Toggle v-model="interceptWarmupRequests" />
+                  </template>
+                </SettingRow>
+              </div>
+
               <!-- OpenAI 自动透传开关（OAuth/API Key） -->
-        <div
-          v-if="form.platform === 'openai'"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.openai.oauthPassthrough')" :hint="t('admin.accounts.openai.oauthPassthroughDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="openaiPassthroughEnabled" />
-          </HintFormField>
-        </div>
-  
+              <div v-if="form.platform === 'openai'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.oauthPassthrough')"
+                  :hint="t('admin.accounts.openai.oauthPassthroughDesc')"
+                  :on="openaiPassthroughEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="openaiPassthroughEnabled" />
+                  </template>
+                </SettingRow>
+              </div>
+
               <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
-        <div
-          v-if="form.platform === 'openai' && form.type === 'oauth'"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.openai.flattenNamespaces')" :hint="t('admin.accounts.openai.flattenNamespacesDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="openaiFlattenNamespacesEnabled" data-testid="create-openai-flatten-namespaces-toggle" />
-          </HintFormField>
-        </div>
-  
+              <div v-if="form.platform === 'openai' && form.type === 'oauth'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.flattenNamespaces')"
+                  :hint="t('admin.accounts.openai.flattenNamespacesDesc')"
+                  :on="openaiFlattenNamespacesEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="openaiFlattenNamespacesEnabled" data-testid="create-openai-flatten-namespaces-toggle" />
+                  </template>
+                </SettingRow>
+              </div>
+
               <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
-        <div
-          v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
-          data-testid="create-openai-ws-mode"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.wsMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t('admin.accounts.openai.wsModeDesc') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t(openAIWSModeConcurrencyHintKey) }}</span></HelpTooltip></label>
-              
-              
-            </div>
-            <div class="w-52">
-              <Select v-model="openaiResponsesWebSocketV2Mode" :options="openAIWSModeOptions" />
-            </div>
-          </div>
-        </div>
-  
-              <!-- Anthropic API Key 自动透传开关 -->
-        <div
-          v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.anthropic.apiKeyPassthrough')" :hint="t('admin.accounts.anthropic.apiKeyPassthroughDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="anthropicPassthroughEnabled" />
-          </HintFormField>
-        </div>
-  
               <div
-          v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between gap-4">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.anthropic.apiKeyAuthScheme') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.anthropic.apiKeyAuthScheme')"><span class="block">{{ t('admin.accounts.anthropic.apiKeyAuthSchemeDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <Select
-              v-model="anthropicAPIKeyAuthScheme"
-              :options="[
-                { value: 'x_api_key', label: t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey') },
-                { value: 'authorization_bearer', label: t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') }
-              ]"
-              class="w-52"
-            />
-          </div>
-        </div>
-  
-              <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
-        <div
-          v-if="form.platform === 'anthropic' && accountCategory === 'apikey' && webSearchGlobalEnabled"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.anthropic.webSearchEmulation') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.anthropic.webSearchEmulation')"><span class="block">{{ t('admin.accounts.anthropic.webSearchEmulationDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <Select
-              v-model="webSearchEmulationMode"
-              :options="[
-                { value: 'default', label: t('admin.accounts.anthropic.webSearchDefault') },
-                { value: 'enabled', label: t('admin.accounts.anthropic.webSearchEnabled') },
-                { value: 'disabled', label: t('admin.accounts.anthropic.webSearchDisabled') }
-              ]"
-              class="w-24"
-            />
-          </div>
-        </div>
-  
-              <div
-          v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.openai.codexCLIOnly')" :hint="t('admin.accounts.openai.codexCLIOnlyDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="codexCLIOnlyEnabled" />
-          </HintFormField>
-          <HintFormField v-if="codexCLIOnlyEnabled" :label="t('admin.accounts.openai.codexCLIOnlyAppServer')" :hint="t('admin.accounts.openai.codexCLIOnlyAppServerDesc')" class="flex items-center justify-between gap-4 mt-4">
-            <Toggle v-model="codexCLIOnlyAppServerEnabled" />
-          </HintFormField>
-        </div>
-  
-              <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
-        <div
-          v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between gap-4">
-            <div class="min-w-0">
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexFingerprintMode')"><span class="block">{{ t('admin.accounts.openai.codexFingerprintModeDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <div class="w-52 flex-shrink-0">
-              <Select v-model="codexFingerprintMode" data-testid="create-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
-            </div>
-          </div>
-        </div>
-  
-              <!-- OpenAI Compact 能力配置 -->
-        <div
-          v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
-          class="pt-2 space-y-4"
-        >
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactMode')"><span class="block">{{ t('admin.accounts.openai.compactModeDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <div class="w-44">
-              <Select v-model="openAICompactMode" :options="openAICompactModeOptions" />
-            </div>
-          </div>
-          <div>
-            <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactModelMapping') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactModelMapping')"><span class="block">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</span></HelpTooltip></label>
-            
-            <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
-              <div
-                v-for="(mapping, index) in openAICompactModelMappings"
-                :key="getOpenAICompactModelMappingKey(mapping)"
-                class="flex items-center gap-2"
+                v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+                data-testid="create-openai-ws-mode"
               >
-                <UInput v-model="mapping.from" type="text" :placeholder="t('admin.accounts.fromModel')" class="flex-1" />
-                <span class="text-muted">→</span>
-                <UInput v-model="mapping.to" type="text" :placeholder="t('admin.accounts.toModel')" class="flex-1" />
-                <UButton
-                  color="error"
-                  variant="ghost"
-                  square
-                  size="sm"
-                  icon="i-lucide-trash-2"
-                  :aria-label="t('admin.accounts.formActions.remove')"
-                  type="button"
-                  @click="removeOpenAICompactModelMapping(index)"
-                />
+                <SettingRow
+                  :label="t('admin.accounts.openai.wsMode')"
+                  :hint="[t('admin.accounts.openai.wsModeDesc'), t(openAIWSModeConcurrencyHintKey)]"
+                  :on="openaiResponsesWebSocketV2Mode !== OPENAI_WS_MODE_OFF"
+                  :summary="openAIWSModeOptions.find((option) => option.value === openaiResponsesWebSocketV2Mode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-44">
+                      <Select v-model="openaiResponsesWebSocketV2Mode" :options="openAIWSModeOptions" />
+                    </div>
+                  </template>
+                </SettingRow>
               </div>
-            </div>
-            <UButton color="neutral" variant="outline" type="button" @click="addOpenAICompactModelMapping" class="text-sm">
-              + {{ t('admin.accounts.addMapping') }}
-            </UButton>
-          </div>
-        </div>
-  
+
+              <!-- Anthropic API Key 自动透传开关 -->
+              <div v-if="form.platform === 'anthropic' && accountCategory === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.anthropic.apiKeyPassthrough')"
+                  :hint="t('admin.accounts.anthropic.apiKeyPassthroughDesc')"
+                  :on="anthropicPassthroughEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="anthropicPassthroughEnabled" />
+                  </template>
+                </SettingRow>
+              </div>
+
+              <div v-if="form.platform === 'anthropic' && accountCategory === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.anthropic.apiKeyAuthScheme')"
+                  :hint="t('admin.accounts.anthropic.apiKeyAuthSchemeDesc')"
+                  :on="anthropicAPIKeyAuthScheme !== 'x_api_key'"
+                  :summary="anthropicAPIKeyAuthScheme === 'authorization_bearer' ? t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') : t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey')"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-44">
+                      <Select
+                        v-model="anthropicAPIKeyAuthScheme"
+                        :options="[
+                          { value: 'x_api_key', label: t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey') },
+                          { value: 'authorization_bearer', label: t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') }
+                        ]"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
+              <div v-if="form.platform === 'anthropic' && accountCategory === 'apikey' && webSearchGlobalEnabled">
+                <SettingRow
+                  :label="t('admin.accounts.anthropic.webSearchEmulation')"
+                  :hint="t('admin.accounts.anthropic.webSearchEmulationDesc')"
+                  :on="webSearchEmulationMode !== 'default'"
+                  :summary="webSearchEmulationMode === 'enabled' ? t('admin.accounts.anthropic.webSearchEnabled') : (webSearchEmulationMode === 'disabled' ? t('admin.accounts.anthropic.webSearchDisabled') : t('admin.accounts.anthropic.webSearchDefault'))"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-28">
+                      <Select
+                        v-model="webSearchEmulationMode"
+                        :options="[
+                          { value: 'default', label: t('admin.accounts.anthropic.webSearchDefault') },
+                          { value: 'enabled', label: t('admin.accounts.anthropic.webSearchEnabled') },
+                          { value: 'disabled', label: t('admin.accounts.anthropic.webSearchDisabled') }
+                        ]"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <div v-if="form.platform === 'openai' && accountCategory === 'oauth-based'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.codexCLIOnly')"
+                  :hint="t('admin.accounts.openai.codexCLIOnlyDesc')"
+                  :on="codexCLIOnlyEnabled"
+                  :summary="codexCLIOnlyEnabled ? (codexCLIOnlyAppServerEnabled ? t('admin.accounts.openai.codexCLIOnlyAppServer') : '') : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="codexCLIOnlyEnabled" />
+                  </template>
+                  <template #fields>
+                    <HintFormField v-if="codexCLIOnlyEnabled" :label="t('admin.accounts.openai.codexCLIOnlyAppServer')" :hint="t('admin.accounts.openai.codexCLIOnlyAppServerDesc')" class="flex items-center justify-between gap-4">
+                      <Toggle v-model="codexCLIOnlyAppServerEnabled" />
+                    </HintFormField>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
+              <div v-if="form.platform === 'openai' && accountCategory === 'oauth-based'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.codexFingerprintMode')"
+                  :hint="t('admin.accounts.openai.codexFingerprintModeDesc')"
+                  :on="codexFingerprintMode !== 'off'"
+                  :summary="codexFingerprintModeOptions.find((option) => option.value === codexFingerprintMode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-44">
+                      <Select v-model="codexFingerprintMode" data-testid="create-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- OpenAI Compact 能力配置 -->
+              <div v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')">
+                <SettingRow
+                  :label="t('admin.accounts.openai.compactMode')"
+                  :hint="t('admin.accounts.openai.compactModeDesc')"
+                  :on="openAICompactMode !== 'auto'"
+                  :summary="openAICompactModeOptions.find((option) => option.value === openAICompactMode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-40">
+                      <Select v-model="openAICompactMode" :options="openAICompactModeOptions" />
+                    </div>
+                  </template>
+                </SettingRow>
+                <div class="space-y-3 pb-3 ps-4">
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactModelMapping') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactModelMapping')"><span class="block">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</span></HelpTooltip></label>
+                    <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
+                      <div
+                        v-for="(mapping, index) in openAICompactModelMappings"
+                        :key="getOpenAICompactModelMappingKey(mapping)"
+                        class="flex items-center gap-2"
+                      >
+                        <UInput v-model="mapping.from" type="text" :placeholder="t('admin.accounts.fromModel')" class="flex-1" />
+                        <span class="text-muted">→</span>
+                        <UInput v-model="mapping.to" type="text" :placeholder="t('admin.accounts.toModel')" class="flex-1" />
+                        <UButton
+                          color="error"
+                          variant="ghost"
+                          square
+                          size="sm"
+                          icon="i-lucide-trash-2"
+                          :aria-label="t('admin.accounts.formActions.remove')"
+                          type="button"
+                          @click="removeOpenAICompactModelMapping(index)"
+                        />
+                      </div>
+                    </div>
+                    <UButton color="neutral" variant="outline" type="button" @click="addOpenAICompactModelMapping" class="text-sm">
+                      + {{ t('admin.accounts.addMapping') }}
+                    </UButton>
+                  </div>
+                </div>
+              </div>
+
               <!-- OpenAI APIKey Responses API support mode -->
-        <div
-          v-if="form.platform === 'openai' && accountCategory === 'apikey'"
-          class="space-y-4 pt-2"
-        >
-          <div class="flex items-center justify-between gap-4">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.responsesMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.responsesMode')"><span class="block">{{ t('admin.accounts.openai.responsesModeDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <div class="w-56">
-              <Select
-                v-model="openAIResponsesMode"
-                :options="openAIResponsesModeOptions"
-                :disabled="!openAITextGenerationCapabilityEnabled"
-                data-testid="openai-responses-mode-select"
-              />
-            </div>
-          </div>
-          <p
-            v-if="!openAITextGenerationCapabilityEnabled"
-            class="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
-            data-testid="openai-responses-mode-not-applicable"
-          >
-            {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
-          </p>
-          <div>
-            <label class="mb-1.5 block text-sm font-medium text-default mb-2">{{ t('admin.accounts.openai.endpointCapabilities') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.endpointCapabilities')"><span class="block">{{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}</span></HelpTooltip></label>
-            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <UCheckbox
-                v-for="option in openAIEndpointCapabilityOptions"
-                :key="option.value"
-                :data-testid="`openai-endpoint-capability-${option.value}`"
-                :model-value="openAIEndpointCapabilities.includes(option.value)"
-                @update:model-value="toggleOpenAIEndpointCapability(option.value)"
-                :label="option.label"
-              />
-            </div>
-            
-          </div>
-        </div>
-  
+              <div v-if="form.platform === 'openai' && accountCategory === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.responsesMode')"
+                  :hint="t('admin.accounts.openai.responsesModeDesc')"
+                  :on="openAIResponsesMode !== 'auto'"
+                  :summary="openAIResponsesModeOptions.find((option) => option.value === openAIResponsesMode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-44">
+                      <Select
+                        v-model="openAIResponsesMode"
+                        :options="openAIResponsesModeOptions"
+                        :disabled="!openAITextGenerationCapabilityEnabled"
+                        data-testid="openai-responses-mode-select"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+                <div class="space-y-2 pb-3 ps-4">
+                  <p
+                    v-if="!openAITextGenerationCapabilityEnabled"
+                    class="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
+                    data-testid="openai-responses-mode-not-applicable"
+                  >
+                    {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
+                  </p>
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-default">{{ t('admin.accounts.openai.endpointCapabilities') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.endpointCapabilities')"><span class="block">{{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}</span></HelpTooltip></label>
+                    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <UCheckbox
+                        v-for="option in openAIEndpointCapabilityOptions"
+                        :key="option.value"
+                        :data-testid="`openai-endpoint-capability-${option.value}`"
+                        :model-value="openAIEndpointCapabilities.includes(option.value)"
+                        @update:model-value="toggleOpenAIEndpointCapability(option.value)"
+                        :label="option.label"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- OpenAI APIKey images: backfill b64_json from url -->
-        <HintFormField v-if="form.platform === 'openai' && accountCategory === 'apikey'" :label="t('admin.accounts.openai.imagesUrlToB64Json')" :hint="t('admin.accounts.openai.imagesUrlToB64JsonDesc')" class="flex items-center justify-between gap-4">
-          <Toggle v-model="openAIImagesUrlToB64JsonEnabled" data-testid="openai-images-url-to-b64-json-toggle" />
-        </HintFormField>
-  
-              <h4 v-if="(form.platform === 'openai' && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey'))" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.billing') }}</h4>
-  
+              <div v-if="form.platform === 'openai' && accountCategory === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.imagesUrlToB64Json')"
+                  :hint="t('admin.accounts.openai.imagesUrlToB64JsonDesc')"
+                  :on="openAIImagesUrlToB64JsonEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="openAIImagesUrlToB64JsonEnabled" data-testid="openai-images-url-to-b64-json-toggle" />
+                  </template>
+                </SettingRow>
+              </div>
+              </SettingGroup>
+
+              <SettingGroup v-if="(form.platform === 'openai' && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey'))" :title="t('admin.accounts.formSections.billing')">
               <!-- OpenAI API 长上下文计费开关 -->
-        <div
-          v-if="form.platform === 'openai' && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.openai.longContextBilling')" :hint="t('admin.accounts.openai.longContextBillingDesc')" class="flex items-center justify-between gap-4">
-            <Toggle :model-value="openAILongContextBillingEnabled" @update:model-value="toggleOpenAILongContextBilling()" data-testid="openai-long-context-billing-toggle" />
-          </HintFormField>
-        </div>
-  
-              <h4 v-if="(form.platform === 'anthropic' && accountCategory === 'oauth-based')" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.limits') }}</h4>
-  
+              <div v-if="form.platform === 'openai' && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey')">
+                <SettingRow
+                  :label="t('admin.accounts.openai.longContextBilling')"
+                  :hint="t('admin.accounts.openai.longContextBillingDesc')"
+                  :on="openAILongContextBillingEnabled"
+                >
+                  <template #control>
+                    <Toggle :model-value="openAILongContextBillingEnabled" @update:model-value="toggleOpenAILongContextBilling()" data-testid="openai-long-context-billing-toggle" />
+                  </template>
+                </SettingRow>
+              </div>
+              </SettingGroup>
+
               <!-- 配额控制 (Anthropic OAuth/SetupToken: 亲和 + 窗口费用 + 会话 + RPM 等) -->
-        <div
-          v-if="form.platform === 'anthropic' && accountCategory === 'oauth-based'"
-          class="pt-2 space-y-4"
-        >
-          <div class="mb-3">
-            <h3 class="inline-flex items-center text-sm font-medium text-default text-base font-semibold">
-              {{ t('admin.accounts.quotaControl.title') }}
-              <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')" width-class="w-72">
-                <span class="block">{{ t('admin.accounts.quotaControl.hint') }}</span>
-              </HelpTooltip>
-            </h3>
-          </div>
-  
-          <!-- Window Cost Limit -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.windowCost.label')" :hint="t('admin.accounts.quotaControl.windowCost.hint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="windowCostEnabled" />
-            </HintFormField>
-  
-            <div v-if="windowCostEnabled" class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.windowCost.limit') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.windowCost.limit')"><span class="block">{{ t('admin.accounts.quotaControl.windowCost.limitHint') }}</span></HelpTooltip></label>
-                <div class="relative">
-                  <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
-                  <UInput
-                    v-model.number="windowCostLimit"
-                    type="number"
-                    min="0"
-                    step="1"
-                    :placeholder="t('admin.accounts.quotaControl.windowCost.limitPlaceholder')"
-                    class="w-full"
-                  />
-                </div>
-                
-              </div>
-              <div>
-                <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.windowCost.stickyReserve') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.windowCost.stickyReserve')"><span class="block">{{ t('admin.accounts.quotaControl.windowCost.stickyReserveHint') }}</span></HelpTooltip></label>
-                <div class="relative">
-                  <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
-                  <UInput
-                    v-model.number="windowCostStickyReserve"
-                    type="number"
-                    min="0"
-                    step="1"
-                    :placeholder="t('admin.accounts.quotaControl.windowCost.stickyReservePlaceholder')"
-                    class="w-full"
-                  />
-                </div>
-                
-              </div>
-            </div>
-          </div>
-  
-          <!-- Session Limit -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.sessionLimit.label')" :hint="t('admin.accounts.quotaControl.sessionLimit.hint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="sessionLimitEnabled" />
-            </HintFormField>
-  
-            <div v-if="sessionLimitEnabled" class="grid grid-cols-2 gap-4">
-              <HintFormField :label="t('admin.accounts.quotaControl.sessionLimit.maxSessions')" :hint="t('admin.accounts.quotaControl.sessionLimit.maxSessionsHint')">
-                <UInput
-                  v-model.number="maxSessions"
-                  type="number"
-                  min="1"
-                  step="1"
-                  :placeholder="t('admin.accounts.quotaControl.sessionLimit.maxSessionsPlaceholder')"
-                  class="w-full"
-                />
-              </HintFormField>
-              <div>
-                <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeout') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.sessionLimit.idleTimeout')"><span class="block">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeoutHint') }}</span></HelpTooltip></label>
-                <div class="relative">
-                  <UInput
-                    v-model.number="sessionIdleTimeout"
-                    type="number"
-                    min="1"
-                    step="1"
-                    :placeholder="t('admin.accounts.quotaControl.sessionLimit.idleTimeoutPlaceholder')"
-                    class="w-full"
-                  />
-                  <span class="absolute right-3 top-1/2 -translate-y-1/2 text-muted">{{ t('common.minutes') }}</span>
-                </div>
-                
-              </div>
-            </div>
-          </div>
-  
-          <!-- RPM Limit -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.rpmLimit.label')" :hint="t('admin.accounts.quotaControl.rpmLimit.hint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="rpmLimitEnabled" />
-            </HintFormField>
-  
-            <div v-if="rpmLimitEnabled" class="space-y-4">
-              <HintFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :hint="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
-                <UInput
-                  v-model.number="baseRpm"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  step="1"
-                  :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
-                  class="w-full"
-                />
-              </HintFormField>
-  
-              <div>
-                <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
-                <div class="flex gap-1 rounded-lg bg-elevated p-1">
-                  <UButton
-                    :color="rpmStrategy === 'tiered' ? 'primary' : 'neutral'"
-                    :variant="rpmStrategy === 'tiered' ? 'solid' : 'ghost'"
-                    size="sm"
-                    block
-                    class="flex-1"
-                    type="button"
-                    @click="rpmStrategy = 'tiered'"
-                  >
-                    <div class="text-center">
-                      <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}</div>
-                      <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyTieredHint') }}</div>
+              <SettingGroup
+                v-if="(form.platform === 'anthropic' && accountCategory === 'oauth-based')"
+                :title="t('admin.accounts.formSections.limits')"
+                :description="t('admin.accounts.quotaControl.hint')"
+              >
+              <div v-if="form.platform === 'anthropic' && accountCategory === 'oauth-based'">
+                <!-- Window Cost Limit -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.windowCost.label')"
+                  :hint="t('admin.accounts.quotaControl.windowCost.hint')"
+                  :on="windowCostEnabled"
+                  :summary="windowCostEnabled ? [windowCostLimit != null ? `${t('admin.accounts.quotaControl.windowCost.limit')} ${windowCostLimit}` : '', windowCostStickyReserve != null ? `${t('admin.accounts.quotaControl.windowCost.stickyReserve')} ${windowCostStickyReserve}` : ''].filter(Boolean).join(' · ') : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="windowCostEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="windowCostEnabled" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <HintFormField :label="t('admin.accounts.quotaControl.windowCost.limit')" :hint="t('admin.accounts.quotaControl.windowCost.limitHint')">
+                        <div class="relative">
+                          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
+                          <UInput
+                            v-model.number="windowCostLimit"
+                            type="number"
+                            min="0"
+                            step="1"
+                            :placeholder="t('admin.accounts.quotaControl.windowCost.limitPlaceholder')"
+                            class="w-full"
+                          />
+                        </div>
+                      </HintFormField>
+                      <HintFormField :label="t('admin.accounts.quotaControl.windowCost.stickyReserve')" :hint="t('admin.accounts.quotaControl.windowCost.stickyReserveHint')">
+                        <div class="relative">
+                          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
+                          <UInput
+                            v-model.number="windowCostStickyReserve"
+                            type="number"
+                            min="0"
+                            step="1"
+                            :placeholder="t('admin.accounts.quotaControl.windowCost.stickyReservePlaceholder')"
+                            class="w-full"
+                          />
+                        </div>
+                      </HintFormField>
                     </div>
-                  </UButton>
-                  <UButton
-                    :color="rpmStrategy === 'sticky_exempt' ? 'primary' : 'neutral'"
-                    :variant="rpmStrategy === 'sticky_exempt' ? 'solid' : 'ghost'"
-                    size="sm"
-                    block
-                    class="flex-1"
-                    type="button"
-                    @click="rpmStrategy = 'sticky_exempt'"
-                  >
-                    <div class="text-center">
-                      <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}</div>
-                      <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExemptHint') }}</div>
+                  </template>
+                </SettingRow>
+
+                <!-- Session Limit -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.sessionLimit.label')"
+                  :hint="t('admin.accounts.quotaControl.sessionLimit.hint')"
+                  :on="sessionLimitEnabled"
+                  :summary="sessionLimitEnabled ? [maxSessions != null ? `${t('admin.accounts.quotaControl.sessionLimit.maxSessions')} ${maxSessions}` : '', sessionIdleTimeout != null ? `${t('admin.accounts.quotaControl.sessionLimit.idleTimeout')} ${sessionIdleTimeout} ${t('common.minutes')}` : ''].filter(Boolean).join(' · ') : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="sessionLimitEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="sessionLimitEnabled" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <HintFormField :label="t('admin.accounts.quotaControl.sessionLimit.maxSessions')" :hint="t('admin.accounts.quotaControl.sessionLimit.maxSessionsHint')">
+                        <UInput
+                          v-model.number="maxSessions"
+                          type="number"
+                          min="1"
+                          step="1"
+                          :placeholder="t('admin.accounts.quotaControl.sessionLimit.maxSessionsPlaceholder')"
+                          class="w-full"
+                        />
+                      </HintFormField>
+                      <HintFormField :label="t('admin.accounts.quotaControl.sessionLimit.idleTimeout')" :hint="t('admin.accounts.quotaControl.sessionLimit.idleTimeoutHint')">
+                        <div class="relative">
+                          <UInput
+                            v-model.number="sessionIdleTimeout"
+                            type="number"
+                            min="1"
+                            step="1"
+                            :placeholder="t('admin.accounts.quotaControl.sessionLimit.idleTimeoutPlaceholder')"
+                            class="w-full"
+                          />
+                          <span class="absolute right-3 top-1/2 -translate-y-1/2 text-muted">{{ t('common.minutes') }}</span>
+                        </div>
+                      </HintFormField>
                     </div>
-                  </UButton>
-                </div>
+                  </template>
+                </SettingRow>
+
+                <!-- RPM Limit -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.rpmLimit.label')"
+                  :hint="t('admin.accounts.quotaControl.rpmLimit.hint')"
+                  :on="rpmLimitEnabled"
+                  :summary="rpmLimitEnabled && baseRpm != null ? `${t('admin.accounts.quotaControl.rpmLimit.baseRpm')} ${baseRpm}` : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="rpmLimitEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="rpmLimitEnabled" class="space-y-3">
+                      <HintFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :hint="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
+                        <UInput
+                          v-model.number="baseRpm"
+                          type="number"
+                          min="1"
+                          max="1000"
+                          step="1"
+                          :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
+                          class="w-full"
+                        />
+                      </HintFormField>
+
+                      <div>
+                        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
+                        <div class="flex gap-1 rounded-lg bg-elevated p-1">
+                          <UButton
+                            :color="rpmStrategy === 'tiered' ? 'primary' : 'neutral'"
+                            :variant="rpmStrategy === 'tiered' ? 'solid' : 'ghost'"
+                            size="sm"
+                            block
+                            class="flex-1"
+                            type="button"
+                            @click="rpmStrategy = 'tiered'"
+                          >
+                            <div class="text-center">
+                              <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}</div>
+                              <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyTieredHint') }}</div>
+                            </div>
+                          </UButton>
+                          <UButton
+                            :color="rpmStrategy === 'sticky_exempt' ? 'primary' : 'neutral'"
+                            :variant="rpmStrategy === 'sticky_exempt' ? 'solid' : 'ghost'"
+                            size="sm"
+                            block
+                            class="flex-1"
+                            type="button"
+                            @click="rpmStrategy = 'sticky_exempt'"
+                          >
+                            <div class="text-center">
+                              <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}</div>
+                              <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExemptHint') }}</div>
+                            </div>
+                          </UButton>
+                        </div>
+                      </div>
+
+                      <HintFormField v-if="rpmStrategy === 'tiered'" :label="t('admin.accounts.quotaControl.rpmLimit.stickyBuffer')" :hint="t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint')">
+                        <UInput
+                          v-model.number="rpmStickyBuffer"
+                          type="number"
+                          min="1"
+                          step="1"
+                          :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
+                          class="w-full"
+                        />
+                      </HintFormField>
+                    </div>
+                  </template>
+                </SettingRow>
+
+                <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')"
+                  :hint="t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint')"
+                  :on="userMsgQueueMode !== ''"
+                  :summary="umqModeOptions.find((option) => option.value === userMsgQueueMode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="inline-flex flex-wrap justify-end gap-0.5 rounded-2xl bg-accented p-0.5" role="group" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')">
+                      <UButton
+                        :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
+                        :variant="userMsgQueueMode === opt.value ? 'soft' : 'ghost'"
+                        :aria-pressed="userMsgQueueMode === opt.value"
+                        class="rounded-full whitespace-nowrap"
+                        size="xs"
+                        type="button"
+                        v-for="opt in umqModeOptions"
+                        :key="opt.value"
+                        @click="userMsgQueueMode = opt.value"
+                      >{{ opt.label }}</UButton>
+                    </div>
+                  </template>
+                </SettingRow>
+
+                <!-- TLS Fingerprint -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.tlsFingerprint.label')"
+                  :hint="t('admin.accounts.quotaControl.tlsFingerprint.hint')"
+                  :on="tlsFingerprintEnabled"
+                  :summary="tlsFingerprintEnabled ? (tlsFingerprintProfiles.find((profile) => profile.id === tlsFingerprintProfileId)?.name ?? t('admin.accounts.quotaControl.tlsFingerprint.defaultProfile')) : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="tlsFingerprintEnabled" />
+                  </template>
+                  <template #fields>
+                    <!-- Profile selector -->
+                    <div v-if="tlsFingerprintEnabled">
+                      <Select
+                        v-model="tlsFingerprintProfileId"
+                        :options="[
+                          { value: null, label: t('admin.accounts.quotaControl.tlsFingerprint.defaultProfile') },
+                          ...(tlsFingerprintProfiles.length > 0 ? [{ value: -1, label: t('admin.accounts.quotaControl.tlsFingerprint.randomProfile') }] : []),
+                          ...tlsFingerprintProfiles.map((p) => ({ value: p.id, label: p.name }))
+                        ]"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+
+                <!-- Session ID Masking -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.sessionIdMasking.label')"
+                  :hint="t('admin.accounts.quotaControl.sessionIdMasking.hint')"
+                  :on="sessionIdMaskingEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="sessionIdMaskingEnabled" />
+                  </template>
+                </SettingRow>
+
+                <!-- Cache TTL Override -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.cacheTTLOverride.label')"
+                  :hint="t('admin.accounts.quotaControl.cacheTTLOverride.hint')"
+                  :on="cacheTTLOverrideEnabled"
+                  :summary="cacheTTLOverrideEnabled ? cacheTTLOverrideTarget : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="cacheTTLOverrideEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="cacheTTLOverrideEnabled">
+                      <label class="mb-1.5 block text-xs font-medium text-default">{{ t('admin.accounts.quotaControl.cacheTTLOverride.target') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.cacheTTLOverride.target')"><span class="block">{{ t('admin.accounts.quotaControl.cacheTTLOverride.targetHint') }}</span></HelpTooltip></label>
+                      <Select
+                        v-model="cacheTTLOverrideTarget"
+                        :options="[{ value: '5m', label: '5m' }, { value: '1h', label: '1h' }]"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+
+                <!-- Custom Base URL Relay -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.customBaseUrl.label')"
+                  :hint="t('admin.accounts.quotaControl.customBaseUrl.hint')"
+                  :on="customBaseUrlEnabled"
+                  :summary="customBaseUrlEnabled ? customBaseUrl : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="customBaseUrlEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="customBaseUrlEnabled">
+                      <UInput
+                        v-model="customBaseUrl"
+                        type="text"
+                        :placeholder="t('admin.accounts.quotaControl.customBaseUrl.urlHint')"
+                        class="w-full"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
               </div>
-  
-              <HintFormField v-if="rpmStrategy === 'tiered'" :label="t('admin.accounts.quotaControl.rpmLimit.stickyBuffer')" :hint="t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint')">
-                <UInput
-                  v-model.number="rpmStickyBuffer"
-                  type="number"
-                  min="1"
-                  step="1"
-                  :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
-                  class="w-full"
-                />
-              </HintFormField>
-  
-            </div>
-  
-            <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
-            <div class="mt-4">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')"><span class="block">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}</span></HelpTooltip></label>
-              
-              <div class="flex space-x-2">
-                <UButton
-                  :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
-                  :variant="userMsgQueueMode === opt.value ? 'solid' : 'outline'"
-                  size="sm"
-                  type="button"
-                  v-for="opt in umqModeOptions"
-                  :key="opt.value"
-                  @click="userMsgQueueMode = opt.value"
-                >{{ opt.label }}</UButton>
-              </div>
-            </div>
-          </div>
-  
-          <!-- TLS Fingerprint -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.tlsFingerprint.label')" :hint="t('admin.accounts.quotaControl.tlsFingerprint.hint')" class="flex items-center justify-between gap-4">
-              <Toggle v-model="tlsFingerprintEnabled" />
-            </HintFormField>
-            <!-- Profile selector -->
-            <div v-if="tlsFingerprintEnabled" class="mt-3">
-              <Select
-                v-model="tlsFingerprintProfileId"
-                :options="[
-                  { value: null, label: t('admin.accounts.quotaControl.tlsFingerprint.defaultProfile') },
-                  ...(tlsFingerprintProfiles.length > 0 ? [{ value: -1, label: t('admin.accounts.quotaControl.tlsFingerprint.randomProfile') }] : []),
-                  ...tlsFingerprintProfiles.map((p) => ({ value: p.id, label: p.name }))
-                ]"
-              />
-            </div>
-          </div>
-  
-          <!-- Session ID Masking -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.sessionIdMasking.label')" :hint="t('admin.accounts.quotaControl.sessionIdMasking.hint')" class="flex items-center justify-between gap-4">
-              <Toggle v-model="sessionIdMaskingEnabled" />
-            </HintFormField>
-          </div>
-  
-          <!-- Cache TTL Override -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.cacheTTLOverride.label')" :hint="t('admin.accounts.quotaControl.cacheTTLOverride.hint')" class="flex items-center justify-between gap-4">
-              <Toggle v-model="cacheTTLOverrideEnabled" />
-            </HintFormField>
-            <div v-if="cacheTTLOverrideEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default text-xs">{{ t('admin.accounts.quotaControl.cacheTTLOverride.target') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.cacheTTLOverride.target')"><span class="block">{{ t('admin.accounts.quotaControl.cacheTTLOverride.targetHint') }}</span></HelpTooltip></label>
-              <Select
-                v-model="cacheTTLOverrideTarget"
-                :options="[{ value: '5m', label: '5m' }, { value: '1h', label: '1h' }]"
-                class="mt-1"
-              />
-              
-            </div>
-          </div>
-  
-          <!-- Custom Base URL Relay -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.customBaseUrl.label')" :hint="t('admin.accounts.quotaControl.customBaseUrl.hint')" class="flex items-center justify-between gap-4">
-              <Toggle v-model="customBaseUrlEnabled" />
-            </HintFormField>
-            <div v-if="customBaseUrlEnabled" class="mt-3">
-              <UInput
-                v-model="customBaseUrl"
-                type="text"
-                :placeholder="t('admin.accounts.quotaControl.customBaseUrl.urlHint')"
-                class="w-full"
-              />
-            </div>
-          </div>
-        </div>
+              </SettingGroup>
             </div>
           </template>
         </UCollapsible>
+        </SettingPanel>
       </div>
       <div v-show="showWizardStep(4)" data-wizard-step="4" class="space-y-4">
         <p class="text-sm text-muted">{{ t('admin.accounts.wizard.confirmHint') }}</p>
@@ -2742,6 +2850,9 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import HintFormField from '@/components/common/HintFormField.vue'
+import SettingPanel from '@/components/common/SettingPanel.vue'
+import SettingGroup from '@/components/common/SettingGroup.vue'
+import SettingRow from '@/components/common/SettingRow.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
