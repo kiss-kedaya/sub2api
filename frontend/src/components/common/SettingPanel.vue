@@ -9,7 +9,11 @@ import { settingPanelKey, type SettingPanelEntry } from '@/components/common/set
 withDefaults(defineProps<{
   /** Hide the summary bar, e.g. for a list too short to need one. */
   hideSummary?: boolean
-}>(), { hideSummary: false })
+  /** i18n key for the summary's count line; see SettingSummary. Defaults to "N enabled". */
+  summaryCountKey?: string
+  /** i18n key for the summary line when no row is on. Defaults to "All at defaults". */
+  summaryEmptyKey?: string
+}>(), { hideSummary: false, summaryCountKey: undefined, summaryEmptyKey: undefined })
 
 const entries = shallowReactive(new Map<string, SettingPanelEntry>())
 
@@ -38,7 +42,12 @@ const hasRows = computed(() => entries.size > 0)
 
 <template>
   <div class="setting-panel">
-    <SettingSummary v-if="!hideSummary && hasRows" :items="enabled" />
+    <SettingSummary
+      v-if="!hideSummary && hasRows"
+      :items="enabled"
+      :count-key="summaryCountKey"
+      :empty-key="summaryEmptyKey"
+    />
     <slot />
   </div>
 </template>

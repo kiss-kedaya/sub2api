@@ -3,10 +3,20 @@ import { useI18n } from 'vue-i18n'
 
 // The one-line "what is on" bar at the top of a settings list: a count, then one pill per enabled
 // setting. With nothing on it says so, so an empty bar never reads as "still loading".
-defineProps<{
+withDefaults(defineProps<{
   /** Already-translated names of the settings that are on, in page order. */
   items: string[]
-}>()
+  /**
+   * i18n key for the count line, given `{ count }`. A form that is not about "enabled" settings
+   * (a bulk edit, where a ticked row is a field about to change) says what it actually counts.
+   */
+  countKey?: string
+  /** i18n key for the line shown when nothing is listed. */
+  emptyKey?: string
+}>(), {
+  countKey: 'common.settingsSummary.enabled',
+  emptyKey: 'common.settingsSummary.allDefault',
+})
 
 const { t } = useI18n()
 </script>
@@ -14,10 +24,10 @@ const { t } = useI18n()
 <template>
   <div class="setting-summary" data-testid="setting-summary">
     <span class="setting-summary__count" data-testid="setting-summary-count">
-      {{ t('common.settingsSummary.enabled', { count: items.length }) }}
+      {{ t(countKey, { count: items.length }) }}
     </span>
     <span v-for="(name, index) in items" :key="`${index}-${name}`" class="setting-summary__chip" :title="name">{{ name }}</span>
-    <span v-if="!items.length" class="setting-summary__none">{{ t('common.settingsSummary.allDefault') }}</span>
+    <span v-if="!items.length" class="setting-summary__none">{{ t(emptyKey) }}</span>
   </div>
 </template>
 
