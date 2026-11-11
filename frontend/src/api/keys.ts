@@ -174,6 +174,18 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
   return update(id, { status })
 }
 
+export interface BlockDatacenterIPsResult {
+  added: string[]
+  added_count: number
+  checked_ip_count: number
+}
+
+/** Append recently used hosting/proxy IPs to this key's IP blacklist. */
+export async function blockDatacenterIPs(id: number): Promise<BlockDatacenterIPsResult> {
+  const { data } = await apiClient.post<BlockDatacenterIPsResult>(`/keys/${id}/block-datacenter-ips`)
+  return data
+}
+
 export const keysAPI = {
 	getConcurrencyQueue,
   list,
@@ -182,7 +194,8 @@ export const keysAPI = {
   update,
   delete: deleteKey,
   deleteMany,
-  toggleStatus
+  toggleStatus,
+  blockDatacenterIPs
 }
 
 export default keysAPI

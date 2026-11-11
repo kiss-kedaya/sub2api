@@ -30,6 +30,28 @@ func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
 	}
 }
 
+// BlockDatacenterIPs appends hosting/proxy IPs from the key's recent usage
+// to its IP blacklist.
+// POST /api/v1/keys/:id/block-datacenter-ips
+func (h *APIKeyHandler) BlockDatacenterIPs(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid API key ID")
+		return
+	}
+	added, checked, err := h.apiKeyService.BlockDatacenterIPs(c.Request.Context(), id, subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"added": added, "added_count": len(added), "checked_ip_count": checked})
+}
+
 // CreateAPIKeyRequest represents the create API key request payload
 type CreateAPIKeyRequest struct {
 	ConcurrencyLimit int      `json:"concurrency_limit" binding:"gte=0"`
