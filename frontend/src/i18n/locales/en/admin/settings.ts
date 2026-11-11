@@ -1171,7 +1171,8 @@ export default {
         quickPresets: 'Quick Presets',
         presetOpusOnly: 'Opus only for 1M',
         presetOpusOnlyDesc: 'Pass for Opus, filter others',
-        commonPatterns: 'Common patterns'
+        commonPatterns: 'Common patterns',
+        empty: 'The server returned no Beta rules; every Beta header is handled by default.'
       },
       openaiFastPolicy: {
         title: 'OpenAI Fast/Flex Policy',
