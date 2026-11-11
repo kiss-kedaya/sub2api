@@ -1065,8 +1065,8 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		// Cache TTL Override: 重写 SSE 事件中的 cache_creation 分类。
-		// 账号级设置优先；全局 1h 请求注入开启时，默认把 usage 计费归回 5m。
-		if overrideTarget, ok := s.resolveCacheTTLUsageOverrideTarget(ctx, account); ok {
+		// 优先级：密钥 > 账号 > 全局（见 resolveCacheTTLUsageOverrideTarget）。
+		if overrideTarget, ok := s.resolveCacheTTLUsageOverrideTarget(ctx, getAPIKeyFromContext(c), account); ok {
 			if eventType == "message_start" {
 				if msg, ok := event["message"].(map[string]any); ok {
 					if u, ok := msg["usage"].(map[string]any); ok {
@@ -1512,7 +1512,30 @@ func rewriteCacheCreationJSON(usageObj map[string]any, target string) bool {
 	return true
 }
 
-func (s *GatewayService) resolveCacheTTLUsageOverrideTarget(ctx context.Context, account *Account) (string, bool) {
+// resolveCacheTTLUsageOverrideTarget 决定 cache creation tokens 按哪种 TTL 计费。
+//
+// 优先级：密钥 > 账号 > 全局。
+//
+//	密钥 = 1h / 5m  -> 按密钥选的计费
+//	密钥 = off      -> 不改写，按上游返回的计费
+//	密钥 = inherit  -> 账号开了「缓存 TTL 强制替换」就按账号选的；
+//	                   否则全局 1h 注入开着（且账号是 OAuth/SetupToken）就归回 5m；
+//	                   都没有则不改写
+//
+// 密钥级设置只在请求落到 Anthropic 平台时生效，判定与请求侧改写
+// （resolveAnthropicCacheTTLMode）共用 anthropicTargetForRequest，
+// 这样「请求里写了什么 TTL」和「按什么 TTL 计费」不会各说各话。
+func (s *GatewayService) resolveCacheTTLUsageOverrideTarget(ctx context.Context, apiKey *APIKey, account *Account) (string, bool) {
+	if apiKey != nil && anthropicTargetForBilling(ctx, apiKey, account) {
+		switch NormalizeAnthropicCacheTTLMode(apiKey.AnthropicCacheTTLMode) {
+		case AnthropicCacheTTLMode1h:
+			return cacheTTLTarget1h, true
+		case AnthropicCacheTTLMode5m:
+			return cacheTTLTarget5m, true
+		case AnthropicCacheTTLModeOff:
+			return "", false
+		}
+	}
 	if account == nil {
 		return "", false
 	}
@@ -1573,8 +1596,8 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	}
 
 	// Cache TTL Override: 重写 non-streaming 响应中的 cache_creation 分类。
-	// 账号级设置优先；全局 1h 请求注入开启时，默认把 usage 计费归回 5m。
-	if overrideTarget, ok := s.resolveCacheTTLUsageOverrideTarget(ctx, account); ok {
+	// 优先级：密钥 > 账号 > 全局（见 resolveCacheTTLUsageOverrideTarget）。
+	if overrideTarget, ok := s.resolveCacheTTLUsageOverrideTarget(ctx, getAPIKeyFromContext(c), account); ok {
 		if applyCacheTTLOverride(&response.Usage, overrideTarget) {
 			// 同步更新 body JSON 中的嵌套 cache_creation 对象
 			if newBody, err := sjson.SetBytes(body, "usage.cache_creation.ephemeral_5m_input_tokens", response.Usage.CacheCreation5mTokens); err == nil {

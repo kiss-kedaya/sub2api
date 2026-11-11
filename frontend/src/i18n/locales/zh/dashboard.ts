@@ -356,7 +356,7 @@ export default {
     rateLimit7d: '7天限额 (USD)',
     anthropicCacheTtlMode: 'Anthropic 缓存 TTL',
     anthropicCacheTtlModeHint:
-      '仅对该密钥打到 Anthropic 平台上游时生效。跟随全局 = 由管理员开关决定；关闭 = 不注入；强制 1h / 强制 5m = 本密钥覆盖全局。密钥级设置优先。',
+      '仅对该密钥打到 Anthropic 平台上游时生效，同时决定请求里写的缓存 TTL 和计费用的 TTL。强制 1h / 强制 5m = 按所选 TTL 发送并计费；关闭 = 不改写，按上游返回的计费；跟随全局 = 交给账号和全局设置决定。优先级：密钥 > 账号 > 全局。',
     anthropicCacheTtlInherit: '跟随全局设置',
     anthropicCacheTtlOff: '关闭（不注入）',
     anthropicCacheTtl1h: '强制 1 小时缓存',

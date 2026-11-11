@@ -50,6 +50,21 @@ func anthropicTargetForRequest(c *gin.Context, account *Account) bool {
 	return false
 }
 
+// anthropicTargetForBilling 是 anthropicTargetForRequest 的计费侧版本：计费在请求
+// 结束后进行，手里不一定有 gin.Context，所以直接用已解析出的密钥和 ctx。
+// 三个判据与请求侧一致：调度出的账号平台、智能路由解析出的目标平台、密钥所属分组的平台。
+func anthropicTargetForBilling(ctx context.Context, apiKey *APIKey, account *Account) bool {
+	if account != nil && account.Platform == PlatformAnthropic {
+		return true
+	}
+	if ctx != nil {
+		if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok && platform == PlatformAnthropic {
+			return true
+		}
+	}
+	return apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform == PlatformAnthropic
+}
+
 // resolveAnthropicCacheTTLMode 返回本次请求生效的 TTL 模式，以及是否需要执行
 // 「强制改写所有 ephemeral 断点」。
 //

@@ -351,7 +351,7 @@ export default {
     rateLimit7d: '7-Day Limit (USD)',
     anthropicCacheTtlMode: 'Anthropic cache TTL',
     anthropicCacheTtlModeHint:
-      'Applies only when this key resolves to an Anthropic upstream. Inherit = follow the admin switch; Off = no injection; Force 1h / Force 5m = this key overrides the global setting. Key-level wins.',
+      'Applies only when this key resolves to an Anthropic upstream. It decides both the cache TTL written into the request and the TTL used for billing. Force 1h / Force 5m = send and bill at that TTL; Off = leave the request alone and bill what the upstream reports; Inherit = leave it to the account and global settings. Priority: API key, then account, then the global switch.',
     anthropicCacheTtlInherit: 'Inherit global setting',
     anthropicCacheTtlOff: 'Off (no injection)',
     anthropicCacheTtl1h: 'Force 1-hour cache',

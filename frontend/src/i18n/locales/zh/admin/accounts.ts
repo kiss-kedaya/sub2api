@@ -1142,7 +1142,7 @@ export default {
         },
         cacheTTLOverride: {
           label: '缓存 TTL 强制替换',
-          hint: '将所有缓存创建 token 强制按指定的 TTL 类型（5分钟或1小时）计费',
+          hint: '将所有缓存创建 token 强制按指定的 TTL 类型（5分钟或1小时）计费。只影响计费，不改写请求。API 密钥选了强制 1h / 强制 5m / 关闭时以密钥为准。优先级：密钥 > 账号 > 全局。',
           target: '目标 TTL',
           targetHint: '选择计费使用的 TTL 类型'
         },
