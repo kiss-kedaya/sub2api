@@ -198,16 +198,60 @@ function createAdminFixtures(now: Date, groups: Group[], sourceKeys: ApiKey[], s
     sort_order: (index + 1) * 10,
   }))
 
+  // Upstream kind + balance snapshots for the API-key accounts, one state each, so the preview shows every
+  // kind and every balance state at once (shape: backend/internal/service/upstream_billing_probe.go).
+  const probeAt = (ms: number) => at(ms)
+  const okBalance = (source: string, data: Record<string, unknown>, freshMs = 90 * 60_000) => ({
+    status: 'ok' as const, source, data, received_at: probeAt(-30 * 60_000), fresh_until: probeAt(freshMs),
+    last_attempt_at: probeAt(-30 * 60_000), http_status: 200,
+  })
+  // A Sub2API upstream also declares its rate; the other kinds answer the rate endpoint with 404.
+  const declaredRate = {
+    object: 'sub2api.key_billing', schema_version: 1, billing_scope: 'token', group_rate_multiplier: 1,
+    resolved_rate_multiplier: 0.8, peak_rate_enabled: false, effective_rate_multiplier: 0.8, observed_at: probeAt(-30 * 60_000),
+  }
+  const upstreamProbe = (upstream_kind: string | undefined, balance: Record<string, unknown> | undefined, status?: string) => ({
+    status: status ?? (upstream_kind === 'sub2api' ? 'ok' : 'unsupported'),
+    ...(upstream_kind === 'sub2api' && !status ? { data: declaredRate, received_at: probeAt(-30 * 60_000), fresh_until: probeAt(90 * 60_000) } : {}),
+    last_attempt_at: probeAt(-30 * 60_000), next_probe_at: probeAt(30 * 60_000),
+    ...(upstream_kind ? { upstream_kind } : {}), ...(balance ? { balance } : {}),
+  })
+  const upstreamScenarios: Record<number, ReturnType<typeof upstreamProbe> | null> = {
+    0: upstreamProbe('sub2api', okBalance('sub2api_usage', { is_valid: true, mode: 'quota_limited', unit: 'USD', remaining: 128.4, quota_limit: 200, quota_used: 71.6 })),
+    14: upstreamProbe('sub2api', okBalance('sub2api_usage', { is_valid: true, unit: 'USD', remaining: 0.0001 })),
+    6: upstreamProbe('newapi', okBalance('newapi_token_usage', { is_valid: true, unit: 'USD', unit_assumed: true, plan_name: 'team-shared', remaining: 37.5, quota_limit: 50, quota_used: 12.5, wallet_balance: 412.09, wallet_used: 87.91 })),
+    8: upstreamProbe('newapi', {
+      ...okBalance('newapi_token_usage', { is_valid: true, unit: 'USD', unit_assumed: true, plan_name: '华东区共享令牌-生产环境-高优先级-请勿随意删除或改名-运维值班联系人张三-备用', wallet_balance: 9.87 }),
+      received_at: probeAt(-26 * 60 * 60_000), fresh_until: probeAt(-24 * 60 * 60_000),
+    }),
+    12: upstreamProbe('newapi', okBalance('newapi_token_usage', { is_valid: true, unit: 'USD', unit_assumed: true, unlimited: true, quota_used: 3.25 })),
+    22: upstreamProbe(undefined, { status: 'failed', last_attempt_at: probeAt(-5 * 60_000), last_error: 'request_failed' }, 'failed'),
+    4: upstreamProbe('openai_compatible', okBalance('openai_billing_subscription', { is_valid: true, unit: 'USD', remaining: 1234567.89, quota_limit: 2000000, quota_used: 765432.11, expires_at: probeAt(40 * DAY) })),
+    20: upstreamProbe('sub2api', okBalance('sub2api_usage', { is_valid: true, unit: 'USD', remaining: -3.2 })),
+    18: upstreamProbe('sub2api', {
+      status: 'failed', source: 'sub2api_usage', data: { is_valid: true, unit: 'USD', remaining: 5.1234 },
+      received_at: probeAt(-3 * 60 * 60_000), fresh_until: probeAt(-60 * 60_000), last_attempt_at: probeAt(-5 * 60_000),
+      http_status: 502, last_error: 'http_error',
+    }, 'failed'),
+    3: upstreamProbe('sub2api', okBalance('sub2api_usage', { is_valid: true, unit: 'USD', remaining: 0, quota_limit: 20, quota_used: 20 })),
+    10: upstreamProbe('custom', { status: 'unsupported', last_attempt_at: probeAt(-30 * 60_000), http_status: 404, last_error: 'unsupported' }),
+    16: upstreamProbe('official', undefined, 'unsupported'),
+    2: null,
+  }
+  // The list sorts by name with 10 rows a page, so the scenarios sit on the rows of page 1 first.
+  const isApiKeyDemo = (index: number) => index % 3 === 1 || index in upstreamScenarios
+
   const adminAccounts: AccountListItem[] = Array.from({ length: 24 }, (_, index) => {
     const group = adminGroups[index % adminGroups.length]
     const status: AccountListItem['status'] = index % 9 === 7 ? 'error' : index % 8 === 6 ? 'inactive' : 'active'
+    const upstreamBillingProbe = upstreamScenarios[index]
     return {
       id: 920001 + index,
       name: `${group.platform.toUpperCase()} 演示账号 ${String(index + 1).padStart(2, '0')}`,
       notes: `${PREVIEW_LABEL}，不含真实凭据`,
       platform: group.platform === 'composite' ? 'openai' : group.platform,
-      type: index % 3 === 0 ? 'oauth' : index % 3 === 1 ? 'apikey' : 'upstream',
-      ...(index % 3 === 1 ? { credentials: { base_url: 'https://upstream.example.com' } } : {}),
+      type: isApiKeyDemo(index) ? 'apikey' : index % 3 === 0 ? 'oauth' : 'upstream',
+      ...(isApiKeyDemo(index) ? { credentials: { base_url: 'https://upstream.example.com' } } : {}),
       credentials_status: { has_access_token: false, has_api_key: false },
       proxy_id: index % 3 === 0 ? 930001 : null,
       concurrency: 4 + index % 8,
@@ -232,7 +276,11 @@ function createAdminFixtures(now: Date, groups: Group[], sourceKeys: ApiKey[], s
       session_window_start: at(-2 * 60 * 60_000),
       session_window_end: at(3 * 60 * 60_000),
       session_window_status: status === 'active' ? 'allowed' : null,
-      extra: { preview: true, plan_type: index % 2 === 0 ? 'team' : 'pro' },
+      extra: {
+        preview: true,
+        plan_type: index % 2 === 0 ? 'team' : 'pro',
+        ...(upstreamBillingProbe ? { upstream_billing_probe: upstreamBillingProbe as never, upstream_billing_probe_enabled: true } : {}),
+      },
       scheduler_score: { base_score: 0.91 - (index % 7) * 0.07, sticky_weighted_enabled: true },
     }
   })

@@ -258,6 +258,7 @@ export default {
         priority: 'Priority',
         billingRateMultiplier: 'Billing Rate',
         upstreamBillingRate: 'Upstream Declared Rate',
+        upstreamBalance: 'Upstream Balance',
         weight: 'Weight',
         schedulerScore: 'Scheduler Score',
         status: 'Status',
@@ -325,6 +326,80 @@ export default {
           response_too_large: 'Settings page exceeded the response limit',
           invalid_html: 'Settings page format was not recognized',
           OLLAMA_CLOUD_USAGE_REFRESH_RATE_LIMITED: 'Refresh is limited. Try again in {retry_after_seconds} seconds.'
+        }
+      },
+      upstreamKind: {
+        label: {
+          sub2api: 'Sub2API',
+          newapi: 'New API',
+          openai_compatible: 'OpenAI billing',
+          official: 'Official',
+          custom: 'Custom',
+          unknown: 'Unknown'
+        },
+        hint: {
+          sub2api: 'The upstream is Sub2API: it answered /v1/usage',
+          newapi: 'The upstream is New API: it answered /api/usage/token/',
+          openai_compatible: 'The upstream only serves the legacy OpenAI billing endpoints (/v1/dashboard/billing)',
+          official: "The provider's own API. No balance is read",
+          custom: 'The upstream is reachable but answered none of the known balance endpoints',
+          unknown: 'Not identified yet: never probed, the key was rejected, or the probe could not connect'
+        }
+      },
+      upstreamBalance: {
+        notApplicable: 'Only API key accounts read an upstream balance',
+        manualProbe: 'Read upstream balance now',
+        unlimited: 'Unlimited',
+        official: 'Official API',
+        unsupported: 'Unsupported',
+        failed: 'Read failed',
+        notRead: 'Not read',
+        keyQuotaShort: 'Key quota',
+        walletShort: 'Account {value}',
+        walletOnlyShort: 'Account balance',
+        usedPercent: '{value}% used',
+        staleShort: 'Old · {value} ago',
+        lastReadFailedShort: 'Last read failed',
+        unitAssumed: "Converted at New API's default ratio (500,000 points = 1 USD). If the upstream changed that ratio or its display currency, this amount is wrong.",
+        walletNote: '"Remaining" is what this key can still spend; "Account balance" is the whole upstream account. They are different numbers.',
+        officialNote: "Provider APIs offer no balance endpoint, so the account key is never sent to one.",
+        unsupportedNote: 'The upstream is reachable but is not Sub2API or New API and has no legacy OpenAI billing endpoint, so no balance can be read.',
+        notReadNote: 'No balance has been read yet. Turn on the upstream rate probe or use the button on the right to read once.',
+        unlimitedNote: 'The upstream set this key to unlimited quota, so there is no remaining amount.',
+        keptLastValueNote: 'The latest read failed; this is the last value that was read successfully.',
+        staleNote: 'Past its valid-until time; this is the last value read and may have changed.',
+        detail: {
+          kind: 'Upstream',
+          source: 'Endpoint',
+          plan: 'Plan / token',
+          remaining: 'Remaining',
+          limit: 'Quota limit',
+          used: 'Used',
+          usedPercent: 'Usage',
+          wallet: 'Account balance',
+          walletUsed: 'Account used',
+          expiresAt: 'Expires',
+          receivedAt: 'Read at',
+          freshUntil: 'Valid until',
+          lastAttempt: 'Last attempt',
+          reason: 'Failure',
+          httpStatus: 'HTTP status',
+          nextProbe: 'Next probe'
+        },
+        source: {
+          sub2api_usage: 'Sub2API /v1/usage',
+          newapi_token_usage: 'New API /api/usage/token/',
+          openai_billing_subscription: 'OpenAI /v1/dashboard/billing'
+        },
+        failure: {
+          unsupported: 'The upstream has no such endpoint (404/405)',
+          http_error: 'The upstream returned an error status',
+          invalid_response: 'Unexpected response format',
+          request_failed: 'Could not reach the upstream',
+          request_build_failed: 'Invalid request URL',
+          empty_response: 'The upstream returned nothing',
+          response_read_failed: 'Failed to read the response',
+          response_too_large: 'Response too large'
         }
       },
       upstreamBilling: {

@@ -144,6 +144,7 @@ export default {
         priority: '优先级',
         billingRateMultiplier: '账号倍率',
         upstreamBillingRate: '上游声明倍率',
+        upstreamBalance: '上游余额',
         weight: '权重',
         schedulerScore: '调度权值',
         status: '状态',
@@ -211,6 +212,80 @@ export default {
           response_too_large: '设置页超过响应大小限制',
           invalid_html: '无法识别设置页格式',
           OLLAMA_CLOUD_USAGE_REFRESH_RATE_LIMITED: '刷新过于频繁，请在 {retry_after_seconds} 秒后重试。'
+        }
+      },
+      upstreamKind: {
+        label: {
+          sub2api: 'Sub2API',
+          newapi: 'New API',
+          openai_compatible: 'OpenAI 账单',
+          official: '官方',
+          custom: '自定义',
+          unknown: '未识别'
+        },
+        hint: {
+          sub2api: '上游是 Sub2API：应答了 /v1/usage',
+          newapi: '上游是 New API：应答了 /api/usage/token/',
+          openai_compatible: '上游只提供 OpenAI 旧版账单接口（/v1/dashboard/billing）',
+          official: '服务商官方接口，不读取余额',
+          custom: '上游已连通，但没有应答任何已知的余额接口',
+          unknown: '还没识别出来：未探测、上游拒绝了密钥，或探测没有连上'
+        }
+      },
+      upstreamBalance: {
+        notApplicable: '只有 API Key 账号读取上游余额',
+        manualProbe: '立即读取上游余额',
+        unlimited: '无限额度',
+        official: '官方接口',
+        unsupported: '不支持',
+        failed: '读取失败',
+        notRead: '未读取',
+        keyQuotaShort: '密钥额度',
+        walletShort: '账户 {value}',
+        walletOnlyShort: '账户余额',
+        usedPercent: '已用 {value}%',
+        staleShort: '旧数据 · {value}前',
+        lastReadFailedShort: '最近一次读取失败',
+        unitAssumed: '按 New API 默认比例（500000 点 = 1 美元）换算；上游改过比例或换了显示货币，这个金额就不准。',
+        walletNote: '“剩余”是这个密钥还能用的额度，“账户余额”是上游整个账户的余额，两个数不同。',
+        officialNote: '服务商官方接口不提供余额查询，不会用账号密钥去请求。',
+        unsupportedNote: '上游连通了，但不是 Sub2API、New API，也没有 OpenAI 旧版账单接口，读不到余额。',
+        notReadNote: '还没有读到过余额。打开“自动探测上游声明倍率”或点右侧按钮读取一次。',
+        unlimitedNote: '上游把这个密钥设成了无限额度，所以没有剩余金额。',
+        keptLastValueNote: '最近一次读取失败，显示的是上次成功读到的值。',
+        staleNote: '已超过有效期，显示的是上次读到的值，可能已经变了。',
+        detail: {
+          kind: '上游类型',
+          source: '来源接口',
+          plan: '套餐 / 令牌',
+          remaining: '剩余',
+          limit: '额度上限',
+          used: '已用',
+          usedPercent: '用量比例',
+          wallet: '账户余额',
+          walletUsed: '账户已用',
+          expiresAt: '到期时间',
+          receivedAt: '读取时间',
+          freshUntil: '有效至',
+          lastAttempt: '最近尝试',
+          reason: '失败原因',
+          httpStatus: 'HTTP 状态',
+          nextProbe: '下次探测'
+        },
+        source: {
+          sub2api_usage: 'Sub2API /v1/usage',
+          newapi_token_usage: 'New API /api/usage/token/',
+          openai_billing_subscription: 'OpenAI /v1/dashboard/billing'
+        },
+        failure: {
+          unsupported: '上游没有这个接口（404/405）',
+          http_error: '上游返回了错误状态码',
+          invalid_response: '响应格式不对',
+          request_failed: '请求没有连上上游',
+          request_build_failed: '请求地址无效',
+          empty_response: '上游没有返回内容',
+          response_read_failed: '读取响应失败',
+          response_too_large: '响应过大'
         }
       },
       upstreamBilling: {
