@@ -170,3 +170,21 @@ func TestWriteFilteredHeadersDoesNotExposePrivateMetadata(t *testing.T) {
 		t.Fatal("safe request correlation was not preserved")
 	}
 }
+
+func TestFilterHeadersAllowsMshCacheWriteTTLHeaders(t *testing.T) {
+	src := http.Header{}
+	src.Set("Msh-Usage-Cache-Write-Tokens-5m", "5376")
+	src.Set("Msh-Usage-Cache-Write-Tokens-1h", "0")
+	src.Set("Msh-Context-Cache-Token-Saved", "14848")
+
+	filtered := FilterHeaders(src, CompileHeaderFilter(config.ResponseHeaderConfig{}))
+	for key, want := range map[string]string{
+		"Msh-Usage-Cache-Write-Tokens-5m": "5376",
+		"Msh-Usage-Cache-Write-Tokens-1h": "0",
+		"Msh-Context-Cache-Token-Saved":   "14848",
+	} {
+		if got := filtered.Get(key); got != want {
+			t.Fatalf("expected %s=%q, got %q", key, want, got)
+		}
+	}
+}
