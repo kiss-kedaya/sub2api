@@ -12,6 +12,25 @@ import (
 
 var corsWarningOnce sync.Once
 
+// corsExposedHeaders are the response headers a browser script may read on a
+// cross-origin response. Without this list a page sees only the CORS-safelisted
+// headers, so a header the gateway forwards is present on the wire and still
+// invisible to fetch().
+//
+// The request id and the Kimi/Moonshot cache headers are forwarded by the
+// response header allowlist (util/responseheaders); a browser client verifying
+// cache warm-up needs to read them, so they are exposed here too. Keep the two
+// lists in step: exposing a header that is never forwarded is harmless, but
+// forwarding one without exposing it reproduces this bug.
+var corsExposedHeaders = []string{
+	"ETag",
+	"Server-Timing",
+	"X-Request-Id",
+	"Msh-Usage-Cache-Write-Tokens-5m",
+	"Msh-Usage-Cache-Write-Tokens-1h",
+	"Msh-Context-Cache-Token-Saved",
+}
+
 // CORS 跨域中间件
 func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 	allowedOrigins := normalizeOrigins(cfg.AllowedOrigins)
@@ -63,6 +82,7 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 		allowHeaders = append(allowHeaders, "x-stainless-"+prop)
 	}
 	allowHeadersValue := strings.Join(allowHeaders, ", ")
+	exposeHeadersValue := strings.Join(corsExposedHeaders, ", ")
 
 	return func(c *gin.Context) {
 		origin := strings.TrimSpace(c.GetHeader("Origin"))
@@ -83,7 +103,7 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 			}
 			c.Writer.Header().Set("Access-Control-Allow-Headers", allowHeadersValue)
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
-			c.Writer.Header().Set("Access-Control-Expose-Headers", "ETag, Server-Timing")
+			c.Writer.Header().Set("Access-Control-Expose-Headers", exposeHeadersValue)
 			c.Writer.Header().Set("Access-Control-Max-Age", "86400")
 		}
 		// 处理预检请求
