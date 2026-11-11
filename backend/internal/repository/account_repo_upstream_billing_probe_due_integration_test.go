@@ -19,7 +19,7 @@ func TestListDueUpstreamBillingProbeAccountsHandlesInvalidCalendarDate(t *testin
 	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 	_, err := tx.ExecContext(ctx, `
 		UPDATE accounts
-		SET extra = extra - 'upstream_billing_probe_enabled' - 'upstream_billing_probe'
+		SET extra = (COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe') || '{"upstream_billing_probe_enabled": false}'::jsonb
 	`)
 	require.NoError(t, err)
 
@@ -85,7 +85,7 @@ func TestListDueUpstreamBillingProbeAccountsParsesNanosecondTimestamps(t *testin
 	now := time.Date(2026, time.July, 25, 17, 30, 0, 0, time.UTC)
 	_, err := tx.ExecContext(ctx, `
 		UPDATE accounts
-		SET extra = extra - 'upstream_billing_probe_enabled' - 'upstream_billing_probe'
+		SET extra = (COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe') || '{"upstream_billing_probe_enabled": false}'::jsonb
 	`)
 	require.NoError(t, err)
 
@@ -124,7 +124,7 @@ func TestListDueUpstreamBillingProbeAccountsSelectsEarliestDueAcrossIDs(t *testi
 	now := time.Date(2026, time.July, 25, 17, 30, 0, 0, time.UTC)
 	_, err := tx.ExecContext(ctx, `
 		UPDATE accounts
-		SET extra = extra - 'upstream_billing_probe_enabled' - 'upstream_billing_probe'
+		SET extra = (COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe') || '{"upstream_billing_probe_enabled": false}'::jsonb
 	`)
 	require.NoError(t, err)
 
@@ -163,7 +163,7 @@ func TestListDueUpstreamBillingProbeAccountsIncludesAllAPIKeyPlatforms(t *testin
 	now := time.Date(2026, time.July, 26, 3, 0, 0, 0, time.UTC)
 	_, err := tx.ExecContext(ctx, `
 		UPDATE accounts
-		SET extra = extra - 'upstream_billing_probe_enabled' - 'upstream_billing_probe'
+		SET extra = (COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe') || '{"upstream_billing_probe_enabled": false}'::jsonb
 	`)
 	require.NoError(t, err)
 
@@ -188,11 +188,12 @@ func TestListDueUpstreamBillingProbeAccountsIncludesAllAPIKeyPlatforms(t *testin
 	grokDue := insert("probe-grok-due", "grok", service.AccountTypeAPIKey, "2026-07-26T02:59:00Z")
 	// OAuth 账号即便误持有启用标记也不得入选。
 	_ = insert("probe-grok-oauth-excluded", "grok", service.AccountTypeOAuth, "2026-07-26T02:59:00Z")
-	// 未启用探测的 API-key 账号不入选。
+	// 管理员显式关掉探测的 API-key 账号不入选。空 extra 现在表示「从未表态」，
+	// 会被自动纳入（见 IncludesUndecidedAndSkipsDisabled），所以这里必须写明 false。
 	var disabledID int64
 	err = scanSingleRow(ctx, tx, `
 		INSERT INTO accounts (name, platform, type, status, extra)
-		VALUES ('probe-grok-disabled', 'grok', $1, 'active', '{}'::jsonb)
+		VALUES ('probe-grok-disabled', 'grok', $1, 'active', '{"upstream_billing_probe_enabled": false}'::jsonb)
 		RETURNING id
 	`, []any{service.AccountTypeAPIKey}, &disabledID)
 	require.NoError(t, err)
@@ -203,4 +204,44 @@ func TestListDueUpstreamBillingProbeAccountsIncludesAllAPIKeyPlatforms(t *testin
 	require.Equal(t, openaiDue, accounts[0].ID)
 	require.Equal(t, anthropicDue, accounts[1].ID)
 	require.Equal(t, grokDue, accounts[2].ID)
+}
+
+// The enabled flag has three states. Explicitly on and never decided are both
+// candidates; an account whose admin turned the probe off is not.
+func TestListDueUpstreamBillingProbeAccountsIncludesUndecidedAndSkipsDisabled(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
+	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
+	_, err := tx.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = (COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe') || '{"upstream_billing_probe_enabled": false}'::jsonb
+	`)
+	require.NoError(t, err)
+
+	insert := func(name, accountType, extra string) int64 {
+		t.Helper()
+		var id int64
+		err := scanSingleRow(ctx, tx, `
+			INSERT INTO accounts (name, platform, type, status, extra)
+			VALUES ($1, 'openai', $2, 'active', $3::jsonb)
+			RETURNING id
+		`, []any{name, accountType, extra}, &id)
+		require.NoError(t, err)
+		return id
+	}
+
+	enabledID := insert("probe-enabled", service.AccountTypeAPIKey, `{"upstream_billing_probe_enabled": true}`)
+	undecidedID := insert("probe-undecided", service.AccountTypeAPIKey, `{}`)
+	undecidedOtherKeysID := insert("probe-undecided-other-keys", service.AccountTypeAPIKey, `{"quota_limit": 5}`)
+	_ = insert("probe-disabled", service.AccountTypeAPIKey, `{"upstream_billing_probe_enabled": false}`)
+	_ = insert("probe-oauth", service.AccountTypeOAuth, `{}`)
+
+	accounts, err := repo.ListDueUpstreamBillingProbeAccounts(ctx, now, 20)
+	require.NoError(t, err)
+	ids := make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		ids = append(ids, account.ID)
+	}
+	require.ElementsMatch(t, []int64{enabledID, undecidedID, undecidedOtherKeysID}, ids)
 }

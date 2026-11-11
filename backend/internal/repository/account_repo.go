@@ -4096,7 +4096,12 @@ func (r *accountRepository) ListDueUpstreamBillingProbeAccounts(ctx context.Cont
 			WHERE deleted_at IS NULL
 				AND status = 'active'
 				AND type = 'apikey'
-				AND extra @> '{"upstream_billing_probe_enabled": true}'::jsonb
+				-- Explicitly enabled, or never decided. An account whose admin turned
+				-- the probe off carries the key with a false value and stays out.
+				AND (
+					extra @> '{"upstream_billing_probe_enabled": true}'::jsonb
+					OR NOT COALESCE(extra, '{}'::jsonb) ? 'upstream_billing_probe_enabled'
+				)
 		), parsed AS MATERIALIZED (
 			SELECT
 				id,

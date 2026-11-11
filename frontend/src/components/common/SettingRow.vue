@@ -94,6 +94,16 @@ function toggle() {
 <template>
   <div ref="root" class="setting-row" :data-on="on || undefined" :data-wide-control="wideControl || undefined" :data-testid="testId">
     <div class="setting-row__head">
+      <!-- Before the name: a bulk form's "change this field" checkbox. Pressing it counts as using
+           the control, so ticking a row opens it on the value to fill in. -->
+      <div
+        v-if="$slots.leading"
+        class="setting-row__leading"
+        @click.capture="markControlInteraction"
+        @keydown.capture="markControlInteraction"
+      >
+        <slot name="leading" />
+      </div>
       <button
         type="button"
         class="setting-row__button"
@@ -257,6 +267,18 @@ function toggle() {
     max-width: 28rem;
     margin-inline-start: auto;
   }
+}
+
+.setting-row__leading {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+/* A row with a leading checkbox indents its body past the checkbox too, so the hint lines up with the name. */
+.setting-row:has(> .setting-row__head > .setting-row__leading) > .setting-row__body > .setting-row__body-inner,
+.setting-row:has(> .setting-row__head > .setting-row__leading) > .setting-row__status {
+  padding-inline-start: 44px;
 }
 
 .setting-row__status {

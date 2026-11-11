@@ -141,6 +141,43 @@ describe('SettingRow', () => {
     expect(button.attributes('aria-expanded')).toBeUndefined()
     expect(button.attributes('disabled')).toBeDefined()
   })
+
+  it('opens on the value when a leading "change this field" checkbox is ticked, without the click expanding by itself', async () => {
+    const ticked = ref(false)
+    const Host = defineComponent({
+      setup: () => () =>
+        h(
+          SettingRow,
+          { label: 'Base URL', on: ticked.value },
+          {
+            leading: () =>
+              h('input', {
+                type: 'checkbox',
+                'data-test': 'tick',
+                checked: ticked.value,
+                onClick: () => { ticked.value = !ticked.value },
+              }),
+            fields: () => h('input', { 'data-test': 'value' }),
+          },
+        ),
+    })
+    const wrapper = mount(Host, { attachTo: document.body })
+    const leading = wrapper.get('.setting-row__leading')
+    // The checkbox sits before the name, outside the expand button.
+    expect(leading.element.compareDocumentPosition(wrapper.get('.setting-row__button').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(wrapper.get('.setting-row__button').find('[data-test="tick"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="tick"]').trigger('click')
+    await nextTick()
+    expect(ticked.value).toBe(true)
+    expect(wrapper.get('.setting-row__button').attributes('aria-expanded')).toBe('true')
+
+    // Unticking does not toggle the row closed through the header.
+    await wrapper.get('[data-test="tick"]').trigger('click')
+    await nextTick()
+    expect(ticked.value).toBe(false)
+    expect(wrapper.get('.setting-row__button').attributes('aria-expanded')).toBe('true')
+  })
 })
 
 describe('SettingPanel summary', () => {
@@ -207,6 +244,31 @@ describe('SettingPanel summary', () => {
   it('renders the group titles above their rows', () => {
     const { wrapper } = mountPanel()
     expect(wrapper.findAll('.setting-group__title').map((t) => t.text())).toEqual(['Scheduling', 'Limits'])
+  })
+})
+
+describe('SettingPanel with custom summary wording', () => {
+  it('uses the caller\'s count and empty keys, e.g. a bulk edit counting fields to change', async () => {
+    const ticked = ref(false)
+    const Host = defineComponent({
+      setup: () => () =>
+        h(
+          SettingPanel,
+          { summaryCountKey: 'common.settingsSummary.willChange', summaryEmptyKey: 'common.settingsSummary.noneSelected' },
+          () => [h(SettingRow, { label: 'Proxy', on: ticked.value })],
+        ),
+    })
+    const wrapper = mount(Host, { attachTo: document.body })
+    await nextTick()
+    // Nothing ticked: only the empty line, in the caller's words (no "0 to change" in front of it).
+    expect(wrapper.get('[data-testid="setting-summary"]').text()).toBe('common.settingsSummary.noneSelected')
+    expect(wrapper.get('.setting-summary__none').text()).toBe('common.settingsSummary.noneSelected')
+
+    ticked.value = true
+    await nextTick()
+    expect(wrapper.get('[data-testid="setting-summary-count"]').text()).toBe('common.settingsSummary.willChange')
+    expect(wrapper.findAll('.setting-summary__chip').map((c) => c.text())).toEqual(['Proxy'])
+    expect(wrapper.find('.setting-summary__none').exists()).toBe(false)
   })
 })
 

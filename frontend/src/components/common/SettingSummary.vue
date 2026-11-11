@@ -2,13 +2,23 @@
 import { useI18n } from 'vue-i18n'
 
 // The one-line "what is on" bar at the top of a settings list: a count, then one pill per enabled
-// setting. With nothing on it says exactly that, so an empty bar never reads as "still loading".
-// It does not claim the settings are "at their defaults": it cannot know the defaults, and a setting
-// whose default is on would make that claim false.
-defineProps<{
+// setting. With nothing listed it says exactly that, in one line, so an empty bar never reads as
+// "still loading". It does not claim the settings are "at their defaults": it cannot know the
+// defaults, and a setting whose default is on would make that claim false.
+withDefaults(defineProps<{
   /** Already-translated names of the settings that are on, in page order. */
   items: string[]
-}>()
+  /**
+   * i18n key for the count line, given `{ count }`. A form that is not about "enabled" settings
+   * (a bulk edit, where a ticked row is a field about to change) says what it actually counts.
+   */
+  countKey?: string
+  /** i18n key for the line shown when nothing is listed. */
+  emptyKey?: string
+}>(), {
+  countKey: 'common.settingsSummary.enabled',
+  emptyKey: 'common.settingsSummary.noneOn',
+})
 
 const { t } = useI18n()
 </script>
@@ -17,11 +27,11 @@ const { t } = useI18n()
   <div class="setting-summary" data-testid="setting-summary">
     <template v-if="items.length">
       <span class="setting-summary__count" data-testid="setting-summary-count">
-        {{ t('common.settingsSummary.enabled', { count: items.length }) }}
+        {{ t(countKey, { count: items.length }) }}
       </span>
       <span v-for="(name, index) in items" :key="`${index}-${name}`" class="setting-summary__chip" :title="name">{{ name }}</span>
     </template>
-    <span v-else class="setting-summary__none" data-testid="setting-summary-count">{{ t('common.settingsSummary.noneOn') }}</span>
+    <span v-else class="setting-summary__none" data-testid="setting-summary-count">{{ t(emptyKey) }}</span>
   </div>
 </template>
 

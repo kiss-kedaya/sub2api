@@ -15,6 +15,8 @@ export default {
       configured: 'Set',
       notSet: 'Not set',
       itemCount: '{count} item | {count} items',
+      willChange: '{count} field to change | {count} fields to change',
+      noneSelected: 'Tick the fields you want to change',
     },
     done: 'Done',
     delete: 'Delete',

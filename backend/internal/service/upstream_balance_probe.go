@@ -38,6 +38,10 @@ type UpstreamBalanceSnapshot struct {
 	LastAttemptAt time.Time      `json:"last_attempt_at"`
 	HTTPStatus    int            `json:"http_status,omitempty"`
 	LastError     string         `json:"last_error,omitempty"`
+	// Source names the endpoint the balance was read from (see the
+	// UpstreamBalanceSource* constants), so a reader knows how far to trust the
+	// unit: new-api amounts are converted with an assumed ratio.
+	Source string `json:"source,omitempty"`
 }
 
 type upstreamUsageBalanceResponse struct {

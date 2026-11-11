@@ -15,6 +15,8 @@ export default {
       configured: '已填写',
       notSet: '未填写',
       itemCount: '{count} 条',
+      willChange: '将修改 {count} 项',
+      noneSelected: '还没勾选要修改的项',
     },
     done: '完成',
     delete: '删除',

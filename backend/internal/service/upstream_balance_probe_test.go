@@ -278,7 +278,10 @@ func TestUpstreamBalanceProbeReadsBalanceWhenRateIsUnsupported(t *testing.T) {
 
 func TestUpstreamBalanceProbeKeepsStretchedDelayWhenNothingIsSupported(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 1, 30, 0, 0, time.UTC)
-	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+	// Rate, then the three balance endpoints tried in order: all 404.
+	upstream := &httpUpstreamRecorder{resp: upstreamBalanceProbeJSONResponse(http.StatusNotFound, `{}`), responses: []*http.Response{
+		upstreamBalanceProbeJSONResponse(http.StatusNotFound, `{}`),
+		upstreamBalanceProbeJSONResponse(http.StatusNotFound, `{}`),
 		upstreamBalanceProbeJSONResponse(http.StatusNotFound, `{}`),
 		upstreamBalanceProbeJSONResponse(http.StatusNotFound, `{}`),
 	}}
