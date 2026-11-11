@@ -255,7 +255,7 @@ function toggle() {
 }
 
 /* A wide control takes half the row on a desktop, so a URL can be read without opening the row.
-   The name gives up its growth instead; on a narrow screen the default rule above still applies. */
+   The name gives up its growth instead. */
 @media (min-width: 640px) {
   .setting-row[data-wide-control] > .setting-row__head > .setting-row__button {
     flex: 0 1 auto;
@@ -266,6 +266,67 @@ function toggle() {
     justify-content: flex-end;
     max-width: 28rem;
     margin-inline-start: auto;
+  }
+}
+
+/* On a phone there is no room for a name and a text input side by side: sharing one line cut the
+   name to "User Message…" and the value to "https://<account_id". The input drops to its own line
+   under the name, full width, so both can be read. Switches and short numbers stay beside the name. */
+@media (max-width: 639px) {
+  .setting-row[data-wide-control] > .setting-row__head {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .setting-row[data-wide-control] > .setting-row__head > .setting-row__button {
+    flex: 1 1 100%;
+  }
+
+  .setting-row[data-wide-control] > .setting-row__head > .setting-row__control {
+    flex: 1 1 100%;
+    /* Line up with the name, past the caret. */
+    padding-inline-start: 19px;
+    padding-block-end: 8px;
+  }
+
+  /* The name has the whole line now, so it may wrap instead of ending in an ellipsis. */
+  .setting-row[data-wide-control] > .setting-row__head .setting-row__label,
+  .setting-row[data-wide-control] > .setting-row__head .setting-row__label-text {
+    white-space: normal;
+    overflow: visible;
+  }
+
+  /* Every other row keeps its switch or short number beside the name, but on a phone the name
+     wraps onto a second line rather than being cut to "Enable Stream Timeout Handli…": a setting
+     whose name cannot be read cannot be set. The row grows; the control stays centred on it. */
+  .setting-row:not([data-wide-control]) > .setting-row__head .setting-row__label {
+    overflow: visible;
+    white-space: normal;
+    text-wrap: pretty;
+  }
+
+  .setting-row:not([data-wide-control]) > .setting-row__head .setting-row__label-text {
+    overflow: visible;
+  }
+
+  .setting-row:not([data-wide-control]) > .setting-row__head > .setting-row__button {
+    padding-block: 10px;
+  }
+
+  /* A summary squeezed beside the name ends up as one letter ("O" for "Off"). On a phone it takes
+     the line under the name instead, aligned with it past the caret. */
+  .setting-row:not([data-wide-control]) > .setting-row__head > .setting-row__button {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .setting-row:not([data-wide-control]) > .setting-row__head .setting-row__label {
+    flex: 1 1 0;
+  }
+
+  .setting-row:not([data-wide-control]) > .setting-row__head .setting-row__summary {
+    flex: 1 1 100%;
+    padding-inline-start: 19px;
   }
 }
 

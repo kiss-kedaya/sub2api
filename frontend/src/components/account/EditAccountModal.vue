@@ -2165,7 +2165,7 @@
                   :persistent-summary="true"
                 >
                   <template #control>
-                    <div class="inline-flex gap-0.5 rounded-full bg-accented p-0.5" role="group" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')">
+                    <div class="inline-flex flex-wrap justify-end gap-0.5 rounded-2xl bg-accented p-0.5" role="group" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')">
                       <UButton
                         :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
                         :variant="userMsgQueueMode === opt.value ? 'soft' : 'ghost'"
