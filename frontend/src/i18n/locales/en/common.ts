@@ -9,6 +9,10 @@ export default {
     saved: 'Saved successfully',
     deleted: 'Deleted successfully',
     cancel: 'Cancel',
+    settingsSummary: {
+      enabled: '{count} enabled',
+      allDefault: 'All at defaults',
+    },
     done: 'Done',
     delete: 'Delete',
     edit: 'Edit',

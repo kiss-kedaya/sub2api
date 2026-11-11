@@ -1017,1138 +1017,1252 @@
         </div>
       </div>
       <div v-show="showEditSection('forwarding')" data-edit-section="forwarding" class="space-y-6">
-        <h4 v-if="[(account.platform === 'grok' && account.type === 'oauth'), (isGrokOAuthAccount), (headerOverrideCapable)].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.forwarding') }}</h4>
-
-        <!-- Grok OAuth client-tool prompt cache opt-in -->
-        <div
-          v-if="account.platform === 'grok' && account.type === 'oauth'"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between gap-4">
-            <div class="min-w-0">
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.grokClientToolCache.title') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.grokClientToolCache.title')"><span class="block">{{ t('admin.accounts.grokClientToolCache.hint') }}</span></HelpTooltip></label>
-              
-            </div>
-            <Toggle
-              v-model="grokClientToolCacheEnabled"
-              data-testid="grok-client-tool-cache-toggle"
-              :aria-label="t('admin.accounts.grokClientToolCache.title')"
-            />
-          </div>
-        </div>
-
-        <!-- Grok OAuth media generation eligibility override -->
-        <div
-          v-if="isGrokOAuthAccount"
-          class="pt-2"
-          data-testid="grok-media-eligibility-card"
-        >
-          <div class="space-y-3">
-            <div>
-              <label class="block text-sm font-medium text-default">
-                {{ t('admin.accounts.grokMediaEligibility.title') }}
-                <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.grokMediaEligibility.title')" width-class="w-72">
-                  <span class="block">{{ t('admin.accounts.grokMediaEligibility.hint') }}</span>
-                </HelpTooltip>
-              </label>
-            </div>
-            <Select
-              v-model="grokMediaEligibilityMode"
-              data-testid="grok-media-eligibility-mode"
-              :disabled="grokMediaEligibilityLoading"
-              :options="[
-                { value: 'auto', label: t('admin.accounts.grokMediaEligibility.auto') },
-                { value: 'enabled', label: t('admin.accounts.grokMediaEligibility.enabled') },
-                { value: 'disabled', label: t('admin.accounts.grokMediaEligibility.disabled') }
-              ]"
-            />
-            <p v-if="grokMediaEligibilityLoading" class="text-xs text-muted">
-              {{ t('admin.accounts.grokMediaEligibility.loading') }}
-            </p>
-            <p v-else-if="grokMediaEligibilityError" class="text-xs text-error">
-              {{ grokMediaEligibilityError }}
-            </p>
-            <div v-else-if="grokMediaEligibilityState" class="rounded-lg bg-elevated p-3 text-xs">
-              <span class="font-medium">{{ t('admin.accounts.grokMediaEligibility.current') }}</span>
-              <span class="ml-1" data-testid="grok-media-eligibility-status">
-                {{ grokMediaEligibilityState.eligible ? t('admin.accounts.grokMediaEligibility.eligible') : t('admin.accounts.grokMediaEligibility.ineligible') }}
-                · {{ t(`admin.accounts.grokMediaEligibility.reasons.${grokMediaEligibilityState.reason}`) }}
-              </span>
-            </div>
-            <UAlert v-if="grokMediaEligibilityMode === 'enabled'" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.grokMediaEligibility.forceEnableWarning')" />
-            <p v-else-if="grokMediaEligibilityMode === 'auto'" class="text-xs text-muted">
-              {{ t('admin.accounts.grokMediaEligibility.autoHint') }}
-            </p>
-          </div>
-        </div>
-
-        <!-- Header Override Section (eligible API-key platforms + grok OAuth) -->
-        <div v-if="headerOverrideCapable" class="pt-2">
-          <HintFormField :label="t('admin.accounts.headerOverride.title')" :hint="t('admin.accounts.headerOverride.hint')" class="flex items-center justify-between gap-4 mb-3">
-            <Toggle v-model="headerOverrideEnabled" />
-          </HintFormField>
-  
-          <div v-if="headerOverrideEnabled" class="space-y-3">
-            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
-  
-            <HeaderOverrideEditor
-              :rows="headerOverrideRows"
-              @update:rows="headerOverrideRows = $event"
-            />
-          </div>
-        </div>
-
-        <div v-if="account.type === 'apikey' || account.type === 'cloudflare'" class="space-y-4">
-          <!-- Pool Mode Section -->
-          <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.errors') }}</h4>
-  
-          <div class="pt-2">
-            <HintFormField :label="t('admin.accounts.poolMode')" :hint="t('admin.accounts.poolModeHint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="poolModeEnabled" />
-            </HintFormField>
-            <UAlert v-if="poolModeEnabled" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.poolModeInfo')" />
-            <div v-if="poolModeEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryCount') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.poolModeRetryCount')"><span class="block">{{ t('admin.accounts.poolModeRetryCountHint', {
-                    default: DEFAULT_POOL_MODE_RETRY_COUNT,
-                    max: MAX_POOL_MODE_RETRY_COUNT
-                  }) }}</span></HelpTooltip></label>
-              <UInput
-                v-model.number="poolModeRetryCount"
-                type="number"
-                min="0"
-                :max="MAX_POOL_MODE_RETRY_COUNT"
-                step="1"
-                class="w-full"
-              />
-              
-            </div>
-            <div v-if="poolModeEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryStatusCodes') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.poolModeRetryStatusCodes')"><span class="block">{{ t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') }) }}</span></HelpTooltip></label>
-              <UInput
-                v-model="poolModeRetryStatusCodesInput"
-                type="text"
-                :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
-                class="w-full"
-              />
-              
-            </div>
-          </div>
-  
-          <!-- Custom Error Codes Section -->
-          <div class="pt-2">
-            <HintFormField :label="t('admin.accounts.customErrorCodes')" :hint="t('admin.accounts.customErrorCodesHint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="customErrorCodesEnabled" />
-            </HintFormField>
-  
-            <div v-if="customErrorCodesEnabled" class="space-y-3">
-              <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.customErrorCodesWarning')" />
-  
-              <!-- Error Code Buttons -->
-              <div class="flex flex-wrap gap-2">
-                <UButton
-                  :color="selectedErrorCodes.includes(code.value) ? 'error' : 'neutral'"
-                  :variant="selectedErrorCodes.includes(code.value) ? 'soft' : 'outline'"
-                  size="sm"
-                  v-for="code in commonErrorCodes"
-                  :key="code.value"
-                  type="button"
-                  @click="toggleErrorCode(code.value)"
-                >{{ code.value }} {{ code.label }}</UButton>
-              </div>
-  
-              <!-- Manual input -->
-              <div class="flex items-center gap-2">
-                <UInput
-                  v-model.number="customErrorCodeInput"
-                  type="number"
-                  min="100"
-                  max="599"
-                  :placeholder="t('admin.accounts.enterErrorCode')"
-                  @keyup.enter="addCustomErrorCode"
-                  class="flex-1"
+        <SettingPanel>
+          <SettingGroup v-if="[(account.platform === 'grok' && account.type === 'oauth'), (isGrokOAuthAccount), (headerOverrideCapable)].some(Boolean)" :title="t('admin.accounts.formSections.forwarding')">
+            <!-- Grok OAuth client-tool prompt cache opt-in -->
+            <SettingRow
+              v-if="account.platform === 'grok' && account.type === 'oauth'"
+              :label="t('admin.accounts.grokClientToolCache.title')"
+              :hint="t('admin.accounts.grokClientToolCache.hint')"
+              :on="grokClientToolCacheEnabled"
+            >
+              <template #control>
+                <Toggle
+                  v-model="grokClientToolCacheEnabled"
+                  data-testid="grok-client-tool-cache-toggle"
+                  :aria-label="t('admin.accounts.grokClientToolCache.title')"
                 />
-                <UButton color="neutral" variant="outline" type="button" @click="addCustomErrorCode" class="px-3">
-                  <UIcon name="i-lucide-plus" class="size-4" />
-                </UButton>
-              </div>
-  
-              <!-- Selected codes summary -->
-              <div class="flex flex-wrap gap-1.5">
-                <span
-                  v-for="code in selectedErrorCodes.sort((a, b) => a - b)"
-                  :key="code"
-                  class="inline-flex items-center gap-1 rounded-full bg-error/10 px-2.5 py-0.5 text-sm font-medium text-error"
-                >
-                  {{ code }}
-                  <UButton
-                    color="neutral"
-                    variant="link"
-                    square
-                    size="xs"
-                    icon="i-lucide-x"
-                    :aria-label="t('admin.accounts.formActions.remove')"
-                    class="-me-1 p-0"
-                    type="button"
-                    @click="removeErrorCode(code)"
-                  />
-                </span>
-                <span v-if="selectedErrorCodes.length === 0" class="text-xs text-muted">
-                  {{ t('admin.accounts.noneSelectedUsesDefault') }}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
+              </template>
+            </SettingRow>
 
-        <div v-if="account.type === 'bedrock'" class="space-y-4">
-          <!-- Pool Mode Section for Bedrock -->
-          <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.errors') }}</h4>
-  
-          <div class="pt-2">
-            <HintFormField :label="t('admin.accounts.poolMode')" :hint="t('admin.accounts.poolModeHint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="poolModeEnabled" />
-            </HintFormField>
-            <UAlert v-if="poolModeEnabled" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.poolModeInfo')" />
-            <div v-if="poolModeEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryCount') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.poolModeRetryCount')"><span class="block">{{ t('admin.accounts.poolModeRetryCountHint', {
-                    default: DEFAULT_POOL_MODE_RETRY_COUNT,
-                    max: MAX_POOL_MODE_RETRY_COUNT
-                  }) }}</span></HelpTooltip></label>
-              <UInput
-                v-model.number="poolModeRetryCount"
-                type="number"
-                min="0"
-                :max="MAX_POOL_MODE_RETRY_COUNT"
-                step="1"
-                class="w-full"
-              />
-              
-            </div>
-            <div v-if="poolModeEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.poolModeRetryStatusCodes') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.poolModeRetryStatusCodes')"><span class="block">{{ t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') }) }}</span></HelpTooltip></label>
-              <UInput
-                v-model="poolModeRetryStatusCodesInput"
-                type="text"
-                :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
-                class="w-full"
-              />
-              
-            </div>
-          </div>
-        </div>
-      </div>
-      <div v-show="showEditSection('advanced')" data-edit-section="advanced" class="space-y-6">
-        <div class="space-y-6 pt-4">
-              <h4 class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.scheduling') }}</h4>
-  
-              <div>
-          <HintFormField :label="t('admin.accounts.autoPauseOnExpired')" :hint="t('admin.accounts.autoPauseOnExpiredDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="autoPauseOnExpired" />
-          </HintFormField>
-        </div>
-  
-              <div
-          v-if="account?.platform === 'openai'"
-          class="pt-2 space-y-4"
-        >
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.autoPause5hDisabled') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.autoPause5hDisabled')"><span class="block">{{ t('admin.accounts.autoPauseDisabledHint') }}</span></HelpTooltip></label>
-              <Toggle v-model="autoPause5hDisabled" data-testid="auto-pause-5h-disabled" />
-            </div>
-            
-          </div>
-          <HintFormField :label="t('admin.accounts.autoPause5hThreshold')" :hint="t('admin.accounts.autoPauseThresholdHint')">
-            <UInput
-              v-model.number="autoPause5hThreshold"
-              type="number"
-              min="0"
-              max="100"
-              step="0.1"
-              :disabled="autoPause5hDisabled"
-              data-testid="auto-pause-5h-threshold"
-              class="w-full"
-            />
-          </HintFormField>
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.autoPause7dDisabled') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.autoPause7dDisabled')"><span class="block">{{ t('admin.accounts.autoPauseDisabledHint') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.autoPause7dDisabled')"><span class="block">{{ t('admin.accounts.autoResetCredit.thresholdHint') }}</span></HelpTooltip></label>
-              <Toggle v-model="autoPause7dDisabled" data-testid="auto-pause-7d-disabled" />
-            </div>
-            
-          </div>
-          <HintFormField :label="t('admin.accounts.autoPause7dThreshold')" :hint="t('admin.accounts.autoPauseThresholdHint')">
-            <UInput
-              v-model.number="autoPause7dThreshold"
-              type="number"
-              min="0"
-              max="100"
-              step="0.1"
-              :disabled="autoPause7dDisabled"
-              data-testid="auto-pause-7d-threshold"
-              class="w-full"
-            />
-          </HintFormField>
-        </div>
-  
-              <div
-          v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
-          class="space-y-4 pt-2"
-          data-testid="auto-reset-credit-settings"
-        >
-          <HintFormField :label="t('admin.accounts.autoResetCredit.title')" :hint="t('admin.accounts.autoResetCredit.hint')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="autoResetCreditEnabled" data-testid="auto-reset-credit-enabled" />
-          </HintFormField>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField :label="t('admin.accounts.autoResetCredit.threshold5h')">
-              <UInput
-                v-model.number="autoResetCredit5hThreshold"
-                type="number"
-                min="0.1"
-                max="100"
-                step="0.1"
-                :disabled="!autoResetCreditEnabled"
-                data-testid="auto-reset-credit-5h-threshold"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField :label="t('admin.accounts.autoResetCredit.threshold7d')">
-              <UInput
-                v-model.number="autoResetCredit7dThreshold"
-                type="number"
-                min="0.1"
-                max="100"
-                step="0.1"
-                :disabled="!autoResetCreditEnabled"
-                data-testid="auto-reset-credit-7d-threshold"
-                class="w-full"
-              />
-            </UFormField>
-          </div>
-          
-        </div>
-  
-              <div
-          v-if="supportsAccountSchedulingThresholdOverride"
-          class="pt-2"
-          data-testid="account-scheduling-threshold-section"
-        >
-          <div class="mb-3 flex items-center justify-between">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.accountSchedulingThresholdOverride') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.accountSchedulingThresholdOverride')"><span class="block">{{ t('admin.accounts.accountSchedulingThresholdOverrideHint') }}</span></HelpTooltip></label>
-              
-            </div>
-            <UCheckbox v-model="accountSchedulingThresholdOverrideEnabled" data-testid="account-scheduling-threshold-override-enabled" />
-          </div>
-          <HintFormField v-if="accountSchedulingThresholdOverrideEnabled" :label="t('admin.accounts.accountSchedulingThresholdOverrideValue')" :hint="t('admin.accounts.accountSchedulingThresholdOverrideDisabledHint')">
-            <UInput
-              v-model.number="accountSchedulingThresholdOverrideValue"
-              data-testid="account-scheduling-threshold-override-value"
-              type="number"
-              min="1"
-              max="100"
-              class="w-full"
-            />
-          </HintFormField>
-        </div>
-  
-              <div class="pt-2 space-y-4">
-          <HintFormField :label="t('admin.accounts.tempUnschedulable.title')" :hint="t('admin.accounts.tempUnschedulable.hint')" class="flex items-center justify-between gap-4 mb-3">
-            <Toggle v-model="tempUnschedEnabled" />
-          </HintFormField>
-  
-          <div v-if="tempUnschedEnabled" class="space-y-3">
-            <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.tempUnschedulable.notice')" />
-  
-            <div class="flex flex-wrap gap-2">
-              <UButton
-                color="neutral"
-                variant="soft"
-                size="xs"
-                v-for="preset in tempUnschedPresets"
-                :key="preset.label"
-                type="button"
-                @click="addTempUnschedRule(preset.rule)"
+            <!-- Grok OAuth media generation eligibility override -->
+            <div v-if="isGrokOAuthAccount" data-testid="grok-media-eligibility-card">
+              <SettingRow
+                :label="t('admin.accounts.grokMediaEligibility.title')"
+                :hint="t('admin.accounts.grokMediaEligibility.hint')"
+                :on="grokMediaEligibilityMode !== 'auto'"
+                :summary="grokMediaEligibilityMode === 'enabled' ? t('admin.accounts.grokMediaEligibility.enabled') : (grokMediaEligibilityMode === 'disabled' ? t('admin.accounts.grokMediaEligibility.disabled') : '')"
               >
-                + {{ preset.label }}
-              </UButton>
-            </div>
-  
-            <div v-if="tempUnschedRules.length > 0" class="space-y-3">
-              <div
-                v-for="(rule, index) in tempUnschedRules"
-                :key="getTempUnschedRuleKey(rule)"
-               
-              >
-                <div class="mb-2 flex items-center justify-between">
-                  <span class="text-xs font-medium text-muted">
-                    {{ t('admin.accounts.tempUnschedulable.ruleIndex', { index: index + 1 }) }}
+                <template #control>
+                  <Select
+                    v-model="grokMediaEligibilityMode"
+                    data-testid="grok-media-eligibility-mode"
+                    :disabled="grokMediaEligibilityLoading"
+                    :options="[
+                      { value: 'auto', label: t('admin.accounts.grokMediaEligibility.auto') },
+                      { value: 'enabled', label: t('admin.accounts.grokMediaEligibility.enabled') },
+                      { value: 'disabled', label: t('admin.accounts.grokMediaEligibility.disabled') }
+                    ]"
+                    class="w-36"
+                  />
+                </template>
+              </SettingRow>
+              <div class="space-y-2 pb-2 ps-4">
+                <p v-if="grokMediaEligibilityLoading" class="text-xs text-muted">
+                  {{ t('admin.accounts.grokMediaEligibility.loading') }}
+                </p>
+                <p v-else-if="grokMediaEligibilityError" class="text-xs text-error">
+                  {{ grokMediaEligibilityError }}
+                </p>
+                <div v-else-if="grokMediaEligibilityState" class="rounded-lg bg-elevated p-3 text-xs">
+                  <span class="font-medium">{{ t('admin.accounts.grokMediaEligibility.current') }}</span>
+                  <span class="ml-1" data-testid="grok-media-eligibility-status">
+                    {{ grokMediaEligibilityState.eligible ? t('admin.accounts.grokMediaEligibility.eligible') : t('admin.accounts.grokMediaEligibility.ineligible') }}
+                    · {{ t(`admin.accounts.grokMediaEligibility.reasons.${grokMediaEligibilityState.reason}`) }}
                   </span>
-                  <div class="flex items-center gap-2">
+                </div>
+                <UAlert v-if="grokMediaEligibilityMode === 'enabled'" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.grokMediaEligibility.forceEnableWarning')" />
+                <p v-else-if="grokMediaEligibilityMode === 'auto'" class="text-xs text-muted">
+                  {{ t('admin.accounts.grokMediaEligibility.autoHint') }}
+                </p>
+              </div>
+            </div>
+
+            <!-- Header Override Section (eligible API-key platforms + grok OAuth) -->
+            <div v-if="headerOverrideCapable">
+              <SettingRow
+                :label="t('admin.accounts.headerOverride.title')"
+                :hint="t('admin.accounts.headerOverride.hint')"
+                :on="headerOverrideEnabled"
+              >
+                <template #control>
+                  <Toggle v-model="headerOverrideEnabled" />
+                </template>
+              </SettingRow>
+
+              <div v-if="headerOverrideEnabled" class="space-y-3 pb-3 ps-4">
+                <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.headerOverride.info')" />
+
+                <HeaderOverrideEditor
+                  :rows="headerOverrideRows"
+                  @update:rows="headerOverrideRows = $event"
+                />
+              </div>
+            </div>
+          </SettingGroup>
+
+          <div v-if="account.type === 'apikey' || account.type === 'cloudflare'" class="space-y-4">
+            <SettingGroup :title="t('admin.accounts.formSections.errors')">
+              <SettingRow
+                :label="t('admin.accounts.poolMode')"
+                :hint="t('admin.accounts.poolModeHint')"
+                :on="poolModeEnabled"
+                :summary="poolModeEnabled ? `${t('admin.accounts.poolModeRetryCount')} ${poolModeRetryCount}` : ''"
+              >
+                <template #control>
+                  <Toggle v-model="poolModeEnabled" />
+                </template>
+                <template #fields>
+                  <UAlert v-if="poolModeEnabled" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.poolModeInfo')" />
+                  <div v-show="poolModeEnabled" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <HintFormField v-if="poolModeEnabled" :label="t('admin.accounts.poolModeRetryCount')" :hint="t('admin.accounts.poolModeRetryCountHint', {
+                      default: DEFAULT_POOL_MODE_RETRY_COUNT,
+                      max: MAX_POOL_MODE_RETRY_COUNT
+                    })">
+                      <UInput
+                        v-model.number="poolModeRetryCount"
+                        type="number"
+                        min="0"
+                        :max="MAX_POOL_MODE_RETRY_COUNT"
+                        step="1"
+                        class="w-full"
+                      />
+                    </HintFormField>
+                    <HintFormField v-if="poolModeEnabled" :label="t('admin.accounts.poolModeRetryStatusCodes')" :hint="t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') })">
+                      <UInput
+                        v-model="poolModeRetryStatusCodesInput"
+                        type="text"
+                        :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
+                        class="w-full"
+                      />
+                    </HintFormField>
+                  </div>
+                </template>
+              </SettingRow>
+
+              <!-- Custom Error Codes Section -->
+              <SettingRow
+                :label="t('admin.accounts.customErrorCodes')"
+                :hint="t('admin.accounts.customErrorCodesHint')"
+                :on="customErrorCodesEnabled"
+                :summary="customErrorCodesEnabled && selectedErrorCodes.length ? selectedErrorCodes.slice().sort((a, b) => a - b).join(', ') : ''"
+              >
+                <template #control>
+                  <Toggle v-model="customErrorCodesEnabled" />
+                </template>
+              </SettingRow>
+
+              <div v-if="customErrorCodesEnabled" class="space-y-3 pb-3 ps-4">
+                <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.accounts.customErrorCodesWarning')" />
+
+                <!-- Error Code Buttons -->
+                <div class="flex flex-wrap gap-2">
+                  <UButton
+                    :color="selectedErrorCodes.includes(code.value) ? 'error' : 'neutral'"
+                    :variant="selectedErrorCodes.includes(code.value) ? 'soft' : 'outline'"
+                    size="sm"
+                    v-for="code in commonErrorCodes"
+                    :key="code.value"
+                    type="button"
+                    @click="toggleErrorCode(code.value)"
+                  >{{ code.value }} {{ code.label }}</UButton>
+                </div>
+
+                <!-- Manual input -->
+                <div class="flex items-center gap-2">
+                  <UInput
+                    v-model.number="customErrorCodeInput"
+                    type="number"
+                    min="100"
+                    max="599"
+                    :placeholder="t('admin.accounts.enterErrorCode')"
+                    @keyup.enter="addCustomErrorCode"
+                    class="flex-1"
+                  />
+                  <UButton color="neutral" variant="outline" type="button" @click="addCustomErrorCode" class="px-3">
+                    <UIcon name="i-lucide-plus" class="size-4" />
+                  </UButton>
+                </div>
+
+                <!-- Selected codes summary -->
+                <div class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="code in selectedErrorCodes.sort((a, b) => a - b)"
+                    :key="code"
+                    class="inline-flex items-center gap-1 rounded-full bg-error/10 px-2.5 py-0.5 text-sm font-medium text-error"
+                  >
+                    {{ code }}
                     <UButton
                       color="neutral"
-                      variant="ghost"
-                      square
-                      size="xs"
-                      icon="i-lucide-chevron-up"
-                      type="button"
-                      :disabled="index === 0"
-                      @click="moveTempUnschedRule(index, -1)"
-                    />
-                    <UButton
-                      color="neutral"
-                      variant="ghost"
-                      square
-                      size="xs"
-                      icon="i-lucide-chevron-down"
-                      type="button"
-                      :disabled="index === tempUnschedRules.length - 1"
-                      @click="moveTempUnschedRule(index, 1)"
-                    />
-                    <UButton
-                      color="error"
-                      variant="ghost"
+                      variant="link"
                       square
                       size="xs"
                       icon="i-lucide-x"
                       :aria-label="t('admin.accounts.formActions.remove')"
+                      class="-me-1 p-0"
                       type="button"
-                      @click="removeTempUnschedRule(index)"
+                      @click="removeErrorCode(code)"
                     />
-                  </div>
+                  </span>
+                  <span v-if="selectedErrorCodes.length === 0" class="text-xs text-muted">
+                    {{ t('admin.accounts.noneSelectedUsesDefault') }}
+                  </span>
                 </div>
-  
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <UFormField :label="t('admin.accounts.tempUnschedulable.errorCode')">
+              </div>
+            </SettingGroup>
+          </div>
+
+          <div v-if="account.type === 'bedrock'" class="space-y-4">
+            <SettingGroup :title="t('admin.accounts.formSections.errors')">
+              <SettingRow
+                :label="t('admin.accounts.poolMode')"
+                :hint="t('admin.accounts.poolModeHint')"
+                :on="poolModeEnabled"
+                :summary="poolModeEnabled ? `${t('admin.accounts.poolModeRetryCount')} ${poolModeRetryCount}` : ''"
+              >
+                <template #control>
+                  <Toggle v-model="poolModeEnabled" />
+                </template>
+                <template #fields>
+                  <UAlert v-if="poolModeEnabled" color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.poolModeInfo')" />
+                  <div v-show="poolModeEnabled" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <HintFormField v-if="poolModeEnabled" :label="t('admin.accounts.poolModeRetryCount')" :hint="t('admin.accounts.poolModeRetryCountHint', {
+                      default: DEFAULT_POOL_MODE_RETRY_COUNT,
+                      max: MAX_POOL_MODE_RETRY_COUNT
+                    })">
+                      <UInput
+                        v-model.number="poolModeRetryCount"
+                        type="number"
+                        min="0"
+                        :max="MAX_POOL_MODE_RETRY_COUNT"
+                        step="1"
+                        class="w-full"
+                      />
+                    </HintFormField>
+                    <HintFormField v-if="poolModeEnabled" :label="t('admin.accounts.poolModeRetryStatusCodes')" :hint="t('admin.accounts.poolModeRetryStatusCodesHint', { default: DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ') })">
+                      <UInput
+                        v-model="poolModeRetryStatusCodesInput"
+                        type="text"
+                        :placeholder="DEFAULT_POOL_MODE_RETRY_STATUS_CODES.join(', ')"
+                        class="w-full"
+                      />
+                    </HintFormField>
+                  </div>
+                </template>
+              </SettingRow>
+            </SettingGroup>
+          </div>
+        </SettingPanel>
+      </div>
+      <div v-show="showEditSection('advanced')" data-edit-section="advanced" class="space-y-6">
+        <SettingPanel>
+          <SettingGroup :title="t('admin.accounts.formSections.scheduling')">
+            <SettingRow
+              :label="t('admin.accounts.autoPauseOnExpired')"
+              :hint="t('admin.accounts.autoPauseOnExpiredDesc')"
+              :on="autoPauseOnExpired"
+            >
+              <template #control>
+                <Toggle v-model="autoPauseOnExpired" />
+              </template>
+            </SettingRow>
+
+            <div v-if="account?.platform === 'openai'">
+              <SettingRow
+                :label="t('admin.accounts.autoPause5hDisabled')"
+                :hint="t('admin.accounts.autoPauseDisabledHint')"
+                :on="autoPause5hDisabled"
+              >
+                <template #control>
+                  <Toggle v-model="autoPause5hDisabled" data-testid="auto-pause-5h-disabled" />
+                </template>
+              </SettingRow>
+              <SettingRow
+                :label="t('admin.accounts.autoPause5hThreshold')"
+                :hint="t('admin.accounts.autoPauseThresholdHint')"
+                :on="true"
+                :in-summary="false"
+                :summary="autoPause5hThreshold == null ? '' : `${autoPause5hThreshold}%`"
+              >
+                <template #fields>
+                  <UInput
+                    v-model.number="autoPause5hThreshold"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    :disabled="autoPause5hDisabled"
+                    data-testid="auto-pause-5h-threshold"
+                    class="w-full"
+                  />
+                </template>
+              </SettingRow>
+              <SettingRow
+                :label="t('admin.accounts.autoPause7dDisabled')"
+                :hint="[t('admin.accounts.autoPauseDisabledHint'), t('admin.accounts.autoResetCredit.thresholdHint')]"
+                :on="autoPause7dDisabled"
+              >
+                <template #control>
+                  <Toggle v-model="autoPause7dDisabled" data-testid="auto-pause-7d-disabled" />
+                </template>
+              </SettingRow>
+              <SettingRow
+                :label="t('admin.accounts.autoPause7dThreshold')"
+                :hint="t('admin.accounts.autoPauseThresholdHint')"
+                :on="true"
+                :in-summary="false"
+                :summary="autoPause7dThreshold == null ? '' : `${autoPause7dThreshold}%`"
+              >
+                <template #fields>
+                  <UInput
+                    v-model.number="autoPause7dThreshold"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    :disabled="autoPause7dDisabled"
+                    data-testid="auto-pause-7d-threshold"
+                    class="w-full"
+                  />
+                </template>
+              </SettingRow>
+            </div>
+
+            <div v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow" data-testid="auto-reset-credit-settings">
+              <SettingRow
+                :label="t('admin.accounts.autoResetCredit.title')"
+                :hint="t('admin.accounts.autoResetCredit.hint')"
+                :on="autoResetCreditEnabled"
+                :summary="autoResetCreditEnabled ? `${t('admin.accounts.autoResetCredit.threshold5h')} ${autoResetCredit5hThreshold}% · ${t('admin.accounts.autoResetCredit.threshold7d')} ${autoResetCredit7dThreshold}%` : ''"
+              >
+                <template #control>
+                  <Toggle v-model="autoResetCreditEnabled" data-testid="auto-reset-credit-enabled" />
+                </template>
+                <template #fields>
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    <UFormField :label="t('admin.accounts.autoResetCredit.threshold5h')">
+                      <UInput
+                        v-model.number="autoResetCredit5hThreshold"
+                        type="number"
+                        min="0.1"
+                        max="100"
+                        step="0.1"
+                        :disabled="!autoResetCreditEnabled"
+                        data-testid="auto-reset-credit-5h-threshold"
+                        class="w-full"
+                      />
+                    </UFormField>
+                    <UFormField :label="t('admin.accounts.autoResetCredit.threshold7d')">
+                      <UInput
+                        v-model.number="autoResetCredit7dThreshold"
+                        type="number"
+                        min="0.1"
+                        max="100"
+                        step="0.1"
+                        :disabled="!autoResetCreditEnabled"
+                        data-testid="auto-reset-credit-7d-threshold"
+                        class="w-full"
+                      />
+                    </UFormField>
+                  </div>
+                </template>
+              </SettingRow>
+            </div>
+
+            <div v-if="supportsAccountSchedulingThresholdOverride" data-testid="account-scheduling-threshold-section">
+              <SettingRow
+                :label="t('admin.accounts.accountSchedulingThresholdOverride')"
+                :hint="t('admin.accounts.accountSchedulingThresholdOverrideHint')"
+                :on="accountSchedulingThresholdOverrideEnabled"
+                :summary="accountSchedulingThresholdOverrideEnabled ? `${accountSchedulingThresholdOverrideValue}%` : ''"
+              >
+                <template #control>
+                  <Toggle v-model="accountSchedulingThresholdOverrideEnabled" data-testid="account-scheduling-threshold-override-enabled" />
+                </template>
+                <template #fields>
+                  <HintFormField v-if="accountSchedulingThresholdOverrideEnabled" :label="t('admin.accounts.accountSchedulingThresholdOverrideValue')" :hint="t('admin.accounts.accountSchedulingThresholdOverrideDisabledHint')">
                     <UInput
-                      v-model.number="rule.error_code"
-                      type="number"
-                      min="100"
-                      max="599"
-                      :placeholder="t('admin.accounts.tempUnschedulable.errorCodePlaceholder')"
-                      class="w-full"
-                    />
-                  </UFormField>
-                  <UFormField :label="t('admin.accounts.tempUnschedulable.durationMinutes')">
-                    <UInput
-                      v-model.number="rule.duration_minutes"
+                      v-model.number="accountSchedulingThresholdOverrideValue"
+                      data-testid="account-scheduling-threshold-override-value"
                       type="number"
                       min="1"
-                      :placeholder="t('admin.accounts.tempUnschedulable.durationPlaceholder')"
-                      class="w-full"
-                    />
-                  </UFormField>
-                  <HintFormField class="sm:col-span-2" :label="t('admin.accounts.tempUnschedulable.keywords')" :hint="t('admin.accounts.tempUnschedulable.keywordsHint')">
-                    <UInput
-                      v-model="rule.keywords"
-                      type="text"
-                      :placeholder="t('admin.accounts.tempUnschedulable.keywordsPlaceholder')"
+                      max="100"
                       class="w-full"
                     />
                   </HintFormField>
-                  <UFormField class="sm:col-span-2" :label="t('admin.accounts.tempUnschedulable.description')">
-                    <UInput
-                      v-model="rule.description"
-                      type="text"
-                      :placeholder="t('admin.accounts.tempUnschedulable.descriptionPlaceholder')"
-                      class="w-full"
-                    />
-                  </UFormField>
-                </div>
-              </div>
+                </template>
+              </SettingRow>
             </div>
-  
-            <UButton color="neutral" variant="soft" block icon="i-lucide-plus" type="button" @click="addTempUnschedRule()">{{ t('admin.accounts.tempUnschedulable.addRule') }}</UButton>
-          </div>
-        </div>
-  
-              <h4 v-if="[(account?.platform === 'anthropic' || account?.platform === 'antigravity'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'oauth'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'apikey'), (account?.platform === 'openai' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey' && webSearchGlobalEnabled), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token') && codexTurnTickets.length), (account?.platform === 'openai' && account?.type === 'oauth'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey'))].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.forwarding') }}</h4>
-  
-              <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
-        <div
-          v-if="account?.platform === 'anthropic' || account?.platform === 'antigravity'"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.interceptWarmupRequests')" :hint="t('admin.accounts.interceptWarmupRequestsDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="interceptWarmupRequests" />
-          </HintFormField>
-        </div>
-  
-              <!-- OpenAI 自动透传开关（OAuth/API Key） -->
-        <div
-          v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.openai.oauthPassthrough')" :hint="t('admin.accounts.openai.oauthPassthroughDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="openaiPassthroughEnabled" />
-          </HintFormField>
-        </div>
-  
-              <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
-        <div
-          v-if="account?.platform === 'openai' && account?.type === 'oauth'"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.openai.flattenNamespaces')" :hint="t('admin.accounts.openai.flattenNamespacesDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="openaiFlattenNamespacesEnabled" data-testid="edit-openai-flatten-namespaces-toggle" />
-          </HintFormField>
-        </div>
-  
-              <!-- OpenAI Codex hosted image_generation bridge policy -->
-        <div
-          v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
-          class="pt-2"
-        >
-          <HintFormField :hint="t('admin.accounts.openai.codexImageToolDesc')">
-            <template #label>
-              <span class="inline-flex items-center gap-2">
-                {{ t('admin.accounts.openai.codexImageTool') }}
-                <UBadge :color="codexImageToolBadgeColor" variant="subtle" size="sm" :label="codexImageToolBadgeLabel" />
-                <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexImageTool')" width-class="w-72">
-                  <span class="block">{{ t('admin.accounts.openai.codexImageToolDesc') }}</span>
-                </HelpTooltip>
-              </span>
-            </template>
+
             <div>
-              <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <UPageCard
-                  as="button"
-                  type="button"
-                  variant="outline"
-                  :highlight="codexImageToolMode === option.value"
-                  :aria-pressed="codexImageToolMode === option.value"
-                  :title="option.label"
-                  :description="option.description"
-                  :ui="choiceCardUi"
-                  v-for="option in codexImageToolOptions"
-                  :key="option.value"
-                  :data-testid="`codex-image-tool-${option.value}`"
-                  @click="codexImageToolMode = option.value"
-                />
-              </div>
-            </div>
-          </HintFormField>
-        </div>
-  
-              <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
-        <div
-          v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.wsMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t('admin.accounts.openai.wsModeDesc') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.wsMode')"><span class="block">{{ t(openAIWSModeConcurrencyHintKey) }}</span></HelpTooltip></label>
-              
-              
-            </div>
-            <div class="w-52">
-              <Select v-model="openaiResponsesWebSocketV2Mode" data-testid="edit-openai-ws-mode-select" :options="openAIWSModeOptions" />
-            </div>
-          </div>
-        </div>
-  
-              <!-- OpenAI APIKey Responses API support mode -->
-        <div
-          v-if="account?.platform === 'openai' && account?.type === 'apikey'"
-          class="space-y-4 pt-2"
-        >
-          <div class="flex items-center justify-between gap-4">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.responsesMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.responsesMode')"><span class="block">{{ t('admin.accounts.openai.responsesModeDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <div class="w-56">
-              <Select
-                v-model="openAIResponsesMode"
-                :options="openAIResponsesModeOptions"
-                :disabled="!openAITextGenerationCapabilityEnabled"
-                data-testid="openai-responses-mode-select"
-              />
-            </div>
-          </div>
-          <div
-            v-if="openAITextGenerationCapabilityEnabled"
-            class="rounded-lg bg-elevated px-3 py-2 text-xs text-toned"
-          >
-            <span class="font-medium">{{ t(openAIResponsesStatusKey) }}</span>
-          </div>
-          <div
-            v-else
-            class="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
-            data-testid="openai-responses-mode-not-applicable"
-          >
-            {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
-          </div>
-          <div>
-            <label class="mb-1.5 block text-sm font-medium text-default mb-2">{{ t('admin.accounts.openai.endpointCapabilities') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.endpointCapabilities')"><span class="block">{{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}</span></HelpTooltip></label>
-            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <UCheckbox
-                v-for="option in openAIEndpointCapabilityOptions"
-                :key="option.value"
-                :data-testid="`openai-endpoint-capability-${option.value}`"
-                :model-value="openAIEndpointCapabilities.includes(option.value)"
-                @update:model-value="toggleOpenAIEndpointCapability(option.value)"
-                :label="option.label"
-              />
-            </div>
-            
-          </div>
-        </div>
-  
-              <!-- OpenAI APIKey images: backfill b64_json from url -->
-        <HintFormField v-if="account?.platform === 'openai' && account?.type === 'apikey'" :label="t('admin.accounts.openai.imagesUrlToB64Json')" :hint="t('admin.accounts.openai.imagesUrlToB64JsonDesc')" class="flex items-center justify-between gap-4">
-          <Toggle v-model="openAIImagesUrlToB64JsonEnabled" data-testid="openai-images-url-to-b64-json-toggle" />
-        </HintFormField>
-  
-              <!-- Anthropic API Key 自动透传开关 -->
-        <div
-          v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.anthropic.apiKeyPassthrough')" :hint="t('admin.accounts.anthropic.apiKeyPassthroughDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="anthropicPassthroughEnabled" />
-          </HintFormField>
-        </div>
-  
-              <div
-          v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between gap-4">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.anthropic.apiKeyAuthScheme') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.anthropic.apiKeyAuthScheme')"><span class="block">{{ t('admin.accounts.anthropic.apiKeyAuthSchemeDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <Select
-              v-model="anthropicAPIKeyAuthScheme"
-              :options="[
-                { value: 'x_api_key', label: t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey') },
-                { value: 'authorization_bearer', label: t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') }
-              ]"
-              class="w-52"
-            />
-          </div>
-        </div>
-  
-              <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
-        <div
-          v-if="account?.platform === 'anthropic' && account?.type === 'apikey' && webSearchGlobalEnabled"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.anthropic.webSearchEmulation') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.anthropic.webSearchEmulation')"><span class="block">{{ t('admin.accounts.anthropic.webSearchEmulationDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <Select
-              v-model="webSearchEmulationMode"
-              :options="[
-                { value: 'default', label: t('admin.accounts.anthropic.webSearchDefault') },
-                { value: 'enabled', label: t('admin.accounts.anthropic.webSearchEnabled') },
-                { value: 'disabled', label: t('admin.accounts.anthropic.webSearchDisabled') }
-              ]"
-              class="w-24"
-            />
-          </div>
-        </div>
-  
-              <div
-          v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.openai.codexCLIOnly')" :hint="t('admin.accounts.openai.codexCLIOnlyDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="codexCLIOnlyEnabled" />
-          </HintFormField>
-          <HintFormField v-if="codexCLIOnlyEnabled" :label="t('admin.accounts.openai.codexCLIOnlyAppServer')" :hint="t('admin.accounts.openai.codexCLIOnlyAppServerDesc')" class="flex items-center justify-between gap-4 mt-4">
-            <Toggle v-model="codexCLIOnlyAppServerEnabled" />
-          </HintFormField>
-        </div>
-  
-              <!-- Codex 292 门票状态（仅 OpenAI OAuth） -->
-        <div
-          v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token') && codexTurnTickets.length"
-          class="pt-2"
-        >
-          <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexTurnTicket') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexTurnTicket')"><span class="block">{{ t('admin.accounts.openai.codexTurnTicketDesc') }}</span></HelpTooltip></label>
-          
-          <div class="mt-3 space-y-1.5">
-            <div v-for="ticket in codexTurnTickets" :key="ticket.model" class="flex items-center justify-between text-sm">
-              <span class="font-medium">{{ ticket.model }}</span>
-              <span v-if="ticket.ready" class="text-success">
-                {{ t('admin.accounts.openai.codexTurnTicketReady', { time: formatCodexTicketRemaining(ticket.remaining_seconds) }) }}
-              </span>
-              <span v-else-if="ticket.blocked" class="text-warning">
-                {{ t('admin.accounts.openai.codexTurnTicketPaused') }}
-              </span>
-              <span v-else class="text-muted">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
-            </div>
-          </div>
-        </div>
-  
-              <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
-        <div
-          v-if="account?.platform === 'openai' && account?.type === 'oauth'"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between gap-4">
-            <div class="min-w-0">
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.codexFingerprintMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexFingerprintMode')"><span class="block">{{ t('admin.accounts.openai.codexFingerprintModeDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <div class="w-52 flex-shrink-0">
-              <Select v-model="codexFingerprintMode" data-testid="edit-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
-            </div>
-          </div>
-        </div>
-  
-              <div
-          v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
-          class="pt-2 space-y-4"
-        >
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactMode') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactMode')"><span class="block">{{ t('admin.accounts.openai.compactModeDesc') }}</span></HelpTooltip></label>
-              
-            </div>
-            <div class="w-44">
-              <Select v-model="openAICompactMode" :options="openAICompactModeOptions" />
-            </div>
-          </div>
-          <div class="rounded-lg bg-elevated px-3 py-2 text-xs text-toned">
-            <span class="font-medium">{{ t(openAICompactStatusKey) }}</span>
-            <span
-              v-if="account?.extra?.openai_compact_checked_at"
-              class="ml-2 text-muted"
-            >
-              {{ t('admin.accounts.openai.compactLastChecked') }}:
-              {{ formatDateTime(new Date(String(account.extra.openai_compact_checked_at))) }}
-            </span>
-          </div>
-          <div>
-            <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactModelMapping') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactModelMapping')"><span class="block">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</span></HelpTooltip></label>
-            
-            <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
-              <div
-                v-for="(mapping, index) in openAICompactModelMappings"
-                :key="getOpenAICompactModelMappingKey(mapping)"
-                class="flex items-center gap-2"
+              <SettingRow
+                :label="t('admin.accounts.tempUnschedulable.title')"
+                :hint="t('admin.accounts.tempUnschedulable.hint')"
+                :on="tempUnschedEnabled"
+                :summary="tempUnschedEnabled ? tempUnschedRules.map((rule) => rule.error_code).filter(Boolean).join(', ') : ''"
               >
-                <UInput
-                  v-model="mapping.from"
-                  type="text"
-                  :placeholder="t('admin.accounts.fromModel')"
-                  class="flex-1"
-                />
-                <span class="text-muted">→</span>
-                <UInput
-                  v-model="mapping.to"
-                  type="text"
-                  :placeholder="t('admin.accounts.toModel')"
-                  class="flex-1"
-                />
-                <UButton
-                  color="error"
-                  variant="ghost"
-                  square
-                  size="sm"
-                  icon="i-lucide-trash-2"
-                  :aria-label="t('admin.accounts.formActions.remove')"
-                  type="button"
-                  @click="removeOpenAICompactModelMapping(index)"
-                />
+                <template #control>
+                  <Toggle v-model="tempUnschedEnabled" />
+                </template>
+              </SettingRow>
+
+              <div v-if="tempUnschedEnabled" class="space-y-3 pb-3 ps-4">
+                <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :description="t('admin.accounts.tempUnschedulable.notice')" />
+
+                <div class="flex flex-wrap gap-2">
+                  <UButton
+                    color="neutral"
+                    variant="soft"
+                    size="xs"
+                    v-for="preset in tempUnschedPresets"
+                    :key="preset.label"
+                    type="button"
+                    @click="addTempUnschedRule(preset.rule)"
+                  >
+                    + {{ preset.label }}
+                  </UButton>
+                </div>
+
+                <div v-if="tempUnschedRules.length > 0" class="space-y-3">
+                  <div
+                    v-for="(rule, index) in tempUnschedRules"
+                    :key="getTempUnschedRuleKey(rule)"
+                    class="rounded-lg bg-elevated p-3"
+                  >
+                    <div class="mb-2 flex items-center justify-between">
+                      <span class="text-xs font-medium text-muted">
+                        {{ t('admin.accounts.tempUnschedulable.ruleIndex', { index: index + 1 }) }}
+                      </span>
+                      <div class="flex items-center gap-2">
+                        <UButton
+                          color="neutral"
+                          variant="ghost"
+                          square
+                          size="xs"
+                          icon="i-lucide-chevron-up"
+                          type="button"
+                          :disabled="index === 0"
+                          @click="moveTempUnschedRule(index, -1)"
+                        />
+                        <UButton
+                          color="neutral"
+                          variant="ghost"
+                          square
+                          size="xs"
+                          icon="i-lucide-chevron-down"
+                          type="button"
+                          :disabled="index === tempUnschedRules.length - 1"
+                          @click="moveTempUnschedRule(index, 1)"
+                        />
+                        <UButton
+                          color="error"
+                          variant="ghost"
+                          square
+                          size="xs"
+                          icon="i-lucide-x"
+                          :aria-label="t('admin.accounts.formActions.remove')"
+                          type="button"
+                          @click="removeTempUnschedRule(index)"
+                        />
+                      </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <UFormField :label="t('admin.accounts.tempUnschedulable.errorCode')">
+                        <UInput
+                          v-model.number="rule.error_code"
+                          type="number"
+                          min="100"
+                          max="599"
+                          :placeholder="t('admin.accounts.tempUnschedulable.errorCodePlaceholder')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <UFormField :label="t('admin.accounts.tempUnschedulable.durationMinutes')">
+                        <UInput
+                          v-model.number="rule.duration_minutes"
+                          type="number"
+                          min="1"
+                          :placeholder="t('admin.accounts.tempUnschedulable.durationPlaceholder')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                      <HintFormField class="sm:col-span-2" :label="t('admin.accounts.tempUnschedulable.keywords')" :hint="t('admin.accounts.tempUnschedulable.keywordsHint')">
+                        <UInput
+                          v-model="rule.keywords"
+                          type="text"
+                          :placeholder="t('admin.accounts.tempUnschedulable.keywordsPlaceholder')"
+                          class="w-full"
+                        />
+                      </HintFormField>
+                      <UFormField class="sm:col-span-2" :label="t('admin.accounts.tempUnschedulable.description')">
+                        <UInput
+                          v-model="rule.description"
+                          type="text"
+                          :placeholder="t('admin.accounts.tempUnschedulable.descriptionPlaceholder')"
+                          class="w-full"
+                        />
+                      </UFormField>
+                    </div>
+                  </div>
+                </div>
+
+                <UButton color="neutral" variant="soft" block icon="i-lucide-plus" type="button" @click="addTempUnschedRule()">{{ t('admin.accounts.tempUnschedulable.addRule') }}</UButton>
               </div>
             </div>
-            <UButton color="neutral" variant="outline" type="button" @click="addOpenAICompactModelMapping" class="text-sm">
-              + {{ t('admin.accounts.addMapping') }}
-            </UButton>
-          </div>
-        </div>
-  
-              <h4 v-if="[(account?.type === 'apikey'), (account?.ollama_cloud_usage?.eligible), (account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow)].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.billing') }}</h4>
-  
-              <div
-          v-if="account?.type === 'apikey'"
-          class="flex items-center justify-between gap-4 pt-2"
-        >
-          <div>
-            <label class="block text-sm font-medium text-default">{{ t('admin.accounts.upstreamBilling.autoProbe') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.upstreamBilling.autoProbe')"><span class="block">{{ t('admin.accounts.upstreamBilling.autoProbeHint') }}</span></HelpTooltip></label>
-            
-          </div>
-          <Toggle
-            :model-value="upstreamBillingAutoProbeEnabled"
-            data-testid="upstream-billing-auto-probe"
-            :aria-label="t('admin.accounts.upstreamBilling.autoProbe')"
-            @update:model-value="handleUpstreamBillingAutoProbeChange"
-          />
-        </div>
-  
+          </SettingGroup>
+
+            <SettingGroup v-if="[(account?.platform === 'anthropic' || account?.platform === 'antigravity'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'oauth'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'apikey'), (account?.platform === 'openai' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey'), (account?.platform === 'anthropic' && account?.type === 'apikey' && webSearchGlobalEnabled), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token') && codexTurnTickets.length), (account?.platform === 'openai' && account?.type === 'oauth'), (account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey'))].some(Boolean)" :title="t('admin.accounts.formSections.forwarding')">
+              <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
+              <div v-if="account?.platform === 'anthropic' || account?.platform === 'antigravity'">
+                <SettingRow
+                  :label="t('admin.accounts.interceptWarmupRequests')"
+                  :hint="t('admin.accounts.interceptWarmupRequestsDesc')"
+                  :on="interceptWarmupRequests"
+                >
+                  <template #control>
+                    <Toggle v-model="interceptWarmupRequests" />
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- OpenAI 自动透传开关（OAuth/API Key） -->
+              <div v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')">
+                <SettingRow
+                  :label="t('admin.accounts.openai.oauthPassthrough')"
+                  :hint="t('admin.accounts.openai.oauthPassthroughDesc')"
+                  :on="openaiPassthroughEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="openaiPassthroughEnabled" />
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
+              <div v-if="account?.platform === 'openai' && account?.type === 'oauth'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.flattenNamespaces')"
+                  :hint="t('admin.accounts.openai.flattenNamespacesDesc')"
+                  :on="openaiFlattenNamespacesEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="openaiFlattenNamespacesEnabled" data-testid="edit-openai-flatten-namespaces-toggle" />
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- OpenAI Codex hosted image_generation bridge policy -->
+              <div v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')">
+                <SettingRow
+                  :hint="t('admin.accounts.openai.codexImageToolDesc')"
+                  :label="t('admin.accounts.openai.codexImageTool')"
+                  :on="codexImageToolMode !== 'inherit'"
+                  :summary="codexImageToolOptions.find((option) => option.value === codexImageToolMode)?.label ?? ''"
+                >
+                  <template #title>
+                    <span class="inline-flex min-w-0 items-center gap-2">
+                      <span class="truncate">{{ t('admin.accounts.openai.codexImageTool') }}</span>
+                      <UBadge :color="codexImageToolBadgeColor" variant="subtle" size="sm" :label="codexImageToolBadgeLabel" class="flex-none" />
+                    </span>
+                  </template>
+                  <template #fields>
+                    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <UPageCard
+                        as="button"
+                        type="button"
+                        variant="outline"
+                        :highlight="codexImageToolMode === option.value"
+                        :aria-pressed="codexImageToolMode === option.value"
+                        :title="option.label"
+                        :description="option.description"
+                        :ui="choiceCardUi"
+                        v-for="option in codexImageToolOptions"
+                        :key="option.value"
+                        :data-testid="`codex-image-tool-${option.value}`"
+                        @click="codexImageToolMode = option.value"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
+              <div v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')">
+                <SettingRow
+                  :label="t('admin.accounts.openai.wsMode')"
+                  :hint="[t('admin.accounts.openai.wsModeDesc'), t(openAIWSModeConcurrencyHintKey)]"
+                  :on="openaiResponsesWebSocketV2Mode !== OPENAI_WS_MODE_OFF"
+                  :summary="openAIWSModeOptions.find((option) => option.value === openaiResponsesWebSocketV2Mode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-44">
+                      <Select v-model="openaiResponsesWebSocketV2Mode" data-testid="edit-openai-ws-mode-select" :options="openAIWSModeOptions" />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- OpenAI APIKey Responses API support mode -->
+              <div v-if="account?.platform === 'openai' && account?.type === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.responsesMode')"
+                  :hint="t('admin.accounts.openai.responsesModeDesc')"
+                  :on="openAIResponsesMode !== 'auto'"
+                  :summary="openAIResponsesModeOptions.find((option) => option.value === openAIResponsesMode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-44">
+                      <Select
+                        v-model="openAIResponsesMode"
+                        :options="openAIResponsesModeOptions"
+                        :disabled="!openAITextGenerationCapabilityEnabled"
+                        data-testid="openai-responses-mode-select"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+                <div class="space-y-2 pb-3 ps-4">
+                  <div
+                    v-if="openAITextGenerationCapabilityEnabled"
+                    class="rounded-lg bg-elevated px-3 py-2 text-xs text-toned"
+                  >
+                    <span class="font-medium">{{ t(openAIResponsesStatusKey) }}</span>
+                  </div>
+                  <div
+                    v-else
+                    class="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
+                    data-testid="openai-responses-mode-not-applicable"
+                  >
+                    {{ t('admin.accounts.openai.responsesModeTextDisabledHint') }}
+                  </div>
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-default">{{ t('admin.accounts.openai.endpointCapabilities') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.endpointCapabilities')"><span class="block">{{ t('admin.accounts.openai.endpointCapabilitiesDesc') }}</span></HelpTooltip></label>
+                    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <UCheckbox
+                        v-for="option in openAIEndpointCapabilityOptions"
+                        :key="option.value"
+                        :data-testid="`openai-endpoint-capability-${option.value}`"
+                        :model-value="openAIEndpointCapabilities.includes(option.value)"
+                        @update:model-value="toggleOpenAIEndpointCapability(option.value)"
+                        :label="option.label"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- OpenAI APIKey images: backfill b64_json from url -->
+              <div v-if="account?.platform === 'openai' && account?.type === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.imagesUrlToB64Json')"
+                  :hint="t('admin.accounts.openai.imagesUrlToB64JsonDesc')"
+                  :on="openAIImagesUrlToB64JsonEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="openAIImagesUrlToB64JsonEnabled" data-testid="openai-images-url-to-b64-json-toggle" />
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- Anthropic API Key 自动透传开关 -->
+              <div v-if="account?.platform === 'anthropic' && account?.type === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.anthropic.apiKeyPassthrough')"
+                  :hint="t('admin.accounts.anthropic.apiKeyPassthroughDesc')"
+                  :on="anthropicPassthroughEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="anthropicPassthroughEnabled" />
+                  </template>
+                </SettingRow>
+              </div>
+
+              <div v-if="account?.platform === 'anthropic' && account?.type === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.anthropic.apiKeyAuthScheme')"
+                  :hint="t('admin.accounts.anthropic.apiKeyAuthSchemeDesc')"
+                  :on="anthropicAPIKeyAuthScheme !== 'x_api_key'"
+                  :summary="anthropicAPIKeyAuthScheme === 'authorization_bearer' ? t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') : t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey')"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-44">
+                      <Select
+                        v-model="anthropicAPIKeyAuthScheme"
+                        :options="[
+                          { value: 'x_api_key', label: t('admin.accounts.anthropic.apiKeyAuthSchemeXApiKey') },
+                          { value: 'authorization_bearer', label: t('admin.accounts.anthropic.apiKeyAuthSchemeBearer') }
+                        ]"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
+              <div v-if="account?.platform === 'anthropic' && account?.type === 'apikey' && webSearchGlobalEnabled">
+                <SettingRow
+                  :label="t('admin.accounts.anthropic.webSearchEmulation')"
+                  :hint="t('admin.accounts.anthropic.webSearchEmulationDesc')"
+                  :on="webSearchEmulationMode !== 'default'"
+                  :summary="webSearchEmulationMode === 'enabled' ? t('admin.accounts.anthropic.webSearchEnabled') : (webSearchEmulationMode === 'disabled' ? t('admin.accounts.anthropic.webSearchDisabled') : t('admin.accounts.anthropic.webSearchDefault'))"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-28">
+                      <Select
+                        v-model="webSearchEmulationMode"
+                        :options="[
+                          { value: 'default', label: t('admin.accounts.anthropic.webSearchDefault') },
+                          { value: 'enabled', label: t('admin.accounts.anthropic.webSearchEnabled') },
+                          { value: 'disabled', label: t('admin.accounts.anthropic.webSearchDisabled') }
+                        ]"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <div v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')">
+                <SettingRow
+                  :label="t('admin.accounts.openai.codexCLIOnly')"
+                  :hint="t('admin.accounts.openai.codexCLIOnlyDesc')"
+                  :on="codexCLIOnlyEnabled"
+                  :summary="codexCLIOnlyEnabled ? (codexCLIOnlyAppServerEnabled ? t('admin.accounts.openai.codexCLIOnlyAppServer') : '') : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="codexCLIOnlyEnabled" />
+                  </template>
+                  <template #fields>
+                    <HintFormField v-if="codexCLIOnlyEnabled" :label="t('admin.accounts.openai.codexCLIOnlyAppServer')" :hint="t('admin.accounts.openai.codexCLIOnlyAppServerDesc')" class="flex items-center justify-between gap-4">
+                      <Toggle v-model="codexCLIOnlyAppServerEnabled" />
+                    </HintFormField>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <!-- Codex 292 门票状态（仅 OpenAI OAuth） -->
+              <div v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token') && codexTurnTickets.length" class="pb-3">
+                <label class="block py-2 text-xs font-medium text-muted">{{ t('admin.accounts.openai.codexTurnTicket') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.codexTurnTicket')"><span class="block">{{ t('admin.accounts.openai.codexTurnTicketDesc') }}</span></HelpTooltip></label>
+                <div class="space-y-1.5">
+                  <div v-for="ticket in codexTurnTickets" :key="ticket.model" class="flex items-center justify-between gap-3 text-sm">
+                    <span class="min-w-0 truncate font-medium">{{ ticket.model }}</span>
+                    <span v-if="ticket.ready" class="flex-none text-success">
+                      {{ t('admin.accounts.openai.codexTurnTicketReady', { time: formatCodexTicketRemaining(ticket.remaining_seconds) }) }}
+                    </span>
+                    <span v-else-if="ticket.blocked" class="flex-none text-warning">
+                      {{ t('admin.accounts.openai.codexTurnTicketPaused') }}
+                    </span>
+                    <span v-else class="flex-none text-muted">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
+              <div v-if="account?.platform === 'openai' && account?.type === 'oauth'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.codexFingerprintMode')"
+                  :hint="t('admin.accounts.openai.codexFingerprintModeDesc')"
+                  :on="codexFingerprintMode !== 'off'"
+                  :summary="codexFingerprintModeOptions.find((option) => option.value === codexFingerprintMode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-44">
+                      <Select v-model="codexFingerprintMode" data-testid="edit-codex-fingerprint-mode-select" :options="codexFingerprintModeOptions" />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
+
+              <div v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')">
+                <SettingRow
+                  :label="t('admin.accounts.openai.compactMode')"
+                  :hint="t('admin.accounts.openai.compactModeDesc')"
+                  :on="openAICompactMode !== 'auto'"
+                  :summary="openAICompactModeOptions.find((option) => option.value === openAICompactMode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-40">
+                      <Select v-model="openAICompactMode" :options="openAICompactModeOptions" />
+                    </div>
+                  </template>
+                </SettingRow>
+                <div class="space-y-3 pb-3 ps-4">
+                  <div class="rounded-lg bg-elevated px-3 py-2 text-xs text-toned">
+                    <span class="font-medium">{{ t(openAICompactStatusKey) }}</span>
+                    <span
+                      v-if="account?.extra?.openai_compact_checked_at"
+                      class="ml-2 text-muted"
+                    >
+                      {{ t('admin.accounts.openai.compactLastChecked') }}:
+                      {{ formatDateTime(new Date(String(account.extra.openai_compact_checked_at))) }}
+                    </span>
+                  </div>
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactModelMapping') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactModelMapping')"><span class="block">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</span></HelpTooltip></label>
+                    <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
+                      <div
+                        v-for="(mapping, index) in openAICompactModelMappings"
+                        :key="getOpenAICompactModelMappingKey(mapping)"
+                        class="flex items-center gap-2"
+                      >
+                        <UInput
+                          v-model="mapping.from"
+                          type="text"
+                          :placeholder="t('admin.accounts.fromModel')"
+                          class="flex-1"
+                        />
+                        <span class="text-muted">→</span>
+                        <UInput
+                          v-model="mapping.to"
+                          type="text"
+                          :placeholder="t('admin.accounts.toModel')"
+                          class="flex-1"
+                        />
+                        <UButton
+                          color="error"
+                          variant="ghost"
+                          square
+                          size="sm"
+                          icon="i-lucide-trash-2"
+                          :aria-label="t('admin.accounts.formActions.remove')"
+                          type="button"
+                          @click="removeOpenAICompactModelMapping(index)"
+                        />
+                      </div>
+                    </div>
+                    <UButton color="neutral" variant="outline" type="button" @click="addOpenAICompactModelMapping" class="text-sm">
+                      + {{ t('admin.accounts.addMapping') }}
+                    </UButton>
+                  </div>
+                </div>
+              </div>
+          </SettingGroup>
+
+          <SettingGroup v-if="[(account?.type === 'apikey'), (account?.ollama_cloud_usage?.eligible), (account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')), (account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow)].some(Boolean)" :title="t('admin.accounts.formSections.billing')">
+            <div>
+              <div v-if="account?.type === 'apikey'">
+                <SettingRow
+                  :label="t('admin.accounts.upstreamBilling.autoProbe')"
+                  :hint="t('admin.accounts.upstreamBilling.autoProbeHint')"
+                  :on="upstreamBillingAutoProbeEnabled"
+                >
+                  <template #control>
+                    <Toggle
+                      :model-value="upstreamBillingAutoProbeEnabled"
+                      data-testid="upstream-billing-auto-probe"
+                      :aria-label="t('admin.accounts.upstreamBilling.autoProbe')"
+                      @update:model-value="handleUpstreamBillingAutoProbeChange"
+                    />
+                  </template>
+                </SettingRow>
+              </div>
+
               <OllamaCloudUsageSettings
-          v-if="account?.ollama_cloud_usage?.eligible"
-          :account="account"
-          @updated="handleOllamaCloudUsageUpdated"
-        />
-  
+                v-if="account?.ollama_cloud_usage?.eligible"
+                :account="account"
+                @updated="handleOllamaCloudUsageUpdated"
+              />
+
               <!-- OpenAI API 长上下文计费开关 -->
-        <div
-          v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
-          class="pt-2"
-        >
-          <HintFormField :label="t('admin.accounts.openai.longContextBilling')" :hint="t('admin.accounts.openai.longContextBillingDesc')" class="flex items-center justify-between gap-4">
-            <Toggle v-model="openAILongContextBillingEnabled" data-testid="openai-long-context-billing-toggle" />
-          </HintFormField>
-        </div>
-  
+              <div v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')">
+                <SettingRow
+                  :label="t('admin.accounts.openai.longContextBilling')"
+                  :hint="t('admin.accounts.openai.longContextBillingDesc')"
+                  :on="openAILongContextBillingEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="openAILongContextBillingEnabled" data-testid="openai-long-context-billing-toggle" />
+                  </template>
+                </SettingRow>
+              </div>
+
               <!-- OpenAI 订阅档位手动覆盖（Plus/Pro/Free），仅 OAuth 非影子账号 -->
-        <div
-          v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
-          class="pt-2"
-        >
-          <div class="flex items-center justify-between gap-4">
-            <div class="min-w-0">
-              <label class="block text-sm font-medium text-default">{{ t('admin.accounts.openai.planType') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.planType')"><span class="block">{{ t('admin.accounts.openai.planTypeDesc') }}</span></HelpTooltip></label>
-              
+              <div v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow">
+                <SettingRow
+                  :label="t('admin.accounts.openai.planType')"
+                  :hint="t('admin.accounts.openai.planTypeDesc')"
+                  :on="Boolean(editPlanType)"
+                  :summary="planTypeOptions.find((option) => option.value === editPlanType)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="w-40">
+                      <Select v-model="editPlanType" :options="planTypeOptions" />
+                    </div>
+                  </template>
+                </SettingRow>
+              </div>
             </div>
-            <div class="w-44 flex-shrink-0">
-              <Select v-model="editPlanType" :options="planTypeOptions" />
-            </div>
-          </div>
-        </div>
-  
-              <h4 v-if="[(account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')), (account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'), (account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token'))].some(Boolean)" class="pt-2 text-sm font-semibold text-highlighted">{{ t('admin.accounts.formSections.limits') }}</h4>
-  
+          </SettingGroup>
+
+          <SettingGroup
+            :title="t('admin.accounts.formSections.limits')"
+            :description="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token') ? t('admin.accounts.quotaControl.hint') : undefined"
+          >
+            <div v-if="[(account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')), (account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'), (account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token'))].some(Boolean)">
               <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
-        <div
-          v-if="account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')"
-          class="pt-2 space-y-4"
-        >
-          <div class="mb-3">
-            <h3 class="inline-flex items-center text-sm font-medium text-default text-base font-semibold">
-              {{ t('admin.accounts.quotaControl.title') }}
-              <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')" width-class="w-72">
-                <span class="block">{{ t('admin.accounts.quotaControl.hint') }}</span>
-              </HelpTooltip>
-            </h3>
-          </div>
-          <QuotaLimitCard
-            :totalLimit="editQuotaLimit"
-            :dailyLimit="editQuotaDailyLimit"
-            :weeklyLimit="editQuotaWeeklyLimit"
-            :dailyResetMode="editDailyResetMode"
-            :dailyResetHour="editDailyResetHour"
-            :weeklyResetMode="editWeeklyResetMode"
-            :weeklyResetDay="editWeeklyResetDay"
-            :weeklyResetHour="editWeeklyResetHour"
-            :resetTimezone="editResetTimezone"
-            :quotaNotifyGlobalEnabled="quotaNotifyGlobalEnabled"
-            :quotaNotifyDailyEnabled="quotaNotifyState.daily.enabled"
-            :quotaNotifyDailyThreshold="quotaNotifyState.daily.threshold"
-            :quotaNotifyDailyThresholdType="quotaNotifyState.daily.thresholdType"
-            :quotaNotifyWeeklyEnabled="quotaNotifyState.weekly.enabled"
-            :quotaNotifyWeeklyThreshold="quotaNotifyState.weekly.threshold"
-            :quotaNotifyWeeklyThresholdType="quotaNotifyState.weekly.thresholdType"
-            :quotaNotifyTotalEnabled="quotaNotifyState.total.enabled"
-            :quotaNotifyTotalThreshold="quotaNotifyState.total.threshold"
-            :quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType"
-            @update:totalLimit="editQuotaLimit = $event"
-            @update:dailyLimit="editQuotaDailyLimit = $event"
-            @update:weeklyLimit="editQuotaWeeklyLimit = $event"
-            @update:dailyResetMode="editDailyResetMode = $event"
-            @update:dailyResetHour="editDailyResetHour = $event"
-            @update:weeklyResetMode="editWeeklyResetMode = $event"
-            @update:weeklyResetDay="editWeeklyResetDay = $event"
-            @update:weeklyResetHour="editWeeklyResetHour = $event"
-            @update:resetTimezone="editResetTimezone = $event"
-            @update:quotaNotifyDailyEnabled="quotaNotifyState.daily.enabled = $event"
-            @update:quotaNotifyDailyThreshold="quotaNotifyState.daily.threshold = $event"
-            @update:quotaNotifyDailyThresholdType="quotaNotifyState.daily.thresholdType = $event"
-            @update:quotaNotifyWeeklyEnabled="quotaNotifyState.weekly.enabled = $event"
-            @update:quotaNotifyWeeklyThreshold="quotaNotifyState.weekly.threshold = $event"
-            @update:quotaNotifyWeeklyThresholdType="quotaNotifyState.weekly.thresholdType = $event"
-            @update:quotaNotifyTotalEnabled="quotaNotifyState.total.enabled = $event"
-            @update:quotaNotifyTotalThreshold="quotaNotifyState.total.threshold = $event"
-            @update:quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType = $event"
-          />
-        </div>
-        <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
-        <div
-          v-else-if="account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'"
-          class="pt-2 space-y-4"
-        >
-          <div class="mb-3">
-            <h3 class="block text-sm font-medium text-default text-base font-semibold">{{ t('admin.accounts.quotaControl.title') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')"><span class="block">{{ t('admin.accounts.quotaLimitHint') }}</span></HelpTooltip></h3>
-            
-          </div>
-          <QuotaLimitCard
-            :totalLimit="editQuotaLimit"
-            :dailyLimit="editQuotaDailyLimit"
-            :weeklyLimit="editQuotaWeeklyLimit"
-            :dailyResetMode="editDailyResetMode"
-            :dailyResetHour="editDailyResetHour"
-            :weeklyResetMode="editWeeklyResetMode"
-            :weeklyResetDay="editWeeklyResetDay"
-            :weeklyResetHour="editWeeklyResetHour"
-            :resetTimezone="editResetTimezone"
-            :quotaNotifyGlobalEnabled="quotaNotifyGlobalEnabled"
-            :quotaNotifyDailyEnabled="quotaNotifyState.daily.enabled"
-            :quotaNotifyDailyThreshold="quotaNotifyState.daily.threshold"
-            :quotaNotifyDailyThresholdType="quotaNotifyState.daily.thresholdType"
-            :quotaNotifyWeeklyEnabled="quotaNotifyState.weekly.enabled"
-            :quotaNotifyWeeklyThreshold="quotaNotifyState.weekly.threshold"
-            :quotaNotifyWeeklyThresholdType="quotaNotifyState.weekly.thresholdType"
-            :quotaNotifyTotalEnabled="quotaNotifyState.total.enabled"
-            :quotaNotifyTotalThreshold="quotaNotifyState.total.threshold"
-            :quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType"
-            @update:totalLimit="editQuotaLimit = $event"
-            @update:dailyLimit="editQuotaDailyLimit = $event"
-            @update:weeklyLimit="editQuotaWeeklyLimit = $event"
-            @update:dailyResetMode="editDailyResetMode = $event"
-            @update:dailyResetHour="editDailyResetHour = $event"
-            @update:weeklyResetMode="editWeeklyResetMode = $event"
-            @update:weeklyResetDay="editWeeklyResetDay = $event"
-            @update:weeklyResetHour="editWeeklyResetHour = $event"
-            @update:resetTimezone="editResetTimezone = $event"
-            @update:quotaNotifyDailyEnabled="quotaNotifyState.daily.enabled = $event"
-            @update:quotaNotifyDailyThreshold="quotaNotifyState.daily.threshold = $event"
-            @update:quotaNotifyDailyThresholdType="quotaNotifyState.daily.thresholdType = $event"
-            @update:quotaNotifyWeeklyEnabled="quotaNotifyState.weekly.enabled = $event"
-            @update:quotaNotifyWeeklyThreshold="quotaNotifyState.weekly.threshold = $event"
-            @update:quotaNotifyWeeklyThresholdType="quotaNotifyState.weekly.thresholdType = $event"
-            @update:quotaNotifyTotalEnabled="quotaNotifyState.total.enabled = $event"
-            @update:quotaNotifyTotalThreshold="quotaNotifyState.total.threshold = $event"
-            @update:quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType = $event"
-          />
-        </div>
-  
+              <div v-if="account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')" class="pb-3">
+                <h3 class="inline-flex items-center py-2 text-sm font-semibold text-default">
+                  {{ t('admin.accounts.quotaControl.title') }}
+                  <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')" width-class="w-72">
+                    <span class="block">{{ t('admin.accounts.quotaControl.hint') }}</span>
+                  </HelpTooltip>
+                </h3>
+                <QuotaLimitCard
+                  :totalLimit="editQuotaLimit"
+                  :dailyLimit="editQuotaDailyLimit"
+                  :weeklyLimit="editQuotaWeeklyLimit"
+                  :dailyResetMode="editDailyResetMode"
+                  :dailyResetHour="editDailyResetHour"
+                  :weeklyResetMode="editWeeklyResetMode"
+                  :weeklyResetDay="editWeeklyResetDay"
+                  :weeklyResetHour="editWeeklyResetHour"
+                  :resetTimezone="editResetTimezone"
+                  :quotaNotifyGlobalEnabled="quotaNotifyGlobalEnabled"
+                  :quotaNotifyDailyEnabled="quotaNotifyState.daily.enabled"
+                  :quotaNotifyDailyThreshold="quotaNotifyState.daily.threshold"
+                  :quotaNotifyDailyThresholdType="quotaNotifyState.daily.thresholdType"
+                  :quotaNotifyWeeklyEnabled="quotaNotifyState.weekly.enabled"
+                  :quotaNotifyWeeklyThreshold="quotaNotifyState.weekly.threshold"
+                  :quotaNotifyWeeklyThresholdType="quotaNotifyState.weekly.thresholdType"
+                  :quotaNotifyTotalEnabled="quotaNotifyState.total.enabled"
+                  :quotaNotifyTotalThreshold="quotaNotifyState.total.threshold"
+                  :quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType"
+                  @update:totalLimit="editQuotaLimit = $event"
+                  @update:dailyLimit="editQuotaDailyLimit = $event"
+                  @update:weeklyLimit="editQuotaWeeklyLimit = $event"
+                  @update:dailyResetMode="editDailyResetMode = $event"
+                  @update:dailyResetHour="editDailyResetHour = $event"
+                  @update:weeklyResetMode="editWeeklyResetMode = $event"
+                  @update:weeklyResetDay="editWeeklyResetDay = $event"
+                  @update:weeklyResetHour="editWeeklyResetHour = $event"
+                  @update:resetTimezone="editResetTimezone = $event"
+                  @update:quotaNotifyDailyEnabled="quotaNotifyState.daily.enabled = $event"
+                  @update:quotaNotifyDailyThreshold="quotaNotifyState.daily.threshold = $event"
+                  @update:quotaNotifyDailyThresholdType="quotaNotifyState.daily.thresholdType = $event"
+                  @update:quotaNotifyWeeklyEnabled="quotaNotifyState.weekly.enabled = $event"
+                  @update:quotaNotifyWeeklyThreshold="quotaNotifyState.weekly.threshold = $event"
+                  @update:quotaNotifyWeeklyThresholdType="quotaNotifyState.weekly.thresholdType = $event"
+                  @update:quotaNotifyTotalEnabled="quotaNotifyState.total.enabled = $event"
+                  @update:quotaNotifyTotalThreshold="quotaNotifyState.total.threshold = $event"
+                  @update:quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType = $event"
+                />
+              </div>
+              <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
+              <div v-else-if="account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'" class="pb-3">
+                <h3 class="inline-flex items-center py-2 text-sm font-semibold text-default">{{ t('admin.accounts.quotaControl.title') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')"><span class="block">{{ t('admin.accounts.quotaLimitHint') }}</span></HelpTooltip></h3>
+                <QuotaLimitCard
+                  :totalLimit="editQuotaLimit"
+                  :dailyLimit="editQuotaDailyLimit"
+                  :weeklyLimit="editQuotaWeeklyLimit"
+                  :dailyResetMode="editDailyResetMode"
+                  :dailyResetHour="editDailyResetHour"
+                  :weeklyResetMode="editWeeklyResetMode"
+                  :weeklyResetDay="editWeeklyResetDay"
+                  :weeklyResetHour="editWeeklyResetHour"
+                  :resetTimezone="editResetTimezone"
+                  :quotaNotifyGlobalEnabled="quotaNotifyGlobalEnabled"
+                  :quotaNotifyDailyEnabled="quotaNotifyState.daily.enabled"
+                  :quotaNotifyDailyThreshold="quotaNotifyState.daily.threshold"
+                  :quotaNotifyDailyThresholdType="quotaNotifyState.daily.thresholdType"
+                  :quotaNotifyWeeklyEnabled="quotaNotifyState.weekly.enabled"
+                  :quotaNotifyWeeklyThreshold="quotaNotifyState.weekly.threshold"
+                  :quotaNotifyWeeklyThresholdType="quotaNotifyState.weekly.thresholdType"
+                  :quotaNotifyTotalEnabled="quotaNotifyState.total.enabled"
+                  :quotaNotifyTotalThreshold="quotaNotifyState.total.threshold"
+                  :quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType"
+                  @update:totalLimit="editQuotaLimit = $event"
+                  @update:dailyLimit="editQuotaDailyLimit = $event"
+                  @update:weeklyLimit="editQuotaWeeklyLimit = $event"
+                  @update:dailyResetMode="editDailyResetMode = $event"
+                  @update:dailyResetHour="editDailyResetHour = $event"
+                  @update:weeklyResetMode="editWeeklyResetMode = $event"
+                  @update:weeklyResetDay="editWeeklyResetDay = $event"
+                  @update:weeklyResetHour="editWeeklyResetHour = $event"
+                  @update:resetTimezone="editResetTimezone = $event"
+                  @update:quotaNotifyDailyEnabled="quotaNotifyState.daily.enabled = $event"
+                  @update:quotaNotifyDailyThreshold="quotaNotifyState.daily.threshold = $event"
+                  @update:quotaNotifyDailyThresholdType="quotaNotifyState.daily.thresholdType = $event"
+                  @update:quotaNotifyWeeklyEnabled="quotaNotifyState.weekly.enabled = $event"
+                  @update:quotaNotifyWeeklyThreshold="quotaNotifyState.weekly.threshold = $event"
+                  @update:quotaNotifyWeeklyThresholdType="quotaNotifyState.weekly.thresholdType = $event"
+                  @update:quotaNotifyTotalEnabled="quotaNotifyState.total.enabled = $event"
+                  @update:quotaNotifyTotalThreshold="quotaNotifyState.total.threshold = $event"
+                  @update:quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType = $event"
+                />
+              </div>
+
               <!-- 配额控制 (Anthropic OAuth/SetupToken: 亲和 + 窗口费用 + 会话 + RPM 等) -->
-        <div
-          v-if="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token')"
-          class="pt-2 space-y-4"
-        >
-          <div class="mb-3">
-            <h3 class="inline-flex items-center text-sm font-medium text-default text-base font-semibold">
-              {{ t('admin.accounts.quotaControl.title') }}
-              <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')" width-class="w-72">
-                <span class="block">{{ t('admin.accounts.quotaControl.hint') }}</span>
-              </HelpTooltip>
-            </h3>
-          </div>
-  
-          <!-- Window Cost Limit -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.windowCost.label')" :hint="t('admin.accounts.quotaControl.windowCost.hint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="windowCostEnabled" />
-            </HintFormField>
-  
-            <div v-if="windowCostEnabled" class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.windowCost.limit') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.windowCost.limit')"><span class="block">{{ t('admin.accounts.quotaControl.windowCost.limitHint') }}</span></HelpTooltip></label>
-                <div class="relative">
-                  <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
-                  <UInput
-                    v-model.number="windowCostLimit"
-                    type="number"
-                    min="0"
-                    step="1"
-                    :placeholder="t('admin.accounts.quotaControl.windowCost.limitPlaceholder')"
-                    class="w-full"
-                  />
-                </div>
-                
-              </div>
-              <div>
-                <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.windowCost.stickyReserve') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.windowCost.stickyReserve')"><span class="block">{{ t('admin.accounts.quotaControl.windowCost.stickyReserveHint') }}</span></HelpTooltip></label>
-                <div class="relative">
-                  <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
-                  <UInput
-                    v-model.number="windowCostStickyReserve"
-                    type="number"
-                    min="0"
-                    step="1"
-                    :placeholder="t('admin.accounts.quotaControl.windowCost.stickyReservePlaceholder')"
-                    class="w-full"
-                  />
-                </div>
-                
-              </div>
-            </div>
-          </div>
-  
-          <!-- Session Limit -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.sessionLimit.label')" :hint="t('admin.accounts.quotaControl.sessionLimit.hint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="sessionLimitEnabled" />
-            </HintFormField>
-  
-            <div v-if="sessionLimitEnabled" class="grid grid-cols-2 gap-4">
-              <HintFormField :label="t('admin.accounts.quotaControl.sessionLimit.maxSessions')" :hint="t('admin.accounts.quotaControl.sessionLimit.maxSessionsHint')">
-                <UInput
-                  v-model.number="maxSessions"
-                  type="number"
-                  min="1"
-                  step="1"
-                  :placeholder="t('admin.accounts.quotaControl.sessionLimit.maxSessionsPlaceholder')"
-                  class="w-full"
-                />
-              </HintFormField>
-              <div>
-                <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeout') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.sessionLimit.idleTimeout')"><span class="block">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeoutHint') }}</span></HelpTooltip></label>
-                <div class="relative">
-                  <UInput
-                    v-model.number="sessionIdleTimeout"
-                    type="number"
-                    min="1"
-                    step="1"
-                    :placeholder="t('admin.accounts.quotaControl.sessionLimit.idleTimeoutPlaceholder')"
-                    class="w-full"
-                  />
-                  <span class="absolute right-3 top-1/2 -translate-y-1/2 text-muted">{{ t('common.minutes') }}</span>
-                </div>
-                
-              </div>
-            </div>
-          </div>
-  
-          <!-- RPM Limit -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.rpmLimit.label')" :hint="t('admin.accounts.quotaControl.rpmLimit.hint')" class="flex items-center justify-between gap-4 mb-3">
-              <Toggle v-model="rpmLimitEnabled" />
-            </HintFormField>
-  
-            <div v-if="rpmLimitEnabled" class="space-y-4">
-              <HintFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :hint="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
-                <UInput
-                  v-model.number="baseRpm"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  step="1"
-                  :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
-                  class="w-full"
-                />
-              </HintFormField>
-  
-              <div>
-                <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
-                <div class="flex gap-1 rounded-lg bg-elevated p-1">
-                  <UButton
-                    :color="rpmStrategy === 'tiered' ? 'primary' : 'neutral'"
-                    :variant="rpmStrategy === 'tiered' ? 'solid' : 'ghost'"
-                    size="sm"
-                    block
-                    class="flex-1"
-                    type="button"
-                    @click="rpmStrategy = 'tiered'"
-                  >
-                    <div class="text-center">
-                      <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}</div>
-                      <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyTieredHint') }}</div>
+              <div v-if="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token')">
+
+                <!-- Window Cost Limit -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.windowCost.label')"
+                  :hint="t('admin.accounts.quotaControl.windowCost.hint')"
+                  :on="windowCostEnabled"
+                  :summary="windowCostEnabled ? [windowCostLimit != null ? `${t('admin.accounts.quotaControl.windowCost.limit')} ${windowCostLimit}` : '', windowCostStickyReserve != null ? `${t('admin.accounts.quotaControl.windowCost.stickyReserve')} ${windowCostStickyReserve}` : ''].filter(Boolean).join(' · ') : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="windowCostEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="windowCostEnabled" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.windowCost.limit') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.windowCost.limit')"><span class="block">{{ t('admin.accounts.quotaControl.windowCost.limitHint') }}</span></HelpTooltip></label>
+                        <div class="relative">
+                          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
+                          <UInput
+                            v-model.number="windowCostLimit"
+                            type="number"
+                            min="0"
+                            step="1"
+                            :placeholder="t('admin.accounts.quotaControl.windowCost.limitPlaceholder')"
+                            class="w-full"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.windowCost.stickyReserve') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.windowCost.stickyReserve')"><span class="block">{{ t('admin.accounts.quotaControl.windowCost.stickyReserveHint') }}</span></HelpTooltip></label>
+                        <div class="relative">
+                          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">$</span>
+                          <UInput
+                            v-model.number="windowCostStickyReserve"
+                            type="number"
+                            min="0"
+                            step="1"
+                            :placeholder="t('admin.accounts.quotaControl.windowCost.stickyReservePlaceholder')"
+                            class="w-full"
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </UButton>
-                  <UButton
-                    :color="rpmStrategy === 'sticky_exempt' ? 'primary' : 'neutral'"
-                    :variant="rpmStrategy === 'sticky_exempt' ? 'solid' : 'ghost'"
-                    size="sm"
-                    block
-                    class="flex-1"
-                    type="button"
-                    @click="rpmStrategy = 'sticky_exempt'"
-                  >
-                    <div class="text-center">
-                      <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}</div>
-                      <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExemptHint') }}</div>
+                  </template>
+                </SettingRow>
+
+                <!-- Session Limit -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.sessionLimit.label')"
+                  :hint="t('admin.accounts.quotaControl.sessionLimit.hint')"
+                  :on="sessionLimitEnabled"
+                  :summary="sessionLimitEnabled ? [maxSessions != null ? `${t('admin.accounts.quotaControl.sessionLimit.maxSessions')} ${maxSessions}` : '', sessionIdleTimeout != null ? `${t('admin.accounts.quotaControl.sessionLimit.idleTimeout')} ${sessionIdleTimeout} ${t('common.minutes')}` : ''].filter(Boolean).join(' · ') : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="sessionLimitEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="sessionLimitEnabled" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <HintFormField :label="t('admin.accounts.quotaControl.sessionLimit.maxSessions')" :hint="t('admin.accounts.quotaControl.sessionLimit.maxSessionsHint')">
+                        <UInput
+                          v-model.number="maxSessions"
+                          type="number"
+                          min="1"
+                          step="1"
+                          :placeholder="t('admin.accounts.quotaControl.sessionLimit.maxSessionsPlaceholder')"
+                          class="w-full"
+                        />
+                      </HintFormField>
+                      <div>
+                        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeout') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.sessionLimit.idleTimeout')"><span class="block">{{ t('admin.accounts.quotaControl.sessionLimit.idleTimeoutHint') }}</span></HelpTooltip></label>
+                        <div class="relative">
+                          <UInput
+                            v-model.number="sessionIdleTimeout"
+                            type="number"
+                            min="1"
+                            step="1"
+                            :placeholder="t('admin.accounts.quotaControl.sessionLimit.idleTimeoutPlaceholder')"
+                            class="w-full"
+                          />
+                          <span class="absolute right-3 top-1/2 -translate-y-1/2 text-muted">{{ t('common.minutes') }}</span>
+                        </div>
+                      </div>
                     </div>
-                  </UButton>
-                </div>
+                  </template>
+                </SettingRow>
+
+                <!-- RPM Limit -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.rpmLimit.label')"
+                  :hint="t('admin.accounts.quotaControl.rpmLimit.hint')"
+                  :on="rpmLimitEnabled"
+                  :summary="rpmLimitEnabled && baseRpm != null ? `${t('admin.accounts.quotaControl.rpmLimit.baseRpm')} ${baseRpm}` : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="rpmLimitEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="rpmLimitEnabled" class="space-y-3">
+                      <HintFormField :label="t('admin.accounts.quotaControl.rpmLimit.baseRpm')" :hint="t('admin.accounts.quotaControl.rpmLimit.baseRpmHint')">
+                        <UInput
+                          v-model.number="baseRpm"
+                          type="number"
+                          min="1"
+                          max="1000"
+                          step="1"
+                          :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
+                          class="w-full"
+                        />
+                      </HintFormField>
+
+                      <div>
+                        <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
+                        <div class="flex gap-1 rounded-lg bg-elevated p-1">
+                          <UButton
+                            :color="rpmStrategy === 'tiered' ? 'primary' : 'neutral'"
+                            :variant="rpmStrategy === 'tiered' ? 'solid' : 'ghost'"
+                            size="sm"
+                            block
+                            class="flex-1"
+                            type="button"
+                            @click="rpmStrategy = 'tiered'"
+                          >
+                            <div class="text-center">
+                              <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}</div>
+                              <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyTieredHint') }}</div>
+                            </div>
+                          </UButton>
+                          <UButton
+                            :color="rpmStrategy === 'sticky_exempt' ? 'primary' : 'neutral'"
+                            :variant="rpmStrategy === 'sticky_exempt' ? 'solid' : 'ghost'"
+                            size="sm"
+                            block
+                            class="flex-1"
+                            type="button"
+                            @click="rpmStrategy = 'sticky_exempt'"
+                          >
+                            <div class="text-center">
+                              <div>{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}</div>
+                              <div class="mt-0.5 text-[10px] opacity-70">{{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExemptHint') }}</div>
+                            </div>
+                          </UButton>
+                        </div>
+                      </div>
+
+                      <HintFormField v-if="rpmStrategy === 'tiered'" :label="t('admin.accounts.quotaControl.rpmLimit.stickyBuffer')" :hint="t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint')">
+                        <UInput
+                          v-model.number="rpmStickyBuffer"
+                          type="number"
+                          min="1"
+                          step="1"
+                          :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
+                          class="w-full"
+                        />
+                      </HintFormField>
+                    </div>
+                  </template>
+                </SettingRow>
+
+                <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')"
+                  :hint="t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint')"
+                  :on="userMsgQueueMode !== ''"
+                  :summary="umqModeOptions.find((option) => option.value === userMsgQueueMode)?.label ?? ''"
+                  :persistent-summary="true"
+                >
+                  <template #control>
+                    <div class="inline-flex gap-0.5 rounded-full bg-accented p-0.5" role="group" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')">
+                      <UButton
+                        :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
+                        :variant="userMsgQueueMode === opt.value ? 'soft' : 'ghost'"
+                        :aria-pressed="userMsgQueueMode === opt.value"
+                        class="rounded-full"
+                        size="xs"
+                        type="button"
+                        v-for="opt in umqModeOptions"
+                        :key="opt.value"
+                        @click="userMsgQueueMode = opt.value"
+                      >{{ opt.label }}</UButton>
+                    </div>
+                  </template>
+                </SettingRow>
+
+                <!-- TLS Fingerprint -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.tlsFingerprint.label')"
+                  :hint="t('admin.accounts.quotaControl.tlsFingerprint.hint')"
+                  :on="tlsFingerprintEnabled"
+                  :summary="tlsFingerprintEnabled ? (tlsFingerprintProfiles.find((profile) => profile.id === tlsFingerprintProfileId)?.name ?? t('admin.accounts.quotaControl.tlsFingerprint.defaultProfile')) : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="tlsFingerprintEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="tlsFingerprintEnabled">
+                      <Select
+                        v-model="tlsFingerprintProfileId"
+                        :options="[
+                          { value: null, label: t('admin.accounts.quotaControl.tlsFingerprint.defaultProfile') },
+                          ...(tlsFingerprintProfiles.length > 0 ? [{ value: -1, label: t('admin.accounts.quotaControl.tlsFingerprint.randomProfile') }] : []),
+                          ...tlsFingerprintProfiles.map((p) => ({ value: p.id, label: p.name }))
+                        ]"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+
+                <!-- Session ID Masking -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.sessionIdMasking.label')"
+                  :hint="t('admin.accounts.quotaControl.sessionIdMasking.hint')"
+                  :on="sessionIdMaskingEnabled"
+                >
+                  <template #control>
+                    <Toggle v-model="sessionIdMaskingEnabled" />
+                  </template>
+                </SettingRow>
+
+                <!-- Cache TTL Override -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.cacheTTLOverride.label')"
+                  :hint="t('admin.accounts.quotaControl.cacheTTLOverride.hint')"
+                  :on="cacheTTLOverrideEnabled"
+                  :summary="cacheTTLOverrideEnabled ? cacheTTLOverrideTarget : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="cacheTTLOverrideEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="cacheTTLOverrideEnabled">
+                      <label class="mb-1.5 block text-xs font-medium text-default">{{ t('admin.accounts.quotaControl.cacheTTLOverride.target') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.cacheTTLOverride.target')"><span class="block">{{ t('admin.accounts.quotaControl.cacheTTLOverride.targetHint') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.cacheTTLOverride.target')"><span class="block">{{ t('admin.accounts.editLoading') }}</span></HelpTooltip></label>
+                      <Select
+                        v-model="cacheTTLOverrideTarget"
+                        :options="[{ value: '5m', label: '5m' }, { value: '1h', label: '1h' }]"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
+
+                <!-- Custom Base URL Relay -->
+                <SettingRow
+                  :label="t('admin.accounts.quotaControl.customBaseUrl.label')"
+                  :hint="t('admin.accounts.quotaControl.customBaseUrl.hint')"
+                  :on="customBaseUrlEnabled"
+                  :summary="customBaseUrlEnabled ? customBaseUrl : ''"
+                >
+                  <template #control>
+                    <Toggle v-model="customBaseUrlEnabled" />
+                  </template>
+                  <template #fields>
+                    <div v-if="customBaseUrlEnabled">
+                      <UInput
+                        v-model="customBaseUrl"
+                        type="text"
+                        :placeholder="t('admin.accounts.quotaControl.customBaseUrl.urlHint')"
+                        class="w-full"
+                      />
+                    </div>
+                  </template>
+                </SettingRow>
               </div>
-  
-              <HintFormField v-if="rpmStrategy === 'tiered'" :label="t('admin.accounts.quotaControl.rpmLimit.stickyBuffer')" :hint="t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint')">
-                <UInput
-                  v-model.number="rpmStickyBuffer"
-                  type="number"
-                  min="1"
-                  step="1"
-                  :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
-                  class="w-full"
-                />
-              </HintFormField>
-  
             </div>
-  
-            <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
-            <div class="mt-4">
-              <label class="mb-1.5 block text-sm font-medium text-default">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')"><span class="block">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}</span></HelpTooltip></label>
-              
-              <div class="flex space-x-2">
-                <UButton
-                  :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
-                  :variant="userMsgQueueMode === opt.value ? 'solid' : 'outline'"
-                  size="sm"
-                  type="button"
-                  v-for="opt in umqModeOptions"
-                  :key="opt.value"
-                  @click="userMsgQueueMode = opt.value"
-                >{{ opt.label }}</UButton>
-              </div>
-            </div>
-          </div>
-  
-          <!-- TLS Fingerprint -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.tlsFingerprint.label')" :hint="t('admin.accounts.quotaControl.tlsFingerprint.hint')" class="flex items-center justify-between gap-4">
-              <Toggle v-model="tlsFingerprintEnabled" />
-            </HintFormField>
-            <!-- Profile selector -->
-            <div v-if="tlsFingerprintEnabled" class="mt-3">
-              <Select
-                v-model="tlsFingerprintProfileId"
-                :options="[
-                  { value: null, label: t('admin.accounts.quotaControl.tlsFingerprint.defaultProfile') },
-                  ...(tlsFingerprintProfiles.length > 0 ? [{ value: -1, label: t('admin.accounts.quotaControl.tlsFingerprint.randomProfile') }] : []),
-                  ...tlsFingerprintProfiles.map((p) => ({ value: p.id, label: p.name }))
-                ]"
-              />
-            </div>
-          </div>
-  
-          <!-- Session ID Masking -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.sessionIdMasking.label')" :hint="t('admin.accounts.quotaControl.sessionIdMasking.hint')" class="flex items-center justify-between gap-4">
-              <Toggle v-model="sessionIdMaskingEnabled" />
-            </HintFormField>
-          </div>
-  
-          <!-- Cache TTL Override -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.cacheTTLOverride.label')" :hint="t('admin.accounts.quotaControl.cacheTTLOverride.hint')" class="flex items-center justify-between gap-4">
-              <Toggle v-model="cacheTTLOverrideEnabled" />
-            </HintFormField>
-            <div v-if="cacheTTLOverrideEnabled" class="mt-3">
-              <label class="mb-1.5 block text-sm font-medium text-default text-xs">{{ t('admin.accounts.quotaControl.cacheTTLOverride.target') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.cacheTTLOverride.target')"><span class="block">{{ t('admin.accounts.quotaControl.cacheTTLOverride.targetHint') }}</span></HelpTooltip><HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.cacheTTLOverride.target')"><span class="block">{{ t('admin.accounts.editLoading') }}</span></HelpTooltip></label>
-              <Select
-                v-model="cacheTTLOverrideTarget"
-                :options="[{ value: '5m', label: '5m' }, { value: '1h', label: '1h' }]"
-                class="mt-1"
-              />
-              
-            </div>
-          </div>
-  
-          <!-- Custom Base URL Relay -->
-          <div class="space-y-4">
-            <HintFormField :label="t('admin.accounts.quotaControl.customBaseUrl.label')" :hint="t('admin.accounts.quotaControl.customBaseUrl.hint')" class="flex items-center justify-between gap-4">
-              <Toggle v-model="customBaseUrlEnabled" />
-            </HintFormField>
-            <div v-if="customBaseUrlEnabled" class="mt-3">
-              <UInput
-                v-model="customBaseUrl"
-                type="text"
-                :placeholder="t('admin.accounts.quotaControl.customBaseUrl.urlHint')"
-                class="w-full"
-              />
-            </div>
-          </div>
-        </div>
-            </div>
+          </SettingGroup>
+        </SettingPanel>
       </div>
 
     </form>
@@ -2239,6 +2353,9 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import HintFormField from '@/components/common/HintFormField.vue'
+import SettingPanel from '@/components/common/SettingPanel.vue'
+import SettingGroup from '@/components/common/SettingGroup.vue'
+import SettingRow from '@/components/common/SettingRow.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -5063,7 +5180,13 @@ function refreshEditSections() {
   const next = { ...editSectionAvailable.value }
   for (const key of EDIT_SECTION_KEYS) {
     const el = editFormRef.value?.querySelector<HTMLElement>(`[data-edit-section="${key}"]`)
-    next[key] = !el || Array.from(el.children).some((child) => child.tagName !== 'H4')
+    // A section is worth a tab only when it holds something besides headings. The dense sections
+    // wrap their groups in a SettingPanel that is always rendered, so look inside it: a panel whose
+    // groups were all hidden by their own conditions is an empty section too. A group counts as
+    // soon as it rendered, whether it holds rows or another block (a quota card, a usage panel).
+    next[key] = !el || Array.from(el.children).some((child) =>
+      child.classList.contains('setting-panel') ? child.querySelector('.setting-group') !== null : child.tagName !== 'H4'
+    )
   }
   editSectionAvailable.value = next
   if (!next[editSection.value]) editSection.value = 'basic'

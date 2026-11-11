@@ -360,6 +360,14 @@ async function helpTextFor(wrapper: ReturnType<typeof mountModal>, fieldLabelKey
   return tooltip?.textContent ?? ''
 }
 
+// Settings on the 转发与错误 / 高级选项 tabs are SettingRow lines: the explanation sits in the row body that the
+// row header expands. Find the row by its label and read that body.
+function settingRowHintFor(wrapper: ReturnType<typeof mountModal>, labelKey: string): string {
+  const row = wrapper.findAll('.setting-row').find((el) => el.get('.setting-row__label').text().startsWith(labelKey))
+  if (!row) throw new Error(`no setting row labelled ${labelKey}`)
+  return row.findAll('.setting-row__hint').map((p) => p.text()).join('\n')
+}
+
 describe('EditAccountModal', () => {
   afterEach(() => {
     document.body.innerHTML = ''
@@ -1389,7 +1397,8 @@ describe('EditAccountModal', () => {
     const wrapper = mountModal(account)
 
     expect(wrapper.text()).toContain('admin.accounts.openai.codexImageTool')
-    expect(await helpTextFor(wrapper, 'admin.accounts.openai.codexImageTool')).toContain('admin.accounts.openai.codexImageToolDesc')
+    // The description now opens with the setting's row instead of from an info bubble.
+    expect(settingRowHintFor(wrapper, 'admin.accounts.openai.codexImageTool')).toContain('admin.accounts.openai.codexImageToolDesc')
     expect(wrapper.text()).toContain('admin.accounts.openai.codexImageToolEnabledDesc')
 
     await wrapper.get('button[data-testid="codex-image-tool-enabled"]').trigger('click')
@@ -1757,6 +1766,29 @@ describe('EditAccountModal section nav', () => {
     expect(visible()).toEqual(['models'])
     // fields in hidden sections stay mounted, so the payload does not depend on the visible section
     expect(wrapper.find('[data-edit-section="basic"] [data-tour="edit-account-form-name"]').exists()).toBe(true)
+  })
+
+  // The dense sections keep their SettingPanel mounted even when every group inside is hidden by
+  // its own condition. Such a section has nothing to show, so it must not get a tab: an Anthropic
+  // OAuth account has no forwarding setting at all, and used to land on an empty page.
+  it('offers no tab for a section whose settings are all hidden', async () => {
+    const tabs = (wrapper: ReturnType<typeof mountModal>) =>
+      wrapper.get('[data-testid="edit-section-nav"]').findAll('button').map((b) => b.text())
+
+    const anthropicOAuth = { ...buildAccount(), platform: 'anthropic', type: 'oauth', credentials: {} }
+    const empty = mountModal(anthropicOAuth)
+    await flushPromises()
+    expect(empty.find('[data-edit-section="forwarding"] .setting-group').exists()).toBe(false)
+    expect(tabs(empty)).not.toContain('admin.accounts.editSections.forwarding')
+    expect(tabs(empty)).toContain('admin.accounts.advancedOptions')
+    empty.unmount()
+
+    // An API-key account does have forwarding settings: the tab stays.
+    const withSettings = mountModal(buildAccount())
+    await flushPromises()
+    expect(withSettings.find('[data-edit-section="forwarding"] .setting-group').exists()).toBe(true)
+    expect(tabs(withSettings)).toContain('admin.accounts.editSections.forwarding')
+    withSettings.unmount()
   })
   it('reveals the stored API key through the backend and keeps it out of the save payload', async () => {
     const account = buildAccount()
