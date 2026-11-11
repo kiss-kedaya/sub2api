@@ -331,6 +331,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 	scanner := s.newUpstreamSSEScanner(resp.Body)
+	// Read once: the chunk carrying usage arrives much later, and the headers are
+	// the only source of the per-TTL split.
+	streamCacheFiveMinute, streamCacheOneHour, streamCacheBucketsOK := ParseMSHCacheWriteBuckets(resp.Header)
 
 	var usage OpenAIUsage
 	var firstTokenMs *int
@@ -430,6 +433,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 		line = applyOllamaCloudRawChatCompletionsSSELine(account, line)
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
+		// Same split as the buffered path, applied to the chunk that carries
+		// usage. No headers means no change.
+		if streamCacheBucketsOK {
+			line = InjectChatCompletionCacheCreationIntoSSELine(line, streamCacheFiveMinute, streamCacheOneHour)
+		}
 
 		writeLine(line)
 		if line == "" {
@@ -733,6 +741,9 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
 	}
 	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
+	// The upstream reports the prompt-cache writes per TTL bucket in headers; a
+	// chat client cannot see those, so carry the split into the body's usage.
+	respBody = InjectChatCompletionCacheCreation(respBody, resp.Header)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
