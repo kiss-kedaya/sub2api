@@ -31,7 +31,10 @@ func TestAccountRepositoryListDueUpstreamBillingProbeAccountsBoundsQuery(t *test
 	// 探测资格已放宽到全部 API-key 平台：候选 SQL 不得再按 platform 过滤。
 	require.NotContains(t, normalized, "platform")
 	require.Contains(t, normalized, "type = 'apikey'")
+	// 候选 = 显式开启，或从未表态（键不存在）。管理员显式关掉的账号带着
+	// 值为 false 的键，两个条件都不满足，不会被自动探测覆盖。
 	require.Contains(t, normalized, `extra @> '{"upstream_billing_probe_enabled": true}'::jsonb`)
+	require.Contains(t, normalized, `OR NOT COALESCE(extra, '{}'::jsonb) ? 'upstream_billing_probe_enabled'`)
 	require.Contains(t, normalized, "jsonb_path_query_first_tz")
 	require.Contains(t, normalized, `'(\.[0-9]{6})[0-9]+(Z|[+-][0-9]{2}:[0-9]{2})$'`)
 	require.Contains(t, normalized, "parsed AS MATERIALIZED")
