@@ -1767,6 +1767,29 @@ describe('EditAccountModal section nav', () => {
     // fields in hidden sections stay mounted, so the payload does not depend on the visible section
     expect(wrapper.find('[data-edit-section="basic"] [data-tour="edit-account-form-name"]').exists()).toBe(true)
   })
+
+  // The dense sections keep their SettingPanel mounted even when every group inside is hidden by
+  // its own condition. Such a section has nothing to show, so it must not get a tab: an Anthropic
+  // OAuth account has no forwarding setting at all, and used to land on an empty page.
+  it('offers no tab for a section whose settings are all hidden', async () => {
+    const tabs = (wrapper: ReturnType<typeof mountModal>) =>
+      wrapper.get('[data-testid="edit-section-nav"]').findAll('button').map((b) => b.text())
+
+    const anthropicOAuth = { ...buildAccount(), platform: 'anthropic', type: 'oauth', credentials: {} }
+    const empty = mountModal(anthropicOAuth)
+    await flushPromises()
+    expect(empty.find('[data-edit-section="forwarding"] .setting-group').exists()).toBe(false)
+    expect(tabs(empty)).not.toContain('admin.accounts.editSections.forwarding')
+    expect(tabs(empty)).toContain('admin.accounts.advancedOptions')
+    empty.unmount()
+
+    // An API-key account does have forwarding settings: the tab stays.
+    const withSettings = mountModal(buildAccount())
+    await flushPromises()
+    expect(withSettings.find('[data-edit-section="forwarding"] .setting-group').exists()).toBe(true)
+    expect(tabs(withSettings)).toContain('admin.accounts.editSections.forwarding')
+    withSettings.unmount()
+  })
   it('reveals the stored API key through the backend and keeps it out of the save payload', async () => {
     const account = buildAccount()
     account.credentials = { base_url: 'https://api.openai.com' }

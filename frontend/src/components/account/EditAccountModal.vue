@@ -1377,7 +1377,7 @@
                 :summary="accountSchedulingThresholdOverrideEnabled ? `${accountSchedulingThresholdOverrideValue}%` : ''"
               >
                 <template #control>
-                  <UCheckbox v-model="accountSchedulingThresholdOverrideEnabled" data-testid="account-scheduling-threshold-override-enabled" />
+                  <Toggle v-model="accountSchedulingThresholdOverrideEnabled" data-testid="account-scheduling-threshold-override-enabled" />
                 </template>
                 <template #fields>
                   <HintFormField v-if="accountSchedulingThresholdOverrideEnabled" :label="t('admin.accounts.accountSchedulingThresholdOverrideValue')" :hint="t('admin.accounts.accountSchedulingThresholdOverrideDisabledHint')">
@@ -1901,7 +1901,10 @@
             </div>
           </SettingGroup>
 
-          <SettingGroup :title="t('admin.accounts.formSections.limits')">
+          <SettingGroup
+            :title="t('admin.accounts.formSections.limits')"
+            :description="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token') ? t('admin.accounts.quotaControl.hint') : undefined"
+          >
             <div v-if="[(account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')), (account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'), (account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token'))].some(Boolean)">
               <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
               <div v-if="account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')" class="pb-3">
@@ -2001,7 +2004,7 @@
                 <!-- Window Cost Limit -->
                 <SettingRow
                   :label="t('admin.accounts.quotaControl.windowCost.label')"
-                  :hint="[t('admin.accounts.quotaControl.hint'), t('admin.accounts.quotaControl.windowCost.hint')]"
+                  :hint="t('admin.accounts.quotaControl.windowCost.hint')"
                   :on="windowCostEnabled"
                   :summary="windowCostEnabled ? [windowCostLimit != null ? `${t('admin.accounts.quotaControl.windowCost.limit')} ${windowCostLimit}` : '', windowCostStickyReserve != null ? `${t('admin.accounts.quotaControl.windowCost.stickyReserve')} ${windowCostStickyReserve}` : ''].filter(Boolean).join(' · ') : ''"
                 >
@@ -2163,11 +2166,13 @@
                   :persistent-summary="true"
                 >
                   <template #control>
-                    <div class="flex gap-2">
+                    <div class="inline-flex gap-0.5 rounded-full bg-accented p-0.5" role="group" :aria-label="t('admin.accounts.quotaControl.rpmLimit.userMsgQueue')">
                       <UButton
                         :color="userMsgQueueMode === opt.value ? 'primary' : 'neutral'"
-                        :variant="userMsgQueueMode === opt.value ? 'solid' : 'outline'"
-                        size="sm"
+                        :variant="userMsgQueueMode === opt.value ? 'soft' : 'ghost'"
+                        :aria-pressed="userMsgQueueMode === opt.value"
+                        class="rounded-full"
+                        size="xs"
                         type="button"
                         v-for="opt in umqModeOptions"
                         :key="opt.value"
@@ -5175,7 +5180,13 @@ function refreshEditSections() {
   const next = { ...editSectionAvailable.value }
   for (const key of EDIT_SECTION_KEYS) {
     const el = editFormRef.value?.querySelector<HTMLElement>(`[data-edit-section="${key}"]`)
-    next[key] = !el || Array.from(el.children).some((child) => child.tagName !== 'H4')
+    // A section is worth a tab only when it holds something besides headings. The dense sections
+    // wrap their groups in a SettingPanel that is always rendered, so look inside it: a panel whose
+    // groups were all hidden by their own conditions is an empty section too. A group counts as
+    // soon as it rendered, whether it holds rows or another block (a quota card, a usage panel).
+    next[key] = !el || Array.from(el.children).some((child) =>
+      child.classList.contains('setting-panel') ? child.querySelector('.setting-group') !== null : child.tagName !== 'H4'
+    )
   }
   editSectionAvailable.value = next
   if (!next[editSection.value]) editSection.value = 'basic'

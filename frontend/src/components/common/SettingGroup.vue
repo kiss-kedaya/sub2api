@@ -6,12 +6,15 @@
 defineProps<{
   /** Already-translated group title. Omit to render the rows with no heading. */
   title?: string
+  /** Already-translated line under the title, for what the whole group is about. */
+  description?: string
 }>()
 </script>
 
 <template>
   <section class="setting-group">
     <h4 v-if="title" class="setting-group__title">{{ title }}</h4>
+    <p v-if="description" class="setting-group__description">{{ description }}</p>
     <div class="setting-group__rows">
       <slot />
     </div>
@@ -31,6 +34,15 @@ defineProps<{
   line-height: 16px;
   letter-spacing: 0.06em;
   color: var(--ui-text-dimmed);
+}
+
+.setting-group__description {
+  max-width: 64ch;
+  padding-block-end: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ui-text-muted);
+  text-wrap: pretty;
 }
 
 /* Rows draw the line above themselves; the group closes the list with the line below the last one.
