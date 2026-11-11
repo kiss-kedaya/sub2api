@@ -9,6 +9,10 @@ export default {
     saved: '保存成功',
     deleted: '删除成功',
     cancel: '取消',
+    settingsSummary: {
+      enabled: '已启用 {count} 项',
+      allDefault: '全部保持默认',
+    },
     done: '完成',
     delete: '删除',
     edit: '编辑',

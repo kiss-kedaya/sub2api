@@ -360,6 +360,14 @@ async function helpTextFor(wrapper: ReturnType<typeof mountModal>, fieldLabelKey
   return tooltip?.textContent ?? ''
 }
 
+// Settings on the 转发与错误 / 高级选项 tabs are SettingRow lines: the explanation sits in the row body that the
+// row header expands. Find the row by its label and read that body.
+function settingRowHintFor(wrapper: ReturnType<typeof mountModal>, labelKey: string): string {
+  const row = wrapper.findAll('.setting-row').find((el) => el.get('.setting-row__label').text().startsWith(labelKey))
+  if (!row) throw new Error(`no setting row labelled ${labelKey}`)
+  return row.findAll('.setting-row__hint').map((p) => p.text()).join('\n')
+}
+
 describe('EditAccountModal', () => {
   afterEach(() => {
     document.body.innerHTML = ''
@@ -1389,7 +1397,8 @@ describe('EditAccountModal', () => {
     const wrapper = mountModal(account)
 
     expect(wrapper.text()).toContain('admin.accounts.openai.codexImageTool')
-    expect(await helpTextFor(wrapper, 'admin.accounts.openai.codexImageTool')).toContain('admin.accounts.openai.codexImageToolDesc')
+    // The description now opens with the setting's row instead of from an info bubble.
+    expect(settingRowHintFor(wrapper, 'admin.accounts.openai.codexImageTool')).toContain('admin.accounts.openai.codexImageToolDesc')
     expect(wrapper.text()).toContain('admin.accounts.openai.codexImageToolEnabledDesc')
 
     await wrapper.get('button[data-testid="codex-image-tool-enabled"]').trigger('click')
