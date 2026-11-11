@@ -84,6 +84,9 @@ func (s *GatewayService) tempUnscheduleTransportError(ctx context.Context, accou
 	if s == nil || account == nil || s.accountRepo == nil {
 		return
 	}
+	if !account.ShouldAutoTempUnscheduleOnTransportError() {
+		return
+	}
 	until := time.Now().Add(gatewayTransportErrorTempUnschedDuration)
 	reason := "upstream transport error (proxy/network): " + safeErr
 

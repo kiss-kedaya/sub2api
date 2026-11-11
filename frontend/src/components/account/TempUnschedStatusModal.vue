@@ -88,6 +88,15 @@
           </div>
         </div>
 
+        <div v-if="rawReason" class="">
+          <p class="text-xs text-muted">
+            {{ t('admin.accounts.tempUnschedulable.rawReason') }}
+          </p>
+          <div class="mt-2 rounded-md bg-muted p-2 font-mono text-xs text-default" data-testid="temp-unsched-raw-reason">
+            {{ rawReason }}
+          </div>
+        </div>
+
         <div
           v-if="hasThresholdEvidence"
           class="rounded-md bg-info/10 px-3 py-2 text-sm text-info"
@@ -137,6 +146,17 @@ const resetting = ref(false)
 const status = ref<TempUnschedulableStatus | null>(null)
 
 const state = computed(() => status.value?.state || null)
+
+// Marks written by the gateway itself (transport / network failures) carry a
+// free-form reason rather than a matched rule. Show it as-is: without it the
+// dialog reads "no current temporary unschedule" for an account that is in fact
+// unscheduled, which is exactly the case an operator needs to see.
+const rawReason = computed(() => {
+  const reason = props.account?.temp_unschedulable_reason?.trim()
+  if (!reason) return ''
+  if (reason === state.value?.error_message?.trim()) return ''
+  return reason
+})
 
 const isActive = computed(() => {
   if (!status.value?.active || !state.value) return false
