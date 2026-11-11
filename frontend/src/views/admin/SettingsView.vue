@@ -50,89 +50,102 @@
             :title="t('admin.settings.adminApiKey.title')"
             :description="t('admin.settings.adminApiKey.description')"
           >
-            <!-- Security Warning -->
-            <UAlert
-              color="warning"
-              variant="subtle"
-              icon="i-lucide-triangle-alert"
-              :description="t('admin.settings.adminApiKey.securityWarning')"
-            />
-            <!-- Loading State -->
-            <div v-if="adminApiKeyLoading" class="flex items-center gap-2 text-muted">
-              <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin text-muted" />
-              {{ t("common.loading") }}
-            </div>
-            <!-- No Key Configured -->
-            <div v-else-if="!adminApiKeyExists" class="flex items-center justify-between">
-              <span class="text-muted">
-                {{ t("admin.settings.adminApiKey.notConfigured") }}
-              </span>
-              <UButton
-                :loading="adminApiKeyOperating"
-                @click="createAdminApiKey"
-                :disabled="adminApiKeyOperating"
-                size="sm"
-              >
-                {{
-                  adminApiKeyOperating
-                    ? t("admin.settings.adminApiKey.creating")
-                    : t("admin.settings.adminApiKey.create")
-                }}
-              </UButton>
-            </div>
-            <!-- Key Exists -->
-            <template v-else>
-              <div class="flex items-center justify-between">
-                <UFormField :label="t('admin.settings.adminApiKey.currentKey')">
-                  <code class="rounded-sm bg-elevated px-2 py-1 font-mono text-sm text-highlighted">
-                    {{ adminApiKeyMasked }}
-                  </code>
-                </UFormField>
-                <div class="flex gap-2">
-                  <UButton
-                    @click="regenerateAdminApiKey"
-                    :disabled="adminApiKeyOperating"
-                    color="neutral"
-                    variant="outline"
-                    size="sm"
-                  >
-                    {{
-                      adminApiKeyOperating
-                        ? t("admin.settings.adminApiKey.regenerating")
-                        : t("admin.settings.adminApiKey.regenerate")
-                    }}
-                  </UButton>
-                  <UButton
-                    @click="deleteAdminApiKey"
-                    :disabled="adminApiKeyOperating"
-                    color="error"
-                    variant="soft"
-                    size="sm"
-                  >
-                    {{ t("admin.settings.adminApiKey.delete") }}
-                  </UButton>
-                </div>
+            <SettingPanel hide-summary>
+              <!-- Security Warning -->
+              <UAlert
+                color="warning"
+                variant="subtle"
+                icon="i-lucide-triangle-alert"
+                :description="t('admin.settings.adminApiKey.securityWarning')"
+              />
+              <!-- Loading State -->
+              <div v-if="adminApiKeyLoading" class="flex items-center gap-2 text-sm text-muted">
+                <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin text-muted" />
+                {{ t("common.loading") }}
               </div>
-              <!-- Newly Generated Key Display -->
-              <template v-if="newAdminApiKey">
-                <p class="text-sm font-medium text-success">
-                  {{ t("admin.settings.adminApiKey.keyWarning") }}
-                </p>
-                <div class="flex items-center gap-2">
-                  <code
-                    class="flex-1 select-all break-all rounded-sm border border-success/30 bg-default px-3 py-2 font-mono text-sm"
-                  >
-                    {{ newAdminApiKey }}
-                  </code>
-                  <UButton @click="copyNewKey" size="sm">
-                    {{ t("admin.settings.adminApiKey.copyKey") }}
-                  </UButton>
-                </div>
-                <p class="text-xs text-success">
-                  {{ t("admin.settings.adminApiKey.usage") }}
-                </p>
-              </template>
-            </template>
+              <!-- No Key Configured -->
+              <SettingGroup v-else-if="!adminApiKeyExists">
+                <SettingRow
+                  :label="t('admin.settings.adminApiKey.currentKey')"
+                  :summary="t('admin.settings.adminApiKey.notConfigured')"
+                  persistent-summary
+                  :in-summary="false"
+                >
+                  <template #control>
+                    <UButton
+                      :loading="adminApiKeyOperating"
+                      @click="createAdminApiKey"
+                      :disabled="adminApiKeyOperating"
+                      size="sm"
+                    >
+                      {{
+                        adminApiKeyOperating
+                          ? t("admin.settings.adminApiKey.creating")
+                          : t("admin.settings.adminApiKey.create")
+                      }}
+                    </UButton>
+                  </template>
+                </SettingRow>
+              </SettingGroup>
+              <!-- Key Exists -->
+              <SettingGroup v-else>
+                <SettingRow
+                  :label="t('admin.settings.adminApiKey.currentKey')"
+                  :summary="adminApiKeyMasked"
+                  :on="true"
+                  persistent-summary
+                  :in-summary="false"
+                >
+                  <template #control>
+                    <div class="flex gap-2">
+                      <UButton
+                        @click="regenerateAdminApiKey"
+                        :disabled="adminApiKeyOperating"
+                        color="neutral"
+                        variant="outline"
+                        size="sm"
+                      >
+                        {{
+                          adminApiKeyOperating
+                            ? t("admin.settings.adminApiKey.regenerating")
+                            : t("admin.settings.adminApiKey.regenerate")
+                        }}
+                      </UButton>
+                      <UButton
+                        @click="deleteAdminApiKey"
+                        :disabled="adminApiKeyOperating"
+                        color="error"
+                        variant="soft"
+                        size="sm"
+                      >
+                        {{ t("admin.settings.adminApiKey.delete") }}
+                      </UButton>
+                    </div>
+                  </template>
+                  <!-- Newly Generated Key Display: live state, never folded away -->
+                  <template #status>
+                    <div v-if="newAdminApiKey" class="grid gap-2 pb-3">
+                      <p class="text-sm font-medium text-success">
+                        {{ t("admin.settings.adminApiKey.keyWarning") }}
+                      </p>
+                      <div class="flex items-center gap-2">
+                        <code
+                          class="min-w-0 flex-1 select-all break-all rounded-sm border border-success/30 bg-default px-3 py-2 font-mono text-sm"
+                        >
+                          {{ newAdminApiKey }}
+                        </code>
+                        <UButton @click="copyNewKey" size="sm">
+                          {{ t("admin.settings.adminApiKey.copyKey") }}
+                        </UButton>
+                      </div>
+                      <p class="text-xs text-success">
+                        {{ t("admin.settings.adminApiKey.usage") }}
+                      </p>
+                    </div>
+                  </template>
+                </SettingRow>
+              </SettingGroup>
+            </SettingPanel>
           </SettingsSection>
         </div>
         <!-- /Tab: Security — Admin API Key -->
@@ -1004,14 +1017,13 @@
                     <Toggle v-model="form.totp_enabled" :disabled="!form.totp_encryption_key_configured" />
                   </template>
                   <template #status>
-                    <p v-if="!form.totp_encryption_key_configured" class="text-sm text-warning mt-2">
+                    <p v-if="!form.totp_encryption_key_configured" class="settings-row-status text-warning">
                       {{ t("admin.settings.registration.totpKeyNotConfigured") }}
                     </p>
                   </template>
                 </SettingRow>
-              </SettingGroup>
               <!-- Passkey sign-in -->
-              <div class="border-default" data-testid="passkey-settings">
+              <div class="grid" data-testid="passkey-settings">
                 <SettingRow
                   :label="t('admin.settings.security.passkey')"
                   :hint="t('admin.settings.security.passkeyHint')"
@@ -1023,42 +1035,42 @@
                       :disabled="!form.passkey_configured"
                     />
                   </template>
+                  <!-- Deployment state belongs to this row: it is why the switch above may be disabled. -->
+                  <template #status>
+                    <div
+                      class="settings-row-status"
+                      :class="form.passkey_configured ? 'text-success' : 'text-warning'"
+                      data-testid="passkey-config-status"
+                    >
+                      <p class="font-medium">
+                        {{
+                          form.passkey_configured
+                            ? t("admin.settings.security.passkeyConfigured")
+                            : t("admin.settings.security.passkeyNotConfigured")
+                        }}
+                      </p>
+                      <p class="break-all text-muted">
+                        {{ t("admin.settings.security.passkeyRPID") }}:
+                        {{ form.passkey_rp_id || t("admin.settings.security.passkeyValueNotConfigured") }}
+                      </p>
+                      <p class="break-all text-muted">
+                        {{ t("admin.settings.security.passkeyOrigins") }}:
+                        {{
+                          form.passkey_rp_origins.length > 0
+                            ? form.passkey_rp_origins.join(", ")
+                            : t(
+                                "admin.settings.security.passkeyValueNotConfigured",
+                              )
+                        }}
+                      </p>
+                      <p v-if="!form.passkey_configured">
+                        {{ t("admin.settings.security.passkeyDeploymentHint") }}
+                      </p>
+                    </div>
+                  </template>
                 </SettingRow>
-                <div
-                  class="mt-3 rounded-lg border px-3 py-2 text-sm"
-                  :class="
-                    form.passkey_configured
-                      ? 'border-success/30 bg-success/10 text-success'
-                      : 'border-warning/30 bg-warning/10 text-warning'
-                  "
-                  data-testid="passkey-config-status"
-                >
-                  <p class="font-medium">
-                    {{
-                      form.passkey_configured
-                        ? t("admin.settings.security.passkeyConfigured")
-                        : t("admin.settings.security.passkeyNotConfigured")
-                    }}
-                  </p>
-                  <p class="mt-1 break-all">
-                    {{ t("admin.settings.security.passkeyRPID") }}:
-                    {{ form.passkey_rp_id || t("admin.settings.security.passkeyValueNotConfigured") }}
-                  </p>
-                  <p class="mt-1 break-all">
-                    {{ t("admin.settings.security.passkeyOrigins") }}:
-                    {{
-                      form.passkey_rp_origins.length > 0
-                        ? form.passkey_rp_origins.join(", ")
-                        : t(
-                            "admin.settings.security.passkeyValueNotConfigured",
-                          )
-                    }}
-                  </p>
-                  <p v-if="!form.passkey_configured" class="mt-2">
-                    {{ t("admin.settings.security.passkeyDeploymentHint") }}
-                  </p>
-                </div>
               </div>
+              </SettingGroup>
               <!-- 敏感操作 step-up 2FA -->
               <SettingGroup>
                 <SettingRow
@@ -1198,7 +1210,7 @@
                   </template>
                 </SettingRow>
                 <template v-if="panelRateLimitForm.enabled">
-                  <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  <div class="grid">
                     <SettingRow
                       :label="t('admin.settings.panelRateLimit.userRpm')"
                       :hint="t('admin.settings.panelRateLimit.userRpmHint')"
@@ -1301,203 +1313,234 @@
                   <template #fields>
                     <template v-if="captchaMasterEnabled">
                       <!-- Provider Selector -->
-                      <UFormField :label="t('admin.settings.captcha.provider')" :ui="{ container: 'w-full mt-3' }">
-                        <div class="grid grid-cols-3 gap-2 rounded-lg bg-elevated p-1">
-                          <UButton
-                            data-testid="captcha-provider-turnstile"
-                            @click="selectCaptchaProvider('turnstile')"
-                            color="neutral"
-                            :variant="captchaProviderSelection === 'turnstile' ? 'outline' : 'ghost'"
-                            class="justify-center"
-                          >
-                            {{ t("admin.settings.captcha.providerTurnstile") }}
-                          </UButton>
-                          <UButton
-                            data-testid="captcha-provider-tencent"
-                            @click="selectCaptchaProvider('tencent')"
-                            color="neutral"
-                            :variant="captchaProviderSelection === 'tencent' ? 'outline' : 'ghost'"
-                            class="justify-center"
-                          >
-                            {{ t("admin.settings.captcha.providerTencent") }}
-                          </UButton>
-                          <UButton
-                            data-testid="captcha-provider-aliyun"
-                            @click="selectCaptchaProvider('aliyun')"
-                            color="neutral"
-                            :variant="captchaProviderSelection === 'aliyun' ? 'outline' : 'ghost'"
-                            class="justify-center"
-                          >
-                            {{ t("admin.settings.captcha.providerAliyun") }}
-                          </UButton>
-                        </div>
-                      </UFormField>
-                      <!-- Cloudflare Turnstile fields -->
-                      <div v-if="captchaProviderSelection === 'turnstile'" class="grid grid-cols-1 gap-6">
-                        <UFormField :label="t('admin.settings.turnstile.siteKey')">
-                          <template #description>
-                            <span>
+                      <SettingGroup>
+                        <SettingRow :label="t('admin.settings.captcha.provider')" :on="true" :in-summary="false">
+                          <template #control>
+                            <div class="settings-segmented" role="group" :aria-label="t('admin.settings.captcha.provider')">
+                              <UButton
+                                data-testid="captcha-provider-turnstile"
+                                @click="selectCaptchaProvider('turnstile')"
+                                color="neutral"
+                                :variant="captchaProviderSelection === 'turnstile' ? 'outline' : 'ghost'"
+                                :aria-pressed="captchaProviderSelection === 'turnstile'"
+                                size="sm"
+                                class="justify-center"
+                              >
+                                {{ t("admin.settings.captcha.providerTurnstile") }}
+                              </UButton>
+                              <UButton
+                                data-testid="captcha-provider-tencent"
+                                @click="selectCaptchaProvider('tencent')"
+                                color="neutral"
+                                :variant="captchaProviderSelection === 'tencent' ? 'outline' : 'ghost'"
+                                :aria-pressed="captchaProviderSelection === 'tencent'"
+                                size="sm"
+                                class="justify-center"
+                              >
+                                {{ t("admin.settings.captcha.providerTencent") }}
+                              </UButton>
+                              <UButton
+                                data-testid="captcha-provider-aliyun"
+                                @click="selectCaptchaProvider('aliyun')"
+                                color="neutral"
+                                :variant="captchaProviderSelection === 'aliyun' ? 'outline' : 'ghost'"
+                                :aria-pressed="captchaProviderSelection === 'aliyun'"
+                                size="sm"
+                                class="justify-center"
+                              >
+                                {{ t("admin.settings.captcha.providerAliyun") }}
+                              </UButton>
+                            </div>
+                          </template>
+                        </SettingRow>
+                        <!-- Cloudflare Turnstile fields -->
+                        <template v-if="captchaProviderSelection === 'turnstile'">
+                          <SettingRow wide-control :label="t('admin.settings.turnstile.siteKey')" :on="true" :in-summary="false">
+                            <template #hint>
                               {{ t("admin.settings.turnstile.siteKeyHint") }}
                               <a href="https://dash.cloudflare.com/" target="_blank" class="text-primary hover:underline">{{ t("admin.settings.turnstile.cloudflareDashboard") }}</a>
-                            </span>
-                          </template>
-                          <UInput
-                            v-model="form.turnstile_site_key"
-                            type="text"
-                            placeholder="0x4AAAAAAA..."
-                            class="w-full font-mono"
-                          />
-                        </UFormField>
-                        <UFormField
-                          :label="t('admin.settings.turnstile.secretKey')"
-                          :description="form.turnstile_secret_key_configured
-                                ? t(
-                                    'admin.settings.turnstile.secretKeyConfiguredHint',
-                                  )
-                                : t('admin.settings.turnstile.secretKeyHint')"
-                        >
-                          <UInput
-                            v-model="form.turnstile_secret_key"
-                            type="password"
-                            placeholder="0x4AAAAAAA..."
-                            class="w-full font-mono"
-                          />
-                        </UFormField>
-                      </div>
-                      <!-- Tencent Captcha fields -->
-                      <template v-else-if="captchaProviderSelection === 'tencent'">
-                        <UFormField
-                          :label="t('admin.settings.tencentCaptcha.region')"
-                          :description="t('admin.settings.tencentCaptcha.regionHint')"
-                          :ui="{ container: 'w-full mt-3' }"
-                        >
-                          <div class="grid grid-cols-2 gap-2 rounded-lg bg-elevated p-1">
-                            <UButton
-                              data-testid="tencent-captcha-region-cn"
-                              @click="form.tencent_captcha_region = 'cn'"
-                              :color="form.tencent_captcha_region !== 'intl' ? 'primary' : 'neutral'"
-                              :variant="form.tencent_captcha_region !== 'intl' ? 'subtle' : 'outline'"
-                              size="sm"
-                              class="justify-center"
-                            >
-                              {{ t("admin.settings.tencentCaptcha.regionCn") }}
-                            </UButton>
-                            <UButton
-                              data-testid="tencent-captcha-region-intl"
-                              @click="form.tencent_captcha_region = 'intl'"
-                              :color="form.tencent_captcha_region === 'intl' ? 'primary' : 'neutral'"
-                              :variant="form.tencent_captcha_region === 'intl' ? 'subtle' : 'outline'"
-                              size="sm"
-                              class="justify-center"
-                            >
-                              {{ t("admin.settings.tencentCaptcha.regionIntl") }}
-                            </UButton>
+                            </template>
+                            <template #control>
+                              <UInput
+                                v-model="form.turnstile_site_key"
+                                type="text"
+                                placeholder="0x4AAAAAAA..."
+                                class="w-full font-mono"
+                              />
+                            </template>
+                          </SettingRow>
+                          <SettingRow
+                            wide-control
+                            :label="t('admin.settings.turnstile.secretKey')"
+                            :hint="form.turnstile_secret_key_configured
+                              ? t(
+                                  'admin.settings.turnstile.secretKeyConfiguredHint',
+                                )
+                              : t('admin.settings.turnstile.secretKeyHint')"
+                            :on="true"
+                            :in-summary="false"
+                          >
+                            <template #control>
+                              <UInput
+                                v-model="form.turnstile_secret_key"
+                                type="password"
+                                placeholder="0x4AAAAAAA..."
+                                class="w-full font-mono"
+                              />
+                            </template>
+                          </SettingRow>
+                        </template>
+                        <!-- Tencent Captcha fields -->
+                        <template v-else-if="captchaProviderSelection === 'tencent'">
+                          <SettingRow
+                            :label="t('admin.settings.tencentCaptcha.region')"
+                            :hint="t('admin.settings.tencentCaptcha.regionHint')"
+                            :on="true"
+                            :in-summary="false"
+                          >
+                            <template #control>
+                              <div class="settings-segmented" role="group" :aria-label="t('admin.settings.tencentCaptcha.region')">
+                                <UButton
+                                  data-testid="tencent-captcha-region-cn"
+                                  @click="form.tencent_captcha_region = 'cn'"
+                                  color="neutral"
+                                  :variant="form.tencent_captcha_region !== 'intl' ? 'outline' : 'ghost'"
+                                  :aria-pressed="form.tencent_captcha_region !== 'intl'"
+                                  size="sm"
+                                  class="justify-center"
+                                >
+                                  {{ t("admin.settings.tencentCaptcha.regionCn") }}
+                                </UButton>
+                                <UButton
+                                  data-testid="tencent-captcha-region-intl"
+                                  @click="form.tencent_captcha_region = 'intl'"
+                                  color="neutral"
+                                  :variant="form.tencent_captcha_region === 'intl' ? 'outline' : 'ghost'"
+                                  :aria-pressed="form.tencent_captcha_region === 'intl'"
+                                  size="sm"
+                                  class="justify-center"
+                                >
+                                  {{ t("admin.settings.tencentCaptcha.regionIntl") }}
+                                </UButton>
+                              </div>
+                            </template>
+                          </SettingRow>
+                          <div class="settings-subhead">
+                            <h5>{{ t("admin.settings.tencentCaptcha.appCredentialsTitle") }}</h5>
+                            <p>{{ t("admin.settings.tencentCaptcha.appCredentialsHint") }}</p>
                           </div>
-                        </UFormField>
-                        <UFormField
-                          :label="t('admin.settings.tencentCaptcha.appCredentialsTitle')"
-                          :description="t('admin.settings.tencentCaptcha.appCredentialsHint')"
-                          :ui="{ container: 'w-full mt-3' }"
-                        >
-                          <UFormField :label="t('admin.settings.tencentCaptcha.appId')">
-                            <UInput
-                              v-model="form.tencent_captcha_app_id"
-                              type="text"
-                              inputmode="numeric"
-                              placeholder="123456789"
-                              class="w-full font-mono"
-                            />
-                          </UFormField>
-                          <UFormField
+                          <SettingRow wide-control :label="t('admin.settings.tencentCaptcha.appId')" :on="true" :in-summary="false">
+                            <template #control>
+                              <UInput
+                                v-model="form.tencent_captcha_app_id"
+                                type="text"
+                                inputmode="numeric"
+                                placeholder="123456789"
+                                class="w-full font-mono"
+                              />
+                            </template>
+                          </SettingRow>
+                          <SettingRow
+                            wide-control
                             :label="t('admin.settings.tencentCaptcha.appSecretKey')"
-                            :description="form.tencent_captcha_app_secret_key_configured ? t('admin.settings.tencentCaptcha.configured') : t('admin.settings.tencentCaptcha.required')"
+                            :hint="form.tencent_captcha_app_secret_key_configured ? t('admin.settings.tencentCaptcha.configured') : t('admin.settings.tencentCaptcha.required')"
+                            :on="true"
+                            :in-summary="false"
                           >
-                            <UInput
-                              v-model="form.tencent_captcha_app_secret_key"
-                              type="password"
-                              autocomplete="new-password"
-                              :placeholder="t('admin.settings.tencentCaptcha.keepExisting')"
-                              class="w-full font-mono"
-                            />
-                          </UFormField>
-                          <div class="border-t border-default pt-5 md:col-span-2">
-                            <h3 class="text-sm font-semibold text-highlighted">
-                              {{ t("admin.settings.tencentCaptcha.cloudCredentialsTitle") }}
-                            </h3>
-                            <p class="mt-1 text-xs text-muted">
-                              {{ t("admin.settings.tencentCaptcha.cloudCredentialsHint") }}
-                            </p>
+                            <template #control>
+                              <UInput
+                                v-model="form.tencent_captcha_app_secret_key"
+                                type="password"
+                                autocomplete="new-password"
+                                :placeholder="t('admin.settings.tencentCaptcha.keepExisting')"
+                                class="w-full font-mono"
+                              />
+                            </template>
+                          </SettingRow>
+                          <div class="settings-subhead">
+                            <h5>{{ t("admin.settings.tencentCaptcha.cloudCredentialsTitle") }}</h5>
+                            <p>{{ t("admin.settings.tencentCaptcha.cloudCredentialsHint") }}</p>
                           </div>
-                          <UFormField
+                          <SettingRow
+                            wide-control
                             :label="t('admin.settings.tencentCaptcha.cloudSecretId')"
-                            :description="form.tencent_captcha_cloud_secret_id_configured ? t('admin.settings.tencentCaptcha.configured') : t('admin.settings.tencentCaptcha.required')"
+                            :hint="form.tencent_captcha_cloud_secret_id_configured ? t('admin.settings.tencentCaptcha.configured') : t('admin.settings.tencentCaptcha.required')"
+                            :on="true"
+                            :in-summary="false"
                           >
-                            <UInput
-                              v-model="form.tencent_captcha_cloud_secret_id"
-                              type="password"
-                              autocomplete="new-password"
-                              :placeholder="t('admin.settings.tencentCaptcha.keepExisting')"
-                              class="w-full font-mono"
-                            />
-                          </UFormField>
-                          <UFormField
+                            <template #control>
+                              <UInput
+                                v-model="form.tencent_captcha_cloud_secret_id"
+                                type="password"
+                                autocomplete="new-password"
+                                :placeholder="t('admin.settings.tencentCaptcha.keepExisting')"
+                                class="w-full font-mono"
+                              />
+                            </template>
+                          </SettingRow>
+                          <SettingRow
+                            wide-control
                             :label="t('admin.settings.tencentCaptcha.cloudSecretKey')"
-                            :description="form.tencent_captcha_cloud_secret_key_configured ? t('admin.settings.tencentCaptcha.configured') : t('admin.settings.tencentCaptcha.required')"
+                            :hint="form.tencent_captcha_cloud_secret_key_configured ? t('admin.settings.tencentCaptcha.configured') : t('admin.settings.tencentCaptcha.required')"
+                            :on="true"
+                            :in-summary="false"
                           >
-                            <UInput
-                              v-model="form.tencent_captcha_cloud_secret_key"
-                              type="password"
-                              autocomplete="new-password"
-                              :placeholder="t('admin.settings.tencentCaptcha.keepExisting')"
-                              class="w-full font-mono"
-                            />
-                          </UFormField>
-                        </UFormField>
-                        <p class="text-xs text-muted">
-                          {{ t("admin.settings.tencentCaptcha.camPermissionHint") }}
-                        </p>
-                        <p class="text-xs text-muted">
-                          {{ t("admin.settings.tencentCaptcha.aidEncryptedHint") }}
-                        </p>
-                        <div class="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-                          <a
-                            :href="tencentCaptchaLinks.console"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="text-primary hover:underline"
-                          >
-                            {{ t("admin.settings.tencentCaptcha.openCaptchaConsole") }}
-                          </a>
-                          <a
-                            :href="tencentCaptchaLinks.cloudKeys"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="text-primary hover:underline"
-                          >
-                            {{ t("admin.settings.tencentCaptcha.createCloudKeys") }}
-                          </a>
-                          <a
-                            :href="tencentCaptchaLinks.webDocs"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="text-primary hover:underline"
-                          >
-                            {{ t("admin.settings.tencentCaptcha.openWebDocs") }}
-                          </a>
+                            <template #control>
+                              <UInput
+                                v-model="form.tencent_captcha_cloud_secret_key"
+                                type="password"
+                                autocomplete="new-password"
+                                :placeholder="t('admin.settings.tencentCaptcha.keepExisting')"
+                                class="w-full font-mono"
+                              />
+                            </template>
+                          </SettingRow>
+                        <div class="settings-footnote">
+                          <p>{{ t("admin.settings.tencentCaptcha.camPermissionHint") }}</p>
+                          <p>{{ t("admin.settings.tencentCaptcha.aidEncryptedHint") }}</p>
+                          <div class="flex flex-wrap gap-x-4 gap-y-1">
+                            <a
+                              :href="tencentCaptchaLinks.console"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="text-primary hover:underline"
+                            >
+                              {{ t("admin.settings.tencentCaptcha.openCaptchaConsole") }}
+                            </a>
+                            <a
+                              :href="tencentCaptchaLinks.cloudKeys"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="text-primary hover:underline"
+                            >
+                              {{ t("admin.settings.tencentCaptcha.createCloudKeys") }}
+                            </a>
+                            <a
+                              :href="tencentCaptchaLinks.webDocs"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="text-primary hover:underline"
+                            >
+                              {{ t("admin.settings.tencentCaptcha.openWebDocs") }}
+                            </a>
+                          </div>
                         </div>
-                      </template>
-                      <!-- Aliyun Captcha 2.0 fields -->
-                      <div v-else class="grid grid-cols-1 gap-6">
-                        <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                          <UFormField
-                            :label="t('admin.settings.aliyunCaptcha.region')"
-                            :description="t('admin.settings.aliyunCaptcha.regionHint')"
-                          >
-                            <div class="grid grid-cols-2 gap-2 rounded-lg bg-elevated p-1">
+                        </template>
+                        <!-- Aliyun Captcha 2.0 fields -->
+                        <template v-else>
+                        <SettingRow
+                          :label="t('admin.settings.aliyunCaptcha.region')"
+                          :hint="t('admin.settings.aliyunCaptcha.regionHint')"
+                          :on="true"
+                          :in-summary="false"
+                        >
+                          <template #control>
+                            <div class="settings-segmented" role="group" :aria-label="t('admin.settings.aliyunCaptcha.region')">
                               <UButton
                                 @click="form.aliyun_captcha_region = 'cn'"
-                                :color="form.aliyun_captcha_region !== 'sgp' ? 'primary' : 'neutral'"
-                                :variant="form.aliyun_captcha_region !== 'sgp' ? 'subtle' : 'outline'"
+                                color="neutral"
+                                :variant="form.aliyun_captcha_region !== 'sgp' ? 'outline' : 'ghost'"
+                                :aria-pressed="form.aliyun_captcha_region !== 'sgp'"
                                 size="sm"
                                 class="justify-center"
                               >
@@ -1505,66 +1548,88 @@
                               </UButton>
                               <UButton
                                 @click="form.aliyun_captcha_region = 'sgp'"
-                                :color="form.aliyun_captcha_region === 'sgp' ? 'primary' : 'neutral'"
-                                :variant="form.aliyun_captcha_region === 'sgp' ? 'subtle' : 'outline'"
+                                color="neutral"
+                                :variant="form.aliyun_captcha_region === 'sgp' ? 'outline' : 'ghost'"
+                                :aria-pressed="form.aliyun_captcha_region === 'sgp'"
                                 size="sm"
                                 class="justify-center"
                               >
                                 {{ t("admin.settings.aliyunCaptcha.regionSgp") }}
                               </UButton>
                             </div>
-                          </UFormField>
-                          <UFormField
-                            :label="t('admin.settings.aliyunCaptcha.prefix')"
-                            :description="t('admin.settings.aliyunCaptcha.prefixHint')"
-                          >
+                          </template>
+                        </SettingRow>
+                        <SettingRow
+                          wide-control
+                          :label="t('admin.settings.aliyunCaptcha.prefix')"
+                          :hint="t('admin.settings.aliyunCaptcha.prefixHint')"
+                          :on="true"
+                          :in-summary="false"
+                        >
+                          <template #control>
                             <UInput
                               v-model="form.aliyun_captcha_prefix"
                               type="text"
                               placeholder="14xxxxx"
                               class="w-full font-mono"
                             />
-                          </UFormField>
-                        </div>
-                        <UFormField
+                          </template>
+                        </SettingRow>
+                        <SettingRow
+                          wide-control
                           :label="t('admin.settings.aliyunCaptcha.sceneId')"
-                          :description="t('admin.settings.aliyunCaptcha.sceneIdHint')"
+                          :hint="t('admin.settings.aliyunCaptcha.sceneIdHint')"
+                          :on="true"
+                          :in-summary="false"
                         >
-                          <UInput
-                            v-model="form.aliyun_captcha_scene_id"
-                            type="text"
-                            placeholder="1cxxxxxx"
-                            class="w-full font-mono"
-                          />
-                        </UFormField>
-                        <UFormField
+                          <template #control>
+                            <UInput
+                              v-model="form.aliyun_captcha_scene_id"
+                              type="text"
+                              placeholder="1cxxxxxx"
+                              class="w-full font-mono"
+                            />
+                          </template>
+                        </SettingRow>
+                        <SettingRow
+                          wide-control
                           :label="t('admin.settings.aliyunCaptcha.accessKeyId')"
-                          :description="t('admin.settings.aliyunCaptcha.accessKeyIdHint')"
+                          :hint="t('admin.settings.aliyunCaptcha.accessKeyIdHint')"
+                          :on="true"
+                          :in-summary="false"
                         >
-                          <UInput
-                            v-model="form.aliyun_captcha_access_key_id"
-                            type="text"
-                            placeholder="LTAI..."
-                            class="w-full font-mono"
-                          />
-                        </UFormField>
-                        <UFormField
+                          <template #control>
+                            <UInput
+                              v-model="form.aliyun_captcha_access_key_id"
+                              type="text"
+                              placeholder="LTAI..."
+                              class="w-full font-mono"
+                            />
+                          </template>
+                        </SettingRow>
+                        <SettingRow
+                          wide-control
                           :label="t('admin.settings.aliyunCaptcha.accessKeySecret')"
-                          :description="form.aliyun_captcha_access_key_secret_configured
-                                ? t(
-                                    'admin.settings.aliyunCaptcha.accessKeySecretConfiguredHint',
-                                  )
-                                : t('admin.settings.aliyunCaptcha.accessKeySecretHint')"
+                          :hint="form.aliyun_captcha_access_key_secret_configured
+                            ? t(
+                                'admin.settings.aliyunCaptcha.accessKeySecretConfiguredHint',
+                              )
+                            : t('admin.settings.aliyunCaptcha.accessKeySecretHint')"
+                          :on="true"
+                          :in-summary="false"
                         >
-                          <UInput
-                            v-model="form.aliyun_captcha_access_key_secret"
-                            type="password"
-                            autocomplete="new-password"
-                            placeholder="••••••••"
-                            class="w-full font-mono"
-                          />
-                        </UFormField>
-                      </div>
+                          <template #control>
+                            <UInput
+                              v-model="form.aliyun_captcha_access_key_secret"
+                              type="password"
+                              autocomplete="new-password"
+                              placeholder="••••••••"
+                              class="w-full font-mono"
+                            />
+                          </template>
+                        </SettingRow>
+                        </template>
+                      </SettingGroup>
                     </template>
                   </template>
                 </SettingRow>
@@ -1598,74 +1663,89 @@
                   </template>
                   <template #fields>
                     <template v-if="form.linuxdo_connect_enabled">
-                      <div class="grid grid-cols-1 gap-6">
-                        <UFormField
+                      <SettingGroup>
+                        <SettingRow
+                          wide-control
                           :label="t('admin.settings.linuxdo.clientId')"
-                          :description="t('admin.settings.linuxdo.clientIdHint')"
+                          :hint="t('admin.settings.linuxdo.clientIdHint')"
+                          :on="true"
+                          :in-summary="false"
                         >
-                          <UInput
-                            v-model="form.linuxdo_connect_client_id"
-                            type="text"
-                            :placeholder="
-                              t('admin.settings.linuxdo.clientIdPlaceholder')
-                            "
-                            class="w-full font-mono"
-                          />
-                        </UFormField>
-
-                        <UFormField
+                          <template #control>
+                            <UInput
+                              v-model="form.linuxdo_connect_client_id"
+                              type="text"
+                              :placeholder="
+                                t('admin.settings.linuxdo.clientIdPlaceholder')
+                              "
+                              class="w-full font-mono"
+                            />
+                          </template>
+                        </SettingRow>
+                        <SettingRow
+                          wide-control
                           :label="t('admin.settings.linuxdo.clientSecret')"
-                          :description="form.linuxdo_connect_client_secret_configured
-                                ? t(
-                                    'admin.settings.linuxdo.clientSecretConfiguredHint',
-                                  )
-                                : t('admin.settings.linuxdo.clientSecretHint')"
+                          :hint="form.linuxdo_connect_client_secret_configured
+                            ? t(
+                                'admin.settings.linuxdo.clientSecretConfiguredHint',
+                              )
+                            : t('admin.settings.linuxdo.clientSecretHint')"
+                          :on="true"
+                          :in-summary="false"
                         >
-                          <UInput
-                            v-model="form.linuxdo_connect_client_secret"
-                            type="password"
-                            :placeholder="
-                              form.linuxdo_connect_client_secret_configured
-                                ? t(
-                                    'admin.settings.linuxdo.clientSecretConfiguredPlaceholder',
-                                  )
-                                : t('admin.settings.linuxdo.clientSecretPlaceholder')
-                            "
-                            class="w-full font-mono"
-                          />
-                        </UFormField>
-
-                        <UFormField
+                          <template #control>
+                            <UInput
+                              v-model="form.linuxdo_connect_client_secret"
+                              type="password"
+                              :placeholder="
+                                form.linuxdo_connect_client_secret_configured
+                                  ? t(
+                                      'admin.settings.linuxdo.clientSecretConfiguredPlaceholder',
+                                    )
+                                  : t('admin.settings.linuxdo.clientSecretPlaceholder')
+                              "
+                              class="w-full font-mono"
+                            />
+                          </template>
+                        </SettingRow>
+                        <SettingRow
+                          wide-control
                           :label="t('admin.settings.linuxdo.redirectUrl')"
-                          :description="t('admin.settings.linuxdo.redirectUrlHint')"
+                          :hint="t('admin.settings.linuxdo.redirectUrlHint')"
+                          :on="true"
+                          :in-summary="false"
                         >
-                          <UInput
-                            v-model="form.linuxdo_connect_redirect_url"
-                            type="url"
-                            :placeholder="
-                              t('admin.settings.linuxdo.redirectUrlPlaceholder')
-                            "
-                            class="w-full font-mono"
-                          />
-                          <div class="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                            <UButton
-                              @click="setAndCopyLinuxdoRedirectUrl"
-                              color="neutral"
-                              variant="outline"
-                              size="sm"
-                              class="w-fit"
-                            >
-                              {{ t("admin.settings.linuxdo.quickSetCopy") }}
-                            </UButton>
-                            <code
-                              v-if="linuxdoRedirectUrlSuggestion"
-                              class="select-all break-all rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
-                            >
-                              {{ linuxdoRedirectUrlSuggestion }}
-                            </code>
-                          </div>
-                        </UFormField>
-                      </div>
+                          <template #control>
+                            <UInput
+                              v-model="form.linuxdo_connect_redirect_url"
+                              type="url"
+                              :placeholder="
+                                t('admin.settings.linuxdo.redirectUrlPlaceholder')
+                              "
+                              class="w-full font-mono"
+                            />
+                          </template>
+                          <template #fields>
+                            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                              <UButton
+                                @click="setAndCopyLinuxdoRedirectUrl"
+                                color="neutral"
+                                variant="outline"
+                                size="sm"
+                                class="w-fit"
+                              >
+                                {{ t("admin.settings.linuxdo.quickSetCopy") }}
+                              </UButton>
+                              <code
+                                v-if="linuxdoRedirectUrlSuggestion"
+                                class="select-all break-all rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
+                              >
+                                {{ linuxdoRedirectUrlSuggestion }}
+                              </code>
+                            </div>
+                          </template>
+                        </SettingRow>
+                      </SettingGroup>
                     </template>
                   </template>
                 </SettingRow>
@@ -1693,7 +1773,7 @@
               </span>
             </template>
             <SettingPanel hide-summary>
-              <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+              <div class="grid">
                 <div class="">
                   <SettingRow
                     label="GitHub"
@@ -1733,7 +1813,7 @@
                       </template>
                     </div>
 
-                    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <div class="grid">
                       <SettingRow
                   wide-control
                         label="Client ID"
@@ -1841,7 +1921,7 @@
                       }}
                     </div>
 
-                    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <div class="grid">
                       <SettingRow
                   wide-control
                         label="Client ID"
@@ -1970,7 +2050,7 @@
                     />
                   </template>
                 </SettingRow>
-                <div v-if="form.wechat_connect_open_enabled" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div v-if="form.wechat_connect_open_enabled" class="grid">
                   <SettingRow
                   wide-control
                     :label="localText('PC AppID', 'PC App ID')"
@@ -2032,7 +2112,7 @@
                     />
                   </template>
                 </SettingRow>
-                <div v-if="form.wechat_connect_mp_enabled" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div v-if="form.wechat_connect_mp_enabled" class="grid">
                   <SettingRow
                   wide-control
                     :label="localText('公众号 AppID', 'Official Account App ID')"
@@ -2097,7 +2177,7 @@
                     />
                   </template>
                 </SettingRow>
-                <div v-if="form.wechat_connect_mobile_enabled" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div v-if="form.wechat_connect_mobile_enabled" class="grid">
                   <SettingRow
                   wide-control
                     :label="localText('移动应用 AppID', 'Mobile App ID')"
@@ -2158,7 +2238,7 @@
 
                   </template>
                 </UAlert>
-                <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <div class="grid">
                   <SettingRow
                     :label="localText(
                           '浏览器回调地址',
@@ -2561,7 +2641,7 @@
                       </template>
                     </SettingRow>
                   </div>
-                  <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  <div class="grid">
                     <SettingRow
                   wide-control
                       :label="t('admin.settings.oidc.issuerUrl')"
@@ -2662,7 +2742,7 @@
                       </template>
                     </SettingRow>
                   </div>
-                  <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  <div class="grid">
                     <SettingRow
                   wide-control
                       :label="t('admin.settings.oidc.scopes')"
@@ -2873,7 +2953,7 @@
           >
             <SettingPanel hide-summary>
               <SettingGroup>
-                <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+                <div class="grid">
                   <SettingRow
                     :label="t('admin.settings.defaults.defaultBalance')"
                     :hint="t('admin.settings.defaults.defaultBalanceHint')"
@@ -2922,7 +3002,7 @@
                   :on="true"
                   :in-summary="false"
                   persistent-summary
-                  :summary="t('common.settingsSummary.configured')">
+                  :summary="t('common.settingsSummary.itemCount', { count: form.default_subscriptions.length })">
                   <template #fields>
                     <UButton
                       @click="addDefaultSubscription"
@@ -2938,7 +3018,7 @@
               </SettingGroup>
               <div
                 v-if="form.default_subscriptions.length === 0"
-                class="py-2 text-sm text-muted"
+                class="settings-row-status ps-4 pt-2 text-muted"
               >
                 {{ t("admin.settings.defaults.defaultSubscriptionsEmpty") }}
               </div>
@@ -2946,7 +3026,7 @@
                 <div
                   v-for="(item, index) in form.default_subscriptions"
                   :key="`default-sub-${index}`"
-                  class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_160px_auto] border-t border-default pt-4 first:border-t-0 first:pt-0"
+                  class="grid"
                 >
                   <SettingRow
                     :label="t('admin.settings.defaults.subscriptionGroup')"
@@ -3091,39 +3171,35 @@
                     <Toggle v-model="form.force_email_on_third_party_signup" />
                   </template>
                 </SettingRow>
-              </SettingGroup>
               <div
                 v-for="authSource in authSourceDefaultsMeta"
                 :key="authSource.source"
-                class="border-t border-default pt-4 first:border-t-0 first:pt-0"
+                class="grid"
               >
-                <div class="flex items-center justify-between gap-4">
-                  <div>
-                    <div class="font-medium text-highlighted">
-                      {{ authSource.title }}
-                    </div>
-                    <p class="mt-1 text-sm text-muted">
-                      {{ authSource.description }}
-                    </p>
-                  </div>
-                  <Toggle
-                    v-model="
-                      authSourceDefaults[authSource.source].grant_on_signup
-                    "
-                    :data-testid="`auth-source-${authSource.source}-enabled`"
-                  />
-                </div>
+                <SettingRow
+                  :label="authSource.title"
+                  :hint="authSource.description"
+                  :on="authSourceDefaults[authSource.source].grant_on_signup">
+                  <template #control>
+                    <Toggle
+                      v-model="
+                        authSourceDefaults[authSource.source].grant_on_signup
+                      "
+                      :data-testid="`auth-source-${authSource.source}-enabled`"
+                    />
+                  </template>
+                </SettingRow>
 
                 <div
                   v-if="authSourceDefaults[authSource.source].grant_on_signup"
                   :data-testid="`auth-source-${authSource.source}-panel`"
-                  class="mt-4 space-y-4 border-t border-default pt-4"
+                  class="mb-3 ms-4 space-y-3 border-s border-default ps-4"
                 >
                   <p class="text-sm text-muted">
                     {{ t("admin.settings.authSourceDefaults.enabledHint") }}
                   </p>
 
-                  <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div class="grid">
                     <SettingRow
                       :label="t('admin.settings.defaults.defaultBalance')"
                       :on="true"
@@ -3352,6 +3428,7 @@
                   <!-- /auth source 平台限额覆盖区块 -->
                 </div>
               </div>
+              </SettingGroup>
             </SettingPanel>
           </SettingsSection>
         </div>
@@ -4702,7 +4779,7 @@
                     <Toggle v-model="form.backend_mode_enabled" />
                   </template>
                 </SettingRow>
-                <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+                <div class="grid">
                  <SettingRow
                   wide-control
                    :label="t('admin.settings.site.siteName')"
@@ -4799,8 +4876,8 @@
                         :key="index"
                         class="border-t border-default pt-4 first:border-t-0 first:pt-0"
                       >
-                        <div class="mb-3 flex items-center justify-between">
-                          <span class="text-sm font-medium text-toned">
+                        <div class="flex items-center justify-between pb-1">
+                          <span class="text-xs font-semibold text-toned">
                             {{ t("admin.settings.site.customEndpoints.itemLabel", { n: index + 1, }) }}
                           </span>
                           <UButton
@@ -4811,110 +4888,122 @@
                             variant="ghost"
                           />
                         </div>
-                        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <UFormField :label="t('admin.settings.site.customEndpoints.name')">
-                            <UInput
-                              v-model="ep.name"
-                              type="text"
-                              :placeholder="
-                                t(
-                                  'admin.settings.site.customEndpoints.namePlaceholder',
-                                )
-                              "
-                              class="w-full"
-                            />
-                          </UFormField>
-                          <UFormField :label="t('admin.settings.site.customEndpoints.endpointUrl')">
-                            <UInput
-                              v-model="ep.endpoint"
-                              type="url"
-                              :placeholder="
-                                t(
-                                  'admin.settings.site.customEndpoints.endpointUrlPlaceholder',
-                                )
-                              "
-                              class="w-full font-mono"
-                            />
-                          </UFormField>
-                          <div class="sm:col-span-2">
-                            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-                              <span class="text-xs font-semibold text-toned">
-                                {{ t( "admin.settings.site.customEndpoints.visibilityTitle", ) }}
-                              </span>
-                              <span class="text-[11px] font-medium text-muted">
-                                {{
-                                  Number(ep.min_recharge) > 0
-                                    ? t(
-                                        "admin.settings.site.customEndpoints.visibilityTier",
-                                        { amount: ep.min_recharge },
-                                      )
-                                    : t(
-                                        "admin.settings.site.customEndpoints.visibilityAll",
-                                      )
-                                }}
-                              </span>
-                            </div>
-                            <div class="flex flex-wrap items-center gap-2">
-                              <UButton
-                                @click="ep.min_recharge = 0"
-                                :color="Number(ep.min_recharge) <= 0 ? 'primary' : 'neutral'"
-                                :variant="Number(ep.min_recharge) <= 0 ? 'subtle' : 'outline'"
-                                size="sm"
-                              >
-                                {{ t( "admin.settings.site.customEndpoints.visibilityEveryone", ) }}
-                              </UButton>
-                              <UButton
-                                @click="
-                                  ep.min_recharge =
-                                    Number(ep.min_recharge) > 0
-                                      ? ep.min_recharge
-                                      : 1000
+                        <div class="grid">
+                          <SettingRow wide-control :label="t('admin.settings.site.customEndpoints.name')" :on="true" :in-summary="false">
+                            <template #control>
+                              <UInput
+                                v-model="ep.name"
+                                type="text"
+                                :placeholder="
+                                  t(
+                                    'admin.settings.site.customEndpoints.namePlaceholder',
+                                  )
                                 "
-                                :color="Number(ep.min_recharge) > 0 ? 'primary' : 'neutral'"
-                                :variant="Number(ep.min_recharge) > 0 ? 'subtle' : 'outline'"
-                                size="sm"
-                              >
-                                {{ t( "admin.settings.site.customEndpoints.visibilityThreshold", ) }}
-                              </UButton>
-                              <template v-if="Number(ep.min_recharge) > 0">
-                                <span class="text-xs text-muted">
-                                  {{ t( "admin.settings.site.customEndpoints.visibilityRechargePrefix", ) }}
-                                </span>
-                                <UInput
-                                  :model-value="ep.min_recharge ?? undefined"
-                                  @update:model-value="ep.min_recharge = $event as number"
-                                  type="number"
-                                  min="1"
-                                  step="1"
-                                  @blur="normalizeEndpointThreshold(ep)"
-                                  class="w-28"
-                                />
-                                <span class="text-xs text-muted">
-                                  {{ t( "admin.settings.site.customEndpoints.visibilityRechargeSuffix", ) }}
-                                </span>
-                              </template>
-                            </div>
-                            <p class="mt-2 text-[11px] text-muted">
-                              {{ t( "admin.settings.site.customEndpoints.visibilityHint", ) }}
-                            </p>
-                          </div>
-                          <UFormField
+                                class="w-full"
+                              />
+                            </template>
+                          </SettingRow>
+                          <SettingRow wide-control :label="t('admin.settings.site.customEndpoints.endpointUrl')" :on="true" :in-summary="false">
+                            <template #control>
+                              <UInput
+                                v-model="ep.endpoint"
+                                type="url"
+                                :placeholder="
+                                  t(
+                                    'admin.settings.site.customEndpoints.endpointUrlPlaceholder',
+                                  )
+                                "
+                                class="w-full font-mono"
+                              />
+                            </template>
+                          </SettingRow>
+                          <SettingRow
+                            :label="t( 'admin.settings.site.customEndpoints.visibilityTitle', )"
+                            :hint="t( 'admin.settings.site.customEndpoints.visibilityHint', )"
+                            :on="Number(ep.min_recharge) > 0"
+                            :in-summary="false"
+                            persistent-summary
+                            :summary="
+                              Number(ep.min_recharge) > 0
+                                ? t(
+                                    'admin.settings.site.customEndpoints.visibilityTier',
+                                    { amount: ep.min_recharge },
+                                  )
+                                : t(
+                                    'admin.settings.site.customEndpoints.visibilityAll',
+                                  )
+                            "
+                          >
+                            <template #control>
+                              <div class="settings-segmented" role="group" :aria-label="t( 'admin.settings.site.customEndpoints.visibilityTitle', )">
+                                <UButton
+                                  @click="ep.min_recharge = 0"
+                                  color="neutral"
+                                  :variant="Number(ep.min_recharge) <= 0 ? 'outline' : 'ghost'"
+                                  :aria-pressed="Number(ep.min_recharge) <= 0"
+                                  size="sm"
+                                >
+                                  {{ t( "admin.settings.site.customEndpoints.visibilityEveryone", ) }}
+                                </UButton>
+                                <UButton
+                                  @click="
+                                    ep.min_recharge =
+                                      Number(ep.min_recharge) > 0
+                                        ? ep.min_recharge
+                                        : 1000
+                                  "
+                                  color="neutral"
+                                  :variant="Number(ep.min_recharge) > 0 ? 'outline' : 'ghost'"
+                                  :aria-pressed="Number(ep.min_recharge) > 0"
+                                  size="sm"
+                                >
+                                  {{ t( "admin.settings.site.customEndpoints.visibilityThreshold", ) }}
+                                </UButton>
+                              </div>
+                            </template>
+                            <template #fields>
+                              <div class="flex flex-wrap items-center gap-2">
+                                <template v-if="Number(ep.min_recharge) > 0">
+                                  <span class="text-sm text-muted">
+                                    {{ t( "admin.settings.site.customEndpoints.visibilityRechargePrefix", ) }}
+                                  </span>
+                                  <UInput
+                                    :model-value="ep.min_recharge ?? undefined"
+                                    @update:model-value="ep.min_recharge = $event as number"
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    @blur="normalizeEndpointThreshold(ep)"
+                                    class="w-28"
+                                  />
+                                  <span class="text-sm text-muted">
+                                    {{ t( "admin.settings.site.customEndpoints.visibilityRechargeSuffix", ) }}
+                                  </span>
+                                </template>
+                              </div>
+                            </template>
+                          </SettingRow>
+                          <SettingRow
+                            wide-control
                             :label="t(
                                   'admin.settings.site.customEndpoints.descriptionLabel',
                                 )"
-                            class="sm:col-span-2"
+                            :on="true"
+                            :in-summary="false"
                           >
-                            <UInput
-                              v-model="ep.description"
-                              type="text"
-                              :placeholder="
-                                t(
-                                  'admin.settings.site.customEndpoints.descriptionPlaceholder',
-                                )
-                              "
-                              class="w-full"
-                            />
-                          </UFormField>
+                            <template #control>
+                              <UInput
+                                v-model="ep.description"
+                                type="text"
+                                :placeholder="
+                                  t(
+                                    'admin.settings.site.customEndpoints.descriptionPlaceholder',
+                                  )
+                                "
+                                class="w-full"
+                              />
+                            </template>
+                          </SettingRow>
                         </div>
                       </div>
                     </div>
@@ -5068,7 +5157,7 @@
                   </div>
                 </div>
 
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div class="grid">
                   <!-- Label -->
                   <SettingRow
                   wide-control
@@ -5158,193 +5247,171 @@
 
         <!-- Tab: Login Agreement -->
         <div v-show="activeTab === 'agreement'" id="settings-agreement" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
-	          <SettingsSection>
-             <template #actions>
-               <SettingRow
-                 :label="localText('登录条款确认', 'Login agreement')"
-                 :hint="localText(
-	                        '控制登录页是否要求用户先阅读并同意服务条款、隐私政策或其他 Markdown 文档。',
-	                        'Control whether the login page requires users to accept Markdown policy documents first.',
-	                      )"
-                 :on="!!form.login_agreement_enabled"
-                 :in-summary="false">
-                 <template #control>
-                   <div class="flex items-center gap-3">
-                     <span class="text-sm text-toned">
-                       {{ form.login_agreement_enabled ? localText("已启用", "Enabled") : localText("未启用", "Disabled") }}
-                     </span>
-                     <Toggle v-model="form.login_agreement_enabled" />
-                   </div>
-                 </template>
-               </SettingRow>
-             </template>
-             <SettingPanel hide-summary>
-               <SettingGroup>
-                 <div class="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-                   <SettingRow
-                     :label="localText('展示形式', 'Display mode')"
-                     :hint="form.login_agreement_mode === 'checkbox'
-                          ? localText('复选框会显示在登录按钮下方，未勾选前所有登录入口禁用。', 'The checkbox appears below the login button and gates all login actions.')
-                          : localText('弹窗会在登录页打开，用户拒绝后所有登录入口保持禁用。', 'The modal opens on the login page and gates all login actions until accepted.')"
-                     :on="true"
-                     :in-summary="false"
-                     persistent-summary
-                     :summary="t('common.settingsSummary.configured')">
-                     <template #fields>
-                        <div class="grid grid-cols-2 gap-2 rounded-lg bg-elevated p-1">
-                         <UButton
-                           icon="i-lucide-shield"
-                           @click="form.login_agreement_mode = 'modal'"
-                           color="neutral"
-                           :variant="form.login_agreement_mode === 'modal' ? 'outline' : 'ghost'"
-                           class="justify-center"
-                         >
-                           {{ localText("弹窗", "Modal") }}
-                         </UButton>
-                         <UButton
-                           icon="i-lucide-circle-check"
-                           @click="form.login_agreement_mode = 'checkbox'"
-                           color="neutral"
-                           :variant="form.login_agreement_mode === 'checkbox' ? 'outline' : 'ghost'"
-                           class="justify-center"
-                         >
-                           {{ localText("复选框", "Checkbox") }}
-                         </UButton>
-                       </div>
-                     </template>
-                   </SettingRow>
-
-                  <SettingRow
-                  wide-control
-                    :label="localText('条款更新日期', 'Updated date')"
-                    :hint="localText('日期或文档内容变化后，用户需要重新同意。', 'Changing the date or content requires fresh consent.')"
-                    :on="true"
-                    :in-summary="false">
-                    <template #control>
-                      <UInput v-model="form.login_agreement_updated_at" type="date" class="w-full" />
-                    </template>
-                  </SettingRow>
+          <SettingsSection>
+            <SettingPanel hide-summary>
+              <SettingGroup>
+                <SettingRow
+                  :label="localText('登录条款确认', 'Login agreement')"
+                  :hint="localText(
+                          '控制登录页是否要求用户先阅读并同意服务条款、隐私政策或其他 Markdown 文档。',
+                          'Control whether the login page requires users to accept Markdown policy documents first.',
+                        )"
+                  :on="!!form.login_agreement_enabled"
+                  :in-summary="false">
+                  <template #control>
+                    <div class="flex items-center gap-3">
+                      <span class="text-sm text-toned">
+                        {{ form.login_agreement_enabled ? localText("已启用", "Enabled") : localText("未启用", "Disabled") }}
+                      </span>
+                      <Toggle v-model="form.login_agreement_enabled" />
+                    </div>
+                  </template>
+                </SettingRow>
+                <SettingRow
+                  :label="localText('展示形式', 'Display mode')"
+                  :hint="form.login_agreement_mode === 'checkbox'
+                       ? localText('复选框会显示在登录按钮下方，未勾选前所有登录入口禁用。', 'The checkbox appears below the login button and gates all login actions.')
+                       : localText('弹窗会在登录页打开，用户拒绝后所有登录入口保持禁用。', 'The modal opens on the login page and gates all login actions until accepted.')"
+                  :on="true"
+                  :in-summary="false">
+                  <template #control>
+                    <div class="settings-segmented" role="group" :aria-label="localText('展示形式', 'Display mode')">
+                      <UButton
+                        icon="i-lucide-shield"
+                        @click="form.login_agreement_mode = 'modal'"
+                        color="neutral"
+                        :variant="form.login_agreement_mode === 'modal' ? 'outline' : 'ghost'"
+                        :aria-pressed="form.login_agreement_mode === 'modal'"
+                        size="sm"
+                        class="justify-center"
+                      >
+                        {{ localText("弹窗", "Modal") }}
+                      </UButton>
+                      <UButton
+                        icon="i-lucide-circle-check"
+                        @click="form.login_agreement_mode = 'checkbox'"
+                        color="neutral"
+                        :variant="form.login_agreement_mode === 'checkbox' ? 'outline' : 'ghost'"
+                        :aria-pressed="form.login_agreement_mode === 'checkbox'"
+                        size="sm"
+                        class="justify-center"
+                      >
+                        {{ localText("复选框", "Checkbox") }}
+                      </UButton>
+                    </div>
+                  </template>
+                </SettingRow>
+                <SettingRow
+                  :label="localText('条款更新日期', 'Updated date')"
+                  :hint="localText('日期或文档内容变化后，用户需要重新同意。', 'Changing the date or content requires fresh consent.')"
+                  :on="true"
+                  :in-summary="false">
+                  <template #control>
+                    <UInput v-model="form.login_agreement_updated_at" type="date" class="w-44" />
+                  </template>
+                </SettingRow>
+                <SettingRow
+                  :label="localText('协议文档', 'Agreement documents')"
+                  :hint="localText(
+                          '文档名称可自定义。正文留空时前台自动使用内置条款（按 OpenLux 结构改写，主体为本站运营方）。可一键填入隐私政策、服务条款、可接受使用政策、免责条款、退款政策、DPA、合规说明和支持地区。',
+                          'Titles are customizable. Empty bodies fall back to bundled terms adapted from the OpenLux structure for this site. You can fill Privacy, Terms, AUP, Disclaimer, Refund, DPA, Compliance and Supported regions in one click.',
+                        )"
+                  :on="true"
+                  :in-summary="false"
+                  persistent-summary
+                  :summary="t('common.settingsSummary.itemCount', { count: form.login_agreement_documents.length })">
+                  <template #control>
+                    <div class="flex flex-wrap items-center justify-end gap-2">
+                      <UButton @click="fillBundledLoginAgreementDocuments" color="neutral" variant="outline" size="sm">
+                        {{ localText("填入内置条款", "Fill bundled terms") }}
+                      </UButton>
+                      <UButton icon="i-lucide-plus" @click="addLoginAgreementDocument" size="sm">
+                        {{ localText("添加文档", "Add document") }}
+                      </UButton>
+                    </div>
+                  </template>
+                </SettingRow>
+              </SettingGroup>
+              <SettingGroup
+                v-for="(doc, index) in form.login_agreement_documents"
+                :key="doc.id || index"
+              >
+                <!-- One document = one small group: its name and route as the heading, its three fields as rows. -->
+                <div class="flex min-w-0 items-center justify-between gap-3 pb-1">
+                  <div class="flex min-w-0 items-center gap-2.5">
+                    <UIcon
+                      :name="
+                        index === 1
+                          ? 'i-lucide-shield'
+                          : index === 2
+                            ? 'i-lucide-globe'
+                            : index === 3
+                              ? 'i-lucide-settings'
+                              : 'i-lucide-file-text'
+                      "
+                      class="size-4 shrink-0 text-dimmed"
+                    />
+                    <p class="min-w-0 truncate text-[13px] font-semibold text-highlighted">
+                      {{ doc.title || localText("未命名文档", "Untitled document") }}
+                      <span class="ms-2 font-mono text-xs font-normal text-muted">{{ loginAgreementRoutePath(doc, index) }}</span>
+                    </p>
+                  </div>
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    square
+                    size="sm"
+                    :disabled="
+                      form.login_agreement_enabled &&
+                      form.login_agreement_documents.length <= 1
+                    "
+                    @click="removeLoginAgreementDocument(index)"
+                    color="error"
+                    variant="ghost"
+                  />
                 </div>
-                 <SettingRow
-                   :label="localText('协议文档', 'Agreement documents')"
-                   :hint="localText(
-                           '文档名称可自定义。正文留空时前台自动使用内置条款（按 OpenLux 结构改写，主体为本站运营方）。可一键填入隐私政策、服务条款、可接受使用政策、免责条款、退款政策、DPA、合规说明和支持地区。',
-                           'Titles are customizable. Empty bodies fall back to bundled terms adapted from the OpenLux structure for this site. You can fill Privacy, Terms, AUP, Disclaimer, Refund, DPA, Compliance and Supported regions in one click.',
-                         )"
-                   :on="true"
-                   :in-summary="false"
-                   persistent-summary
-                   :summary="t('common.settingsSummary.configured')">
-                   <template #fields>
-                     <div class="flex flex-wrap items-center gap-2">
-                       <UButton @click="fillBundledLoginAgreementDocuments" color="neutral" variant="outline" size="sm">
-                         {{ localText("填入内置条款", "Fill bundled terms") }}
-                       </UButton>
-                       <UButton icon="i-lucide-plus" @click="addLoginAgreementDocument" size="sm">
-                         {{ localText("添加文档", "Add document") }}
-                       </UButton>
-                     </div>
-                   </template>
-                 </SettingRow>
-               </SettingGroup>
-               <div
-                 v-for="(doc, index) in form.login_agreement_documents"
-                 :key="doc.id || index"
-                 class="border-t border-default pt-4 first:border-t-0 first:pt-0"
-               >
-                 <div class="mb-3 flex items-center justify-between gap-3">
-                   <div class="flex min-w-0 items-center gap-3">
-                     <span
-                       class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-elevated text-toned"
-                     >
-                       <UIcon
-                         :name="
-                           index === 1
-                             ? 'i-lucide-shield'
-                             : index === 2
-                               ? 'i-lucide-globe'
-                               : index === 3
-                                 ? 'i-lucide-settings'
-                                 : 'i-lucide-file-text'
-                         "
-                         class="size-4 shrink-0"
-                       />
-                     </span>
-                     <div class="min-w-0">
-                       <p class="truncate text-sm font-semibold text-highlighted">
-                         {{ doc.title || localText("未命名文档", "Untitled document") }}
-                       </p>
-                       <p class="truncate text-xs text-muted">
-                         {{ loginAgreementRoutePath(doc, index) }}
-                       </p>
-                     </div>
-                   </div>
-                   <UButton
-                     icon="i-lucide-trash-2"
-                     square
-                     :disabled="
-                       form.login_agreement_enabled &&
-                       form.login_agreement_documents.length <= 1
-                     "
-                     @click="removeLoginAgreementDocument(index)"
-                     color="error"
-                     variant="ghost"
-                   />
-                 </div>
-
-                 <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                   <SettingRow
-                     :label="localText('文档名称', 'Document title')"
-                     :on="true"
-                     :in-summary="false"
-                     persistent-summary
-                     :summary="doc.title || t('common.settingsSummary.notSet')">
-                     <template #fields>
-                       <UInput
-                         v-model="doc.title"
-                         type="text"
-                         :placeholder="localText('例如：服务条款', 'Example: Terms of Service')"
-                         class="w-full"
-                       />
-                     </template>
-                   </SettingRow>
-                   <SettingRow
-                     :label="localText('路由标识', 'Route slug')"
-                     :on="true"
-                     :in-summary="false"
-                     persistent-summary
-                     :summary="doc.id == null ? '' : String(doc.id)">
-                     <template #fields>
-                       <div
-                         class="flex overflow-hidden rounded-lg border border-default bg-default focus-within:border-primary-500 focus-within:ring-1 focus-within:ring-primary-500"
-                       >
-                         <span
-                           class="inline-flex flex-shrink-0 items-center border-r border-default bg-elevated px-3 text-sm text-muted"
-                         >
-                           /legal/
-                         </span>
-                         <UInput v-model="doc.id" type="text" placeholder="privacy" class="min-w-0 flex-1" />
-                       </div>
-                     </template>
-                   </SettingRow>
-                 </div>
-                 <SettingRow
-                   :label="localText('Markdown 内容', 'Markdown content')"
-                   :on="true"
-                   :in-summary="false"
-                   persistent-summary
-                   :summary="doc.content_md ? t('common.settingsSummary.configured') : t('common.settingsSummary.notSet')">
-                   <template #fields>
-                     <UTextarea
-                       v-model="doc.content_md"
-                       :rows="8"
-                       :placeholder="localText('在这里填写正式 Markdown 内容。', 'Write the final Markdown content here.')"
-                       class="w-full font-mono"
-                     />
-                   </template>
-                 </SettingRow>
-               </div>
-             </SettingPanel>
+                <SettingRow
+                  wide-control
+                  :label="localText('文档名称', 'Document title')"
+                  :on="true"
+                  :in-summary="false">
+                  <template #control>
+                    <UInput
+                      v-model="doc.title"
+                      type="text"
+                      :placeholder="localText('例如：服务条款', 'Example: Terms of Service')"
+                      class="w-full"
+                    />
+                  </template>
+                </SettingRow>
+                <SettingRow
+                  wide-control
+                  :label="localText('路由标识', 'Route slug')"
+                  :on="true"
+                  :in-summary="false">
+                  <template #control>
+                    <div class="flex w-full min-w-0 items-center gap-1.5">
+                      <span class="shrink-0 font-mono text-sm text-muted">/legal/</span>
+                      <UInput v-model="doc.id" type="text" placeholder="privacy" class="min-w-0 flex-1 font-mono" />
+                    </div>
+                  </template>
+                </SettingRow>
+                <SettingRow
+                  :label="localText('Markdown 内容', 'Markdown content')"
+                  :on="true"
+                  :in-summary="false"
+                  persistent-summary
+                  :summary="doc.content_md ? t('common.settingsSummary.configured') : t('common.settingsSummary.notSet')">
+                  <template #fields>
+                    <UTextarea
+                      v-model="doc.content_md"
+                      :rows="8"
+                      :placeholder="localText('在这里填写正式 Markdown 内容。', 'Write the final Markdown content here.')"
+                      class="w-full font-mono"
+                    />
+                  </template>
+                </SettingRow>
+              </SettingGroup>
+            </SettingPanel>
            </SettingsSection>
         </div>
         <!-- /Tab: Login Agreement -->
@@ -5608,7 +5675,6 @@
                   <Toggle v-model="form.affiliate_enabled" />
                 </template>
               </SettingRow>
-            </SettingGroup>
             <template v-if="form.affiliate_enabled">
               <SettingRow
                 :label="t('admin.settings.features.affiliate.adminRechargeRebate')"
@@ -5699,7 +5765,9 @@
                   </UButton>
                 </template>
               </SettingRow>
-              <div class="mb-3 flex items-center gap-2">
+              <!-- The custom-user list belongs to the row above: indented under it, closed by the group's last line. -->
+              <div class="grid gap-3 ps-4 pb-3">
+              <div class="flex items-center gap-2">
                 <UInput
                   v-model="affiliateState.search"
                   type="text"
@@ -5801,7 +5869,9 @@
                   </UButton>
                 </div>
               </div>
+              </div>
             </template>
+            </SettingGroup>
           </SettingPanel>
         </SettingsSection>
 
@@ -5812,23 +5882,25 @@
           width="narrow"
           @close="closeAffiliateModal"
         >
-          <div class="space-y-4">
+          <SettingGroup>
+            <!-- Picking the user is the first thing this dialog asks for, so its row starts open. -->
             <SettingRow
               v-if="affiliateModal.mode === 'add'"
+              default-open
               :label="t('admin.settings.features.affiliate.modal.userLabel')"
               :on="true"
               :in-summary="false"
               persistent-summary
-              :summary="t('common.settingsSummary.itemCount', { count: (affiliateModal.userResults).length })">
+              :summary="affiliateModal.selectedUser ? affiliateModal.selectedUser.email : t('common.settingsSummary.notSet')">
               <template #fields>
-                <UFormField
+                <div
                   v-if="affiliateModal.selectedUser"
-                  :label="affiliateModal.selectedUser.email"
-                  class="flex max-sm:flex-col justify-between sm:items-center gap-4"
+                  class="flex min-w-0 items-center justify-between gap-3 rounded-md bg-elevated px-3 py-1.5"
                 >
-                  <template #description>
-                    <span class="ml-1">({{ affiliateModal.selectedUser.username }})</span>
-                  </template>
+                  <span class="min-w-0 truncate text-sm text-highlighted">
+                    {{ affiliateModal.selectedUser.email }}
+                    <span class="text-muted">({{ affiliateModal.selectedUser.username }})</span>
+                  </span>
                   <UButton
                     :title="t('admin.settings.features.affiliate.modal.changeUser')"
                     @click="clearSelectedAffiliateUser"
@@ -5837,7 +5909,7 @@
                   >
                     ×
                   </UButton>
-                </UFormField>
+                </div>
                 <template v-else>
                   <UInput
                     v-model="affiliateModal.userQuery"
@@ -5919,7 +5991,7 @@
                 </div>
               </template>
             </SettingRow>
-          </div>
+          </SettingGroup>
           <div
             v-if="affiliateModal.mode === 'edit' && affiliateModal.editingEntry"
             class="mt-5 border-t border-default pt-4"
@@ -6189,7 +6261,7 @@
                         step="0.01"
                         min="0"
                         :placeholder="t('admin.settings.payment.subscriptionUsdToCnyRateDisabled')"
-                        class="w-40"
+                        class="w-56"
                       />
                     </template>
                   </SettingRow>
@@ -6341,7 +6413,7 @@
                     </template>
                   </SettingRow>
                   <!-- Row 5: Help image + text -->
-                  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div class="grid">
                     <SettingRow
                       :label="t('admin.settings.payment.helpImage')"
                       :on="true"
@@ -6402,14 +6474,16 @@
         </div>
 
         <div v-show="activeTab === 'email'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
-          <!-- Email disabled hint - show when email_verify_enabled is off -->
-          <SettingsSection
+          <!-- Email disabled hint - show when email_verify_enabled is off. A notice, not a settings card:
+               there is nothing to configure here until email verification is switched on. -->
+          <UAlert
             v-if="!form.email_verify_enabled"
+            color="neutral"
+            variant="subtle"
+            icon="i-lucide-mail-x"
             :title="t('admin.settings.emailTabDisabledTitle')"
             :description="t('admin.settings.emailTabDisabledHint')"
-          >
-
-          </SettingsSection>
+          />
 
           <!-- SMTP Settings - Only show when email verification is enabled -->
           <SettingsSection
@@ -6431,7 +6505,7 @@
             </template>
             <SettingPanel hide-summary>
               <SettingGroup>
-                <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+                <div class="grid">
                   <SettingRow
                   wide-control
                     :label="t('admin.settings.smtp.host')"
@@ -6646,13 +6720,14 @@
                   :in-summary="false">
                   <template #control>
                     <div class="relative">
-                      <span class="absolute left-3 top-1/2 -translate-y-1/2 text-dimmed">$</span>
+                      <span class="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-dimmed">$</span>
                       <UInput
                         v-model.number="form.balance_low_notify_threshold"
                         type="number"
                         min="0"
                         step="0.01"
-                        class="w-full"
+                        class="w-32"
+                        :ui="{ base: 'ps-7' }"
                       />
                     </div>
                   </template>
@@ -11238,6 +11313,62 @@ watch(
 </script>
 
 <style scoped>
+/* One look for every "pick one of a few" control on this page: a tinted track, the chosen option
+   outlined. Sits in a dense row control, so it keeps the row height (two or three short labels). */
+.settings-segmented {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--ui-bg-elevated);
+}
+
+/* A heading inside a group: a smaller sibling of the group title, for a run of rows that belong
+   together (two credential pairs of one provider). */
+.settings-subhead {
+  display: grid;
+  gap: 2px;
+  padding-block: 14px 6px;
+  border-top: 1px solid var(--ui-border);
+}
+
+.settings-subhead h5 {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--ui-text-toned);
+}
+
+.settings-subhead p,
+.settings-footnote > p {
+  max-width: 64ch;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ui-text-muted);
+  text-wrap: pretty;
+}
+
+/* A line of live state under a row (a key that is not configured, a deployment check): it says why
+   the control looks the way it does, so it hangs off the row rather than floating below the group. */
+.settings-row-status {
+  display: grid;
+  gap: 2px;
+  max-width: 64ch;
+  padding-block-end: 10px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-footnote {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ui-text-muted);
+  display: grid;
+  gap: 4px;
+  padding-block: 10px 2px;
+  border-top: 1px solid var(--ui-border);
+}
 @reference "../../style.css";
 /* Command-palette deep links briefly outline the section they jump to. */
 .settings-section-highlight {

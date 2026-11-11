@@ -179,7 +179,7 @@ function toggle() {
   transition: rotate 150ms var(--cb-ease-out);
 }
 
-.setting-row__button[aria-expanded='true'] .setting-row__caret {
+.setting-row__button[aria-expanded='true'] > .setting-row__caret {
   rotate: 45deg;
 }
 
@@ -213,7 +213,9 @@ function toggle() {
 }
 
 /* Off rows step back: the name is still readable, it just is not what is happening. */
-.setting-row:not([data-on]) .setting-row__label {
+/* Child combinators throughout: a row can sit inside another row's body (a provider's fields under
+   its switch), and the outer row's state must not leak into the inner one. */
+.setting-row:not([data-on]) > .setting-row__head .setting-row__label {
   color: var(--ui-text-toned);
 }
 
@@ -245,11 +247,11 @@ function toggle() {
 /* A wide control takes half the row on a desktop, so a URL can be read without opening the row.
    The name gives up its growth instead; on a narrow screen the default rule above still applies. */
 @media (min-width: 640px) {
-  .setting-row[data-wide-control] .setting-row__button {
+  .setting-row[data-wide-control] > .setting-row__head > .setting-row__button {
     flex: 0 1 auto;
   }
 
-  .setting-row[data-wide-control] .setting-row__control {
+  .setting-row[data-wide-control] > .setting-row__head > .setting-row__control {
     flex: 1 1 50%;
     justify-content: flex-end;
     max-width: 28rem;
@@ -286,7 +288,7 @@ function toggle() {
   padding-inline-start: 16px;
 }
 
-.setting-row__body[data-open='true'] .setting-row__body-inner {
+.setting-row__body[data-open='true'] > .setting-row__body-inner {
   padding-block-end: 12px;
 }
 

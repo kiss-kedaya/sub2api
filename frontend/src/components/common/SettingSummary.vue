@@ -2,7 +2,9 @@
 import { useI18n } from 'vue-i18n'
 
 // The one-line "what is on" bar at the top of a settings list: a count, then one pill per enabled
-// setting. With nothing on it says so, so an empty bar never reads as "still loading".
+// setting. With nothing on it says exactly that, so an empty bar never reads as "still loading".
+// It does not claim the settings are "at their defaults": it cannot know the defaults, and a setting
+// whose default is on would make that claim false.
 defineProps<{
   /** Already-translated names of the settings that are on, in page order. */
   items: string[]
@@ -13,11 +15,13 @@ const { t } = useI18n()
 
 <template>
   <div class="setting-summary" data-testid="setting-summary">
-    <span class="setting-summary__count" data-testid="setting-summary-count">
-      {{ t('common.settingsSummary.enabled', { count: items.length }) }}
-    </span>
-    <span v-for="(name, index) in items" :key="`${index}-${name}`" class="setting-summary__chip" :title="name">{{ name }}</span>
-    <span v-if="!items.length" class="setting-summary__none">{{ t('common.settingsSummary.allDefault') }}</span>
+    <template v-if="items.length">
+      <span class="setting-summary__count" data-testid="setting-summary-count">
+        {{ t('common.settingsSummary.enabled', { count: items.length }) }}
+      </span>
+      <span v-for="(name, index) in items" :key="`${index}-${name}`" class="setting-summary__chip" :title="name">{{ name }}</span>
+    </template>
+    <span v-else class="setting-summary__none" data-testid="setting-summary-count">{{ t('common.settingsSummary.noneOn') }}</span>
   </div>
 </template>
 

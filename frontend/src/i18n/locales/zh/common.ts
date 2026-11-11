@@ -11,7 +11,7 @@ export default {
     cancel: '取消',
     settingsSummary: {
       enabled: '已启用 {count} 项',
-      allDefault: '全部保持默认',
+      noneOn: '没有开启的项',
       configured: '已填写',
       notSet: '未填写',
       itemCount: '{count} 条',
