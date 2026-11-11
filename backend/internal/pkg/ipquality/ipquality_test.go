@@ -42,8 +42,7 @@ func TestClassifyDatacenterIPsCacheAndFailOpen(t *testing.T) {
 		calls++
 		_ = json.NewEncoder(w).Encode([]batchResult{{Status: "success", Query: "4.4.4.4", Hosting: true}})
 	}))
-	var url string
-	url = server.URL
+	url := server.URL
 	oldURL := lookupURL
 	lookupURL = url
 	defer func() { lookupURL = oldURL; server.Close() }()
