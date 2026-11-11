@@ -1363,7 +1363,7 @@
                     <template v-if="captchaMasterEnabled">
                       <!-- Provider Selector -->
                       <SettingGroup>
-                        <SettingRow :label="t('admin.settings.captcha.provider')" :on="true" :in-summary="false">
+                        <SettingRow class="settings-row-stack" :label="t('admin.settings.captcha.provider')" :on="true" :in-summary="false">
                           <template #control>
                             <div class="settings-segmented" role="group" :aria-label="t('admin.settings.captcha.provider')">
                               <UButton
@@ -11363,10 +11363,37 @@ watch(
 .settings-segmented {
   display: inline-flex;
   flex-wrap: nowrap;
+  white-space: nowrap;
   gap: 2px;
   padding: 2px;
   border-radius: 8px;
   background: var(--ui-bg-elevated);
+}
+
+/* A row whose control is wider than a phone can give it next to the name (three provider names):
+   below 640px the control drops to its own line under the name instead of crushing either. */
+@media (max-width: 639px) {
+  .settings-row-stack :deep(> .setting-row__head) {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-block-end: 8px;
+  }
+
+  .settings-row-stack :deep(> .setting-row__head > .setting-row__control) {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .settings-row-stack :deep(> .setting-row__head > .setting-row__control > .settings-segmented) {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .settings-row-stack :deep(> .setting-row__head > .setting-row__control > .settings-segmented > *) {
+    justify-content: flex-start;
+    min-width: 0;
+  }
 }
 
 /* A heading inside a group: a smaller sibling of the group title, for a run of rows that belong
