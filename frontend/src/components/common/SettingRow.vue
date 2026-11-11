@@ -51,7 +51,7 @@ const uid = useId()
 const bodyId = computed(() => `setting-row-body-${uid}`)
 
 const hints = computed(() => (Array.isArray(props.hint) ? props.hint : [props.hint]).filter((h): h is string => Boolean(h)))
-const hasBody = computed(() => hints.value.length > 0 || Boolean(slots.fields))
+const hasBody = computed(() => hints.value.length > 0 || Boolean(slots.hint) || Boolean(slots.fields))
 const hasFields = computed(() => Boolean(slots.fields))
 
 const open = ref(props.defaultOpen)
@@ -120,6 +120,8 @@ function toggle() {
       <!-- inert, not v-show: a closed row keeps its height animated but nothing inside can be focused. -->
       <div class="setting-row__body-inner" :inert="open ? undefined : true">
         <p v-for="(text, index) in hints" :key="index" class="setting-row__hint">{{ text }}</p>
+        <!-- For an explanation that is more than plain text (several spans, a live value, an id for aria). -->
+        <div v-if="$slots.hint" class="setting-row__hint"><slot name="hint" /></div>
         <slot name="fields" />
       </div>
     </div>
@@ -221,10 +223,17 @@ function toggle() {
   white-space: nowrap;
 }
 
+/* The control gives way before the name does: on a phone a wide text input would otherwise squeeze
+   the name down to one letter and an ellipsis. The name keeps at least ~9rem (or 45% of the row). */
 .setting-row__control {
   display: inline-flex;
-  flex: none;
+  flex: 0 1 auto;
   align-items: center;
+  min-width: 0;
+}
+
+.setting-row__button {
+  min-width: min(45%, 9rem);
 }
 
 .setting-row__status {

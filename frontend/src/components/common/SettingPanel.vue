@@ -46,6 +46,8 @@ const hasRows = computed(() => entries.size > 0)
 <style scoped>
 .setting-panel {
   display: grid;
+  /* One shrinkable column: an auto track would grow to the widest child (a long summary) and push the page sideways. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   min-width: 0;
 }

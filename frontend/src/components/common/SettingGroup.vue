@@ -24,6 +24,7 @@ defineProps<{
 <style scoped>
 .setting-group {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
   min-width: 0;
 }

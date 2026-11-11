@@ -12,6 +12,9 @@ export default {
     settingsSummary: {
       enabled: '{count} enabled',
       allDefault: 'All at defaults',
+      configured: 'Set',
+      notSet: 'Not set',
+      itemCount: '{count} item | {count} items',
     },
     done: 'Done',
     delete: 'Delete',
