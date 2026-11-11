@@ -701,6 +701,16 @@
                 :ui="{ base: 'font-mono text-sm' }"
                 :placeholder="t('keys.ipBlacklistPlaceholder')"
               />
+              <div v-if="selectedKey" class="mt-2 flex justify-end">
+                <UButton
+                  size="sm"
+                  variant="outline"
+                  :loading="blockingDatacenterIPs"
+                  @click="blockDatacenterIPs"
+                >
+                  {{ blockingDatacenterIPs ? t('keys.blockDatacenterIPsLoading') : t('keys.blockDatacenterIPs') }}
+                </UButton>
+              </div>
             </UFormField>
           </div>
         </div>
@@ -2520,6 +2530,27 @@ function formatResetTime(resetAt: string | null): string {
   if (days > 0) return `${days}d ${hours}h`
   if (hours > 0) return `${hours}h ${mins}m`
   return `${mins}m`
+}
+
+const blockingDatacenterIPs = ref(false)
+
+const blockDatacenterIPs = async () => {
+  if (!selectedKey.value || blockingDatacenterIPs.value) return
+  blockingDatacenterIPs.value = true
+  try {
+    const result = await keysAPI.blockDatacenterIPs(selectedKey.value.id)
+    const current = formData.value.ip_blacklist
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    formData.value.ip_blacklist = [...new Set([...current, ...result.added])].join('\n')
+    formData.value.enable_ip_restriction = true
+    appStore.showSuccess(t('keys.blockDatacenterIPsResult', { count: result.added_count }))
+  } catch (error: any) {
+    appStore.showError(error?.message || t('keys.failedToUpdateStatus'))
+  } finally {
+    blockingDatacenterIPs.value = false
+  }
 }
 
 onMounted(() => {

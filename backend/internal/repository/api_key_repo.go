@@ -754,6 +754,37 @@ func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID in
 }
 
 // UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID
+// ListRecentIPAddresses returns the most recent distinct client IPs observed
+// for one API key. It powers the operator's datacenter-IP blacklist action.
+func (r *apiKeyRepository) ListRecentIPAddresses(ctx context.Context, apiKeyID int64, limit int) ([]string, error) {
+	if r.sql == nil {
+		return nil, errors.New("api key repository SQL executor not configured")
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT ip_address
+		FROM usage_logs
+		WHERE api_key_id = $1 AND COALESCE(ip_address, '') <> ''
+		GROUP BY ip_address
+		ORDER BY MAX(created_at) DESC
+		LIMIT $2`, apiKeyID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		out = append(out, value)
+	}
+	return out, rows.Err()
+}
+
 func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
 	n, err := client.APIKey.Update().
