@@ -2,6 +2,8 @@
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QuotaDimensionRow from './QuotaDimensionRow.vue'
+import SettingRow from '@/components/common/SettingRow.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import type { QuotaThresholdType, QuotaResetMode } from '@/constants/account'
 
 const { t } = useI18n()
@@ -17,6 +19,8 @@ const props = withDefaults(defineProps<{
   weeklyResetHour: number | null
   resetTimezone: string | null
   quotaNotifyGlobalEnabled?: boolean
+  /** Already-translated extra explanation, shown under the row's own hint when expanded. */
+  hint?: string
   quotaNotifyDailyEnabled?: boolean | null
   quotaNotifyDailyThreshold?: number | null
   quotaNotifyDailyThresholdType?: QuotaThresholdType | null
@@ -28,6 +32,7 @@ const props = withDefaults(defineProps<{
   quotaNotifyTotalThresholdType?: QuotaThresholdType | null
 }>(), {
   quotaNotifyGlobalEnabled: false,
+  hint: undefined,
   quotaNotifyDailyEnabled: null,
   quotaNotifyDailyThreshold: null,
   quotaNotifyDailyThresholdType: null,
@@ -67,17 +72,15 @@ const enabled = computed(() =>
 )
 
 const localEnabled = ref(enabled.value)
-const collapsed = ref(false)
 
 // Sync when props change externally
 watch(enabled, (val) => {
   localEnabled.value = val
 })
 
-// When toggle is turned off, clear all values and expand
+// When toggle is turned off, clear all values
 watch(localEnabled, (val) => {
   if (!val) {
-    collapsed.value = false
     emit('update:totalLimit', null)
     emit('update:dailyLimit', null)
     emit('update:weeklyLimit', null)
@@ -122,6 +125,16 @@ const weeklyFixedHint = computed(() => {
   })
 })
 
+// Limits are US dollars. A limit that is unset or zero is not a limit and stays out of the summary.
+const money = (value: number | null) => (value != null && value > 0 ? '$' + value : null)
+const summary = computed(() =>
+  [
+    money(props.dailyLimit) && t('admin.accounts.quotaSummary.daily', { value: money(props.dailyLimit) }),
+    money(props.weeklyLimit) && t('admin.accounts.quotaSummary.weekly', { value: money(props.weeklyLimit) }),
+    money(props.totalLimit) && t('admin.accounts.quotaSummary.total', { value: money(props.totalLimit) }),
+  ].filter(Boolean).join(' · ')
+)
+
 const dailyFixedHint = computed(() =>
   t('admin.accounts.quotaDailyLimitHintFixed', {
     hour: String(props.dailyResetHour ?? 0).padStart(2, '0'),
@@ -131,25 +144,18 @@ const dailyFixedHint = computed(() =>
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 dark:border-dark-600">
-      <!-- Header: toggle + collapse -->
-      <div class="flex items-center justify-between p-4" :class="{ 'pb-0': localEnabled && !collapsed }">
-        <div class="flex items-center gap-2 flex-1 cursor-pointer" @click="localEnabled && (collapsed = !collapsed)">
-          <svg v-if="localEnabled" class="h-4 w-4 text-gray-400 transition-transform" :class="{ '-rotate-90': collapsed }" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
-          </svg>
-          <div>
-            <label class="input-label mb-0 cursor-pointer">{{ t('admin.accounts.quotaLimitToggle') }}</label>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-              {{ t('admin.accounts.quotaLimitToggleHint') }}
-            </p>
-          </div>
-        </div>
-        <USwitch v-model="localEnabled" :aria-label="t('admin.accounts.quotaLimitToggle')" />
-      </div>
-
-      <!-- Collapsible content -->
-      <div v-if="localEnabled && !collapsed" class="space-y-2 p-4 pt-3">
+  <SettingRow
+    :label="t('admin.accounts.quotaLimitToggle')"
+    :hint="[t('admin.accounts.quotaLimitToggleHint'), ...(hint ? [hint] : [])]"
+    :summary="summary"
+    :on="localEnabled"
+    test-id="quota-limit-row"
+  >
+    <template #control>
+      <Toggle v-model="localEnabled" :aria-label="t('admin.accounts.quotaLimitToggle')" />
+    </template>
+    <template v-if="localEnabled" #fields>
+      <div class="space-y-2">
         <!-- Daily quota -->
         <QuotaDimensionRow
           dim="daily"
@@ -228,5 +234,6 @@ const dailyFixedHint = computed(() =>
           @update:notify-threshold-type="emit('update:quotaNotifyTotalThresholdType', $event)"
         />
       </div>
-  </div>
+    </template>
+  </SettingRow>
 </template>
