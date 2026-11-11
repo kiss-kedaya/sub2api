@@ -978,6 +978,7 @@
                 </SettingRow>
                 <!-- Frontend URL - Only show when password reset is enabled -->
                 <SettingRow
+                  wide-control
                   v-if="form.email_verify_enabled && form.password_reset_enabled"
                   :label="t('admin.settings.registration.frontendUrl')"
                   :hint="t('admin.settings.registration.frontendUrlHint')"
@@ -1734,6 +1735,7 @@
 
                     <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
                       <SettingRow
+                  wide-control
                         label="Client ID"
                         :on="true"
                         :in-summary="false">
@@ -1747,6 +1749,7 @@
                         </template>
                       </SettingRow>
                       <SettingRow
+                  wide-control
                         label="Client Secret"
                         :on="true"
                         :in-summary="false">
@@ -1799,6 +1802,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="localText('前端回跳地址', 'Frontend Callback URL')"
                       :on="true"
                       :in-summary="false">
@@ -1839,6 +1843,7 @@
 
                     <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
                       <SettingRow
+                  wide-control
                         label="Client ID"
                         :on="true"
                         :in-summary="false">
@@ -1852,6 +1857,7 @@
                         </template>
                       </SettingRow>
                       <SettingRow
+                  wide-control
                         label="Client Secret"
                         :on="true"
                         :in-summary="false">
@@ -1904,6 +1910,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="localText('前端回跳地址', 'Frontend Callback URL')"
                       :on="true"
                       :in-summary="false">
@@ -1965,6 +1972,7 @@
                 </SettingRow>
                 <div v-if="form.wechat_connect_open_enabled" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <SettingRow
+                  wide-control
                     :label="localText('PC AppID', 'PC App ID')"
                     :on="true"
                     :in-summary="false">
@@ -1984,6 +1992,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="localText('PC AppSecret', 'PC App Secret')"
                     :on="true"
                     :in-summary="false">
@@ -2025,6 +2034,7 @@
                 </SettingRow>
                 <div v-if="form.wechat_connect_mp_enabled" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <SettingRow
+                  wide-control
                     :label="localText('公众号 AppID', 'Official Account App ID')"
                     :on="true"
                     :in-summary="false">
@@ -2044,6 +2054,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="localText(
                           '公众号 AppSecret',
                           'Official Account App Secret',
@@ -2088,6 +2099,7 @@
                 </SettingRow>
                 <div v-if="form.wechat_connect_mobile_enabled" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <SettingRow
+                  wide-control
                     :label="localText('移动应用 AppID', 'Mobile App ID')"
                     :on="true"
                     :in-summary="false">
@@ -2107,6 +2119,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="localText('移动应用 AppSecret', 'Mobile App Secret')"
                     :on="true"
                     :in-summary="false">
@@ -2188,6 +2201,7 @@
                   </SettingRow>
                 </div>
                 <SettingRow
+                  wide-control
                   :label="t('admin.settings.wechatConnect.frontendRedirectUrlLabel')"
                   :hint="t('admin.settings.wechatConnect.frontendRedirectUrlHint')"
                   :on="true"
@@ -2234,6 +2248,7 @@
               <template v-if="form.dingtalk_connect_enabled">
                 <div class="grid grid-cols-1 gap-6">
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.dingtalk.clientId')"
                     :hint="t('admin.settings.dingtalk.clientIdHint')"
                     :on="true"
@@ -2251,6 +2266,7 @@
                   </SettingRow>
 
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.dingtalk.clientSecret')"
                     :hint="form.dingtalk_connect_client_secret_configured
                           ? t(
@@ -2276,6 +2292,7 @@
                   </SettingRow>
 
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.dingtalk.redirectUrl')"
                     :hint="t('admin.settings.dingtalk.redirectUrlHint')"
                     :on="true"
@@ -2487,6 +2504,7 @@
                 <template v-if="form.oidc_connect_enabled">
                   <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.providerName')"
                       :on="true"
                       :in-summary="false">
@@ -2503,6 +2521,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.clientId')"
                       :on="true"
                       :in-summary="false">
@@ -2519,6 +2538,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.clientSecret')"
                       :hint="form.oidc_connect_client_secret_configured
                             ? t('admin.settings.oidc.clientSecretConfiguredHint')
@@ -2543,6 +2563,7 @@
                   </div>
                   <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.issuerUrl')"
                       :on="true"
                       :in-summary="false">
@@ -2559,6 +2580,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.discoveryUrl')"
                       :on="true"
                       :in-summary="false">
@@ -2575,6 +2597,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.authorizeUrl')"
                       :on="true"
                       :in-summary="false">
@@ -2591,6 +2614,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.tokenUrl')"
                       :on="true"
                       :in-summary="false">
@@ -2607,6 +2631,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.userinfoUrl')"
                       :on="true"
                       :in-summary="false">
@@ -2623,6 +2648,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.jwksUrl')"
                       :on="true"
                       :in-summary="false">
@@ -2638,6 +2664,7 @@
                   </div>
                   <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.scopes')"
                       :hint="t('admin.settings.oidc.scopesHint')"
                       :on="true"
@@ -2689,6 +2716,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.frontendRedirectUrl')"
                       :hint="t('admin.settings.oidc.frontendRedirectUrlHint')"
                       :on="true"
@@ -2735,6 +2763,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.allowedSigningAlgs')"
                       :on="true"
                       :in-summary="false">
@@ -2777,6 +2806,7 @@
                   </div>
                   <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.userinfoEmailPath')"
                       :on="true"
                       :in-summary="false">
@@ -2793,6 +2823,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.userinfoIdPath')"
                       :on="true"
                       :in-summary="false">
@@ -2809,6 +2840,7 @@
                     </SettingRow>
 
                     <SettingRow
+                  wide-control
                       :label="t('admin.settings.oidc.userinfoUsernamePath')"
                       :on="true"
                       :in-summary="false">
@@ -3433,6 +3465,7 @@
               <SettingGroup>
                 <div class="grid gap-4 sm:grid-cols-2">
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.gatewayForwarding.minCodexVersion')"
                     :on="true"
                     :in-summary="false">
@@ -3450,6 +3483,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.gatewayForwarding.maxCodexVersion')"
                     :on="true"
                     :in-summary="false">
@@ -4287,6 +4321,7 @@
                 </SettingRow>
                 <!-- OpenAI Codex UA -->
                 <SettingRow
+                  wide-control
                   :label="t(
                         'admin.settings.gatewayForwarding.openaiCodexUserAgent',
                       )"
@@ -4310,6 +4345,7 @@
                 </SettingRow>
                 <!-- Codex 客户端版本号 -->
                 <SettingRow
+                  wide-control
                   :label="t(
                         'admin.settings.gatewayForwarding.openaiCodexClientVersion',
                       )"
@@ -4668,6 +4704,7 @@
                 </SettingRow>
                 <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
                  <SettingRow
+                  wide-control
                    :label="t('admin.settings.site.siteName')"
                    :hint="t('admin.settings.site.siteNameHint')"
                    :on="true"
@@ -4682,6 +4719,7 @@
                    </template>
                  </SettingRow>
                  <SettingRow
+                  wide-control
                    :label="t('admin.settings.site.siteSubtitle')"
                    :hint="t('admin.settings.site.siteSubtitleHint')"
                    :on="true"
@@ -4700,6 +4738,7 @@
                </div>
                 <!-- API Base URL -->
                 <SettingRow
+                  wide-control
                   :label="t('admin.settings.site.apiBaseUrl')"
                   :hint="t('admin.settings.site.apiBaseUrlHint')"
                   :on="true"
@@ -4731,6 +4770,7 @@
                   </template>
                 </SettingRow>
                 <SettingRow
+                  wide-control
                   :label="t('admin.settings.site.tablePreferencesTitle') + ' · ' + t('admin.settings.site.tablePageSizeOptions')"
                   :hint="t('admin.settings.site.tablePageSizeOptionsHint')"
                   :on="true"
@@ -4885,6 +4925,7 @@
                 </SettingRow>
                 <!-- Contact Info -->
                 <SettingRow
+                  wide-control
                   :label="t('admin.settings.site.contactInfo')"
                   :hint="t('admin.settings.site.contactInfoHint')"
                   :on="true"
@@ -4900,6 +4941,7 @@
                 </SettingRow>
                 <!-- Doc URL -->
                 <SettingRow
+                  wide-control
                   :label="t('admin.settings.site.docUrl')"
                   :hint="t('admin.settings.site.docUrlHint')"
                   :on="true"
@@ -5029,6 +5071,7 @@
                 <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <!-- Label -->
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.customMenu.name')"
                     :on="true"
                     :in-summary="false">
@@ -5060,6 +5103,7 @@
 
                   <!-- URL (full width) -->
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.customMenu.url')"
                     :on="true"
                     :in-summary="false">
@@ -5171,6 +5215,7 @@
                    </SettingRow>
 
                   <SettingRow
+                  wide-control
                     :label="localText('条款更新日期', 'Updated date')"
                     :hint="localText('日期或文档内容变化后，用户需要重新同意。', 'Changing the date or content requires fresh consent.')"
                     :on="true"
@@ -5821,6 +5866,7 @@
               </template>
             </SettingRow>
             <SettingRow
+                  wide-control
               v-else
               :label="t('admin.settings.features.affiliate.modal.userLabel')"
               :on="true"
@@ -5836,6 +5882,7 @@
             </SettingRow>
 
             <SettingRow
+                  wide-control
               :label="t('admin.settings.features.affiliate.modal.codeLabel')"
               :hint="t('admin.settings.features.affiliate.modal.codeHint')"
               :on="true"
@@ -6386,6 +6433,7 @@
               <SettingGroup>
                 <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.smtp.host')"
                     :on="true"
                     :in-summary="false">
@@ -6414,6 +6462,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.smtp.username')"
                     :on="true"
                     :in-summary="false">
@@ -6427,6 +6476,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.smtp.password')"
                     :hint="form.smtp_password_configured
                           ? t('admin.settings.smtp.passwordConfiguredHint')
@@ -6452,6 +6502,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.smtp.fromEmail')"
                     :on="true"
                     :in-summary="false">
@@ -6465,6 +6516,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.smtp.fromName')"
                     :on="true"
                     :in-summary="false">
@@ -6478,6 +6530,7 @@
                     </template>
                   </SettingRow>
                   <SettingRow
+                  wide-control
                     :label="t('admin.settings.smtp.ticketAdminEmail')"
                     :hint="t('admin.settings.smtp.ticketAdminEmailHint')"
                     :on="true"
@@ -6516,6 +6569,7 @@
             <SettingPanel hide-summary>
               <div class="flex flex-wrap items-center gap-x-4 gap-y-2 [&>.setting-row]:min-w-0 [&>.setting-row]:flex-1">
                 <SettingRow
+                  wide-control
                   :label="t('admin.settings.testEmail.recipientEmail')"
                   :on="true"
                   :in-summary="false">
@@ -6604,6 +6658,7 @@
                   </template>
                 </SettingRow>
                 <SettingRow
+                  wide-control
                   :label="t('admin.settings.balanceNotify.rechargeUrl')"
                   :hint="t('admin.settings.balanceNotify.rechargeUrlHint')"
                   :on="true"

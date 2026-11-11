@@ -34,7 +34,13 @@ const props = withDefaults(defineProps<{
    * plain value (a threshold, a mode) rather than a feature someone switched on.
    */
   inSummary?: boolean
+  /**
+   * Give the control half of the row instead of its intrinsic width. For text and URL inputs,
+   * whose content is the thing to read; a switch or a short number keeps the default.
+   */
+  wideControl?: boolean
 }>(), {
+  wideControl: false,
   inSummary: true,
   hint: undefined,
   summary: undefined,
@@ -86,7 +92,7 @@ function toggle() {
 </script>
 
 <template>
-  <div ref="root" class="setting-row" :data-on="on || undefined" :data-testid="testId">
+  <div ref="root" class="setting-row" :data-on="on || undefined" :data-wide-control="wideControl || undefined" :data-testid="testId">
     <div class="setting-row__head">
       <button
         type="button"
@@ -234,6 +240,21 @@ function toggle() {
 
 .setting-row__button {
   min-width: min(45%, 9rem);
+}
+
+/* A wide control takes half the row on a desktop, so a URL can be read without opening the row.
+   The name gives up its growth instead; on a narrow screen the default rule above still applies. */
+@media (min-width: 640px) {
+  .setting-row[data-wide-control] .setting-row__button {
+    flex: 0 1 auto;
+  }
+
+  .setting-row[data-wide-control] .setting-row__control {
+    flex: 1 1 50%;
+    justify-content: flex-end;
+    max-width: 28rem;
+    margin-inline-start: auto;
+  }
 }
 
 .setting-row__status {
