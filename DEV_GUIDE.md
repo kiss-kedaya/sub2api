@@ -53,7 +53,7 @@ npm install -g pnpm
 
 ### CI 要求
 
-- Go 版本由 `backend/go.mod` 指定；CI workflow 的版本断言和三个 Dockerfile 的 Go 构建镜像也必须同步更新。当前锁定 **1.26.10**，用于包含 `crypto/x509` 安全修复。
+- Go 版本由 `backend/go.mod` 指定；CI workflow 的版本断言和三个 Dockerfile 的 Go 构建镜像也必须同步更新。当前锁定 **1.26.11**，用于包含 `net/http` 安全修复（GO-2026-6859）。
 - 前端使用 `pnpm install --frozen-lockfile`，必须提交 `pnpm-lock.yaml`
 
 ### 本地测试命令
