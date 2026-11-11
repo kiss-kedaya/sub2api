@@ -188,11 +188,12 @@ func TestListDueUpstreamBillingProbeAccountsIncludesAllAPIKeyPlatforms(t *testin
 	grokDue := insert("probe-grok-due", "grok", service.AccountTypeAPIKey, "2026-07-26T02:59:00Z")
 	// OAuth 账号即便误持有启用标记也不得入选。
 	_ = insert("probe-grok-oauth-excluded", "grok", service.AccountTypeOAuth, "2026-07-26T02:59:00Z")
-	// 未启用探测的 API-key 账号不入选。
+	// 管理员显式关掉探测的 API-key 账号不入选。空 extra 现在表示「从未表态」，
+	// 会被自动纳入（见 IncludesUndecidedAndSkipsDisabled），所以这里必须写明 false。
 	var disabledID int64
 	err = scanSingleRow(ctx, tx, `
 		INSERT INTO accounts (name, platform, type, status, extra)
-		VALUES ('probe-grok-disabled', 'grok', $1, 'active', '{}'::jsonb)
+		VALUES ('probe-grok-disabled', 'grok', $1, 'active', '{"upstream_billing_probe_enabled": false}'::jsonb)
 		RETURNING id
 	`, []any{service.AccountTypeAPIKey}, &disabledID)
 	require.NoError(t, err)
