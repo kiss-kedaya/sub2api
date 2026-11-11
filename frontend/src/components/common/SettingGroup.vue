@@ -3,16 +3,22 @@
 // draw their own dividers, so the group only owns the spacing and the heading.
 //
 // Reusable outside the account dialogs: the group has no idea what the rows configure.
-defineProps<{
+withDefaults(defineProps<{
   /** Already-translated group title. Omit to render the rows with no heading. */
   title?: string
   /** Already-translated line under the title, for what the whole group is about. */
   description?: string
-}>()
+  /**
+   * Drop the line above the first row and below the last one. For a group that already sits inside
+   * a bordered card: the card edge is the frame, and a second line just inside it reads as an empty
+   * row (most visible when the group has a single row).
+   */
+  flush?: boolean
+}>(), { title: undefined, description: undefined, flush: false })
 </script>
 
 <template>
-  <section class="setting-group">
+  <section class="setting-group" :data-flush="flush || undefined">
     <h4 v-if="title" class="setting-group__title">{{ title }}</h4>
     <p v-if="description" class="setting-group__description">{{ description }}</p>
     <div class="setting-group__rows">
@@ -52,5 +58,14 @@ defineProps<{
   display: grid;
   min-width: 0;
   border-bottom: 1px solid var(--ui-border);
+}
+
+.setting-group[data-flush] .setting-group__rows {
+  border-bottom: 0;
+}
+
+/* v-if / v-for leave comment nodes, not elements, so :first-of-type still finds the first real row. */
+.setting-group[data-flush] .setting-group__rows > :deep(.setting-row:first-of-type) {
+  border-top: 0;
 }
 </style>

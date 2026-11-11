@@ -1165,7 +1165,8 @@ export default {
         quickPresets: '快捷预设',
         presetOpusOnly: '仅 Opus 允许 1M',
         presetOpusOnlyDesc: 'Opus 透传，其他模型过滤',
-        commonPatterns: '常用模式'
+        commonPatterns: '常用模式',
+        empty: '后端没有返回任何 Beta 规则，当前全部按默认处理。'
       },
       openaiFastPolicy: {
         title: 'OpenAI Fast/Flex 策略',
