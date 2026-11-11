@@ -34,6 +34,11 @@ var defaultAllowed = map[string]struct{}{
 	// Codex uses this response header to avoid estimating reasoning tokens a
 	// second time when upstream usage already includes them.
 	"x-reasoning-included": {},
+	// Kimi/Moonshot reports prompt-cache writes per TTL bucket in these
+	// response headers. Clients use them to verify cache warm-up.
+	"msh-usage-cache-write-tokens-5m": {},
+	"msh-usage-cache-write-tokens-1h": {},
+	"msh-context-cache-token-saved":   {},
 }
 
 // hopByHopHeaders 是跳过的 hop-by-hop 头部，这些头部由 HTTP 库自动处理

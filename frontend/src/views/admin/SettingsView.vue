@@ -168,32 +168,32 @@
               </UButton>
             </template>
             <SettingPanel hide-summary>
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.overloadCooldown.enabled')"
                   :hint="t('admin.settings.overloadCooldown.enabledHint')"
-                  :on="overloadCooldownForm.enabled"
-                  :summary="`${t('admin.settings.overloadCooldown.cooldownMinutes')} ${overloadCooldownForm.cooldown_minutes}`">
+                  :on="overloadCooldownForm.enabled">
                   <template #control>
                     <Toggle v-model="overloadCooldownForm.enabled" />
                   </template>
-                  <template #fields>
-                    <template v-if="overloadCooldownForm.enabled">
-                      <UFormField
-                        :label="t('admin.settings.overloadCooldown.cooldownMinutes')"
-                        :description="t('admin.settings.overloadCooldown.cooldownMinutesHint')"
-                      >
-                        <UInput
-                          v-model.number="overloadCooldownForm.cooldown_minutes"
-                          type="number"
-                          min="1"
-                          max="120"
-                          class="w-32"
-                        />
-                      </UFormField>
-                    </template>
-                  </template>
                 </SettingRow>
+                <template v-if="overloadCooldownForm.enabled">
+                  <SettingRow
+                    :label="t('admin.settings.overloadCooldown.cooldownMinutes')"
+                    :hint="t('admin.settings.overloadCooldown.cooldownMinutesHint')"
+                    :on="true"
+                    :in-summary="false">
+                    <template #control>
+                      <UInput
+                        v-model.number="overloadCooldownForm.cooldown_minutes"
+                        type="number"
+                        min="1"
+                        max="120"
+                        class="w-28"
+                      />
+                    </template>
+                  </SettingRow>
+                </template>
               </SettingGroup>
             </SettingPanel>
           </SettingsSection>
@@ -214,36 +214,32 @@
               </UButton>
             </template>
             <SettingPanel hide-summary>
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.rateLimit429Cooldown.enabled')"
                   :hint="t('admin.settings.rateLimit429Cooldown.enabledHint')"
-                  :on="rateLimit429CooldownForm.enabled"
-                  :summary="`${t('admin.settings.rateLimit429Cooldown.cooldownSeconds')} ${rateLimit429CooldownForm.cooldown_seconds}`">
+                  :on="rateLimit429CooldownForm.enabled">
                   <template #control>
                     <Toggle v-model="rateLimit429CooldownForm.enabled" />
                   </template>
-                  <template #fields>
-                    <template v-if="rateLimit429CooldownForm.enabled">
-                      <UFormField
-                        :label="t(
-                              'admin.settings.rateLimit429Cooldown.cooldownSeconds',
-                            )"
-                        :description="t(
-                              'admin.settings.rateLimit429Cooldown.cooldownSecondsHint',
-                            )"
-                      >
-                        <UInput
-                          v-model.number="rateLimit429CooldownForm.cooldown_seconds"
-                          type="number"
-                          min="1"
-                          max="7200"
-                          class="w-32"
-                        />
-                      </UFormField>
-                    </template>
-                  </template>
                 </SettingRow>
+                <template v-if="rateLimit429CooldownForm.enabled">
+                  <SettingRow
+                    :label="t('admin.settings.rateLimit429Cooldown.cooldownSeconds')"
+                    :hint="t('admin.settings.rateLimit429Cooldown.cooldownSecondsHint')"
+                    :on="true"
+                    :in-summary="false">
+                    <template #control>
+                      <UInput
+                        v-model.number="rateLimit429CooldownForm.cooldown_seconds"
+                        type="number"
+                        min="1"
+                        max="7200"
+                        class="w-28"
+                      />
+                    </template>
+                  </SettingRow>
+                </template>
               </SettingGroup>
             </SettingPanel>
           </SettingsSection>
@@ -266,75 +262,80 @@
             <SettingPanel hide-summary>
               <!-- Loading State -->
               <!-- Enable Stream Timeout -->
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.streamTimeout.enabled')"
                   :hint="t('admin.settings.streamTimeout.enabledHint')"
-                  :on="streamTimeoutForm.enabled"
-                  :summary="`${t('admin.settings.streamTimeout.thresholdCount')} ${streamTimeoutForm.threshold_count} · ${t('admin.settings.streamTimeout.thresholdWindowMinutes')} ${streamTimeoutForm.threshold_window_minutes}`">
+                  :on="streamTimeoutForm.enabled">
                   <template #control>
                     <Toggle v-model="streamTimeoutForm.enabled" />
                   </template>
-                  <template #fields>
-                    <template v-if="streamTimeoutForm.enabled">
-                      <!-- Action -->
-                      <UFormField
-                        :label="t('admin.settings.streamTimeout.action')"
-                        :description="t('admin.settings.streamTimeout.actionHint')"
-                      >
-                        <Select
-                          v-model="streamTimeoutForm.action"
-                          :options="[{ value: 'temp_unsched', label: t('admin.settings.streamTimeout.actionTempUnsched') }, { value: 'error', label: t('admin.settings.streamTimeout.actionError') }, { value: 'none', label: t('admin.settings.streamTimeout.actionNone') }]"
-                          class="w-64"
-                        />
-                      </UFormField>
-                      <!-- Temp Unsched Minutes (only show when action is temp_unsched) -->
-                      <UFormField
-                        v-if="streamTimeoutForm.action === 'temp_unsched'"
-                        :label="t('admin.settings.streamTimeout.tempUnschedMinutes')"
-                        :description="t('admin.settings.streamTimeout.tempUnschedMinutesHint')"
-                      >
-                        <UInput
-                          v-model.number="streamTimeoutForm.temp_unsched_minutes"
-                          type="number"
-                          min="1"
-                          max="60"
-                          class="w-32"
-                        />
-                      </UFormField>
-                      <!-- Threshold Count -->
-                      <UFormField
-                        :label="t('admin.settings.streamTimeout.thresholdCount')"
-                        :description="t('admin.settings.streamTimeout.thresholdCountHint')"
-                      >
-                        <UInput
-                          v-model.number="streamTimeoutForm.threshold_count"
-                          type="number"
-                          min="1"
-                          max="10"
-                          class="w-32"
-                        />
-                      </UFormField>
-                      <!-- Threshold Window Minutes -->
-                      <UFormField
-                        :label="t('admin.settings.streamTimeout.thresholdWindowMinutes')"
-                        :description="t(
-                              'admin.settings.streamTimeout.thresholdWindowMinutesHint',
-                            )"
-                      >
-                        <UInput
-                          v-model.number="
-                            streamTimeoutForm.threshold_window_minutes
-                          "
-                          type="number"
-                          min="1"
-                          max="60"
-                          class="w-32"
-                        />
-                      </UFormField>
-                    </template>
-                  </template>
                 </SettingRow>
+                <template v-if="streamTimeoutForm.enabled">
+                  <!-- Action -->
+                  <SettingRow
+                    :label="t('admin.settings.streamTimeout.action')"
+                    :hint="t('admin.settings.streamTimeout.actionHint')"
+                    :on="true"
+                    :in-summary="false">
+                    <template #control>
+                      <Select
+                        v-model="streamTimeoutForm.action"
+                        :options="[{ value: 'temp_unsched', label: t('admin.settings.streamTimeout.actionTempUnsched') }, { value: 'error', label: t('admin.settings.streamTimeout.actionError') }, { value: 'none', label: t('admin.settings.streamTimeout.actionNone') }]"
+                        class="w-36 sm:w-56"
+                      />
+                    </template>
+                  </SettingRow>
+                  <!-- Temp Unsched Minutes (only show when action is temp_unsched) -->
+                  <SettingRow
+                    v-if="streamTimeoutForm.action === 'temp_unsched'"
+                    :label="t('admin.settings.streamTimeout.tempUnschedMinutes')"
+                    :hint="t('admin.settings.streamTimeout.tempUnschedMinutesHint')"
+                    :on="true"
+                    :in-summary="false">
+                    <template #control>
+                      <UInput
+                        v-model.number="streamTimeoutForm.temp_unsched_minutes"
+                        type="number"
+                        min="1"
+                        max="60"
+                        class="w-28"
+                      />
+                    </template>
+                  </SettingRow>
+                  <!-- Threshold Count -->
+                  <SettingRow
+                    :label="t('admin.settings.streamTimeout.thresholdCount')"
+                    :hint="t('admin.settings.streamTimeout.thresholdCountHint')"
+                    :on="true"
+                    :in-summary="false">
+                    <template #control>
+                      <UInput
+                        v-model.number="streamTimeoutForm.threshold_count"
+                        type="number"
+                        min="1"
+                        max="10"
+                        class="w-28"
+                      />
+                    </template>
+                  </SettingRow>
+                  <!-- Threshold Window Minutes -->
+                  <SettingRow
+                    :label="t('admin.settings.streamTimeout.thresholdWindowMinutes')"
+                    :hint="t('admin.settings.streamTimeout.thresholdWindowMinutesHint')"
+                    :on="true"
+                    :in-summary="false">
+                    <template #control>
+                      <UInput
+                        v-model.number="streamTimeoutForm.threshold_window_minutes"
+                        type="number"
+                        min="1"
+                        max="60"
+                        class="w-28"
+                      />
+                    </template>
+                  </SettingRow>
+                </template>
               </SettingGroup>
               <!-- Save Button -->
             </SettingPanel>
@@ -358,7 +359,7 @@
             <SettingPanel>
               <!-- Loading State -->
               <!-- Master Toggle -->
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.rectifier.enabled')"
                   :hint="t('admin.settings.rectifier.enabledHint')"
@@ -401,7 +402,7 @@
                         v-if="rectifierForm.apikey_signature_enabled"
                         :label="t('admin.settings.rectifier.apikeyPatterns')"
                         :description="t('admin.settings.rectifier.apikeyPatternsHint')"
-                        :ui="{ container: 'w-full mt-3' }"
+                        :ui="{ container: 'grid gap-2 w-full' }"
                       >
                         <div
                           v-for="(
@@ -417,7 +418,7 @@
                               t('admin.settings.rectifier.apikeyPatternPlaceholder')
                             "
                             size="sm"
-                            class="flex-1"
+                            class="min-w-0 flex-1 font-mono"
                           />
                           <UButton
                             icon="i-lucide-x"
@@ -429,17 +430,20 @@
                               )
                             "
                             color="error"
-                            variant="soft"
+                            variant="ghost"
                             size="xs"
+                            class="shrink-0"
                           />
                         </div>
                         <UButton
                           @click="rectifierForm.apikey_signature_patterns.push('')"
+                          icon="i-lucide-plus"
                           color="neutral"
                           variant="outline"
                           size="xs"
+                          class="w-fit"
                         >
-                          + {{ t("admin.settings.rectifier.addPattern") }}
+                          {{ t("admin.settings.rectifier.addPattern") }}
                         </UButton>
                       </UFormField>
                     </template>
@@ -465,158 +469,183 @@
               </UButton>
             </template>
             <!-- Loading State -->
-            <!-- Rule Cards -->
-            <div
-              v-for="rule in betaPolicyForm.rules"
-              :key="rule.beta_token"
-              class="border-t border-default pt-4 first:border-t-0 first:pt-0"
-            >
-              <div class="mb-3 flex items-center gap-2">
-                <span class="text-sm font-medium text-highlighted">
-                  {{ getBetaDisplayName(rule.beta_token) }}
-                </span>
-                <span class="rounded-sm bg-elevated px-2 py-0.5 text-xs text-muted">
-                  {{ rule.beta_token }}
-                </span>
-              </div>
-
-              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <!-- Action -->
-                <UFormField :label="t('admin.settings.betaPolicy.action')">
-                  <Select
-                    :modelValue="rule.action"
-                    @update:modelValue="rule.action = $event as any"
-                    :options="betaPolicyActionOptions"
-                  />
-                </UFormField>
-
-                <!-- Scope -->
-                <UFormField :label="t('admin.settings.betaPolicy.scope')">
-                  <Select
-                    :modelValue="rule.scope"
-                    @update:modelValue="rule.scope = $event as any"
-                    :options="betaPolicyScopeOptions"
-                  />
-                </UFormField>
-              </div>
-
-              <!-- Error Message (only when action=block) -->
-              <UFormField
-                v-if="rule.action === 'block'"
-                :label="t('admin.settings.betaPolicy.errorMessage')"
-                :description="t('admin.settings.betaPolicy.errorMessageHint')"
-              >
-                <UInput
-                  v-model="rule.error_message"
-                  type="text"
-                  :placeholder="
-                    t('admin.settings.betaPolicy.errorMessagePlaceholder')
-                  "
-                  class="w-full"
-                />
-              </UFormField>
-
-              <!-- Quick Presets (only for tokens with presets) -->
-              <UFormField
-                v-if="betaPresets[rule.beta_token]?.length"
-                :label="t('admin.settings.betaPolicy.quickPresets')"
-              >
-                <div class="flex flex-wrap gap-2">
-                  <UButton
-                    v-for="preset in betaPresets[rule.beta_token]"
-                    :key="preset.label"
-                    @click="applyBetaPreset(rule, preset)"
-                    :title="preset.description"
-                    size="sm"
-                  >
-                    {{ preset.label }}
-                  </UButton>
-                </div>
-              </UFormField>
-
-              <!-- Model Whitelist -->
-              <UFormField
-                :label="t('admin.settings.betaPolicy.modelWhitelist')"
-                :description="t('admin.settings.betaPolicy.modelWhitelistHint')"
-              >
-                <div
-                  v-for="(_, index) in rule.model_whitelist || []"
-                  :key="index"
-                  class="mb-1.5 flex items-center gap-2"
+            <!-- Rule Rows: one row per Beta token; the action is the row's control, everything else unfolds. -->
+            <SettingPanel hide-summary>
+              <SettingGroup flush>
+                <!-- Shown only while the list below renders no row (only-child ignores the v-for comment nodes). -->
+                <p class="hidden rounded-lg border border-dashed border-default px-4 py-6 text-center text-sm text-muted only:block">
+                  {{ t("admin.settings.betaPolicy.empty") }}
+                </p>
+                <SettingRow
+                  v-for="rule in betaPolicyForm.rules"
+                  :key="rule.beta_token"
+                  :label="getBetaDisplayName(rule.beta_token)"
+                  :on="rule.action !== 'pass'"
+                  :in-summary="false"
+                  persistent-summary
+                  :summary="[
+                    betaPolicyScopeOptions.find((o) => o.value === rule.scope)?.label,
+                    (rule.model_whitelist || []).some((p) => p.trim() !== '') ? `${t('admin.settings.betaPolicy.modelWhitelist')} ${(rule.model_whitelist || []).filter((p) => p.trim() !== '').length}` : '',
+                  ].filter(Boolean).join(' · ')"
                 >
-                  <UInput
-                    v-model="rule.model_whitelist![index]"
-                    type="text"
-                    :placeholder="
-                      t('admin.settings.betaPolicy.modelPatternPlaceholder')
-                    "
-                    size="sm"
-                    class="flex-1"
-                  />
-                  <UButton
-                    icon="i-lucide-x"
-                    square
-                    @click="rule.model_whitelist!.splice(index, 1)"
-                    color="error"
-                    variant="ghost"
-                    class="shrink-0"
-                  />
-                </div>
-                <UButton
-                  icon="i-lucide-plus"
-                  @click="
-                    if (!rule.model_whitelist) rule.model_whitelist = [];
-                    rule.model_whitelist.push('');
-                  "
-                  variant="link"
-                  size="sm"
-                  class="mb-2"
-                >
-                  {{ t("admin.settings.betaPolicy.addModelPattern") }}
-                </UButton>
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <span class="text-xs text-dimmed">{{ t("admin.settings.betaPolicy.commonPatterns") }}:</span>
-                  <UButton
-                    v-for="pattern in commonModelPatterns"
-                    :key="pattern"
-                    @click="addQuickPattern(rule, pattern)"
-                    size="sm"
-                  >
-                    {{ pattern }}
-                  </UButton>
-                </div>
-              </UFormField>
+                  <template #title>
+                    <span class="min-w-0 truncate">{{ getBetaDisplayName(rule.beta_token) }}</span>
+                    <!-- The raw token, when the name above is a friendlier alias of it. -->
+                    <span
+                      :class="getBetaDisplayName(rule.beta_token) === rule.beta_token ? 'hidden' : 'hidden sm:inline'"
+                      class="truncate rounded-sm bg-elevated px-1.5 font-mono text-[11px] leading-5 font-normal text-muted"
+                    >{{ rule.beta_token }}</span>
+                  </template>
+                  <template #control>
+                    <Select
+                      :modelValue="rule.action"
+                      @update:modelValue="rule.action = $event as any"
+                      :options="betaPolicyActionOptions"
+                      :aria-label="t('admin.settings.betaPolicy.action')"
+                      class="w-40 sm:w-48"
+                    />
+                  </template>
+                  <template #fields>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                      <!-- Scope -->
+                      <UFormField :label="t('admin.settings.betaPolicy.scope')">
+                        <Select
+                          :modelValue="rule.scope"
+                          @update:modelValue="rule.scope = $event as any"
+                          :options="betaPolicyScopeOptions"
+                          class="w-full"
+                        />
+                      </UFormField>
 
-              <!-- Fallback Action (only when model_whitelist is non-empty) -->
-              <UFormField
-                v-if="
-                  rule.model_whitelist && rule.model_whitelist.length > 0
-                "
-                :label="t('admin.settings.betaPolicy.fallbackAction')"
-                :description="t('admin.settings.betaPolicy.fallbackActionHint')"
-              >
-                <Select
-                  :modelValue="rule.fallback_action || 'pass'"
-                  @update:modelValue="rule.fallback_action = $event as any"
-                  :options="betaPolicyActionOptions"
-                />
-                <div v-if="rule.fallback_action === 'block'" class="mt-2">
-                  <UInput
-                    v-model="rule.fallback_error_message"
-                    type="text"
-                    :placeholder="
-                      t(
-                        'admin.settings.betaPolicy.fallbackErrorMessagePlaceholder',
-                      )
-                    "
-                    class="w-full"
-                  />
-                  <p class="mt-1 text-xs text-dimmed">
-                    {{ t("admin.settings.betaPolicy.errorMessageHint") }}
-                  </p>
-                </div>
-              </UFormField>
-            </div>
+                      <!-- Error Message (only when action=block) -->
+                      <UFormField
+                        v-if="rule.action === 'block'"
+                        :label="t('admin.settings.betaPolicy.errorMessage')"
+                        :description="t('admin.settings.betaPolicy.errorMessageHint')"
+                      >
+                        <UInput
+                          v-model="rule.error_message"
+                          type="text"
+                          :placeholder="
+                            t('admin.settings.betaPolicy.errorMessagePlaceholder')
+                          "
+                          class="w-full"
+                        />
+                      </UFormField>
+                    </div>
+
+                    <!-- Quick Presets (only for tokens with presets) -->
+                    <UFormField
+                      v-if="betaPresets[rule.beta_token]?.length"
+                      :label="t('admin.settings.betaPolicy.quickPresets')"
+                    >
+                      <div class="flex flex-wrap gap-2">
+                        <UButton
+                          v-for="preset in betaPresets[rule.beta_token]"
+                          :key="preset.label"
+                          @click="applyBetaPreset(rule, preset)"
+                          :title="preset.description"
+                          color="neutral"
+                          variant="outline"
+                          size="sm"
+                        >
+                          {{ preset.label }}
+                        </UButton>
+                      </div>
+                    </UFormField>
+
+                    <!-- Model Whitelist -->
+                    <UFormField
+                      :label="t('admin.settings.betaPolicy.modelWhitelist')"
+                      :description="t('admin.settings.betaPolicy.modelWhitelistHint')"
+                      :ui="{ container: 'grid gap-1.5 w-full' }"
+                    >
+                      <div
+                        v-for="(_, index) in rule.model_whitelist || []"
+                        :key="index"
+                        class="flex items-center gap-2"
+                      >
+                        <UInput
+                          v-model="rule.model_whitelist![index]"
+                          type="text"
+                          :placeholder="
+                            t('admin.settings.betaPolicy.modelPatternPlaceholder')
+                          "
+                          size="sm"
+                          class="min-w-0 flex-1 font-mono"
+                        />
+                        <UButton
+                          icon="i-lucide-x"
+                          square
+                          @click="rule.model_whitelist!.splice(index, 1)"
+                          color="error"
+                          variant="ghost"
+                          size="xs"
+                          class="shrink-0"
+                        />
+                      </div>
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <UButton
+                          icon="i-lucide-plus"
+                          @click="
+                            if (!rule.model_whitelist) rule.model_whitelist = [];
+                            rule.model_whitelist.push('');
+                          "
+                          color="neutral"
+                          variant="outline"
+                          size="xs"
+                        >
+                          {{ t("admin.settings.betaPolicy.addModelPattern") }}
+                        </UButton>
+                        <span class="ms-2 text-xs text-dimmed">{{ t("admin.settings.betaPolicy.commonPatterns") }}:</span>
+                        <UButton
+                          v-for="pattern in commonModelPatterns"
+                          :key="pattern"
+                          @click="addQuickPattern(rule, pattern)"
+                          color="neutral"
+                          variant="soft"
+                          size="xs"
+                          class="font-mono"
+                        >
+                          {{ pattern }}
+                        </UButton>
+                      </div>
+                    </UFormField>
+
+                    <!-- Fallback Action (only when model_whitelist is non-empty) -->
+                    <UFormField
+                      v-if="
+                        rule.model_whitelist && rule.model_whitelist.length > 0
+                      "
+                      :label="t('admin.settings.betaPolicy.fallbackAction')"
+                      :description="t('admin.settings.betaPolicy.fallbackActionHint')"
+                    >
+                      <Select
+                        :modelValue="rule.fallback_action || 'pass'"
+                        @update:modelValue="rule.fallback_action = $event as any"
+                        :options="betaPolicyActionOptions"
+                        class="w-full sm:w-56"
+                      />
+                      <div v-if="rule.fallback_action === 'block'" class="mt-2">
+                        <UInput
+                          v-model="rule.fallback_error_message"
+                          type="text"
+                          :placeholder="
+                            t(
+                              'admin.settings.betaPolicy.fallbackErrorMessagePlaceholder',
+                            )
+                          "
+                          class="w-full"
+                        />
+                        <p class="mt-1 text-xs text-dimmed">
+                          {{ t("admin.settings.betaPolicy.errorMessageHint") }}
+                        </p>
+                      </div>
+                    </UFormField>
+                  </template>
+                </SettingRow>
+              </SettingGroup>
+            </SettingPanel>
             <!-- Save Button -->
           </SettingsSection>
           <!-- OpenAI Fast/Flex Policy Settings -->
@@ -624,233 +653,253 @@
             :title="t('admin.settings.openaiFastPolicy.title')"
             :description="t('admin.settings.openaiFastPolicy.description')"
           >
-            <!-- Empty state -->
-            <div
-              v-if="openaiFastPolicyForm.rules.length === 0"
-              class="py-2 text-center text-sm text-muted"
-            >
-              {{ t("admin.settings.openaiFastPolicy.empty") }}
-            </div>
-            <!-- Rule Cards -->
-            <div
-              v-for="(rule, ruleIndex) in openaiFastPolicyForm.rules"
-              :key="ruleIndex"
-              class="border-t border-default pt-4 first:border-t-0 first:pt-0"
-            >
-              <div class="mb-3 flex items-center justify-between">
-                <span class="text-sm font-medium text-highlighted">
-                  {{ t("admin.settings.openaiFastPolicy.ruleHeader", { index: ruleIndex + 1, }) }}
-                </span>
-                <UButton
-                  icon="i-lucide-x"
-                  square
-                  :aria-label="t('admin.settings.openaiFastPolicy.removeRule')"
-                  @click="removeOpenAIFastPolicyRule(ruleIndex)"
-                  :title="t('admin.settings.openaiFastPolicy.removeRule')"
-                  color="error"
-                  variant="ghost"
-                />
-              </div>
-
+            <SettingPanel hide-summary>
+              <!-- Empty state -->
               <div
-                class="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted"
-                :data-testid="`openai-fast-policy-summary-${ruleIndex}`"
+                v-if="openaiFastPolicyForm.rules.length === 0"
+                class="flex flex-col items-center gap-1 rounded-lg border border-dashed border-default px-4 py-6 text-center"
               >
-                <span class="font-medium text-toned">
-                  {{
-                    t(
-                      hasOpenAIFastPolicyTargetModels(rule)
-                        ? "admin.settings.openaiFastPolicy.summaryTargetModels"
-                        : "admin.settings.openaiFastPolicy.summaryAllModels",
-                    )
-                  }}
-                </span>
-                <span aria-hidden="true">→</span>
-                <span class="inline-flex items-center rounded-sm bg-primary/10 px-2 py-0.5 font-medium text-primary">
-                  {{ openaiFastPolicyActionSummary(rule.action) }}
-                </span>
-                <template v-if="hasOpenAIFastPolicyTargetModels(rule)">
-                  <span aria-hidden="true">·</span>
-                  <span class="font-medium text-toned">
-                    {{ t( "admin.settings.openaiFastPolicy.summaryOtherModels", ) }}
-                  </span>
-                  <span aria-hidden="true">→</span>
-                  <span class="inline-flex items-center rounded-sm bg-elevated px-2 py-0.5 font-medium text-toned">
-                    {{ openaiFastPolicyActionSummary( rule.fallback_action || "pass", ) }}
-                  </span>
-                </template>
+                <UIcon name="i-lucide-list-filter" class="size-5 text-dimmed" />
+                <p class="text-sm text-muted">{{ t("admin.settings.openaiFastPolicy.empty") }}</p>
               </div>
-
-              <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <!-- Service Tier -->
-                <UFormField :label="t('admin.settings.openaiFastPolicy.serviceTier')">
-                  <Select
-                    :modelValue="rule.service_tier"
-                    @update:modelValue="
-                      rule.service_tier = $event as
-                        | 'all'
-                        | 'priority'
-                        | 'flex'
-                        | 'missing'
-                    "
-                    :options="openaiFastPolicyTierOptions"
-                  />
-                </UFormField>
-
-                <!-- Action -->
-                <UFormField :label="t('admin.settings.openaiFastPolicy.action')">
-                  <Select
-                    :modelValue="rule.action"
-                    @update:modelValue="
-                      rule.action = $event as
-                        | 'pass'
-                        | 'filter'
-                        | 'block'
-                        | 'force_priority'
-                    "
-                    :options="openaiFastPolicyActionOptions"
-                  />
-                </UFormField>
-
-                <!-- Scope -->
-                <UFormField :label="t('admin.settings.openaiFastPolicy.scope')">
-                  <Select
-                    :modelValue="rule.scope"
-                    @update:modelValue="
-                      rule.scope = $event as
-                        | 'all'
-                        | 'oauth'
-                        | 'apikey'
-                        | 'bedrock'
-                    "
-                    :options="openaiFastPolicyScopeOptions"
-                  />
-                </UFormField>
-              </div>
-
-              <!-- User Scope -->
-              <UFormField
-                :label="t('admin.settings.openaiFastPolicy.userIds')"
-                :description="t('admin.settings.openaiFastPolicy.userIdsHint')"
-              >
-                <OpenAIFastPolicyUserSelector
-                  :model-value="rule.user_ids || []"
-                  @update:model-value="rule.user_ids = $event"
-                />
-              </UFormField>
-
-              <!-- Error Message (only when action=block) -->
-              <UFormField
-                v-if="rule.action === 'block'"
-                :label="t('admin.settings.openaiFastPolicy.errorMessage')"
-                :description="t('admin.settings.openaiFastPolicy.errorMessageHint')"
-              >
-                <UInput
-                  v-model="rule.error_message"
-                  type="text"
-                  :placeholder="
-                    t(
-                      'admin.settings.openaiFastPolicy.errorMessagePlaceholder',
-                    )
-                  "
-                  class="w-full"
-                />
-              </UFormField>
-
-              <!-- Target Models -->
-              <UFormField
-                role="group"
-                :aria-labelledby="`openai-fast-policy-models-label-${ruleIndex}`"
-                :aria-describedby="`openai-fast-policy-models-hint-${ruleIndex}`"
-              >
-                <template #label>
-                  <span :id="`openai-fast-policy-models-label-${ruleIndex}`">{{ t("admin.settings.openaiFastPolicy.modelWhitelist") }}</span>
-                </template>
-                <template #description>
-                  <span :id="`openai-fast-policy-models-hint-${ruleIndex}`">{{ t("admin.settings.openaiFastPolicy.modelWhitelistHint") }}</span>
-                </template>
-                <div
-                  v-for="(_, patternIdx) in rule.model_whitelist || []"
-                  :key="patternIdx"
-                  class="mb-1.5 flex items-center gap-2"
+              <!-- Rule Rows: the row line carries the rule's own summary; tier / action / scope and the rest unfold. -->
+              <SettingGroup flush>
+                <SettingRow
+                  v-for="(rule, ruleIndex) in openaiFastPolicyForm.rules"
+                  :key="ruleIndex"
+                  :label="t('admin.settings.openaiFastPolicy.ruleHeader', { index: ruleIndex + 1, })"
+                  :on="rule.action !== 'pass'"
+                  :in-summary="false"
                 >
-                  <UInput
-                    v-model="rule.model_whitelist![patternIdx]"
-                    type="text"
-                    :placeholder="
-                      t(
-                        'admin.settings.openaiFastPolicy.modelPatternPlaceholder',
-                      )
-                    "
-                    size="sm"
-                    class="flex-1"
-                  />
-                  <UButton
-                    icon="i-lucide-x"
-                    square
-                    @click="
-                      removeOpenAIFastPolicyModelPattern(rule, patternIdx)
-                    "
-                    color="error"
-                    variant="ghost"
-                    class="shrink-0"
-                  />
-                </div>
+                  <template #title>
+                    <span class="shrink-0">{{ t("admin.settings.openaiFastPolicy.ruleHeader", { index: ruleIndex + 1, }) }}</span>
+                    <span
+                      class="flex min-w-0 items-center gap-x-1.5 overflow-hidden text-xs font-normal text-muted max-sm:[mask-image:linear-gradient(to_right,black_80%,transparent)]"
+                      :data-testid="`openai-fast-policy-summary-${ruleIndex}`"
+                    >
+                      <span class="shrink-0 rounded-sm bg-elevated px-1.5 font-mono leading-5 text-toned">
+                        {{ openaiFastPolicyTierOptions.find((o) => o.value === rule.service_tier)?.label ?? rule.service_tier }}
+                      </span>
+                      <span class="shrink-0 text-toned">
+                        {{
+                          t(
+                            hasOpenAIFastPolicyTargetModels(rule)
+                              ? "admin.settings.openaiFastPolicy.summaryTargetModels"
+                              : "admin.settings.openaiFastPolicy.summaryAllModels",
+                          )
+                        }}
+                      </span>
+                      <span aria-hidden="true">→</span>
+                      <span class="shrink-0 rounded-sm bg-primary/10 px-1.5 leading-5 font-medium text-primary">
+                        {{ openaiFastPolicyActionSummary(rule.action) }}
+                      </span>
+                      <template v-if="hasOpenAIFastPolicyTargetModels(rule)">
+                        <span aria-hidden="true">·</span>
+                        <span class="truncate text-toned">
+                          {{ t( "admin.settings.openaiFastPolicy.summaryOtherModels", ) }}
+                        </span>
+                        <span aria-hidden="true">→</span>
+                        <span class="shrink-0 rounded-sm bg-elevated px-1.5 leading-5 font-medium text-toned">
+                          {{ openaiFastPolicyActionSummary( rule.fallback_action || "pass", ) }}
+                        </span>
+                      </template>
+                    </span>
+                  </template>
+                  <template #control>
+                    <UButton
+                      icon="i-lucide-trash-2"
+                      square
+                      :aria-label="t('admin.settings.openaiFastPolicy.removeRule')"
+                      @click="removeOpenAIFastPolicyRule(ruleIndex)"
+                      :title="t('admin.settings.openaiFastPolicy.removeRule')"
+                      color="error"
+                      variant="ghost"
+                      size="sm"
+                    />
+                  </template>
+                  <template #fields>
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <!-- Service Tier -->
+                      <UFormField :label="t('admin.settings.openaiFastPolicy.serviceTier')">
+                        <Select
+                          :modelValue="rule.service_tier"
+                          @update:modelValue="
+                            rule.service_tier = $event as
+                              | 'all'
+                              | 'priority'
+                              | 'flex'
+                              | 'missing'
+                          "
+                          :options="openaiFastPolicyTierOptions"
+                          class="w-full"
+                        />
+                      </UFormField>
+
+                      <!-- Action -->
+                      <UFormField :label="t('admin.settings.openaiFastPolicy.action')">
+                        <Select
+                          :modelValue="rule.action"
+                          @update:modelValue="
+                            rule.action = $event as
+                              | 'pass'
+                              | 'filter'
+                              | 'block'
+                              | 'force_priority'
+                          "
+                          :options="openaiFastPolicyActionOptions"
+                          class="w-full"
+                        />
+                      </UFormField>
+
+                      <!-- Scope -->
+                      <UFormField :label="t('admin.settings.openaiFastPolicy.scope')">
+                        <Select
+                          :modelValue="rule.scope"
+                          @update:modelValue="
+                            rule.scope = $event as
+                              | 'all'
+                              | 'oauth'
+                              | 'apikey'
+                              | 'bedrock'
+                          "
+                          :options="openaiFastPolicyScopeOptions"
+                          class="w-full"
+                        />
+                      </UFormField>
+                    </div>
+
+                    <!-- Error Message (only when action=block) -->
+                    <UFormField
+                      v-if="rule.action === 'block'"
+                      :label="t('admin.settings.openaiFastPolicy.errorMessage')"
+                      :description="t('admin.settings.openaiFastPolicy.errorMessageHint')"
+                    >
+                      <UInput
+                        v-model="rule.error_message"
+                        type="text"
+                        :placeholder="
+                          t(
+                            'admin.settings.openaiFastPolicy.errorMessagePlaceholder',
+                          )
+                        "
+                        class="w-full"
+                      />
+                    </UFormField>
+
+                    <!-- User Scope -->
+                    <UFormField
+                      :label="t('admin.settings.openaiFastPolicy.userIds')"
+                      :description="t('admin.settings.openaiFastPolicy.userIdsHint')"
+                    >
+                      <OpenAIFastPolicyUserSelector
+                        :model-value="rule.user_ids || []"
+                        @update:model-value="rule.user_ids = $event"
+                      />
+                    </UFormField>
+
+                    <!-- Target Models -->
+                    <UFormField
+                      role="group"
+                      :aria-labelledby="`openai-fast-policy-models-label-${ruleIndex}`"
+                      :aria-describedby="`openai-fast-policy-models-hint-${ruleIndex}`"
+                      :ui="{ container: 'grid gap-1.5 w-full' }"
+                    >
+                      <template #label>
+                        <span :id="`openai-fast-policy-models-label-${ruleIndex}`">{{ t("admin.settings.openaiFastPolicy.modelWhitelist") }}</span>
+                      </template>
+                      <template #description>
+                        <span :id="`openai-fast-policy-models-hint-${ruleIndex}`">{{ t("admin.settings.openaiFastPolicy.modelWhitelistHint") }}</span>
+                      </template>
+                      <div
+                        v-for="(_, patternIdx) in rule.model_whitelist || []"
+                        :key="patternIdx"
+                        class="flex items-center gap-2"
+                      >
+                        <UInput
+                          v-model="rule.model_whitelist![patternIdx]"
+                          type="text"
+                          :placeholder="
+                            t(
+                              'admin.settings.openaiFastPolicy.modelPatternPlaceholder',
+                            )
+                          "
+                          size="sm"
+                          class="min-w-0 flex-1 font-mono"
+                        />
+                        <UButton
+                          icon="i-lucide-x"
+                          square
+                          @click="
+                            removeOpenAIFastPolicyModelPattern(rule, patternIdx)
+                          "
+                          color="error"
+                          variant="ghost"
+                          size="xs"
+                          class="shrink-0"
+                        />
+                      </div>
+                      <UButton
+                        icon="i-lucide-plus"
+                        @click="addOpenAIFastPolicyModelPattern(rule)"
+                        color="neutral"
+                        variant="outline"
+                        size="xs"
+                        class="w-fit"
+                      >
+                        {{ t("admin.settings.openaiFastPolicy.addModelPattern") }}
+                      </UButton>
+                    </UFormField>
+
+                    <!-- Other Models Action (only when target models are non-empty) -->
+                    <UFormField
+                      v-if="hasOpenAIFastPolicyTargetModels(rule)"
+                      :label="t('admin.settings.openaiFastPolicy.fallbackAction')"
+                      :description="t('admin.settings.openaiFastPolicy.fallbackActionHint')"
+                    >
+                      <Select
+                        :modelValue="rule.fallback_action || 'pass'"
+                        @update:modelValue="
+                          rule.fallback_action = $event as
+                            | 'pass'
+                            | 'filter'
+                            | 'block'
+                            | 'force_priority'
+                        "
+                        :options="openaiFastPolicyActionOptions"
+                        class="w-full sm:w-56"
+                      />
+                      <div v-if="rule.fallback_action === 'block'" class="mt-2">
+                        <UInput
+                          v-model="rule.fallback_error_message"
+                          type="text"
+                          :placeholder="
+                            t(
+                              'admin.settings.openaiFastPolicy.fallbackErrorMessagePlaceholder',
+                            )
+                          "
+                          class="w-full"
+                        />
+                      </div>
+                    </UFormField>
+                  </template>
+                </SettingRow>
+              </SettingGroup>
+              <!-- Add Rule Button -->
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <UButton
                   icon="i-lucide-plus"
-                  @click="addOpenAIFastPolicyModelPattern(rule)"
-                  variant="link"
+                  @click="addOpenAIFastPolicyRule"
+                  color="neutral"
+                  variant="outline"
                   size="sm"
-                  class="mb-2"
                 >
-                  {{ t("admin.settings.openaiFastPolicy.addModelPattern") }}
+                  {{ t("admin.settings.openaiFastPolicy.addRule") }}
                 </UButton>
-              </UFormField>
-
-              <!-- Other Models Action (only when target models are non-empty) -->
-              <UFormField
-                v-if="hasOpenAIFastPolicyTargetModels(rule)"
-                :label="t('admin.settings.openaiFastPolicy.fallbackAction')"
-                :description="t('admin.settings.openaiFastPolicy.fallbackActionHint')"
-              >
-                <Select
-                  :modelValue="rule.fallback_action || 'pass'"
-                  @update:modelValue="
-                    rule.fallback_action = $event as
-                      | 'pass'
-                      | 'filter'
-                      | 'block'
-                      | 'force_priority'
-                  "
-                  :options="openaiFastPolicyActionOptions"
-                />
-                <div v-if="rule.fallback_action === 'block'" class="mt-2">
-                  <UInput
-                    v-model="rule.fallback_error_message"
-                    type="text"
-                    :placeholder="
-                      t(
-                        'admin.settings.openaiFastPolicy.fallbackErrorMessagePlaceholder',
-                      )
-                    "
-                    class="w-full"
-                  />
-                </div>
-              </UFormField>
-            </div>
-            <!-- Add Rule Button -->
-            <UButton
-              icon="i-lucide-plus"
-              @click="addOpenAIFastPolicyRule"
-              color="neutral"
-              variant="outline"
-              size="sm"
-            >
-              {{ t("admin.settings.openaiFastPolicy.addRule") }}
-            </UButton>
-            <p class="text-xs text-dimmed">
-              {{ t("admin.settings.openaiFastPolicy.saveHint") }}
-            </p>
+                <p class="text-xs text-dimmed">
+                  {{ t("admin.settings.openaiFastPolicy.saveHint") }}
+                </p>
+              </div>
+            </SettingPanel>
           </SettingsSection>
         </div>
         <!-- /Tab: Gateway -->
@@ -3442,7 +3491,7 @@
             :description="t('admin.settings.claudeCode.description')"
           >
             <SettingPanel hide-summary>
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.claudeCode.minVersion')"
                   :hint="t('admin.settings.claudeCode.minVersionHint')"
@@ -3455,7 +3504,7 @@
                       :placeholder="
                         t('admin.settings.claudeCode.minVersionPlaceholder')
                       "
-                      class="max-w-xs font-mono"
+                      class="w-40 font-mono"
                     />
                   </template>
                 </SettingRow>
@@ -3471,7 +3520,7 @@
                       :placeholder="
                         t('admin.settings.claudeCode.maxVersionPlaceholder')
                       "
-                      class="max-w-xs font-mono"
+                      class="w-40 font-mono"
                     />
                   </template>
                 </SettingRow>
@@ -3482,7 +3531,7 @@
           <!-- Codex Settings -->
           <SettingsSection :title="t('admin.settings.gatewayForwarding.codexHardeningTitle')">
             <SettingPanel>
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.gatewayForwarding.codexOverdraftTitle')"
                   :hint="t('admin.settings.gatewayForwarding.codexOverdraftDescription')"
@@ -3502,8 +3551,9 @@
                     />
                   </template>
                   <template #status>
-                    <p class="text-xs text-warning mt-2">
-                      {{ t("admin.settings.gatewayForwarding.codexOverdraftBusinessInjectionHint") }}
+                    <p class="flex items-start gap-1.5 pb-2.5 text-xs text-warning">
+                      <UIcon name="i-lucide-triangle-alert" class="mt-0.5 size-3.5 shrink-0" />
+                      <span>{{ t("admin.settings.gatewayForwarding.codexOverdraftBusinessInjectionHint") }}</span>
                     </p>
                   </template>
                 </SettingRow>
@@ -3515,74 +3565,70 @@
                     <Toggle id="codex-ticket-enabled" v-model="form.openai_codex_ticket_enabled" />
                   </template>
                 </SettingRow>
-              </SettingGroup>
-              <h3 class="text-base font-semibold text-highlighted">
-                {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxy") }}
-              </h3>
-              <p class="text-sm text-muted">
-                {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyDesc") }}
-              </p>
-              <UInput
-                id="codex-ticket-harvest-proxy"
-                v-model="form.openai_codex_ticket_harvest_proxy_url"
-                type="text"
-                :placeholder="t('admin.settings.gatewayForwarding.codexTicketHarvestProxyPlaceholder')"
-                autocomplete="off"
-                class="mt-3 w-full font-mono"
-              />
-              <p v-if="form.openai_codex_ticket_harvest_proxy_configured" class="text-xs text-muted">
-                {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyConfigured") }}
-              </p>
-              <h3 class="text-base font-semibold text-highlighted">
-                {{ t("admin.settings.gatewayForwarding.codexClientRestrictionTitle") }}
-              </h3>
-              <p class="text-sm text-muted">
-                {{ t("admin.settings.gatewayForwarding.codexHardeningDesc") }}
-              </p>
-              <SettingGroup>
-                <div class="grid gap-4 sm:grid-cols-2">
-                  <SettingRow
+                <!-- 292 ticket harvest proxy -->
+                <SettingRow
                   wide-control
-                    :label="t('admin.settings.gatewayForwarding.minCodexVersion')"
-                    :on="true"
-                    :in-summary="false">
-                    <template #control>
-                      <UInput
-                        v-model="form.min_codex_version"
-                        type="text"
-                        :placeholder="
-                          t(
-                            'admin.settings.gatewayForwarding.minCodexVersionPlaceholder',
-                          )
-                        "
-                        class="w-full font-mono"
-                      />
-                    </template>
-                  </SettingRow>
-                  <SettingRow
-                  wide-control
-                    :label="t('admin.settings.gatewayForwarding.maxCodexVersion')"
-                    :on="true"
-                    :in-summary="false">
-                    <template #control>
-                      <UInput
-                        v-model="form.max_codex_version"
-                        type="text"
-                        :placeholder="
-                          t(
-                            'admin.settings.gatewayForwarding.maxCodexVersionPlaceholder',
-                          )
-                        "
-                        class="w-full font-mono"
-                      />
-                    </template>
-                  </SettingRow>
-                </div>
+                  :label="t('admin.settings.gatewayForwarding.codexTicketHarvestProxy')"
+                  :hint="t('admin.settings.gatewayForwarding.codexTicketHarvestProxyDesc')"
+                  :on="true"
+                  :in-summary="false">
+                  <template #control>
+                    <UInput
+                      id="codex-ticket-harvest-proxy"
+                      v-model="form.openai_codex_ticket_harvest_proxy_url"
+                      type="text"
+                      :placeholder="t('admin.settings.gatewayForwarding.codexTicketHarvestProxyPlaceholder')"
+                      autocomplete="off"
+                      class="w-full font-mono"
+                    />
+                  </template>
+                  <template #status>
+                    <p v-if="form.openai_codex_ticket_harvest_proxy_configured" class="pb-2.5 text-xs text-muted">
+                      {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyConfigured") }}
+                    </p>
+                  </template>
+                </SettingRow>
               </SettingGroup>
-              <p class="text-xs text-muted">
-                {{ t("admin.settings.gatewayForwarding.codexVersionHint") }}
-              </p>
-              <SettingGroup>
+              <SettingGroup
+                :title="t('admin.settings.gatewayForwarding.codexClientRestrictionTitle')"
+                :description="t('admin.settings.gatewayForwarding.codexHardeningDesc')"
+              >
+                <SettingRow
+                  :label="t('admin.settings.gatewayForwarding.minCodexVersion')"
+                  :hint="t('admin.settings.gatewayForwarding.codexVersionHint')"
+                  :on="true"
+                  :in-summary="false">
+                  <template #control>
+                    <UInput
+                      v-model="form.min_codex_version"
+                      type="text"
+                      :placeholder="
+                        t(
+                          'admin.settings.gatewayForwarding.minCodexVersionPlaceholder',
+                        )
+                      "
+                      class="w-40 font-mono"
+                    />
+                  </template>
+                </SettingRow>
+                <SettingRow
+                  :label="t('admin.settings.gatewayForwarding.maxCodexVersion')"
+                  :hint="t('admin.settings.gatewayForwarding.codexVersionHint')"
+                  :on="true"
+                  :in-summary="false">
+                  <template #control>
+                    <UInput
+                      v-model="form.max_codex_version"
+                      type="text"
+                      :placeholder="
+                        t(
+                          'admin.settings.gatewayForwarding.maxCodexVersionPlaceholder',
+                        )
+                      "
+                      class="w-40 font-mono"
+                    />
+                  </template>
+                </SettingRow>
                 <SettingRow
                   :label="t('admin.settings.gatewayForwarding.codexFingerprintSignals')"
                   :hint="t('admin.settings.gatewayForwarding.codexFingerprintSignalsDesc')"
@@ -3594,7 +3640,7 @@
                     <div
                       v-for="(row, i) in codexFingerprintRows"
                       :key="`codex-fp-${i}`"
-                      class="mb-2 flex items-center gap-2"
+                      class="flex flex-wrap items-center gap-2 sm:flex-nowrap"
                     >
                       <Select
                         v-model="row.type"
@@ -3605,7 +3651,7 @@
                         v-model="row.match"
                         type="text"
                         :placeholder="t('admin.settings.gatewayForwarding.codexFpMatchPlaceholder')"
-                        class="flex-1 font-mono"
+                        class="min-w-0 flex-1 basis-40 font-mono"
                       />
                       <label class="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-toned">
                         <Toggle v-model="row.required" />
@@ -3621,10 +3667,10 @@
                         {{ t("admin.settings.gatewayForwarding.codexRemoveRow") }}
                       </UButton>
                     </div>
-                    <UButton @click="addCodexFingerprintRow" color="neutral" variant="outline" size="sm">
+                    <UButton @click="addCodexFingerprintRow" color="neutral" variant="outline" size="sm" class="w-fit">
                       {{ t("admin.settings.gatewayForwarding.codexAddRow") }}
                     </UButton>
-                    <p v-if="codexFingerprintNoRequired" class="text-xs text-warning mt-2">
+                    <p v-if="codexFingerprintNoRequired" class="text-xs text-warning">
                       {{ t("admin.settings.gatewayForwarding.codexFingerprintNoRequiredWarn") }}
                     </p>
                   </template>
@@ -3647,7 +3693,7 @@
                   persistent-summary
                   :summary="t('common.settingsSummary.itemCount', { count: (codexBlacklistRows).length })">
                   <template #fields>
-                    <div v-for="(row, i) in codexBlacklistRows" :key="`codex-bl-${i}`" class="mb-2 flex gap-2">
+                    <div v-for="(row, i) in codexBlacklistRows" :key="`codex-bl-${i}`" class="flex flex-wrap gap-2 sm:flex-nowrap">
                       <UInput
                         v-model="row.originator"
                         type="text"
@@ -3656,7 +3702,7 @@
                             'admin.settings.gatewayForwarding.codexOriginatorPlaceholder',
                           )
                         "
-                        class="w-1/3 font-mono"
+                        class="min-w-0 basis-full font-mono sm:basis-1/3"
                       />
                       <UInput
                         v-model="row.uaContains"
@@ -3666,13 +3712,13 @@
                             'admin.settings.gatewayForwarding.codexUaContainsPlaceholder',
                           )
                         "
-                        class="flex-1 font-mono"
+                        class="min-w-0 flex-1 basis-40 font-mono"
                       />
                       <UButton @click="removeCodexBlacklistRow(i)" color="error" variant="soft" size="sm" class="shrink-0">
                         {{ t("admin.settings.gatewayForwarding.codexRemoveRow") }}
                       </UButton>
                     </div>
-                    <UButton @click="addCodexBlacklistRow" color="neutral" variant="outline" size="sm">
+                    <UButton @click="addCodexBlacklistRow" color="neutral" variant="outline" size="sm" class="w-fit">
                       {{ t("admin.settings.gatewayForwarding.codexAddRow") }}
                     </UButton>
                   </template>
@@ -3685,7 +3731,7 @@
                   persistent-summary
                   :summary="t('common.settingsSummary.itemCount', { count: (codexWhitelistRows).length })">
                   <template #fields>
-                    <div v-for="(row, i) in codexWhitelistRows" :key="`codex-wl-${i}`" class="mb-2 flex gap-2">
+                    <div v-for="(row, i) in codexWhitelistRows" :key="`codex-wl-${i}`" class="flex flex-wrap gap-2 sm:flex-nowrap">
                       <UInput
                         v-model="row.originator"
                         type="text"
@@ -3694,7 +3740,7 @@
                             'admin.settings.gatewayForwarding.codexOriginatorPlaceholder',
                           )
                         "
-                        class="w-1/3 font-mono"
+                        class="min-w-0 basis-full font-mono sm:basis-1/3"
                       />
                       <UInput
                         v-model="row.uaContains"
@@ -3704,7 +3750,7 @@
                             'admin.settings.gatewayForwarding.codexUaContainsPlaceholder',
                           )
                         "
-                        class="flex-1 font-mono"
+                        class="min-w-0 flex-1 basis-40 font-mono"
                       />
                       <label
                         class="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-toned"
@@ -3717,7 +3763,7 @@
                         {{ t("admin.settings.gatewayForwarding.codexRemoveRow") }}
                       </UButton>
                     </div>
-                    <UButton @click="addCodexWhitelistRow" color="neutral" variant="outline" size="sm">
+                    <UButton @click="addCodexWhitelistRow" color="neutral" variant="outline" size="sm" class="w-fit">
                       {{ t("admin.settings.gatewayForwarding.codexAddRow") }}
                     </UButton>
                   </template>
@@ -3743,7 +3789,7 @@
               </UButton>
             </template>
             <SettingPanel hide-summary>
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.upstreamBillingProbe.enabled')"
                   :hint="t('admin.settings.upstreamBillingProbe.enabledHint')"
@@ -3796,7 +3842,7 @@
               </UButton>
             </template>
             <SettingPanel hide-summary>
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.ollamaCloudUsage.enabled')"
                   :hint="t('admin.settings.ollamaCloudUsage.enabledHint')"
@@ -3808,43 +3854,45 @@
                       data-testid="ollama-cloud-usage-global-enabled"
                     />
                   </template>
-                  <template #fields>
-                    <template v-if="ollamaCloudUsageForm.enabled">
-                      <UFormField
-                        :label="t('admin.settings.ollamaCloudUsage.debounceMinutes')"
-                        :description="t('admin.settings.ollamaCloudUsage.debounceHint')"
-                        class="flex max-sm:flex-col justify-between items-start gap-4"
-                      >
-                        <UInput
-                          id="ollama-cloud-usage-debounce"
-                          v-model.number="ollamaCloudUsageForm.debounce_minutes"
-                          type="number"
-                          min="1"
-                          max="60"
-                          data-testid="ollama-cloud-usage-global-debounce"
-                          @keydown.enter.prevent="saveOllamaCloudUsageSettings"
-                          class="w-32"
-                        />
-                      </UFormField>
-                      <UFormField
-                        :label="t('admin.settings.ollamaCloudUsage.intervalMinutes')"
-                        :description="t('admin.settings.ollamaCloudUsage.intervalHint')"
-                        class="flex max-sm:flex-col justify-between items-start gap-4"
-                      >
-                        <UInput
-                          id="ollama-cloud-usage-interval"
-                          v-model.number="ollamaCloudUsageForm.interval_minutes"
-                          type="number"
-                          min="15"
-                          max="1440"
-                          data-testid="ollama-cloud-usage-global-interval"
-                          @keydown.enter.prevent="saveOllamaCloudUsageSettings"
-                          class="w-32"
-                        />
-                      </UFormField>
-                    </template>
-                  </template>
                 </SettingRow>
+                <template v-if="ollamaCloudUsageForm.enabled">
+                  <SettingRow
+                    :label="t('admin.settings.ollamaCloudUsage.debounceMinutes')"
+                    :hint="t('admin.settings.ollamaCloudUsage.debounceHint')"
+                    :on="true"
+                    :in-summary="false">
+                    <template #control>
+                      <UInput
+                        id="ollama-cloud-usage-debounce"
+                        v-model.number="ollamaCloudUsageForm.debounce_minutes"
+                        type="number"
+                        min="1"
+                        max="60"
+                        data-testid="ollama-cloud-usage-global-debounce"
+                        @keydown.enter.prevent="saveOllamaCloudUsageSettings"
+                        class="w-28"
+                      />
+                    </template>
+                  </SettingRow>
+                  <SettingRow
+                    :label="t('admin.settings.ollamaCloudUsage.intervalMinutes')"
+                    :hint="t('admin.settings.ollamaCloudUsage.intervalHint')"
+                    :on="true"
+                    :in-summary="false">
+                    <template #control>
+                      <UInput
+                        id="ollama-cloud-usage-interval"
+                        v-model.number="ollamaCloudUsageForm.interval_minutes"
+                        type="number"
+                        min="15"
+                        max="1440"
+                        data-testid="ollama-cloud-usage-global-interval"
+                        @keydown.enter.prevent="saveOllamaCloudUsageSettings"
+                        class="w-28"
+                      />
+                    </template>
+                  </SettingRow>
+                </template>
               </SettingGroup>
             </SettingPanel>
           </SettingsSection>
@@ -3854,7 +3902,7 @@
             :description="t('admin.settings.scheduling.description')"
           >
             <SettingPanel>
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.scheduling.allowUngroupedKey')"
                   :hint="t('admin.settings.scheduling.allowUngroupedKeyHint')"
@@ -3880,39 +3928,35 @@
                     </span>
                   </template>
                   <template #fields>
-                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                      <div
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                      <label
                         v-for="platform in schedulingThresholdPlatforms"
                         :key="platform"
-                        class="border-t border-default pt-4 first:border-t-0 first:pt-0"
+                        class="grid min-w-0 gap-1"
                       >
-                        <UFormField
-                          :label="platform"
-                          :description="t(
-                                  'admin.settings.scheduling.accountSchedulingThresholdsRangeHint',
-                                )"
-                        >
-                          <span class="rounded-sm bg-elevated px-2 py-0.5 text-[11px] font-medium text-toned">
-                            %
-                          </span>
-                        </UFormField>
-                        <UInput
-                          v-model.number="form.account_scheduling_thresholds[platform]"
-                          type="number"
-                          min="1"
-                          max="100"
-                          step="1"
-                          :data-testid="`account-scheduling-threshold-${platform}`"
-                          placeholder="100"
-                          class="w-full mt-3"
-                        />
-                      </div>
+                        <span class="truncate text-xs font-medium text-toned">{{ platform }}</span>
+                        <span class="relative">
+                          <UInput
+                            v-model.number="form.account_scheduling_thresholds[platform]"
+                            type="number"
+                            min="1"
+                            max="100"
+                            step="1"
+                            :data-testid="`account-scheduling-threshold-${platform}`"
+                            placeholder="100"
+                            class="w-full"
+                          />
+                          <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-dimmed">%</span>
+                        </span>
+                      </label>
                     </div>
-                    <p class="text-xs text-warning mt-2">
+                    <p class="text-xs text-muted">
+                      {{ t( "admin.settings.scheduling.accountSchedulingThresholdsRangeHint", ) }}
+                    </p>
+                    <p class="text-xs text-warning">
                       {{ t( "admin.settings.scheduling.accountSchedulingThresholdsDisabledHint", ) }}
                     </p>
-                  </template>
-                </SettingRow>
+                  </template>                </SettingRow>
                 <SettingRow
                   v-if="!form.openai_advanced_scheduler_enabled"
                   :label="t('admin.settings.openaiExperimentalScheduler.lowRatePriorityTitle')"
@@ -4004,9 +4048,9 @@
                   persistent-summary
                   :summary="t('common.settingsSummary.itemCount', { count: (openAIAdvancedSchedulerWeightFields).length })">
                   <template #fields>
-                    <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-                      <label v-for="field in openAIAdvancedSchedulerWeightFields" :key="field.key" class="block">
-                        <span class="text-xs font-medium text-toned">
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 xl:grid-cols-5">
+                      <label v-for="field in openAIAdvancedSchedulerWeightFields" :key="field.key" class="grid min-w-0 gap-1">
+                        <span class="truncate text-xs font-medium text-toned" :title="field.label">
                           {{ field.label }}
                         </span>
                         <UInput
@@ -4014,7 +4058,7 @@
                           inputmode="decimal"
                           :placeholder="field.placeholder"
                           type="text"
-                          class="w-full mt-1"
+                          class="w-full font-mono"
                         />
                       </label>
                     </div>
@@ -4031,8 +4075,7 @@
             :description="t('admin.settings.gatewayForwarding.description')"
           >
             <SettingPanel>
-              <SettingGroup>
-                <div class="grid gap-5 border-b border-default pb-5 md:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] md:items-end">
+              <SettingGroup flush>
                   <SettingRow
                     :label="t('admin.settings.gatewayForwarding.grokDefaultTextModel')"
                     :hint="t('admin.settings.gatewayForwarding.grokDefaultTextModelHint')"
@@ -4048,7 +4091,7 @@
                         list="grok-default-text-model-options"
                         data-testid="grok-default-text-model"
                         placeholder="grok-4.5"
-                        class="mt-2 w-full"
+                        class="w-full"
                       />
                       <datalist id="grok-default-text-model-options">
                         <option value="grok-4.5" />
@@ -4068,7 +4111,6 @@
                       />
                     </template>
                   </SettingRow>
-                  </div>
                 <SettingRow
                   :label="t('admin.settings.gatewayForwarding.grokDefaultBaseURLMode')"
                   :hint="t('admin.settings.gatewayForwarding.grokDefaultBaseURLModeHint')"
@@ -4080,7 +4122,7 @@
                       v-model="form.grok_default_base_url_mode"
                       data-testid="grok-default-base-url-mode"
                       :options="[{ value: 'cli', label: t('admin.settings.gatewayForwarding.grokBaseURLModeCLI') }, { value: 'api', label: t('admin.settings.gatewayForwarding.grokBaseURLModeAPI') }, { value: 'us-east-1', label: t('admin.settings.gatewayForwarding.grokBaseURLModeUSEast1') }, { value: 'us-west-2', label: t('admin.settings.gatewayForwarding.grokBaseURLModeUSWest2') }, { value: 'eu-west-1', label: t('admin.settings.gatewayForwarding.grokBaseURLModeEUWest1') }]"
-                      class="mt-2 w-full"
+                      class="w-40 sm:w-48"
                     />
                   </template>
                 </SettingRow>
@@ -4096,7 +4138,7 @@
                       v-model="form.openai_ttft_mode"
                       data-testid="openai-ttft-mode"
                       :options="[{ value: 'semantic', label: t('admin.settings.gatewayForwarding.openaiTTFTModeSemantic') }, { value: 'visible', label: t('admin.settings.gatewayForwarding.openaiTTFTModeVisible') }]"
-                      class="mt-2 w-full"
+                      class="w-40 sm:w-48"
                     />
                   </template>
                 </SettingRow>
@@ -4473,7 +4515,7 @@
           >
             <SettingPanel hide-summary>
               <!-- Global Toggle -->
-              <SettingGroup>
+              <SettingGroup flush>
                 <SettingRow
                   :label="t('admin.settings.webSearchEmulation.enabled')"
                   :hint="t('admin.settings.webSearchEmulation.enabledHint')"
@@ -4481,66 +4523,71 @@
                   <template #control>
                     <Toggle v-model="webSearchConfig.enabled" />
                   </template>
-                  <template #fields>
-                    <template v-if="webSearchConfig.enabled">
-                      <UFormField
-                        :label="t('admin.settings.webSearchEmulation.providers')"
-                        class="flex max-sm:flex-col justify-between sm:items-center gap-4"
-                      >
-                        <UButton @click="addWebSearchProvider" color="neutral" variant="outline" size="sm">
-                          {{ t("admin.settings.webSearchEmulation.addProvider") }}
-                        </UButton>
-                      </UFormField>
-                      <div
-                        v-if="webSearchConfig.providers.length === 0"
-                        class="py-2 text-center text-sm text-muted"
-                      >
-                        {{ t("admin.settings.webSearchEmulation.noProviders") }}
-                      </div>
-                      <div
-                        v-for="(provider, pIdx) in webSearchConfig.providers"
-                        :key="pIdx"
-                        class="rounded-lg border border-default"
-                      >
-                        <!-- Collapsible header -->
-                        <div
-                          class="flex cursor-pointer items-center justify-between px-4 py-3"
-                          @click="toggleProviderExpand(pIdx)"
+                </SettingRow>
+                <template v-if="webSearchConfig.enabled">
+                  <!-- Providers: the list label carries the add button; each provider below is its own line. -->
+                  <UFormField
+                    :label="t('admin.settings.webSearchEmulation.providers')"
+                    class="flex items-center justify-between gap-4 border-t border-default py-2"
+                    :ui="{ label: 'text-[11px] font-semibold tracking-[0.06em] text-dimmed' }"
+                  >
+                    <UButton @click="addWebSearchProvider" icon="i-lucide-plus" color="neutral" variant="outline" size="xs">
+                      {{ t("admin.settings.webSearchEmulation.addProvider") }}
+                    </UButton>
+                  </UFormField>
+                  <div
+                    v-if="webSearchConfig.providers.length === 0"
+                    class="rounded-lg border border-dashed border-default px-4 py-4 text-center text-sm text-muted"
+                  >
+                    {{ t("admin.settings.webSearchEmulation.noProviders") }}
+                  </div>
+                  <div
+                    v-for="(provider, pIdx) in webSearchConfig.providers"
+                    :key="pIdx"
+                    class="border-t border-default"
+                  >
+                    <!-- Collapsible header -->
+                    <div
+                      class="flex min-h-10 cursor-pointer items-center justify-between gap-3"
+                      @click="toggleProviderExpand(pIdx)"
+                    >
+                      <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 py-1.5">
+                        <UIcon
+                          name="i-lucide-chevron-right"
+                          class="size-3.5 shrink-0 text-dimmed transition-[rotate] duration-150 motion-reduce:transition-none"
+                          :class="expandedProviders[pIdx] ? 'rotate-90' : ''"
+                        />
+                        <Select
+                          v-model="provider.type"
+                          :options="[
+                            { value: 'brave', label: 'Brave Search' },
+                            { value: 'tavily', label: 'Tavily' },
+                          ]"
+                          class="w-32 shrink-0 sm:w-36"
+                          @click.stop
+                        />
+                        <!-- Quota summary (always visible) -->
+                        <span class="shrink-0 font-mono text-xs text-muted tabular-nums">
+                          {{ provider.quota_used ?? 0 }} /
+                          {{ provider.quota_limit != null && provider.quota_limit > 0 ? provider.quota_limit : "∞" }}
+                        </span>
+                        <span
+                          v-if="
+                            !expandedProviders[pIdx] &&
+                            provider.api_key_configured
+                          "
+                          class="truncate text-xs text-success"
                         >
-                          <div class="flex items-center gap-3">
-                            <UIcon name="i-lucide-chevron-right" class="size-4" />
-                            <Select
-                              v-model="provider.type"
-                              :options="[
-                                { value: 'brave', label: 'Brave Search' },
-                                { value: 'tavily', label: 'Tavily' },
-                              ]"
-                              class="w-36"
-                              @click.stop
-                            />
-                            <!-- Quota summary (always visible) -->
-                            <span class="text-xs text-dimmed">
-                              {{ provider.quota_used ?? 0 }} /
-                              {{ provider.quota_limit != null && provider.quota_limit > 0 ? provider.quota_limit : "∞" }}
-                            </span>
-                            <span
-                              v-if="
-                                !expandedProviders[pIdx] &&
-                                provider.api_key_configured
-                              "
-                              class="text-xs text-success"
-                            >
-                              {{ t( "admin.settings.webSearchEmulation.apiKeyConfigured", ) }}
-                            </span>
-                          </div>
-                          <UButton @click.stop="removeWebSearchProvider(pIdx)" color="error" variant="ghost" size="sm">
-                            {{ t("admin.settings.webSearchEmulation.removeProvider") }}
-                          </UButton>
-                        </div>
+                          {{ t( "admin.settings.webSearchEmulation.apiKeyConfigured", ) }}
+                        </span>
+                      </div>
+                      <UButton @click.stop="removeWebSearchProvider(pIdx)" color="error" variant="ghost" size="sm" class="shrink-0">
+                        {{ t("admin.settings.webSearchEmulation.removeProvider") }}
+                      </UButton>
+                    </div>
 
-                        <!-- Expanded content -->
-                        <div v-if="expandedProviders[pIdx]" class="space-y-3 border-t border-default px-4 pb-4 pt-3">
-                          <!-- API Key with inline show/copy -->
+                    <!-- Expanded content -->
+                    <div v-if="expandedProviders[pIdx]" class="grid gap-3 pb-4 ps-6">                          <!-- API Key with inline show/copy -->
                           <UFormField :label="t('admin.settings.webSearchEmulation.apiKey')">
                             <div class="relative">
                               <UInput
@@ -4682,9 +4729,7 @@
                           </div>
                         </div>
                       </div>
-                    </template>
-                  </template>
-                </SettingRow>
+                </template>
               </SettingGroup>
               <!-- Providers -->
             </SettingPanel>
@@ -4749,7 +4794,7 @@
         >
           <SettingPanel hide-summary>
             <!-- User error requests visibility -->
-            <SettingGroup>
+            <SettingGroup flush>
               <SettingRow
                 :label="t('admin.settings.user_error_view.label')"
                 :hint="t('admin.settings.user_error_view.description')"
