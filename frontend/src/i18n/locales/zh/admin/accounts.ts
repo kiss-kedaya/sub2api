@@ -996,7 +996,7 @@ export default {
       mapRequestModels: '将请求模型映射到实际模型。左边是请求的模型，右边是发送到 API 的实际模型。',
       modelAutoSync: {
         label: '自动同步上游最新模型',
-        hint: '默认开启；失败自动重试，仍失败则清空模型限制。'
+        hint: '默认开启；失败自动重试，仍失败则保留原有模型列表不变。'
       },
       selectedModels: '已选择 {count} 个模型',
       hiddenMappingsHint: '另有 {count} 条模型映射在「映射」模式下生效，切到映射可查看',

@@ -918,7 +918,7 @@ export default {
         'Map request models to actual models. Left is the requested model, right is the actual model sent to API.',
       modelAutoSync: {
         label: 'Auto-sync the latest upstream models',
-        hint: 'On by default. A failed sync is retried; if it still fails, the model restriction is cleared.'
+        hint: 'On by default. A failed sync is retried; if it still fails, the existing model list is kept unchanged.'
       },
       selectedModels: 'Selected {count} model(s)',
       hiddenMappingsHint: '{count} model mapping(s) are active in mapping mode; switch to Mapping to review them',
