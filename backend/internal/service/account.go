@@ -1252,6 +1252,49 @@ func (a *Account) IsCustomErrorCodesEnabled() bool {
 	return false
 }
 
+// IsRelayAPIKeyAccount reports whether this account is an API key that points at
+// a relay or aggregator (a custom base_url) rather than the vendor's own API.
+//
+// The distinction matters for scheduling: a relay's error says something about
+// that third-party site, not about whether this account is usable. The operator
+// who added the relay knows which upstreams are expected to flap, so the gateway
+// must not take these accounts out of rotation on its own.
+func (a *Account) IsRelayAPIKeyAccount() bool {
+	if a == nil || !a.IsAPIKeyOrBedrock() || a.Credentials == nil {
+		return false
+	}
+	base := strings.TrimSpace(a.GetCredential("base_url"))
+	if base == "" {
+		return false
+	}
+	return !upstreamBillingProbeTargetIsOfficialAPI(base)
+}
+
+// ShouldAutoTempUnscheduleOnTransportError reports whether a transport failure
+// (proxy / DNS / TCP / TLS — an error that carries no upstream status code) may
+// take this account out of scheduling.
+//
+// It says no in two cases:
+//   - the account has its custom error code rule turned on. That rule is the
+//     operator's answer to "which errors stop this account"; a network-level
+//     failure cannot be expressed as a status code, so falling back to the
+//     gateway's own ten-minute cooldown is exactly the surprise this avoids;
+//   - the account is an API-key account on a relay upstream. A relay flapping
+//     says nothing about whether this account is usable, and the operator stops
+//     it only through the rule above.
+//
+// Status-code based rules are unaffected: those are the operator's own
+// configuration and are decided in CheckErrorPolicy / HandleUpstreamError.
+func (a *Account) ShouldAutoTempUnscheduleOnTransportError() bool {
+	if a == nil {
+		return false
+	}
+	if a.IsCustomErrorCodesEnabled() {
+		return false
+	}
+	return !a.IsRelayAPIKeyAccount()
+}
+
 // IsPoolMode 检查 API Key 账号是否启用池模式。
 // 池模式下，上游错误不标记本地账号状态，而是在同一账号上重试。
 func (a *Account) IsPoolMode() bool {

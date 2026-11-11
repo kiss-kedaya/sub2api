@@ -178,6 +178,9 @@ func (s *OpenAIGatewayService) tempUnscheduleOpenAITransportErrorFor(ctx context
 	if s == nil || account == nil {
 		return
 	}
+	if !account.ShouldAutoTempUnscheduleOnTransportError() {
+		return
+	}
 	if duration <= 0 {
 		duration = openAITransportErrorTempUnschedDuration
 	}

@@ -570,6 +570,7 @@ export default {
         remaining: '剩余时间',
         matchedKeyword: '匹配关键词',
         errorMessage: '错误详情',
+        rawReason: '原始原因',
         reset: '恢复状态',
         resetSuccess: '账号状态已恢复',
         resetFailed: '恢复账号状态失败',

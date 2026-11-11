@@ -517,6 +517,7 @@ export default {
         remaining: 'Remaining',
         matchedKeyword: 'Matched Keyword',
         errorMessage: 'Error Details',
+        rawReason: 'Reported reason',
         reset: 'Recover State',
         resetSuccess: 'Account state recovered successfully',
         resetFailed: 'Failed to recover account state',
