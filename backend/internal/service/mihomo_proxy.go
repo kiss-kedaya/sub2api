@@ -3,11 +3,20 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/mihomo"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+)
+
+const (
+	mihomoProxyNamePrefix = "Mihomo · "
+	// proxies.name is validated as at most 100 bytes by the entity layer, so the
+	// display name has to be byte-truncated after the fixed prefix.
+	proxyNameMaxBytes = 100
 )
 
 type MihomoBindingRepository interface {
@@ -103,18 +112,13 @@ func (s *MihomoProxyService) CreateMihomoNodeProxies(ctx context.Context, kernel
 				result.Failed = append(result.Failed, MihomoNodeProxyImportFailure{b.Name, "saved proxy no longer matches its managed listener"})
 				continue
 			}
-			label := []rune(strings.TrimSpace(b.DisplayName))
-			if len(label) > 90 {
-				label = label[:90]
-			}
-			if len(label) == 0 {
-				label = []rune(b.Name)
-			}
-			p, e := s.admin.CreateProxy(ctx, &CreateProxyInput{Name: "Mihomo · " + string(label), Protocol: "http", Host: b.Host, Port: b.Port, Username: b.Username, Password: b.Password, FallbackMode: FallbackModeNone, ExpiryWarnDays: 7})
+			name := mihomoProxyName(b.DisplayName, b.Name)
+			p, e := s.admin.CreateProxy(ctx, &CreateProxyInput{Name: name, Protocol: "http", Host: b.Host, Port: b.Port, Username: b.Username, Password: b.Password, FallbackMode: FallbackModeNone, ExpiryWarnDays: 7})
 			if e == nil {
 				e = s.bindings.Save(ctx, kernel.HostID(), b.Name, p.ID)
 			}
 			if e != nil {
+				slog.Error("managed_proxy_registration_failed", "node", b.Name, "error", e)
 				if b.New {
 					deactivate = append(deactivate, b.Name)
 				}
@@ -193,4 +197,28 @@ func (s *MihomoProxyService) RemoveMihomoNodeProxies(ctx context.Context, kernel
 		return nil
 	})
 	return removed, err
+}
+
+// truncateUTF8Bytes shortens s to at most max bytes without splitting a
+// multi-byte UTF-8 sequence. Callers use it when a column limit is measured in
+// bytes rather than runes.
+func truncateUTF8Bytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
+}
+
+// mihomoProxyName builds the display name stored in proxies.name. The entity
+// layer limits that column to 100 bytes, so the variable part is truncated on a
+// rune boundary after accounting for the fixed prefix.
+func mihomoProxyName(displayName, fallback string) string {
+	label := strings.TrimSpace(displayName)
+	if label == "" {
+		label = fallback
+	}
+	return mihomoProxyNamePrefix + truncateUTF8Bytes(label, proxyNameMaxBytes-len(mihomoProxyNamePrefix))
 }
