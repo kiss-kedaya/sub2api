@@ -142,6 +142,17 @@ describe('SettingRow', () => {
     expect(button.attributes('disabled')).toBeDefined()
   })
 
+  // The phone layout (a text input dropping under its name, names wrapping instead of being cut)
+  // is CSS inside a media query, which jsdom does not evaluate; it is measured in a real browser.
+  // What can be pinned here is the hook that CSS selects on.
+  it('marks a wide-control row so the stylesheet can give its input its own line on a phone', () => {
+    const wide = mount(SettingRow, { props: { label: 'Endpoint', wideControl: true } })
+    const plain = mount(SettingRow, { props: { label: 'Enabled' } })
+
+    expect(wide.get('.setting-row').attributes('data-wide-control')).toBe('true')
+    expect(plain.get('.setting-row').attributes('data-wide-control')).toBeUndefined()
+  })
+
   it('opens on the value when a leading "change this field" checkbox is ticked, without the click expanding by itself', async () => {
     const ticked = ref(false)
     const Host = defineComponent({

@@ -15,32 +15,77 @@
           {{ savingS3 ? t('common.loading') : t('common.save') }}
         </UButton>
       </template>
-      <UFormField :label="t('admin.backup.s3.endpoint')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput v-model="s3Form.endpoint" placeholder="https://<account_id>.r2.cloudflarestorage.com" class="w-full" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.s3.region')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput v-model="s3Form.region" placeholder="auto" class="w-full" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.s3.bucket')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput v-model="s3Form.bucket" class="w-full" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.s3.prefix')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput v-model="s3Form.prefix" placeholder="backups/" class="w-full" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.s3.accessKeyId')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput v-model="s3Form.access_key_id" class="w-full" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.s3.secretAccessKey')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput
-          v-model="s3Form.secret_access_key"
-          type="password"
-          :placeholder="s3SecretConfigured ? t('admin.backup.s3.secretConfigured') : ''"
-          class="w-full"
-        />
-      </UFormField>
-      <UFormField :label="t('admin.backup.s3.forcePathStyle')" class="flex items-center justify-between gap-4">
-        <Toggle v-model="s3Form.force_path_style" />
-      </UFormField>
+      <SettingPanel hide-summary>
+        <SettingGroup>
+          <SettingRow
+            :label="t('admin.backup.s3.endpoint')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput v-model="s3Form.endpoint" placeholder="https://<account_id>.r2.cloudflarestorage.com" class="w-full" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.s3.region')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput v-model="s3Form.region" placeholder="auto" class="w-full" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.s3.bucket')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput v-model="s3Form.bucket" class="w-full" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.s3.prefix')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput v-model="s3Form.prefix" placeholder="backups/" class="w-full" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.s3.accessKeyId')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput v-model="s3Form.access_key_id" class="w-full" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.s3.secretAccessKey')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput
+                  v-model="s3Form.secret_access_key"
+                  type="password"
+                  :placeholder="s3SecretConfigured ? t('admin.backup.s3.secretConfigured') : ''"
+                  class="w-full"
+                />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.s3.forcePathStyle')"
+            :on="s3Form.force_path_style"
+          >
+            <template #control>
+                <Toggle v-model="s3Form.force_path_style" />
+            </template>
+          </SettingRow>
+        </SettingGroup>
+      </SettingPanel>
     </SettingsSection>
 
     <!-- Async image object storage -->
@@ -53,50 +98,116 @@
           {{ savingImageStorage ? t('common.loading') : t('common.save') }}
         </UButton>
       </template>
-      <UFormField :label="t('admin.backup.imageStorage.enabled')" class="flex items-center justify-between gap-4">
-        <Toggle v-model="imageStorageForm.enabled" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.imageStorage.reuseBackupS3')" class="flex items-center justify-between gap-4">
-        <Toggle v-model="imageStorageForm.reuse_backup_s3" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.imageStorage.bucket')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput
-          v-model="imageStorageForm.bucket"
-          :placeholder="imageStorageForm.reuse_backup_s3 ? t('admin.backup.imageStorage.bucketInherited') : ''"
-          class="w-full"
-        />
-      </UFormField>
-      <UFormField :label="t('admin.backup.imageStorage.prefix')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput v-model="imageStorageForm.prefix" placeholder="images/" class="w-full" />
-      </UFormField>
-      <template v-if="!imageStorageForm.reuse_backup_s3">
-        <UFormField :label="t('admin.backup.s3.endpoint')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-          <UInput v-model="imageStorageForm.endpoint" placeholder="https://<account_id>.r2.cloudflarestorage.com" class="w-full" />
-        </UFormField>
-        <UFormField :label="t('admin.backup.s3.region')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-          <UInput v-model="imageStorageForm.region" placeholder="auto" class="w-full" />
-        </UFormField>
-        <UFormField :label="t('admin.backup.s3.accessKeyId')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-          <UInput v-model="imageStorageForm.access_key_id" class="w-full" />
-        </UFormField>
-        <UFormField :label="t('admin.backup.s3.secretAccessKey')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-          <UInput
-            v-model="imageStorageForm.secret_access_key"
-            type="password"
-            :placeholder="imageStorageSecretConfigured ? t('admin.backup.s3.secretConfigured') : ''"
-            class="w-full"
-          />
-        </UFormField>
-        <UFormField :label="t('admin.backup.s3.forcePathStyle')" class="flex items-center justify-between gap-4">
-          <Toggle v-model="imageStorageForm.force_path_style" />
-        </UFormField>
-      </template>
-      <UFormField :label="t('admin.backup.imageStorage.publicBaseUrl')" class="flex max-sm:flex-col justify-between items-start gap-4" :ui="{ container: 'w-full sm:max-w-sm' }">
-        <UInput v-model="imageStorageForm.public_base_url" :placeholder="t('admin.backup.imageStorage.publicBaseUrlPlaceholder')" class="w-full" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.imageStorage.presignExpiryHours')" class="flex max-sm:flex-col justify-between items-start gap-4">
-        <UInput v-model.number="imageStorageForm.presign_expiry_hours" type="number" min="1" class="w-32" />
-      </UFormField>
+      <SettingPanel hide-summary>
+        <SettingGroup>
+          <SettingRow
+            :label="t('admin.backup.imageStorage.enabled')"
+            :on="imageStorageForm.enabled"
+          >
+            <template #control>
+                <Toggle v-model="imageStorageForm.enabled" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.imageStorage.reuseBackupS3')"
+            :on="imageStorageForm.reuse_backup_s3"
+          >
+            <template #control>
+                <Toggle v-model="imageStorageForm.reuse_backup_s3" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.imageStorage.bucket')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput
+                  v-model="imageStorageForm.bucket"
+                  :placeholder="imageStorageForm.reuse_backup_s3 ? t('admin.backup.imageStorage.bucketInherited') : ''"
+                  class="w-full"
+                />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.imageStorage.prefix')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput v-model="imageStorageForm.prefix" placeholder="images/" class="w-full" />
+            </template>
+          </SettingRow>
+          <template v-if="!imageStorageForm.reuse_backup_s3">
+            <SettingRow
+              :label="t('admin.backup.s3.endpoint')"
+              :in-summary="false"
+              wide-control
+            >
+              <template #control>
+                  <UInput v-model="imageStorageForm.endpoint" placeholder="https://<account_id>.r2.cloudflarestorage.com" class="w-full" />
+              </template>
+            </SettingRow>
+            <SettingRow
+              :label="t('admin.backup.s3.region')"
+              :in-summary="false"
+              wide-control
+            >
+              <template #control>
+                  <UInput v-model="imageStorageForm.region" placeholder="auto" class="w-full" />
+              </template>
+            </SettingRow>
+            <SettingRow
+              :label="t('admin.backup.s3.accessKeyId')"
+              :in-summary="false"
+              wide-control
+            >
+              <template #control>
+                  <UInput v-model="imageStorageForm.access_key_id" class="w-full" />
+              </template>
+            </SettingRow>
+            <SettingRow
+              :label="t('admin.backup.s3.secretAccessKey')"
+              :in-summary="false"
+              wide-control
+            >
+              <template #control>
+                  <UInput
+                    v-model="imageStorageForm.secret_access_key"
+                    type="password"
+                    :placeholder="imageStorageSecretConfigured ? t('admin.backup.s3.secretConfigured') : ''"
+                    class="w-full"
+                  />
+              </template>
+            </SettingRow>
+            <SettingRow
+              :label="t('admin.backup.s3.forcePathStyle')"
+              :on="imageStorageForm.force_path_style"
+            >
+              <template #control>
+                  <Toggle v-model="imageStorageForm.force_path_style" />
+              </template>
+            </SettingRow>
+          </template>
+          <SettingRow
+            :label="t('admin.backup.imageStorage.publicBaseUrl')"
+            :in-summary="false"
+            wide-control
+          >
+            <template #control>
+                <UInput v-model="imageStorageForm.public_base_url" :placeholder="t('admin.backup.imageStorage.publicBaseUrlPlaceholder')" class="w-full" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.imageStorage.presignExpiryHours')"
+            :in-summary="false"
+          >
+            <template #control>
+                <UInput v-model.number="imageStorageForm.presign_expiry_hours" type="number" min="1" class="w-32" />
+            </template>
+          </SettingRow>
+        </SettingGroup>
+      </SettingPanel>
     </SettingsSection>
 
     <!-- Schedule Config -->
@@ -106,18 +217,45 @@
           {{ savingSchedule ? t('common.loading') : t('common.save') }}
         </UButton>
       </template>
-      <UFormField :label="t('admin.backup.schedule.enabled')" class="flex items-center justify-between gap-4">
-        <Toggle v-model="scheduleForm.enabled" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.schedule.cronExpr')" :description="t('admin.backup.schedule.cronHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
-        <UInput v-model="scheduleForm.cron_expr" placeholder="0 2 * * *" class="w-48 font-mono" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.schedule.retainDays')" :description="t('admin.backup.schedule.retainDaysHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
-        <UInput v-model.number="scheduleForm.retain_days" type="number" min="0" class="w-32" />
-      </UFormField>
-      <UFormField :label="t('admin.backup.schedule.retainCount')" :description="t('admin.backup.schedule.retainCountHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
-        <UInput v-model.number="scheduleForm.retain_count" type="number" min="0" class="w-32" />
-      </UFormField>
+      <SettingPanel hide-summary>
+        <SettingGroup>
+          <SettingRow
+            :label="t('admin.backup.schedule.enabled')"
+            :on="scheduleForm.enabled"
+          >
+            <template #control>
+                <Toggle v-model="scheduleForm.enabled" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.schedule.cronExpr')"
+            :hint="t('admin.backup.schedule.cronHint')"
+            :in-summary="false"
+          >
+            <template #control>
+                <UInput v-model="scheduleForm.cron_expr" placeholder="0 2 * * *" class="w-48 font-mono" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.schedule.retainDays')"
+            :hint="t('admin.backup.schedule.retainDaysHint')"
+            :in-summary="false"
+          >
+            <template #control>
+                <UInput v-model.number="scheduleForm.retain_days" type="number" min="0" class="w-32" />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.schedule.retainCount')"
+            :hint="t('admin.backup.schedule.retainCountHint')"
+            :in-summary="false"
+          >
+            <template #control>
+                <UInput v-model.number="scheduleForm.retain_count" type="number" min="0" class="w-32" />
+            </template>
+          </SettingRow>
+        </SettingGroup>
+      </SettingPanel>
     </SettingsSection>
 
     <!-- Backup Operations -->
@@ -259,6 +397,9 @@ import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import SettingsSection from '@/views/admin/settings/SettingsSection.vue'
+import SettingRow from '@/components/common/SettingRow.vue'
+import SettingGroup from '@/components/common/SettingGroup.vue'
+import SettingPanel from '@/components/common/SettingPanel.vue'
 import type { TableColumn } from '@nuxt/ui'
 import { confirm } from '@/composables/useConfirmation'
 
