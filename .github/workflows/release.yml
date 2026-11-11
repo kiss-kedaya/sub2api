@@ -238,7 +238,7 @@ jobs:
 
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.10'
+          go version | grep -q 'go1.26.11'
 
       # DockerHub publishing is optional. A step-level `env:` is not visible to
       # that same step's `if:`, so guarding on `env.DOCKERHUB_USERNAME` made the
