@@ -1530,13 +1530,8 @@
           v-if="form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')"
           class="pb-3"
         >
-          <h3 class="inline-flex items-center py-2 text-sm font-semibold text-default">
-            {{ t('admin.accounts.quotaControl.title') }}
-            <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')" width-class="w-72">
-              <span class="block">{{ t('admin.accounts.quotaControl.hint') }}</span>
-            </HelpTooltip>
-          </h3>
           <QuotaLimitCard
+            :hint="t('admin.accounts.quotaControl.hint')"
             :totalLimit="editQuotaLimit"
             :dailyLimit="editQuotaDailyLimit"
             :weeklyLimit="editQuotaWeeklyLimit"
@@ -1582,8 +1577,8 @@
           v-else-if="form.type === 'apikey' || form.type === 'cloudflare' || form.type === 'bedrock'"
           class="pb-3"
         >
-          <h3 class="inline-flex items-center py-2 text-sm font-semibold text-default">{{ t('admin.accounts.quotaControl.title') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')"><span class="block">{{ t('admin.accounts.quotaLimitHint') }}</span></HelpTooltip></h3>
           <QuotaLimitCard
+            :hint="t('admin.accounts.quotaLimitHint')"
             :totalLimit="editQuotaLimit"
             :dailyLimit="editQuotaDailyLimit"
             :weeklyLimit="editQuotaWeeklyLimit"
@@ -2148,8 +2143,8 @@
                       <Select v-model="openAICompactMode" :options="openAICompactModeOptions" />
                     </div>
                   </template>
-                </SettingRow>
-                <div class="space-y-3 pb-3 ps-4">
+                  <template #fields>
+                    <div class="space-y-3">
                   <div>
                     <label class="mb-2 block text-sm font-medium text-default">{{ t('admin.accounts.openai.compactModelMapping') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.openai.compactModelMapping')"><span class="block">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</span></HelpTooltip></label>
                     <div v-if="openAICompactModelMappings.length > 0" class="mb-3 space-y-2">
@@ -2177,7 +2172,9 @@
                       + {{ t('admin.accounts.addMapping') }}
                     </UButton>
                   </div>
-                </div>
+                    </div>
+                  </template>
+                </SettingRow>
               </div>
 
               <!-- OpenAI APIKey Responses API support mode -->
@@ -2199,8 +2196,8 @@
                       />
                     </div>
                   </template>
-                </SettingRow>
-                <div class="space-y-2 pb-3 ps-4">
+                  <template #fields>
+                    <div class="space-y-3">
                   <p
                     v-if="!openAITextGenerationCapabilityEnabled"
                     class="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
@@ -2221,7 +2218,9 @@
                       />
                     </div>
                   </div>
-                </div>
+                    </div>
+                  </template>
+                </SettingRow>
               </div>
 
               <!-- OpenAI APIKey images: backfill b64_json from url -->

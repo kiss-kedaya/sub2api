@@ -1623,8 +1623,8 @@
                       />
                     </div>
                   </template>
-                </SettingRow>
-                <div class="space-y-2 pb-3 ps-4">
+                  <template #fields>
+                    <div class="space-y-3">
                   <div
                     v-if="openAITextGenerationCapabilityEnabled"
                     class="rounded-lg bg-elevated px-3 py-2 text-xs text-toned"
@@ -1651,7 +1651,9 @@
                       />
                     </div>
                   </div>
-                </div>
+                    </div>
+                  </template>
+                </SettingRow>
               </div>
 
               <!-- OpenAI APIKey images: backfill b64_json from url -->
@@ -1791,8 +1793,8 @@
                       <Select v-model="openAICompactMode" :options="openAICompactModeOptions" />
                     </div>
                   </template>
-                </SettingRow>
-                <div class="space-y-3 pb-3 ps-4">
+                  <template #fields>
+                    <div class="space-y-3">
                   <div class="rounded-lg bg-elevated px-3 py-2 text-xs text-toned">
                     <span class="font-medium">{{ t(openAICompactStatusKey) }}</span>
                     <span
@@ -1840,7 +1842,9 @@
                       + {{ t('admin.accounts.addMapping') }}
                     </UButton>
                   </div>
-                </div>
+                    </div>
+                  </template>
+                </SettingRow>
               </div>
           </SettingGroup>
 
@@ -1908,13 +1912,8 @@
             <div v-if="[(account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')), (account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'), (account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token'))].some(Boolean)">
               <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
               <div v-if="account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')" class="pb-3">
-                <h3 class="inline-flex items-center py-2 text-sm font-semibold text-default">
-                  {{ t('admin.accounts.quotaControl.title') }}
-                  <HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')" width-class="w-72">
-                    <span class="block">{{ t('admin.accounts.quotaControl.hint') }}</span>
-                  </HelpTooltip>
-                </h3>
                 <QuotaLimitCard
+                  :hint="t('admin.accounts.quotaControl.hint')"
                   :totalLimit="editQuotaLimit"
                   :dailyLimit="editQuotaDailyLimit"
                   :weeklyLimit="editQuotaWeeklyLimit"
@@ -1956,8 +1955,8 @@
               </div>
               <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
               <div v-else-if="account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'" class="pb-3">
-                <h3 class="inline-flex items-center py-2 text-sm font-semibold text-default">{{ t('admin.accounts.quotaControl.title') }}<HelpTooltip trigger="auto" :aria-label="t('admin.accounts.quotaControl.title')"><span class="block">{{ t('admin.accounts.quotaLimitHint') }}</span></HelpTooltip></h3>
                 <QuotaLimitCard
+                  :hint="t('admin.accounts.quotaLimitHint')"
                   :totalLimit="editQuotaLimit"
                   :dailyLimit="editQuotaDailyLimit"
                   :weeklyLimit="editQuotaWeeklyLimit"

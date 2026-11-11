@@ -13,36 +13,62 @@
         {{ saving ? t('common.saving') : t('common.save') }}
       </UButton>
     </template>
-    <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
-    <UFormField :label="t('admin.settings.gatewayIPNotice.enabled')" class="flex items-center justify-between gap-4">
-      <Toggle id="gateway-ip-notice-enabled" v-model="form.enabled" :disabled="saving || loadFailed" />
-    </UFormField>
-    <UFormField :label="t('admin.settings.gatewayIPNotice.ips')" :description="t('admin.settings.gatewayIPNotice.ipHint')" :ui="{ container: 'w-full mt-3' }">
-      <UTextarea
-        id="gateway-ip-notice-ips"
-        v-model="ipText"
-        :rows="5"
-        autoresize
-        :disabled="saving || loadFailed"
-        spellcheck="false"
-        class="w-full font-mono"
-      />
-    </UFormField>
-    <UFormField :label="t('admin.settings.gatewayIPNotice.message')" :ui="{ container: 'w-full mt-3' }">
-      <UTextarea id="gateway-ip-notice-message" v-model="form.message" :rows="3" autoresize maxlength="2048" :disabled="saving || loadFailed" class="w-full" />
-      <template v-if="form.message" #help>
-        <span class="block text-xs font-medium text-muted">{{ t('admin.settings.gatewayIPNotice.preview') }}</span>
-        <span class="mt-1 block whitespace-pre-wrap wrap-break-word text-sm text-highlighted">{{ form.message }}</span>
-      </template>
-    </UFormField>
-    <UFormField
-      :label="t('admin.settings.gatewayIPNotice.rpm')"
-      :description="t('admin.settings.gatewayIPNotice.rpmHint')"
-      :help="t('admin.settings.gatewayIPNotice.effectiveHint')"
-      class="flex max-sm:flex-col justify-between items-start gap-4"
-    >
-      <UInput id="gateway-ip-notice-rpm" v-model.number="form.rpm" type="number" min="1" max="100000" step="1" :disabled="saving || loadFailed" class="w-36" />
-    </UFormField>
+    <SettingPanel hide-summary>
+      <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
+      <SettingGroup>
+        <SettingRow :label="t('admin.settings.gatewayIPNotice.enabled')" :on="form.enabled">
+          <template #control>
+            <Toggle id="gateway-ip-notice-enabled" v-model="form.enabled" :disabled="saving || loadFailed" />
+          </template>
+        </SettingRow>
+        <!-- The list and the message are long text: the row shows how much is there, the editor opens on click. -->
+        <SettingRow
+          :label="t('admin.settings.gatewayIPNotice.ips')"
+          :hint="t('admin.settings.gatewayIPNotice.ipHint')"
+          :summary="t('common.settingsSummary.itemCount', { count: ipText.split(/[\s,，;；]+/).filter(Boolean).length })"
+          :on="true"
+          :in-summary="false"
+          persistent-summary
+        >
+          <template #fields>
+            <UTextarea
+              id="gateway-ip-notice-ips"
+              v-model="ipText"
+              :rows="5"
+              autoresize
+              :disabled="saving || loadFailed"
+              spellcheck="false"
+              class="w-full font-mono"
+            />
+          </template>
+        </SettingRow>
+        <SettingRow
+          :label="t('admin.settings.gatewayIPNotice.message')"
+          :summary="form.message.trim() ? form.message : t('common.settingsSummary.notSet')"
+          :on="true"
+          :in-summary="false"
+          persistent-summary
+        >
+          <template #fields>
+            <UTextarea id="gateway-ip-notice-message" v-model="form.message" :rows="3" autoresize maxlength="2048" :disabled="saving || loadFailed" class="w-full" />
+            <div v-if="form.message" class="grid gap-1">
+              <span class="block text-xs font-medium text-muted">{{ t('admin.settings.gatewayIPNotice.preview') }}</span>
+              <span class="block whitespace-pre-wrap wrap-break-word text-sm text-highlighted">{{ form.message }}</span>
+            </div>
+          </template>
+        </SettingRow>
+        <SettingRow
+          :label="t('admin.settings.gatewayIPNotice.rpm')"
+          :hint="[t('admin.settings.gatewayIPNotice.rpmHint'), t('admin.settings.gatewayIPNotice.effectiveHint')]"
+          :on="true"
+          :in-summary="false"
+        >
+          <template #control>
+            <UInput id="gateway-ip-notice-rpm" v-model.number="form.rpm" type="number" min="1" max="100000" step="1" :disabled="saving || loadFailed" class="w-28" />
+          </template>
+        </SettingRow>
+      </SettingGroup>
+    </SettingPanel>
   </SettingsSection>
   <TotpStepUpDialog :controller="stepUp" />
 </template>
@@ -56,6 +82,9 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import SettingPanel from '@/components/common/SettingPanel.vue'
+import SettingGroup from '@/components/common/SettingGroup.vue'
+import SettingRow from '@/components/common/SettingRow.vue'
 import SettingsSection from './SettingsSection.vue'
 
 const { t } = useI18n()
