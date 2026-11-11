@@ -11,7 +11,7 @@ export default {
     cancel: 'Cancel',
     settingsSummary: {
       enabled: '{count} enabled',
-      allDefault: 'All at defaults',
+      noneOn: 'Nothing switched on',
       configured: 'Set',
       notSet: 'Not set',
       itemCount: '{count} item | {count} items',

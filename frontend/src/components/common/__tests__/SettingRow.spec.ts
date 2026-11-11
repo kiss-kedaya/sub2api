@@ -226,12 +226,19 @@ describe('SettingPanel summary', () => {
     expect(chips(wrapper)).not.toContain('Threshold')
   })
 
-  it('says everything is at its default when nothing is on', async () => {
+  it('says nothing is on when nothing is on, without claiming anything is at its default', async () => {
     const { wrapper, state } = mountPanel()
     state.value.b = false
     await nextTick()
     expect(chips(wrapper)).toEqual([])
-    expect(wrapper.get('.setting-summary__none').text()).toBe('common.settingsSummary.allDefault')
+    // One fact, said once: no "0 enabled" in front of it, and no verdict about defaults.
+    expect(wrapper.get('[data-testid="setting-summary"]').text()).toBe('common.settingsSummary.noneOn')
+    expect(wrapper.get('.setting-summary__none').text()).toBe('common.settingsSummary.noneOn')
+
+    state.value.b = true
+    await nextTick()
+    expect(wrapper.find('.setting-summary__none').exists()).toBe(false)
+    expect(count(wrapper)).toContain('common.settingsSummary.enabled')
   })
 
   it('renders the group titles above their rows', () => {
@@ -253,11 +260,13 @@ describe('SettingPanel with custom summary wording', () => {
     })
     const wrapper = mount(Host, { attachTo: document.body })
     await nextTick()
-    expect(wrapper.get('[data-testid="setting-summary-count"]').text()).toBe('common.settingsSummary.willChange')
+    // Nothing ticked: only the empty line, in the caller's words (no "0 to change" in front of it).
+    expect(wrapper.get('[data-testid="setting-summary"]').text()).toBe('common.settingsSummary.noneSelected')
     expect(wrapper.get('.setting-summary__none').text()).toBe('common.settingsSummary.noneSelected')
 
     ticked.value = true
     await nextTick()
+    expect(wrapper.get('[data-testid="setting-summary-count"]').text()).toBe('common.settingsSummary.willChange')
     expect(wrapper.findAll('.setting-summary__chip').map((c) => c.text())).toEqual(['Proxy'])
     expect(wrapper.find('.setting-summary__none').exists()).toBe(false)
   })
