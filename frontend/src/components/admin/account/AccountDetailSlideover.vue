@@ -83,6 +83,13 @@
                 <h4 class="text-xs font-medium text-muted">{{ t('admin.accounts.columns.upstreamBillingRate') }}</h4>
                 <UpstreamBillingRateCell :account="account" :now="now" :global-probe-enabled="globalProbeEnabled" @probe="emit('probe-upstream-billing', account)" />
               </section>
+              <section class="space-y-2" data-testid="account-detail-upstream-balance">
+                <div class="flex items-center gap-2">
+                  <h4 class="text-xs font-medium text-muted">{{ t('admin.accounts.columns.upstreamBalance') }}</h4>
+                  <UpstreamKindBadge v-if="upstreamKindOf(account)" :kind="upstreamKindOf(account)!" />
+                </div>
+                <UpstreamBalanceCell :account="account" :now="now" align="start" @probe="emit('probe-upstream-billing', account)" />
+              </section>
             </template>
           </div>
         </template>
@@ -127,6 +134,9 @@ import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
+import UpstreamBalanceCell from '@/components/account/UpstreamBalanceCell.vue'
+import UpstreamKindBadge from '@/components/account/UpstreamKindBadge.vue'
+import { upstreamKindOf } from '@/components/account/upstreamBalance'
 import SchedulableTimerControl from '@/components/account/SchedulableTimerControl.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'

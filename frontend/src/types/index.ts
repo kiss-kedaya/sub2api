@@ -1175,6 +1175,56 @@ export interface UpstreamBillingProbeSnapshot {
   // Value this probe wrote into the account rate multiplier; absent when the
   // probe did not sync a rate.
   synced_rate_multiplier?: number
+  // What the probe recognised the upstream as. Absent until the upstream answered one of the known
+  // endpoints; kept across failed probes (backend/internal/service/upstream_kind_probe.go).
+  upstream_kind?: UpstreamKind
+  balance?: UpstreamBalanceSnapshot
+}
+
+export type UpstreamKind = 'sub2api' | 'newapi' | 'openai_compatible' | 'official' | 'custom'
+
+// Which upstream endpoint produced the balance (UpstreamBalanceSource* in upstream_kind_probe.go).
+export type UpstreamBalanceSource = 'sub2api_usage' | 'newapi_token_usage' | 'openai_billing_subscription'
+
+export interface UpstreamBalanceWindow {
+  window: string
+  limit: number
+  used?: number
+  reset_at?: string
+}
+
+// Normalised balance fields written by parseUpstreamBalanceResponse,
+// parseUpstreamNewAPIUsageResponse and the legacy billing parser. Every field is optional.
+export interface UpstreamBalanceData {
+  is_valid?: boolean
+  mode?: string
+  key_status?: string
+  plan_name?: string
+  unit?: string
+  // new-api amounts are converted with its default 500000 points = 1 USD ratio.
+  unit_assumed?: boolean
+  // Headroom left on this API key. Absent when unlimited.
+  remaining?: number
+  quota_limit?: number
+  quota_used?: number
+  unlimited?: boolean
+  // Account-level wallet balance, a different number from the key's remaining quota.
+  wallet_balance?: number
+  wallet_used?: number
+  windows?: UpstreamBalanceWindow[]
+  expires_at?: string
+}
+
+export interface UpstreamBalanceSnapshot {
+  status: UpstreamBillingProbeStatus
+  // On failure this keeps the last successful data, with received_at / fresh_until of that read.
+  data?: UpstreamBalanceData
+  received_at?: string
+  fresh_until?: string
+  last_attempt_at?: string
+  http_status?: number
+  last_error?: string
+  source?: UpstreamBalanceSource | string
 }
 
 export interface UpstreamBillingProbeSettings {

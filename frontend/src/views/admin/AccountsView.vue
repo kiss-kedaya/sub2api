@@ -181,6 +181,7 @@
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
                   :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
+                <UpstreamKindBadge v-if="upstreamKindOf(row)" :kind="upstreamKindOf(row)!" />
                 <UBadge
                   v-if="getAntigravityTierLabel(row)"
                   :color="getAntigravityTierColor(row)"
@@ -317,6 +318,17 @@
             <UpstreamBillingRateCell
               :account="row"
               :global-probe-enabled="upstreamBillingProbeGloballyEnabled"
+              :now="upstreamBillingNow"
+              :probing="probingUpstreamBilling.has(row.id)"
+              @probe="handleProbeUpstreamBilling(row)"
+            />
+          </template>
+          <template #header-upstream_balance="{ column }">
+            <span class="block w-36 text-right">{{ column.label }}</span>
+          </template>
+          <template #cell-upstream_balance="{ row }">
+            <UpstreamBalanceCell
+              :account="row"
               :now="upstreamBillingNow"
               :probing="probingUpstreamBilling.has(row.id)"
               @probe="handleProbeUpstreamBilling(row)"
@@ -520,6 +532,9 @@ import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vu
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
+import UpstreamBalanceCell from '@/components/account/UpstreamBalanceCell.vue'
+import UpstreamKindBadge from '@/components/account/UpstreamKindBadge.vue'
+import { upstreamKindOf } from '@/components/account/upstreamBalance'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
@@ -1852,6 +1867,8 @@ const allColumns = computed(() => {
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
+    // Sorting happens on the server, which has no balance sort yet, so this column is not sortable.
+    { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
     { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },
