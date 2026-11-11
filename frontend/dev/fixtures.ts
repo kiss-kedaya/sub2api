@@ -227,8 +227,8 @@ function createAdminFixtures(now: Date, groups: Group[], sourceKeys: ApiKey[], s
     12: upstreamProbe('newapi', okBalance('newapi_token_usage', { is_valid: true, unit: 'USD', unit_assumed: true, unlimited: true, quota_used: 3.25 })),
     22: upstreamProbe(undefined, { status: 'failed', last_attempt_at: probeAt(-5 * 60_000), last_error: 'request_failed' }, 'failed'),
     4: upstreamProbe('openai_compatible', okBalance('openai_billing_subscription', { is_valid: true, unit: 'USD', remaining: 1234567.89, quota_limit: 2000000, quota_used: 765432.11, expires_at: probeAt(40 * DAY) })),
-    20: upstreamProbe('sub2api', okBalance('sub2api_usage', { is_valid: true, unit: 'USD', remaining: -3.2 })),
-    18: upstreamProbe('sub2api', {
+    7: upstreamProbe('sub2api', okBalance('sub2api_usage', { is_valid: true, unit: 'USD', remaining: -3.2 })),
+    2: upstreamProbe('sub2api', {
       status: 'failed', source: 'sub2api_usage', data: { is_valid: true, unit: 'USD', remaining: 5.1234 },
       received_at: probeAt(-3 * 60 * 60_000), fresh_until: probeAt(-60 * 60_000), last_attempt_at: probeAt(-5 * 60_000),
       http_status: 502, last_error: 'http_error',
@@ -236,9 +236,10 @@ function createAdminFixtures(now: Date, groups: Group[], sourceKeys: ApiKey[], s
     3: upstreamProbe('sub2api', okBalance('sub2api_usage', { is_valid: true, unit: 'USD', remaining: 0, quota_limit: 20, quota_used: 20 })),
     10: upstreamProbe('custom', { status: 'unsupported', last_attempt_at: probeAt(-30 * 60_000), http_status: 404, last_error: 'unsupported' }),
     16: upstreamProbe('official', undefined, 'unsupported'),
-    2: null,
   }
-  // The list sorts by name with 10 rows a page, so the scenarios sit on the rows of page 1 first.
+  // The list sorts by name with 10 rows a page, so the scenarios sit on the rows of page 1 first. Rows past
+  // index 16 keep their original type: mock-api seeds custom usage on the last three API-key accounts.
+  // API-key accounts without a scenario (920002, 920014, ...) show the never-read state.
   const isApiKeyDemo = (index: number) => index % 3 === 1 || index in upstreamScenarios
 
   const adminAccounts: AccountListItem[] = Array.from({ length: 24 }, (_, index) => {
