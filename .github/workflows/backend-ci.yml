@@ -167,7 +167,7 @@ jobs:
       - uses: ./.github/actions/go-cache
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.10'
+          go version | grep -q 'go1.26.11'
       - name: Unit tests
         working-directory: backend
         run: make test-unit
@@ -182,7 +182,7 @@ jobs:
       - uses: ./.github/actions/go-cache
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.10'
+          go version | grep -q 'go1.26.11'
       - name: Integration tests
         working-directory: backend
         run: make test-integration
@@ -200,7 +200,7 @@ jobs:
         run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs test-race-a --timeout 1500
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.10'
+          go version | grep -q 'go1.26.11'
       - name: Wallet security concurrency regression
         working-directory: backend
         run: go test -race -p 1 ./internal/cryptopay/... ./internal/notify/... -count=1
@@ -223,7 +223,7 @@ jobs:
         run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs test-race-b --timeout 1500
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.10'
+          go version | grep -q 'go1.26.11'
       - name: Explicit cache and operations safety regression
         working-directory: backend
         run: |
@@ -254,7 +254,7 @@ jobs:
         run: python3 .github/ci/warm-go.py --workflow .github/workflows/backend-ci.yml --jobs test-race-c --timeout 1500
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.10'
+          go version | grep -q 'go1.26.11'
       - name: Codex ticket concurrency regression
         working-directory: backend
         run: go test -race -tags=unit ./internal/service -run 'Test.*CodexTicket' -count=1
@@ -460,7 +460,7 @@ jobs:
       - uses: ./.github/actions/go-cache
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.26.10'
+          go version | grep -q 'go1.26.11'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

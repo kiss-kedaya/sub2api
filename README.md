@@ -4,7 +4,7 @@
 
 # Sub2API
 
-[![Go](https://img.shields.io/badge/Go-1.26.10-00ADD8.svg)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26.11-00ADD8.svg)](https://go.dev/)
 [![Nuxt UI](https://img.shields.io/badge/Nuxt_UI-4-00DC82.svg)](https://ui.nuxt.com/)
 [![Vue](https://img.shields.io/badge/Vue-3.5+-4FC08D.svg)](https://vuejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg)](https://www.postgresql.org/)
@@ -46,7 +46,7 @@ Balance preauthorization stays **off** in this deployment (`BILLING_BALANCE_PREA
 
 | Layer | Tech |
 |-------|------|
-| Backend | Go 1.26.10, Gin, Ent |
+| Backend | Go 1.26.11, Gin, Ent |
 | Frontend | Vue 3, @nuxt/ui 4, Vite SPA, TailwindCSS, pnpm |
 | UI packaging | Complete SPA embedded in the Go binary (`-tags=embed`) |
 | Database | PostgreSQL 15+ |
