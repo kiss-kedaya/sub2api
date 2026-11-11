@@ -4,7 +4,7 @@
 
 # Sub2API
 
-[![Go](https://img.shields.io/badge/Go-1.26.10-00ADD8.svg)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26.11-00ADD8.svg)](https://go.dev/)
 [![Nuxt UI](https://img.shields.io/badge/Nuxt_UI-4-00DC82.svg)](https://ui.nuxt.com/)
 [![Vue](https://img.shields.io/badge/Vue-3.5+-4FC08D.svg)](https://vuejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg)](https://www.postgresql.org/)
@@ -46,7 +46,7 @@
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Go 1.26.10、Gin、Ent |
+| 后端 | Go 1.26.11、Gin、Ent |
 | 前端 | Vue 3、@nuxt/ui 4、Vite SPA、TailwindCSS、pnpm |
 | UI 打包 | 完整 SPA 嵌入 Go 二进制（`-tags=embed`） |
 | 数据库 | PostgreSQL 15+ |
