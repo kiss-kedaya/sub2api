@@ -590,22 +590,22 @@ func TestChannelMonitorV2HealthTTFTAtTargetIsHealthy(t *testing.T) {
 }
 
 func TestChannelMonitorV2HealthCacheBelowThirtyPercentIsCritical(t *testing.T) {
-	health := ChannelMonitorV2HealthFor(ChannelMonitorV2Metric{
+	health := ChannelMonitorV2HealthForWithThresholds(ChannelMonitorV2Metric{
 		RequestCount:         100,
 		ErrorRate:            0,
 		CacheRate:            0.29,
 		CacheRateDenominator: 100,
-	})
+	}, ChannelMonitorV2HealthThresholds{WarningCacheRate: 0.85, CriticalCacheRate: 0.6})
 	require.Equal(t, "critical", health.Overall)
 	require.Equal(t, "critical", health.Cache)
 }
 
 func TestChannelMonitorV2HealthCacheThirtyPercentStaysScored(t *testing.T) {
-	health := ChannelMonitorV2HealthFor(ChannelMonitorV2Metric{
+	health := ChannelMonitorV2HealthForWithThresholds(ChannelMonitorV2Metric{
 		RequestCount:         100,
 		ErrorRate:            0,
 		CacheRate:            0.30,
 		CacheRateDenominator: 100,
-	})
+	}, ChannelMonitorV2HealthThresholds{WarningCacheRate: 0.85, CriticalCacheRate: 0.6})
 	require.NotEqual(t, "critical", health.Overall)
 }

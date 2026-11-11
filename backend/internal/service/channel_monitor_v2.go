@@ -1145,7 +1145,8 @@ func ChannelMonitorV2HealthForWithThresholds(metrics ChannelMonitorV2Metric, thr
 	result.Overall = scoreBand(overall)
 	// 缓存率低于 30% 时，这个分组实际已经不可用：即使请求都成功，
 	// 也把整体状态压成 critical，让卡片直接显示红色。
-	if metrics.CacheRateDenominator >= result.MinimumSample && metrics.CacheRate < 0.30 {
+	cacheScoringEnabled := thresholds.WarningCacheRate > 0 || thresholds.CriticalCacheRate > 0
+	if cacheScoringEnabled && metrics.CacheRateDenominator >= result.MinimumSample && metrics.CacheRate < 0.30 {
 		result.Overall = "critical"
 		result.Cache = "critical"
 	}
