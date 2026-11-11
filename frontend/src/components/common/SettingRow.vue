@@ -34,7 +34,13 @@ const props = withDefaults(defineProps<{
    * plain value (a threshold, a mode) rather than a feature someone switched on.
    */
   inSummary?: boolean
+  /**
+   * Give the control half of the row instead of its intrinsic width. For text and URL inputs,
+   * whose content is the thing to read; a switch or a short number keeps the default.
+   */
+  wideControl?: boolean
 }>(), {
+  wideControl: false,
   inSummary: true,
   hint: undefined,
   summary: undefined,
@@ -51,7 +57,7 @@ const uid = useId()
 const bodyId = computed(() => `setting-row-body-${uid}`)
 
 const hints = computed(() => (Array.isArray(props.hint) ? props.hint : [props.hint]).filter((h): h is string => Boolean(h)))
-const hasBody = computed(() => hints.value.length > 0 || Boolean(slots.fields))
+const hasBody = computed(() => hints.value.length > 0 || Boolean(slots.hint) || Boolean(slots.fields))
 const hasFields = computed(() => Boolean(slots.fields))
 
 const open = ref(props.defaultOpen)
@@ -86,7 +92,7 @@ function toggle() {
 </script>
 
 <template>
-  <div ref="root" class="setting-row" :data-on="on || undefined" :data-testid="testId">
+  <div ref="root" class="setting-row" :data-on="on || undefined" :data-wide-control="wideControl || undefined" :data-testid="testId">
     <div class="setting-row__head">
       <button
         type="button"
@@ -120,6 +126,8 @@ function toggle() {
       <!-- inert, not v-show: a closed row keeps its height animated but nothing inside can be focused. -->
       <div class="setting-row__body-inner" :inert="open ? undefined : true">
         <p v-for="(text, index) in hints" :key="index" class="setting-row__hint">{{ text }}</p>
+        <!-- For an explanation that is more than plain text (several spans, a live value, an id for aria). -->
+        <div v-if="$slots.hint" class="setting-row__hint"><slot name="hint" /></div>
         <slot name="fields" />
       </div>
     </div>
@@ -221,10 +229,32 @@ function toggle() {
   white-space: nowrap;
 }
 
+/* The control gives way before the name does: on a phone a wide text input would otherwise squeeze
+   the name down to one letter and an ellipsis. The name keeps at least ~9rem (or 45% of the row). */
 .setting-row__control {
   display: inline-flex;
-  flex: none;
+  flex: 0 1 auto;
   align-items: center;
+  min-width: 0;
+}
+
+.setting-row__button {
+  min-width: min(45%, 9rem);
+}
+
+/* A wide control takes half the row on a desktop, so a URL can be read without opening the row.
+   The name gives up its growth instead; on a narrow screen the default rule above still applies. */
+@media (min-width: 640px) {
+  .setting-row[data-wide-control] .setting-row__button {
+    flex: 0 1 auto;
+  }
+
+  .setting-row[data-wide-control] .setting-row__control {
+    flex: 1 1 50%;
+    justify-content: flex-end;
+    max-width: 28rem;
+    margin-inline-start: auto;
+  }
 }
 
 .setting-row__status {

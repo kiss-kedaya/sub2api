@@ -12,6 +12,9 @@ export default {
     settingsSummary: {
       enabled: '已启用 {count} 项',
       allDefault: '全部保持默认',
+      configured: '已填写',
+      notSet: '未填写',
+      itemCount: '{count} 条',
     },
     done: '完成',
     delete: '删除',

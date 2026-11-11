@@ -120,6 +120,21 @@ describe('SettingRow', () => {
     expect(wrapper.findAll('.setting-row__hint').map((p) => p.text())).toEqual(['First paragraph', 'Second paragraph'])
   })
 
+  it('expands to show a rich hint slot even when the row has no fields', async () => {
+    const wrapper = mount(SettingRow, {
+      props: { label: 'Linked', on: false },
+      slots: { hint: () => h('a', { href: '/docs', class: 'doc-link' }, 'Read the guide') },
+    })
+    const button = wrapper.get('.setting-row__button')
+    expect(button.attributes('disabled')).toBeUndefined()
+    // The body stays in the DOM (so it can animate) but is inert while closed.
+    expect(wrapper.get('.setting-row__body-inner').attributes('inert')).toBeDefined()
+    await button.trigger('click')
+    expect(button.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('.setting-row__body-inner').attributes('inert')).toBeUndefined()
+    expect(wrapper.get('.setting-row__body-inner .doc-link').text()).toBe('Read the guide')
+  })
+
   it('has nothing to expand when there is neither a hint nor fields', async () => {
     const wrapper = mount(SettingRow, { props: { label: 'Bare', hint: '' } })
     const button = wrapper.get('.setting-row__button')
