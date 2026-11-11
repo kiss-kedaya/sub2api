@@ -1438,3 +1438,12 @@ func TestSyncUpstreamModelCatalogFillsMissingOfficialMetadata(t *testing.T) {
 	require.Equal(t, int64(16384), catalog.Metadata["gpt-image-2"].MaxOutputTokens)
 	require.Equal(t, int64(1024), catalog.Metadata["grok-imagine-video-1.5"].MaxOutputTokens)
 }
+
+func TestFilterUpstreamModelsByAccountPlatformKeepsAggregatorModels(t *testing.T) {
+	models := []string{"deepseek-v4.1-flash", "glm-5.3", "kimi-k3", "qwen3.8-max"}
+	aggregator := &Account{Platform: PlatformKimi, Credentials: map[string]any{"base_url": "https://platform.deepseek.bid/v1"}}
+	require.Equal(t, models, filterUpstreamModelsByAccountPlatform(aggregator, models))
+
+	official := &Account{Platform: PlatformKimi, Credentials: map[string]any{"base_url": "https://api.moonshot.cn/v1"}}
+	require.Equal(t, []string{"kimi-k3"}, filterUpstreamModelsByAccountPlatform(official, models))
+}
