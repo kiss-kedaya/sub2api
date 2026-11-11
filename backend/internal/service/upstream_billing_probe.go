@@ -120,6 +120,10 @@ type UpstreamBillingProbeSnapshot struct {
 	// to what" without a separate history table.
 	SyncedRateMultiplier *float64                 `json:"synced_rate_multiplier,omitempty"`
 	Balance              *UpstreamBalanceSnapshot `json:"balance,omitempty"`
+	// UpstreamKind is what the probe recognised the upstream as (see the
+	// UpstreamKind* constants). It is kept across failed probes, because a
+	// timeout says nothing about which software the upstream runs.
+	UpstreamKind string `json:"upstream_kind,omitempty"`
 }
 
 // UpstreamBillingProbeResult is returned by manual probe endpoints.
@@ -401,7 +405,7 @@ func (s *UpstreamBillingProbeService) RunDue(ctx context.Context) error {
 	due := make([]Account, 0, len(accounts))
 	for i := range accounts {
 		account := accounts[i]
-		if !isUpstreamBillingProbeAccount(&account) || !account.IsActive() || !upstreamBillingProbeEnabled(&account) {
+		if !isUpstreamBillingProbeAccount(&account) || !account.IsActive() || !upstreamBillingProbeScheduled(&account) {
 			continue
 		}
 		snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
@@ -507,7 +511,7 @@ func (s *UpstreamBillingProbeService) probeAccountWithMode(ctx context.Context, 
 			return nil, ErrUpstreamBillingProbeAccountInvalid
 		}
 		if requireEnabled {
-			if !account.IsActive() || !upstreamBillingProbeEnabled(account) {
+			if !account.IsActive() || !upstreamBillingProbeScheduled(account) {
 				return nil, nil
 			}
 			if snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra); snapshot != nil &&
@@ -646,7 +650,12 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		// 填成官方默认域，且提供 us-east-1.api.x.ai 等官方区域预设）⇒
 		// 必无 /v1/sub2api/billing；不发请求，直接记 unsupported，避免
 		// 拿账号 Key 周期性请求官方域的不存在路径。
-		return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "unsupported", 0)
+		snapshot := upstreamBillingProbeFailureSnapshot(account, intervalMinutes, now, 0, "unsupported", 0)
+		snapshot.UpstreamKind = UpstreamKindOfficial
+		if err := s.updateSnapshot(ctx, account, snapshot, nil); err != nil {
+			return nil, err
+		}
+		return snapshot, nil
 	}
 	normalizedBaseURL, err := s.accountTestService.validateUpstreamBaseURL(baseURL)
 	if err != nil {
@@ -667,17 +676,15 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		buildOpenAIEndpointURL(normalizedBaseURL, "/v1/sub2api/billing"), upstreamBillingProbeMaxBodyBytes)
 	previousRate := account.BillingRateMultiplier()
 	snapshot, syncRate := upstreamBillingRateSnapshotFromResult(account, intervalMinutes, now, rateResult, previousRate)
-	if s.accountOps != nil && s.accountOps.NeedsBalanceProbe(account.ID) && upstreamBalanceProbeAllowed(normalizedBaseURL, rateResult) {
-		balanceResult := s.fetchUpstreamProbeBody(ctx, account, target,
-			upstreamBalanceProbeURL(normalizedBaseURL, now), upstreamBalanceProbeMaxBodyBytes)
-		snapshot.Balance = upstreamBalanceSnapshotFromResult(balanceResult, snapshot.Balance, intervalMinutes, now)
-		// Sub2API upstreams that predate /v1/sub2api/billing still answer
-		// /v1/usage. The stretched unsupported delay is for upstreams that return
-		// nothing useful; stretching one with a readable balance would leave that
-		// balance stale for most of every cycle.
-		if snapshot.Status == UpstreamBillingProbeStatusUnsupported && snapshot.Balance.Status == UpstreamBillingProbeStatusOK {
-			snapshot.NextProbeAt = now.Add(nextProbeDelay(intervalMinutes, retryAfter(rateResult.header, now)))
-		}
+	previous := decodeUpstreamBillingProbeSnapshot(account.Extra)
+	if previous != nil {
+		snapshot.UpstreamKind = normalizeUpstreamKind(previous.UpstreamKind)
+	}
+	if snapshot.Status == UpstreamBillingProbeStatusOK {
+		snapshot.UpstreamKind = UpstreamKindSub2API
+	}
+	if upstreamBalanceProbeAllowed(normalizedBaseURL, rateResult) {
+		s.identifyUpstreamAndReadBalance(ctx, account, target, normalizedBaseURL, intervalMinutes, now, rateResult, snapshot)
 	}
 	if err := s.updateSnapshot(ctx, account, snapshot, syncRate); err != nil {
 		return nil, err
@@ -693,6 +700,163 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		)
 	}
 	return snapshot, nil
+}
+
+// identifyUpstreamAndReadBalance works out which software the upstream runs
+// and reads its balance, updating snapshot.UpstreamKind and snapshot.Balance.
+//
+// Endpoints are tried in a fixed order and the first whose own schema parses
+// wins; a 200 alone proves nothing, because relays commonly answer unknown
+// paths with an HTML page or a generic JSON envelope.
+//
+//  1. /v1/usage                           -> sub2api
+//  2. /api/usage/token/                   -> new-api
+//  3. /v1/dashboard/billing/subscription  -> OpenAI-compatible
+//
+// Once the kind is known, later probes go straight to that kind's endpoint,
+// so a recognised upstream costs one balance request per cycle and only an
+// unrecognised one is asked about every path. A recognised upstream whose
+// endpoint stops parsing is re-identified from the top.
+//
+// The sequence stops as soon as the upstream rejects the key or asks for
+// back-off (401/403/429): repeating a rejected key against more paths is how a
+// relay ends up rate-limiting or banning the caller's IP.
+func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
+	ctx context.Context,
+	account *Account,
+	target upstreamBillingProbeTarget,
+	baseURL string,
+	intervalMinutes int,
+	now time.Time,
+	rateResult upstreamBillingProbeHTTPResult,
+	snapshot *UpstreamBillingProbeSnapshot,
+) {
+	previousBalance := snapshot.Balance
+	// Status of the first balance endpoint asked, kept for the "custom" verdict.
+	lastStatusCode := 0
+	fresh := func(data map[string]any, source string, statusCode int) *UpstreamBalanceSnapshot {
+		return &UpstreamBalanceSnapshot{
+			Status:        UpstreamBillingProbeStatusOK,
+			Data:          data,
+			ReceivedAt:    probeTimePtr(now),
+			FreshUntil:    probeTimePtr(now.Add(2 * time.Duration(intervalMinutes) * time.Minute)),
+			LastAttemptAt: now,
+			HTTPStatus:    statusCode,
+			Source:        source,
+		}
+	}
+	fetch := func(path string, maxBytes int) upstreamBillingProbeHTTPResult {
+		return s.fetchUpstreamProbeBody(ctx, account, target, buildOpenAIEndpointURL(baseURL, path), maxBytes)
+	}
+	// readable keeps a recognised upstream on the normal interval. The stretched
+	// "unsupported" delay is for upstreams that return nothing useful; applying
+	// it to one with a readable balance would leave that balance stale.
+	readable := func() {
+		if snapshot.Status == UpstreamBillingProbeStatusUnsupported {
+			snapshot.NextProbeAt = now.Add(nextProbeDelay(intervalMinutes, retryAfter(rateResult.header, now)))
+		}
+	}
+
+	trySub2API := func() (done bool) {
+		result := s.fetchUpstreamProbeBody(ctx, account, target, upstreamBalanceProbeURL(baseURL, now), upstreamBalanceProbeMaxBodyBytes)
+		lastStatusCode = result.statusCode
+		if upstreamProbeAnswered(result) {
+			if data, err := parseUpstreamBalanceResponse(result.body); err == nil {
+				snapshot.UpstreamKind = UpstreamKindSub2API
+				snapshot.Balance = fresh(data, UpstreamBalanceSourceSub2APIUsage, result.statusCode)
+				readable()
+				return true
+			}
+		}
+		if snapshot.UpstreamKind == UpstreamKindSub2API || upstreamProbeRejectedKey(result) {
+			// Known Sub2API upstream, or the key was rejected: record this attempt
+			// against the balance and stop.
+			snapshot.Balance = upstreamBalanceSnapshotFromResult(result, previousBalance, intervalMinutes, now)
+			return true
+		}
+		return false
+	}
+	tryNewAPI := func() (done bool) {
+		// Site root, not the model base path: see upstreamSiteRootURL.
+		result := s.fetchUpstreamProbeBody(ctx, account, target,
+			upstreamSiteRootURL(baseURL, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
+		if upstreamProbeAnswered(result) {
+			if data, err := parseUpstreamNewAPIUsageResponse(result.body); err == nil {
+				snapshot.UpstreamKind = UpstreamKindNewAPI
+				snapshot.Balance = fresh(data, UpstreamBalanceSourceNewAPITokenUsage, result.statusCode)
+				readable()
+				return true
+			}
+		}
+		if snapshot.UpstreamKind == UpstreamKindNewAPI || upstreamProbeRejectedKey(result) {
+			snapshot.Balance = upstreamBalanceSnapshotFromResult(result, previousBalance, intervalMinutes, now)
+			return true
+		}
+		return false
+	}
+	tryLegacy := func() (done bool) {
+		subscription := fetch(upstreamLegacySubscriptionPath, upstreamKindProbeMaxBodyBytes)
+		if upstreamProbeAnswered(subscription) {
+			// hard_limit_usd is the granted total, so the usage endpoint is needed
+			// for what is left. It is only requested once the subscription parsed.
+			if _, err := parseUpstreamLegacySubscriptionResponse(subscription.body, nil); err == nil {
+				var usageBody []byte
+				if usage := fetch(upstreamLegacyUsagePath, upstreamKindProbeMaxBodyBytes); upstreamProbeAnswered(usage) {
+					usageBody = usage.body
+				}
+				if data, err := parseUpstreamLegacySubscriptionResponse(subscription.body, usageBody); err == nil {
+					snapshot.UpstreamKind = UpstreamKindOpenAICompatible
+					snapshot.Balance = fresh(data, UpstreamBalanceSourceLegacySubscription, subscription.statusCode)
+					readable()
+					return true
+				}
+			}
+		}
+		if snapshot.UpstreamKind == UpstreamKindOpenAICompatible || upstreamProbeRejectedKey(subscription) {
+			snapshot.Balance = upstreamBalanceSnapshotFromResult(subscription, previousBalance, intervalMinutes, now)
+			return true
+		}
+		return false
+	}
+
+	// A recognised upstream is asked only about its own endpoint. If that
+	// endpoint no longer parses, the kind is dropped and identification restarts
+	// on the next probe rather than in this one, to keep one probe bounded.
+	switch snapshot.UpstreamKind {
+	case UpstreamKindSub2API:
+		if trySub2API(); snapshot.Balance == nil || snapshot.Balance.Status != UpstreamBillingProbeStatusOK {
+			if snapshot.Status != UpstreamBillingProbeStatusOK && (snapshot.Balance == nil || snapshot.Balance.LastError == "unsupported" || snapshot.Balance.LastError == "invalid_response") {
+				snapshot.UpstreamKind = ""
+			}
+		}
+		return
+	case UpstreamKindNewAPI:
+		if tryNewAPI(); snapshot.Balance == nil || (snapshot.Balance.Status != UpstreamBillingProbeStatusOK &&
+			(snapshot.Balance.LastError == "unsupported" || snapshot.Balance.LastError == "invalid_response")) {
+			snapshot.UpstreamKind = ""
+		}
+		return
+	case UpstreamKindOpenAICompatible:
+		if tryLegacy(); snapshot.Balance == nil || (snapshot.Balance.Status != UpstreamBillingProbeStatusOK &&
+			(snapshot.Balance.LastError == "unsupported" || snapshot.Balance.LastError == "invalid_response")) {
+			snapshot.UpstreamKind = ""
+		}
+		return
+	}
+
+	if trySub2API() || tryNewAPI() || tryLegacy() {
+		return
+	}
+	// Reached the upstream, the key was not rejected, and no known endpoint
+	// answered with its schema. HTTPStatus is what the first balance endpoint
+	// answered, which is what an operator looking at "unsupported" wants to see.
+	snapshot.UpstreamKind = UpstreamKindCustom
+	snapshot.Balance = &UpstreamBalanceSnapshot{
+		Status:        UpstreamBillingProbeStatusUnsupported,
+		LastAttemptAt: now,
+		HTTPStatus:    lastStatusCode,
+		LastError:     "unsupported",
+	}
 }
 
 // upstreamBillingProbeTarget is the credential and route one probe uses for
@@ -876,6 +1040,7 @@ func upstreamBillingProbeFailureSnapshot(
 			snapshot.FreshUntil = probeTimePtr(previous.ReceivedAt.Add(2 * time.Duration(intervalMinutes) * time.Minute))
 		}
 		snapshot.Balance = previous.Balance
+		snapshot.UpstreamKind = normalizeUpstreamKind(previous.UpstreamKind)
 	}
 	return snapshot
 }
@@ -1176,6 +1341,32 @@ func upstreamBillingProbeEnabled(account *Account) bool {
 	}
 	enabled, ok := account.Extra[UpstreamBillingProbeEnabledExtraKey].(bool)
 	return ok && enabled
+}
+
+// upstreamBillingProbeAutoEligible reports whether the scheduled runner may
+// probe an account nobody configured. The enabled flag has three states: true
+// (on), false (an admin turned it off) and absent (never decided). Only the
+// absent state is auto-eligible, so an explicit "off" is never overridden and
+// existing rows need no backfill.
+//
+// Auto-eligible probes only identify the upstream and read its balance. They
+// never write a rate back: rate sync still requires both switches to be true.
+func upstreamBillingProbeAutoEligible(account *Account) bool {
+	if !isUpstreamBillingProbeAccount(account) {
+		return false
+	}
+	if account.Extra != nil {
+		if _, decided := account.Extra[UpstreamBillingProbeEnabledExtraKey]; decided {
+			return false
+		}
+	}
+	return true
+}
+
+// upstreamBillingProbeScheduled is what the runner checks: explicitly enabled,
+// or never decided.
+func upstreamBillingProbeScheduled(account *Account) bool {
+	return upstreamBillingProbeEnabled(account) || upstreamBillingProbeAutoEligible(account)
 }
 
 // upstreamBillingRateSyncEnabled is the probe-side pre-filter deciding whether
