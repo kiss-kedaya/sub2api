@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -114,6 +115,54 @@ func TestCORS_AllowedOrigin_HasAllowHeaders(t *testing.T) {
 				"允许的 origin 应收到 Allow-Origin")
 		})
 	}
+}
+
+// A browser script can only read a cross-origin response header that is listed
+// in Access-Control-Expose-Headers. The gateway forwards the Kimi/Moonshot cache
+// headers and the request id; unless they are exposed, they are on the wire and
+// still invisible to fetch().
+func TestCORS_ExposesForwardedCacheHeadersToBrowsers(t *testing.T) {
+	for name, cfg := range map[string]config.CORSConfig{
+		"explicit_origin": {AllowedOrigins: []string{"https://allowed.example.com"}},
+		"wildcard":        {AllowedOrigins: []string{"*"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			c.Request.Header.Set("Origin", "https://allowed.example.com")
+
+			CORS(cfg)(c)
+
+			exposed := map[string]bool{}
+			for _, header := range strings.Split(w.Header().Get("Access-Control-Expose-Headers"), ",") {
+				exposed[strings.ToLower(strings.TrimSpace(header))] = true
+			}
+			for _, header := range []string{
+				"msh-usage-cache-write-tokens-5m",
+				"msh-usage-cache-write-tokens-1h",
+				"msh-context-cache-token-saved",
+				"x-request-id",
+				// Exposed before this change; must stay.
+				"etag",
+				"server-timing",
+			} {
+				assert.True(t, exposed[header], "%s must be readable by a browser script", header)
+			}
+		})
+	}
+}
+
+// An origin that is not allowed gets no CORS headers at all, the exposed list included.
+func TestCORS_DisallowedOrigin_ExposesNothing(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("Origin", "https://evil.example.com")
+
+	CORS(config.CORSConfig{AllowedOrigins: []string{"https://allowed.example.com"}})(c)
+
+	assert.Empty(t, w.Header().Get("Access-Control-Expose-Headers"))
 }
 
 func TestCORS_PreflightDisallowedOrigin_ReturnsForbidden(t *testing.T) {
