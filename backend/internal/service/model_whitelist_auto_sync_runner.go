@@ -100,6 +100,19 @@ type ModelWhitelistAutoSyncService struct {
 	lockCache  LeaderLockCache
 	db         *sql.DB
 	instanceID string
+
+	// retryBackoffUnit is the wait before the second fetch attempt; the third
+	// waits twice as long. Zero means the default. Tests shorten it.
+	retryBackoffUnit time.Duration
+}
+
+const modelWhitelistFetchRetryBackoffUnit = 3 * time.Second
+
+func (s *ModelWhitelistAutoSyncService) fetchRetryBackoffUnit() time.Duration {
+	if s != nil && s.retryBackoffUnit > 0 {
+		return s.retryBackoffUnit
+	}
+	return modelWhitelistFetchRetryBackoffUnit
 }
 
 type modelWhitelistFetcher interface {
@@ -398,13 +411,19 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 	var fetchErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			backoff := time.Duration(attempt) * 3 * time.Second
+			// Wait before retrying. Only the context ending stops the retries:
+			// fetchErr still holds the previous attempt's error here, so testing
+			// it would end the loop after the first failure and the retries
+			// would never run.
+			backoff := time.Duration(attempt) * s.fetchRetryBackoffUnit()
+			cancelled := false
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
 				fetchErr = ctx.Err()
+				cancelled = true
 			}
-			if fetchErr != nil {
+			if cancelled {
 				break
 			}
 		}
@@ -414,14 +433,12 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 		}
 	}
 	if fetchErr != nil {
-		// Persistent upstream failure: an unreachable model list must never keep
-		// a stale/closed whitelist. Clear the mapping so the account passes any
-		// model through, then record the error for the operator.
-		if writer, ok := s.accountRepo.(modelWhitelistAutoSyncMappingWriter); ok {
-			if baseline, _, baseErr := modelWhitelistBaselineMapping(account); baseErr == nil {
-				_, _ = writer.UpdateAccountModelMappingCAS(ctx, account, baseline, map[string]string{}, autoSyncConfigSnapshot(account.Extra))
-			}
-		}
+		// The upstream model list could not be read. Leave the account's model
+		// list exactly as it is: a failed read says nothing about which models
+		// the upstream serves, so the last list that was read successfully is
+		// still the best one available. Clearing it here used to open the
+		// account to every model on a transient upstream error. The error is
+		// recorded for the operator and the sync is retried on its backoff.
 		return s.finishWithError(ctx, account, interval, now, result, fmt.Errorf("upstream model sync failed after 3 attempts: %w", fetchErr))
 	}
 	models = normalizeModelIDs(models)
