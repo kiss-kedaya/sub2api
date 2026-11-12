@@ -80,8 +80,9 @@ describe('one-shot schedulable timer', () => {
     api.list.mockResolvedValue({ ...snapshot(), tasks: [task] })
     wrapper = mountTimer({ accountId: 7 })
     await flushPromises()
-    // The cell only carries the compact trigger; the plan itself lives in the dialog.
-    expect(wrapper.get('[data-test="timer-entry"]').text()).toContain('10-23 08:00')
+    // The cell only carries the icon trigger; the plan itself lives in the dialog and in the tooltip.
+    expect(wrapper.get('[data-test="timer-entry"]').attributes('title')).toContain('2026-10-23 08:00')
+    expect(wrapper.get('[data-test="timer-entry"]').attributes('data-scheduled')).toBe('true')
     expect(wrapper.find('[data-test="timer-form"]').exists()).toBe(false)
     await wrapper.get('[data-test="timer-entry"]').trigger('click')
     await flushPromises()

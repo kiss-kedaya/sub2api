@@ -7,8 +7,6 @@ export default {
   "noHistory": "暂无执行记录。",
   "schedulable": "账号调度开关",
   "schedulableHint": "关闭会立即切换并取消待执行的计划。",
-  "weekdaysShort": "工作日",
-  "everyDayShort": "每天",
   "newPlan": "新建计划",
   "recurringPage": "定时段",
   "action": "操作",

@@ -7,8 +7,6 @@ export default {
   "noHistory": "No execution records yet.",
   "schedulable": "Account scheduling",
   "schedulableHint": "Turning this off switches the account now and cancels pending plans.",
-  "weekdaysShort": "Weekdays",
-  "everyDayShort": "Daily",
   "newPlan": "New schedule",
   "recurringPage": "Time windows",
   "action": "Action",

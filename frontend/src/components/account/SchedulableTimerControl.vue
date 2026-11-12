@@ -1,26 +1,24 @@
 <template>
-  <!-- The cell footprint is fixed on purpose. Only a compact trigger lives in the table cell; the
-       plan summary and the execution log moved into the dialog below, so a snapshot that arrives
-       late can never widen this column and the table never starts scrolling sideways. -->
-  <div class="inline-flex w-[112px] max-w-full shrink-0 align-middle" data-test="timer-cell" @click.stop>
+  <!-- The cell footprint is fixed on purpose. Only a single icon trigger lives in the table cell;
+       the plan summary and the execution log moved into the dialog below, so a snapshot that
+       arrives late can never widen this column and the table never starts scrolling sideways.
+       Two states, no text: tinted while a plan is active, quiet outline while there is none. -->
+  <div class="inline-flex shrink-0 align-middle" data-test="timer-cell" @click.stop>
     <UButton
       data-test="timer-entry"
-      class="w-full min-w-0 justify-start overflow-hidden"
+      :data-scheduled="hasSchedule ? 'true' : 'false'"
       :color="hasSchedule ? 'primary' : 'neutral'"
       :variant="hasSchedule ? 'soft' : 'outline'"
+      icon="i-lucide-alarm-clock"
       size="xs"
+      square
       :disabled="busy || loading"
       :aria-expanded="expanded"
       aria-haspopup="dialog"
       :aria-label="t('admin.accounts.timer.title')"
       :title="triggerTitle"
       @click="openDialog"
-    >
-      <span class="inline-flex min-w-0 items-center gap-1.5">
-        <span class="size-1.5 shrink-0 rounded-full" :class="hasSchedule ? 'bg-primary' : 'bg-muted'" aria-hidden="true" />
-        <span class="min-w-0 truncate">{{ triggerLabel }}</span>
-      </span>
-    </UButton>
+    />
     <BaseDialog :show="expanded" :title="t('admin.accounts.timer.title')" width="narrow"
       :close-on-escape="!busy" :close-on-click-outside="!busy" :show-close-button="!busy"
       :draft-notice="timerDraft.restored.value ? t('common.draftRestored') : ''"
@@ -293,18 +291,7 @@ const historyZone = computed(() => {
   const offset = formatTimezoneOffset(zone)
   return offset ? `${zone} (${offset})` : zone
 })
-// What the fixed-width trigger says: at most one short fact, never a layout input.
-const triggerLabel = computed(() => {
-  const schedule = snapshot.value?.recurring
-  if (schedule?.enabled) {
-    const start = schedule.periods?.[0]?.start ?? ''
-    const day = schedule.weekdays_only ? t('admin.accounts.timer.weekdaysShort') : t('admin.accounts.timer.everyDayShort')
-    return start ? `${day} ${start}` : day
-  }
-  const next = pending.value[0]
-  if (next) return compactTime(next.execute_at, next.timezone)
-  return t('admin.accounts.timer.title')
-})
+// What the trigger tooltip says: the plan in one line, since the icon itself stays wordless.
 const triggerTitle = computed(() => {
   const schedule = snapshot.value?.recurring
   if (schedule?.enabled) return `${t('admin.accounts.timer.title')} · ${recurringSummary.value}`
