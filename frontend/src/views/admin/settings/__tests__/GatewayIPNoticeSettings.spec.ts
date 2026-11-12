@@ -16,6 +16,7 @@ const policy = {
   auto_add_enabled: true,
   sharing_window_minutes: 10,
   sharing_threshold: 3,
+  key_disable_enabled: false,
   auto_entries: [],
 }
 function render() { return mount(GatewayIPNoticeSettings, { global: { stubs: { TotpStepUpDialog: true } } }) }
@@ -42,6 +43,7 @@ describe('GatewayIPNoticeSettings', () => {
       auto_add_enabled: true,
       sharing_window_minutes: 10,
       sharing_threshold: 3,
+      key_disable_enabled: false,
       auto_entries: [],
     })
     expect(showSuccess).toHaveBeenCalledOnce()
@@ -92,7 +94,27 @@ describe('GatewayIPNoticeSettings', () => {
     await flushPromises()
     await wrapper.get('[data-testid="gateway-ip-notice-save"]').trigger('click')
     await flushPromises()
-    expect(updatePolicy).toHaveBeenCalledWith(expect.objectContaining({ auto_add_enabled: true, sharing_threshold: 3, sharing_window_minutes: 10, auto_entries: [] }))
+    expect(updatePolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ auto_add_enabled: true, sharing_threshold: 3, sharing_window_minutes: 10, key_disable_enabled: false, auto_entries: [] }),
+    )
+  })
+
+  it('renders the key-disable switch off by default and submits it once switched on', async () => {
+    const wrapper = render()
+    await flushPromises()
+    const toggle = wrapper.get('[data-testid="gateway-ip-notice-key-disable"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+
+    await wrapper.get('[data-testid="gateway-ip-notice-save"]').trigger('click')
+    await flushPromises()
+    expect(updatePolicy).toHaveBeenLastCalledWith(expect.objectContaining({ key_disable_enabled: false }))
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-testid="gateway-ip-notice-save"]').trigger('click')
+    await flushPromises()
+    expect(updatePolicy).toHaveBeenLastCalledWith(expect.objectContaining({ key_disable_enabled: true }))
+    expect(showSuccess).toHaveBeenCalledTimes(2)
   })
 
   it('rejects a threshold below two', async () => {

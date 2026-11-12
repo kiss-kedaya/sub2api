@@ -16,10 +16,11 @@ import (
 // classified as hosting/proxy infrastructure.
 //
 // It sits after API-key authentication and before GatewayIPNotice, so the IP it
-// adds takes effect immediately for the triggering request as well. On a hit it
-// also disables the API keys observed from that IP (status=inactive, never
-// deleted, upstream accounts untouched). Otherwise it is observation-only: it
-// never rejects or blocks a request.
+// adds takes effect immediately for the triggering request as well. It is
+// observation-only by default: it appends the IP and logs the hit, and never
+// rejects a request. Disabling the involved keys is an explicit opt-in
+// (Settings.KeyDisableEnabled); only then does it flip them to inactive
+// (status=inactive, never deleted, upstream accounts untouched).
 func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDetector, keys *service.APIKeyService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settings == nil || detector == nil {
@@ -54,23 +55,42 @@ func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDe
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
+		// The escalation switch is opt-in. Reading it off the cached policy
+		// keeps the hit path free of an extra settings read; a replica adopts an
+		// edit within the same five seconds as every other policy field, and an
+		// unreadable policy stays at the safe default (observe only).
+		keyDisable := settings.GatewayIPNoticeSnapshot().KeyDisable()
+
 		// Record the IP first: the notice policy is the reversible half of the
-		// action. The key write is attempted regardless, so one failing half
-		// never silently leaves the other undone.
+		// action. In opt-in mode the key write still runs when the append fails,
+		// so one failing half never silently leaves the other undone.
 		added, appendErr := settings.AppendGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
-		disabled, disableErr := disableSharedKeys(ctx, keys, hit)
 		attrs := []any{
 			"ip", hit.IP,
 			"distinct_users", hit.DistinctUsers,
 			"window_minutes", hit.WindowMinutes,
 			"key_prefixes", hit.KeyPrefixes,
-			"key_ids", hit.KeyIDs,
 			"auto_added", added,
-			"disabled_keys", disabled,
 		}
 		if appendErr != nil {
 			attrs = append(attrs, "append_error", appendErr)
 		}
+		if !keyDisable {
+			// Default mode: append the IP and keep every key exactly as it is.
+			// mode=observe_only is the operator-facing marker that makes this
+			// line distinguishable from the opt-in action below.
+			attrs = append(attrs, "mode", ipSharingModeObserveOnly)
+			if appendErr != nil {
+				slog.Error("gateway ip key sharing detected, observe only, ip append failed", attrs...)
+				c.Next()
+				return
+			}
+			slog.Warn("gateway ip key sharing detected, observe only: ip added, keys untouched", attrs...)
+			c.Next()
+			return
+		}
+		disabled, disableErr := disableSharedKeys(ctx, keys, hit)
+		attrs = append(attrs, "mode", ipSharingModeKeyDisable, "key_ids", hit.KeyIDs, "disabled_keys", disabled)
 		if disableErr != nil {
 			attrs = append(attrs, "disable_error", disableErr)
 		}
@@ -83,6 +103,13 @@ func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDe
 		c.Next()
 	}
 }
+
+// Log modes for one sharing hit. observe_only is the default and the only mode
+// that runs without an explicit operator opt-in.
+const (
+	ipSharingModeObserveOnly = "observe_only"
+	ipSharingModeKeyDisable  = "key_disable"
+)
 
 // disableSharedKeys flips every involved key to inactive. A nil service (tests
 // and deployments without the API-key service) makes it a no-op.

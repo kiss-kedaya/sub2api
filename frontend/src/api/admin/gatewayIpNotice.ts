@@ -18,6 +18,11 @@ export interface GatewayIPNoticeSettings {
   auto_add_enabled: boolean
   sharing_window_minutes: number
   sharing_threshold: number
+  /**
+   * Opt-in escalation: when true a sharing hit also disables the involved keys.
+   * Missing/false means observe-only — the IP is added, key statuses are not.
+   */
+  key_disable_enabled: boolean
   auto_entries: GatewayIPNoticeAutoEntry[]
 }
 

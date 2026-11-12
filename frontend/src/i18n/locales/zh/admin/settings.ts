@@ -19,11 +19,14 @@ export default {
         saved: '指定 IP 提示与限流已保存',
         autoAdd: '自动加入：同 IP 多账号共用 Key',
         autoAddHint:
-          '开启后，同一来源 IP 在窗口内出现达到阈值的不同用户账号的 API Key 调用时，自动把该 IP 加入上方列表并记录证据。只加 IP，不封禁账号、不改动任何 Key。',
+          '开启后，同一来源 IP 在窗口内出现达到阈值的不同用户账号的 API Key 调用时，自动把该 IP 加入上方列表并记录证据。是否同时停用涉及的 Key 由下方开关决定；默认只加 IP，不改动任何 Key。',
         autoThreshold: '触发所需的用户数',
         autoThresholdHint: '按不同用户计数：同一用户的多个 Key 只算 1 个。默认 3，最小 2。',
         autoWindow: '统计窗口（分钟）',
         autoWindowHint: '滑动窗口长度，默认 10 分钟。窗口外的调用不计入用户数。',
+        keyDisable: '命中时停用涉及的 Key（默认关闭）',
+        keyDisableHint:
+          '关闭时只把 IP 加入列表，不动任何 Key。开启后，该 IP 上达到阈值的不同用户所用的 Key 会被置为「停用」（仅改状态，不删除 Key，不影响上游账号）；可随时关闭。',
         autoEntries: '自动加入的 IP',
         autoEntriesHint: '自动条目与手填列表分开显示，便于区分来源；只统计 /v1 等 Key 鉴权业务接口，健康检查、探针和静态资源不计入。',
         autoEntriesEmpty: '暂无自动加入的 IP。',

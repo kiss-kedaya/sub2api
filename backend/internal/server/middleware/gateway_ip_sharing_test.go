@@ -176,11 +176,23 @@ func sharedEgressKey(userID int64, createdAt time.Time) *service.APIKey {
 	}
 }
 
-// TestGatewayIPSharingDisablesKeysOnDatacenterSharedEgress pins the positive
-// contract: a hosting IP used by three distinct users adds the IP AND disables
-// every observed key (status only, key rows never deleted).
+// setKeyDisable flips the opt-in escalation switch on the stored policy, the
+// same way the admin page does.
+func setKeyDisable(t *testing.T, settings *service.SettingService, enabled bool) {
+	t.Helper()
+	policy, err := settings.GetGatewayIPNotice(context.Background())
+	require.NoError(t, err)
+	policy.KeyDisableEnabled = &enabled
+	require.NoError(t, settings.SetGatewayIPNotice(context.Background(), policy))
+}
+
+// TestGatewayIPSharingDisablesKeysOnDatacenterSharedEgress pins the opt-in
+// contract: with key_disable_enabled=true a hosting IP used by three distinct
+// users adds the IP AND disables every observed key (status only, key rows
+// never deleted).
 func TestGatewayIPSharingDisablesKeysOnDatacenterSharedEgress(t *testing.T) {
 	settings := noticeTestSettings(t)
+	setKeyDisable(t, settings, true)
 	detector := newSharingDetector(t, settings)
 	keysByUser := map[int64]*service.APIKey{}
 	var keys []*service.APIKey
@@ -204,6 +216,67 @@ func TestGatewayIPSharingDisablesKeysOnDatacenterSharedEgress(t *testing.T) {
 	require.Len(t, policy.AutoEntries, 1)
 	require.Equal(t, 3, policy.AutoEntries[0].DistinctUsers)
 	require.Len(t, policy.AutoEntries[0].KeyPrefixes, 3)
+}
+
+// TestGatewayIPSharingObserveOnlyLeavesKeysActive pins the product default:
+// key_disable_enabled=false still appends the IP, but DisableKeysForRisk is
+// never reached and every key keeps status=active.
+func TestGatewayIPSharingObserveOnlyLeavesKeysActive(t *testing.T) {
+	settings := noticeTestSettings(t)
+	require.False(t, settings.GatewayIPNoticeSnapshot().KeyDisable(),
+		"a policy without the switch must default to observe-only")
+	detector := newSharingDetector(t, settings)
+	keysByUser := map[int64]*service.APIKey{}
+	var keys []*service.APIKey
+	for _, userID := range []int64{41, 42, 43} {
+		key := sharedEgressKey(userID, sharingTestKeyCreatedAt)
+		keysByUser[userID] = key
+		keys = append(keys, key)
+	}
+	keysSvc, repo := newSharingKeyService(t, keys)
+	router := newSharingRouter(t, settings, detector, keysSvc, keysByUser)
+
+	for _, userID := range []int64{41, 42, 43} {
+		require.Equal(t, http.StatusOK, callSharing(router, userID))
+	}
+
+	require.Zero(t, repo.updates, "observe-only must not call DisableKeysForRisk")
+	for id := range keysByUser {
+		require.Equal(t, service.StatusActive, repo.keys[id].Status, "key %d must stay active", id)
+	}
+	policy := settings.GatewayIPNoticeSnapshot()
+	require.Len(t, policy.AutoEntries, 1, "the IP is still appended in observe-only mode")
+	require.Equal(t, "203.0.113.88", policy.AutoEntries[0].IP)
+	require.Equal(t, 3, policy.AutoEntries[0].DistinctUsers)
+	require.Len(t, policy.AutoEntries[0].KeyPrefixes, 3)
+}
+
+// TestGatewayIPSharingExplicitKeyDisableFalseLeavesKeysActive covers an
+// operator who saved the switch as an explicit false instead of leaving the
+// field unset.
+func TestGatewayIPSharingExplicitKeyDisableFalseLeavesKeysActive(t *testing.T) {
+	settings := noticeTestSettings(t)
+	setKeyDisable(t, settings, false)
+	detector := newSharingDetector(t, settings)
+	keysByUser := map[int64]*service.APIKey{}
+	var keys []*service.APIKey
+	for _, userID := range []int64{51, 52, 53} {
+		key := sharedEgressKey(userID, sharingTestKeyCreatedAt)
+		keysByUser[userID] = key
+		keys = append(keys, key)
+	}
+	keysSvc, repo := newSharingKeyService(t, keys)
+	router := newSharingRouter(t, settings, detector, keysSvc, keysByUser)
+
+	for _, userID := range []int64{51, 52, 53} {
+		require.Equal(t, http.StatusOK, callSharing(router, userID))
+	}
+
+	require.Zero(t, repo.updates)
+	for id := range keysByUser {
+		require.Equal(t, service.StatusActive, repo.keys[id].Status)
+	}
+	require.Len(t, settings.GatewayIPNoticeSnapshot().AutoEntries, 1)
 }
 
 // TestGatewayIPSharingResidentialEgressTouchesNothing is the false-positive
