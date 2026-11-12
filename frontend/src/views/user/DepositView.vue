@@ -80,10 +80,26 @@
             <h2>{{ t('deposit.creditDetails') }}</h2>
             <p class="deposit-view__desc">{{ t('deposit.creditDetailsHint') }}</p>
             <dl class="deposit-view__terms">
-              <div><dt>{{ t('deposit.rateLabel') }}</dt><dd>1 {{ rateUnit }} <span>= {{ info.rate }} {{ t('deposit.balanceUnits') }}</span></dd></div>
-              <div><dt>{{ t('deposit.minLabel') }}</dt><dd>{{ info.min_amount }} <span>{{ rateUnit }}</span></dd></div>
-              <div v-if="info.max_amount > 0"><dt>{{ t('deposit.maxLabel') }}</dt><dd>{{ info.max_amount }} <span>{{ rateUnit }}</span></dd></div>
+              <div v-if="selectedMarketPriced">
+                <dt>{{ t('deposit.settlementLabel') }}</dt>
+                <dd class="deposit-view__settlement">{{ t('deposit.settlementMarket') }}</dd>
+              </div>
+              <div v-else-if="selectedFixedRate !== null">
+                <dt>{{ t('deposit.rateLabel') }}</dt>
+                <dd>1 {{ rateUnit }} <span>= {{ selectedFixedRate }} {{ t('deposit.balanceUnits') }}</span></dd>
+              </div>
+              <div>
+                <dt>{{ selectedMarketPriced ? t('deposit.minLabelUsd') : t('deposit.minLabel') }}</dt>
+                <dd>{{ info.min_amount }} <span>{{ limitUnit }}</span></dd>
+              </div>
+              <div v-if="info.max_amount > 0">
+                <dt>{{ selectedMarketPriced ? t('deposit.maxLabelUsd') : t('deposit.maxLabel') }}</dt>
+                <dd>{{ info.max_amount }} <span>{{ limitUnit }}</span></dd>
+              </div>
             </dl>
+            <p v-if="selectedMarketPriced && referencePrice" class="deposit-view__reference">
+              {{ t('deposit.referencePrice', { price: '$' + referencePrice }) }}
+            </p>
             <div class="deposit-view__confirmation">
               <span class="deposit-view__confirmation-dot" aria-hidden="true"></span>
               <div><strong>{{ t('deposit.autoCredit') }}</strong><p>{{ t('deposit.confirmationHint') }}</p></div>
@@ -123,7 +139,7 @@
                     <template v-else>{{ row.status === 'credited' ? fmtCredited(row.credited) : '—' }}</template>
                   </td>
                   <td :data-label="t('common.status')" class="deposit-view__status">
-                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + (row.status === 'credited' && !hasKnownCredit(row) ? 'pending' : row.status)">{{ row.status === 'credited' && !hasKnownCredit(row) ? t('deposit.statusReconciliation') : statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason) }}</span>
+                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + (row.status === 'credited' && !hasKnownCredit(row) ? 'pending' : row.status)">{{ row.status === 'credited' && !hasKnownCredit(row) ? t('deposit.statusReconciliation') : statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason, row.token === 'native') }}</span>
                     <div v-if="progress" class="deposit-view__progress">
                       <span class="deposit-view__progress-text">{{ progressText(progress) }}</span>
                       <span class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
@@ -197,9 +213,14 @@ interface HistoryRow {
 
 // One currency a network accepts. `native` marks the chain's mainnet coin
 // (ETH, BNB), which shares the deposit address but has no token contract.
+// `market_priced` marks an asset credited at the market price observed when it
+// lands; only fixed-rate assets carry a `rate`.
 interface AssetOption {
   symbol: string
   native: boolean
+  market_priced?: boolean
+  rate?: number | null
+  reference_price_usd?: string | null
 }
 
 const info = ref<DepositInfo | null>(null)
@@ -224,7 +245,9 @@ const current = computed(() => info.value?.chains.find((c) => c.chain === select
 // all ERC-20 assets, so the derived list keeps the page identical for it.
 function chainAssets(chain: DepositChain): AssetOption[] {
   const declared = (chain.assets ?? []).filter(a => a && a.symbol)
-  const assets = declared.length ? declared : chain.tokens.map(symbol => ({ symbol, native: false }))
+  const assets: AssetOption[] = declared.length
+    ? declared
+    : chain.tokens.map(symbol => ({ symbol, native: false, market_priced: false }))
   // Stablecoins first: an existing user's page must not start on a currency
   // worth a thousand times more. The mainnet coin is an explicit choice.
   return [...assets.filter(a => !a.native), ...assets.filter(a => a.native)]
@@ -241,6 +264,32 @@ const selectedSymbol = computed(() => selectedOption.value?.symbol ?? '')
 // Rate and limits are expressed per unit of the asset being sent, so the
 // sidebar must name that asset rather than assume USDT.
 const rateUnit = computed(() => selectedSymbol.value || 'USDT')
+
+// A market-priced asset (ETH, BNB) settles at the price observed when the
+// deposit lands. There is no fixed rate to print, and the thresholds are
+// compared as USD notional (amount × price), not as a coin amount.
+const selectedMarketPriced = computed(() => selectedOption.value?.market_priced === true)
+
+// Fixed rate for the selected asset. New backends send it per asset; an older
+// backend only sends the asset-independent rate, which stays the fallback so a
+// rolling deploy still renders the stablecoin line.
+const selectedFixedRate = computed<number | null>(() => {
+  if (selectedMarketPriced.value) return null
+  const assetRate = selectedOption.value?.rate
+  if (typeof assetRate === 'number' && Number.isFinite(assetRate)) return assetRate
+  const legacyRate = info.value?.rate
+  return typeof legacyRate === 'number' && Number.isFinite(legacyRate) ? legacyRate : null
+})
+
+// Display-only market quote ("about $3210.12"). Empty when the backend could
+// not reach the price feed: the page then shows no reference line at all.
+const referencePrice = computed(() => {
+  if (!selectedMarketPriced.value) return ''
+  const price = selectedOption.value?.reference_price_usd
+  return typeof price === 'string' ? price.trim() : ''
+})
+
+const limitUnit = computed(() => (selectedMarketPriced.value ? 'USD' : rateUnit.value))
 
 function assetLabel(asset: AssetOption): string {
   if (!asset.native) return asset.symbol
@@ -330,13 +379,18 @@ function hasKnownCredit(row: DepositRecord): boolean {
 }
 
 // Map the backend's machine reason codes to localized text. The thresholds
-// come from deposit-info so the text always matches the live config.
-function reasonText(code: string): string {
+// come from deposit-info so the text always matches the live config. A native
+// coin is compared as USD notional, so its message must not say USDT.
+function reasonText(code: string, nativeAsset = false): string {
   switch (code) {
     case 'below_min':
-      return t('deposit.reasonBelowMin', { min: info.value?.min_amount ?? 0 })
+      return nativeAsset
+        ? t('deposit.reasonBelowMinUsd', { min: info.value?.min_amount ?? 0 })
+        : t('deposit.reasonBelowMin', { min: info.value?.min_amount ?? 0 })
     case 'above_max':
-      return t('deposit.reasonAboveMax', { max: info.value?.max_amount ?? 0 })
+      return nativeAsset
+        ? t('deposit.reasonAboveMaxUsd', { max: info.value?.max_amount ?? 0 })
+        : t('deposit.reasonAboveMax', { max: info.value?.max_amount ?? 0 })
     case 'address_unassigned':
       return t('deposit.reasonUnassigned')
     case 'address_unknown':
@@ -522,6 +576,8 @@ onUnmounted(() => {
 .deposit-view__terms dt { color: var(--signal-muted, #8c99a6); font-size: .75rem; }
 .deposit-view__terms dd { margin-top: .5rem; font-size: 1.1875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .deposit-view__terms dd span { font-size: .8125rem; font-weight: 400; }
+.deposit-view__terms dd.deposit-view__settlement { font-size: .9375rem; line-height: 1.55; font-weight: 600; }
+.deposit-view__reference { margin-top: .75rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
 .deposit-view__confirmation { display: flex; align-items: flex-start; gap: .625rem; margin-top: .5rem; padding: 1rem; border-radius: .625rem; background: #10b9810a; }
 .deposit-view__confirmation-dot { width: .375rem; height: .375rem; flex-shrink: 0; margin-top: .4rem; background: #10b981; border-radius: 50%; }
 .deposit-view__confirmation strong { font-size: .8125rem; font-weight: 600; }

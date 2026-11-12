@@ -853,25 +853,43 @@ export function createMockApi(now = new Date()) {
         // The real handlers answer `{"data": ...}` with no `code` field, so the
         // frontend's `data.data` read survives the response interceptor. The
         // preview envelope adds `data` here to reproduce exactly that shape.
+        //
+        // Pricing mirrors the current backend contract: the rate lives on each
+        // asset, a native coin is market-priced (rate null, display-only quote)
+        // and there is no response-wide rate any more.
         if (path === '/api/v1/crypto/deposit-info') {
+          const stable = { market_priced: false, rate: 6.7 }
           return { data: {
             enabled: true,
             chains: [
               { chain: 'ethereum', address: demoDepositAddress, tokens: ['USDT', 'USDC', 'ETH'],
-                assets: [{ symbol: 'ETH', native: true }, { symbol: 'USDT', native: false }, { symbol: 'USDC', native: false }] },
+                assets: [
+                  { symbol: 'ETH', native: true, market_priced: true, rate: null, reference_price_usd: '3210.12' },
+                  { symbol: 'USDT', native: false, ...stable },
+                  { symbol: 'USDC', native: false, ...stable }
+                ] },
               { chain: 'bsc', address: demoDepositAddress, tokens: ['USDT', 'USDC', 'BNB'],
-                assets: [{ symbol: 'BNB', native: true }, { symbol: 'USDT', native: false }, { symbol: 'USDC', native: false }] },
+                assets: [
+                  { symbol: 'BNB', native: true, market_priced: true, rate: null, reference_price_usd: '640.5' },
+                  { symbol: 'USDT', native: false, ...stable },
+                  { symbol: 'USDC', native: false, ...stable }
+                ] },
               { chain: 'polygon', address: demoDepositAddress, tokens: ['USDT', 'USDC'],
-                assets: [{ symbol: 'USDT', native: false }, { symbol: 'USDC', native: false }] }
+                assets: [
+                  { symbol: 'USDT', native: false, ...stable },
+                  { symbol: 'USDC', native: false, ...stable }
+                ] }
             ],
-            rate: 6.7, min_amount: 0.001, max_amount: 10000
+            min_amount: 0.001, max_amount: 10000
           } }
         }
         if (path === '/api/v1/crypto/deposit-history') {
           const hash = (seed: string) => '0x' + seed.repeat(64).slice(0, 64)
           return { data: [
+            // 0.5 ETH at the quoted $3210.12, credited at the settlement
+            // multiplier: (0.5 × 3210.12) × 6.7 = 10753.902.
             { chain: 'ethereum', tx_hash: hash('a1'), token: 'ETH', amount: '0.5', status: 'credited',
-              credited: 3.35, credited_known: true, created_at: new Date(Date.now() - 8 * 60_000).toISOString() },
+              credited: 10753.902, credited_known: true, created_at: new Date(Date.now() - 8 * 60_000).toISOString() },
             { chain: 'bsc', tx_hash: hash('b2'), token: 'BNB', amount: '1.25', status: 'pending',
               credited: 0, credited_known: true, confirmations: 1, required_confirmations: 3, block_number: 49_812_004,
               created_at: new Date(Date.now() - 2 * 60_000).toISOString() },
