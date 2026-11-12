@@ -501,6 +501,14 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		// can never land. Recover it before replaying the same dead bytes, which
 		// would otherwise keep the address reserved forever.
 		if job.Status == "sweep_pending" {
+			// A sweep signed below today's gas price is dead in a different way:
+			// the bytes are valid but no validator will include them, and the
+			// nonce they hold keeps the address from moving even after this
+			// record is released. Replace the fee at the same nonce first, so
+			// the release path only ever sees bytes that can still land.
+			if err := e.refreshUnderpricedSweep(ctx, pool, job); err != nil {
+				return pendingError(job, err)
+			}
 			released, err := e.releaseStaleTransaction(ctx, pool, job, false, true)
 			if err != nil {
 				return pendingError(job, err)
@@ -573,7 +581,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	// A budget below the chain's own minimum is not a market condition: no
 	// quote the pool may sign can ever fit, so the job would defer on every run
 	// until it was parked as failed. Name the defect instead.
-	if err := gasFloorExceedsBudget(e.config, job.Chain); err != nil {
+	if err := GasBudgetCoversGasFloor(e.config, job.Chain); err != nil {
 		slog.Error("[cryptopay] sweep deferred: gas budget below the chain gas price floor",
 			"job_id", job.ID, "chain", job.Chain,
 			"floor_wei", chainGasPriceFloor(job.Chain).String(), "budget_wei", cap.String(),

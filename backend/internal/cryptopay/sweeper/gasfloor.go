@@ -15,7 +15,7 @@ func chainGasPriceFloor(chain string) *big.Int {
 	return rpc.GasPriceFloor(uint64(ChainIDs[chain]))
 }
 
-// gasFloorExceedsBudget reports the configuration defect the fee floor can
+// GasBudgetCoversGasFloor reports the configuration defect the fee floor can
 // expose: a per-chain native budget (gas_topup) that cannot pay for a single
 // transfer at that chain's minimum gas price. A high quote is temporary and
 // clears up; this never does. Without an early, explicit report every run
@@ -24,7 +24,10 @@ func chainGasPriceFloor(chain string) *big.Int {
 //
 // A missing budget is a different, already-handled state: it is not a defect
 // of the floor, so it is not reported here.
-func gasFloorExceedsBudget(config Config, chain string) error {
+//
+// It is exported because the operator configuration is validated where it is
+// loaded, not only where a sweep happens to run.
+func GasBudgetCoversGasFloor(config Config, chain string) error {
 	budget := configuredGasBudget(config, chain)
 	if budget.Sign() <= 0 {
 		return nil

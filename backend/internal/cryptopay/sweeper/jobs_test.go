@@ -594,7 +594,11 @@ func TestSweepGasNonceUsesWalletHotSeedAddress(t *testing.T) {
 		t.Fatalf("%+v %v", out, err)
 	}
 	if len(c.signs) != 2 || c.signs[0].Kind != "gas" || c.signs[0].Index != 9 || c.signs[0].Nonce != 7 ||
-		len(c.nonceReads) != 2 || c.nonceReads[0] != c.payer || c.nonceReads[1] != entry.Address {
+		// The sweep reads the child's pending nonce and its latest (mined)
+		// nonce: an un-mined transaction this executor can prove is dead is
+		// replaced at its own nonce rather than queued behind.
+		len(c.nonceReads) != 3 || c.nonceReads[0] != c.payer ||
+		c.nonceReads[1] != entry.Address || c.nonceReads[2] != entry.Address {
 		t.Fatalf("wrong gas payer/nonce: signs=%+v reads=%+v", c.signs, c.nonceReads)
 	}
 }
