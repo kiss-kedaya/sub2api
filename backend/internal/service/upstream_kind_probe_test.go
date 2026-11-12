@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -128,8 +129,8 @@ func TestUpstreamKindProbeRecognisesSub2APIWithoutBillingEndpoint(t *testing.T) 
 }
 
 // The probe delay is jittered by up to a fifth of the interval (capped at five
-// minutes), so intervals are asserted as ranges: 30 minutes ± 5 for a normal
-// one, and at least 8 × 25 minutes for a stretched one.
+// minutes), so a normal interval is asserted as 30 minutes ± 5. An unsupported
+// or balanceless account uses the fixed ten-minute retry instead.
 func requireNormalProbeInterval(t *testing.T, snapshot *UpstreamBillingProbeSnapshot) {
 	t.Helper()
 	delay := snapshot.NextProbeAt.Sub(snapshot.LastAttemptAt)
@@ -137,10 +138,9 @@ func requireNormalProbeInterval(t *testing.T, snapshot *UpstreamBillingProbeSnap
 	require.LessOrEqual(t, delay, 35*time.Minute)
 }
 
-func requireStretchedProbeInterval(t *testing.T, snapshot *UpstreamBillingProbeSnapshot) {
+func requireTenMinuteProbeInterval(t *testing.T, snapshot *UpstreamBillingProbeSnapshot) {
 	t.Helper()
-	delay := snapshot.NextProbeAt.Sub(snapshot.LastAttemptAt)
-	require.GreaterOrEqual(t, delay, time.Duration(upstreamBillingProbeUnsupportedDelayFactor)*25*time.Minute)
+	require.Equal(t, upstreamBillingProbeUnsupportedRetryInterval, snapshot.NextProbeAt.Sub(snapshot.LastAttemptAt))
 }
 
 func TestUpstreamKindProbeRecognisesNewAPI(t *testing.T) {
@@ -244,12 +244,9 @@ func TestParseUpstreamLegacySubscriptionResponse(t *testing.T) {
 		require.InDelta(t, 20.0, data["quota_limit"], 1e-9)
 		require.NotContains(t, data, "remaining")
 	})
-	t.Run("the unlimited sentinel is not a balance", func(t *testing.T) {
-		data, err := parseUpstreamLegacySubscriptionResponse([]byte(`{"hard_limit_usd":100000000}`), []byte(`{"total_usage":12345}`))
-		require.NoError(t, err)
-		require.Equal(t, true, data["unlimited"])
-		require.NotContains(t, data, "remaining")
-		require.NotContains(t, data, "quota_limit")
+	t.Run("the unlimited sentinel is not an OpenAI balance", func(t *testing.T) {
+		_, err := parseUpstreamLegacySubscriptionResponse([]byte(`{"hard_limit_usd":100000000}`), []byte(`{"total_usage":12345}`))
+		require.Error(t, err, "the 1e8 marker identifies new-api and must never be presented as a granted total")
 	})
 	t.Run("usage above the limit clamps to zero", func(t *testing.T) {
 		data, err := parseUpstreamLegacySubscriptionResponse([]byte(`{"hard_limit_usd":5}`), []byte(`{"total_usage":900}`))
@@ -281,16 +278,16 @@ func TestUpstreamKindProbeMarksUnknownUpstreamCustom(t *testing.T) {
 	require.Nil(t, snapshot.Balance.Data)
 }
 
-func TestUpstreamKindProbeCustomUpstreamKeepsStretchedDelay(t *testing.T) {
+func TestUpstreamKindProbeCustomUpstreamRetriesEveryTenMinutes(t *testing.T) {
 	upstream := &upstreamKindRouteStub{}
 
 	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(76, nil), upstream)
 
 	require.Equal(t, UpstreamKindCustom, snapshot.UpstreamKind)
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Status)
-	// Nothing readable: the stretched delay keeps a custom upstream from taking
-	// a slot in every cycle.
-	requireStretchedProbeInterval(t, snapshot)
+	// Nothing readable: the fixed ten-minute cadence still re-identifies the
+	// upstream, so a site that later exposes a balance endpoint is picked up.
+	requireTenMinuteProbeInterval(t, snapshot)
 }
 
 // A rejected key must not be replayed against more paths: relays count
@@ -441,10 +438,12 @@ func TestUpstreamKindProbeNewAPIHeaderOutranksBilling(t *testing.T) {
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Balance.Status,
 		"no balance endpoint answered, so there is no balance to show")
 	require.NotEqual(t, UpstreamBalanceSourceLegacySubscription, snapshot.Balance.Source)
-	// The billing payload's "unlimited" sentinel and its five-figure spend must
-	// not survive the New API verdict.
+	// The billing payload's 1e8 sentinel must not survive as a limit, and it
+	// must not become "unlimited". The spend it reported is still real.
 	require.NotContains(t, snapshot.Balance.Data, "unlimited")
-	require.NotContains(t, snapshot.Balance.Data, "quota_used")
+	require.NotContains(t, snapshot.Balance.Data, "quota_limit")
+	require.NotContains(t, snapshot.Balance.Data, "remaining")
+	require.InDelta(t, 52948.39, snapshot.Balance.Data["quota_used"], 1e-9)
 	require.Contains(t, upstream.requested(), upstreamLegacySubscriptionPath,
 		"the billing endpoint did answer, and the fingerprint still outranked it")
 }
@@ -491,11 +490,13 @@ func TestUpstreamKindProbeOneAPIRequestIDOutranksBilling(t *testing.T) {
 }
 
 // /api/status is the fingerprint of last resort: it needs no key, and it still
-// identifies new-api when the usage endpoint is gone and no header is set.
+// identifies new-api when the usage endpoint is gone and no header is set. The
+// billing answer carries a normal limit here, so the sentinel fingerprint does
+// not fire and /api/status is what decides.
 func TestUpstreamKindProbeNewAPIStatusOutranksBilling(t *testing.T) {
 	upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
 		upstreamNewAPIStatusPath:       {http.StatusOK, upstreamKindTestNewAPIStatus},
-		upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+		upstreamLegacySubscriptionPath: {http.StatusOK, `{"object":"billing_subscription","hard_limit_usd":20,"soft_limit_usd":20,"system_hard_limit_usd":20,"access_until":0}`},
 		upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
 	}}
 
@@ -504,6 +505,8 @@ func TestUpstreamKindProbeNewAPIStatusOutranksBilling(t *testing.T) {
 	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Balance.Status)
 	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	require.NotContains(t, snapshot.Balance.Data, "quota_limit")
+	require.Equal(t, true, snapshot.Balance.Data["balance_unavailable"])
 	require.Contains(t, upstream.requested(), upstreamNewAPIStatusPath)
 }
 
@@ -571,6 +574,224 @@ func TestUpstreamKindProbeRewritesStaleOpenAIBillingSnapshot(t *testing.T) {
 		require.InDelta(t, 7.6, snapshot.Balance.Data["remaining"], 1e-9)
 		require.NotContains(t, snapshot.Balance.Data, "unlimited")
 	})
+}
+
+// Account #34747: the legacy billing endpoint answers with new-api's 1e8
+// sentinel, but /api/status is 404 and no answer carries a new-api header. The
+// sentinel alone has to identify the site, and its limit must not become a
+// balance: the spend stays visible, the limit and "unlimited" do not.
+func TestUpstreamKindProbeBillingSentinelIdentifiesNewAPI(t *testing.T) {
+	upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
+		upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+		upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+	}}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(91, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Balance.Status)
+	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	require.NotContains(t, snapshot.Balance.Data, "quota_limit")
+	require.NotContains(t, snapshot.Balance.Data, "remaining")
+	require.InDelta(t, 52948.39, snapshot.Balance.Data["quota_used"], 1e-9)
+	require.Equal(t, true, snapshot.Balance.Data["balance_unavailable"])
+	// No balance, but the account is still re-probed every ten minutes.
+	requireTenMinuteProbeInterval(t, snapshot)
+	require.NotContains(t, upstream.requested(), upstreamNewAPIStatusPath,
+		"the sentinel is enough evidence; /api/status must not be asked")
+}
+
+func TestUpstreamLegacyBillingSentinel(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want bool
+	}{
+		"hard limit":   {`{"hard_limit_usd":100000000}`, true},
+		"soft limit":   {`{"soft_limit_usd":100000000,"hard_limit_usd":20}`, true},
+		"system limit": {`{"system_hard_limit_usd":150000000}`, true},
+		"real limit":   {`{"hard_limit_usd":20,"soft_limit_usd":20,"system_hard_limit_usd":20}`, false},
+		"html":         {`<html>login</html>`, false},
+		"empty":        {``, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, upstreamLegacyBillingIsNewAPISentinel([]byte(tc.body)))
+		})
+	}
+}
+
+// Account #34760: /api/usage/token/ answers 302. The probe follows a
+// same-origin hop and reads the balance from the document it lands on.
+func TestUpstreamKindProbeNewAPIUsageFollowsSameOriginRedirect(t *testing.T) {
+	upstream := &upstreamKindRouteStub{
+		routes: map[string]upstreamKindRoute{
+			upstreamNewAPIUsagePath: {http.StatusFound, ``},
+			"/api/usage/token":      {http.StatusOK, upstreamKindTestNewAPIUsage},
+		},
+		headers: map[string]http.Header{
+			upstreamNewAPIUsagePath: {"Location": []string{"/api/usage/token"}},
+		},
+	}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(92, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.Equal(t, UpstreamBalanceSourceNewAPITokenUsage, snapshot.Balance.Source)
+	require.InDelta(t, 7.6, snapshot.Balance.Data["remaining"], 1e-9)
+	require.Contains(t, upstream.requested(), "/api/usage/token")
+}
+
+// A redirect to a login page can only answer with a session form, so it is
+// treated as "balance unavailable" without following the hop.
+func TestUpstreamKindProbeNewAPIUsageLoginRedirectIsUnavailable(t *testing.T) {
+	upstream := &upstreamKindRouteStub{
+		routes: map[string]upstreamKindRoute{
+			upstreamNewAPIUsagePath:        {http.StatusFound, ``},
+			upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+			upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+		},
+		headers: map[string]http.Header{
+			upstreamNewAPIUsagePath:        {"Location": []string{"/login?redirect=%2Fapi%2Fusage%2Ftoken%2F"}},
+			upstreamLegacySubscriptionPath: {upstreamKindTestNewAPIHeaderName: []string{upstreamKindTestNewAPIHeaderValue}},
+		},
+	}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(93, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Balance.Status)
+	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	require.NotContains(t, snapshot.Balance.Data, "remaining")
+	require.InDelta(t, 52948.39, snapshot.Balance.Data["quota_used"], 1e-9)
+	require.NotContains(t, upstream.requested(), "/login", "the probe must not fetch a login page")
+}
+
+// An already-recognised new-api upstream whose balance endpoint has disappeared
+// retries in ten minutes, not in the 1s/3s/9s recovery loop.
+func TestUpstreamKindProbeRecognisedNewAPIWithoutBalanceRetriesInTenMinutes(t *testing.T) {
+	extra := map[string]any{UpstreamBillingProbeExtraKey: map[string]any{
+		"status": "unsupported", "last_attempt_at": "2026-07-13T01:00:00Z", "next_probe_at": "2026-07-13T02:00:00Z",
+		"upstream_kind": UpstreamKindNewAPI,
+	}}
+	upstream := &upstreamKindRouteStub{}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(94, extra), upstream)
+
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Balance.Status)
+	requireTenMinuteProbeInterval(t, snapshot)
+}
+
+func TestUpstreamProbeRedirectTarget(t *testing.T) {
+	current, err := url.Parse("https://relay.example/api/usage/token/")
+	require.NoError(t, err)
+	header := func(location string) http.Header {
+		if location == "" {
+			return http.Header{}
+		}
+		return http.Header{"Location": []string{location}}
+	}
+	target, ok := upstreamProbeRedirectTarget(current, upstreamBillingProbeHTTPResult{
+		statusCode: http.StatusFound,
+		header:     header("/api/usage/token"),
+	})
+	require.True(t, ok)
+	require.Equal(t, "https://relay.example/api/usage/token", target.String())
+
+	for name, tc := range map[string]struct {
+		status   int
+		location string
+	}{
+		"cross origin":       {http.StatusFound, "https://evil.example/api/usage/token"},
+		"scheme downgrade":   {http.StatusFound, "http://relay.example/api/usage/token"},
+		"login page":         {http.StatusFound, "/login"},
+		"sign-in page":       {http.StatusFound, "/signin?next=/api"},
+		"no location":        {http.StatusFound, ""},
+		"not a redirect":     {http.StatusOK, "/api/usage/token"},
+		"transport failure":  {http.StatusFound, "/api/usage/token"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := upstreamBillingProbeHTTPResult{statusCode: tc.status, header: header(tc.location)}
+			if name == "transport failure" {
+				result.failure = "request_failed"
+			}
+			_, ok := upstreamProbeRedirectTarget(current, result)
+			require.False(t, ok)
+		})
+	}
+}
+
+// When the operator saved a custom balance extractor, it is the second source
+// for a new-api site whose /api/usage/token/ is gone. The probe's own endpoints
+// are always tried first.
+func TestUpstreamKindProbeFallsBackToConfiguredExtractor(t *testing.T) {
+	account := newUpstreamBalanceProbeTestAccount(95, map[string]any{UpstreamBillingProbeEnabledExtraKey: true})
+	upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
+		upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+		upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+	}}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+	now := time.Date(2026, time.July, 13, 1, 30, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+
+	usageRepo := &customUsageTestRepo{accounts: map[int64]*Account{account.ID: account}}
+	usage := NewCustomUsageService(usageRepo)
+	usage.now = func() time.Time { return now }
+	usage.client.Transport = customUsageRoundTrip(func(*http.Request) (*http.Response, error) {
+		return customUsageResponse(`{"remaining":12.5}`, http.StatusOK), nil
+	})
+	cfg := customUsageDefaults()
+	cfg.Enabled = true
+	cfg.BaseURL = "https://billing.example.com"
+	cfg.TimeoutSeconds = 5
+	cfg.IntervalMinutes = 10
+	cfg.Request.URL = "{{baseUrl}}/balance"
+	cfg.Request.Headers = map[string]string{"Authorization": "Bearer {{apiKey}}"}
+	cfg.Extractor.Remaining = &CustomUsageNumber{Path: "remaining"}
+	cfg.Extractor.Unit = &CustomUsageText{Value: "USD"}
+	_, err := usage.PutConfig(context.Background(), account.ID, cfg)
+	require.NoError(t, err)
+
+	ops := &AccountOpsService{}
+	ops.SetCustomUsageService(usage)
+	svc.SetAccountOpsService(ops)
+
+	snapshot, err := svc.probeScheduledAccount(context.Background(), account.ID, 30)
+	require.NoError(t, err)
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.Equal(t, UpstreamBalanceSourceCustomUsage, snapshot.Balance.Source)
+	require.InDelta(t, 12.5, snapshot.Balance.Data["remaining"], 1e-9)
+}
+
+// A recognised new-api upstream whose balance endpoint is still gone keeps the
+// spend it already read and says "not provided", rather than flipping to
+// "reading" every other round. The ten-minute cadence applies on both rounds.
+func TestUpstreamKindProbeKeepsSpendWhenRecognisedNewAPIBalanceStaysUnavailable(t *testing.T) {
+	account := newUpstreamBalanceProbeTestAccount(96, nil)
+	upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
+		upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+		upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+	}}
+
+	first := runUpstreamKindProbe(t, account, upstream)
+	require.Equal(t, UpstreamKindNewAPI, first.UpstreamKind)
+	require.Equal(t, UpstreamBillingProbeStatusUnsupported, first.Balance.Status)
+	require.InDelta(t, 52948.39, first.Balance.Data["quota_used"], 1e-9)
+
+	// Second round: the stored kind sends the probe straight to the usage
+	// endpoint, which is still 404. The spend must survive and the state must
+	// stay "not provided", not become a never-ending "reading".
+	second := runUpstreamKindProbe(t, account, upstream)
+	require.Equal(t, UpstreamBillingProbeStatusUnsupported, second.Balance.Status)
+	require.InDelta(t, 52948.39, second.Balance.Data["quota_used"], 1e-9)
+	require.NotContains(t, second.Balance.Data, "remaining")
+	requireTenMinuteProbeInterval(t, second)
 }
 
 // A stale billing snapshot on a site that really is an OpenAI-billing relay

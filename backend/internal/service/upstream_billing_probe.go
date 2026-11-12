@@ -42,13 +42,17 @@ const (
 	upstreamBillingProbeMaxPerCycle            = 20
 	upstreamBillingProbeConcurrency            = 4
 	upstreamBillingProbeMaxDelay               = 24 * time.Hour
-	// unsupported 账号的重探间隔倍数：上游不是 sub2api 中转就不会突然长出
-	// /v1/sub2api/billing，按常规 interval 重排只会持续占满每周期
-	// upstreamBillingProbeMaxPerCycle 个名额。
-	upstreamBillingProbeUnsupportedDelayFactor = 8
-	upstreamBillingProbeAccountRateScale       = 10000.0
-	upstreamBillingProbeLeaderLockKey          = "upstream:billing:probe:leader"
-	upstreamBillingProbeLeaderLockTTL          = 2 * time.Minute
+	// unsupported 账号与「识别到了但读不到余额」的账号统一按 10 分钟重探：
+	// 老板的要求是「识别到了就自动填、10 分钟刷一次」。原先按 interval×8 拉长
+	// 到数小时，页面上就看到「旧数据 · 2 小时前」。
+	upstreamBillingProbeUnsupportedRetryInterval = 10 * time.Minute
+	upstreamBillingProbeAccountRateScale         = 10000.0
+	upstreamBillingProbeLeaderLockKey            = "upstream:billing:probe:leader"
+	upstreamBillingProbeLeaderLockTTL            = 2 * time.Minute
+	// upstreamProbeMaxRedirects bounds the manual hop-following done by
+	// fetchUpstreamProbeBodyFollowingRedirects. new-api answers a trailing-slash
+	// mismatch with one redirect; anything longer is not a usable balance path.
+	upstreamProbeMaxRedirects = 3
 )
 
 // UpstreamBillingProbeMaxBatchSize limits one manual batch and one runner cycle.
@@ -811,7 +815,10 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 			return newAPIUsageResult
 		}
 		newAPIUsageFetched = true
-		newAPIUsageResult = s.fetchUpstreamProbeBody(ctx, account, target,
+		// new-api answers the trailing-slash form with a redirect on some
+		// deployments (the production account #34760 answered 302). Follows
+		// same-origin hops only; a login page stays "unavailable".
+		newAPIUsageResult = s.fetchUpstreamProbeBodyFollowingRedirects(ctx, account, target,
 			upstreamSiteRootURL(baseURL, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
 		noteResponse(newAPIUsageResult)
 		return newAPIUsageResult
@@ -821,7 +828,13 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 	// from the usage payload. The balance still has to come from
 	// /api/usage/token/: borrowing the billing numbers is what used to render a
 	// new-api site as "unlimited" with a five-figure spend.
-	adoptNewAPIFromEvidence := func() {
+	//
+	// When that endpoint cannot answer, the operator-configured extractor is
+	// consulted next (the same source the account page's custom usage column
+	// uses). Only when both are unavailable does the balance become "not
+	// provided": the legacy billing endpoint's spend is real and is kept as
+	// "used", but its 1e8 limit is a marker and is never shown as a limit.
+	adoptNewAPIFromEvidence := func(legacyUsageBody []byte) {
 		usage := fetchNewAPIUsage()
 		snapshot.UpstreamKind = UpstreamKindNewAPI
 		if upstreamProbeAnswered(usage) {
@@ -835,16 +848,26 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 			snapshot.Balance = upstreamBalanceSnapshotFromResult(usage, previousBalance, intervalMinutes, now)
 			return
 		}
-		// Fingerprint confirmed, balance endpoint did not answer with its
-		// schema: show nothing rather than a fabricated unlimited balance, and
-		// come back on the stretched delay instead of hammering the endpoint.
+		if custom, ok := s.customUsageBalanceSnapshot(ctx, account, intervalMinutes, now); ok {
+			snapshot.Balance = custom
+			readable()
+			return
+		}
+		// Identified, but no balance endpoint answered with its schema. Show the
+		// spend the upstream did report instead of a fabricated limit, and keep
+		// probing on the ten-minute cadence rather than the old multi-hour delay.
+		data := map[string]any{"is_valid": true, "unit": "USD", "balance_unavailable": true}
+		if used, ok := upstreamLegacyBillingUsedUSD(legacyUsageBody); ok {
+			data["quota_used"] = used
+		}
 		snapshot.Balance = &UpstreamBalanceSnapshot{
 			Status:        UpstreamBillingProbeStatusUnsupported,
+			Data:          data,
 			LastAttemptAt: now,
 			HTTPStatus:    usage.statusCode,
 			LastError:     "unsupported",
 		}
-		snapshot.NextProbeAt = now.Add(unsupportedProbeDelay(intervalMinutes, retryAfter(usage.header, now)))
+		snapshot.NextProbeAt = now.Add(unsupportedProbeDelay(retryAfter(usage.header, now)))
 	}
 
 	// checkNewAPIStatus is the last fingerprint look before a billing payload
@@ -883,15 +906,31 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 			return
 		}
 		snapshot.UpstreamKind = kind
-		snapshot.Balance = upstreamBalanceRetryPendingSnapshot(previousBalance, now, result.statusCode, upstreamBalanceReadReason(result))
-		switch snapshot.Balance.LastError {
+		reason := upstreamBalanceReadReason(result)
+		snapshot.Balance = upstreamBalanceRetryPendingSnapshot(previousBalance, now, result.statusCode, reason)
+		if (reason == "unsupported" || reason == "invalid_response") &&
+			(previousBalance == nil || previousBalance.Status != UpstreamBillingProbeStatusOK) {
+			// There is no earlier successful balance to keep and the endpoint is
+			// not merely flaky: report "not provided" now (the spend carried in
+			// the data stays visible) instead of a read that never ends.
+			snapshot.Balance.Status = UpstreamBillingProbeStatusUnsupported
+		}
+		switch reason {
 		case "unsupported", "invalid_response":
 			// The endpoint no longer serves its own schema: the software behind
 			// the domain may have changed. Drop the kind so the next round
 			// identifies the upstream again (the failure is still not shown).
 			snapshot.UpstreamKind = ""
 		}
-		if retryAt := now.Add(upstreamBalanceRetryNextDelay(previousBalance, upstreamProbeRejectedKey(result))); snapshot.NextProbeAt.IsZero() || retryAt.Before(snapshot.NextProbeAt) {
+		// A missing or unparseable endpoint is not a transient read failure, so
+		// it retries on the ten-minute cadence instead of the 1s/3s/9s recovery
+		// loop. That loop is for transport errors and rejected keys.
+		delay := upstreamBalanceRetryNextDelay(previousBalance, upstreamProbeRejectedKey(result))
+		switch reason {
+		case "unsupported", "invalid_response":
+			delay = unsupportedProbeDelay(retryAfter(result.header, now))
+		}
+		if retryAt := now.Add(delay); snapshot.NextProbeAt.IsZero() || retryAt.Before(snapshot.NextProbeAt) {
 			snapshot.NextProbeAt = retryAt
 		}
 	}
@@ -953,12 +992,27 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 			snapshot.Balance = upstreamBalanceSnapshotFromResult(subscription, previousBalance, intervalMinutes, now)
 			return true
 		}
+		// new-api's 1e8 unlimited sentinel is a fingerprint in its own right: it
+		// identifies the software even when /api/status is 404 and the responses
+		// carry no new-api header (production account #34747). The payload is not
+		// an OpenAI balance, so it must outrank the billing fallback.
+		if newAPISignal == "" && upstreamProbeAnswered(subscription) && upstreamLegacyBillingIsNewAPISentinel(subscription.body) {
+			newAPISignal = "billing:newapi_unlimited_sentinel"
+		}
 		// new-api answers these billing endpoints for compatibility. Its
 		// fingerprint outranks the payload: adopt New API instead of reading a
 		// billing snapshot that was never OpenAI's. The status document is the
 		// last signal consulted, and only when no cheaper one matched.
 		if newAPISignal != "" || checkNewAPIStatus() {
-			adoptNewAPIFromEvidence()
+			// The legacy usage endpoint reports the real spend in cents, which
+			// stays meaningful even though the subscription limit does not.
+			var legacyUsageBody []byte
+			if upstreamProbeAnswered(subscription) {
+				if usage := fetch(upstreamLegacyUsagePath, upstreamKindProbeMaxBodyBytes); upstreamProbeAnswered(usage) {
+					legacyUsageBody = usage.body
+				}
+			}
+			adoptNewAPIFromEvidence(legacyUsageBody)
 			return true
 		}
 		if upstreamProbeAnswered(subscription) {
@@ -1020,7 +1074,8 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 	if newAPISignal != "" {
 		// A fingerprint proved new-api before the billing endpoints were even
 		// asked: read the balance from new-api, never from the billing payload.
-		adoptNewAPIFromEvidence()
+		// No subscription was fetched on this path, so there is no spend to keep.
+		adoptNewAPIFromEvidence(nil)
 		return
 	}
 	if tryLegacy() {
@@ -1102,6 +1157,140 @@ func (s *UpstreamBillingProbeService) fetchUpstreamProbeBody(
 	}
 	result.body = body
 	return result
+}
+
+// fetchUpstreamProbeBodyFollowingRedirects asks one probe URL and follows a
+// bounded number of same-origin redirects. It exists for new-api's
+// /api/usage/token/ endpoint, which some deployments answer with a 302 instead
+// of the document (production account #34760).
+//
+// Only same-origin hops are followed, so the account key is never carried to a
+// different host, and a redirect that lands on a login/sign-in page is treated
+// as "not available" rather than followed. Anything else keeps the redirect
+// response, which the callers already read as "no schema answered".
+func (s *UpstreamBillingProbeService) fetchUpstreamProbeBodyFollowingRedirects(
+	ctx context.Context,
+	account *Account,
+	target upstreamBillingProbeTarget,
+	requestURL string,
+	maxBodyBytes int,
+) upstreamBillingProbeHTTPResult {
+	current, err := url.Parse(requestURL)
+	if err != nil {
+		return s.fetchUpstreamProbeBody(ctx, account, target, requestURL, maxBodyBytes)
+	}
+	var result upstreamBillingProbeHTTPResult
+	for hop := 0; hop <= upstreamProbeMaxRedirects; hop++ {
+		result = s.fetchUpstreamProbeBody(ctx, account, target, current.String(), maxBodyBytes)
+		next, ok := upstreamProbeRedirectTarget(current, result)
+		if !ok {
+			return result
+		}
+		current = next
+	}
+	return result
+}
+
+// upstreamProbeRedirectTarget resolves one redirect hop. It refuses cross-origin
+// targets and login pages, because neither can answer with a key-scoped balance
+// document and the first would leak the credential-bearing request.
+func upstreamProbeRedirectTarget(current *url.URL, result upstreamBillingProbeHTTPResult) (*url.URL, bool) {
+	if current == nil || result.failure != "" || result.statusCode < 300 || result.statusCode >= 400 {
+		return nil, false
+	}
+	location := strings.TrimSpace(result.header.Get("Location"))
+	if location == "" {
+		return nil, false
+	}
+	next, err := current.Parse(location)
+	if err != nil || next.Host == "" {
+		return nil, false
+	}
+	if !strings.EqualFold(next.Scheme, current.Scheme) || !strings.EqualFold(next.Host, current.Host) {
+		return nil, false
+	}
+	path := strings.ToLower(next.Path)
+	if strings.Contains(path, "login") || strings.Contains(path, "signin") || strings.Contains(path, "sign-in") || strings.Contains(path, "sign_in") {
+		return nil, false
+	}
+	return next, true
+}
+
+// customUsageBalanceSnapshot reads the operator-configured balance extractor
+// when the probe's own new-api endpoint could not answer. It is the same source
+// the account page's custom usage column reads, and it is only consulted after
+// /api/usage/token/ failed, so a configured extractor never overrides a balance
+// the upstream reported through its own schema.
+func (s *UpstreamBillingProbeService) customUsageBalanceSnapshot(
+	ctx context.Context,
+	account *Account,
+	intervalMinutes int,
+	now time.Time,
+) (*UpstreamBalanceSnapshot, bool) {
+	if s == nil || s.accountOps == nil || account == nil || !opsConfiguredCustomUsage(account) {
+		return nil, false
+	}
+	if !customUsageExplicitlyConfigured(account) {
+		// The default prefill points at /v1/usage, which the probe already asked
+		// as the Sub2API endpoint. Only an operator-saved extractor can point at
+		// a different source, so only that one is worth a second request.
+		return nil, false
+	}
+	if !upstreamBalanceRetryAllowed(ctx) {
+		// A manual probe runs on the admin request path: record the state now and
+		// let the next scheduled round fill the extractor balance. Waiting for a
+		// second upstream here would block the request for its whole timeout.
+		return nil, false
+	}
+	usage := s.accountOps.CustomUsageService()
+	if usage == nil {
+		return nil, false
+	}
+	result, err := usage.Query(ctx, account.ID, false, nil)
+	if err != nil || !result.Configured || !result.Enabled || result.Error != "" {
+		return nil, false
+	}
+	data, ok := customUsageBalanceData(result)
+	if !ok {
+		return nil, false
+	}
+	received := now
+	if result.UpdatedAt != nil && !result.UpdatedAt.IsZero() {
+		received = result.UpdatedAt.UTC()
+	}
+	return &UpstreamBalanceSnapshot{
+		Status:        UpstreamBillingProbeStatusOK,
+		Data:          data,
+		ReceivedAt:    probeTimePtr(received),
+		FreshUntil:    probeTimePtr(received.Add(2 * time.Duration(intervalMinutes) * time.Minute)),
+		LastAttemptAt: now,
+		Source:        UpstreamBalanceSourceCustomUsage,
+	}, true
+}
+
+// customUsageBalanceData maps an extractor result into the normalised balance
+// fields. Remaining is the only field that can be the headline; used/total and
+// the unit are carried along for the details panel without inventing a value.
+func customUsageBalanceData(result CustomUsageResult) (map[string]any, bool) {
+	data := map[string]any{"is_valid": true}
+	usable := false
+	if remaining, ok := finiteUpstreamBalanceNumber(result.Remaining); ok {
+		data["remaining"] = remaining
+		usable = true
+	}
+	if used, ok := finiteUpstreamBalanceNumber(result.Used); ok {
+		data["quota_used"] = used
+	}
+	if total, ok := finiteUpstreamBalanceNumber(result.Total); ok {
+		data["quota_limit"] = total
+	}
+	if unit := strings.TrimSpace(result.Unit); unit != "" {
+		data["unit"] = unit
+	}
+	if plan := strings.TrimSpace(result.PlanName); plan != "" {
+		data["plan_name"] = plan
+	}
+	return data, usable
 }
 
 // upstreamBillingRateSnapshotFromResult turns one /v1/sub2api/billing response
@@ -1201,7 +1390,7 @@ func upstreamBillingProbeFailureSnapshot(
 	delay := nextProbeDelay(intervalMinutes, retryAfterDuration)
 	if reason == "unsupported" {
 		status = UpstreamBillingProbeStatusUnsupported
-		delay = unsupportedProbeDelay(intervalMinutes, retryAfterDuration)
+		delay = unsupportedProbeDelay(retryAfterDuration)
 	}
 	snapshot := &UpstreamBillingProbeSnapshot{
 		Status:        status,
@@ -1596,21 +1785,17 @@ func nextProbeDelay(intervalMinutes int, retryAfterDuration time.Duration) time.
 	return interval
 }
 
-// unsupportedProbeDelay 拉长 unsupported 账号的重探间隔，让无效候选自然退出
-// 热队列，不再和真正接入 sub2api 的中转账号抢每周期的探测名额。
-// 仍按 upstreamBillingProbeMaxDelay 封顶，保证上游后来接入 sub2api 时最迟一天
-// 内会被重新发现；base 本身已达上限（例如 Retry-After 明确要求更久）时原样返回，
-// 不缩短上游指令。
-func unsupportedProbeDelay(intervalMinutes int, retryAfterDuration time.Duration) time.Duration {
-	base := nextProbeDelay(intervalMinutes, retryAfterDuration)
-	if base >= upstreamBillingProbeMaxDelay {
-		return base
+// unsupportedProbeDelay keeps an unsupported (or identified-but-balanceless)
+// account on a ten-minute retry cadence. The operator asked for "recognise it,
+// fill it in automatically, refresh every ten minutes"; the previous
+// interval×8 stretch put the next attempt hours away and the account list showed
+// "old data · 2 hours ago". A longer Retry-After from the upstream is still
+// honoured, because that is an explicit instruction to back off.
+func unsupportedProbeDelay(retryAfterDuration time.Duration) time.Duration {
+	if retryAfterDuration > upstreamBillingProbeUnsupportedRetryInterval {
+		return retryAfterDuration
 	}
-	stretched := base * upstreamBillingProbeUnsupportedDelayFactor
-	if stretched > upstreamBillingProbeMaxDelay {
-		return upstreamBillingProbeMaxDelay
-	}
-	return stretched
+	return upstreamBillingProbeUnsupportedRetryInterval
 }
 
 func retryAfter(header http.Header, now time.Time) time.Duration {

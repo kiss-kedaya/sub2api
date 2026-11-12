@@ -163,6 +163,18 @@ func customUsageRecognisedDefaults(a *Account, config CustomUsageConfig) CustomU
 	return config
 }
 
+// customUsageExplicitlyConfigured reports whether an operator has saved a
+// custom usage configuration for the account, as opposed to the prefilled
+// default that points at /v1/usage. The billing probe uses it to decide whether
+// an extractor is a distinct balance source worth a second request.
+func customUsageExplicitlyConfigured(a *Account) bool {
+	if a == nil || a.Extra == nil {
+		return false
+	}
+	_, ok := a.Extra[CustomUsageExtraKey]
+	return ok
+}
+
 func readCustomUsage(a *Account) (CustomUsageConfig, customUsageSecrets, bool) {
 	c, configured := customUsageAccountDefaults(a)
 	var secrets customUsageSecrets

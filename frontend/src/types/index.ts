@@ -1195,7 +1195,7 @@ export interface UpstreamBillingProbeSnapshot {
 export type UpstreamKind = 'sub2api' | 'newapi' | 'openai_compatible' | 'official' | 'custom'
 
 // Which upstream endpoint produced the balance (UpstreamBalanceSource* in upstream_kind_probe.go).
-export type UpstreamBalanceSource = 'sub2api_usage' | 'newapi_token_usage' | 'openai_billing_subscription'
+export type UpstreamBalanceSource = 'sub2api_usage' | 'newapi_token_usage' | 'openai_billing_subscription' | 'custom_usage'
 
 export interface UpstreamBalanceWindow {
   window: string
@@ -1218,6 +1218,8 @@ export interface UpstreamBalanceData {
   remaining?: number
   quota_limit?: number
   quota_used?: number
+  // The upstream answered but only with spend; no usable balance was returned.
+  balance_unavailable?: boolean
   unlimited?: boolean
   // Account-level wallet balance, a different number from the key's remaining quota.
   wallet_balance?: number

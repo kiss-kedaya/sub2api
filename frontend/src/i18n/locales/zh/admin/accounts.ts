@@ -225,7 +225,7 @@ export default {
         },
         hint: {
           sub2api: '上游是 Sub2API：应答了 /v1/usage',
-          newapi: '上游是 New API：带 new-api 指纹（x-new-api-version / x-oneapi-request-id / /api/status）或应答了 /api/usage/token/',
+          newapi: '上游是 New API：带 new-api 指纹（x-new-api-version / x-oneapi-request-id / /api/status）、应答了 /api/usage/token/，或账单接口返回 1e8 无限额度哨兵值',
           openai_compatible: '上游只提供 OpenAI 旧版账单接口（/v1/dashboard/billing），且没有任何 New API 指纹',
           official: '服务商官方接口，不读取余额',
           custom: '上游已连通，但没有应答任何已知的余额接口',
@@ -236,6 +236,8 @@ export default {
         notApplicable: '只有 API Key 账号读取上游余额',
         manualProbe: '立即读取上游余额',
         unlimited: '无限额度',
+        notProvided: '余额未提供',
+        usedShort: '已用 {value}',
         official: '官方接口',
         unsupported: '不支持',
         failed: '读取失败',
@@ -253,6 +255,7 @@ export default {
         unsupportedNote: '上游连通了，但不是 Sub2API、New API，也没有 OpenAI 旧版账单接口，读不到余额。',
         notReadNote: '还没有读到过余额。打开“自动探测上游声明倍率”或点右侧按钮读取一次。',
         unlimitedNote: '上游把这个密钥设成了无限额度，所以没有剩余金额。',
+        notProvidedNote: '上游只返回了已用金额，没有返回可用余额；系统会每 10 分钟继续探测。',
         keptLastValueNote: '最近一次读取失败，显示的是上次成功读到的值。',
         readingNote: '上游已识别为 Sub2API / New API，余额读取失败时后台会自动重试（1 秒、3 秒、9 秒退避），读到之前只显示上次成功的值，不显示失败。',
         refreshHint: '余额默认每 10 分钟刷新一次；识别到 Sub2API / New API 的上游，读取失败会一直重试，列表只显示上次成功读到的值。',
@@ -278,7 +281,8 @@ export default {
         source: {
           sub2api_usage: 'Sub2API /v1/usage',
           newapi_token_usage: 'New API /api/usage/token/',
-          openai_billing_subscription: 'OpenAI /v1/dashboard/billing'
+          openai_billing_subscription: 'OpenAI /v1/dashboard/billing',
+          custom_usage: '自定义提取器'
         },
         failure: {
           unsupported: '上游没有这个接口（404/405）',
