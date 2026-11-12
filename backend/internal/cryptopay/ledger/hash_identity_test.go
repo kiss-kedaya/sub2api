@@ -16,7 +16,7 @@ func TestTransactionHashCasingCannotCreateSecondCredit(t *testing.T) {
 	for _, schema := range []string{
 		`CREATE TABLE payment_orders(id INTEGER PRIMARY KEY,user_id INTEGER,amount REAL,out_trade_no TEXT UNIQUE)`,
 		`CREATE TABLE deposit_transactions(chain TEXT,tx_hash TEXT,log_index INTEGER,from_address TEXT,to_address TEXT,token TEXT,
-		 amount TEXT,block_number INTEGER,block_hash TEXT,status TEXT,order_id INTEGER, UNIQUE(chain,tx_hash,log_index))`,
+		 amount TEXT,block_number INTEGER,block_hash TEXT,status TEXT,order_id INTEGER,native_price_usd TEXT,native_price_at TEXT,native_price_source TEXT, UNIQUE(chain,tx_hash,log_index))`,
 	} {
 		if _, err := db.ExecContext(t.Context(), schema); err != nil {
 			t.Fatal(err)

@@ -15,8 +15,10 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
 	"github.com/shopspring/decimal"
 )
@@ -28,6 +30,13 @@ type Creditor interface {
 	// fulfillment pipeline. Must be idempotent on (chain, txHash, logIndex)
 	// via the deposit record status.
 	CreditDeposit(ctx context.Context, req CreditRequest) error
+}
+
+// NativePricer quotes one chain's native coin in USD. Implemented by
+// nativeprice.Provider; tests substitute a fake. A nil pricer fails closed:
+// no native deposit is ever credited on a default price.
+type NativePricer interface {
+	Quote(ctx context.Context, chain string) (nativeprice.Quote, error)
 }
 
 // CreditRequest carries the resolved deposit for fulfillment.
@@ -46,6 +55,12 @@ type CreditRequest struct {
 	FromAddr   string
 	ToAddr     string
 	BlockNum   uint64
+	// NativePriceUSD/At/Source freeze the market price a native deposit was
+	// settled at. Empty for stablecoins. They are copied into the order
+	// snapshot so the settlement can always be explained after the fact.
+	NativePriceUSD    string
+	NativePriceAt     time.Time
+	NativePriceSource string
 }
 
 // AddressResolver maps a deposit address back to its owner.
@@ -68,11 +83,18 @@ type Ledger struct {
 	minAmount  float64
 	maxAmount  float64
 	multiplier float64
+	pricer     NativePricer
 	// onUnmatched reports a transfer that reached one of our addresses but
 	// could not be credited (too small, or the address is unassigned).
 	// Operators need this: it is usually a mistyped deposit or a probe.
 	onUnmatched func(ctx context.Context, t scanner.Transfer, reason string)
 }
+
+// balanceScale is the internal balance precision (payment orders and the
+// fulfillment pipeline round to 3 decimals). Native credits truncate to it so
+// a fractional unit is never rounded up into free balance; stablecoins keep
+// their existing rounding path untouched.
+const balanceScale = 3
 
 // Reason codes stored on ignored rows and echoed to the depositor, so a
 // rejected transfer never looks like a random failure.
@@ -111,6 +133,13 @@ func (l *Ledger) SetUnmatchedNotifier(fn func(ctx context.Context, t scanner.Tra
 	l.onUnmatched = fn
 }
 
+// SetNativePricer wires the market feed native deposits are settled against.
+// Without one, native deposits stay pending rather than being credited at a
+// guessed price; stablecoin crediting is unaffected.
+func (l *Ledger) SetNativePricer(p NativePricer) {
+	l.pricer = p
+}
+
 // notifyUnmatched fires the alert without letting a notifier failure affect
 // the ledger: recording the deposit matters more than the push.
 func (l *Ledger) notifyUnmatched(ctx context.Context, t scanner.Transfer, reason string) {
@@ -147,7 +176,9 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 			if !state.userID.Valid || !state.credit.Valid || state.credit.Float64 <= 0 || math.IsNaN(state.credit.Float64) || math.IsInf(state.credit.Float64, 0) {
 				return false, fmt.Errorf("linked deposit order is missing or invalid")
 			}
-			return l.credit(ctx, t, decimals, state.userID.Int64, state.credit.Float64)
+			// The order amount was frozen at the first settlement, so a retry
+			// after this point can never re-price the deposit.
+			return l.credit(ctx, t, decimals, state.userID.Int64, state.credit.Float64, nil)
 		}
 	case "": // New observation.
 	default:
@@ -163,6 +194,15 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, nil
 	}
 
+	// Native coin has no stable USD value: it is settled at the market price
+	// observed at credit time, and never by the asset-independent multiplier
+	// alone (1 ETH must not be booked as 1 USDT).
+	if t.Token == scanner.NativeToken {
+		return l.processNative(ctx, t, decimals, state)
+	}
+
+	// Stablecoin path: unchanged. A token amount is already a USD amount, so
+	// the multiplier applies directly and no price feed is consulted.
 	amountDecimal := decimal.NewFromBigInt(t.Amount, -int32(decimals))
 	if amountDecimal.LessThan(decimal.NewFromFloat(l.minAmount)) {
 		reason := fmt.Sprintf("below the minimum credit amount (%g)", l.minAmount)
@@ -204,7 +244,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, fmt.Errorf("unexpected deposit status %q", status)
 	}
 
-	credited, err = l.credit(ctx, t, decimals, userID, creditUSDT)
+	credited, err = l.credit(ctx, t, decimals, userID, creditUSDT, nil)
 	if errors.Is(err, ErrReorgedDuplicateTransfer) {
 		const reason = "reorg_duplicate_credit_manual_review"
 		if recordErr := l.record(ctx, t, "reverted", decimals, reason); recordErr != nil {
@@ -216,20 +256,213 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	return credited, err
 }
 
+// processNative settles one native-coin deposit at its market price.
+//
+// Ordering matters for the three guarantees:
+//   - the pending row exists before pricing, so a feed outage leaves a
+//     retryable deposit instead of a silent one;
+//   - the price is persisted before the credit, so a crash between the two
+//     replays with the same price while it is still fresh; an order freezes
+//     the settled amount permanently;
+//   - any failure returns an error and leaves the row pending, never credited.
+func (l *Ledger) processNative(ctx context.Context, t scanner.Transfer, decimals int, state depositState) (bool, error) {
+	status, err := l.insertPending(ctx, t, decimals)
+	if err != nil {
+		return false, err
+	}
+	switch status {
+	case "credited", "ignored", "reverted", "dead_letter":
+		return false, nil
+	case "pending":
+	default:
+		return false, fmt.Errorf("unexpected deposit status %q", status)
+	}
+
+	quote, err := l.nativeQuote(ctx, t, state)
+	if err != nil {
+		// Rate-limit the next attempt: retryPending only picks a row whose
+		// last_attempt_at is old enough, and a failed fetch must not turn the
+		// scan loop into a per-pass hammer of the exchange.
+		l.touchPending(ctx, t)
+		// The row stays pending and the next pass retries. Crediting on an
+		// unavailable/stale price is explicitly forbidden.
+		return false, err
+	}
+	now := time.Now()
+	if !quote.Usable(now) {
+		return false, fmt.Errorf("%w: %s quote from %s is %s old",
+			nativeprice.ErrStale, t.Chain, quote.At.UTC().Format(time.RFC3339), quote.Age(now).Round(time.Second))
+	}
+
+	amountDecimal := decimal.NewFromBigInt(t.Amount, -int32(decimals))
+	// Thresholds are denominated in USD (they were written for stablecoins,
+	// whose token amount is already USD). Comparing raw ETH against a USDT
+	// minimum would reject a $50 deposit as dust.
+	notional := amountDecimal.Mul(quote.USD)
+	if notional.LessThan(decimal.NewFromFloat(l.minAmount)) {
+		reason := fmt.Sprintf("below the minimum credit amount (%g USD)", l.minAmount)
+		return false, l.ignore(ctx, t, decimals, ReasonBelowMin, reason)
+	}
+	if l.maxAmount > 0 && notional.GreaterThan(decimal.NewFromFloat(l.maxAmount)) {
+		reason := fmt.Sprintf("above the per-deposit maximum (%g USD)", l.maxAmount)
+		return false, l.ignore(ctx, t, decimals, ReasonAboveMax, reason)
+	}
+
+	userID, isOurs, err := l.resolver.ResolveDeposit(ctx, t.Chain, t.To)
+	if err != nil {
+		return false, fmt.Errorf("resolve deposit: %w", err)
+	}
+	if !isOurs {
+		return false, nil
+	}
+	if userID == 0 {
+		return false, l.ignore(ctx, t, decimals, ReasonUnassigned, "address is not assigned to a user")
+	}
+
+	creditDecimal := notional.Mul(decimal.NewFromFloat(l.multiplier)).Truncate(balanceScale)
+	creditUSDT, _ := creditDecimal.Float64()
+	if creditUSDT <= 0 || math.IsNaN(creditUSDT) || math.IsInf(creditUSDT, 0) {
+		// Truncation must never mint a sub-precision credit, but it also must
+		// not silently drop funds: keep the row pending for an operator.
+		return false, fmt.Errorf("native credit is below balance precision")
+	}
+	slog.Info("[cryptopay] native deposit priced",
+		"chain", t.Chain,
+		"tx", t.TxHash,
+		"log_index", t.LogIndex,
+		"user_id", userID,
+		"amount", amountDecimal.String(),
+		"price_usd", quote.USD.String(),
+		"priced_at", quote.At.UTC().Format(time.RFC3339),
+		"price_source", quote.Source,
+		"credit_usdt", creditUSDT)
+
+	credited, err := l.credit(ctx, t, decimals, userID, creditUSDT, &quote)
+	if errors.Is(err, ErrReorgedDuplicateTransfer) {
+		const reason = "reorg_duplicate_credit_manual_review"
+		if recordErr := l.record(ctx, t, "reverted", decimals, reason); recordErr != nil {
+			return false, errors.Join(err, recordErr)
+		}
+		l.notifyUnmatched(ctx, t, reason)
+		return false, nil
+	}
+	return credited, err
+}
+
+func (l *Ledger) nativeQuote(ctx context.Context, t scanner.Transfer, state depositState) (nativeprice.Quote, error) {
+	// A price persisted by an earlier attempt is authoritative. There is no
+	// settlement yet at this point (a linked order short-circuits above), so a
+	// stale stored quote is the only case in which it may be replaced.
+	if stored, ok, err := quoteFromState(state); err != nil {
+		return nativeprice.Quote{}, err
+	} else if ok && stored.Usable(time.Now()) {
+		return stored, nil
+	}
+	if l.pricer == nil {
+		return nativeprice.Quote{}, fmt.Errorf("%w: no native price source configured", nativeprice.ErrUnavailable)
+	}
+	quote, err := l.pricer.Quote(ctx, t.Chain)
+	if err != nil {
+		return nativeprice.Quote{}, err
+	}
+	if !quote.Usable(time.Now()) {
+		return nativeprice.Quote{}, fmt.Errorf("%w: %s quote is older than %s",
+			nativeprice.ErrStale, t.Chain, nativeprice.MaxQuoteAge)
+	}
+	if err := l.persistNativePrice(ctx, t, quote); err != nil {
+		return nativeprice.Quote{}, err
+	}
+	// Read back what the row actually holds: a concurrent pass may have
+	// persisted first, and the credit must match the audited row.
+	stored, ok, err := l.readNativePrice(ctx, t)
+	if err != nil {
+		return nativeprice.Quote{}, err
+	}
+	if !ok {
+		return nativeprice.Quote{}, fmt.Errorf("%w: price was not recorded on the deposit", nativeprice.ErrUnavailable)
+	}
+	return stored, nil
+}
+
+func quoteFromState(state depositState) (nativeprice.Quote, bool, error) {
+	price := strings.TrimSpace(state.priceUSD.String)
+	if price == "" {
+		return nativeprice.Quote{}, false, nil
+	}
+	usd, err := decimal.NewFromString(price)
+	if err != nil || usd.Sign() <= 0 {
+		return nativeprice.Quote{}, false, fmt.Errorf("stored native price %q is invalid", price)
+	}
+	if !state.priceAt.Valid || state.priceAt.Time.IsZero() {
+		return nativeprice.Quote{}, false, fmt.Errorf("stored native price has no observation time")
+	}
+	return nativeprice.Quote{USD: usd, At: state.priceAt.Time, Source: state.priceSource.String}, true, nil
+}
+
+// persistNativePrice writes the settlement price for a deposit. A live price
+// already on the row wins: the first writer is authoritative for retries. An
+// expired price may be replaced only because no settlement has happened yet
+// (a linked order short-circuits before pricing), so retrying forever on a
+// price the feed no longer vouches for would strand real funds.
+func (l *Ledger) persistNativePrice(ctx context.Context, t scanner.Transfer, quote nativeprice.Quote) error {
+	cutoff := time.Now().Add(-nativeprice.MaxQuoteAge)
+	_, err := l.db.ExecContext(ctx, `UPDATE deposit_transactions
+		SET native_price_usd = $4, native_price_at = $5, native_price_source = $6, last_attempt_at = NOW()
+		WHERE chain = $1 AND tx_hash = $2 AND log_index = $3
+		  AND status = 'pending'
+		  AND (native_price_usd IS NULL OR native_price_at IS NULL OR native_price_at < $7)`,
+		t.Chain, t.TxHash, t.LogIndex, quote.USD.String(), quote.At.UTC(), quote.Source, cutoff)
+	if err != nil {
+		return fmt.Errorf("record native price: %w", err)
+	}
+	return nil
+}
+
+func (l *Ledger) readNativePrice(ctx context.Context, t scanner.Transfer) (nativeprice.Quote, bool, error) {
+	var state depositState
+	err := l.db.QueryRowContext(ctx, `SELECT COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at,
+		       COALESCE(native_price_source, '')
+		FROM deposit_transactions WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
+		t.Chain, t.TxHash, t.LogIndex).
+		Scan(&state.priceUSD, &state.priceAt, &state.priceSource)
+	if err != nil {
+		return nativeprice.Quote{}, false, fmt.Errorf("read native price: %w", err)
+	}
+	return quoteFromState(state)
+}
+
+// touchPending rotates a pending row's retry clock without changing its state.
+// It is best effort: the price error is the important signal, and a failed
+// bookkeeping update must not replace it.
+func (l *Ledger) touchPending(ctx context.Context, t scanner.Transfer) {
+	if _, err := l.db.ExecContext(ctx, `UPDATE deposit_transactions SET last_attempt_at = NOW()
+		WHERE chain = $1 AND tx_hash = $2 AND log_index = $3 AND status = 'pending'`,
+		t.Chain, t.TxHash, t.LogIndex); err != nil {
+		slog.Warn("[cryptopay] failed to rotate native deposit retry clock",
+			"chain", t.Chain, "tx", t.TxHash, "log_index", t.LogIndex, "error", err)
+	}
+}
+
 type depositState struct {
 	status          string
 	orderID, userID sql.NullInt64
 	credit          sql.NullFloat64
+	priceUSD        sql.NullString
+	priceAt         sql.NullTime
+	priceSource     sql.NullString
 }
 
 func (l *Ledger) existingDeposit(ctx context.Context, t scanner.Transfer) (depositState, error) {
 	var state depositState
 	_, outTradeNo := OrderIdentity(t.Chain, t.TxHash, t.LogIndex)
-	err := l.db.QueryRowContext(ctx, `SELECT d.status, COALESCE(d.order_id, o.id), o.user_id, o.amount
+	err := l.db.QueryRowContext(ctx, `SELECT d.status, COALESCE(d.order_id, o.id), o.user_id, o.amount,
+		       COALESCE(CAST(d.native_price_usd AS TEXT), ''), d.native_price_at, COALESCE(d.native_price_source, '')
 		FROM deposit_transactions d LEFT JOIN payment_orders o
 		  ON o.id = d.order_id OR (d.order_id IS NULL AND o.out_trade_no = $4)
 		WHERE d.chain = $1 AND d.tx_hash = $2 AND d.log_index = $3`,
-		t.Chain, t.TxHash, t.LogIndex, outTradeNo).Scan(&state.status, &state.orderID, &state.userID, &state.credit)
+		t.Chain, t.TxHash, t.LogIndex, outTradeNo).
+		Scan(&state.status, &state.orderID, &state.userID, &state.credit,
+			&state.priceUSD, &state.priceAt, &state.priceSource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return depositState{}, nil
 	}
@@ -239,8 +472,8 @@ func (l *Ledger) existingDeposit(ctx context.Context, t scanner.Transfer) (depos
 	return state, nil
 }
 
-func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, userID int64, creditUSDT float64) (bool, error) {
-	if err := l.creditor.CreditDeposit(ctx, CreditRequest{
+func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, userID int64, creditUSDT float64, quote *nativeprice.Quote) (bool, error) {
+	req := CreditRequest{
 		UserID:     userID,
 		Chain:      t.Chain,
 		TxHash:     t.TxHash,
@@ -253,7 +486,13 @@ func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, u
 		FromAddr:   t.From,
 		ToAddr:     t.To,
 		BlockNum:   t.BlockNumber,
-	}); err != nil {
+	}
+	if quote != nil {
+		req.NativePriceUSD = quote.USD.String()
+		req.NativePriceAt = quote.At.UTC()
+		req.NativePriceSource = quote.Source
+	}
+	if err := l.creditor.CreditDeposit(ctx, req); err != nil {
 		// A credit failure leaves the row pending and retries on every pass, so
 		// without a log the operator only sees "deposit never arrived". Log the
 		// safe identifiers and the cause; amounts and hashes are already public

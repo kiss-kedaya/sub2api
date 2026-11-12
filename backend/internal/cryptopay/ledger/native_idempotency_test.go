@@ -47,6 +47,7 @@ func nativeDepositDB(t *testing.T) *sql.DB {
 			block_number INTEGER, block_hash TEXT, confirmations INTEGER DEFAULT 0,
 			status TEXT DEFAULT 'pending', order_id INTEGER, reason TEXT,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP, last_attempt_at TEXT,
+			native_price_usd TEXT, native_price_at TIMESTAMP, native_price_source TEXT,
 			UNIQUE(chain, tx_hash, log_index))`,
 		`CREATE TABLE payment_orders (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +75,7 @@ func TestNativeDepositIsCreditedOncePerTransaction(t *testing.T) {
 	db := nativeDepositDB(t)
 	creditor := &countingCreditor{}
 	l := New(db, creditor, fixedResolver{userID: 42, ours: true}, 0.001, 10000, 6.7)
+	l.SetNativePricer(fixedPricer(10))
 
 	raw, ok := new(big.Int).SetString("1234567890123456789", 10) // 1.234567890123456789 ETH
 	if !ok {
@@ -130,6 +132,7 @@ func TestNativePendingObservationIsIdempotent(t *testing.T) {
 	db := nativeDepositDB(t)
 	creditor := &countingCreditor{}
 	l := New(db, creditor, fixedResolver{userID: 42, ours: true}, 0.001, 10000, 6.7)
+	l.SetNativePricer(fixedPricer(10))
 
 	transfer := nativeLedgerTransfer(big.NewInt(1_000_000_000_000_000_000))
 	for range 3 {
@@ -169,6 +172,7 @@ func TestNativeDepositBelowMinimumIsIgnoredNotDropped(t *testing.T) {
 	db := nativeDepositDB(t)
 	creditor := &countingCreditor{}
 	l := New(db, creditor, fixedResolver{userID: 42, ours: true}, 0.001, 10000, 6.7)
+	l.SetNativePricer(fixedPricer(10))
 
 	// 1 wei is far below the 0.001 minimum.
 	credited, err := l.Process(t.Context(), nativeLedgerTransfer(big.NewInt(1)), 18)

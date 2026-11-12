@@ -469,16 +469,32 @@ func (s *Service) depositPool(chain string) (*rpc.Pool, error) {
 }
 
 func (s *Service) newDepositConfirmer(adminID int64, cfg CryptoConfig) *depositConfirmer {
+	processor := ledger.New(s.db, s.creditor, newAddressResolver(s.addresses),
+		cfg.CreditMinAmount, cfg.CreditMaxAmount, cfg.CreditMultiplier)
+	// Manual confirmation settles native deposits too: a missing feed would
+	// leave them pending instead of booking them at a guessed price.
+	processor.SetNativePricer(s.liveNativePricer())
 	return &depositConfirmer{
-		db: s.db,
-		processor: ledger.New(s.db, s.creditor, newAddressResolver(s.addresses),
-			cfg.CreditMinAmount, cfg.CreditMaxAmount, cfg.CreditMultiplier),
+		db:        s.db,
+		processor: processor,
 		locker:    pgDepositLocker{db: s.db},
 		pool:      s.depositPool,
 		adminID:   adminID,
 		minCredit: cfg.CreditMinAmount,
 		maxCredit: cfg.CreditMaxAmount,
 	}
+}
+
+// liveNativePricer returns the process-wide feed, or nil when the service has
+// not been reloaded yet. A nil pricer fails closed for native deposits.
+func (s *Service) liveNativePricer() ledger.NativePricer {
+	s.mu.RLock()
+	p := s.nativePrice
+	s.mu.RUnlock()
+	if p == nil {
+		return nil
+	}
+	return p
 }
 
 // depositConfirmGate refuses while the wallet security lock is active. A lock

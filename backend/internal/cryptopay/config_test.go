@@ -224,3 +224,46 @@ func TestNormalizeConfigAcceptsConfiguredAndPredeclaredRPCLimits(t *testing.T) {
 		t.Fatalf("trimmed pre-declared key missing: %+v", cfg.RPCLimits)
 	}
 }
+
+// The market feed is the only external dependency of native crediting: a
+// missing value must mean "public default", and a typo must fail at load time,
+// not once per native deposit.
+func TestNormalizeConfigNativePriceFeed(t *testing.T) {
+	cfg, err := NormalizeConfig(CryptoConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NativePriceURL != "https://api.binance.com/api/v3/ticker/price" {
+		t.Fatalf("native_price_url = %q, want the public Binance default", cfg.NativePriceURL)
+	}
+
+	cfg, err = NormalizeConfig(CryptoConfig{NativePriceURL: "  https://prices.example/ticker  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NativePriceURL != "https://prices.example/ticker" {
+		t.Fatalf("native_price_url = %q, want the trimmed value", cfg.NativePriceURL)
+	}
+
+	cfg, err = NormalizeConfig(CryptoConfig{NativePriceURL: "https://prices.example/{symbol}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NativePriceURL != "https://prices.example/{symbol}" {
+		t.Fatalf("a symbol template must normalize, got %q", cfg.NativePriceURL)
+	}
+
+	for _, bad := range []string{"not-a-url", "ftp://prices.example/ticker", "https:///ticker"} {
+		if _, err := NormalizeConfig(CryptoConfig{NativePriceURL: bad}); err == nil {
+			t.Fatalf("unsafe native price url %q was accepted", bad)
+		}
+	}
+}
+
+func TestConfigPatchAppliesNativePriceURL(t *testing.T) {
+	url := "https://mirror.example/ticker"
+	got := CryptoConfigPatch{NativePriceURL: &url}.Apply(DefaultCryptoConfig())
+	if got.NativePriceURL != url {
+		t.Fatalf("patched native_price_url = %q, want %q", got.NativePriceURL, url)
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/ledger"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/sweeper"
@@ -308,6 +309,10 @@ type Service struct {
 	wallet    *wallet.Manager
 	executor  *sweeper.Executor
 	addresses *addresses.Service
+	// nativePrice is the process-wide market feed. It is rebuilt only when the
+	// configured endpoint changes, so its 60s cache survives scan passes and
+	// manual confirmations share the same observations.
+	nativePrice *nativeprice.Provider
 
 	// maintCancel stops the pool top-up / scheduled sweep loop.
 	maintCancel     context.CancelFunc
@@ -403,6 +408,8 @@ func (s *Service) reload(ctx context.Context) {
 	// A queued run must not retain an executor built from obsolete config.
 	s.sweepMu.Lock()
 	defer s.sweepMu.Unlock()
+	// The feed is cheap to build; its quote cache lives inside the provider.
+	priceProvider := nativeprice.New(cfg.NativePriceURL)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.discoveryCancel != nil {
@@ -410,6 +417,7 @@ func (s *Service) reload(ctx context.Context) {
 		s.discoveryCancel = nil
 	}
 	s.config = cfg
+	s.nativePrice = priceProvider
 	if cfg.Enabled {
 		s.securityPaused.Store(false)
 	}
@@ -465,6 +473,7 @@ func (s *Service) reload(ctx context.Context) {
 	cursor := scanner.NewCursorStore(s.db)
 	led := ledger.New(s.db, s.creditor, newAddressResolver(s.addresses),
 		cfg.CreditMinAmount, cfg.CreditMaxAmount, cfg.CreditMultiplier)
+	led.SetNativePricer(priceProvider)
 	// Funds that arrived but could not be credited are usually a mistyped
 	// deposit or a probe: tell the operator instead of leaving it in a table.
 	led.SetUnmatchedNotifier(func(ctx context.Context, t scanner.Transfer, reason string) {
@@ -1169,6 +1178,21 @@ type DepositRecord struct {
 	Status      string `json:"status"`
 	Reason      string `json:"reason,omitempty"`
 	CreatedAt   string `json:"created_at"`
+	// NativePriceUSD/At/Source answer "which price, observed when" for a
+	// native-coin deposit. Empty for stablecoins, whose amount is already USD.
+	NativePriceUSD    string `json:"native_price_usd,omitempty"`
+	NativePriceAt     string `json:"native_price_at,omitempty"`
+	NativePriceSource string `json:"native_price_source,omitempty"`
+}
+
+// scanDepositPrice fills the native settlement fields from nullable columns.
+// Kept in one place so the three list/export queries cannot drift.
+func (r *DepositRecord) scanDepositPrice(priceUSD sql.NullString, priceAt sql.NullTime, source sql.NullString) {
+	r.NativePriceUSD = trimDecimalZeros(priceUSD.String)
+	if priceAt.Valid {
+		r.NativePriceAt = priceAt.Time.UTC().Format(time.RFC3339)
+	}
+	r.NativePriceSource = source.String
 }
 
 // ListDeposits returns recent deposit observations, optionally filtered.
@@ -1177,7 +1201,8 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 		limit = 100
 	}
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-		       token, amount::text, status, reason, created_at
+		       token, amount::text, status, reason, created_at,
+		       COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
 	            FROM deposit_transactions WHERE 1=1`
 	args := []any{}
 	if chain != "" {
@@ -1198,14 +1223,19 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 	for rows.Next() {
 		var r DepositRecord
 		var created time.Time
+		var priceUSD sql.NullString
+		var priceAt sql.NullTime
+		var source sql.NullString
 		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
+			&priceUSD, &priceAt, &source); err != nil {
 			return nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -1251,7 +1281,8 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 	}
 
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-	                 token, amount::text, status, reason, created_at
+	                 token, amount::text, status, reason, created_at,
+	                 COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
 	            FROM deposit_transactions` + where +
 		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
 	rows, err := s.db.QueryContext(ctx, query, append(args, limit, offset)...)
@@ -1263,14 +1294,19 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 	for rows.Next() {
 		var r DepositRecord
 		var created time.Time
+		var priceUSD sql.NullString
+		var priceAt sql.NullTime
+		var source sql.NullString
 		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
+			&priceUSD, &priceAt, &source); err != nil {
 			return nil, nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, &summary, rows.Err()
@@ -1300,7 +1336,8 @@ func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status stri
 	}
 	args = append(args, limit)
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-	                 token, amount::text, status, reason, created_at
+	                 token, amount::text, status, reason, created_at,
+	                 COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
 	            FROM deposit_transactions` + where +
 		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args))
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -1312,13 +1349,18 @@ func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status stri
 	for rows.Next() {
 		var r DepositRecord
 		var created time.Time
+		var priceUSD sql.NullString
+		var priceAt sql.NullTime
+		var source sql.NullString
 		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
+			&priceUSD, &priceAt, &source); err != nil {
 			return nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, rows.Err()

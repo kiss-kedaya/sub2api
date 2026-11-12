@@ -13,7 +13,7 @@ import (
 )
 
 func stateRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"status", "order_id", "user_id", "amount"})
+	return sqlmock.NewRows([]string{"status", "order_id", "user_id", "amount", "native_price_usd", "native_price_at", "native_price_source"})
 }
 
 func expectDepositState(mock sqlmock.Sqlmock, tr scanner.Transfer, rows *sqlmock.Rows) {
@@ -31,7 +31,7 @@ func TestPendingOrderWithFailedLinkRestoresOriginalTerms(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	for _, schema := range []string{
 		`CREATE TABLE payment_orders(id INTEGER PRIMARY KEY,user_id INTEGER,amount REAL,out_trade_no TEXT UNIQUE)`,
-		`CREATE TABLE deposit_transactions(chain TEXT,tx_hash TEXT,log_index INTEGER,status TEXT,order_id INTEGER)`,
+		`CREATE TABLE deposit_transactions(chain TEXT,tx_hash TEXT,log_index INTEGER,status TEXT,order_id INTEGER,native_price_usd TEXT,native_price_at TEXT,native_price_source TEXT)`,
 	} {
 		if _, err := db.ExecContext(t.Context(), schema); err != nil {
 			t.Fatal(err)
@@ -42,7 +42,7 @@ func TestPendingOrderWithFailedLinkRestoresOriginalTerms(t *testing.T) {
 	if _, err := db.ExecContext(t.Context(), `INSERT INTO payment_orders VALUES(88,42,67,?)`, outTradeNo); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(t.Context(), `INSERT INTO deposit_transactions VALUES(?,?,?,'pending',NULL)`, tr.Chain, tr.TxHash, tr.LogIndex); err != nil {
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO deposit_transactions VALUES(?,?,?,'pending',NULL,NULL,NULL,'')`, tr.Chain, tr.TxHash, tr.LogIndex); err != nil {
 		t.Fatal(err)
 	}
 	creditor := &countingCreditor{}
@@ -81,7 +81,7 @@ func TestLinkedPendingRestoresFrozenOrderBeforeMutablePolicies(t *testing.T) {
 			// Disabled/unassigned now resolves to user zero. Only the linked
 			// order's owner and frozen amount may drive recovery.
 			l := New(db, creditor, fixedResolver{ours: true}, min, max, multiplier)
-			expectDepositState(mock, tr, stateRows().AddRow("pending", 88, 42, 67.0))
+			expectDepositState(mock, tr, stateRows().AddRow("pending", 88, 42, 67.0, "", nil, ""))
 			mock.ExpectExec(`(?s)UPDATE deposit_transactions SET status = 'credited'.*AND status = 'pending'`).
 				WithArgs(tr.Chain, tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
 			credited, err := l.Process(t.Context(), tr, 6)
@@ -110,7 +110,7 @@ func TestResolvedDepositDoesNotConsultPolicyOrOverwriteState(t *testing.T) {
 			creditor := &countingCreditor{}
 			tr := depositTransfer(10_000_000)
 			l := New(db, creditor, nil, 100, 1, 0) // nil resolver must not be called.
-			expectDepositState(mock, tr, stateRows().AddRow(status, 88, 42, 67.0))
+			expectDepositState(mock, tr, stateRows().AddRow(status, 88, 42, 67.0, "", nil, ""))
 			credited, err := l.Process(t.Context(), tr, 6)
 			if credited || err != nil || creditor.calls != 0 {
 				t.Fatalf("credited=%v err=%v calls=%d", credited, err, creditor.calls)
@@ -131,7 +131,7 @@ func TestLinkedPendingWithMissingOrderFailsClosed(t *testing.T) {
 	creditor := &countingCreditor{}
 	tr := depositTransfer(10_000_000)
 	l := New(db, creditor, nil, 100, 1, 0)
-	expectDepositState(mock, tr, stateRows().AddRow("pending", 88, nil, nil))
+	expectDepositState(mock, tr, stateRows().AddRow("pending", 88, nil, nil, "", nil, ""))
 	credited, err := l.Process(t.Context(), tr, 6)
 	if credited || err == nil || creditor.calls != 0 {
 		t.Fatalf("credited=%v err=%v calls=%d", credited, err, creditor.calls)
@@ -152,7 +152,7 @@ func TestCreditedCASPreservesReorgAndConcurrentCompletion(t *testing.T) {
 			creditor := &countingCreditor{}
 			tr := depositTransfer(10_000_000)
 			l := New(db, creditor, nil, 100, 1, 0)
-			expectDepositState(mock, tr, stateRows().AddRow("pending", 88, 42, 67.0))
+			expectDepositState(mock, tr, stateRows().AddRow("pending", 88, 42, 67.0, "", nil, ""))
 			mock.ExpectExec(`(?s)UPDATE deposit_transactions SET status = 'credited'.*AND status = 'pending'`).
 				WithArgs(tr.Chain, tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 0))
 			mock.ExpectQuery(`SELECT status FROM deposit_transactions`).WithArgs(tr.Chain, tr.TxHash, tr.LogIndex).
@@ -184,7 +184,7 @@ func TestIgnoredCASDoesNotEraseConcurrentlyLinkedOrder(t *testing.T) {
 	creditor := &countingCreditor{}
 	tr := depositTransfer(10_000_000)
 	l := New(db, creditor, fixedResolver{userID: 42, ours: true}, 100, 1000, 1)
-	expectDepositState(mock, tr, stateRows().AddRow("pending", nil, nil, nil))
+	expectDepositState(mock, tr, stateRows().AddRow("pending", nil, nil, nil, "", nil, ""))
 	mock.ExpectExec(`(?s)INSERT INTO deposit_transactions.*WHERE deposit_transactions.status = 'pending'.*AND deposit_transactions.order_id IS NULL`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	credited, err := l.Process(t.Context(), tr, 6)
@@ -207,7 +207,7 @@ func TestFailedCreditedWriteCanResumeLinkedOrder(t *testing.T) {
 	l := New(db, creditor, nil, 100, 1, 0)
 	writeErr := errors.New("mark credited unavailable")
 	for attempt := 0; attempt < 2; attempt++ {
-		expectDepositState(mock, tr, stateRows().AddRow("pending", 88, 42, 67.0))
+		expectDepositState(mock, tr, stateRows().AddRow("pending", 88, 42, 67.0, "", nil, ""))
 		expectation := mock.ExpectExec(`(?s)UPDATE deposit_transactions SET status = 'credited'.*AND status = 'pending'`)
 		if attempt == 0 {
 			expectation.WillReturnError(writeErr)

@@ -143,7 +143,8 @@ func newConfirmEnv(t *testing.T) *confirmEnv {
 		token TEXT NOT NULL, amount TEXT NOT NULL, block_number INTEGER NOT NULL,
 		block_hash TEXT NOT NULL DEFAULT '', confirmations INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL DEFAULT 'pending', reason TEXT NOT NULL DEFAULT '', order_id INTEGER,
-		last_attempt_at TEXT, UNIQUE(chain, tx_hash, log_index))`)
+		last_attempt_at TEXT, native_price_usd TEXT, native_price_at TIMESTAMP, native_price_source TEXT NOT NULL DEFAULT '',
+		UNIQUE(chain, tx_hash, log_index))`)
 	require.NoError(t, err)
 	user, err := client.User.Create().SetEmail("manual-confirm@example.invalid").SetPasswordHash("test-only").Save(t.Context())
 	require.NoError(t, err)

@@ -217,6 +217,16 @@
                   <UFormField :label="t('admin.crypto.creditMax')" :description="t('admin.crypto.creditMaxHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
                     <UInput v-model.number="config.credit_max_amount" data-testid="crypto-credit-max" type="number" step="1" min="0" class="w-40" />
                   </UFormField>
+                  <USeparator />
+                  <UFormField :label="t('admin.crypto.nativePriceUrl')" :description="t('admin.crypto.nativePriceUrlHint')" class="flex max-sm:flex-col justify-between items-start gap-4">
+                    <UInput
+                      v-model="config.native_price_url"
+                      data-testid="crypto-native-price-url"
+                      type="url"
+                      placeholder="https://api.binance.com/api/v3/ticker/price"
+                      class="w-80"
+                    />
+                  </UFormField>
                   <template v-for="chain in config.chains" :key="`scan-limits-${chain}`">
                     <USeparator />
                     <div class="crypto-view__network-limits grid gap-4 sm:grid-cols-2">
@@ -567,6 +577,18 @@
               <template #from_address-cell="{ row }"><span class="font-mono" :title="row.original.from_address">{{ short(row.original.from_address) }}</span></template>
               <template #to_address-cell="{ row }"><span class="font-mono" :title="row.original.to_address">{{ short(row.original.to_address) }}</span></template>
               <template #token_symbol-cell="{ row }"><UBadge color="neutral" variant="outline">{{ row.original.token_symbol || 'USDT' }}</UBadge></template>
+              <template #native_price_usd-cell="{ row }">
+                <span
+                  v-if="row.original.native_price_usd"
+                  class="whitespace-nowrap"
+                  :title="row.original.native_price_source"
+                >${{ row.original.native_price_usd }}</span>
+                <span v-else class="text-muted">—</span>
+              </template>
+              <template #native_price_at-cell="{ row }">
+                <span v-if="row.original.native_price_at" class="whitespace-nowrap text-muted">{{ fmtTime(row.original.native_price_at) }}</span>
+                <span v-else class="text-muted">—</span>
+              </template>
               <template #status-cell="{ row }">
                 <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
               </template>
@@ -896,7 +918,7 @@ function persistedVisibility(key: string, defaults: Record<string, boolean>) {
   return state
 }
 const addressVisibility = persistedVisibility('admin.crypto.addressColumns', { family: false, deposit_count: false })
-const depositVisibility = persistedVisibility('admin.crypto.depositColumns', { from_address: false, token_symbol: false })
+const depositVisibility = persistedVisibility('admin.crypto.depositColumns', { from_address: false, token_symbol: false, native_price_at: false })
 // Templates unwrap refs, so the table is named here and its visibility ref looked up.
 function columnMenu(table: 'address' | 'deposit'): DropdownMenuItem[] {
   const visibility = table === 'address' ? addressVisibility : depositVisibility
@@ -943,6 +965,8 @@ const depositTableColumns = computed<TableColumn<DepositRecord>[]>(() => [
   { accessorKey: 'to_address', header: t('admin.crypto.address') },
   { accessorKey: 'token_symbol', header: t('admin.crypto.token') },
   { accessorKey: 'amount', header: t('admin.crypto.amount') },
+  { accessorKey: 'native_price_usd', header: t('admin.crypto.nativePrice') },
+  { accessorKey: 'native_price_at', header: t('admin.crypto.nativePriceAt') },
   { accessorKey: 'status', header: t('common.status') },
   { accessorKey: 'tx_hash', header: 'TX' },
   { accessorKey: 'created_at', header: t('admin.crypto.colTime') }
@@ -1302,6 +1326,7 @@ async function loadConfig() {
       hot_index: 0,
       credit_min_amount: loaded.credit_min_amount ?? 0.001,
       credit_max_amount: loaded.credit_max_amount ?? 10000,
+      native_price_url: loaded.native_price_url ?? '',
       sweep_auto: loaded.sweep_auto ?? false
     }
     configuredRPCChains.value = [...(loaded.rpc_configured ?? [])]
@@ -1353,6 +1378,7 @@ const RISKY_FIELDS: Array<{ key: keyof CryptoConfig; label: string }> = [
   { key: 'hot_wallet_solana', label: 'admin.crypto.hotWalletSolana' },
   { key: 'sweep_auto', label: 'admin.crypto.sweepAuto' },
   { key: 'credit_multiplier', label: 'admin.crypto.creditMultiplier' },
+  { key: 'native_price_url', label: 'admin.crypto.nativePriceUrl' },
   { key: 'chains', label: 'admin.crypto.chains' },
   { key: 'rpc', label: 'admin.crypto.rpc' },
   { key: 'gas_topup', label: 'admin.crypto.gasTopup' },

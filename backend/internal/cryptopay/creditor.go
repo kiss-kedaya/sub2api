@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/ledger"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
 	"github.com/Wei-Shaw/sub2api/internal/notify"
 	"github.com/Wei-Shaw/sub2api/internal/notify/bark"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -52,6 +53,11 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 	if req.CreditUSDT <= 0 || math.IsNaN(req.CreditUSDT) || math.IsInf(req.CreditUSDT, 0) || req.Amount == nil || req.Amount.Sign() <= 0 || req.Decimals < 0 || req.Decimals > 18 {
 		return fmt.Errorf("cryptopay credit: non-positive amount")
 	}
+	// A native deposit without a settlement price cannot be audited, and must
+	// never be booked at the asset-independent multiplier. Fail closed; the
+	// ledger leaves the deposit pending. This is enforced at order creation,
+	// not on resume: a retry of an existing order uses its frozen amount and
+	// must not depend on a fresh quote.
 	reminted, err := ledger.ReorgedTransferAlreadyCredited(ctx, c.db, req.Chain, req.TxHash,
 		req.LogIndex, req.BlockHash)
 	if err != nil {
@@ -80,6 +86,14 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 		return fmt.Errorf("cryptopay credit: find order: %w", err)
 	}
 
+	if req.Token == scanner.NativeToken {
+		// New native order: the settlement basis is mandatory. A resumed order
+		// never reaches this point — it short-circuits above on out_trade_no.
+		price, err := decimal.NewFromString(req.NativePriceUSD)
+		if err != nil || price.Sign() <= 0 || req.NativePriceAt.IsZero() {
+			return fmt.Errorf("cryptopay credit: native deposit is missing its settlement price")
+		}
+	}
 	// user_email/user_name are required columns (redundant copies so order
 	// history survives user deletion); without them every insert fails and
 	// the deposit loops in "pending" forever.
@@ -102,16 +116,37 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 
 	// Match the existing balance-order precision once, before persisting.
 	// The stored order, rather than a later multiplier, is authoritative on retry.
-	creditAmount := decimal.NewFromFloat(req.CreditUSDT).Round(3).InexactFloat64()
-	if creditAmount <= 0 {
+	// A native credit arrives already truncated to this precision by the ledger;
+	// Round is a no-op for it and preserves the stablecoin path.
+	creditAmount := decimal.NewFromFloat(req.CreditUSDT).Round(3)
+	if creditAmount.Sign() <= 0 {
 		return fmt.Errorf("cryptopay credit: amount below balance precision")
+	}
+	snapshot := map[string]any{
+		"currency":   "USD",
+		"raw_amount": req.Amount.String(),
+		"decimals":   req.Decimals,
+		"log_index":  req.LogIndex,
+		"chain":      req.Chain,
+		"token":      req.Token,
+		"from":       req.FromAddr,
+		"to":         req.ToAddr,
+		"tx":         req.TxHash,
+		"block":      req.BlockNum,
+	}
+	if req.Token == scanner.NativeToken {
+		// Freeze the settlement basis in the order itself: "which price, and
+		// from when" survives config changes and later audits.
+		snapshot["native_price_usd"] = req.NativePriceUSD
+		snapshot["native_price_at"] = req.NativePriceAt.UTC().Format(time.RFC3339)
+		snapshot["native_price_source"] = req.NativePriceSource
 	}
 	paidToken := decimal.NewFromBigInt(req.Amount, -int32(req.Decimals))
 	order, err = c.entClient.PaymentOrder.Create().
 		SetUserID(req.UserID).
 		SetUserEmail(user.Email).
 		SetUserName(displayName).
-		SetAmount(creditAmount).
+		SetAmount(creditAmount.InexactFloat64()).
 		SetPayAmount(paidToken.Round(3).InexactFloat64()).
 		SetFeeRate(0).
 		SetRechargeCode(rechargeCode).
@@ -129,18 +164,7 @@ func (c *DepositCreditor) CreditDeposit(ctx context.Context, req ledger.CreditRe
 		// has no HTTP client, so mark the source as the crypto watcher.
 		SetClientIP("crypto").
 		SetSrcHost("crypto").
-		SetProviderSnapshot(map[string]any{
-			"currency":   "USD",
-			"raw_amount": req.Amount.String(),
-			"decimals":   req.Decimals,
-			"log_index":  req.LogIndex,
-			"chain":      req.Chain,
-			"token":      req.Token,
-			"from":       req.FromAddr,
-			"to":         req.ToAddr,
-			"tx":         req.TxHash,
-			"block":      req.BlockNum,
-		}).
+		SetProviderSnapshot(snapshot).
 		Save(ctx)
 	if err != nil {
 		if !dbent.IsConstraintError(err) {
