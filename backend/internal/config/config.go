@@ -80,6 +80,7 @@ type Config struct {
 	Cloudflare              CloudflareConfig              `mapstructure:"cloudflare"`
 	Database                DatabaseConfig                `mapstructure:"database"`
 	Redis                   RedisConfig                   `mapstructure:"redis"`
+	UsageStatsCache         UsageStatsCacheConfig         `mapstructure:"usage_stats_cache"`
 	Ops                     OpsConfig                     `mapstructure:"ops"`
 	JWT                     JWTConfig                     `mapstructure:"jwt"`
 	Totp                    TotpConfig                    `mapstructure:"totp"`
@@ -1748,6 +1749,14 @@ type OpsMetricsCollectorCacheConfig struct {
 	TTL     time.Duration `mapstructure:"ttl"`
 }
 
+// UsageStatsCacheConfig controls the Redis cache in front of the dashboard and
+// usage aggregation queries. TTL is intentionally short: cached numbers may lag
+// freshly written usage logs by at most TTL.
+type UsageStatsCacheConfig struct {
+	Enabled bool          `mapstructure:"enabled"`
+	TTL     time.Duration `mapstructure:"ttl"`
+}
+
 type JWTConfig struct {
 	Secret     string `mapstructure:"secret"`
 	ExpireHour int    `mapstructure:"expire_hour"`
@@ -2430,6 +2439,11 @@ func setDefaults() {
 	viper.SetDefault("ops.metrics_collector_cache.enabled", true)
 	// TTL should be slightly larger than collection interval (1m) to maximize cross-replica cache hits.
 	viper.SetDefault("ops.metrics_collector_cache.ttl", 65*time.Second)
+
+	// Usage stats cache: one minute of reuse for dashboard/usage aggregates. The
+	// write path never invalidates it, so TTL is the maximum staleness.
+	viper.SetDefault("usage_stats_cache.enabled", true)
+	viper.SetDefault("usage_stats_cache.ttl", 60*time.Second)
 
 	// JWT
 	viper.SetDefault("jwt.secret", "")
@@ -3919,6 +3933,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Ops.MetricsCollectorCache.TTL < 0 {
 		return fmt.Errorf("ops.metrics_collector_cache.ttl must be non-negative")
+	}
+	if c.UsageStatsCache.TTL < 0 {
+		return fmt.Errorf("usage_stats_cache.ttl must be non-negative")
 	}
 	if c.Ops.Cleanup.ErrorLogRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.error_log_retention_days must be non-negative")

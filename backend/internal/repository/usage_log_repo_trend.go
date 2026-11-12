@@ -294,6 +294,17 @@ func (r *usageLogRepository) GetUserModelStats(ctx context.Context, userID int64
 
 // GetUsageTrendWithFilters returns usage trend data with optional filters
 func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) (results []TrendDataPoint, err error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "usage_trend_with_filters", UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+		Model: model, Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+		Extra:   granularity,
+		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
+	}, func() ([]TrendDataPoint, error) {
+		return r.getUsageTrendWithFiltersResolved(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
+	})
+}
+
+func (r *usageLogRepository) getUsageTrendWithFiltersResolved(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) (results []TrendDataPoint, err error) {
 	if r.rollupReadEnabled.Load() {
 		filters := UsageLogFilters{UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID, Model: model, RequestType: requestType, Stream: stream, BillingType: billingType}
 		if trend, covered, rollupErr := r.GetUsageTrendWithRollups(ctx, startTime, endTime, granularity, filters); rollupErr == nil && covered {
@@ -495,6 +506,17 @@ func (r *usageLogRepository) GetModelStatsWithFilters(ctx context.Context, start
 // GetModelStatsWithFiltersBySource returns model statistics with optional filters and model source dimension.
 // source: requested | upstream | mapping.
 func (r *usageLogRepository) GetModelStatsWithFiltersBySource(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8, source string) (results []ModelStat, err error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "model_stats_with_filters", UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+		ModelSource: usagestats.NormalizeModelSource(source),
+		Start:       startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
+	}, func() ([]ModelStat, error) {
+		return r.getModelStatsWithFiltersBySourceResolved(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, source)
+	})
+}
+
+func (r *usageLogRepository) getModelStatsWithFiltersBySourceResolved(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8, source string) (results []ModelStat, err error) {
 	if r.rollupReadEnabled.Load() {
 		filters := UsageLogFilters{UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID, RequestType: requestType, Stream: stream, BillingType: billingType}
 		if stats, covered, rollupErr := r.GetModelStatsWithRollups(ctx, startTime, endTime, filters, source); rollupErr == nil && covered {
@@ -505,6 +527,16 @@ func (r *usageLogRepository) GetModelStatsWithFiltersBySource(ctx context.Contex
 }
 
 func (r *usageLogRepository) GetModelStatsWithUsageFiltersBySource(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, source string) (results []ModelStat, err error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "model_stats_usage_filters", ModelSource: usagestats.NormalizeModelSource(source),
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+		Filters: usageFiltersFingerprintOf(filters),
+	}, func() ([]ModelStat, error) {
+		return r.getModelStatsWithUsageFiltersBySourceResolved(ctx, startTime, endTime, filters, source)
+	})
+}
+
+func (r *usageLogRepository) getModelStatsWithUsageFiltersBySourceResolved(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, source string) (results []ModelStat, err error) {
 	if r.rollupReadEnabled.Load() {
 		if stats, covered, rollupErr := r.GetModelStatsWithRollups(ctx, startTime, endTime, filters, source); rollupErr == nil && covered {
 			return stats, nil
