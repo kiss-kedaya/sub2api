@@ -1,6 +1,5 @@
 export default {
   "title": "Balance query",
-  "column": "Upstream balance",
   "enabled": "Auto query",
   "enableHint": "Query this account’s custom upstream only. Local billing and scheduling are unchanged.",
   "template": "Query template",
@@ -18,7 +17,7 @@ export default {
   "userId": "User ID",
   "timeout": "Timeout (seconds)",
   "interval": "Refresh interval (minutes)",
-  "intervalDefault": "Refreshes every 10 minutes by default for visible accounts.",
+  "intervalDefault": "Refreshes every 10 minutes by default. Accounts recognised as Sub2API / New API have their URL, credential and extractor filled in automatically.",
   "secretSaved": "Saved — leave blank to keep",
   "secretPlaceholder": "Enter a new credential",
   "clearSecret": "Explicitly clear the saved credential",

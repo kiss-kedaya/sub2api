@@ -93,6 +93,11 @@ const (
 	UpstreamBillingProbeStatusOK          = "ok"
 	UpstreamBillingProbeStatusUnsupported = "unsupported"
 	UpstreamBillingProbeStatusFailed      = "failed"
+	// UpstreamBillingProbeStatusPending marks a balance read that is still being
+	// retried for an upstream already recognised as Sub2API / New API. It is
+	// deliberately not a failure: the account list keeps the last successful
+	// value (see upstream_balance_retry.go).
+	UpstreamBillingProbeStatusPending = "pending"
 )
 
 // UpstreamBillingProbeSettings controls the periodic probe runner.
@@ -491,7 +496,10 @@ func (s *UpstreamBillingProbeService) probeAccount(ctx context.Context, accountI
 }
 
 func (s *UpstreamBillingProbeService) probeScheduledAccount(ctx context.Context, accountID int64, intervalMinutes int) (*UpstreamBillingProbeSnapshot, error) {
-	return s.probeAccountWithMode(ctx, accountID, intervalMinutes, true)
+	// Scheduled rounds are allowed to sleep between balance read attempts.
+	// Manual probes (ProbeAccount) run on the admin request path and are not
+	// marked, so they never block on a retry.
+	return s.probeAccountWithMode(withUpstreamBalanceRetry(ctx), accountID, intervalMinutes, true)
 }
 
 func (s *UpstreamBillingProbeService) probeAccountWithMode(ctx context.Context, accountID int64, intervalMinutes int, requireEnabled bool) (*UpstreamBillingProbeSnapshot, error) {
@@ -757,8 +765,45 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		}
 	}
 
+	// readRecognisedBalance reads the balance of an upstream that was already
+	// identified as Sub2API / New API. Those two never report a read failure to
+	// the account list: a background round retries the read (1s/3s/9s), the last
+	// successful value stays on screen, and the next scheduled round keeps
+	// retrying until the upstream answers.
+	readRecognisedBalance := func(kind, source string, fetch func() upstreamBillingProbeHTTPResult, parse func([]byte) (map[string]any, error)) {
+		attempts := 1
+		if upstreamBalanceRetryAllowed(ctx) {
+			attempts = upstreamBalanceRetryAttempts
+		}
+		result, data, ok := upstreamBalanceRead(ctx, attempts, fetch, parse)
+		if ok {
+			snapshot.UpstreamKind = kind
+			snapshot.Balance = fresh(data, source, result.statusCode)
+			readable()
+			return
+		}
+		snapshot.UpstreamKind = kind
+		snapshot.Balance = upstreamBalanceRetryPendingSnapshot(previousBalance, now, result.statusCode, upstreamBalanceReadReason(result))
+		switch snapshot.Balance.LastError {
+		case "unsupported", "invalid_response":
+			// The endpoint no longer serves its own schema: the software behind
+			// the domain may have changed. Drop the kind so the next round
+			// identifies the upstream again (the failure is still not shown).
+			snapshot.UpstreamKind = ""
+		}
+		if retryAt := now.Add(upstreamBalanceRetryNextDelay(previousBalance, upstreamProbeRejectedKey(result))); snapshot.NextProbeAt.IsZero() || retryAt.Before(snapshot.NextProbeAt) {
+			snapshot.NextProbeAt = retryAt
+		}
+	}
 	trySub2API := func() (done bool) {
-		result := s.fetchUpstreamProbeBody(ctx, account, target, upstreamBalanceProbeURL(baseURL, now), upstreamBalanceProbeMaxBodyBytes)
+		fetchBalance := func() upstreamBillingProbeHTTPResult {
+			return s.fetchUpstreamProbeBody(ctx, account, target, upstreamBalanceProbeURL(baseURL, now), upstreamBalanceProbeMaxBodyBytes)
+		}
+		if snapshot.UpstreamKind == UpstreamKindSub2API {
+			readRecognisedBalance(UpstreamKindSub2API, UpstreamBalanceSourceSub2APIUsage, fetchBalance, parseUpstreamBalanceResponse)
+			return true
+		}
+		result := fetchBalance()
 		lastStatusCode = result.statusCode
 		if upstreamProbeAnswered(result) {
 			if data, err := parseUpstreamBalanceResponse(result.body); err == nil {
@@ -768,9 +813,9 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 				return true
 			}
 		}
-		if snapshot.UpstreamKind == UpstreamKindSub2API || upstreamProbeRejectedKey(result) {
-			// Known Sub2API upstream, or the key was rejected: record this attempt
-			// against the balance and stop.
+		if upstreamProbeRejectedKey(result) {
+			// The key was rejected before the upstream was identified: record this
+			// attempt and stop asking more paths, as before.
 			snapshot.Balance = upstreamBalanceSnapshotFromResult(result, previousBalance, intervalMinutes, now)
 			return true
 		}
@@ -778,8 +823,15 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 	}
 	tryNewAPI := func() (done bool) {
 		// Site root, not the model base path: see upstreamSiteRootURL.
-		result := s.fetchUpstreamProbeBody(ctx, account, target,
-			upstreamSiteRootURL(baseURL, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
+		fetchBalance := func() upstreamBillingProbeHTTPResult {
+			return s.fetchUpstreamProbeBody(ctx, account, target,
+				upstreamSiteRootURL(baseURL, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
+		}
+		if snapshot.UpstreamKind == UpstreamKindNewAPI {
+			readRecognisedBalance(UpstreamKindNewAPI, UpstreamBalanceSourceNewAPITokenUsage, fetchBalance, parseUpstreamNewAPIUsageResponse)
+			return true
+		}
+		result := fetchBalance()
 		if upstreamProbeAnswered(result) {
 			if data, err := parseUpstreamNewAPIUsageResponse(result.body); err == nil {
 				snapshot.UpstreamKind = UpstreamKindNewAPI
@@ -788,7 +840,7 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 				return true
 			}
 		}
-		if snapshot.UpstreamKind == UpstreamKindNewAPI || upstreamProbeRejectedKey(result) {
+		if upstreamProbeRejectedKey(result) {
 			snapshot.Balance = upstreamBalanceSnapshotFromResult(result, previousBalance, intervalMinutes, now)
 			return true
 		}
@@ -824,14 +876,24 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 	// on the next probe rather than in this one, to keep one probe bounded.
 	switch snapshot.UpstreamKind {
 	case UpstreamKindSub2API:
-		if trySub2API(); snapshot.Balance == nil || snapshot.Balance.Status != UpstreamBillingProbeStatusOK {
-			if snapshot.Status != UpstreamBillingProbeStatusOK && (snapshot.Balance == nil || snapshot.Balance.LastError == "unsupported" || snapshot.Balance.LastError == "invalid_response") {
+		trySub2API()
+		if snapshot.Balance != nil && snapshot.Balance.Status == UpstreamBillingProbeStatusPending && snapshot.UpstreamKind != "" {
+			// Identified upstream whose read is still being retried: keep the kind
+			// so the next round asks the same endpoint instead of re-identifying.
+			return
+		}
+		if snapshot.Balance == nil || snapshot.Balance.Status != UpstreamBillingProbeStatusOK {
+			if snapshot.UpstreamKind != "" && snapshot.Status != UpstreamBillingProbeStatusOK && (snapshot.Balance == nil || snapshot.Balance.LastError == "unsupported" || snapshot.Balance.LastError == "invalid_response") {
 				snapshot.UpstreamKind = ""
 			}
 		}
 		return
 	case UpstreamKindNewAPI:
-		if tryNewAPI(); snapshot.Balance == nil || (snapshot.Balance.Status != UpstreamBillingProbeStatusOK &&
+		tryNewAPI()
+		if snapshot.Balance != nil && snapshot.Balance.Status == UpstreamBillingProbeStatusPending {
+			return
+		}
+		if snapshot.Balance == nil || (snapshot.Balance.Status != UpstreamBillingProbeStatusOK &&
 			(snapshot.Balance.LastError == "unsupported" || snapshot.Balance.LastError == "invalid_response")) {
 			snapshot.UpstreamKind = ""
 		}
@@ -1246,11 +1308,14 @@ func decodeUpstreamBillingProbeSnapshot(extra map[string]any) *UpstreamBillingPr
 	}
 	if snapshot.Status != UpstreamBillingProbeStatusOK &&
 		snapshot.Status != UpstreamBillingProbeStatusUnsupported &&
-		snapshot.Status != UpstreamBillingProbeStatusFailed {
+		snapshot.Status != UpstreamBillingProbeStatusFailed &&
+		snapshot.Status != UpstreamBillingProbeStatusPending {
 		return nil
 	}
 	if snapshot.Balance != nil && snapshot.Balance.Status != UpstreamBillingProbeStatusOK &&
-		snapshot.Balance.Status != UpstreamBillingProbeStatusUnsupported && snapshot.Balance.Status != UpstreamBillingProbeStatusFailed {
+		snapshot.Balance.Status != UpstreamBillingProbeStatusUnsupported &&
+		snapshot.Balance.Status != UpstreamBillingProbeStatusFailed &&
+		snapshot.Balance.Status != UpstreamBillingProbeStatusPending {
 		snapshot.Balance = nil
 	}
 	return &snapshot

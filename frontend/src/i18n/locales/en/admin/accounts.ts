@@ -353,6 +353,7 @@ export default {
         official: 'Official API',
         unsupported: 'Unsupported',
         failed: 'Read failed',
+        reading: 'Reading',
         notRead: 'Not read',
         keyQuotaShort: 'Key quota',
         walletShort: 'Account {value}',
@@ -367,6 +368,8 @@ export default {
         notReadNote: 'No balance has been read yet. Turn on the upstream rate probe or use the button on the right to read once.',
         unlimitedNote: 'The upstream set this key to unlimited quota, so there is no remaining amount.',
         keptLastValueNote: 'The latest read failed; this is the last value that was read successfully.',
+        readingNote: 'This upstream was recognised as Sub2API / New API. A failed read is retried in the background (1s, 3s, 9s back-off); until it succeeds only the last successful value is shown, never a failure.',
+        refreshHint: 'The balance refreshes every 10 minutes by default. For a recognised Sub2API / New API upstream a failed read is retried until it succeeds, and the list only ever shows the last successful value.',
         staleNote: 'Past its valid-until time; this is the last value read and may have changed.',
         detail: {
           kind: 'Upstream',

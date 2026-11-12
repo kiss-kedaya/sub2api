@@ -1160,7 +1160,7 @@ export interface UpstreamBillingData {
   observed_at: string
 }
 
-export type UpstreamBillingProbeStatus = 'ok' | 'unsupported' | 'failed'
+export type UpstreamBillingProbeStatus = 'ok' | 'unsupported' | 'failed' | 'pending'
 
 export interface UpstreamBillingProbeSnapshot {
   status: UpstreamBillingProbeStatus

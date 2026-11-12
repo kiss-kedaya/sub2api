@@ -260,16 +260,6 @@
             />
             </div>
           </template>
-          <template #cell-custom_usage="{ row }">
-            <CustomUsageCell
-              :key="row.id + ':' + customUsagePageKey"
-              :account="row"
-              :state="customUsageStates[row.id]"
-              @refresh="refreshCustomUsage(row.id)"
-              @configure="customUsageAccount = row"
-              @visibility="setCustomUsageVisible(row.id, $event)"
-            />
-          </template>
           <template #cell-proxy="{ row }">
             <div class="flex flex-col gap-1">
               <div v-if="row.proxy" class="flex items-center gap-1.5 text-sm">
@@ -324,7 +314,10 @@
             />
           </template>
           <template #header-upstream_balance="{ column }">
-            <span class="block w-36 text-right">{{ column.label }}</span>
+            <div class="flex w-36 items-center justify-end gap-1">
+              <span>{{ column.label }}</span>
+              <HelpTooltip :content="t('admin.accounts.upstreamBalance.refreshHint')" width-class="w-72" />
+            </div>
           </template>
           <template #cell-upstream_balance="{ row }">
             <UpstreamBalanceCell
@@ -525,9 +518,6 @@ import AccountDetailSlideover from '@/components/admin/account/AccountDetailSlid
 import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
-import CustomUsageCell from '@/components/account/CustomUsageCell.vue'
-import { useCustomUsage } from '@/composables/useCustomUsage'
-import type { CustomUsageConfig } from '@/api/admin/customUsage'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
@@ -683,7 +673,7 @@ const hiddenColumns = reactive<Set<string>>(new Set())
 // Saved layouts keep their own choice; only a fresh layout starts with this set.
 const DEFAULT_HIDDEN_COLUMNS = [
   'id', 'today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier', 'expires_at',
-  'priority', 'created_at', 'custom_usage', 'upstream_billing_rate'
+  'priority', 'created_at', 'upstream_billing_rate'
 ]
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
@@ -1138,16 +1128,10 @@ const {
 })
 
 const customUsageAccount = ref<AccountListItem | null>(null)
-const customUsagePageKey = computed(() => JSON.stringify([pagination.page, pagination.page_size, params]))
-const customUsageActive = computed(() => !loading.value && customUsageAccount.value === null && !hiddenColumns.has('custom_usage'))
-const {
-  states: customUsageStates,
-  setVisible: setCustomUsageVisible,
-  refresh: refreshCustomUsage,
-  configSaved: customUsageConfigSaved
-} = useCustomUsage(accounts, customUsageActive, customUsagePageKey)
-const handleCustomUsageSaved = (id: number, config: Pick<CustomUsageConfig, 'enabled' | 'interval_minutes'>) => {
-  customUsageConfigSaved(id, config)
+// The balance query configuration still lives in the account action menu, so
+// the modal keeps its saved toast. The list column it used to render is gone:
+// the upstream balance column already shows the same upstream read.
+const handleCustomUsageSaved = () => {
   appStore.showSuccess(t('admin.accounts.customUsage.saved'))
 }
 
@@ -1860,7 +1844,6 @@ const allColumns = computed(() => {
     c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })
   }
   c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false })
-  c.push({ key: 'custom_usage', label: t('admin.accounts.customUsage.column'), sortable: false })
   c.push(
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },

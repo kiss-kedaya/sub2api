@@ -103,7 +103,7 @@ func customUsageAccountDefaults(a *Account) (CustomUsageConfig, bool) {
 	if base == "" {
 		return c, false
 	}
-	return CustomUsageConfig{
+	config := CustomUsageConfig{
 		Enabled:         true,
 		Template:        "general",
 		BaseURL:         base,
@@ -118,7 +118,49 @@ func customUsageAccountDefaults(a *Account) (CustomUsageConfig, bool) {
 			Remaining: &CustomUsageNumber{Path: "remaining"},
 			Unit:      &CustomUsageText{Value: "USD"},
 		},
-	}, true
+	}
+	return customUsageRecognisedDefaults(a, config), true
+}
+
+// customUsageRecognisedDefaults pre-fills the balance query form for an upstream
+// the billing probe already identified. It reads the same endpoint with the
+// same account key as the probe, so the account list column and the balance
+// query show one balance instead of two separately computed numbers. An
+// unrecognised upstream keeps the generic prefill.
+func customUsageRecognisedDefaults(a *Account, config CustomUsageConfig) CustomUsageConfig {
+	snapshot := decodeUpstreamBillingProbeSnapshot(a.Extra)
+	if snapshot == nil {
+		return config
+	}
+	switch normalizeUpstreamKind(snapshot.UpstreamKind) {
+	case UpstreamKindSub2API:
+		config.Template = "sub2api"
+		config.Request = CustomUsageRequest{
+			URL:     "{{baseUrl}}" + upstreamBalanceProbePath,
+			Method:  http.MethodGet,
+			Headers: map[string]string{"Authorization": "Bearer {{apiKey}}"},
+		}
+		config.Extractor = CustomUsageExtractor{
+			Remaining: &CustomUsageNumber{Path: "remaining"},
+			Unit:      &CustomUsageText{Path: "unit"},
+			PlanName:  &CustomUsageText{Path: "planName"},
+		}
+	case UpstreamKindNewAPI:
+		divisor := upstreamNewAPIQuotaPerUnit
+		config.Template = "newapi"
+		config.Request = CustomUsageRequest{
+			URL:     "{{baseUrl}}" + upstreamNewAPIUsagePath,
+			Method:  http.MethodGet,
+			Headers: map[string]string{"Authorization": "Bearer {{apiKey}}"},
+		}
+		config.Extractor = CustomUsageExtractor{
+			Remaining: &CustomUsageNumber{Path: "data.total_available", Divisor: &divisor},
+			Used:      &CustomUsageNumber{Path: "data.total_used", Divisor: &divisor},
+			Unit:      &CustomUsageText{Value: "USD"},
+			PlanName:  &CustomUsageText{Path: "data.name"},
+		}
+	}
+	return config
 }
 
 func readCustomUsage(a *Account) (CustomUsageConfig, customUsageSecrets, bool) {

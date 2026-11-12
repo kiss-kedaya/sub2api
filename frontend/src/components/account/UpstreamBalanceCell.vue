@@ -112,6 +112,8 @@ const headline = computed(() => {
       return t('admin.accounts.upstreamBalance.unsupported')
     case 'failed':
       return t('admin.accounts.upstreamBalance.failed')
+    case 'reading':
+      return t('admin.accounts.upstreamBalance.reading')
     default:
       return t('admin.accounts.upstreamBalance.notRead')
   }
@@ -227,6 +229,7 @@ const noteText = computed(() => {
   if (v.state === 'official') return t('admin.accounts.upstreamBalance.officialNote')
   if (v.state === 'unsupported') return t('admin.accounts.upstreamBalance.unsupportedNote')
   if (v.state === 'not_read') return t('admin.accounts.upstreamBalance.notReadNote')
+  if (v.state === 'reading') return t('admin.accounts.upstreamBalance.readingNote')
   if (v.state === 'unlimited') return t('admin.accounts.upstreamBalance.unlimitedNote')
   if (v.lastReadFailed) return t('admin.accounts.upstreamBalance.keptLastValueNote')
   if (v.stale) return t('admin.accounts.upstreamBalance.staleNote')

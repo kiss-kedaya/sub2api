@@ -38,6 +38,10 @@ type UpstreamBalanceSnapshot struct {
 	LastAttemptAt time.Time      `json:"last_attempt_at"`
 	HTTPStatus    int            `json:"http_status,omitempty"`
 	LastError     string         `json:"last_error,omitempty"`
+	// RetryCount counts consecutive failed reads of an upstream that was
+	// recognised as Sub2API / New API. The list keeps the last successful
+	// value while these retries run (see upstream_balance_retry.go).
+	RetryCount int `json:"retry_count,omitempty"`
 	// Source names the endpoint the balance was read from (see the
 	// UpstreamBalanceSource* constants), so a reader knows how far to trust the
 	// unit: new-api amounts are converted with an assumed ratio.

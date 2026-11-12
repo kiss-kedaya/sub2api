@@ -362,7 +362,12 @@ func TestUpstreamBalanceProbeFailureKeepsLastBalance(t *testing.T) {
 
 			require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
 			require.NotNil(t, snapshot.Balance)
-			require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Balance.Status)
+			// The rate read proved this is a Sub2API upstream, and a recognised
+			// Sub2API / New API balance read is retried instead of reported as
+			// failed: the last good value stays on screen and the retry counter
+			// drives the next attempt (see upstream_balance_retry.go).
+			require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+			require.Equal(t, 1, snapshot.Balance.RetryCount)
 			require.Equal(t, tc.wantReason, snapshot.Balance.LastError)
 			require.Equal(t, tc.wantStatus, snapshot.Balance.HTTPStatus)
 			require.Equal(t, time.Date(2026, time.July, 13, 1, 30, 0, 0, time.UTC), snapshot.Balance.LastAttemptAt)
