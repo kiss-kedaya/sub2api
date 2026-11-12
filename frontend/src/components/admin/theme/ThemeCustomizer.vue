@@ -30,22 +30,15 @@
           :summary="row.summary"
           :on="true"
           :in-summary="false"
-          :wide-control="row.wide"
           persistent-summary
           :default-open="row.field === 'theme_primary'"
           :test-id="`site-theme-row-${row.field}`"
         >
           <template #control>
+            <!-- The swatch is the one setting whose current value is a colour: showing it beside the
+                 name is faster to read than the colour's name. Everything else keeps the value in the
+                 inline summary and puts the picker under the line, per the Dense pattern. -->
             <span v-if="row.swatch" class="site-theme-swatch" :style="row.swatch" aria-hidden="true" />
-            <Select
-              v-else
-              :model-value="draft[row.field]"
-              :options="plainOptions(row.options)"
-              :disabled="saving || loadFailed"
-              :aria-label="row.label"
-              :class="row.wide ? 'w-full max-w-xs' : 'w-36'"
-              @update:model-value="selectFromControl(row, $event)"
-            />
           </template>
           <template #fields>
             <!-- Colours and fonts are long lists of long names: each option gets its own line of the
@@ -127,7 +120,6 @@ interface Row {
   hint: string
   summary: string
   swatch?: Record<string, string>
-  wide: boolean
   options: Option[]
 }
 
@@ -182,7 +174,6 @@ const rows = computed<Row[]>(() => {
       hint: t('admin.settings.siteTheme.primaryHint'),
       summary: current(primary, 'theme_primary').label,
       swatch: current(primary, 'theme_primary').swatch,
-      wide: false,
       options: primary,
     },
     {
@@ -191,7 +182,6 @@ const rows = computed<Row[]>(() => {
       hint: t('admin.settings.siteTheme.neutralHint'),
       summary: current(neutral, 'theme_neutral').label,
       swatch: current(neutral, 'theme_neutral').swatch,
-      wide: false,
       options: neutral,
     },
     {
@@ -199,7 +189,6 @@ const rows = computed<Row[]>(() => {
       label: t('admin.settings.siteTheme.font'),
       hint: t('admin.settings.siteTheme.fontHint'),
       summary: current(font, 'theme_font').label,
-      wide: true,
       options: font,
     },
     {
@@ -207,7 +196,6 @@ const rows = computed<Row[]>(() => {
       label: t('admin.settings.siteTheme.radius'),
       hint: t('admin.settings.siteTheme.radiusHint'),
       summary: current(radius, 'theme_radius').label,
-      wide: false,
       options: radius,
     },
     {
@@ -215,15 +203,10 @@ const rows = computed<Row[]>(() => {
       label: t('admin.settings.siteTheme.mode'),
       hint: t('admin.settings.siteTheme.modeHint'),
       summary: current(mode, 'theme_default_mode').label,
-      wide: false,
       options: mode,
     },
   ]
 })
-
-function plainOptions(options: Option[]): { value: OptionValue; label: string }[] {
-  return options.map((option) => ({ value: option.value, label: option.label }))
-}
 
 const dirty = computed(() => FIELDS.some((field) => draft.value[field] !== saved.value[field]))
 const isDefault = computed(() => FIELDS.every((field) => draft.value[field] === DEFAULT_SITE_THEME[field]))
@@ -241,11 +224,6 @@ function select(field: Field, value: OptionValue) {
     previewSiteThemeMode(draft.value.theme_default_mode)
     modePreviewed = true
   }
-}
-
-// The quick select in the row header and the picker under it write the same draft.
-function selectFromControl(row: Row, value: OptionValue) {
-  select(row.field, value)
 }
 
 async function onOptionKeydown(event: KeyboardEvent, current: Row, index: number) {
