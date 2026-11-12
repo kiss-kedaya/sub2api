@@ -43,6 +43,9 @@ func RegisterGatewayRoutes(
 		redisClient = redisClients[0]
 	}
 	ipNotice := middleware.GatewayIPNotice(settingService, redisClient)
+	// Distinct-user IP sharing detection runs before the notice middleware so an
+	// IP that is appended by this very request is throttled immediately.
+	ipSharing := middleware.GatewayIPSharing(settingService, service.NewIPKeySharingDetector(settingService, redisClient))
 	regional := func(c *gin.Context) { c.Next() }
 	if h.Admin != nil && h.Admin.Serverless != nil {
 		regional = func(c *gin.Context) {
@@ -230,6 +233,7 @@ func RegisterGatewayRoutes(
 	gateway.Use(opsErrorLogger)
 	gateway.Use(endpointNorm)
 	gateway.Use(gin.HandlerFunc(apiKeyAuth), regional, capture)
+	gateway.Use(ipSharing)
 	gateway.Use(ipNotice)
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
 	gateway.Use(groupModelAllowlist)
@@ -388,7 +392,7 @@ func RegisterGatewayRoutes(
 	// Ark native task management keeps ordinary key authentication and routing.
 	ark := r.Group("/api/v3")
 	ark.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth))
-	ark.Use(capture, ipNotice, groupModelAllowlist, compositeTarget)
+	ark.Use(capture, ipSharing, ipNotice, groupModelAllowlist, compositeTarget)
 	ark.POST("/contents/generations/tasks", h.OpenAIGateway.SeedanceTasks)
 	ark.GET("/contents/generations/tasks/:task_id", h.OpenAIGateway.SeedanceTasks)
 	ark.DELETE("/contents/generations/tasks/:task_id", h.OpenAIGateway.SeedanceTasks)
@@ -401,7 +405,7 @@ func RegisterGatewayRoutes(
 	gemini.Use(opsErrorLogger)
 	gemini.Use(endpointNorm)
 	gemini.Use(middleware.APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg))
-	gemini.Use(capture, ipNotice)
+	gemini.Use(capture, ipSharing, ipNotice)
 	gemini.Use(groupModelAllowlist)
 	gemini.Use(compositeGeminiTarget)
 	gemini.Use(requireGroupGoogle)
@@ -429,7 +433,7 @@ func RegisterGatewayRoutes(
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
 	// 之前，避免逐条路由手工维护链导致漏挂。
 	rootRoute := func(method, path string, limit gin.HandlerFunc, handler gin.HandlerFunc) {
-		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
+		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipSharing, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
 	}
 	rootRoute(http.MethodPost, "/responses", bodyLimit, responsesHandler)
 	rootRoute(http.MethodPost, "/responses/*subpath", bodyLimit, guardResponsesSubpath(responsesHandler))
@@ -441,7 +445,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic)
+	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipSharing, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic)
 	{
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)
@@ -544,7 +548,7 @@ func RegisterGatewayRoutes(
 	})
 
 	// Antigravity 模型列表
-	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), regional, capture, ipNotice, requireGroupAnthropic, h.Gateway.AntigravityModels)
+	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), regional, capture, ipSharing, ipNotice, requireGroupAnthropic, h.Gateway.AntigravityModels)
 
 	// Antigravity 专用路由（仅使用 antigravity 账户，不混合调度）
 	antigravityV1 := r.Group("/antigravity/v1")
@@ -554,6 +558,7 @@ func RegisterGatewayRoutes(
 	antigravityV1.Use(endpointNorm)
 	antigravityV1.Use(middleware.ForcePlatform(service.PlatformAntigravity))
 	antigravityV1.Use(gin.HandlerFunc(apiKeyAuth), capture)
+	antigravityV1.Use(ipSharing)
 	antigravityV1.Use(ipNotice)
 	antigravityV1.Use(groupModelAllowlist)
 	antigravityV1.Use(requireGroupAnthropic)
@@ -571,6 +576,7 @@ func RegisterGatewayRoutes(
 	antigravityV1Beta.Use(endpointNorm)
 	antigravityV1Beta.Use(middleware.ForcePlatform(service.PlatformAntigravity))
 	antigravityV1Beta.Use(middleware.APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg), capture)
+	antigravityV1Beta.Use(ipSharing)
 	antigravityV1Beta.Use(ipNotice)
 	antigravityV1Beta.Use(groupModelAllowlist)
 	antigravityV1Beta.Use(requireGroupGoogle)
