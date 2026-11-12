@@ -375,10 +375,10 @@ describe('UpstreamBillingRateCell', () => {
       }
     })
 
-    it('says "same as account" instead of repeating the number off peak', () => {
+    it('repeats the number off peak instead of labelling it', () => {
       const wrapper = mount(UpstreamBillingRateCell, { props: { account: synced(true), now: Date.now() } })
-      expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.sameAsAccount')
-      expect(wrapper.text()).not.toContain('0.60x')
+      expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.60x')
+      expect(wrapper.text()).not.toContain('sameAsAccount')
       expect(wrapper.find('[data-testid="upstream-billing-probe"]').exists()).toBe(true)
     })
 
