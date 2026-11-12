@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -51,6 +52,24 @@ type Plan struct {
 	Entries  []PlanEntry
 	TotalUSD float64
 	DryRun   bool
+}
+
+// NativeToken is the asset identifier for a chain's mainnet coin (ETH/BNB).
+// It mirrors scanner.NativeToken; the two packages are kept independent (the
+// sweeper never imports the scanner) so a test asserts they stay equal.
+const NativeToken = "native"
+
+// isNativeToken reports whether an asset identifier names the mainnet coin.
+func isNativeToken(token string) bool { return strings.EqualFold(token, NativeToken) }
+
+// sortNativeLast moves mainnet-coin entries to the end of a plan, keeping every
+// other entry in its original order. A native sweep pays its own fee out of the
+// balance it empties, so doing it first would starve the token transfers that
+// share the address of the gas they need in the same run.
+func sortNativeLast(entries []PlanEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		return !isNativeToken(entries[i].Token) && isNativeToken(entries[j].Token)
+	})
 }
 
 // AddressBalance is one (address, token) balance snapshot.
@@ -178,6 +197,15 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 			if amountDecimal < minAmount {
 				continue
 			}
+			if isNativeToken(balance.Token) {
+				// A native sweep must leave the fee behind, so anything at or
+				// below that reserve cannot be swept at all. Planning it would
+				// create a job that defers forever (and, with a zero minimum,
+				// one per run).
+				if gasPrice != nil && balance.Raw.Cmp(nativeSweepGasReserve(gasPrice)) <= 0 {
+					continue
+				}
+			}
 			entry := PlanEntry{
 				Chain:           chain,
 				Address:         balance.Address,
@@ -189,9 +217,17 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 			}
 			p.estimateGas(ctx, chain, &entry, gasPrice)
 			plan.Entries = append(plan.Entries, entry)
+			// Native coin is not USD-pegged and there is no price oracle here,
+			// so it counts 1:1 towards the global trigger exactly like one unit
+			// of stablecoin. The per-address minimum is the operator's real
+			// control over how much native coin is worth a sweep.
 			plan.TotalUSD += amountDecimal // stablecoin ~= USD
 		}
 	}
+	// Sweep the mainnet coin last: its balance is the gas that pays for the
+	// token transfers at the same address, and only the remainder (minus the
+	// gas reserve) may be swept.
+	sortNativeLast(plan.Entries)
 	if plan.TotalUSD < p.config.GlobalThreshold {
 		// Below the global trigger: report the would-be plan but mark it
 		// empty so nothing executes.

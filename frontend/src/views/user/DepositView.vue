@@ -33,6 +33,15 @@
                 {{ chainLabel(c.chain) }}
               </button>
             </div>
+            <div v-if="currentAssets.length > 1" class="deposit-view__assets" role="radiogroup"
+              :aria-label="t('deposit.chooseAsset')">
+              <button v-for="asset in currentAssets" :key="asset.symbol" type="button" class="deposit-view__asset"
+                :class="{ 'deposit-view__asset--active': selectedSymbol === asset.symbol }"
+                :aria-checked="selectedSymbol === asset.symbol" role="radio"
+                @click="selectedAsset = asset.symbol">
+                {{ assetLabel(asset) }}
+              </button>
+            </div>
             <template v-if="current">
               <div class="deposit-view__section-head deposit-view__section-head--address">
                 <span class="deposit-view__step">02</span>
@@ -58,7 +67,10 @@
               </div>
               <div class="deposit-view__notice">
                 <span class="deposit-view__notice-mark" aria-hidden="true">!</span>
-                <p>{{ t('deposit.networkNotice', { network: chainLabel(current.chain), tokens: current.tokens.join(' / ') }) }}</p>
+                <p v-if="selectedOption?.native">
+                  {{ t('deposit.nativeNotice', { network: nativeNetworkLabel(current.chain), asset: selectedOption.symbol }) }}
+                </p>
+                <p v-else>{{ t('deposit.networkNotice', { network: chainLabel(current.chain), tokens: selectedSymbol || current.tokens.join(' / ') }) }}</p>
               </div>
             </template>
             <div v-else class="deposit-view__empty">{{ t('deposit.noNetworks') }}</div>
@@ -68,9 +80,9 @@
             <h2>{{ t('deposit.creditDetails') }}</h2>
             <p class="deposit-view__desc">{{ t('deposit.creditDetailsHint') }}</p>
             <dl class="deposit-view__terms">
-              <div><dt>{{ t('deposit.rateLabel') }}</dt><dd>1 USDT <span>= {{ info.rate }} {{ t('deposit.balanceUnits') }}</span></dd></div>
-              <div><dt>{{ t('deposit.minLabel') }}</dt><dd>{{ info.min_amount }} <span>USDT</span></dd></div>
-              <div v-if="info.max_amount > 0"><dt>{{ t('deposit.maxLabel') }}</dt><dd>{{ info.max_amount }} <span>USDT</span></dd></div>
+              <div><dt>{{ t('deposit.rateLabel') }}</dt><dd>1 {{ rateUnit }} <span>= {{ info.rate }} {{ t('deposit.balanceUnits') }}</span></dd></div>
+              <div><dt>{{ t('deposit.minLabel') }}</dt><dd>{{ info.min_amount }} <span>{{ rateUnit }}</span></dd></div>
+              <div v-if="info.max_amount > 0"><dt>{{ t('deposit.maxLabel') }}</dt><dd>{{ info.max_amount }} <span>{{ rateUnit }}</span></dd></div>
             </dl>
             <div class="deposit-view__confirmation">
               <span class="deposit-view__confirmation-dot" aria-hidden="true"></span>
@@ -153,7 +165,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import { getDepositHistory, getDepositInfo, type DepositInfo, type DepositRecord } from '@/api/crypto'
+import { getDepositHistory, getDepositInfo, type DepositChain, type DepositInfo, type DepositRecord } from '@/api/crypto'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
@@ -183,10 +195,18 @@ interface HistoryRow {
   progress: ConfirmationProgress | null
 }
 
+// One currency a network accepts. `native` marks the chain's mainnet coin
+// (ETH, BNB), which shares the deposit address but has no token contract.
+interface AssetOption {
+  symbol: string
+  native: boolean
+}
+
 const info = ref<DepositInfo | null>(null)
 const history = ref<DepositRecord[]>([])
 const loading = ref(true)
 const selectedChain = ref('')
+const selectedAsset = ref('')
 const copied = ref(false)
 const copyError = ref(false)
 const qrError = ref(false)
@@ -199,6 +219,46 @@ const qrCanvas = ref<HTMLCanvasElement | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
 const current = computed(() => info.value?.chains.find((c) => c.chain === selectedChain.value))
+
+// A backend that predates native-coin support sends only `tokens`. Those are
+// all ERC-20 assets, so the derived list keeps the page identical for it.
+function chainAssets(chain: DepositChain): AssetOption[] {
+  const declared = (chain.assets ?? []).filter(a => a && a.symbol)
+  const assets = declared.length ? declared : chain.tokens.map(symbol => ({ symbol, native: false }))
+  // Stablecoins first: an existing user's page must not start on a currency
+  // worth a thousand times more. The mainnet coin is an explicit choice.
+  return [...assets.filter(a => !a.native), ...assets.filter(a => a.native)]
+}
+
+const currentAssets = computed<AssetOption[]>(() => (current.value ? chainAssets(current.value) : []))
+
+// The first asset is the default; it is also the fallback when the selected
+// symbol is not accepted on the newly chosen network.
+const selectedOption = computed<AssetOption | null>(() =>
+  currentAssets.value.find(a => a.symbol === selectedAsset.value) ?? currentAssets.value[0] ?? null
+)
+const selectedSymbol = computed(() => selectedOption.value?.symbol ?? '')
+// Rate and limits are expressed per unit of the asset being sent, so the
+// sidebar must name that asset rather than assume USDT.
+const rateUnit = computed(() => selectedSymbol.value || 'USDT')
+
+function assetLabel(asset: AssetOption): string {
+  if (!asset.native) return asset.symbol
+  return `${asset.symbol} (${nativeNetworkLabel(selectedChain.value)})`
+}
+
+// A native coin is the network's own currency, not a token standard, so it is
+// labelled with the bare network name.
+function nativeNetworkLabel(chain: string): string {
+  switch (chain) {
+    case 'ethereum':
+      return 'Ethereum'
+    case 'bsc':
+      return 'BSC'
+    default:
+      return chainLabel(chain).replace(/\s*\([^)]*\)$/, '')
+  }
+}
 
 // Older backends send no confirmation fields, and a chain without a
 // confirmation target sends 0: both fall back to the plain status badge.
@@ -405,6 +465,10 @@ async function load() {
 watch(current, () => {
   copied.value = false
   copyError.value = false
+  // A symbol accepted on the previous network may not exist on this one.
+  if (!currentAssets.value.some(a => a.symbol === selectedAsset.value)) {
+    selectedAsset.value = currentAssets.value[0]?.symbol ?? ''
+  }
   void renderQR()
 }, { flush: 'post' })
 
@@ -437,6 +501,10 @@ onUnmounted(() => {
 .deposit-view__chain--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
 .deposit-view__network-dot { width: .375rem; height: .375rem; flex-shrink: 0; border-radius: 50%; background: var(--signal-muted, #8c99a6); }
 .deposit-view__chain--active .deposit-view__network-dot { background: var(--signal-accent, #0891b2); }
+.deposit-view__assets { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
+.deposit-view__asset { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .45rem .75rem; border: 1px solid var(--ui-border); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
+.deposit-view__asset:hover { background: var(--signal-accent-soft, #0891b212); }
+.deposit-view__asset--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
 .deposit-view__token { padding: .15rem .5rem; border-radius: .375rem; border: 1px solid #10b98145; background: #10b98112; color: #10b981; font-size: .6875rem; font-weight: 600; }
 .deposit-view__address-block { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }
 .deposit-view__qr-wrap { text-align: center; }
@@ -504,6 +572,7 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
   .deposit-view__funding, .deposit-view__guide, .deposit-view__history { padding: 1.125rem; border-radius: .875rem; }
   .deposit-view__chains { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .deposit-view__chain { padding: .65rem .4rem; font-size: .75rem; }
+  .deposit-view__assets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .deposit-view__address-block { grid-template-columns: minmax(0, 1fr); }
   .deposit-view__qr-wrap { justify-self: center; }
   .deposit-view__terms { grid-template-columns: minmax(0, 1fr); gap: 0; }

@@ -26,12 +26,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// TokenConfig is one watched token on a chain. Symbol is display-only:
-// crediting and sweeping always key on the contract address.
+// TokenConfig is one watched asset on a chain. Symbol is display-only:
+// crediting and sweeping key on Contract, and native coin uses the
+// scanner.NativeToken sentinel in that field so it shares one key space with
+// the ERC-20 contracts.
 type TokenConfig struct {
 	Contract string
 	Decimals int
 	Symbol   string
+	// Native marks the chain's mainnet coin (ETH/BNB). It has no contract and
+	// no Transfer event: the scanner finds it from transactions, and the
+	// sweeper signs a plain value transfer instead of an ERC-20 transfer.
+	Native bool
 }
 
 // PushNotifier delivers operator alerts. Implemented by the notify adapter;
@@ -129,10 +135,16 @@ func toDisplayAmount(raw *big.Int, decimals int) string {
 // The previously accepted X Layer bridge remains explicit as USDC.e.
 var watchedTokens = map[string][]TokenConfig{
 	ChainEthereum: {
+		// ETH is the chain's mainnet coin: no contract, 18 decimals, and it
+		// arrives as a transaction value transfer rather than a Transfer log.
+		{Contract: scanner.NativeToken, Decimals: 18, Symbol: "ETH", Native: true},
 		{Contract: "0xdac17f958d2ee523a2206206994597c13d831ec7", Decimals: 6, Symbol: "USDT"},
 		{Contract: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", Decimals: 6, Symbol: "USDC"},
 	},
 	ChainBSC: {
+		// BNB is the chain's mainnet coin; USDT/USDC on BSC are 18-decimal
+		// BEP-20 tokens whose contracts are unrelated to the native coin.
+		{Contract: scanner.NativeToken, Decimals: 18, Symbol: "BNB", Native: true},
 		{Contract: "0x55d398326f99059ff775485246999027b3197955", Decimals: 18, Symbol: "USDT"}, // BSC-USD (Tether)
 		{Contract: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", Decimals: 18, Symbol: "USDC"}, // USD Coin (Circle)
 	},
@@ -183,6 +195,33 @@ func tokenSymbol(chain, contract string) string {
 		}
 	}
 	return "USDT"
+}
+
+// nativeToken returns the chain's native-coin entry when that chain watches a
+// mainnet coin. Chains without one keep their previous behaviour exactly.
+func nativeToken(chain string) (TokenConfig, bool) {
+	for _, t := range watchedTokens[chain] {
+		if t.Native {
+			return t, true
+		}
+	}
+	return TokenConfig{}, false
+}
+
+// evmContracts returns only the ERC-20 contract addresses watched on a chain.
+// The native coin has no contract: scanner.NativeToken is not a hex address, so
+// it must never reach an eth_getLogs address filter, a balanceOf call or a
+// signed ERC-20 transfer.
+func evmContracts(chain string) []string {
+	tokens := watchedTokens[chain]
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if t.Native || t.Contract == "" {
+			continue
+		}
+		out = append(out, t.Contract)
+	}
+	return out
 }
 
 // Service is the cryptopay facade: owns config snapshots, the RPC pools,
@@ -353,17 +392,26 @@ func (s *Service) reload(ctx context.Context) {
 		}
 		contracts := make([]string, 0, len(tokens))
 		decimals := make(map[string]int, len(tokens))
+		chainConfig := scanner.ChainConfig{Chain: chain, MaxRange: uint64(cfg.ScanRange[chain])}
 		for _, token := range tokens {
-			contracts = append(contracts, token.Contract)
 			decimals[token.Contract] = token.Decimals
+			if token.Native {
+				// Native coin is scanned from transactions, not from logs, so
+				// its sentinel must stay out of the eth_getLogs filter while
+				// still resolving decimals through the same map.
+				chainConfig.Native = true
+				chainConfig.NativeDecimals = token.Decimals
+				continue
+			}
+			contracts = append(contracts, token.Contract)
 		}
-		chainConfigs = append(chainConfigs, scanner.ChainConfig{
-			Chain:         chain,
-			Tokens:        contracts,
-			Confirmations: uint64(cfg.Confirmations[chain]),
-			Decimals:      decimals,
-			MaxRange:      uint64(cfg.ScanRange[chain]),
-		})
+		if len(contracts) == 0 && !chainConfig.Native {
+			continue
+		}
+		chainConfig.Tokens = contracts
+		chainConfig.Confirmations = uint64(cfg.Confirmations[chain])
+		chainConfig.Decimals = decimals
+		chainConfigs = append(chainConfigs, chainConfig)
 	}
 
 	cursor := scanner.NewCursorStore(s.db)
@@ -1249,11 +1297,23 @@ type DepositInfo struct {
 	MaxAmount float64        `json:"max_amount"` // largest single credit
 }
 
+// DepositAsset is one asset a user can send to a chain's deposit address.
+// Native distinguishes ETH/BNB from the ERC-20 tokens so the UI can label the
+// asset correctly: the address and QR code are the same for both.
+type DepositAsset struct {
+	Symbol string `json:"symbol"`
+	Native bool   `json:"native"`
+}
+
 // DepositChain is one chain's deposit address.
 type DepositChain struct {
 	Chain   string   `json:"chain"`
 	Address string   `json:"address"`
 	Tokens  []string `json:"tokens"` // supported symbols on this chain, e.g. ["USDT","USDC"]
+	// Assets is Tokens with the native-coin flag, in the same order. Kept
+	// alongside Tokens so an older client that only reads Tokens still shows
+	// every accepted symbol.
+	Assets []DepositAsset `json:"assets"`
 }
 
 // DepositInfo resolves (assigning on first use) the user's addresses.
@@ -1280,15 +1340,18 @@ func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, 
 			continue
 		}
 		symbols := make([]string, 0, len(watchedTokens[chain]))
+		assets := make([]DepositAsset, 0, len(watchedTokens[chain]))
 		for _, token := range watchedTokens[chain] {
-			if token.Symbol != "" {
-				symbols = append(symbols, token.Symbol)
+			if token.Symbol == "" {
+				continue
 			}
+			symbols = append(symbols, token.Symbol)
+			assets = append(assets, DepositAsset{Symbol: token.Symbol, Native: token.Native})
 		}
 		if len(symbols) == 0 {
 			continue
 		}
-		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Tokens: symbols})
+		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Tokens: symbols, Assets: assets})
 	}
 	return info, nil
 }

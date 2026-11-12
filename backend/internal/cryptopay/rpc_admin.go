@@ -132,13 +132,11 @@ func ProbeRPCEndpoint(ctx context.Context, chain, endpoint string) *RPCTestResul
 }
 
 func probeDepositCapabilities(ctx context.Context, pool *rpc.Pool, chain string, head uint64) error {
-	tokens := watchedTokens[chain]
-	if len(tokens) == 0 {
+	// The native coin has no contract, so it cannot appear in the filter; the
+	// probe only needs one watched ERC-20 to exercise the same query shape.
+	contracts := evmContracts(chain)
+	if len(contracts) == 0 {
 		return &rpc.Failure{Kind: "request"}
-	}
-	contracts := make([]string, 0, len(tokens))
-	for _, token := range tokens {
-		contracts = append(contracts, token.Contract)
 	}
 	// A known token contract cannot legitimately receive its own ordinary
 	// customer deposits. Narrowing the recipient avoids large unfiltered logs

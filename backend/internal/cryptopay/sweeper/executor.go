@@ -31,6 +31,10 @@ func isZeroAddress(address string) bool {
 type TokenSpec struct {
 	Contract string
 	Decimals int
+	// Native marks a mainnet coin (ETH/BNB): its sweep is a plain value
+	// transfer with no calldata and the intrinsic 21000 gas, not an ERC-20
+	// transfer to a token contract.
+	Native bool
 }
 
 const selBalanceOf = "0x70a08231"
@@ -42,6 +46,34 @@ const (
 	legacyTransferGasLimit = 65000
 	transferGasLimit       = 90000
 )
+
+// nativeSweepGasLimit is the exact intrinsic gas of a native value transfer:
+// no calldata, no contract call. It is also the fee that a native sweep must
+// pay out of the same balance it is emptying.
+const nativeSweepGasLimit = 21000
+
+// nativeSweepGasReserveFactor multiplies the intrinsic fee to size the reserve
+// a native sweep leaves in the address. Two reasons it is not 1:
+//   - the fee is charged at the effective gas price, which can be higher than
+//     the quote used to sign (base fee moves every block);
+//   - a deposit address usually receives ERC-20 tokens as well, and the token
+//     sweep that follows is funded from this same native balance. Sweeping it
+//     to zero would force an extra hot-wallet top-up transaction for every
+//     address, which is exactly the cost this reserve avoids.
+//
+// The reserve is dust by design; the credited ledger keeps it as the only
+// remainder after the sweep and the planner ignores balances at or below it.
+const nativeSweepGasReserveFactor = 2
+
+// nativeSweepGasReserve is the native-coin amount a sweep must leave behind:
+// nativeSweepGasReserveFactor times the intrinsic fee at the signing gas price.
+func nativeSweepGasReserve(gasPrice *big.Int) *big.Int {
+	if gasPrice == nil || gasPrice.Sign() <= 0 {
+		return new(big.Int)
+	}
+	fee := new(big.Int).Mul(gasPrice, big.NewInt(nativeSweepGasLimit))
+	return fee.Mul(fee, big.NewInt(nativeSweepGasReserveFactor))
+}
 
 // maxConsecutiveStorageFailures bounds how many persisted-state failures a
 // single run tolerates before giving up: one bad row must not abort the run,
@@ -268,8 +300,17 @@ func addressKey(chain, address string) string { return chain + "|" + strings.ToL
 
 func (e *Executor) validateEntry(entry PlanEntry) (TokenSpec, *rpc.Pool, error) {
 	spec, ok := e.tokens[entry.Chain+"|"+strings.ToLower(entry.Token)]
-	if !ok || !common.IsHexAddress(spec.Contract) || isZeroAddress(spec.Contract) ||
-		!strings.EqualFold(spec.Contract, entry.Token) || spec.Decimals != entry.Decimals {
+	if !ok || spec.Decimals != entry.Decimals {
+		return spec, nil, fmt.Errorf("no matching token/decimals configured for chain/contract")
+	}
+	if spec.Native {
+		// The native coin has no contract, so the ERC-20 shape checks below
+		// cannot apply; only the asset identifier has to line up.
+		if !isNativeToken(entry.Token) {
+			return spec, nil, fmt.Errorf("native asset identifier does not match the configured asset")
+		}
+	} else if !common.IsHexAddress(spec.Contract) || isZeroAddress(spec.Contract) ||
+		!strings.EqualFold(spec.Contract, entry.Token) {
 		return spec, nil, fmt.Errorf("no matching token/decimals configured for chain/contract")
 	}
 	if !common.IsHexAddress(entry.Address) || isZeroAddress(entry.Address) ||
@@ -282,6 +323,23 @@ func (e *Executor) validateEntry(entry PlanEntry) (TokenSpec, *rpc.Pool, error) 
 		return spec, nil, fmt.Errorf("no rpc pool for chain")
 	}
 	return spec, pool, nil
+}
+
+// isNativeSweep reports whether this job sweeps the chain's mainnet coin. The
+// asset map is the authority, so a hand-edited token string cannot make a
+// signed ERC-20 transfer out of a native one.
+func (e *Executor) isNativeSweep(chain, token string) bool {
+	spec, ok := e.tokens[chain+"|"+strings.ToLower(token)]
+	return ok && spec.Native
+}
+
+// sweepGasLimitFor is the gas limit a sweep of this asset signs with: intrinsic
+// only for a mainnet coin, the contract-call budget for an ERC-20 transfer.
+func (e *Executor) sweepGasLimitFor(chain, token string) uint64 {
+	if e.isNativeSweep(chain, token) {
+		return nativeSweepGasLimit
+	}
+	return transferGasLimit
 }
 
 func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (SweepEntry, error) {
@@ -565,6 +623,18 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	// signing the token transaction, while preserving a signed token verbatim.
 	if err := e.checkCurrentSweepBalance(ctx, pool, job); err != nil {
 		return e.jobError(ctx, job, err)
+	}
+	if e.isNativeSweep(job.Chain, job.Token) {
+		// A native sweep pays its own fee from the balance it empties, so the
+		// signed amount must leave the gas reserve behind.
+		if err := e.capNativeSweepAmount(ctx, pool, job, price); err != nil {
+			if errors.Is(err, errNativeSweepBelowGasReserve) {
+				// Waiting for more native coin (or a cheaper quote) is not a
+				// failed payment: keep the bounded attempt counter untouched.
+				return e.deferJob(ctx, job, err)
+			}
+			return e.jobError(ctx, job, err)
+		}
 	}
 	if err := e.prepareSweep(ctx, pool, job, price); err != nil {
 		return e.jobError(ctx, job, err)

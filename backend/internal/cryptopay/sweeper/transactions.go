@@ -100,14 +100,17 @@ func (e *Executor) prepareSweep(ctx context.Context, pool *rpc.Pool, j *sweepJob
 	if err != nil {
 		return err
 	}
+	// A native coin sweep is a plain value transfer: intrinsic gas only, no
+	// calldata. An ERC-20 sweep needs the larger contract-call budget.
+	gasLimit := e.sweepGasLimitFor(j.Chain, j.Token)
 	raw, err := e.wallet.SignEVM(ctx, EVMSignRequest{Index: j.DerivationIndex, Kind: "sweep",
 		ChainID: ChainIDs[j.Chain], Token: j.Token, To: j.Destination, Amount: j.RawAmount.String(),
-		Nonce: nonce, GasPrice: price.String(), GasLimit: transferGasLimit})
+		Nonce: nonce, GasPrice: price.String(), GasLimit: gasLimit})
 	if err != nil {
 		return err
 	}
 	hash, err := validateSigned(raw, j.Chain, j.Address, j.Destination, j.Token,
-		j.RawAmount, nonce, transferGasLimit, price)
+		j.RawAmount, nonce, gasLimit, price)
 	if err != nil {
 		return err
 	}
@@ -296,8 +299,12 @@ func blockIsFinal(ctx context.Context, pool *rpc.Pool, chain string, block uint6
 func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas bool, required uint64) (bool, error) {
 	raw, hash, nonceStr := j.SweepRaw, j.SweepHash, j.SweepNonce
 	// A zero limit means "accept either the legacy or the current sweep gas
-	// limit"; signed bytes from before the raise must stay verifiable.
+	// limit"; signed bytes from before the raise must stay verifiable. A native
+	// sweep is new, so its intrinsic limit is checked exactly.
 	from, to, token, amount, limit := j.Address, j.Destination, j.Token, j.RawAmount, uint64(0)
+	if e.isNativeSweep(j.Chain, j.Token) {
+		limit = nativeSweepGasLimit
+	}
 	if gas {
 		raw, hash, nonceStr = j.GasRaw, j.GasHash, j.GasNonce
 		from, to, token, limit = j.GasPayer, j.Address, "native", 21000
@@ -353,7 +360,7 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		return false, joinErrors(err, e.saveJob(ctx, j))
 	}
 	if state == receiptReverted {
-		if shouldRetrySweepRevert(gas, j.SweepRaw) {
+		if shouldRetrySweepRevert(gas, j.SweepRaw) && !e.isNativeSweep(j.Chain, j.Token) {
 			// The legacy 65k limit is below what some stablecoin transfers
 			// need. Re-sign once with the larger limit instead of parking the
 			// job for manual review; the retried tx is distinguishable because

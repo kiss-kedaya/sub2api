@@ -2,10 +2,20 @@ import { apiClient } from '@/api/client'
 
 // Standalone crypto deposit API (independent of /purchase).
 
+// One asset accepted on a deposit address. `native` marks the chain's mainnet
+// coin (ETH on Ethereum, BNB on BSC), which has no token contract.
+export interface DepositAsset {
+  symbol: string
+  native: boolean
+}
+
 export interface DepositChain {
   chain: string
   address: string
   tokens: string[]
+  // Older backends send only `tokens`; the view then treats every entry as an
+  // ERC-20 token so it keeps working unchanged.
+  assets?: DepositAsset[]
 }
 
 export interface DepositInfo {

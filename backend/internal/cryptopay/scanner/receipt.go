@@ -301,6 +301,9 @@ func VerifyObservedTransfer(ctx context.Context, pool *rpc.Pool, t Transfer) err
 	if err := verifyCanonicalBlock(ctx, pool, receipt); err != nil {
 		return err
 	}
+	if t.Native {
+		return verifyNativeTransfer(ctx, pool, t, receipt)
+	}
 	return verifyReceiptTransfer(t, receipt)
 }
 

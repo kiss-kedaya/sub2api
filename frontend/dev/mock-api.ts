@@ -14,6 +14,11 @@ import type { MonitorMatrixGroupBy, MonitorMatrixRow } from '../src/api/channelM
 import type { PaymentOrder } from '../src/types/payment'
 import { readFileSync } from 'node:fs'
 
+// Preview-only deposit address: a syntactically valid EVM address, not a real
+// wallet. One address serves every network because the channel derives one HD
+// address per user, exactly like production.
+const demoDepositAddress = '0x' + '12'.repeat(20)
+
 // Local preview fixture: a real generated artwork so the hover player shows a
 // lifelike animation instead of a placeholder.
 const qualityDemoArtwork = readFileSync(new URL('./quality-demo-artwork.html', import.meta.url), 'utf8')
@@ -841,6 +846,39 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/payment/plans') return data.paymentPlans
         if (path === '/api/v1/payment/checkout-info') return data.checkoutInfo
         if (path === '/api/v1/payment/limits') return { methods: data.checkoutInfo.methods, global_min: data.checkoutInfo.global_min, global_max: data.checkoutInfo.global_max }
+        // On-chain deposit preview: three networks, the two mainnet coins the
+        // channel now accepts (ETH on Ethereum, BNB on BSC) and the stablecoins
+        // that were already there. Polygon deliberately has no native coin yet.
+        //
+        // The real handlers answer `{"data": ...}` with no `code` field, so the
+        // frontend's `data.data` read survives the response interceptor. The
+        // preview envelope adds `data` here to reproduce exactly that shape.
+        if (path === '/api/v1/crypto/deposit-info') {
+          return { data: {
+            enabled: true,
+            chains: [
+              { chain: 'ethereum', address: demoDepositAddress, tokens: ['USDT', 'USDC', 'ETH'],
+                assets: [{ symbol: 'ETH', native: true }, { symbol: 'USDT', native: false }, { symbol: 'USDC', native: false }] },
+              { chain: 'bsc', address: demoDepositAddress, tokens: ['USDT', 'USDC', 'BNB'],
+                assets: [{ symbol: 'BNB', native: true }, { symbol: 'USDT', native: false }, { symbol: 'USDC', native: false }] },
+              { chain: 'polygon', address: demoDepositAddress, tokens: ['USDT', 'USDC'],
+                assets: [{ symbol: 'USDT', native: false }, { symbol: 'USDC', native: false }] }
+            ],
+            rate: 6.7, min_amount: 0.001, max_amount: 10000
+          } }
+        }
+        if (path === '/api/v1/crypto/deposit-history') {
+          const hash = (seed: string) => '0x' + seed.repeat(64).slice(0, 64)
+          return { data: [
+            { chain: 'ethereum', tx_hash: hash('a1'), token: 'ETH', amount: '0.5', status: 'credited',
+              credited: 3.35, credited_known: true, created_at: new Date(Date.now() - 8 * 60_000).toISOString() },
+            { chain: 'bsc', tx_hash: hash('b2'), token: 'BNB', amount: '1.25', status: 'pending',
+              credited: 0, credited_known: true, confirmations: 1, required_confirmations: 3, block_number: 49_812_004,
+              created_at: new Date(Date.now() - 2 * 60_000).toISOString() },
+            { chain: 'ethereum', tx_hash: hash('c3'), token: 'USDT', amount: '100', status: 'credited',
+              credited: 670, credited_known: true, created_at: new Date(Date.now() - 55 * 60_000).toISOString() }
+          ] }
+        }
         if (path === '/api/v1/payment/orders/my') {
           const status = query.get('status')
           const orders = data.paymentOrders.filter(order => !status || order.status === status).sort((a, b) => b.id - a.id)

@@ -301,3 +301,63 @@ describe('user deposit auto refresh', () => {
     expect(mocks.showSuccess).not.toHaveBeenCalled()
   })
 })
+
+describe('user deposit currency selection', () => {
+  const address = '0x' + '12'.repeat(20)
+
+  function nativeChain() {
+    return {
+      enabled: true,
+      chains: [{
+        chain: 'ethereum', address, tokens: ['ETH', 'USDT', 'USDC'],
+        assets: [
+          { symbol: 'ETH', native: true },
+          { symbol: 'USDT', native: false },
+          { symbol: 'USDC', native: false }
+        ]
+      }],
+      rate: 6.7, min_amount: 0.001, max_amount: 0
+    }
+  }
+
+  it('labels the mainnet coin with its network and keeps a stablecoin selected by default', async () => {
+    mocks.getDepositInfo.mockResolvedValue(nativeChain())
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.findAll('.deposit-view__asset').map(a => a.text())).toEqual(['USDT', 'USDC', 'ETH (Ethereum)'])
+    // An existing user must not land on a currency worth far more than a token.
+    expect(wrapper.get('.deposit-view__notice').text()).toContain('deposit.networkNotice')
+    expect(wrapper.get('.deposit-view__notice').text()).not.toContain('deposit.nativeNotice')
+  })
+
+  it('switches the transfer notice to the native wording when ETH is chosen', async () => {
+    mocks.getDepositInfo.mockResolvedValue(nativeChain())
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+    const eth = wrapper.findAll('.deposit-view__asset')[2]
+    await eth.trigger('click')
+    // The paragraph inside the notice, not the whole box: the box also renders
+    // the decorative "!" mark.
+    expect(wrapper.get('.deposit-view__notice p').text()).toBe(
+      'deposit.nativeNotice {"network":"Ethereum","asset":"ETH"}'
+    )
+    // The address and QR code are shared; only the wording changes.
+    expect(wrapper.get('code.deposit-view__address').text()).toBe(address)
+    expect(wrapper.find('canvas').exists()).toBe(true)
+  })
+
+  it('derives assets from tokens when an older backend sends no asset list', async () => {
+    mocks.getDepositInfo.mockResolvedValue({
+      enabled: true, chains: [{ chain: 'polygon', address, tokens: ['USDT'] }],
+      rate: 6.7, min_amount: 0.001, max_amount: 0
+    })
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+    // One asset needs no selector, and the notice keeps the legacy wording.
+    expect(wrapper.find('.deposit-view__assets').exists()).toBe(false)
+    expect(wrapper.get('.deposit-view__notice').text()).toContain('deposit.networkNotice')
+  })
+})
