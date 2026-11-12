@@ -570,6 +570,16 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			"job_id", job.ID, "chain", job.Chain)
 		return e.deferJob(ctx, job, fmt.Errorf("sweep gas budget is not configured for %s", job.Chain))
 	}
+	// A budget below the chain's own minimum is not a market condition: no
+	// quote the pool may sign can ever fit, so the job would defer on every run
+	// until it was parked as failed. Name the defect instead.
+	if err := gasFloorExceedsBudget(e.config, job.Chain); err != nil {
+		slog.Error("[cryptopay] sweep deferred: gas budget below the chain gas price floor",
+			"job_id", job.ID, "chain", job.Chain,
+			"floor_wei", chainGasPriceFloor(job.Chain).String(), "budget_wei", cap.String(),
+			"error", err.Error())
+		return e.deferJob(ctx, job, err)
+	}
 	if transferGasBudget(price).Cmp(cap) > 0 {
 		slog.Warn("[cryptopay] sweep deferred: gas quote above the configured budget",
 			"job_id", job.ID, "chain", job.Chain)

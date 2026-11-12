@@ -16,12 +16,13 @@ import (
 // shortfall branch. Each one used to go through jobError, which spends a
 // bounded attempt and finally marks a payable sweep as `failed`.
 func TestGasFundingWaitDoesNotBurnAnAttempt(t *testing.T) {
-	smallBudget := map[string]float64{"bsc": 1e-18} // 1 wei: below one buffered transfer
+	smallBudget := map[string]float64{"bsc": 1e-5} // 1e13 wei: pays one floored transfer, not 30 gwei
 	cases := []struct {
 		name        string
 		native      int64
 		payerNative int64
 		budget      map[string]float64
+		gasPrice    string
 		askGasPayer bool
 		want        string
 	}{
@@ -32,8 +33,8 @@ func TestGasFundingWaitDoesNotBurnAnAttempt(t *testing.T) {
 		},
 		{
 			name: "quote above configured budget", native: 0, payerNative: 1_000_000_000,
-			budget: smallBudget,
-			want:   errGasQuoteExceedsBudget.Error(),
+			budget: smallBudget, gasPrice: "0x6fc23ac00", // 30 gwei: above a 1e13 wei budget
+			want: errGasQuoteExceedsBudget.Error(),
 		},
 		{
 			name: "gas wallet cannot pay", native: 0, payerNative: 0,
@@ -45,6 +46,9 @@ func TestGasFundingWaitDoesNotBurnAnAttempt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e, m, c, entry := setupExecutor(t)
 			c.native, c.payerNative = tc.native, tc.payerNative
+			if tc.gasPrice != "" {
+				c.gasPrice = tc.gasPrice
+			}
 			e.config.GasTopUp = tc.budget
 			// Already at the terminal attempt bound: one more persisted failure
 			// would mark this job `failed` forever.

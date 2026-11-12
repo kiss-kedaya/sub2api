@@ -74,7 +74,9 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 			continue
 		}
 		if strings.TrimSpace(cfg.RPC[chain]) != "" {
-			pools[chain] = rpc.NewPool(cfg.RPC[chain])
+			// The chain id is part of the pool's identity: it selects the gas
+			// price floor a sweep may never sign below.
+			pools[chain] = rpc.NewPool(cfg.RPC[chain]).WithChainID(uint64(chainlistIDs[chain]))
 		} else if pool := runtimePools[chain]; pool != nil && len(pool.Endpoints()) > 0 {
 			pools[chain] = pool.Snapshot()
 		} else {

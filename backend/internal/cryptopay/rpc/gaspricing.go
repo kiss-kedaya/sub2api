@@ -13,14 +13,71 @@ import (
 )
 
 // A gas price is a signed number, not a hint: it decides whether a transaction
-// can be mined at all. Pool.GasPrice used to return whatever the first endpoint
-// in the rotation answered. A public BSC endpoint that reports 0x1 (1 wei) is
-// valid JSON-RPC, so the pool accepted it and the sweeper signed a transaction
-// that can never be included, even though the network itself reported 0x2faf080
-// (50,000,000 wei) at the same moment.
+// can be mined at all. Two independent defects produced dead sweep bytes on BSC
+// on 2026-11-13 (sweep_records.id=560, tx 0x9f208df3…, nonce 0x0, gasPrice 0x1):
 //
-// Every endpoint that is not cooling down is therefore sampled and the median
-// is used: one outlier can no longer move the fee in either direction.
+//   - Pool.GasPrice returned whatever the first endpoint in the rotation
+//     answered, with no cross-endpoint check. A public endpoint that reports
+//     0x1 (1 wei) is valid JSON-RPC, so the pool accepted it even though the
+//     network itself reported 0x2faf080 (50,000,000 wei) at the same time.
+//   - Nothing compared the quote with the chain's own minimum, so a single bad
+//     endpoint produced a fee no validator would ever include.
+//
+// Both are fixed here: every healthy endpoint is sampled and the median is
+// used (one outlier cannot move it), and the result is clamped to a per-chain
+// floor that is documented below.
+const weiPerGwei = 1_000_000_000
+
+// Minimum acceptable gas price per chain, in wei. A pool never signs below its
+// chain's floor; a quote under it is treated as a bad answer, not a bargain.
+const (
+	// Ethereum mainnet: 1 gwei is the long-standing minimum that relayers and
+	// block builders accept; the observed eth_gasPrice is 1-5 gwei.
+	ethereumMinGasPriceWei = 1 * weiPerGwei
+	// BSC: 0.05 gwei, measured as eth_gasPrice = 0x2faf080 on 2026-11-13. BSC
+	// validators include transactions at the network's minimum gas price, which
+	// is 0 for the chain but 0.05 gwei in practice on every public endpoint.
+	bscMinGasPriceWei = 50_000_000
+	// Polygon PoS: 30 gwei is the minimum gas price bor validators enforce;
+	// anything below it is rejected by the pool, not merely unprofitable.
+	polygonMinGasPriceWei = 30 * weiPerGwei
+	// Arbitrum One: L2 fees are priced around 0.01 gwei on the parent chain.
+	arbitrumMinGasPriceWei = 10_000_000
+	// Base: OP-Stack L2, market price around 0.005-0.01 gwei.
+	baseMinGasPriceWei = 1_000_000
+	// X Layer: OP-Stack L2 priced like the other L2s above.
+	xlayerMinGasPriceWei = 10_000_000
+	// Plasma: EVM chain with mainnet-like pricing.
+	plasmaMinGasPriceWei = 1 * weiPerGwei
+	// unknownChainMinGasPriceWei applies when the pool cannot prove which chain
+	// it serves. It is deliberately the conservative mainnet figure: signing a
+	// too-low fee produces a transaction that never lands, while this value is
+	// still accepted on every chain the sweeper supports.
+	unknownChainMinGasPriceWei = 1 * weiPerGwei
+)
+
+// gasPriceFloors is keyed by EIP-155 chain id so a pool only needs to know the
+// chain it verified, never a chain name.
+var gasPriceFloors = map[uint64]int64{
+	1:     ethereumMinGasPriceWei,
+	56:    bscMinGasPriceWei,
+	137:   polygonMinGasPriceWei,
+	42161: arbitrumMinGasPriceWei,
+	8453:  baseMinGasPriceWei,
+	196:   xlayerMinGasPriceWei,
+	9745:  plasmaMinGasPriceWei,
+}
+
+// GasPriceFloor returns the minimum gas price, in wei, that a pool may sign
+// with on chainID. An unknown chain id gets the conservative default rather
+// than no floor: a missing floor is exactly the defect this guards against.
+// The returned value is a copy the caller may modify.
+func GasPriceFloor(chainID uint64) *big.Int {
+	if floor, ok := gasPriceFloors[chainID]; ok {
+		return big.NewInt(floor)
+	}
+	return big.NewInt(unknownChainMinGasPriceWei)
+}
 
 // decodeGasPrice accepts only a strictly positive JSON-RPC quantity. hexutil
 // already rejects a missing 0x prefix, leading zeros, negative values and
@@ -92,6 +149,18 @@ func medianGasPrice(samples []*big.Int) *big.Int {
 	sorted := append([]*big.Int(nil), samples...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Cmp(sorted[j]) < 0 })
 	return new(big.Int).Set(sorted[len(sorted)/2])
+}
+
+// clampGasPrice raises price to floor. A missing or zero floor leaves the price
+// untouched; callers only ever lose the ability to sign below the floor.
+func clampGasPrice(price, floor *big.Int) *big.Int {
+	if price == nil {
+		return new(big.Int).Set(floor)
+	}
+	if floor == nil || floor.Sign() <= 0 || price.Cmp(floor) >= 0 {
+		return price
+	}
+	return new(big.Int).Set(floor)
 }
 
 // gasPriceCacheTTL keeps one sweep run from sampling the whole pool once per

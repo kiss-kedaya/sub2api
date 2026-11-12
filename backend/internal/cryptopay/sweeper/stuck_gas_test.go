@@ -34,7 +34,7 @@ func expectGasRewrite(m sqlmock.Sqlmock, oldRaw string, rewritten *atomic.Bool) 
 func TestStuckUnderpricedGasTopUpIsReplacedAtTheSameNonce(t *testing.T) {
 	e, m, c, entry := setupExecutor(t)
 	c.gasPrice = "0x64" // 100 wei today; the top-up signed earlier carries a fee cap of 1 wei
-	j := signedJob(c, entry, true)
+	j := signedJobAtPrice(c, entry, true, "1")
 	oldRaw, oldHash := j.GasRaw, j.GasHash
 	var rewritten atomic.Bool
 	c.beforeSend = func() {
@@ -53,7 +53,7 @@ func TestStuckUnderpricedGasTopUpIsReplacedAtTheSameNonce(t *testing.T) {
 	if err != nil || summary.Swept != 1 {
 		t.Fatalf("summary=%+v err=%v", summary, err)
 	}
-	if len(c.signs) != 2 || c.signs[0].Kind != "gas" || c.signs[0].Nonce != 7 || c.signs[0].GasPrice != "100" ||
+	if len(c.signs) != 2 || c.signs[0].Kind != "gas" || c.signs[0].Nonce != 7 || c.signs[0].GasPrice != chainGasPriceFloor("bsc").String() ||
 		c.signs[0].Amount != "195000" || c.signs[1].Kind != "sweep" {
 		t.Fatalf("replacement must keep nonce and amount and raise only the fee: %+v", c.signs)
 	}
@@ -123,7 +123,7 @@ func TestStuckGasTopUpIsNotReplacedWithoutAuthorization(t *testing.T) {
 		t.Fatal("unexpected wallet fixture")
 	}
 	e.wallet = denySigningWallet{fixture}
-	j := signedJob(c, entry, true)
+	j := signedJobAtPrice(c, entry, true, "1")
 	expectRunStart(m, j)
 	expectUnlock(m)
 	summary, err := e.Run(t.Context(), false)
