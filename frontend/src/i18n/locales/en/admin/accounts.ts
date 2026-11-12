@@ -339,8 +339,8 @@ export default {
         },
         hint: {
           sub2api: 'The upstream is Sub2API: it answered /v1/usage',
-          newapi: 'The upstream is New API: it answered /api/usage/token/',
-          openai_compatible: 'The upstream only serves the legacy OpenAI billing endpoints (/v1/dashboard/billing)',
+          newapi: 'The upstream is New API: it carries a new-api fingerprint (x-new-api-version / x-oneapi-request-id / /api/status) or answered /api/usage/token/',
+          openai_compatible: 'The upstream only serves the legacy OpenAI billing endpoints (/v1/dashboard/billing) and carries no New API fingerprint',
           official: "The provider's own API. No balance is read",
           custom: 'The upstream is reachable but answered none of the known balance endpoints',
           unknown: 'Not identified yet: never probed, the key was rejected, or the probe could not connect'

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -21,8 +22,9 @@ const (
 	// UpstreamKindNewAPI answers /api/usage/token/ with object=token_usage.
 	UpstreamKindNewAPI = "newapi"
 	// UpstreamKindOpenAICompatible answers the legacy
-	// /v1/dashboard/billing/subscription endpoint but none of the above, so a
-	// balance can be read without knowing which software serves it.
+	// /v1/dashboard/billing/subscription endpoint, carries no new-api
+	// fingerprint, and answers none of the above, so a balance can be read
+	// without knowing which software serves it.
 	UpstreamKindOpenAICompatible = "openai_compatible"
 	// UpstreamKindOfficial is a provider's own API domain. Nothing is requested.
 	UpstreamKindOfficial = "official"
@@ -32,11 +34,16 @@ const (
 
 const (
 	upstreamNewAPIUsagePath          = "/api/usage/token/"
+	upstreamNewAPIStatusPath         = "/api/status"
 	upstreamLegacySubscriptionPath   = "/v1/dashboard/billing/subscription"
 	upstreamLegacyUsagePath          = "/v1/dashboard/billing/usage"
 	upstreamKindProbeMaxBodyBytes    = 64 * 1024
 	upstreamNewAPIMaxTokenNameRunes  = 64
 	upstreamLegacyUnlimitedHardLimit = 100000000.0
+
+	// upstreamNewAPIErrorType is what new-api puts in error.type. Its error
+	// envelope is a fingerprint even when the endpoint asked no longer exists.
+	upstreamNewAPIErrorType = "new_api_error"
 
 	// upstreamNewAPIQuotaPerUnit is new-api's default QuotaPerUnit: 500000 quota
 	// points are one US dollar. A site can change that ratio or switch its
@@ -258,4 +265,77 @@ func normalizeUpstreamKind(value string) string {
 	default:
 		return ""
 	}
+}
+
+// upstreamNewAPIHeaderNames are the response headers the new-api family sets on
+// every answer, including error answers for paths it does not serve.
+//
+// They exist because new-api deliberately answers the legacy OpenAI billing
+// endpoints for compatibility: a billing payload on its own can no longer say
+// which software served it. These headers are that distinction.
+var upstreamNewAPIHeaderNames = []string{"X-New-Api-Version", "X-Oneapi-Request-Id"}
+
+// upstreamNewAPIHeaderEvidence reports the new-api fingerprint carried by a
+// response header and names the signal that matched.
+//
+// Headers are read regardless of status code: a 404 from a new-api site still
+// carries its version header, which is exactly how a site that also answers
+// /v1/dashboard/billing is told apart from a real OpenAI-billing relay.
+func upstreamNewAPIHeaderEvidence(header http.Header) (string, bool) {
+	for _, name := range upstreamNewAPIHeaderNames {
+		if value := strings.TrimSpace(header.Get(name)); value != "" {
+			return "header:" + strings.ToLower(name), true
+		}
+	}
+	return "", false
+}
+
+// upstreamNewAPIErrorEvidence reports whether a body is new-api's error
+// envelope, {"error":{"message":…,"type":"new_api_error"}}.
+//
+// The type name only counts inside a JSON error object, so an HTML page or a
+// log line quoting the word is not a fingerprint.
+func upstreamNewAPIErrorEvidence(body []byte) (string, bool) {
+	if len(body) == 0 || !bytes.Contains(bytes.ToLower(body), []byte(upstreamNewAPIErrorType)) {
+		return "", false
+	}
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Error) == 0 {
+		return "", false
+	}
+	if !bytes.Contains(bytes.ToLower(envelope.Error), []byte(upstreamNewAPIErrorType)) {
+		return "", false
+	}
+	return "body:" + upstreamNewAPIErrorType, true
+}
+
+// upstreamNewAPIStatusEvidence reports whether /api/status answered with the
+// document new-api and its one-api ancestor serve.
+//
+// The document carries no literal "new-api" marker, so the fields only that
+// family returns are the fingerprint: new-api adds quota_per_unit /
+// display_in_currency / enable_data_export, while one-api's status always pairs
+// a version with start_time.
+func upstreamNewAPIStatusEvidence(body []byte) (string, bool) {
+	var status struct {
+		Data *struct {
+			Version           *string  `json:"version"`
+			StartTime         *float64 `json:"start_time"`
+			QuotaPerUnit      *float64 `json:"quota_per_unit"`
+			DisplayInCurrency *bool    `json:"display_in_currency"`
+			EnableDataExport  *bool    `json:"enable_data_export"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &status); err != nil || status.Data == nil {
+		return "", false
+	}
+	if status.Data.QuotaPerUnit != nil || status.Data.DisplayInCurrency != nil || status.Data.EnableDataExport != nil {
+		return "status:newapi_fields", true
+	}
+	if status.Data.Version != nil && strings.TrimSpace(*status.Data.Version) != "" && status.Data.StartTime != nil {
+		return "status:oneapi_fields", true
+	}
+	return "", false
 }
