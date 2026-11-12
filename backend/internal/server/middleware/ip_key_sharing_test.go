@@ -436,7 +436,7 @@ func TestIPKeySharingPeakUsers(t *testing.T) {
 
 	t.Run("peak grows from 4 to 6 while first seen stays 4", func(t *testing.T) {
 		detector, settings, _, advance := sharingAcceptanceFixture(t, 4, 5)
-		ip := "207.32.218.139"
+		ip := "203.0.113.7"
 
 		var hit IPKeySharingHit
 		var ok bool

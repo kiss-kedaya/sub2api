@@ -117,7 +117,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { re
 // first_seen_users, peak_users, total_keys and last_seen_at without error.
 func TestAutoEntryLegacyCompatibility(t *testing.T) {
 	legacy := AutoEntry{
-		IP:            "207.32.218.139",
+		IP:            "203.0.113.7",
 		Source:        AutoEntrySourceAuto,
 		FirstSeenAt:   time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC),
 		DistinctUsers: 4,
@@ -171,7 +171,7 @@ func TestUpsertAutoEntryPeakAndTotal(t *testing.T) {
 
 	hit := func(users, total int, at time.Time) AutoEntry {
 		return AutoEntry{
-			IP: "207.32.218.139", DistinctUsers: users, FirstSeenUsers: users,
+			IP: "203.0.113.7", DistinctUsers: users, FirstSeenUsers: users,
 			PeakUsers: users, TotalKeys: total, WindowMinutes: 5,
 			FirstSeenAt: at, LastSeenAt: at, KeyPrefixes: []string{"sk-aaaa1"},
 		}
@@ -213,7 +213,7 @@ func TestUpsertAutoEntryKeyPrefixesStayBounded(t *testing.T) {
 	for i := range 12 {
 		prefixes := []string{"sk-" + strings.Repeat("a", i+1)}
 		settings, _ = settings.UpsertAutoEntry(AutoEntry{
-			IP: "207.32.218.139", DistinctUsers: 4, FirstSeenUsers: 4, PeakUsers: 4,
+			IP: "203.0.113.7", DistinctUsers: 4, FirstSeenUsers: 4, PeakUsers: 4,
 			TotalKeys: i + 1, WindowMinutes: 5, FirstSeenAt: at,
 			LastSeenAt: at.Add(time.Duration(i) * 31 * time.Second), KeyPrefixes: prefixes,
 		})
@@ -252,13 +252,13 @@ func TestUpsertAutoEntryDoesNotMutateReceiver(t *testing.T) {
 		Message: "n",
 		RPM:     100,
 		AutoEntries: []AutoEntry{{
-			IP: "207.32.218.139", DistinctUsers: 4, FirstSeenUsers: 4,
+			IP: "203.0.113.7", DistinctUsers: 4, FirstSeenUsers: 4,
 			PeakUsers: 4, TotalKeys: 4, WindowMinutes: 5,
 			FirstSeenAt: at, LastSeenAt: at,
 		}},
 	}
 	updated, added := original.UpsertAutoEntry(AutoEntry{
-		IP: "207.32.218.139", DistinctUsers: 9, FirstSeenUsers: 9,
+		IP: "203.0.113.7", DistinctUsers: 9, FirstSeenUsers: 9,
 		PeakUsers: 9, TotalKeys: 9, WindowMinutes: 5,
 		FirstSeenAt: at, LastSeenAt: at.Add(31 * time.Second),
 	})
