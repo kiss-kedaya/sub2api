@@ -407,6 +407,15 @@ describe('PaymentView recharge center visibility', () => {
     wrapper.unmount()
   })
 
+  it('hides the balance top-up tab when every payment method is switched off', async () => {
+    const wrapper = await mountEntry({ methods: {}, recharge_center_enabled: true })
+    // Only one tab remains, so the switcher itself is gone and the recharge centre is
+    // the page rather than an empty "not available" panel parked behind a tab.
+    expect(wrapper.findComponent(ConsoleTabs).exists()).toBe(false)
+    expect(wrapper.text()).not.toContain(zh.payment.tabTopUp)
+    wrapper.unmount()
+  })
+
   it('opens on the Alipay / WeChat entry by default once it is enabled', async () => {
     const wrapper = await mountEntry({ recharge_center_enabled: true })
     const tabs = wrapper.getComponent(ConsoleTabs)

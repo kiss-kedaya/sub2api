@@ -231,11 +231,11 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: 'i-lucide-key-round' },
     { path: '/infinite-canvas', label: t('nav.infiniteCanvas'), icon: 'i-lucide-frame' },
-    { path: '/deposit', label: t('nav.cryptoDeposit'), icon: 'i-lucide-wallet', featureFlag: flagCrypto },
     { path: '/batch-image', label: t('nav.batchImage'), icon: 'i-lucide-images', hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: 'i-lucide-chart-column', hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: 'i-lucide-layers', hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: 'i-lucide-activity', featureFlag: flagChannelMonitor },
+    { path: '/deposit', label: t('nav.cryptoDeposit'), icon: 'i-lucide-wallet', featureFlag: flagCrypto },
     { path: '/purchase', label: t('nav.buySubscription'), icon: 'i-lucide-circle-dollar-sign', hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/orders', label: t('nav.myOrders'), icon: 'i-lucide-receipt-text', hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/redeem', label: t('nav.redeem'), icon: 'i-lucide-gift', hideInSimpleMode: true },

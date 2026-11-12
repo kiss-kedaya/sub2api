@@ -613,16 +613,21 @@ const renderedHelpText = computed(() => DOMPurify.sanitize(
 
 const rechargeCenterEnabled = computed(() => checkout.value.recharge_center_enabled === true)
 
+const visibleMethods = computed(() => getVisibleMethods(checkout.value.methods))
+const enabledMethods = computed(() => Object.keys(visibleMethods.value))
+
 // Alipay / WeChat comes first in the tab bar and is the tab the page opens on (see onMounted).
+// The balance top-up tab is only offered when it can actually do something: with every payment
+// method switched off the panel would only ever say "not available", so the tab is hidden
+// instead of parking an empty page behind it.
 const tabs = computed(() => {
   const result: { key: 'recharge' | 'rechargeCenter'; label: string }[] = []
   if (rechargeCenterEnabled.value) result.push({ key: 'rechargeCenter', label: t('payment.tabRechargeCenter') })
-  if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
+  if (!checkout.value.balance_disabled && enabledMethods.value.length > 0) {
+    result.push({ key: 'recharge', label: t('payment.tabTopUp') })
+  }
   return result
 })
-
-const visibleMethods = computed(() => getVisibleMethods(checkout.value.methods))
-const enabledMethods = computed(() => Object.keys(visibleMethods.value))
 const validAmount = computed(() => amount.value ?? 0)
 
 function inheritRechargeFeeRate(override: number | null | undefined, fallback: number): number {
