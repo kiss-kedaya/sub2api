@@ -136,7 +136,7 @@ describe('GatewayIPNoticeSettings', () => {
       ...policy,
       auto_entries: [
         {
-          ip: '207.32.218.139',
+          ip: '203.0.113.7',
           source: 'auto',
           first_seen_at: '2026-11-12T04:00:00Z',
           distinct_users: 6,
@@ -151,7 +151,7 @@ describe('GatewayIPNoticeSettings', () => {
     })
     const wrapper = render()
     await flushPromises()
-    const text = wrapper.get('[data-testid="gateway-ip-notice-auto-entry-207.32.218.139"]').text()
+    const text = wrapper.get('[data-testid="gateway-ip-notice-auto-entry-203.0.113.7"]').text()
     expect(text).toContain('"first":4')
     expect(text).toContain('"peak":6')
     expect(text).toContain('"total":10')
