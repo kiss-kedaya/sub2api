@@ -9,6 +9,7 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/urljoin"
 )
 
 const maxGuardResponseBytes int64 = 256 * 1024
@@ -44,7 +45,7 @@ func ChatCompletionsURL(base string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return normalized + "/v1/chat/completions", nil
+	return urljoin.APIPath(normalized, "/v1/chat/completions"), nil
 }
 
 func ModelsURL(base string) (string, error) {
@@ -52,7 +53,7 @@ func ModelsURL(base string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return normalized + "/v1/models", nil
+	return urljoin.APIPath(normalized, "/v1/models"), nil
 }
 
 func NewSecureHTTPClient(endpoint ActiveEndpoint) (*http.Client, error) {
