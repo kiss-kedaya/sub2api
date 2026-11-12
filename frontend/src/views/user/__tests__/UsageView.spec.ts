@@ -217,6 +217,19 @@ describe('user UsageView', () => {
     getAvailable.mockResolvedValue([{ id: 1, name: 'default' }])
   })
 
+  it('lets the cache-detail popover escape the stats strip', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    const strip = wrapper.get('.usage-stats-strip')
+    // Clipping the strip to its rounded corners also sliced the cache-detail popover that
+    // opens out of the 总 Token cell (1440px: only 18.6% of it stayed visible, 390px: 15.1px
+    // cut off the right edge). The rounded corner is painted by the strip's own background
+    // and ring, so no content clipping is needed here.
+    expect(strip.classes()).not.toContain('overflow-hidden')
+    expect(strip.classes()).toContain('rounded-lg')
+  })
+
   it('preserves named toolbar commands and a semantic page heading', async () => {
     const wrapper = mountUsageView()
     await flushPromises()

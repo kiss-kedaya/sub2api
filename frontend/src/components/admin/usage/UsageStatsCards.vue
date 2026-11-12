@@ -35,8 +35,15 @@
                 d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
+            <!--
+              Aligned to the trigger's right edge, not centred on it: the trigger is the last item
+              of the meta line, so its right edge can never pass the card/strip boundary. Centring
+              pushed this 14rem panel outside the stats strip (768px: 18.7px, 390px: 15.1px), which
+              also meant a horizontal overflow inside the layout. No ancestor clips it any more,
+              and `pointer-events-none` keeps it from stealing hover from the trigger.
+            -->
             <span
-              class="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-56 -translate-x-1/2 rounded-lg border border-gray-200 bg-white p-3 text-left text-xs text-gray-700 shadow-lg group-hover:block group-focus:block dark:border-dark-600 dark:bg-dark-800 dark:text-dark-200"
+              class="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-56 rounded-lg border border-gray-200 bg-white p-3 text-left text-xs text-gray-700 shadow-lg group-hover:block group-focus:block dark:border-dark-600 dark:bg-dark-800 dark:text-dark-200"
             >
               <span class="mb-2 block font-medium text-gray-900 dark:text-white">
                 {{ cacheDetailLabel() }}
