@@ -1,162 +1,216 @@
 <template>
-  <!-- display: contents, so in the table cell the clock button sits next to the schedulable
-       switch and the timer summaries wrap onto their own lines below (basis-full). -->
-  <div class="contents text-left text-xs" @click.stop>
+  <!-- The cell footprint is fixed on purpose. Only a compact trigger lives in the table cell; the
+       plan summary and the execution log moved into the dialog below, so a snapshot that arrives
+       late can never widen this column and the table never starts scrolling sideways. -->
+  <div class="inline-flex w-[112px] max-w-full shrink-0 align-middle" data-test="timer-cell" @click.stop>
     <UButton
       data-test="timer-entry"
+      class="w-full min-w-0 justify-start overflow-hidden"
       :color="hasSchedule ? 'primary' : 'neutral'"
       :variant="hasSchedule ? 'soft' : 'ghost'"
-      icon="i-lucide-alarm-clock"
       size="xs"
-      square
       :disabled="busy || loading"
       :aria-expanded="expanded"
+      aria-haspopup="dialog"
       :aria-label="t('admin.accounts.timer.title')"
-      :title="t('admin.accounts.timer.title')"
-      @click="begin(lastOneShotAction)"
-    />
-    <div v-if="snapshot?.recurring?.enabled" class="max-w-80 basis-full whitespace-normal wrap-break-word text-muted" aria-live="polite">
-      <span>{{ recurringSummary }}</span>
-      <span class="ms-1.5 inline-flex gap-2">
-        <UButton variant="link" size="xs" class="p-0" :disabled="busy || loading" :label="t('admin.accounts.timer.edit')" @click="begin('recurring')" />
-        <UButton data-test="timer-cancel-recurring" color="error" variant="link" size="xs" class="p-0" :disabled="busy || loading" :label="t('admin.accounts.timer.cancel')" @click="cancelRecurring" />
+      :title="triggerTitle"
+      @click="openDialog"
+    >
+      <span class="inline-flex min-w-0 items-center gap-1.5">
+        <span class="size-1.5 shrink-0 rounded-full" :class="hasSchedule ? 'bg-primary' : 'bg-muted'" aria-hidden="true" />
+        <span class="min-w-0 truncate">{{ triggerLabel }}</span>
       </span>
-    </div>
-    <div v-for="task in pending" :key="task.action" class="max-w-80 basis-full whitespace-normal wrap-break-word text-muted" aria-live="polite">
-      <span>{{ t(`admin.accounts.timer.${task.action}`) }} · {{ taskLocalTime(task) }} · {{ countdown(task) }}</span>
-      <span class="ms-1.5 inline-flex gap-2">
-        <UButton variant="link" size="xs" class="p-0" :disabled="busy" :label="t('admin.accounts.timer.edit')" @click="begin(task.action)" />
-        <UButton :data-test="`timer-cancel-${task.action}`" color="error" variant="link" size="xs" class="p-0" :disabled="busy" :label="t('admin.accounts.timer.cancel')" @click="cancel(task)" />
-      </span>
-      <span v-if="task.reason" class="block text-warning">{{ reasonText(task.reason) }}</span>
-    </div>
-    <p v-if="error && !expanded" class="max-w-80 basis-full whitespace-normal text-error" role="alert">{{ error }}</p>
-    <UButton v-if="loadFailed" variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.reload')" @click="load" />
+    </UButton>
     <BaseDialog :show="expanded" :title="t('admin.accounts.timer.title')" width="narrow"
       :close-on-escape="!busy" :close-on-click-outside="!busy" :show-close-button="!busy"
       :draft-notice="timerDraft.restored.value ? t('common.draftRestored') : ''"
       :draft-discard-label="t('common.draftDiscard')"
-      @discard-draft="discardTimerDraft" @close="expanded = false">
-    <div v-if="expanded" data-test="timer-form" class="max-w-full space-y-4 whitespace-normal">
-      <fieldset :disabled="busy" class="min-w-0 space-y-4">
-        <UFormField :label="t('admin.accounts.timer.mode')">
-          <UFieldGroup class="flex w-full" role="tablist" :aria-label="t('admin.accounts.timer.mode')">
-            <UButton
-              v-for="option in modeOptions"
-              :key="option.value"
-              role="tab"
-              color="neutral"
-              :variant="form.mode === option.value ? 'solid' : 'outline'"
-              class="flex-1 justify-center"
-              :aria-selected="form.mode === option.value"
-              :data-test="`timer-mode-${option.value}`"
-              :label="option.label"
-              @click="setMode(option.value)"
-            />
-          </UFieldGroup>
-        </UFormField>
-        <UFormField v-if="form.mode !== 'recurring'" :label="t('admin.accounts.timer.action')">
-          <USelect :model-value="action" :items="actionItems" data-test="timer-action" class="w-full" @update:model-value="selectAction" />
-        </UFormField>
-        <div v-if="form.mode === 'relative'" class="space-y-2">
-          <div class="grid grid-cols-2 gap-2">
-            <UFormField :label="t('admin.accounts.timer.hours')">
-              <UInput v-model.number="form.hours" type="number" min="0" step="1" :max="Math.floor(maxMinutes / 60)" class="w-full" />
-            </UFormField>
-            <UFormField :label="t('admin.accounts.timer.minutes')">
-              <UInput v-model.number="form.minutes" type="number" min="0" step="1" :max="maxMinutes" class="w-full" />
-            </UFormField>
-          </div>
-          <UButton variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.preset')" @click="form.hours = 8; form.minutes = 0" />
-          <p class="text-xs text-muted">{{ t('admin.accounts.timer.relativeHint') }}</p>
-        </div>
-        <div v-else-if="form.mode === 'recurring'" class="space-y-4">
-          <UFormField :label="t('admin.accounts.timer.activeDays')">
-            <Select :model-value="weekdaysOnly" :options="dayScopeOptions" :aria-label="t('admin.accounts.timer.activeDays')" data-test="timer-day-mode" class="w-full" @update:model-value="updateWeekdaysOnly" />
-          </UFormField>
-          <div class="space-y-3">
-            <div v-for="(period, index) in recurringPeriods" :key="index" class="grid min-w-0 grid-cols-[1fr_1fr_auto] items-end gap-2">
-              <UFormField :label="t('admin.accounts.timer.start')" class="min-w-0">
-                <UInput v-model="period.start" data-test="timer-period-start" type="time" step="60" class="w-full" />
-              </UFormField>
-              <UFormField :label="t('admin.accounts.timer.end')" class="min-w-0">
-                <UInput v-model="period.end" data-test="timer-period-end" type="time" step="60" class="w-full" />
-              </UFormField>
-              <UButton
-                v-if="recurringPeriods.length > 1"
-                data-test="timer-period-remove"
-                color="neutral"
-                variant="ghost"
-                icon="i-lucide-x"
-                square
-                :aria-label="t('admin.accounts.timer.removePeriod')"
-                :title="t('admin.accounts.timer.removePeriod')"
-                @click="removePeriod(index)"
+      @discard-draft="discardTimerDraft" @close="closeDialog">
+      <div v-if="expanded" data-test="timer-dialog" class="max-w-full space-y-3 whitespace-normal">
+        <!-- Two dense pages: the plan, and what the scheduler already did. -->
+        <UFieldGroup class="flex w-full" role="tablist" :aria-label="t('admin.accounts.timer.title')">
+          <UButton
+            v-for="option in tabOptions"
+            :key="option.value"
+            role="tab"
+            color="neutral"
+            :variant="tab === option.value ? 'solid' : 'outline'"
+            class="flex-1 justify-center transition-colors duration-150"
+            :aria-selected="tab === option.value"
+            :data-test="`timer-tab-${option.value}`"
+            :label="option.label"
+            @click="tab = option.value"
+          />
+        </UFieldGroup>
+
+        <div v-show="tab === 'plan'" data-test="timer-plan" role="tabpanel" :aria-label="t('admin.accounts.timer.tabPlan')" class="space-y-3">
+          <template v-if="!editing">
+            <p v-if="planZone" class="text-xs text-dimmed">{{ t('admin.accounts.timer.timezone') }} · {{ planZone }}</p>
+            <div data-test="timer-plan-summary" class="space-y-0.5">
+              <div v-if="snapshot?.recurring?.enabled" data-test="timer-plan-recurring" class="flex min-h-10 items-center gap-2">
+                <span class="min-w-0 flex-1 truncate text-[13px]" :title="recurringSummary">{{ recurringSummary }}</span>
+                <UButton data-test="timer-edit-recurring" variant="link" size="xs" class="shrink-0 p-0" :disabled="busy || loading" :label="t('admin.accounts.timer.edit')" @click="begin('recurring')" />
+                <UButton data-test="timer-cancel-recurring" color="error" variant="link" size="xs" class="shrink-0 p-0" :disabled="busy || loading" :label="t('admin.accounts.timer.cancel')" @click="cancelRecurring" />
+              </div>
+              <div v-for="task in pending" :key="task.action" :data-test="`timer-plan-${task.action}`" class="flex min-h-10 items-center gap-2">
+                <span class="min-w-0 flex-1 truncate text-[13px]" :title="planTaskLine(task)">{{ planTaskLine(task) }}</span>
+                <span class="shrink-0 text-xs tabular-nums text-muted">{{ countdown(task) }}</span>
+                <UButton :data-test="`timer-edit-${task.action}`" variant="link" size="xs" class="shrink-0 p-0" :disabled="busy" :label="t('admin.accounts.timer.edit')" @click="begin(task.action)" />
+                <UButton :data-test="`timer-cancel-${task.action}`" color="error" variant="link" size="xs" class="shrink-0 p-0" :disabled="busy" :label="t('admin.accounts.timer.cancel')" @click="cancel(task)" />
+              </div>
+              <p v-if="!hasSchedule" data-test="timer-plan-empty" class="py-2 text-[13px] text-muted">{{ t('admin.accounts.timer.noPlan') }}</p>
+            </div>
+            <template v-for="task in pending" :key="`${task.action}-reason`">
+              <p v-if="task.reason" class="text-[13px] text-warning">{{ reasonText(task.reason) }}</p>
+            </template>
+            <div v-if="schedulable !== undefined" class="flex min-h-10 items-center gap-3 border-t border-default pt-1">
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-[13px]">{{ t('admin.accounts.timer.schedulable') }}</p>
+                <p class="truncate text-xs text-muted">{{ t('admin.accounts.timer.schedulableHint') }}</p>
+              </div>
+              <USwitch
+                data-test="timer-schedulable"
+                :model-value="schedulable"
+                :disabled="schedulableBusy"
+                size="sm"
+                :aria-label="t('admin.accounts.timer.schedulable')"
+                @update:model-value="emit('toggle-schedulable')"
               />
             </div>
-          </div>
-          <UButton data-test="timer-add-period" variant="link" size="xs" icon="i-lucide-plus" class="p-0" :disabled="recurringPeriods.length >= 24" :label="t('admin.accounts.timer.addPeriod')" @click="addPeriod" />
-          <p class="text-xs text-muted">{{ t('admin.accounts.timer.recurringHint') }}</p>
-          <p v-if="pending.length" class="text-xs text-warning">{{ t('admin.accounts.timer.replacesOneShotHint') }}</p>
-        </div>
-        <div v-else class="space-y-3">
-          <UFormField :label="t('admin.accounts.timer.date')">
-            <UInput v-model="form.date" type="date" class="w-full" />
-          </UFormField>
-          <UFormField :label="t('admin.accounts.timer.time')">
-            <UInput v-model="form.time" type="time" step="60" class="w-full" />
-          </UFormField>
-          <p class="text-xs text-muted">{{ t('admin.accounts.timer.absoluteHint') }}</p>
-        </div>
-        <UFormField :label="t('admin.accounts.timer.timezone')">
-          <Select :model-value="form.timezone" :options="timezoneOptions" :aria-label="t('admin.accounts.timer.timezone')" data-test="timer-zone" searchable creatable class="w-full" @update:model-value="updateTimezone" />
-          <div v-if="form.mode !== 'recurring'" class="mt-1.5 flex flex-wrap gap-3">
-            <UButton variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.beijing')" @click="form.timezone = 'Asia/Shanghai'" />
-            <UButton variant="link" size="xs" class="p-0" label="UTC" @click="form.timezone = 'UTC'" />
-          </div>
-        </UFormField>
-        <UButton data-test="timer-preview" color="neutral" variant="outline" block :disabled="busy" :label="t(form.mode === 'recurring' ? 'admin.accounts.timer.previewNext' : 'admin.accounts.timer.preview')" @click="previewTime" />
-        <div v-if="preview" class="space-y-3 text-sm" aria-live="polite">
-          <p data-test="timer-preview-value" class="text-highlighted">{{ preview.local_date }} {{ preview.local_time }} · {{ preview.timezone }} · UTC{{ preview.offset }}<span v-if="preview.action"> · {{ t(`admin.accounts.timer.${preview.action}`) }}</span></p>
-          <UCheckbox v-if="form.mode === 'absolute'" v-model="confirmed" data-test="timer-confirm" :label="t('admin.accounts.timer.confirm')" />
-          <UButton data-test="timer-save" block :disabled="form.mode === 'absolute' && !confirmed" :label="form.mode === 'recurring' ? t('admin.accounts.timer.saveRecurring') : t('admin.accounts.timer.save')" @click="save" />
-        </div>
-      </fieldset>
-      <p v-if="error" class="text-xs text-error" role="alert">{{ error }}</p>
-      <p v-if="form.mode !== 'recurring'" class="text-xs text-muted">{{ t('admin.accounts.timer.policy', { seconds: snapshot?.poll_seconds ?? 30, grace: (snapshot?.open_grace_seconds ?? 900) / 60, days: maxMinutes / 1440 }) }}</p>
-      <div class="flex justify-end">
-        <UButton data-test="timer-form-cancel" color="neutral" variant="subtle" :disabled="busy" :label="t('common.cancel')" @click="closeForm" />
-      </div>
-    </div>
-    </BaseDialog>
-    <UCollapsible v-if="snapshot?.history.length" class="max-w-80 basis-full whitespace-normal">
-      <UButton data-test="timer-history-toggle" color="neutral" variant="link" size="xs" class="p-0 text-dimmed" trailing-icon="i-lucide-chevron-down" :label="historySummary" />
-      <template #content>
-        <!-- One line per record; the time zone is shown once instead of on every row. -->
-        <div data-test="timer-history" class="mt-1 text-muted">
-          <p v-if="historyZone" class="mb-0.5 text-dimmed">{{ historyZone }}</p>
-          <div data-test="timer-history-rows" :class="historyExpanded ? 'max-h-60 overflow-y-auto pe-1' : ''">
-            <div v-for="(item, index) in visibleHistory" :key="index" data-test="timer-history-row" class="py-0.5 leading-snug">
-              <div class="flex items-baseline gap-2">
-                <span class="shrink-0 tabular-nums text-dimmed">{{ historyWhen(item) }}</span>
-                <span class="min-w-0 truncate">{{ t(`admin.accounts.timer.${item.action}`) }}</span>
-                <span class="ms-auto shrink-0" :class="resultClass(item.result)">{{ t(`admin.accounts.timer.results.${item.result}`) }}</span>
-              </div>
-              <p v-if="historyNote(item)" class="wrap-break-word" :class="resultClass(item.result) || 'text-dimmed'">{{ historyNote(item) }}</p>
+            <div class="flex flex-wrap gap-2 border-t border-default pt-2">
+              <UButton data-test="timer-plan-new" size="xs" color="neutral" variant="outline" :disabled="busy || loading" :label="t('admin.accounts.timer.newPlan')" @click="begin(lastOneShotAction)" />
+              <UButton data-test="timer-plan-new-recurring" size="xs" color="neutral" variant="outline" :disabled="busy || loading" :label="t('admin.accounts.timer.recurring')" @click="begin('recurring')" />
             </div>
+            <p v-if="error" class="text-[13px] text-error" role="alert">{{ error }}</p>
+            <div v-if="loadFailed" class="flex min-h-10 items-center">
+              <UButton data-test="timer-reload" variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.reload')" @click="load" />
+            </div>
+          </template>
+          <div v-else data-test="timer-form" class="max-w-full space-y-4">
+            <p class="text-[13px] font-medium text-highlighted">{{ formTitle }}</p>
+            <fieldset :disabled="busy" class="min-w-0 space-y-4">
+              <UFormField :label="t('admin.accounts.timer.mode')">
+                <UFieldGroup class="flex w-full" role="tablist" :aria-label="t('admin.accounts.timer.mode')">
+                  <UButton
+                    v-for="option in modeOptions"
+                    :key="option.value"
+                    role="tab"
+                    color="neutral"
+                    :variant="form.mode === option.value ? 'solid' : 'outline'"
+                    class="flex-1 justify-center"
+                    :aria-selected="form.mode === option.value"
+                    :data-test="`timer-mode-${option.value}`"
+                    :label="option.label"
+                    @click="setMode(option.value)"
+                  />
+                </UFieldGroup>
+              </UFormField>
+              <UFormField v-if="form.mode !== 'recurring'" :label="t('admin.accounts.timer.action')">
+                <USelect :model-value="action" :items="actionItems" data-test="timer-action" class="w-full" @update:model-value="selectAction" />
+              </UFormField>
+              <div v-if="form.mode === 'relative'" class="space-y-2">
+                <div class="grid grid-cols-2 gap-2">
+                  <UFormField :label="t('admin.accounts.timer.hours')">
+                    <UInput v-model.number="form.hours" type="number" min="0" step="1" :max="Math.floor(maxMinutes / 60)" class="w-full" />
+                  </UFormField>
+                  <UFormField :label="t('admin.accounts.timer.minutes')">
+                    <UInput v-model.number="form.minutes" type="number" min="0" step="1" :max="maxMinutes" class="w-full" />
+                  </UFormField>
+                </div>
+                <UButton variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.preset')" @click="form.hours = 8; form.minutes = 0" />
+                <p class="text-xs text-muted">{{ t('admin.accounts.timer.relativeHint') }}</p>
+              </div>
+              <div v-else-if="form.mode === 'recurring'" class="space-y-4">
+                <UFormField :label="t('admin.accounts.timer.activeDays')">
+                  <Select :model-value="weekdaysOnly" :options="dayScopeOptions" :aria-label="t('admin.accounts.timer.activeDays')" data-test="timer-day-mode" class="w-full" @update:model-value="updateWeekdaysOnly" />
+                </UFormField>
+                <div class="space-y-3">
+                  <div v-for="(period, index) in recurringPeriods" :key="index" class="grid min-w-0 grid-cols-[1fr_1fr_auto] items-end gap-2">
+                    <UFormField :label="t('admin.accounts.timer.start')" class="min-w-0">
+                      <UInput v-model="period.start" data-test="timer-period-start" type="time" step="60" class="w-full" />
+                    </UFormField>
+                    <UFormField :label="t('admin.accounts.timer.end')" class="min-w-0">
+                      <UInput v-model="period.end" data-test="timer-period-end" type="time" step="60" class="w-full" />
+                    </UFormField>
+                    <UButton
+                      v-if="recurringPeriods.length > 1"
+                      data-test="timer-period-remove"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-x"
+                      square
+                      :aria-label="t('admin.accounts.timer.removePeriod')"
+                      :title="t('admin.accounts.timer.removePeriod')"
+                      @click="removePeriod(index)"
+                    />
+                  </div>
+                </div>
+                <UButton data-test="timer-add-period" variant="link" size="xs" icon="i-lucide-plus" class="p-0" :disabled="recurringPeriods.length >= 24" :label="t('admin.accounts.timer.addPeriod')" @click="addPeriod" />
+                <p class="text-xs text-muted">{{ t('admin.accounts.timer.recurringHint') }}</p>
+                <p v-if="pending.length" class="text-xs text-warning">{{ t('admin.accounts.timer.replacesOneShotHint') }}</p>
+              </div>
+              <div v-else class="space-y-3">
+                <UFormField :label="t('admin.accounts.timer.date')">
+                  <UInput v-model="form.date" type="date" class="w-full" />
+                </UFormField>
+                <UFormField :label="t('admin.accounts.timer.time')">
+                  <UInput v-model="form.time" type="time" step="60" class="w-full" />
+                </UFormField>
+                <p class="text-xs text-muted">{{ t('admin.accounts.timer.absoluteHint') }}</p>
+              </div>
+              <UFormField :label="t('admin.accounts.timer.timezone')">
+                <Select :model-value="form.timezone" :options="timezoneOptions" :aria-label="t('admin.accounts.timer.timezone')" data-test="timer-zone" searchable creatable class="w-full" @update:model-value="updateTimezone" />
+                <div v-if="form.mode !== 'recurring'" class="mt-1.5 flex flex-wrap gap-3">
+                  <UButton variant="link" size="xs" class="p-0" :label="t('admin.accounts.timer.beijing')" @click="form.timezone = 'Asia/Shanghai'" />
+                  <UButton variant="link" size="xs" class="p-0" label="UTC" @click="form.timezone = 'UTC'" />
+                </div>
+              </UFormField>
+              <UButton data-test="timer-preview" color="neutral" variant="outline" block :disabled="busy" :label="t(form.mode === 'recurring' ? 'admin.accounts.timer.previewNext' : 'admin.accounts.timer.preview')" @click="previewTime" />
+              <div v-if="preview" class="space-y-3 text-sm" aria-live="polite">
+                <p data-test="timer-preview-value" class="text-highlighted">{{ preview.local_date }} {{ preview.local_time }} · {{ preview.timezone }} · UTC{{ preview.offset }}<span v-if="preview.action"> · {{ t(`admin.accounts.timer.${preview.action}`) }}</span></p>
+                <UCheckbox v-if="form.mode === 'absolute'" v-model="confirmed" data-test="timer-confirm" :label="t('admin.accounts.timer.confirm')" />
+                <UButton data-test="timer-save" block :disabled="form.mode === 'absolute' && !confirmed" :label="form.mode === 'recurring' ? t('admin.accounts.timer.saveRecurring') : t('admin.accounts.timer.save')" @click="save" />
+              </div>
+            </fieldset>
+            <p v-if="error" class="text-xs text-error" role="alert">{{ error }}</p>
+            <p v-if="form.mode !== 'recurring'" class="text-xs text-muted">{{ t('admin.accounts.timer.policy', { seconds: snapshot?.poll_seconds ?? 30, grace: (snapshot?.open_grace_seconds ?? 900) / 60, days: maxMinutes / 1440 }) }}</p>
+            <div class="flex justify-end">
+              <UButton data-test="timer-form-cancel" color="neutral" variant="subtle" :disabled="busy" :label="t('common.cancel')" @click="closeForm" />
+            </div>
+          </div>
+        </div>
+
+        <div v-show="tab === 'history'" data-test="timer-history" role="tabpanel" :aria-label="t('admin.accounts.timer.tabHistory')" class="space-y-2">
+          <p v-if="historyZone" class="text-xs text-dimmed">{{ historyZone }}</p>
+          <div data-test="timer-history-rows" :class="historyExpanded ? 'max-h-80 overflow-y-auto pe-1' : ''">
+            <!-- One dense line per record; the shared time zone is named once above the list. -->
+            <div
+              v-for="(item, index) in visibleHistory"
+              :key="`${item.action}-${item.execute_at}-${index}`"
+              data-test="timer-history-row"
+              :class="['min-h-10 border-b border-default/60 py-1 last:border-0', index >= HISTORY_PREVIEW && historyExpanded ? 'timer-history-row-in' : '']"
+            >
+              <div class="flex min-w-0 items-baseline gap-2">
+                <span class="shrink-0 text-xs tabular-nums text-muted">{{ historyWhen(item) }}</span>
+                <span class="min-w-0 flex-1 truncate text-[13px]">{{ t(`admin.accounts.timer.${item.action}`) }}</span>
+                <span class="shrink-0 text-xs" :class="resultClass(item.result)">{{ t(`admin.accounts.timer.results.${item.result}`) }}</span>
+              </div>
+              <p v-if="historyNote(item)" class="text-[13px] wrap-break-word" :class="resultClass(item.result) || 'text-dimmed'">{{ historyNote(item) }}</p>
+            </div>
+            <p v-if="!snapshot?.history.length" data-test="timer-history-empty" class="py-2 text-[13px] text-muted">{{ t('admin.accounts.timer.noHistory') }}</p>
           </div>
           <UButton
             v-if="(snapshot?.history.length ?? 0) > HISTORY_PREVIEW"
             data-test="timer-history-more"
             variant="link"
             size="xs"
-            class="mt-0.5 p-0"
+            class="p-0"
             :label="historyExpanded ? t('admin.accounts.timer.historyLess') : t('admin.accounts.timer.historyMore', { count: snapshot?.history.length ?? 0 })"
             @click="historyExpanded = !historyExpanded"
           />
         </div>
-      </template>
-    </UCollapsible>
+      </div>
+    </BaseDialog>
   </div>
 </template>
 
@@ -172,10 +226,17 @@ import timerEn from './schedulableTimer.en'
 import { schedulableTimersAPI, type SchedulableTimer, type TimerAction, type TimerAudit, type TimerInput, type TimerPreview, type TimerSnapshot } from '@/api/admin/schedulableTimers'
 import { COMMON_TIMEZONES, formatTimezoneOffset } from '@/components/admin/channel/types'
 
-const props = defineProps<{ accountId: number; refreshKey?: number }>()
+const props = defineProps<{
+  accountId: number
+  refreshKey?: number
+  // The account-level scheduling switch, shown on the plan page when the caller owns one.
+  schedulable?: boolean
+  schedulableBusy?: boolean
+}>()
 const emit = defineEmits<{
   executed: []
   'schedule-state': [hasSchedule: boolean]
+  'toggle-schedulable': []
 }>()
 const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const app = useAppStore()
@@ -183,6 +244,10 @@ const snapshot = ref<TimerSnapshot | null>(null)
 const pending = computed(() => snapshot.value?.tasks.filter(task => task.status === 'pending') ?? [])
 const maxMinutes = computed(() => snapshot.value?.max_delay_minutes ?? 366 * 1440)
 const expanded = ref(false)
+// The dialog has two pages: the plan itself and what the scheduler already did.
+const tab = ref<'plan' | 'history'>('plan')
+// The plan page shows a summary until the operator edits or creates a schedule.
+const editing = ref(false)
 const action = ref<TimerAction>('open')
 const lastOneShotAction = ref<'open' | 'close'>('open')
 const editVersion = ref(0)
@@ -207,14 +272,12 @@ const actionItems = computed(() => [
   { value: 'open', label: t('admin.accounts.timer.open') },
   { value: 'close', label: t('admin.accounts.timer.close') },
 ])
-// The clock button is highlighted while a one-shot or recurring timer is active.
+const tabOptions = computed<Array<{ value: 'plan' | 'history'; label: string }>>(() => [
+  { value: 'plan', label: t('admin.accounts.timer.tabPlan') },
+  { value: 'history', label: t('admin.accounts.timer.tabHistory') },
+])
+// The clock trigger is highlighted while a one-shot or recurring timer is active.
 const hasSchedule = computed(() => pending.value.length > 0 || !!snapshot.value?.recurring?.enabled)
-const historySummary = computed(() => {
-  const latest = snapshot.value?.history[0]
-  if (!latest) return ''
-  const reason = latest.reason ? ` · ${reasonText(latest.reason)}` : ''
-  return `${t('admin.accounts.timer.history')} · ${t(`admin.accounts.timer.results.${latest.result}`)}${reason}`
-})
 // History is one compact row per record, capped until the operator asks for all of it.
 const HISTORY_PREVIEW = 6
 const historyExpanded = ref(false)
@@ -230,11 +293,44 @@ const historyZone = computed(() => {
   const offset = formatTimezoneOffset(zone)
   return offset ? `${zone} (${offset})` : zone
 })
+// What the fixed-width trigger says: at most one short fact, never a layout input.
+const triggerLabel = computed(() => {
+  const schedule = snapshot.value?.recurring
+  if (schedule?.enabled) {
+    const start = schedule.periods?.[0]?.start ?? ''
+    const day = schedule.weekdays_only ? t('admin.accounts.timer.weekdaysShort') : t('admin.accounts.timer.everyDayShort')
+    return start ? `${day} ${start}` : day
+  }
+  const next = pending.value[0]
+  if (next) return compactTime(next.execute_at, next.timezone)
+  return t('admin.accounts.timer.title')
+})
+const triggerTitle = computed(() => {
+  const schedule = snapshot.value?.recurring
+  if (schedule?.enabled) return `${t('admin.accounts.timer.title')} · ${recurringSummary.value}`
+  const next = pending.value[0]
+  if (next) return `${t('admin.accounts.timer.title')} · ${t(`admin.accounts.timer.${next.action}`)} · ${taskLocalTime(next)}`
+  return t('admin.accounts.timer.title')
+})
+const formTitle = computed(() => action.value === 'recurring'
+  ? t('admin.accounts.timer.recurringPage')
+  : t(`admin.accounts.timer.${action.value}`))
 const modeOptions = computed<Array<{ value: TimerInput['mode']; label: string }>>(() => [
   { value: 'relative', label: t('admin.accounts.timer.relative') },
   { value: 'absolute', label: t('admin.accounts.timer.absolute') },
   { value: 'recurring', label: t('admin.accounts.timer.recurring') },
 ])
+const planZone = computed(() => {
+  const schedule = snapshot.value?.recurring
+  if (schedule?.enabled) {
+    const offset = formatTimezoneOffset(schedule.timezone)
+    return offset ? `${schedule.timezone} (${offset})` : schedule.timezone
+  }
+  const task = pending.value[0]
+  if (!task) return ''
+  const offset = formatTimezoneOffset(task.timezone)
+  return offset ? `${task.timezone} (${offset})` : task.timezone
+})
 let epoch = 0
 let received = 0
 const now = ref(0)
@@ -245,7 +341,7 @@ let loadSequence = 0
 let previewSequence = 0
 
 watch([form, recurringPeriods, weekdaysOnly], () => { previewSequence++; preview.value = null; confirmed.value = false; error.value = '' }, { deep: true, flush: 'sync' })
-watch(() => props.refreshKey, () => { expanded.value = false; void load() })
+watch(() => props.refreshKey, () => { closeDialog(); void load() })
 watch(() => props.accountId, () => {
   loadSequence++
   previewSequence++
@@ -254,6 +350,8 @@ watch(() => props.accountId, () => {
   preview.value = null
   confirmed.value = false
   expanded.value = false
+  editing.value = false
+  tab.value = 'plan'
   historyExpanded.value = false
   error.value = ''
   void load()
@@ -339,6 +437,10 @@ function taskLocalTime(task: SchedulableTimer) {
     ? `${task.local_date} ${task.local_time} · ${task.timezone} · UTC${task.offset}`
     : localTime(task.execute_at, task.timezone)
 }
+// One line on the plan page: what will happen, when, in the configured zone.
+function planTaskLine(task: SchedulableTimer) {
+  return `${t(`admin.accounts.timer.${task.action}`)} · ${taskLocalTime(task)}`
+}
 const recurringSummary = computed(() => {
   const schedule = snapshot.value?.recurring
   if (!schedule) return ''
@@ -350,10 +452,20 @@ function countdown(task: SchedulableTimer) {
   const minutes = Math.ceil((Date.parse(task.execute_at) - now.value) / 60000)
   return minutes <= 0 ? t('admin.accounts.timer.awaiting') : t('admin.accounts.timer.remaining', { hours: Math.floor(minutes / 60), minutes: minutes % 60 })
 }
-async function begin(value: TimerAction) {
-  if (expanded.value && action.value === value) { expanded.value = false; return }
+// The dialog is the only surface now: the trigger opens it and nothing else is rendered in the cell.
+async function openDialog() {
+  if (expanded.value) return
+  tab.value = 'plan'
+  expanded.value = true
+  editing.value = false
+  historyExpanded.value = false
   await load()
   if (loadFailed.value) return
+  // Nothing to summarize yet, so go straight to the form that creates the first plan.
+  if (!hasSchedule.value) prepareEditor(lastOneShotAction.value)
+}
+function prepareEditor(value: TimerAction) {
+  tab.value = 'plan'
   action.value = value
   if (value === 'open' || value === 'close') lastOneShotAction.value = value
   const task = snapshot.value?.tasks.find(item => item.action === value)
@@ -363,7 +475,7 @@ async function begin(value: TimerAction) {
     Object.assign(form, { mode: 'recurring', hours: 0, minutes: 0, date: '', time: '', timezone: schedule?.timezone ?? 'Asia/Shanghai' })
     recurringPeriods.value = schedule?.periods?.map(period => ({ ...period })) ?? [{ start: '08:00', end: '18:00' }]
     weekdaysOnly.value = schedule?.weekdays_only ?? false
-    error.value = ''; preview.value = null; confirmed.value = false; expanded.value = true
+    error.value = ''; preview.value = null; confirmed.value = false; editing.value = true; expanded.value = true
     return
   }
   const existing = task?.status === 'pending' ? task : undefined
@@ -373,7 +485,12 @@ async function begin(value: TimerAction) {
       : localParts(existing.execute_at, existing.timezone)
     Object.assign(form, { mode: 'absolute', hours: 0, minutes: 0, date: local.date, time: local.time, timezone: existing.timezone })
   } else Object.assign(form, { mode: 'relative', hours: 8, minutes: 0, date: '', time: '08:00', timezone: 'Asia/Shanghai', weekdays_only: false, periods: [{ start: '08:00', end: '18:00' }] })
-  error.value = ''; preview.value = null; confirmed.value = false; expanded.value = true
+  error.value = ''; preview.value = null; confirmed.value = false; editing.value = true; expanded.value = true
+}
+async function begin(value: TimerAction) {
+  await load()
+  if (loadFailed.value) return
+  prepareEditor(value)
 }
 function input(): TimerInput {
   return { ...form, hours: form.mode === 'relative' ? form.hours : 0, minutes: form.mode === 'relative' ? form.minutes : 0, date: form.mode === 'absolute' ? form.date : '', time: form.mode === 'absolute' ? form.time : '', weekdays_only: form.mode === 'recurring' ? weekdaysOnly.value : false, periods: form.mode === 'recurring' ? recurringPeriods.value.map(period => ({ ...period })) : [] }
@@ -447,7 +564,19 @@ function validateRecurring() {
   }
   return true
 }
-function closeForm() { expanded.value = false; preview.value = null; confirmed.value = false; error.value = '' }
+// Leaving the form returns to the plan page; with no plan at all it closes the dialog too.
+function closeForm() {
+  editing.value = false
+  preview.value = null
+  confirmed.value = false
+  error.value = ''
+  if (!hasSchedule.value) expanded.value = false
+}
+function closeDialog() {
+  expanded.value = false
+  editing.value = false
+  historyExpanded.value = false
+}
 
 // The timer dialog closes on an outside click, so a half-filled schedule survives it. The
 // key carries the account id, and the signature is the schedule version we started from: a
@@ -461,7 +590,7 @@ const timerDraft = useDialogDraft({
   key: () => `admin.accounts.timer:${props.accountId}:${action.value}`,
   fields: ['mode', 'hours', 'minutes', 'date', 'time', 'timezone'] as const,
   state: form,
-  open: () => expanded.value,
+  open: () => editing.value,
   enabled: isOneShotDraft,
   signature: () => `${action.value}:${editVersion.value}`
 })
@@ -497,13 +626,13 @@ async function save() {
     await schedulableTimersAPI.save(props.accountId, { ...request, action: action.value, expected_version: editVersion.value, confirmed_at: request.mode === 'absolute' ? preview.value.execute_at : undefined })
     // Saved: the draft must not reappear next time the dialog is opened.
     timerDraft.markSubmitted()
-    app.showSuccess(t('admin.accounts.timer.saved')); expanded.value = false; await load()
+    app.showSuccess(t('admin.accounts.timer.saved')); closeDialog(); await load()
   } catch (err) { showError(err) }
   finally { busy.value = false }
 }
 async function cancel(task: SchedulableTimer) {
   busy.value = true; error.value = ''
-  try { await schedulableTimersAPI.cancel(props.accountId, task.action, task.version); app.showSuccess(t('admin.accounts.timer.cancelled')); expanded.value = false; await load() }
+  try { await schedulableTimersAPI.cancel(props.accountId, task.action, task.version); app.showSuccess(t('admin.accounts.timer.cancelled')); editing.value = false; await load() }
   catch (err) { showError(err) }
   finally { busy.value = false }
 }
@@ -511,7 +640,7 @@ async function cancelRecurring() {
   const schedule = snapshot.value?.recurring
   if (!schedule) return
   busy.value = true; error.value = ''
-  try { await schedulableTimersAPI.cancel(props.accountId, 'recurring', schedule.version); app.showSuccess(t('admin.accounts.timer.cancelled')); expanded.value = false; await load() }
+  try { await schedulableTimersAPI.cancel(props.accountId, 'recurring', schedule.version); app.showSuccess(t('admin.accounts.timer.cancelled')); editing.value = false; await load() }
   catch (err) { showError(err) }
   finally { busy.value = false }
 }
@@ -522,3 +651,26 @@ onMounted(() => {
 })
 onUnmounted(() => { disposed = true; loadSequence++; previewSequence++; clearInterval(interval); clearInterval(refreshInterval) })
 </script>
+
+<style scoped>
+/* The rows that appear when more history is asked for rise in over 150ms: enough to read as a
+   change, small enough that a dense list never turns into a performance. */
+.timer-history-row-in {
+  animation: timer-history-row-in 150ms ease-out;
+}
+@keyframes timer-history-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .timer-history-row-in {
+    animation: none;
+  }
+}
+</style>

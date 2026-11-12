@@ -441,9 +441,95 @@ export function createMockApi(now = new Date()) {
     if (!order) throw new PreviewError(404, '本地演示订单不存在')
     return order
   }
+  // Schedulable timers are demoed from memory: a plan, its pending switch and a history long
+  // enough to exercise the "show all" control on the timer dialog's second page.
+  const demoTimerStates = new Map<number, { tasks: Array<Record<string, unknown>>; recurring: Record<string, unknown> | null }>()
+  const timerIso = (minutes: number) => new Date(now.getTime() + minutes * 60000).toISOString()
+  function timerLocal(value: string, zone: string) {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(value))
+    const find = (type: string) => parts.find(part => part.type === type)?.value ?? ''
+    return { date: `${find('year')}-${find('month')}-${find('day')}`, time: `${find('hour')}:${find('minute')}` }
+  }
+  function demoTimers(id: number) {
+    let state = demoTimerStates.get(id)
+    if (!state) {
+      state = { tasks: [], recurring: null }
+      // Every third account gets a recurring window, the next one a pending one-shot switch,
+      // and the rest stay unscheduled so both cell states are visible in one screenshot.
+      if (id % 3 === 1) {
+        state.recurring = { account_id: id, version: 1, timezone: 'Asia/Shanghai', weekdays_only: true, periods: [{ start: '09:00', end: '18:00' }], requested_by: 1, enabled: true, updated_at: timerIso(-1440), last_applied_state: null, last_applied_at: null }
+      } else if (id % 3 === 2) {
+        state.tasks.push({ account_id: id, action: 'close', version: 2, execute_at: timerIso(125), timezone: 'Asia/Shanghai', requested_by: 1, status: 'pending', attempts: 0, actual_at: null, reason: '' })
+      }
+      demoTimerStates.set(id, state)
+    }
+    return state
+  }
+  function demoTimerHistory() {
+    const results = ['executed', 'executed', 'skipped', 'scheduled', 'executed', 'failed']
+    const reasons = ['', '', 'manual_pause', '', '', 'execution_error']
+    return Array.from({ length: 24 }, (_, index) => {
+      const slot = timerIso(-180 * (index + 1))
+      const result = results[index % results.length]!
+      return {
+        action: index % 2 ? 'recurring_close' : 'recurring_open',
+        version: 1, actor_id: 1, execute_at: slot, timezone: 'Asia/Shanghai',
+        // A plan change is logged when it was made; a run is logged when it ran.
+        actual_at: result === 'scheduled' ? timerIso(-180 * (index + 1) + 30) : slot,
+        result, reason: reasons[index % reasons.length]!,
+      }
+    })
+  }
   return {
     user: data.user,
     handle(method: string, path: string, query: URLSearchParams, body: Record<string, unknown> = {}): unknown {
+      const timerPath = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/schedulable-timers(?:\/(open|close|recurring))?$/)
+      if (timerPath) {
+        const id = Number(timerPath[1])
+        const cancelAction = timerPath[2]
+        const state = demoTimers(id)
+        if (method === 'GET' && !cancelAction) {
+          return {
+            tasks: copy(state.tasks), recurring: state.recurring ? copy(state.recurring) : null,
+            history: copy(demoTimerHistory()), server_now: new Date(now.getTime()).toISOString(),
+            poll_seconds: 30, open_grace_seconds: 900, max_delay_minutes: 527040,
+          }
+        }
+        if (method === 'POST' && !cancelAction) {
+          const action = String(body.action ?? '')
+          if (!['open', 'close', 'recurring'].includes(action)) throw new PreviewError(422, '无效的定时动作')
+          const zone = String(body.timezone ?? 'Asia/Shanghai')
+          const executeAt = body.mode === 'recurring'
+            ? timerIso(60)
+            : body.mode === 'absolute'
+              ? timerIso(240)
+              : timerIso(Number(body.hours ?? 0) * 60 + Number(body.minutes ?? 0))
+          if (action === 'recurring') {
+            state.recurring = { account_id: id, version: Number(state.recurring?.version ?? 0) + 1, timezone: zone, weekdays_only: !!body.weekdays_only, periods: Array.isArray(body.periods) && body.periods.length ? body.periods : [{ start: '09:00', end: '18:00' }], requested_by: 1, enabled: true, updated_at: timerIso(0), last_applied_state: null, last_applied_at: null }
+            return copy(state.recurring)
+          }
+          state.tasks = state.tasks.filter(task => task.action !== action)
+          const task = { account_id: id, action, version: 1, execute_at: executeAt, timezone: zone, requested_by: 1, status: 'pending', attempts: 0, actual_at: null, reason: '' }
+          state.tasks.push(task)
+          return copy(task)
+        }
+        if (method === 'DELETE' && cancelAction) {
+          if (cancelAction === 'recurring') {
+            if (!state.recurring) throw new PreviewError(404, '没有定时段计划')
+            state.recurring.enabled = false
+            return { message: 'cancelled' }
+          }
+          state.tasks = state.tasks.filter(task => task.action !== cancelAction)
+          return { message: 'cancelled' }
+        }
+      }
+      const timerPreviewPath = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/schedulable-timers\/preview$/)
+      if (timerPreviewPath && method === 'POST') {
+        const zone = String(body.timezone ?? 'Asia/Shanghai')
+        const executeAt = body.mode === 'recurring' ? timerIso(60) : body.mode === 'absolute' ? timerIso(240) : timerIso(Number(body.hours ?? 0) * 60 + Number(body.minutes ?? 0))
+        const local = timerLocal(executeAt, zone)
+        return { execute_at: executeAt, action: body.action === 'recurring' ? undefined : body.action, timezone: zone, local_date: local.date, local_time: local.time, offset: '+08:00', server_now: new Date(now.getTime()).toISOString() }
+      }
       const usageConfigPath = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/custom-usage-config$/)
       if (usageConfigPath && method === 'GET') return readCustomUsageConfig(Number(usageConfigPath[1]))
       if (usageConfigPath && method === 'PUT') {
