@@ -1190,6 +1190,19 @@ export function createMockApi(now = new Date()) {
           data.keys.splice(index, 1)
           return { message: '已删除本地演示密钥' }
         }
+        if (body.regenerate_key === true) {
+          // Rotation preview: new credential, key reactivated, risk marker gone.
+          const rotated = {
+            ...editKey(data.keys[index], body),
+            key: `sk-demo-rotated-${Date.now().toString(36)}`,
+            status: 'active' as const,
+            risk_disabled: false,
+            risk_hit_ip: null,
+            risk_hit_at: null,
+          }
+          data.keys[index] = rotated
+          return rotated
+        }
         data.keys[index] = editKey(data.keys[index], body)
         return data.keys[index]
       }

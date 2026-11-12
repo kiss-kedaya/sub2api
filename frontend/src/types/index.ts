@@ -831,6 +831,11 @@ export interface ApiKey {
   deepseek_tool_injection_enabled?: boolean
   // 开启后由后台定时任务把最近使用的机房/代理 IP 追加进 IP 黑名单。
   auto_block_datacenter_ips?: boolean
+  // 被网关风控自动停用（多个账号共用一个机房/代理出口）：用户端据此在
+  // key 上展示「此 key 有被盗用风险」与轮换按钮。
+  risk_disabled?: boolean
+  risk_hit_ip?: string | null
+  risk_hit_at?: string | null
 }
 
 export interface CreateApiKeyRequest {
@@ -869,6 +874,8 @@ export interface UpdateApiKeyRequest {
   anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
   deepseek_tool_injection_enabled?: boolean
   auto_block_datacenter_ips?: boolean
+  // 轮换密钥：重新生成 key 值，旧值立即失效；被风控停用的 key 恢复可用。
+  regenerate_key?: boolean
 }
 
 export interface CreateGroupRequest {

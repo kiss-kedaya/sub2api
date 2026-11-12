@@ -133,6 +133,9 @@ export function createFixtures(now = new Date()) {
 }
 
 export function makeKey(id: number, group: Group | undefined, timestamp: string): ApiKey {
+  // One demo key is auto-disabled by the gateway risk control so the console
+  // preview can show the "compromised key" hint and the rotate action.
+  const riskDisabled = id === 7
   return {
     id, user_id: DEMO_USER_ID, key: `sk-demo-not-valid-${String(id).padStart(6, '0')}`,
     name: `演示密钥 ${String(id).padStart(2, '0')}`, group_id: group?.id ?? null,
@@ -142,6 +145,9 @@ export function makeKey(id: number, group: Group | undefined, timestamp: string)
     current_concurrency: 0, rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0,
     usage_5h: 0, usage_1d: 0, usage_7d: 0, window_5h_start: null, window_1d_start: null,
     window_7d_start: null, reset_5h_at: null, reset_1d_at: null, reset_7d_at: null,
+    risk_disabled: riskDisabled,
+    risk_hit_ip: riskDisabled ? '203.0.113.24' : null,
+    risk_hit_at: riskDisabled ? timestamp : null,
   }
 }
 

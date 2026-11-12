@@ -37,6 +37,15 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 		clock := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
 		detector := NewIPKeySharingDetector(settings, client)
 		detector.now = func() time.Time { return clock }
+		// Every IP in these cases is positively classified: they exercise the
+		// distinct-user rules, not the datacenter gate (covered separately).
+		detector.classify = func(_ context.Context, ips []string) map[string]bool {
+			out := make(map[string]bool, len(ips))
+			for _, ip := range ips {
+				out[ip] = true
+			}
+			return out
+		}
 		return detector, settings, &clock
 	}
 
@@ -44,10 +53,10 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 		detector, settings, _ := newFixture(t)
 		ip := "203.0.113.10"
 		for _, userID := range []int64{101, 102} {
-			_, hit := detector.Observe(ctx, ip, userID, fmt.Sprintf("sk-user-%d-abcdef", userID))
+			_, hit := detector.Observe(ctx, ip, userID, 1000+userID, fmt.Sprintf("sk-user-%d-abcdef", userID))
 			require.False(t, hit, "two distinct users must stay below the default threshold")
 		}
-		result, hit := detector.Observe(ctx, ip, 103, "sk-user-103-abcdef")
+		result, hit := detector.Observe(ctx, ip, 103, 103, "sk-user-103-abcdef")
 		require.True(t, hit)
 		require.Equal(t, ip, result.IP)
 		require.Equal(t, 3, result.DistinctUsers)
@@ -84,7 +93,7 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 		detector, settings, _ := newFixture(t)
 		ip := "203.0.113.20"
 		for i := range 5 {
-			_, hit := detector.Observe(ctx, ip, 777, fmt.Sprintf("sk-same-user-%d", i))
+			_, hit := detector.Observe(ctx, ip, 777, int64(700+i), fmt.Sprintf("sk-same-user-%d", i))
 			require.False(t, hit, "one account rotating keys is not key sharing")
 		}
 		require.Empty(t, settings.GatewayIPNoticeSnapshot().AutoEntries)
@@ -94,7 +103,7 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 		detector, settings, _ := newFixture(t)
 		ip := "203.0.113.30"
 		for _, userID := range []int64{201, 202} {
-			_, hit := detector.Observe(ctx, ip, userID, "sk-two-users")
+			_, hit := detector.Observe(ctx, ip, userID, 2000+userID, "sk-two-users")
 			require.False(t, hit)
 		}
 		require.Empty(t, settings.GatewayIPNoticeSnapshot().AutoEntries)
@@ -104,15 +113,15 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 		detector, settings, clock := newFixture(t)
 		ip := "203.0.113.40"
 		for _, userID := range []int64{301, 302} {
-			_, hit := detector.Observe(ctx, ip, userID, fmt.Sprintf("sk-window-%d", userID))
+			_, hit := detector.Observe(ctx, ip, userID, 3000+userID, fmt.Sprintf("sk-window-%d", userID))
 			require.False(t, hit)
 		}
 		*clock = clock.Add(11 * time.Minute)
-		_, hit := detector.Observe(ctx, ip, 303, "sk-window-303")
+		_, hit := detector.Observe(ctx, ip, 303, 303, "sk-window-303")
 		require.False(t, hit, "users last seen 11 minutes ago are outside the 10 minute window")
-		_, hit = detector.Observe(ctx, ip, 304, "sk-window-304")
+		_, hit = detector.Observe(ctx, ip, 304, 304, "sk-window-304")
 		require.False(t, hit)
-		result, hit := detector.Observe(ctx, ip, 305, "sk-window-305")
+		result, hit := detector.Observe(ctx, ip, 305, 305, "sk-window-305")
 		require.True(t, hit)
 		require.Equal(t, 3, result.DistinctUsers, "only the three users inside the window count")
 
@@ -125,7 +134,7 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 		detector, settings, _ := newFixture(t)
 		// The manual entry is already in the list; detection must stay silent.
 		for _, userID := range []int64{401, 402, 403} {
-			_, hit := detector.Observe(ctx, "198.51.100.7", userID, "sk-manual")
+			_, hit := detector.Observe(ctx, "198.51.100.7", userID, 4000+userID, "sk-manual")
 			require.False(t, hit)
 		}
 		added, err := settings.AppendGatewayIPNoticeAutoEntry(ctx, ipnotice.AutoEntry{
@@ -151,9 +160,9 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 			SharingWindowMinutes: 1,
 		}))
 		ip := "203.0.113.50"
-		_, hit := detector.Observe(ctx, ip, 501, "sk-threshold-501")
+		_, hit := detector.Observe(ctx, ip, 501, 501, "sk-threshold-501")
 		require.False(t, hit)
-		result, hit := detector.Observe(ctx, ip, 502, "sk-threshold-502")
+		result, hit := detector.Observe(ctx, ip, 502, 502, "sk-threshold-502")
 		require.True(t, hit)
 		require.Equal(t, 2, result.DistinctUsers)
 		require.Equal(t, 1, result.WindowMinutes)
@@ -170,7 +179,7 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 			AutoAddEnabled: &disabled,
 		}))
 		for _, userID := range []int64{601, 602, 603} {
-			_, hit := detector.Observe(ctx, "203.0.113.60", userID, "sk-disabled")
+			_, hit := detector.Observe(ctx, "203.0.113.60", userID, 6000+userID, "sk-disabled")
 			require.False(t, hit)
 		}
 	})

@@ -187,6 +187,18 @@ export async function blockDatacenterIPs(id: number): Promise<BlockDatacenterIPs
   return data
 }
 
+/**
+ * Rotate the key value (reset/regenerate).
+ *
+ * Reuses the existing update endpoint with `regenerate_key`: the server keeps
+ * the key row, group, quota and upstream accounts, replaces only the credential
+ * and reactivates a key that the gateway risk control disabled. The old key
+ * stops authenticating immediately.
+ */
+export async function rotateKey(id: number): Promise<ApiKey> {
+  return update(id, { regenerate_key: true })
+}
+
 export const keysAPI = {
 	getConcurrencyQueue,
   list,
@@ -196,7 +208,8 @@ export const keysAPI = {
   delete: deleteKey,
   deleteMany,
   toggleStatus,
-  blockDatacenterIPs
+  blockDatacenterIPs,
+  rotateKey
 }
 
 export default keysAPI
