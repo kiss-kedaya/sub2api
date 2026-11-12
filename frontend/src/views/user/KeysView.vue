@@ -701,15 +701,21 @@
                 :ui="{ base: 'font-mono text-sm' }"
                 :placeholder="t('keys.ipBlacklistPlaceholder')"
               />
-              <div v-if="selectedKey" class="mt-2 flex justify-end">
-                <UButton
-                  size="sm"
-                  variant="outline"
-                  :loading="blockingDatacenterIPs"
-                  @click="blockDatacenterIPs"
-                >
-                  {{ blockingDatacenterIPs ? t('keys.blockDatacenterIPsLoading') : t('keys.blockDatacenterIPs') }}
-                </UButton>
+              <div class="mt-3 space-y-2">
+                <div class="flex items-center justify-between gap-4">
+                  <span id="key-auto-block-datacenter-ips-label" class="text-sm font-medium text-default">
+                    {{ t('keys.autoBlockDatacenterIPs') }}
+                  </span>
+                  <USwitch
+                    v-model="formData.auto_block_datacenter_ips"
+                    aria-labelledby="key-auto-block-datacenter-ips-label"
+                    aria-describedby="key-auto-block-datacenter-ips-hint"
+                    data-test="key-auto-block-datacenter-ips"
+                  />
+                </div>
+                <p id="key-auto-block-datacenter-ips-hint" class="text-xs text-muted">
+                  {{ t('keys.autoBlockDatacenterIPsHint') }}
+                </p>
               </div>
             </UFormField>
           </div>
@@ -1484,6 +1490,8 @@ const formData = ref({
   anthropic_cache_ttl_mode: 'inherit' as 'inherit' | 'off' | '1h' | '5m',
   concurrency_limit: 0,
   deepseek_tool_injection_enabled: true,
+  // 开启后由后台定时任务把最近使用的机房/代理 IP 追加进 IP 黑名单。
+  auto_block_datacenter_ips: false,
 })
 
 // 自定义Key验证
@@ -1884,6 +1892,7 @@ const editKey = (key: ApiKey) => {
     anthropic_cache_ttl_mode: (key.anthropic_cache_ttl_mode || 'inherit') as 'inherit' | 'off' | '1h' | '5m',
     concurrency_limit: key.concurrency_limit ?? 0,
     deepseek_tool_injection_enabled: key.deepseek_tool_injection_enabled !== false,
+    auto_block_datacenter_ips: key.auto_block_datacenter_ips === true,
   }
   showEditModal.value = true
 }
@@ -2206,6 +2215,9 @@ const handleSubmit = async () => {
         anthropic_cache_ttl_mode: formData.value.anthropic_cache_ttl_mode,
         concurrency_limit: formData.value.concurrency_limit,
         deepseek_tool_injection_enabled: formData.value.deepseek_tool_injection_enabled,
+        // 黑名单只在开启 IP 限制时提交；开关随黑名单一起失效，避免后台
+        // 持续追加、下次保存又被清空。
+        auto_block_datacenter_ips: formData.value.enable_ip_restriction ? formData.value.auto_block_datacenter_ips : false,
       }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
@@ -2226,7 +2238,7 @@ const handleSubmit = async () => {
         rateLimitData,
         formData.value.smart_routing ? formData.value.group_ids : undefined,
         formData.value.anthropic_cache_ttl_mode,
-        { deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled, ...(formData.value.concurrency_limit > 0 ? { concurrencyLimit: formData.value.concurrency_limit } : {}) }
+        { deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled, autoBlockDatacenterIPs: formData.value.enable_ip_restriction && formData.value.auto_block_datacenter_ips, ...(formData.value.concurrency_limit > 0 ? { concurrencyLimit: formData.value.concurrency_limit } : {}) }
       )
       insertKeyLocally(created)
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
@@ -2334,7 +2346,8 @@ const closeModals = () => {
     expiration_date: '',
     anthropic_cache_ttl_mode: 'inherit',
     concurrency_limit: 0,
-  deepseek_tool_injection_enabled: true,
+    deepseek_tool_injection_enabled: true,
+    auto_block_datacenter_ips: false,
   }
 }
 
@@ -2530,27 +2543,6 @@ function formatResetTime(resetAt: string | null): string {
   if (days > 0) return `${days}d ${hours}h`
   if (hours > 0) return `${hours}h ${mins}m`
   return `${mins}m`
-}
-
-const blockingDatacenterIPs = ref(false)
-
-const blockDatacenterIPs = async () => {
-  if (!selectedKey.value || blockingDatacenterIPs.value) return
-  blockingDatacenterIPs.value = true
-  try {
-    const result = await keysAPI.blockDatacenterIPs(selectedKey.value.id)
-    const current = formData.value.ip_blacklist
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-    formData.value.ip_blacklist = [...new Set([...current, ...result.added])].join('\n')
-    formData.value.enable_ip_restriction = true
-    appStore.showSuccess(t('keys.blockDatacenterIPsResult', { count: result.added_count }))
-  } catch (error: any) {
-    appStore.showError(error?.message || t('keys.failedToUpdateStatus'))
-  } finally {
-    blockingDatacenterIPs.value = false
-  }
 }
 
 onMounted(() => {

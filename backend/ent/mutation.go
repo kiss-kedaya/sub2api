@@ -122,6 +122,7 @@ type APIKeyMutation struct {
 	appendip_whitelist              []string
 	ip_blacklist                    *[]string
 	appendip_blacklist              []string
+	auto_block_datacenter_ips       *bool
 	quota                           *float64
 	addquota                        *float64
 	quota_used                      *float64
@@ -748,6 +749,42 @@ func (m *APIKeyMutation) ResetIPBlacklist() {
 	m.ip_blacklist = nil
 	m.appendip_blacklist = nil
 	delete(m.clearedFields, apikey.FieldIPBlacklist)
+}
+
+// SetAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field.
+func (m *APIKeyMutation) SetAutoBlockDatacenterIps(b bool) {
+	m.auto_block_datacenter_ips = &b
+}
+
+// AutoBlockDatacenterIps returns the value of the "auto_block_datacenter_ips" field in the mutation.
+func (m *APIKeyMutation) AutoBlockDatacenterIps() (r bool, exists bool) {
+	v := m.auto_block_datacenter_ips
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAutoBlockDatacenterIps returns the old "auto_block_datacenter_ips" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldAutoBlockDatacenterIps(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAutoBlockDatacenterIps is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAutoBlockDatacenterIps requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAutoBlockDatacenterIps: %w", err)
+	}
+	return oldValue.AutoBlockDatacenterIps, nil
+}
+
+// ResetAutoBlockDatacenterIps resets all changes to the "auto_block_datacenter_ips" field.
+func (m *APIKeyMutation) ResetAutoBlockDatacenterIps() {
+	m.auto_block_datacenter_ips = nil
 }
 
 // SetQuota sets the "quota" field.
@@ -1664,7 +1701,7 @@ func (m *APIKeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *APIKeyMutation) Fields() []string {
-	fields := make([]string, 0, 26)
+	fields := make([]string, 0, 27)
 	if m.created_at != nil {
 		fields = append(fields, apikey.FieldCreatedAt)
 	}
@@ -1697,6 +1734,9 @@ func (m *APIKeyMutation) Fields() []string {
 	}
 	if m.ip_blacklist != nil {
 		fields = append(fields, apikey.FieldIPBlacklist)
+	}
+	if m.auto_block_datacenter_ips != nil {
+		fields = append(fields, apikey.FieldAutoBlockDatacenterIps)
 	}
 	if m.quota != nil {
 		fields = append(fields, apikey.FieldQuota)
@@ -1773,6 +1813,8 @@ func (m *APIKeyMutation) Field(name string) (ent.Value, bool) {
 		return m.IPWhitelist()
 	case apikey.FieldIPBlacklist:
 		return m.IPBlacklist()
+	case apikey.FieldAutoBlockDatacenterIps:
+		return m.AutoBlockDatacenterIps()
 	case apikey.FieldQuota:
 		return m.Quota()
 	case apikey.FieldQuotaUsed:
@@ -1834,6 +1876,8 @@ func (m *APIKeyMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldIPWhitelist(ctx)
 	case apikey.FieldIPBlacklist:
 		return m.OldIPBlacklist(ctx)
+	case apikey.FieldAutoBlockDatacenterIps:
+		return m.OldAutoBlockDatacenterIps(ctx)
 	case apikey.FieldQuota:
 		return m.OldQuota(ctx)
 	case apikey.FieldQuotaUsed:
@@ -1949,6 +1993,13 @@ func (m *APIKeyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetIPBlacklist(v)
+		return nil
+	case apikey.FieldAutoBlockDatacenterIps:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAutoBlockDatacenterIps(v)
 		return nil
 	case apikey.FieldQuota:
 		v, ok := value.(float64)
@@ -2304,6 +2355,9 @@ func (m *APIKeyMutation) ResetField(name string) error {
 		return nil
 	case apikey.FieldIPBlacklist:
 		m.ResetIPBlacklist()
+		return nil
+	case apikey.FieldAutoBlockDatacenterIps:
+		m.ResetAutoBlockDatacenterIps()
 		return nil
 	case apikey.FieldQuota:
 		m.ResetQuota()

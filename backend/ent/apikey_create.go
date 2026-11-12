@@ -139,6 +139,20 @@ func (_c *APIKeyCreate) SetIPBlacklist(v []string) *APIKeyCreate {
 	return _c
 }
 
+// SetAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field.
+func (_c *APIKeyCreate) SetAutoBlockDatacenterIps(v bool) *APIKeyCreate {
+	_c.mutation.SetAutoBlockDatacenterIps(v)
+	return _c
+}
+
+// SetNillableAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableAutoBlockDatacenterIps(v *bool) *APIKeyCreate {
+	if v != nil {
+		_c.SetAutoBlockDatacenterIps(*v)
+	}
+	return _c
+}
+
 // SetQuota sets the "quota" field.
 func (_c *APIKeyCreate) SetQuota(v float64) *APIKeyCreate {
 	_c.mutation.SetQuota(v)
@@ -429,6 +443,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	if _, ok := _c.mutation.AutoBlockDatacenterIps(); !ok {
+		v := apikey.DefaultAutoBlockDatacenterIps
+		_c.mutation.SetAutoBlockDatacenterIps(v)
+	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		v := apikey.DefaultQuota
 		_c.mutation.SetQuota(v)
@@ -510,6 +528,9 @@ func (_c *APIKeyCreate) check() error {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.AutoBlockDatacenterIps(); !ok {
+		return &ValidationError{Name: "auto_block_datacenter_ips", err: errors.New(`ent: missing required field "APIKey.auto_block_datacenter_ips"`)}
 	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		return &ValidationError{Name: "quota", err: errors.New(`ent: missing required field "APIKey.quota"`)}
@@ -619,6 +640,10 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.IPBlacklist(); ok {
 		_spec.SetField(apikey.FieldIPBlacklist, field.TypeJSON, value)
 		_node.IPBlacklist = value
+	}
+	if value, ok := _c.mutation.AutoBlockDatacenterIps(); ok {
+		_spec.SetField(apikey.FieldAutoBlockDatacenterIps, field.TypeBool, value)
+		_node.AutoBlockDatacenterIps = value
 	}
 	if value, ok := _c.mutation.Quota(); ok {
 		_spec.SetField(apikey.FieldQuota, field.TypeFloat64, value)
@@ -929,6 +954,18 @@ func (u *APIKeyUpsert) UpdateIPBlacklist() *APIKeyUpsert {
 // ClearIPBlacklist clears the value of the "ip_blacklist" field.
 func (u *APIKeyUpsert) ClearIPBlacklist() *APIKeyUpsert {
 	u.SetNull(apikey.FieldIPBlacklist)
+	return u
+}
+
+// SetAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field.
+func (u *APIKeyUpsert) SetAutoBlockDatacenterIps(v bool) *APIKeyUpsert {
+	u.Set(apikey.FieldAutoBlockDatacenterIps, v)
+	return u
+}
+
+// UpdateAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateAutoBlockDatacenterIps() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldAutoBlockDatacenterIps)
 	return u
 }
 
@@ -1407,6 +1444,20 @@ func (u *APIKeyUpsertOne) UpdateIPBlacklist() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearIPBlacklist() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearIPBlacklist()
+	})
+}
+
+// SetAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field.
+func (u *APIKeyUpsertOne) SetAutoBlockDatacenterIps(v bool) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAutoBlockDatacenterIps(v)
+	})
+}
+
+// UpdateAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateAutoBlockDatacenterIps() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAutoBlockDatacenterIps()
 	})
 }
 
@@ -2094,6 +2145,20 @@ func (u *APIKeyUpsertBulk) UpdateIPBlacklist() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearIPBlacklist() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearIPBlacklist()
+	})
+}
+
+// SetAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field.
+func (u *APIKeyUpsertBulk) SetAutoBlockDatacenterIps(v bool) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAutoBlockDatacenterIps(v)
+	})
+}
+
+// UpdateAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateAutoBlockDatacenterIps() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAutoBlockDatacenterIps()
 	})
 }
 

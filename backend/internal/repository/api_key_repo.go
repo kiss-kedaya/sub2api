@@ -59,7 +59,8 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetRateLimit1d(key.RateLimit1d).
 		SetRateLimit7d(key.RateLimit7d).
 		SetAnthropicCacheTTLMode(service.NormalizeAnthropicCacheTTLMode(key.AnthropicCacheTTLMode)).
-		SetDeepseekToolInjectionEnabled(key.IsDeepSeekToolInjectionEnabled())
+		SetDeepseekToolInjectionEnabled(key.IsDeepSeekToolInjectionEnabled()).
+		SetAutoBlockDatacenterIps(key.AutoBlockDatacenterIPs)
 
 	if len(key.IPWhitelist) > 0 {
 		builder.SetIPWhitelist(key.IPWhitelist)
@@ -153,6 +154,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			// 管理员设的「强制 1h」，整条注入链路静默失效。
 			apikey.FieldAnthropicCacheTTLMode,
 			apikey.FieldDeepseekToolInjectionEnabled,
+			apikey.FieldAutoBlockDatacenterIps,
 			apikey.FieldConcurrencyLimit,
 		).
 		WithUser(func(q *dbent.UserQuery) {
@@ -301,6 +303,9 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 	}
 	if fields.DeepSeekToolInjectionEnabled {
 		builder.SetDeepseekToolInjectionEnabled(key.IsDeepSeekToolInjectionEnabled())
+	}
+	if fields.AutoBlockDatacenterIPs {
+		builder.SetAutoBlockDatacenterIps(key.AutoBlockDatacenterIPs)
 	}
 	if fields.RateLimitUsage {
 		builder.
@@ -785,6 +790,33 @@ func (r *apiKeyRepository) ListRecentIPAddresses(ctx context.Context, apiKeyID i
 	return out, rows.Err()
 }
 
+// ListAutoBlockDatacenterIPsKeys returns the keys that opted into the periodic
+// datacenter/proxy IP blacklist job. Ordering by updated_at keeps the scan
+// bounded while rotating which keys are visited when more than limit are on:
+// every processed key bumps updated_at, so it moves to the back of the queue.
+func (r *apiKeyRepository) ListAutoBlockDatacenterIPsKeys(ctx context.Context, limit int) ([]service.APIKey, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := r.activeQuery().
+		Where(apikey.AutoBlockDatacenterIpsEQ(true)).
+		Order(dbent.Asc(apikey.FieldUpdatedAt)).
+		Limit(limit).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]service.APIKey, 0, len(rows))
+	for _, row := range rows {
+		key := apiKeyEntityToService(row)
+		if key == nil {
+			continue
+		}
+		out = append(out, *key)
+	}
+	return out, nil
+}
+
 func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
 	n, err := client.APIKey.Update().
@@ -1032,6 +1064,7 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 
 		AnthropicCacheTTLMode:        service.NormalizeAnthropicCacheTTLMode(m.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: &m.DeepseekToolInjectionEnabled,
+		AutoBlockDatacenterIPs:       m.AutoBlockDatacenterIps,
 		Usage5h:                      m.Usage5h,
 		Usage1d:                      m.Usage1d,
 		Usage7d:                      m.Usage7d,

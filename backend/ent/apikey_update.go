@@ -190,6 +190,20 @@ func (_u *APIKeyUpdate) ClearIPBlacklist() *APIKeyUpdate {
 	return _u
 }
 
+// SetAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field.
+func (_u *APIKeyUpdate) SetAutoBlockDatacenterIps(v bool) *APIKeyUpdate {
+	_u.mutation.SetAutoBlockDatacenterIps(v)
+	return _u
+}
+
+// SetNillableAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableAutoBlockDatacenterIps(v *bool) *APIKeyUpdate {
+	if v != nil {
+		_u.SetAutoBlockDatacenterIps(*v)
+	}
+	return _u
+}
+
 // SetQuota sets the "quota" field.
 func (_u *APIKeyUpdate) SetQuota(v float64) *APIKeyUpdate {
 	_u.mutation.ResetQuota()
@@ -683,6 +697,9 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.IPBlacklistCleared() {
 		_spec.ClearField(apikey.FieldIPBlacklist, field.TypeJSON)
 	}
+	if value, ok := _u.mutation.AutoBlockDatacenterIps(); ok {
+		_spec.SetField(apikey.FieldAutoBlockDatacenterIps, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.Quota(); ok {
 		_spec.SetField(apikey.FieldQuota, field.TypeFloat64, value)
 	}
@@ -1045,6 +1062,20 @@ func (_u *APIKeyUpdateOne) AppendIPBlacklist(v []string) *APIKeyUpdateOne {
 // ClearIPBlacklist clears the value of the "ip_blacklist" field.
 func (_u *APIKeyUpdateOne) ClearIPBlacklist() *APIKeyUpdateOne {
 	_u.mutation.ClearIPBlacklist()
+	return _u
+}
+
+// SetAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field.
+func (_u *APIKeyUpdateOne) SetAutoBlockDatacenterIps(v bool) *APIKeyUpdateOne {
+	_u.mutation.SetAutoBlockDatacenterIps(v)
+	return _u
+}
+
+// SetNillableAutoBlockDatacenterIps sets the "auto_block_datacenter_ips" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableAutoBlockDatacenterIps(v *bool) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetAutoBlockDatacenterIps(*v)
+	}
 	return _u
 }
 
@@ -1570,6 +1601,9 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if _u.mutation.IPBlacklistCleared() {
 		_spec.ClearField(apikey.FieldIPBlacklist, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AutoBlockDatacenterIps(); ok {
+		_spec.SetField(apikey.FieldAutoBlockDatacenterIps, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.Quota(); ok {
 		_spec.SetField(apikey.FieldQuota, field.TypeFloat64, value)

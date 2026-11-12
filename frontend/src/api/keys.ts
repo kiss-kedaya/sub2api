@@ -70,12 +70,13 @@ export async function create(
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
   groupIds?: number[],
   anthropicCacheTtlMode?: 'inherit' | 'off' | '1h' | '5m',
-  options?: { idempotencyKey?: string; deepseekToolInjectionEnabled?: boolean; concurrencyLimit?: number }
+  options?: { idempotencyKey?: string; deepseekToolInjectionEnabled?: boolean; concurrencyLimit?: number; autoBlockDatacenterIPs?: boolean }
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = {
     name,
     deepseek_tool_injection_enabled: options?.deepseekToolInjectionEnabled ?? true,
   }
+  if (options?.autoBlockDatacenterIPs) payload.auto_block_datacenter_ips = true
   if (options?.concurrencyLimit !== undefined && options.concurrencyLimit > 0) payload.concurrency_limit = options.concurrencyLimit
   if (groupId !== undefined) {
     payload.group_id = groupId

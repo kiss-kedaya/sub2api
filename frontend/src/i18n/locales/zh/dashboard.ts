@@ -300,9 +300,8 @@ export default {
     ipBlacklist: 'IP 黑名单',
     ipBlacklistPlaceholder: '1.2.3.4\n5.6.0.0/16',
     ipBlacklistHint: '每行一个 IP 或 CIDR，这些 IP 将被禁止使用此密钥',
-    blockDatacenterIPs: '自动封禁机房 IP',
-    blockDatacenterIPsLoading: '正在检查机房 IP…',
-    blockDatacenterIPsResult: '已加入 {count} 个机房 IP',
+    autoBlockDatacenterIPs: '自动封禁机房 IP',
+    autoBlockDatacenterIPsHint: '开启后每 5 分钟检查该密钥最近使用的 IP，自动把机房/代理 IP 加入 IP 黑名单',
     ipRestrictionEnabled: '已配置 IP 限制',
     ccSwitchNotInstalled:
       'CC-Switch 未安装或协议处理程序未注册。请先安装 CC-Switch 或手动复制 API 密钥。',

@@ -40,6 +40,9 @@ type APIKey struct {
 	Status        string
 	IPWhitelist   []string
 	IPBlacklist   []string
+	// AutoBlockDatacenterIPs 打开后，后台定时把本密钥最近使用的
+	// 机房/代理 IP 追加进 IPBlacklist（只加不删，判定失败放行）。
+	AutoBlockDatacenterIPs bool
 	// 预编译的 IP 规则，用于认证热路径避免重复 ParseIP/ParseCIDR。
 	CompiledIPWhitelist *ip.CompiledIPRules `json:"-"`
 	CompiledIPBlacklist *ip.CompiledIPRules `json:"-"`

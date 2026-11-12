@@ -131,6 +131,7 @@ func provideCleanup(
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	modelWhitelistAutoSync *service.ModelWhitelistAutoSyncService,
+	apiKeyDatacenterAutoBlock *service.APIKeyDatacenterAutoBlockService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
@@ -450,6 +451,12 @@ func provideCleanup(
 			{"ModelWhitelistAutoSyncService", func() error {
 				if modelWhitelistAutoSync != nil {
 					modelWhitelistAutoSync.Stop()
+				}
+				return nil
+			}},
+			{"APIKeyDatacenterAutoBlockService", func() error {
+				if apiKeyDatacenterAutoBlock != nil {
+					apiKeyDatacenterAutoBlock.Stop()
 				}
 				return nil
 			}},

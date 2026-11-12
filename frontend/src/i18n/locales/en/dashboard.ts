@@ -296,9 +296,8 @@ export default {
     ipBlacklist: 'IP Blacklist',
     ipBlacklistPlaceholder: '1.2.3.4\n5.6.0.0/16',
     ipBlacklistHint: 'One IP or CIDR per line. These IPs will be blocked from using this key.',
-    blockDatacenterIPs: 'Block datacenter IPs',
-    blockDatacenterIPsLoading: 'Checking datacenter IPs…',
-    blockDatacenterIPsResult: 'Added {count} datacenter IP(s)',
+    autoBlockDatacenterIPs: 'Auto-block datacenter IPs',
+    autoBlockDatacenterIPsHint: 'When enabled, the key’s recently used IPs are checked every 5 minutes and hosting/proxy IPs are added to its IP blacklist.',
     ipRestrictionEnabled: 'IP restriction enabled',
     ccSwitchNotInstalled: 'CC-Switch is not installed or the protocol handler is not registered. Please install CC-Switch first or manually copy the API key.',
     ccsClientSelect: {
