@@ -79,6 +79,13 @@ describe('upstreamKindOf', () => {
 })
 
 describe('UpstreamKindBadge', () => {
+  // A renamed icon used to render an empty <svg>: assert the glyph itself is drawn, not
+  // just that a badge element exists.
+  it.each(['sub2api', 'newapi', 'openai_compatible', 'official', 'custom', 'unknown'] as const)('draws the icon for %s', kind => {
+    const wrapper = mount(UpstreamKindBadge, { props: { kind } })
+    const icon = wrapper.get('[data-testid="upstream-kind-icon"]')
+    expect(icon.findAll('path, circle').length).toBeGreaterThan(0)
+  })
   it.each(['sub2api', 'newapi', 'openai_compatible', 'official', 'custom', 'unknown'] as const)('renders a text label for %s', kind => {
     const wrapper = mount(UpstreamKindBadge, { props: { kind } })
     const badge = wrapper.get('[data-testid="upstream-kind-badge"]')
@@ -256,3 +263,4 @@ describe('UpstreamBalanceCell', () => {
     }
   })
 })
+

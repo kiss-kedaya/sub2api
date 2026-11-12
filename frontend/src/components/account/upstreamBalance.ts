@@ -13,15 +13,6 @@ export function upstreamKindOf(account: Pick<Account, 'type' | 'extra'>): Upstre
   return typeof kind === 'string' && (KNOWN_KINDS as readonly string[]).includes(kind) ? kind as UpstreamKind : 'unknown'
 }
 
-// Each kind carries its own icon and short label, so the column is readable without colour.
-export const UPSTREAM_KIND_ICON: Record<UpstreamKindKey, string> = {
-  sub2api: 'i-lucide-layers',
-  newapi: 'i-lucide-box',
-  openai_compatible: 'i-lucide-plug',
-  official: 'i-lucide-badge-check',
-  custom: 'i-lucide-wrench',
-  unknown: 'i-lucide-circle-help'
-}
 
 export const UPSTREAM_KIND_COLOR: Record<UpstreamKindKey, 'primary' | 'info' | 'success' | 'warning' | 'neutral'> = {
   sub2api: 'primary',
