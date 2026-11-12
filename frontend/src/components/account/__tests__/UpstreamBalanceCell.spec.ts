@@ -125,6 +125,28 @@ describe('UpstreamBalanceCell', () => {
     expect(text).not.toMatch(/0\.00/)
   })
 
+  it('shows the spend and says the balance was not provided when only used is known', () => {
+    const account = makeAccount({
+      upstream_kind: 'newapi',
+      balance: {
+        status: 'unsupported',
+        data: { is_valid: true, unit: 'USD', quota_used: 53035.92, balance_unavailable: true },
+        last_attempt_at: iso(0),
+        http_status: 404,
+        last_error: 'unsupported'
+      }
+    })
+    const view = upstreamBalanceView(account, NOW)
+    expect(view.state).toBe('used_only')
+    expect(view.used).toBe(53035.92)
+    const wrapper = mountCell(account)
+    expect(wrapper.get('[data-testid="upstream-balance-value"]').text()).toBe('admin.accounts.upstreamBalance.notProvided')
+    expect(wrapper.get('[data-testid="upstream-balance-subline"]').text()).toBe('admin.accounts.upstreamBalance.usedShort:$53,035.92')
+    // The 1e8 sentinel must never reappear as an "unlimited" headline.
+    expect(wrapper.text()).not.toContain('admin.accounts.upstreamBalance.unlimited')
+    expect(wrapper.get('[data-testid="upstream-balance-note"]').text()).toBe('admin.accounts.upstreamBalance.notProvidedNote')
+  })
+
   it('keeps the account wallet and the key quota as two separate numbers', () => {
     const account = makeAccount({ upstream_kind: 'newapi', balance: ok({ unit: 'USD', unit_assumed: true, remaining: 37.5, wallet_balance: 412.09 }, 'newapi_token_usage') })
     const wrapper = mountCell(account)
@@ -205,5 +227,32 @@ describe('UpstreamBalanceCell', () => {
     const wrapper = mountCell(makeAccount())
     await wrapper.get('[data-testid="upstream-balance-probe"]').trigger('click')
     expect(wrapper.emitted('probe')).toHaveLength(1)
+  })
+
+  // The refresh button used to be a plain <button> with no type, so inside any
+  // surrounding form it defaulted to type=submit and reloaded the page. It must
+  // stay a non-submitting button and swallow the default action.
+  it('does not submit a surrounding form or navigate when refresh is clicked', () => {
+    const form = document.createElement('form')
+    const onSubmit = vi.fn((event: Event) => event.preventDefault())
+    form.addEventListener('submit', onSubmit)
+    document.body.appendChild(form)
+    const wrapper = mount(UpstreamBalanceCell, {
+      props: { account: makeAccount(), now: NOW },
+      attachTo: form,
+      global: { stubs: { UIcon: true, HelpTooltip: HelpTooltipStub, UButton: { template: '<button v-bind="$attrs" />' } } }
+    })
+    try {
+      const button = wrapper.get('[data-testid="upstream-balance-probe"]')
+      expect(button.attributes('type')).toBe('button')
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+      button.element.dispatchEvent(click)
+      expect(click.defaultPrevented).toBe(true)
+      expect(wrapper.emitted('probe')).toHaveLength(1)
+      expect(onSubmit).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+      form.remove()
+    }
   })
 })

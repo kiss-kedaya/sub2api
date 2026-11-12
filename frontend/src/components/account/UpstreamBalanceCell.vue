@@ -49,6 +49,7 @@
       <p v-if="noteText" class="mt-2 border-t border-default pt-2 text-muted" data-testid="upstream-balance-note">{{ noteText }}</p>
     </HelpTooltip>
     <UButton
+      type="button"
       color="neutral"
       variant="ghost"
       size="xs"
@@ -60,7 +61,7 @@
       :aria-label="t('admin.accounts.upstreamBalance.manualProbe')"
       :title="t('admin.accounts.upstreamBalance.manualProbe')"
       data-testid="upstream-balance-probe"
-      @click="$emit('probe')"
+      @click.prevent="$emit('probe')"
     />
   </div>
 </template>
@@ -106,6 +107,8 @@ const headline = computed(() => {
       return money(v.amount ?? 0)
     case 'unlimited':
       return t('admin.accounts.upstreamBalance.unlimited')
+    case 'used_only':
+      return t('admin.accounts.upstreamBalance.notProvided')
     case 'official':
       return t('admin.accounts.upstreamBalance.official')
     case 'unsupported':
@@ -161,6 +164,7 @@ const subline = computed(() => {
     if (v.stale) return t('admin.accounts.upstreamBalance.staleShort', { value: elapsed(v.balance?.received_at) })
     return t('admin.accounts.upstreamBalance.walletOnlyShort')
   }
+  if (v.state === 'used_only') return t('admin.accounts.upstreamBalance.usedShort', { value: money(v.used ?? 0) })
   if (v.state === 'failed' && v.balance?.http_status) return `HTTP ${v.balance.http_status}`
   return ''
 })
@@ -187,7 +191,7 @@ const failureText = (code?: string) => {
 
 const sourceText = (source?: string) => {
   if (!source) return ''
-  return ['sub2api_usage', 'newapi_token_usage', 'openai_billing_subscription'].includes(source)
+  return ['sub2api_usage', 'newapi_token_usage', 'openai_billing_subscription', 'custom_usage'].includes(source)
     ? t(`admin.accounts.upstreamBalance.source.${source}`)
     : source
 }
@@ -231,6 +235,7 @@ const noteText = computed(() => {
   if (v.state === 'not_read') return t('admin.accounts.upstreamBalance.notReadNote')
   if (v.state === 'reading') return t('admin.accounts.upstreamBalance.readingNote')
   if (v.state === 'unlimited') return t('admin.accounts.upstreamBalance.unlimitedNote')
+  if (v.state === 'used_only') return t('admin.accounts.upstreamBalance.notProvidedNote')
   if (v.lastReadFailed) return t('admin.accounts.upstreamBalance.keptLastValueNote')
   if (v.stale) return t('admin.accounts.upstreamBalance.staleNote')
   return ''

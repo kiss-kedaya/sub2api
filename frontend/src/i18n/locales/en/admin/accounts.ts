@@ -339,7 +339,7 @@ export default {
         },
         hint: {
           sub2api: 'The upstream is Sub2API: it answered /v1/usage',
-          newapi: 'The upstream is New API: it carries a new-api fingerprint (x-new-api-version / x-oneapi-request-id / /api/status) or answered /api/usage/token/',
+          newapi: 'The upstream is New API: it carries a new-api fingerprint (x-new-api-version / x-oneapi-request-id / /api/status), answered /api/usage/token/, or returned the 1e8 unlimited sentinel from the billing endpoint',
           openai_compatible: 'The upstream only serves the legacy OpenAI billing endpoints (/v1/dashboard/billing) and carries no New API fingerprint',
           official: "The provider's own API. No balance is read",
           custom: 'The upstream is reachable but answered none of the known balance endpoints',
@@ -350,6 +350,8 @@ export default {
         notApplicable: 'Only API key accounts read an upstream balance',
         manualProbe: 'Read upstream balance now',
         unlimited: 'Unlimited',
+        notProvided: 'Balance not provided',
+        usedShort: '{value} used',
         official: 'Official API',
         unsupported: 'Unsupported',
         failed: 'Read failed',
@@ -367,6 +369,7 @@ export default {
         unsupportedNote: 'The upstream is reachable but is not Sub2API or New API and has no legacy OpenAI billing endpoint, so no balance can be read.',
         notReadNote: 'No balance has been read yet. Turn on the upstream rate probe or use the button on the right to read once.',
         unlimitedNote: 'The upstream set this key to unlimited quota, so there is no remaining amount.',
+        notProvidedNote: 'The upstream reported spend but no usable balance; the probe keeps retrying every 10 minutes.',
         keptLastValueNote: 'The latest read failed; this is the last value that was read successfully.',
         readingNote: 'This upstream was recognised as Sub2API / New API. A failed read is retried in the background (1s, 3s, 9s back-off); until it succeeds only the last successful value is shown, never a failure.',
         refreshHint: 'The balance refreshes every 10 minutes by default. For a recognised Sub2API / New API upstream a failed read is retried until it succeeds, and the list only ever shows the last successful value.',
@@ -392,7 +395,8 @@ export default {
         source: {
           sub2api_usage: 'Sub2API /v1/usage',
           newapi_token_usage: 'New API /api/usage/token/',
-          openai_billing_subscription: 'OpenAI /v1/dashboard/billing'
+          openai_billing_subscription: 'OpenAI /v1/dashboard/billing',
+          custom_usage: 'Custom extractor'
         },
         failure: {
           unsupported: 'The upstream has no such endpoint (404/405)',

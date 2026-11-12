@@ -276,9 +276,9 @@ func TestUpstreamBalanceProbeReadsBalanceWhenRateIsUnsupported(t *testing.T) {
 	require.False(t, snapshot.NextProbeAt.Before(now.Add(25*time.Minute)))
 }
 
-func TestUpstreamBalanceProbeKeepsStretchedDelayWhenNothingIsSupported(t *testing.T) {
+func TestUpstreamBalanceProbeRetriesUnsupportedEveryTenMinutes(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 1, 30, 0, 0, time.UTC)
-	// Rate, then the three balance endpoints tried in order: all 404.
+	// Rate, then the balance endpoints tried in order: all 404.
 	upstream := &httpUpstreamRecorder{resp: upstreamBalanceProbeJSONResponse(http.StatusNotFound, `{}`), responses: []*http.Response{
 		upstreamBalanceProbeJSONResponse(http.StatusNotFound, `{}`),
 		upstreamBalanceProbeJSONResponse(http.StatusNotFound, `{}`),
@@ -293,7 +293,9 @@ func TestUpstreamBalanceProbeKeepsStretchedDelayWhenNothingIsSupported(t *testin
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Balance.Status)
 	require.Equal(t, "unsupported", snapshot.Balance.LastError)
 	require.Equal(t, http.StatusNotFound, snapshot.Balance.HTTPStatus)
-	require.True(t, snapshot.NextProbeAt.After(now.Add(3*time.Hour)))
+	// Nothing readable: the fixed ten-minute cadence keeps re-identifying the
+	// upstream instead of parking it for hours.
+	require.Equal(t, now.Add(10*time.Minute), snapshot.NextProbeAt)
 }
 
 func TestUpstreamBalanceProbeSkipsBalanceAfterRejectedOrThrottledRate(t *testing.T) {

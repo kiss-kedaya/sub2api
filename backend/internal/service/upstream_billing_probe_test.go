@@ -829,26 +829,19 @@ func TestUpstreamBillingProbeRetryAfterIsNotShortened(t *testing.T) {
 	require.Equal(t, 48*time.Hour, delay)
 }
 
-// unsupported 的重探间隔明显长于普通失败，但始终有上界：上游后来接入 sub2api
-// 时最迟一天内会被重新发现，且不会缩短上游 Retry-After 指令。
-func TestUpstreamBillingProbeUnsupportedDelayIsStretchedAndBounded(t *testing.T) {
-	// 默认 30 分钟 interval：普通失败 24~36 分钟，unsupported 为其 8 倍。
-	stretched := unsupportedProbeDelay(30, 0)
-	require.Greater(t, stretched, 36*time.Minute)
-	require.GreaterOrEqual(t, stretched, 192*time.Minute)
-	require.LessOrEqual(t, stretched, 288*time.Minute)
+// unsupported 账号按固定 10 分钟重探：这是「识别到了就自动填、10 分钟刷一次」
+// 的直接要求。上游明确要求更久的 Retry-After 时仍然照办。
+func TestUpstreamBillingProbeUnsupportedDelayIsTenMinutes(t *testing.T) {
+	require.Equal(t, 10*time.Minute, unsupportedProbeDelay(0))
+	require.Equal(t, 10*time.Minute, unsupportedProbeDelay(time.Minute))
 
-	// 永不超过封顶值，因此 unsupported 账号不会被永久排除在重探之外。
-	require.LessOrEqual(t, unsupportedProbeDelay(upstreamBillingProbeMaxIntervalMinutes, 0), upstreamBillingProbeMaxDelay)
-	require.Positive(t, unsupportedProbeDelay(upstreamBillingProbeMinIntervalMinutes, 0))
-
-	// Retry-After 更长时原样保留，不被封顶缩短；更短时至少不早于该指令。
-	require.Equal(t, 48*time.Hour, unsupportedProbeDelay(30, 48*time.Hour))
-	require.GreaterOrEqual(t, unsupportedProbeDelay(30, time.Hour), time.Hour)
+	// Retry-After 是上游的明确指令：更长时原样保留，不被本地节奏缩短。
+	require.Equal(t, 48*time.Hour, unsupportedProbeDelay(48*time.Hour))
+	require.Equal(t, time.Hour, unsupportedProbeDelay(time.Hour))
 }
 
-// 加长退避只把 unsupported 账号移出周期性热队列，手动探测不受影响。
-func TestUpstreamBillingProbeUnsupportedBackoffDefersRunnerButNotManualProbe(t *testing.T) {
+// 10 分钟重探只影响 unsupported 账号的节奏，手动探测不受影响。
+func TestUpstreamBillingProbeUnsupportedRetriesEveryTenMinutes(t *testing.T) {
 	// Ollama Cloud 形态：官方域，不发请求直接落 unsupported。
 	account := &Account{
 		ID:          31,
@@ -874,22 +867,30 @@ func TestUpstreamBillingProbeUnsupportedBackoffDefersRunnerButNotManualProbe(t *
 	require.NotNil(t, first)
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, first.Status)
 	require.Equal(t, start, first.LastAttemptAt)
-	require.False(t, first.NextProbeAt.Before(start.Add(192*time.Minute)))
+	require.Equal(t, start.Add(10*time.Minute), first.NextProbeAt)
 	require.Zero(t, upstream.calls.Load())
 
-	// 一个普通失败早就该重探的时间点（远超 36 分钟），runner 仍跳过该账号。
-	now = start.Add(90 * time.Minute)
+	// 9 分钟后还没到点：runner 跳过该账号。
+	now = start.Add(9 * time.Minute)
 	require.NoError(t, svc.RunDue(context.Background()))
 	deferred := decodeUpstreamBillingProbeSnapshot(account.Extra)
 	require.NotNil(t, deferred)
 	require.Equal(t, first.LastAttemptAt, deferred.LastAttemptAt)
+
+	// 到 10 分钟：runner 重新探测，next_probe_at 继续前进。
+	now = start.Add(10 * time.Minute)
+	require.NoError(t, svc.RunDue(context.Background()))
+	retried := decodeUpstreamBillingProbeSnapshot(account.Extra)
+	require.NotNil(t, retried)
+	require.Equal(t, now, retried.LastAttemptAt)
+	require.Equal(t, now.Add(10*time.Minute), retried.NextProbeAt)
 
 	// 手动探测无视退避窗口，管理员随时可以重试。
 	manual, err := svc.ProbeAccount(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, manual.Status)
 	require.Equal(t, now, manual.LastAttemptAt)
-	require.Equal(t, 2, manual.FailureCount)
+	require.Equal(t, 3, manual.FailureCount)
 }
 
 func TestUpstreamBillingProbeEmptyResponseIsPersistedAsFailure(t *testing.T) {
@@ -946,15 +947,13 @@ func TestUpstreamBillingProbeUnsupportedAndAccountToggle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Status)
 	require.Equal(t, "unsupported", snapshot.LastError)
-	// unsupported 走加长退避：默认 30 分钟 interval ⇒ (24~36) * 8 分钟。
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(192*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(288*time.Minute)))
+	// unsupported 也按固定 10 分钟重探，不再按 interval×8 拉到数小时。
+	require.Equal(t, fixedNow.Add(10*time.Minute), snapshot.NextProbeAt)
 
 	snapshot, err = svc.ProbeAccount(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.Equal(t, 2, snapshot.FailureCount)
-	require.False(t, snapshot.NextProbeAt.Before(fixedNow.Add(192*time.Minute)))
-	require.False(t, snapshot.NextProbeAt.After(fixedNow.Add(288*time.Minute)))
+	require.Equal(t, fixedNow.Add(10*time.Minute), snapshot.NextProbeAt)
 	require.NoError(t, svc.SetAccountEnabled(context.Background(), account.ID, false))
 	require.Equal(t, false, account.Extra[UpstreamBillingProbeEnabledExtraKey])
 	require.Equal(t, false, account.Extra[UpstreamBillingRateSyncEnabledExtraKey])

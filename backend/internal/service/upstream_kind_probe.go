@@ -57,6 +57,10 @@ const (
 	UpstreamBalanceSourceSub2APIUsage       = "sub2api_usage"
 	UpstreamBalanceSourceNewAPITokenUsage   = "newapi_token_usage"
 	UpstreamBalanceSourceLegacySubscription = "openai_billing_subscription"
+	// UpstreamBalanceSourceCustomUsage is the operator-configured extractor. It
+	// only fills a balance the probe's own endpoints could not read, and the
+	// figure keeps whatever unit the extractor declared.
+	UpstreamBalanceSourceCustomUsage = "custom_usage"
 )
 
 type upstreamNewAPIUsageResponse struct {
@@ -177,27 +181,25 @@ func parseUpstreamLegacySubscriptionResponse(subscriptionBody, usageBody []byte)
 	if err := json.Unmarshal(subscriptionBody, &subscription); err != nil {
 		return nil, err
 	}
+	// The 1e8 sentinel is new-api's "unlimited quota" marker, not a granted
+	// total. A caller that got this far without identifying new-api must not
+	// present the marker as a limit, and must not present "unlimited" unless the
+	// new-api usage payload says unlimited_quota itself.
+	if upstreamLegacyBillingIsNewAPISentinel(subscriptionBody) {
+		return nil, fmt.Errorf("new-api billing sentinel is not an OpenAI balance")
+	}
 	hardLimit, ok := finiteUpstreamBalanceNumber(subscription.HardLimitUSD)
 	if !ok {
 		return nil, fmt.Errorf("unexpected billing subscription response schema")
 	}
-	data := map[string]any{"is_valid": true, "unit": "USD"}
-	// new-api reports this sentinel for a token with unlimited quota.
-	unlimited := hardLimit >= upstreamLegacyUnlimitedHardLimit
-	if unlimited {
-		data["unlimited"] = true
-	} else {
-		data["quota_limit"] = hardLimit
-	}
+	data := map[string]any{"is_valid": true, "unit": "USD", "quota_limit": hardLimit}
 	if len(usageBody) > 0 {
 		var usage upstreamLegacyUsageResponse
 		if err := json.Unmarshal(usageBody, &usage); err == nil {
 			if cents, ok := finiteUpstreamBalanceNumber(usage.TotalUsage); ok {
 				used := cents / 100
 				data["quota_used"] = used
-				if !unlimited {
-					data["remaining"] = math.Max(hardLimit-used, 0)
-				}
+				data["remaining"] = math.Max(hardLimit-used, 0)
 			}
 		}
 	}
@@ -207,6 +209,52 @@ func parseUpstreamLegacySubscriptionResponse(subscriptionBody, usageBody []byte)
 		}
 	}
 	return data, nil
+}
+
+// upstreamLegacyBillingIsNewAPISentinel reports whether a legacy billing
+// subscription payload carries new-api's "unlimited quota" sentinel.
+//
+// new-api serves /v1/dashboard/billing/subscription for OpenAI-client
+// compatibility and fills hard_limit_usd, soft_limit_usd and
+// system_hard_limit_usd with 1e8 for a token whose quota is unlimited. Real
+// OpenAI billing never reports that number, so the sentinel identifies new-api
+// even on a site whose /api/status is 404 and whose responses carry no
+// new-api header. The amount is a marker, never a granted total: it must not be
+// shown as a limit and must not be used to compute a balance.
+func upstreamLegacyBillingIsNewAPISentinel(body []byte) bool {
+	var subscription upstreamLegacySubscriptionResponse
+	if err := json.Unmarshal(body, &subscription); err != nil {
+		return false
+	}
+	for _, value := range []*float64{
+		subscription.HardLimitUSD,
+		subscription.SoftLimitUSD,
+		subscription.SystemHardLimitUSD,
+	} {
+		if limit, ok := finiteUpstreamBalanceNumber(value); ok && limit >= upstreamLegacyUnlimitedHardLimit {
+			return true
+		}
+	}
+	return false
+}
+
+// upstreamLegacyBillingUsedUSD reads the spend from a legacy
+// /v1/dashboard/billing/usage answer (cents). The figure is real spend even on
+// a new-api site that serves the endpoint for compatibility, so it is kept as
+// "used" while the balance itself is reported as not provided.
+func upstreamLegacyBillingUsedUSD(body []byte) (float64, bool) {
+	if len(body) == 0 {
+		return 0, false
+	}
+	var usage upstreamLegacyUsageResponse
+	if err := json.Unmarshal(body, &usage); err != nil {
+		return 0, false
+	}
+	cents, ok := finiteUpstreamBalanceNumber(usage.TotalUsage)
+	if !ok || cents < 0 {
+		return 0, false
+	}
+	return cents / 100, true
 }
 
 // upstreamSiteRootURL resolves a path against the origin of an account's base

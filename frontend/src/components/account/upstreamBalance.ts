@@ -40,6 +40,7 @@ export type UpstreamBalanceState =
   | 'failed' // read failed and there is no earlier value to show
   | 'reading' // an identified Sub2API / New API read is still being retried
   | 'unlimited'
+  | 'used_only' // the upstream reported spend but no usable balance
   | 'value' // remaining (key quota) is the headline number
   | 'wallet' // only the account wallet balance is known
 
@@ -49,6 +50,8 @@ export interface UpstreamBalanceView {
   data?: UpstreamBalanceData
   // The number shown as the headline (remaining, or wallet balance in the 'wallet' state).
   amount?: number
+  // Spend shown when no usable balance was returned ('used_only').
+  used?: number
   // Shown on a second line when it is a different number from the headline.
   walletBalance?: number
   usedPercent?: number
@@ -68,6 +71,7 @@ export function upstreamBalanceView(account: Pick<Account, 'type' | 'extra'>, no
   const snapshot = account.extra?.upstream_billing_probe
   const balance = snapshot?.balance
   const data = balance?.data
+  const used = finite(data?.quota_used) ? data.quota_used : undefined
   const hasData = !!data && (data.unlimited === true || finite(data.remaining) || finite(data.wallet_balance))
 
   if (!hasData) {
@@ -76,6 +80,10 @@ export function upstreamBalanceView(account: Pick<Account, 'type' | 'extra'>, no
     // A recognised Sub2API / New API upstream whose read is still being retried:
     // show a read in progress instead of "Read failed".
     if (balance.status === 'pending') return { ...base, state: 'reading', balance }
+    // Spend without a usable balance: the upstream answered, but only the
+    // "used" side is real. Say so instead of labelling the whole upstream
+    // unsupported or inventing a limit.
+    if (used !== undefined) return { ...base, state: 'used_only', balance, data, used }
     if (balance.status === 'unsupported' || kind === 'custom') return { ...base, state: 'unsupported', balance }
     if (balance.status === 'failed') return { ...base, state: 'failed', balance }
     return { ...base, state: 'not_read', balance }
