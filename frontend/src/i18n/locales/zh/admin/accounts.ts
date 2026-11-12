@@ -225,8 +225,8 @@ export default {
         },
         hint: {
           sub2api: '上游是 Sub2API：应答了 /v1/usage',
-          newapi: '上游是 New API：应答了 /api/usage/token/',
-          openai_compatible: '上游只提供 OpenAI 旧版账单接口（/v1/dashboard/billing）',
+          newapi: '上游是 New API：带 new-api 指纹（x-new-api-version / x-oneapi-request-id / /api/status）或应答了 /api/usage/token/',
+          openai_compatible: '上游只提供 OpenAI 旧版账单接口（/v1/dashboard/billing），且没有任何 New API 指纹',
           official: '服务商官方接口，不读取余额',
           custom: '上游已连通，但没有应答任何已知的余额接口',
           unknown: '还没识别出来：未探测、上游拒绝了密钥，或探测没有连上'

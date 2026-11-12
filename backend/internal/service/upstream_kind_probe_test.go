@@ -15,11 +15,13 @@ import (
 
 // upstreamKindRouteStub answers by request path, so a test states which
 // endpoint returns what instead of relying on call order. Unlisted paths
-// answer 404. Every requested path is recorded in order.
+// answer 404. Every requested path is recorded in order. headers carries the
+// response headers a recorded answer had, keyed by path.
 type upstreamKindRouteStub struct {
-	mu     sync.Mutex
-	routes map[string]upstreamKindRoute
-	paths  []string
+	mu      sync.Mutex
+	routes  map[string]upstreamKindRoute
+	headers map[string]http.Header
+	paths   []string
 }
 
 type upstreamKindRoute struct {
@@ -35,9 +37,13 @@ func (u *upstreamKindRouteStub) Do(req *http.Request, _ string, _ int64, _ int) 
 	if !ok {
 		route = upstreamKindRoute{status: http.StatusNotFound, body: `{"error":"not found"}`}
 	}
+	header := http.Header{"Content-Type": []string{"application/json"}}
+	for name, values := range u.headers[req.URL.Path] {
+		header[name] = values
+	}
 	return &http.Response{
 		StatusCode: route.status,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Header:     header,
 		Body:       io.NopCloser(strings.NewReader(route.body)),
 	}, nil
 }
@@ -58,6 +64,18 @@ const (
 	upstreamKindTestSub2APIRate = `{"object":"sub2api.key_billing","schema_version":1,"billing_scope":"token","group_rate_multiplier":0.8,"resolved_rate_multiplier":0.8,"peak_rate_enabled":false,"effective_rate_multiplier":0.8,"observed_at":"2026-07-13T01:00:00Z"}`
 	upstreamKindTestSub2APIUse  = `{"isValid":true,"planName":"wallet","remaining":42,"unit":"USD","balance":42}`
 	upstreamKindTestNewAPIUsage = `{"code":true,"message":"ok","data":{"object":"token_usage","name":"my-key","total_granted":5000000,"total_used":1200000,"total_available":3800000,"unlimited_quota":false,"expires_at":0,"user_quota":{"total_available":12345678,"total_used":8765432}}}`
+
+	// The fingerprints a new-api site adds on top of the OpenAI-compatible
+	// billing endpoints it serves for compatibility.
+	upstreamKindTestNewAPIHeaderName  = "X-New-Api-Version"
+	upstreamKindTestNewAPIHeaderValue = "bidnew-v1.0.0-rc.47.22-performance-20261111"
+	upstreamKindTestNewAPIStatus      = `{"success":true,"data":{"version":"v0.8.6","start_time":1735000000,"quota_per_unit":500000,"display_in_currency":true,"enable_data_export":true}}`
+
+	// This is exactly what account #34761 showed: the legacy billing endpoint
+	// answers with new-api's unlimited sentinel, so the account read as
+	// "OpenAI billing, unlimited" although the site is new-api.
+	upstreamKindTestUnlimitedBilling = `{"object":"billing_subscription","hard_limit_usd":100000000,"soft_limit_usd":100000000,"system_hard_limit_usd":100000000,"access_until":0}`
+	upstreamKindTestBillingUsage     = `{"object":"list","total_usage":5294839}`
 )
 
 // runUpstreamKindProbe probes one account that nobody configured: no enabled
@@ -399,4 +417,249 @@ func TestNormalizeUpstreamKind(t *testing.T) {
 	}
 	require.Empty(t, normalizeUpstreamKind("<script>"))
 	require.Empty(t, normalizeUpstreamKind(""))
+}
+
+// Account #34761: a new-api site answered the legacy OpenAI billing endpoints
+// for compatibility, so it was reported as "OpenAI billing" with the unlimited
+// sentinel presented as a balance. The version header it puts on every answer
+// has to outrank that payload.
+func TestUpstreamKindProbeNewAPIHeaderOutranksBilling(t *testing.T) {
+	upstream := &upstreamKindRouteStub{
+		routes: map[string]upstreamKindRoute{
+			upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+			upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+		},
+		headers: map[string]http.Header{
+			upstreamLegacySubscriptionPath: {upstreamKindTestNewAPIHeaderName: []string{upstreamKindTestNewAPIHeaderValue}},
+		},
+	}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(83, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Balance.Status,
+		"no balance endpoint answered, so there is no balance to show")
+	require.NotEqual(t, UpstreamBalanceSourceLegacySubscription, snapshot.Balance.Source)
+	// The billing payload's "unlimited" sentinel and its five-figure spend must
+	// not survive the New API verdict.
+	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	require.NotContains(t, snapshot.Balance.Data, "quota_used")
+	require.Contains(t, upstream.requested(), upstreamLegacySubscriptionPath,
+		"the billing endpoint did answer, and the fingerprint still outranked it")
+}
+
+// The same fingerprint, with a working usage endpoint: the balance must come
+// from /api/usage/token/, not from the billing payload that also answered.
+func TestUpstreamKindProbeNewAPIHeaderReadsBalanceFromUsage(t *testing.T) {
+	upstream := &upstreamKindRouteStub{
+		routes: map[string]upstreamKindRoute{
+			upstreamNewAPIUsagePath:        {http.StatusOK, upstreamKindTestNewAPIUsage},
+			upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+			upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+		},
+		headers: map[string]http.Header{
+			upstreamLegacySubscriptionPath: {upstreamKindTestNewAPIHeaderName: []string{upstreamKindTestNewAPIHeaderValue}},
+		},
+	}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(84, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.Equal(t, UpstreamBalanceSourceNewAPITokenUsage, snapshot.Balance.Source)
+	require.InDelta(t, 7.6, snapshot.Balance.Data["remaining"], 1e-9)
+	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	require.NotContains(t, upstream.requested(), upstreamLegacySubscriptionPath,
+		"the billing payload is never read once the usage endpoint identified new-api")
+}
+
+func TestUpstreamKindProbeOneAPIRequestIDOutranksBilling(t *testing.T) {
+	upstream := &upstreamKindRouteStub{
+		routes: map[string]upstreamKindRoute{
+			upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+		},
+		headers: map[string]http.Header{
+			upstreamLegacySubscriptionPath: {"X-Oneapi-Request-Id": []string{"20261112093000abcdef"}},
+		},
+	}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(85, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+}
+
+// /api/status is the fingerprint of last resort: it needs no key, and it still
+// identifies new-api when the usage endpoint is gone and no header is set.
+func TestUpstreamKindProbeNewAPIStatusOutranksBilling(t *testing.T) {
+	upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
+		upstreamNewAPIStatusPath:       {http.StatusOK, upstreamKindTestNewAPIStatus},
+		upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+		upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+	}}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(86, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Balance.Status)
+	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	require.Contains(t, upstream.requested(), upstreamNewAPIStatusPath)
+}
+
+// new-api types its error envelopes, so even a missing endpoint is evidence.
+func TestUpstreamKindProbeNewAPIErrorEnvelopeOutranksBilling(t *testing.T) {
+	upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
+		upstreamNewAPIUsagePath:        {http.StatusNotFound, `{"error":{"message":"not found","type":"new_api_error"}}`},
+		upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+		upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+	}}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(87, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+}
+
+// A snapshot already written as openai_compatible must be rewritten on the next
+// probe: the stored kind is not proof of anything.
+func TestUpstreamKindProbeRewritesStaleOpenAIBillingSnapshot(t *testing.T) {
+	extra := func() map[string]any {
+		return map[string]any{UpstreamBillingProbeExtraKey: map[string]any{
+			"status": "ok", "last_attempt_at": "2026-07-13T01:00:00Z", "next_probe_at": "2026-07-13T01:30:00Z",
+			"upstream_kind": UpstreamKindOpenAICompatible,
+			"balance": map[string]any{
+				"status":          "ok",
+				"data":            map[string]any{"is_valid": true, "unlimited": true, "quota_used": 52948.39},
+				"received_at":     "2026-07-13T01:00:00Z",
+				"fresh_until":     "2026-07-13T02:00:00Z",
+				"last_attempt_at": "2026-07-13T01:00:00Z",
+				"source":          UpstreamBalanceSourceLegacySubscription,
+			},
+		}}
+	}
+
+	t.Run("fingerprint on the billing answer", func(t *testing.T) {
+		upstream := &upstreamKindRouteStub{
+			routes: map[string]upstreamKindRoute{
+				upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+				upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+			},
+			headers: map[string]http.Header{
+				upstreamLegacySubscriptionPath: {upstreamKindTestNewAPIHeaderName: []string{upstreamKindTestNewAPIHeaderValue}},
+			},
+		}
+
+		snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(88, extra()), upstream)
+
+		require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+		require.NotEqual(t, UpstreamBalanceSourceLegacySubscription, snapshot.Balance.Source)
+		require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	})
+
+	t.Run("usage endpoint answers", func(t *testing.T) {
+		upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
+			upstreamNewAPIUsagePath:        {http.StatusOK, upstreamKindTestNewAPIUsage},
+			upstreamLegacySubscriptionPath: {http.StatusOK, upstreamKindTestUnlimitedBilling},
+			upstreamLegacyUsagePath:        {http.StatusOK, upstreamKindTestBillingUsage},
+		}}
+
+		snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(89, extra()), upstream)
+
+		require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+		require.Equal(t, UpstreamBalanceSourceNewAPITokenUsage, snapshot.Balance.Source)
+		require.InDelta(t, 7.6, snapshot.Balance.Data["remaining"], 1e-9)
+		require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	})
+}
+
+// A stale billing snapshot on a site that really is an OpenAI-billing relay
+// stays billing: the fingerprints are checked, and none of them holds.
+func TestUpstreamKindProbeKeepsBillingWhenNoFingerprintHolds(t *testing.T) {
+	extra := map[string]any{UpstreamBillingProbeExtraKey: map[string]any{
+		"status": "ok", "last_attempt_at": "2026-07-13T01:00:00Z", "next_probe_at": "2026-07-13T01:30:00Z",
+		"upstream_kind": UpstreamKindOpenAICompatible,
+	}}
+	upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
+		upstreamLegacySubscriptionPath: {http.StatusOK, `{"object":"billing_subscription","hard_limit_usd":20,"soft_limit_usd":20,"system_hard_limit_usd":20,"access_until":0}`},
+		upstreamLegacyUsagePath:        {http.StatusOK, `{"object":"list","total_usage":750}`},
+	}}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(90, extra), upstream)
+
+	require.Equal(t, UpstreamKindOpenAICompatible, snapshot.UpstreamKind)
+	require.Equal(t, UpstreamBalanceSourceLegacySubscription, snapshot.Balance.Source)
+	require.InDelta(t, 12.5, snapshot.Balance.Data["remaining"], 1e-9)
+	// Every new-api fingerprint is checked before the billing payload decides,
+	// and none of them held here.
+	require.Equal(t, []string{
+		upstreamKindTestBillingPath,
+		upstreamKindTestUsagePath,
+		upstreamNewAPIUsagePath,
+		upstreamLegacySubscriptionPath,
+		upstreamNewAPIStatusPath,
+		upstreamLegacyUsagePath,
+	}, upstream.requested())
+}
+
+func TestUpstreamNewAPIStatusEvidence(t *testing.T) {
+	for name, tc := range map[string]struct{ body, want string }{
+		"new-api fields": {upstreamKindTestNewAPIStatus, "status:newapi_fields"},
+		"one-api fields": {`{"success":true,"data":{"version":"v0.6.11","start_time":1735000000}}`, "status:oneapi_fields"},
+	} {
+		t.Run("accepts "+name, func(t *testing.T) {
+			signal, ok := upstreamNewAPIStatusEvidence([]byte(tc.body))
+			require.True(t, ok)
+			require.Equal(t, tc.want, signal)
+		})
+	}
+	for name, body := range map[string]string{
+		"generic json":       `{"success":false,"message":"unknown route"}`,
+		"version only":       `{"data":{"version":"1.0"}}`,
+		"html":               `<html><body>login</body></html>`,
+		"new-api error body": `{"error":{"type":"new_api_error"}}`,
+	} {
+		t.Run("rejects "+name, func(t *testing.T) {
+			_, ok := upstreamNewAPIStatusEvidence([]byte(body))
+			require.False(t, ok)
+		})
+	}
+}
+
+func TestUpstreamNewAPIErrorEvidence(t *testing.T) {
+	signal, ok := upstreamNewAPIErrorEvidence([]byte(`{"error":{"message":"not found","type":"new_api_error"}}`))
+	require.True(t, ok)
+	require.Equal(t, "body:new_api_error", signal)
+
+	for name, body := range map[string]string{
+		"plain json": `{"error":"not found"}`,
+		"other type": `{"error":{"type":"invalid_request_error"}}`,
+		"word only":  `the new_api_error marker in prose`,
+		"html":       `<html>new_api_error</html>`,
+	} {
+		t.Run("rejects "+name, func(t *testing.T) {
+			_, ok := upstreamNewAPIErrorEvidence([]byte(body))
+			require.False(t, ok)
+		})
+	}
+}
+
+func TestUpstreamNewAPIHeaderEvidence(t *testing.T) {
+	lowercase := http.Header{}
+	lowercase.Set("x-new-api-version", "v1")
+	for name, header := range map[string]http.Header{
+		"version":   {"X-New-Api-Version": []string{upstreamKindTestNewAPIHeaderValue}},
+		"request":   {"X-Oneapi-Request-Id": []string{"abc"}},
+		"lowercase": lowercase,
+	} {
+		t.Run("accepts "+name, func(t *testing.T) {
+			signal, ok := upstreamNewAPIHeaderEvidence(header)
+			require.True(t, ok)
+			require.Contains(t, signal, "header:")
+		})
+	}
+	_, ok := upstreamNewAPIHeaderEvidence(http.Header{"Content-Type": []string{"application/json"}})
+	require.False(t, ok)
+	_, ok = upstreamNewAPIHeaderEvidence(nil)
+	require.False(t, ok)
 }

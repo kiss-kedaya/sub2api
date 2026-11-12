@@ -719,9 +719,23 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 //
 //  1. /v1/usage                           -> sub2api
 //  2. /api/usage/token/                   -> new-api
-//  3. /v1/dashboard/billing/subscription  -> OpenAI-compatible
+//  3. new-api fingerprints                -> new-api
+//  4. /v1/dashboard/billing/subscription  -> OpenAI-compatible
 //
-// Once the kind is known, later probes go straight to that kind's endpoint,
+// Step 3 exists because new-api answers the legacy OpenAI billing endpoints on
+// purpose, for clients that only know them. "Billing answered" therefore
+// cannot mean "OpenAI-billing relay" while a new-api fingerprint is present,
+// and the fingerprints outrank the payload: x-new-api-version and
+// x-oneapi-request-id response headers, the {"type":"new_api_error"} error
+// envelope, and the /api/status document new-api and one-api share. Only when
+// none of them holds does step 4 decide.
+//
+// A stored UpstreamKindOpenAICompatible verdict is not a cache: it is
+// re-identified from the top on every probe, so an account classified before
+// the fingerprints existed is corrected on its next probe instead of staying
+// wrong forever.
+//
+// Once another kind is known, later probes go straight to that kind's endpoint,
 // so a recognised upstream costs one balance request per cycle and only an
 // unrecognised one is asked about every path. A recognised upstream whose
 // endpoint stops parsing is re-identified from the top.
@@ -765,6 +779,92 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		}
 	}
 
+	// newAPISignal is the first new-api fingerprint this probe saw. It outranks
+	// a billing answer: new-api serves the legacy OpenAI billing endpoints for
+	// compatibility, so "billing answered" cannot mean "OpenAI-billing relay"
+	// once the upstream proved it is new-api.
+	newAPISignal := ""
+	noteResponse := func(result upstreamBillingProbeHTTPResult) {
+		if newAPISignal != "" {
+			return
+		}
+		if signal, ok := upstreamNewAPIHeaderEvidence(result.header); ok {
+			newAPISignal = signal
+			return
+		}
+		if signal, ok := upstreamNewAPIErrorEvidence(result.body); ok {
+			newAPISignal = signal
+		}
+	}
+	// The rate probe is evidence too: a new-api site answers /v1/sub2api/billing
+	// with the same version header as every other path, so the fingerprint is
+	// usually already known before the balance paths are asked.
+	noteResponse(rateResult)
+
+	// newAPIUsageResult caches /api/usage/token/ so fingerprinting and the
+	// balance read share one request: an evidenced upstream that still serves
+	// the usage payload shows a real balance in the same probe.
+	var newAPIUsageResult upstreamBillingProbeHTTPResult
+	newAPIUsageFetched := false
+	fetchNewAPIUsage := func() upstreamBillingProbeHTTPResult {
+		if newAPIUsageFetched {
+			return newAPIUsageResult
+		}
+		newAPIUsageFetched = true
+		newAPIUsageResult = s.fetchUpstreamProbeBody(ctx, account, target,
+			upstreamSiteRootURL(baseURL, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
+		noteResponse(newAPIUsageResult)
+		return newAPIUsageResult
+	}
+
+	// adoptNewAPIFromEvidence records new-api from a fingerprint rather than
+	// from the usage payload. The balance still has to come from
+	// /api/usage/token/: borrowing the billing numbers is what used to render a
+	// new-api site as "unlimited" with a five-figure spend.
+	adoptNewAPIFromEvidence := func() {
+		usage := fetchNewAPIUsage()
+		snapshot.UpstreamKind = UpstreamKindNewAPI
+		if upstreamProbeAnswered(usage) {
+			if data, err := parseUpstreamNewAPIUsageResponse(usage.body); err == nil {
+				snapshot.Balance = fresh(data, UpstreamBalanceSourceNewAPITokenUsage, usage.statusCode)
+				readable()
+				return
+			}
+		}
+		if upstreamProbeRejectedKey(usage) {
+			snapshot.Balance = upstreamBalanceSnapshotFromResult(usage, previousBalance, intervalMinutes, now)
+			return
+		}
+		// Fingerprint confirmed, balance endpoint did not answer with its
+		// schema: show nothing rather than a fabricated unlimited balance, and
+		// come back on the stretched delay instead of hammering the endpoint.
+		snapshot.Balance = &UpstreamBalanceSnapshot{
+			Status:        UpstreamBillingProbeStatusUnsupported,
+			LastAttemptAt: now,
+			HTTPStatus:    usage.statusCode,
+			LastError:     "unsupported",
+		}
+		snapshot.NextProbeAt = now.Add(unsupportedProbeDelay(intervalMinutes, retryAfter(usage.header, now)))
+	}
+
+	// checkNewAPIStatus is the last fingerprint look before a billing payload
+	// decides. /api/status needs no key, so it cannot cost a rejected-key
+	// penalty, and it is only asked when no cheaper signal answered.
+	checkNewAPIStatus := func() bool {
+		if newAPISignal != "" {
+			return true
+		}
+		result := s.fetchUpstreamProbeBody(ctx, account, target,
+			upstreamSiteRootURL(baseURL, upstreamNewAPIStatusPath), upstreamKindProbeMaxBodyBytes)
+		noteResponse(result)
+		if newAPISignal == "" && upstreamProbeAnswered(result) {
+			if signal, ok := upstreamNewAPIStatusEvidence(result.body); ok {
+				newAPISignal = signal
+			}
+		}
+		return newAPISignal != ""
+	}
+
 	// readRecognisedBalance reads the balance of an upstream that was already
 	// identified as Sub2API / New API. Those two never report a read failure to
 	// the account list: a background round retries the read (1s/3s/9s), the last
@@ -804,6 +904,7 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 			return true
 		}
 		result := fetchBalance()
+		noteResponse(result)
 		lastStatusCode = result.statusCode
 		if upstreamProbeAnswered(result) {
 			if data, err := parseUpstreamBalanceResponse(result.body); err == nil {
@@ -823,10 +924,7 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 	}
 	tryNewAPI := func() (done bool) {
 		// Site root, not the model base path: see upstreamSiteRootURL.
-		fetchBalance := func() upstreamBillingProbeHTTPResult {
-			return s.fetchUpstreamProbeBody(ctx, account, target,
-				upstreamSiteRootURL(baseURL, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
-		}
+		fetchBalance := fetchNewAPIUsage
 		if snapshot.UpstreamKind == UpstreamKindNewAPI {
 			readRecognisedBalance(UpstreamKindNewAPI, UpstreamBalanceSourceNewAPITokenUsage, fetchBalance, parseUpstreamNewAPIUsageResponse)
 			return true
@@ -848,6 +946,21 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 	}
 	tryLegacy := func() (done bool) {
 		subscription := fetch(upstreamLegacySubscriptionPath, upstreamKindProbeMaxBodyBytes)
+		noteResponse(subscription)
+		if upstreamProbeRejectedKey(subscription) {
+			// The key was rejected: record the attempt and stop asking. A kind
+			// is not inferred from an answer the upstream refused to give.
+			snapshot.Balance = upstreamBalanceSnapshotFromResult(subscription, previousBalance, intervalMinutes, now)
+			return true
+		}
+		// new-api answers these billing endpoints for compatibility. Its
+		// fingerprint outranks the payload: adopt New API instead of reading a
+		// billing snapshot that was never OpenAI's. The status document is the
+		// last signal consulted, and only when no cheaper one matched.
+		if newAPISignal != "" || checkNewAPIStatus() {
+			adoptNewAPIFromEvidence()
+			return true
+		}
 		if upstreamProbeAnswered(subscription) {
 			// hard_limit_usd is the granted total, so the usage endpoint is needed
 			// for what is left. It is only requested once the subscription parsed.
@@ -864,16 +977,17 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 				}
 			}
 		}
-		if snapshot.UpstreamKind == UpstreamKindOpenAICompatible || upstreamProbeRejectedKey(subscription) {
-			snapshot.Balance = upstreamBalanceSnapshotFromResult(subscription, previousBalance, intervalMinutes, now)
-			return true
-		}
 		return false
 	}
 
 	// A recognised upstream is asked only about its own endpoint. If that
 	// endpoint no longer parses, the kind is dropped and identification restarts
 	// on the next probe rather than in this one, to keep one probe bounded.
+	//
+	// UpstreamKindOpenAICompatible is deliberately absent: that verdict was
+	// reachable while a billing answer alone decided, so it is re-identified
+	// from the top on every probe. A misclassified account is corrected on its
+	// next probe instead of being trusted because a kind is already stored.
 	switch snapshot.UpstreamKind {
 	case UpstreamKindSub2API:
 		trySub2API()
@@ -898,15 +1012,18 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 			snapshot.UpstreamKind = ""
 		}
 		return
-	case UpstreamKindOpenAICompatible:
-		if tryLegacy(); snapshot.Balance == nil || (snapshot.Balance.Status != UpstreamBillingProbeStatusOK &&
-			(snapshot.Balance.LastError == "unsupported" || snapshot.Balance.LastError == "invalid_response")) {
-			snapshot.UpstreamKind = ""
-		}
-		return
 	}
 
-	if trySub2API() || tryNewAPI() || tryLegacy() {
+	if trySub2API() || tryNewAPI() {
+		return
+	}
+	if newAPISignal != "" {
+		// A fingerprint proved new-api before the billing endpoints were even
+		// asked: read the balance from new-api, never from the billing payload.
+		adoptNewAPIFromEvidence()
+		return
+	}
+	if tryLegacy() {
 		return
 	}
 	// Reached the upstream, the key was not rejected, and no known endpoint
