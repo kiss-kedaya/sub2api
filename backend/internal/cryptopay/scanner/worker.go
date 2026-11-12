@@ -52,6 +52,18 @@ type ChainConfig struct {
 	// supported chains) and is never guessed.
 	Native         bool
 	NativeDecimals int
+	// NativeSource is how the chain's native coin is discovered. Empty or
+	// "blocks" reads every block with full transactions; "txlist" means an
+	// address-based poller owns discovery, so this pass must not pay the
+	// per-block cost while Native stays on for the allowlist and decimals.
+	NativeSource string
+}
+
+// NativeBlockScan reports whether a worker pass must read blocks for native
+// value transfers. In txlist mode discovery belongs to the address poller, so
+// the expensive per-block read is skipped without disabling native crediting.
+func (c ChainConfig) NativeBlockScan() bool {
+	return c.Native && c.NativeSource != NativeScanTxList
 }
 
 // DepositHandler receives observed transfers (the ledger).
@@ -897,7 +909,7 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 	if err != nil {
 		return err
 	}
-	if chain.Native {
+	if chain.NativeBlockScan() {
 		// Native coin transfers have no logs, so they are read from the blocks
 		// themselves. A failure here must fail the range: the cursor may only
 		// advance over blocks whose native transfers were actually inspected.
@@ -936,6 +948,29 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 		return stageErr(chain.Chain, "security", from, to, securityFailure)
 	}
 	return nil
+}
+
+// ProcessObservedTransfer runs one transfer that was observed outside the
+// block-range scan (the account-API txlist poller) through the identical
+// verification, pending and crediting path as a scanned one.
+//
+// It is deliberately a thin seam: the receipt/proof/finality checks, the
+// watched-token decimals lookup, the pending persistence and the ledger call
+// are the same code the block scan uses, so a native deposit discovered by
+// txlist can never take a second, differently-validated route into the ledger.
+func (w *Worker) ProcessObservedTransfer(ctx context.Context, chain ChainConfig, transfer Transfer) error {
+	if w == nil || w.handler == nil {
+		return errors.New("scanner has no deposit handler")
+	}
+	pool := w.pools[chain.Chain]
+	if pool == nil {
+		return fmt.Errorf("no RPC pool configured for chain %s", chain.Chain)
+	}
+	decimals, watched := transferDecimals(chain, transfer.Token)
+	if !watched {
+		return fmt.Errorf("transfer for unwatched token %s", transfer.Token)
+	}
+	return w.processTransfer(ctx, pool, chain, transfer, decimals)
 }
 
 // An already durable observation is handled by the rotating pending/reorg
@@ -1055,7 +1090,7 @@ func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainCon
 	observeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	transfers, scanErr := NewEVMScanner(pool).ScanRange(observeCtx, chain.Chain, from, head, chain.Tokens, recipients)
-	if scanErr == nil && chain.Native {
+	if scanErr == nil && chain.NativeBlockScan() {
 		// The unconfirmed window must count native deposits too, otherwise a
 		// user who paid ETH/BNB sees nothing until the cursor reaches the
 		// block. A failure here is best effort, like the log scan above.

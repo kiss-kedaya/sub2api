@@ -318,7 +318,17 @@ type Service struct {
 	maintCancel     context.CancelFunc
 	securityCancel  context.CancelFunc
 	discoveryCancel context.CancelFunc
-	securityPaused  atomic.Bool
+	// nativeCancel stops the address-based native-coin poller. It is separate
+	// from the block worker loop because its cadence is a per-address polling
+	// interval, not the chain scan interval.
+	nativeCancel context.CancelFunc
+	// hotResolver caches the derived gas-wallet address across reloads so the
+	// hot-wallet poll does not audit a derivation row per tick.
+	hotResolver *hotAddressResolver
+	// nativeGuardAt throttles the disabled-channel native outflow guard.
+	nativeGuardMu  sync.Mutex
+	nativeGuardAt  time.Time
+	securityPaused atomic.Bool
 	// push delivers operator alerts (unmatched deposits). Optional.
 	// Keep its lock separate: reload holds mu while waiting for worker.Stop,
 	// and the worker can still deliver an alert before it exits.
@@ -353,6 +363,7 @@ func NewService(
 		addresses: addressSvc,
 	}
 	s.wallet.EnableSecurityMonitoring()
+	s.hotResolver = &hotAddressResolver{svc: s}
 	if addressSvc != nil {
 		addressSvc.SetSecurityGuards(s.checkWalletActivity, s.validateWalletAssignment)
 	}
@@ -418,6 +429,11 @@ func (s *Service) reload(ctx context.Context) {
 	}
 	s.config = cfg
 	s.nativePrice = priceProvider
+	// An imported hot mnemonic changes the gas wallet address; the next poll
+	// must derive it again instead of trusting the cached one.
+	if s.hotResolver != nil {
+		s.hotResolver.reset()
+	}
 	if cfg.Enabled {
 		s.securityPaused.Store(false)
 	}
@@ -444,6 +460,7 @@ func (s *Service) reload(ctx context.Context) {
 			s.worker.Stop()
 			s.worker = nil
 		}
+		s.stopNativePollerLocked()
 		if s.maintCancel != nil {
 			s.maintCancel()
 			s.maintCancel = nil
@@ -467,6 +484,9 @@ func (s *Service) reload(ctx context.Context) {
 		if !ok {
 			continue
 		}
+		// The native source decides which loop owns discovery, so the block
+		// pass only reads blocks for the mainnet coin in fallback mode.
+		chainConfig.NativeSource = cfg.NativeScan
 		chainConfigs = append(chainConfigs, chainConfig)
 	}
 
@@ -502,6 +522,9 @@ func (s *Service) reload(ctx context.Context) {
 	if s.worker != nil {
 		s.worker.Stop()
 	}
+	// The previous poller writes through the previous worker; retire it before
+	// publishing the replacement.
+	s.stopNativePollerLocked()
 	// 5s poll: finality is decided by the chain's safe tag, so a tighter
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
@@ -524,6 +547,25 @@ func (s *Service) reload(ctx context.Context) {
 	})
 	if cryptoWorkersAllowed() {
 		s.worker.Start()
+	}
+
+	// Native-coin source. The default block scan reads every block with full
+	// transactions; the txlist poll is an explicit operator choice that costs
+	// one request per watched address per interval, independent of the chain's
+	// block rate. Either way the poller guards the hot wallet's native spend
+	// (deposits are already covered by the block scan). A missing key is
+	// reported instead of silently degrading to a block-rate scan that would
+	// exhaust the provider.
+	if client, err := newExplorerClient(cfg); err != nil {
+		// The poller is the only native-outflow guard, so say what is lost
+		// rather than leaving an unexplained startup error.
+		slog.Error("[cryptopay] native txlist client unavailable: native outflow alerting is off",
+			"cause", err, "native_scan", cfg.NativeScan)
+	} else {
+		poll := s.newNativePoll(cfg, chainConfigs, s.worker, client, addressLister)
+		if cryptoWorkersAllowed() {
+			s.startNativePoller(context.Background(), time.Duration(cfg.NativePollSeconds)*time.Second, poll)
+		}
 	}
 
 	// Token decimals per chain: the planner and executor rebuild raw amounts
