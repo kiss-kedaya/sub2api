@@ -73,6 +73,8 @@ type CreateAPIKeyRequest struct {
 	// inherit（默认，跟随管理员全局设置）/ off / 1h / 5m。
 	AnthropicCacheTTLMode        string `json:"anthropic_cache_ttl_mode"`
 	DeepSeekToolInjectionEnabled *bool  `json:"deepseek_tool_injection_enabled"`
+	// AutoBlockDatacenterIPs 打开后由后台定时任务把机房/代理 IP 追加进黑名单。
+	AutoBlockDatacenterIPs bool `json:"auto_block_datacenter_ips"`
 }
 
 // UpdateAPIKeyRequest represents the update API key request payload
@@ -98,6 +100,8 @@ type UpdateAPIKeyRequest struct {
 	// （nil = 不修改；合法值 inherit/off/1h/5m）。
 	AnthropicCacheTTLMode        *string `json:"anthropic_cache_ttl_mode"`
 	DeepSeekToolInjectionEnabled *bool   `json:"deepseek_tool_injection_enabled"`
+	// AutoBlockDatacenterIPs 开关（nil = 不修改）。
+	AutoBlockDatacenterIPs *bool `json:"auto_block_datacenter_ips"`
 }
 
 func validAPIKeyLimit(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
@@ -256,6 +260,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	svcReq.ConcurrencyLimit = req.ConcurrencyLimit
 	svcReq.AnthropicCacheTTLMode = req.AnthropicCacheTTLMode
 	svcReq.DeepSeekToolInjectionEnabled = req.DeepSeekToolInjectionEnabled
+	svcReq.AutoBlockDatacenterIPs = req.AutoBlockDatacenterIPs
 
 	executeUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		key, err := h.apiKeyService.Create(ctx, subject.UserID, svcReq)
@@ -303,6 +308,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 
 		AnthropicCacheTTLMode:        req.AnthropicCacheTTLMode,
 		DeepSeekToolInjectionEnabled: req.DeepSeekToolInjectionEnabled,
+		AutoBlockDatacenterIPs:       req.AutoBlockDatacenterIPs,
 		ConcurrencyLimit:             req.ConcurrencyLimit,
 	}
 	if req.Name != "" {

@@ -829,6 +829,8 @@ export interface ApiKey {
   anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
   // Omitted by older servers: DeepSeek tool injection defaults to enabled.
   deepseek_tool_injection_enabled?: boolean
+  // 开启后由后台定时任务把最近使用的机房/代理 IP 追加进 IP 黑名单。
+  auto_block_datacenter_ips?: boolean
 }
 
 export interface CreateApiKeyRequest {
@@ -846,6 +848,7 @@ export interface CreateApiKeyRequest {
   rate_limit_7d?: number
   anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
   deepseek_tool_injection_enabled?: boolean
+  auto_block_datacenter_ips?: boolean
 }
 
 export interface UpdateApiKeyRequest {
@@ -865,6 +868,7 @@ export interface UpdateApiKeyRequest {
   reset_rate_limit_usage?: boolean
   anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
   deepseek_tool_injection_enabled?: boolean
+  auto_block_datacenter_ips?: boolean
 }
 
 export interface CreateGroupRequest {

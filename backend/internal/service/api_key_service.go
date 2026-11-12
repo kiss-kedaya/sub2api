@@ -81,6 +81,8 @@ type APIKeyUpdateFields struct {
 	RateLimitUsage bool
 	// IPRules 覆盖 ip_whitelist 与 ip_blacklist。
 	IPRules bool
+	// AutoBlockDatacenterIPs 覆盖 auto_block_datacenter_ips 一列。
+	AutoBlockDatacenterIPs bool
 	// AnthropicCacheTTLMode 覆盖 anthropic_cache_ttl_mode 一列。
 	AnthropicCacheTTLMode        bool
 	DeepSeekToolInjectionEnabled bool
@@ -246,6 +248,8 @@ type CreateAPIKeyRequest struct {
 	AnthropicCacheTTLMode string `json:"anthropic_cache_ttl_mode"`
 	// nil means enabled, preserving existing clients that omit this option.
 	DeepSeekToolInjectionEnabled *bool `json:"deepseek_tool_injection_enabled"`
+	// AutoBlockDatacenterIPs 打开后由后台定时任务把机房/代理 IP 追加进黑名单。
+	AutoBlockDatacenterIPs bool `json:"auto_block_datacenter_ips"`
 }
 
 // UpdateAPIKeyRequest 更新API Key请求
@@ -275,6 +279,8 @@ type UpdateAPIKeyRequest struct {
 	AnthropicCacheTTLMode *string `json:"anthropic_cache_ttl_mode"`
 	// nil means no change; false explicitly disables automatic tool injection.
 	DeepSeekToolInjectionEnabled *bool `json:"deepseek_tool_injection_enabled"`
+	// AutoBlockDatacenterIPs 开关（nil = 不修改）。
+	AutoBlockDatacenterIPs *bool `json:"auto_block_datacenter_ips"`
 }
 
 func validateAPIKeyLimit(v float64) error {
@@ -350,6 +356,10 @@ type APIKeyService struct {
 	// DeferredService is constructed. Keeping it optional preserves the
 	// synchronous behavior of lightweight embedders and unit-test stubs.
 	lastUsedScheduler func(int64)
+	// datacenterClassifier classifies candidate IPs for the datacenter-IP
+	// blacklist. nil means ipquality.ClassifyDatacenterIPs; tests inject a
+	// deterministic classifier instead of standing up the lookup endpoint.
+	datacenterClassifier datacenterIPClassifier
 }
 
 type APIKeyAuthLookupMetrics struct {
@@ -623,6 +633,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 		AnthropicCacheTTLMode:        NormalizeAnthropicCacheTTLMode(req.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: req.DeepSeekToolInjectionEnabled,
+		AutoBlockDatacenterIPs:       req.AutoBlockDatacenterIPs,
 	}
 
 	// Set expiration time if specified
@@ -990,6 +1001,10 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	if req.DeepSeekToolInjectionEnabled != nil {
 		apiKey.DeepSeekToolInjectionEnabled = req.DeepSeekToolInjectionEnabled
 		fields.DeepSeekToolInjectionEnabled = true
+	}
+	if req.AutoBlockDatacenterIPs != nil {
+		apiKey.AutoBlockDatacenterIPs = *req.AutoBlockDatacenterIPs
+		fields.AutoBlockDatacenterIPs = true
 	}
 	resetRateLimit := req.ResetRateLimitUsage != nil && *req.ResetRateLimitUsage
 	if resetRateLimit {

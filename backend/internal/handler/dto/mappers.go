@@ -104,6 +104,7 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		RateLimit7d:                  k.RateLimit7d,
 		AnthropicCacheTTLMode:        service.NormalizeAnthropicCacheTTLMode(k.AnthropicCacheTTLMode),
 		DeepSeekToolInjectionEnabled: k.IsDeepSeekToolInjectionEnabled(),
+		AutoBlockDatacenterIPs:       k.AutoBlockDatacenterIPs,
 		ConcurrencyLimit:             k.ConcurrencyLimit,
 		Usage5h:                      k.EffectiveUsage5h(),
 		Usage1d:                      k.EffectiveUsage1d(),

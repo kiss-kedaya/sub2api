@@ -57,6 +57,9 @@ func (APIKey) Fields() []ent.Field {
 		field.JSON("ip_blacklist", []string{}).
 			Optional().
 			Comment("Blocked IPs/CIDRs"),
+		field.Bool("auto_block_datacenter_ips").
+			Default(false).
+			Comment("Periodically append hosting/proxy IPs used by this key to its IP blacklist"),
 
 		// ========== Quota fields ==========
 		// Quota limit in USD (0 = unlimited)

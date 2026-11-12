@@ -100,6 +100,11 @@ func LastUsedAt(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldLastUsedAt, v))
 }
 
+// AutoBlockDatacenterIps applies equality check predicate on the "auto_block_datacenter_ips" field. It's identical to AutoBlockDatacenterIpsEQ.
+func AutoBlockDatacenterIps(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAutoBlockDatacenterIps, v))
+}
+
 // Quota applies equality check predicate on the "quota" field. It's identical to QuotaEQ.
 func Quota(v float64) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldQuota, v))
@@ -618,6 +623,16 @@ func IPBlacklistIsNil() predicate.APIKey {
 // IPBlacklistNotNil applies the NotNil predicate on the "ip_blacklist" field.
 func IPBlacklistNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldIPBlacklist))
+}
+
+// AutoBlockDatacenterIpsEQ applies the EQ predicate on the "auto_block_datacenter_ips" field.
+func AutoBlockDatacenterIpsEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAutoBlockDatacenterIps, v))
+}
+
+// AutoBlockDatacenterIpsNEQ applies the NEQ predicate on the "auto_block_datacenter_ips" field.
+func AutoBlockDatacenterIpsNEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldAutoBlockDatacenterIps, v))
 }
 
 // QuotaEQ applies the EQ predicate on the "quota" field.
