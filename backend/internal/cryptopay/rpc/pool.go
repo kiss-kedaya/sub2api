@@ -29,6 +29,15 @@ type Pool struct {
 	client       *http.Client
 	verification *verificationPolicy
 	health       *endpointHealthTracker
+	// chainID is the EIP-155 chain this pool proved it serves, 0 when no caller
+	// ever verified it. GasPrice uses it to apply that chain's gas price floor.
+	chainID atomic.Uint64
+	// gasMu guards a short-lived quote cache. A sweep run asks for the same
+	// chain price once per address; sampling the whole pool for every job would
+	// multiply provider quota for one number that does not move within a block.
+	gasMu    sync.Mutex
+	gasAt    time.Time
+	gasValue *big.Int
 }
 
 // NewPool builds a pool from a comma-separated endpoint list.
@@ -56,6 +65,7 @@ func (p *Pool) Snapshot() *Pool {
 	defer p.mu.RUnlock()
 	snapshot := NewPoolWithHTTPClient(strings.Join(p.endpoints, ","), p.client)
 	snapshot.verification = p.verification
+	snapshot.chainID.Store(p.chainID.Load())
 	return snapshot
 }
 
@@ -67,8 +77,23 @@ func (p *Pool) WithEndpoints(endpoints string) *Pool {
 	p.mu.RUnlock()
 	snapshot := NewPoolWithHTTPClient(endpoints, p.client)
 	snapshot.verification = policy // immutable policy, including for single-node verification
+	snapshot.chainID.Store(p.chainID.Load())
 	return snapshot
 }
+
+// WithChainID returns a snapshot that knows which chain it serves, so GasPrice
+// can apply that chain's minimum gas price. Callers that verified the chain id
+// against every endpoint (ForChain) set it implicitly; this is for pools built
+// directly from a per-chain configuration.
+func (p *Pool) WithChainID(chainID uint64) *Pool {
+	snapshot := p.Snapshot()
+	snapshot.chainID.Store(chainID)
+	snapshot.clearGasPriceCache()
+	return snapshot
+}
+
+// ChainID reports the EIP-155 chain this pool proved it serves, 0 if unproven.
+func (p *Pool) ChainID() uint64 { return p.chainID.Load() }
 
 // SetEndpoints replaces the endpoint list (admin config change).
 func (p *Pool) SetEndpoints(endpoints string) {
@@ -492,20 +517,24 @@ func (p *Pool) transactionCount(ctx context.Context, address, tag string) (uint6
 }
 
 // GasPrice returns the current gas price in wei.
+//
+// It is the median of what the healthy endpoints answer, clamped to the floor
+// of the chain this pool proved it serves (GasPriceFloor). A single endpoint
+// reporting a nonsense fee — 0x1 on BSC — can therefore neither set the price
+// nor be signed: a fee below the floor is the one defect that produces a
+// transaction which is valid, broadcast, and impossible to mine.
 func (p *Pool) GasPrice(ctx context.Context) (*big.Int, error) {
-	result, err := p.Call(ctx, "eth_gasPrice", nil)
+	floor := GasPriceFloor(p.chainID.Load())
+	if cached := p.cachedGasPrice(); cached != nil {
+		return clampGasPrice(cached, floor), nil
+	}
+	quote, err := p.robustGasPrice(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var hex string
-	if err := json.Unmarshal(result, &hex); err != nil {
-		return nil, &Failure{Kind: "response"}
-	}
-	value, err := hexutil.DecodeBig(hex)
-	if err != nil || value.Sign() <= 0 {
-		return nil, &Failure{Kind: "response"}
-	}
-	return value, nil
+	price := clampGasPrice(quote, floor)
+	p.storeGasPrice(price)
+	return price, nil
 }
 
 // SendRawTransaction broadcasts a signed transaction and returns its hash.

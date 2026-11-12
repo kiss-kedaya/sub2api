@@ -96,7 +96,7 @@ func (e *Executor) prepareSweep(ctx context.Context, pool *rpc.Pool, j *sweepJob
 	if e.wallet == nil {
 		return fmt.Errorf("wallet is not initialized")
 	}
-	nonce, err := pool.Nonce(ctx, j.Address)
+	nonce, err := e.sweepNonce(ctx, pool, j)
 	if err != nil {
 		return err
 	}

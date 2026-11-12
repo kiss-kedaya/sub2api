@@ -86,6 +86,12 @@ func (p *Pool) ConfigureEndpoints(endpoints string, automatic bool, chainID uint
 	p.mu.Lock()
 	p.endpoints, p.verification = list, policy
 	p.mu.Unlock()
+	// A pool is built per chain, so the chain id is part of its identity: the
+	// gas price floor is chosen from it. A reload of the same chain does not
+	// change it, but recording it here means every pool built from configuration
+	// knows its floor without a second probe.
+	p.chainID.Store(chainID)
+	p.clearGasPriceCache()
 }
 
 // ClearVerification retains the existing explicit trust placed in manually

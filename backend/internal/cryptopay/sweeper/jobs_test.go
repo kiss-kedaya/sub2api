@@ -209,7 +209,7 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 		var tx types.Transaction
 		_ = tx.UnmarshalBinary(common.FromHex(raw))
 		if tx.Value().Sign() > 0 && c.mined {
-			c.native = 1_000_000_000
+			c.native = 1_000_000_000_000_000
 		}
 		if c.sendUnknown {
 			w.WriteHeader(http.StatusGatewayTimeout) // accepted; response lost
@@ -280,8 +280,8 @@ func setupExecutor(t *testing.T) (*Executor, sqlmock.Sqlmock, *localChain, PlanE
 	child, _ := crypto.HexToECDSA(strings.Repeat("0", 63) + "1")
 	hot, _ := crypto.HexToECDSA(strings.Repeat("0", 63) + "2")
 	c := &localChain{child: child, hot: hot, address: crypto.PubkeyToAddress(child.PublicKey).Hex(),
-		payer: crypto.PubkeyToAddress(hot.PublicKey).Hex(), live: 15_000_000, native: 1_000_000_000,
-		payerNative: 1_000_000_000,
+		payer: crypto.PubkeyToAddress(hot.PublicKey).Hex(), live: 15_000_000, native: 1_000_000_000_000_000,
+		payerNative: 1_000_000_000_000_000,
 		mined:       true, head: 103, status: "0x1", canonical: testBlockHash, txs: map[string]bool{}, chainID: "0x38"}
 	server := httptest.NewServer(http.HandlerFunc(c.serve))
 	t.Cleanup(server.Close)
@@ -352,10 +352,18 @@ func expectWriteID(m sqlmock.Sqlmock, id int64, status string, err error, durabl
 }
 
 func signedJob(c *localChain, entry PlanEntry, gas bool) *sweepJob {
+	return signedJobAtPrice(c, entry, gas, chainGasPriceFloor(entry.Chain).String())
+}
+
+// signedJobAtPrice builds a job whose persisted bytes were signed at price. A
+// fixture that wants the 2026-11 BSC incident — bytes signed at 1 wei — passes
+// "1" explicitly; everything else signs at the chain floor, so a test about
+// another behaviour is not silently exercising the underpriced-replacement path.
+func signedJobAtPrice(c *localChain, entry PlanEntry, gas bool, price string) *sweepJob {
 	j := &sweepJob{PlanEntry: entry, ID: 1, Version: 1, Revision: 1,
 		Destination: testDestination, Status: "sweep_pending", Confirmations: 2}
 	req := EVMSignRequest{Index: 42, Kind: "sweep", ChainID: 56, Token: entry.Token,
-		To: testDestination, Amount: "10000000", Nonce: 3, GasPrice: "1", GasLimit: transferGasLimit}
+		To: testDestination, Amount: "10000000", Nonce: 3, GasPrice: price, GasLimit: transferGasLimit}
 	if gas {
 		req.Kind, req.Token, req.To, req.Amount, req.Nonce, req.GasLimit = "gas", "native", entry.Address, "195000", 7, 21000
 		j.GasPayer, j.GasNonce, j.GasAmount = c.payer, "7", req.Amount
@@ -586,7 +594,11 @@ func TestSweepGasNonceUsesWalletHotSeedAddress(t *testing.T) {
 		t.Fatalf("%+v %v", out, err)
 	}
 	if len(c.signs) != 2 || c.signs[0].Kind != "gas" || c.signs[0].Index != 9 || c.signs[0].Nonce != 7 ||
-		len(c.nonceReads) != 2 || c.nonceReads[0] != c.payer || c.nonceReads[1] != entry.Address {
+		// The sweep reads the child's pending nonce and its latest (mined)
+		// nonce: an un-mined transaction this executor can prove is dead is
+		// replaced at its own nonce rather than queued behind.
+		len(c.nonceReads) != 3 || c.nonceReads[0] != c.payer ||
+		c.nonceReads[1] != entry.Address || c.nonceReads[2] != entry.Address {
 		t.Fatalf("wrong gas payer/nonce: signs=%+v reads=%+v", c.signs, c.nonceReads)
 	}
 }

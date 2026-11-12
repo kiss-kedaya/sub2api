@@ -3,7 +3,6 @@ package sweeper
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -24,7 +23,7 @@ func TestSweepWaitContinuesGasAndTokenInOneOperation(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			chain.mu.Lock()
 			defer chain.mu.Unlock()
-			chain.mined, chain.native = true, 1_000_000_000
+			chain.mined, chain.native = true, 1_000_000_000_000_000
 		}()
 	}
 	expectCreate(mock, entry, nil, nil)
@@ -44,8 +43,8 @@ func TestSweepWaitContinuesGasAndTokenInOneOperation(t *testing.T) {
 	if len(chain.signs) != 2 || len(chain.raws) != 2 || chain.signs[0].Kind != "gas" || chain.signs[1].Kind != "sweep" {
 		t.Fatalf("unexpected replacement or repeated funding: signs=%+v broadcasts=%d", chain.signs, len(chain.raws))
 	}
-	if chain.signs[0].Amount != fmt.Sprintf("%d", transferGasLimit*3/2) {
-		t.Fatalf("funding exceeded the transfer's buffered shortfall: %s", chain.signs[0].Amount)
+	if want := transferGasBudget(chainGasPriceFloor("bsc")).String(); chain.signs[0].Amount != want {
+		t.Fatalf("funding exceeded the transfer's buffered shortfall: %s, want %s", chain.signs[0].Amount, want)
 	}
 }
 

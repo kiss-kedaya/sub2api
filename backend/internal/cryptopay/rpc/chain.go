@@ -37,5 +37,11 @@ func (p *Pool) ForChain(ctx context.Context, chainID uint64) (*Pool, error) {
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("no RPC endpoints verified for chain id %d", chainID)
 	}
-	return p.WithEndpoints(strings.Join(endpoints, ",")), nil
+	verified := p.WithEndpoints(strings.Join(endpoints, ","))
+	// Only verified endpoints survive into the snapshot, and every one of them
+	// answered this exact chain id: the gas price floor is now a proven fact
+	// about the pool rather than a configured guess.
+	verified.chainID.Store(chainID)
+	verified.clearGasPriceCache()
+	return verified, nil
 }

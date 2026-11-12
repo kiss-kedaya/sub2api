@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"sort"
 	"strings"
@@ -174,6 +175,15 @@ func (p *Planner) BuildPlan(ctx context.Context) (*Plan, error) {
 	plan := &Plan{DryRun: true}
 	for chain, minAmount := range p.config.MinPerAddress {
 		if !p.allowsChain(chain) {
+			continue
+		}
+		// Planning a job here could only produce a record that defers on every
+		// run: the operator's native budget cannot pay for one transfer at the
+		// chain's minimum gas price. That is a configuration fact, not a quote
+		// that moves, so report it once and leave the balances pending.
+		if err := GasBudgetCoversGasFloor(p.config, chain); err != nil {
+			slog.Error("[cryptopay] sweep planning skipped: chain cannot fund a transfer at the gas price floor",
+				"chain", chain, "error", err.Error())
 			continue
 		}
 		balances, err := p.reader.UnsweptBalances(ctx, chain)
