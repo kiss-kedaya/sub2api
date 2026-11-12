@@ -4208,15 +4208,15 @@
                       >
                         <div
                           :class="[
-                            'flex flex-wrap items-center justify-between gap-3',
-                            block.expanded && 'mb-3',
+                            'flex min-h-10 flex-wrap items-center justify-between gap-3',
+                            block.expanded && 'mb-1',
                           ]"
                         >
                           <div class="min-w-0">
-                            <div class="text-sm font-medium text-highlighted">
+                            <div class="text-[13px] font-medium leading-5 text-highlighted">
                               {{ t( "admin.settings.gatewayForwarding.systemBlockTitle", { index: index + 1 }, ) }}
                             </div>
-                            <div class="mt-0.5 text-xs text-muted">
+                            <div class="mt-0.5 text-xs leading-[18px] text-muted">
                               {{ getClaudeOAuthPresetLabel(block.preset) }}
                             </div>
                           </div>
@@ -4280,52 +4280,87 @@
                         </div>
 
                         <div v-show="block.expanded">
-                          <div class="grid gap-3 md:grid-cols-2">
-                            <UFormField
-                              :label="t(
-                                    'admin.settings.gatewayForwarding.systemBlockPreset',
-                                  )"
+                          <!-- One Dense line per block field: name, current value inline, control on the
+                               right, the long text under the line. -->
+                          <SettingGroup flush>
+                            <SettingRow
+                              :label="t('admin.settings.gatewayForwarding.systemBlockPreset')"
+                              :summary="getClaudeOAuthPresetLabel(block.preset)"
+                              :on="true"
+                              :in-summary="false"
+                              persistent-summary
                             >
-                              <Select
-                                v-model="block.preset"
-                                :options="claudeOAuthSystemPromptPresetOptions"
-                                @change="
-                                  (value) =>
-                                    applyClaudeOAuthSystemPromptPreset(index, value)
-                                "
-                              />
-                            </UFormField>
-                            <UFormField
-                              :label="t(
-                                    'admin.settings.gatewayForwarding.systemBlockType',
-                                  )"
+                              <template #control>
+                                <Select
+                                  v-model="block.preset"
+                                  :options="claudeOAuthSystemPromptPresetOptions"
+                                  :disabled="saving || loadFailed"
+                                  :aria-label="t('admin.settings.gatewayForwarding.systemBlockPreset')"
+                                  class="w-40"
+                                  @change="(value) => applyClaudeOAuthSystemPromptPreset(index, value)"
+                                />
+                              </template>
+                            </SettingRow>
+                            <SettingRow
+                              :label="t('admin.settings.gatewayForwarding.systemBlockType')"
+                              :summary="getClaudeOAuthBlockTypeLabel(block.type)"
+                              :on="true"
+                              :in-summary="false"
+                              persistent-summary
                             >
-                              <Select v-model="block.type" :options="claudeOAuthSystemPromptBlockTypeOptions" />
-                            </UFormField>
-                          </div>
-
-                          <UFormField :label="t('admin.settings.gatewayForwarding.systemBlockText')">
-                            <UTextarea
-                              v-model="block.text"
-                              :rows="6"
-                              @input="markClaudeOAuthSystemPromptBlockCustom(block)"
-                              class="w-full font-mono"
-                            />
-                          </UFormField>
-
-                          <div class="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
-                            <UFormField
-                              :label="t(
-                                      'admin.settings.gatewayForwarding.systemBlockCacheControl',
-                                    )"
-                              class="flex items-center justify-between gap-4"
+                              <template #control>
+                                <Select
+                                  v-model="block.type"
+                                  :options="claudeOAuthSystemPromptBlockTypeOptions"
+                                  :disabled="saving || loadFailed"
+                                  :aria-label="t('admin.settings.gatewayForwarding.systemBlockType')"
+                                  class="w-40"
+                                />
+                              </template>
+                            </SettingRow>
+                            <SettingRow
+                              :label="t('admin.settings.gatewayForwarding.systemBlockText')"
+                              :summary="block.text.trim() ? t('common.settingsSummary.configured') : t('common.settingsSummary.notSet')"
+                              :on="true"
+                              :in-summary="false"
+                              persistent-summary
                             >
-                              <Toggle v-model="block.cacheControlEnabled" />
-                            </UFormField>
-                            <div v-if="block.cacheControlEnabled">
-                              <Select v-model="block.cacheControlTTL" :options="claudeOAuthSystemPromptCacheTTLOptions" />
-                            </div>
-                          </div>
+                              <template #fields>
+                                <UTextarea
+                                  v-model="block.text"
+                                  :rows="6"
+                                  :disabled="saving || loadFailed"
+                                  @input="markClaudeOAuthSystemPromptBlockCustom(block)"
+                                  class="w-full font-mono"
+                                />
+                              </template>
+                            </SettingRow>
+                            <SettingRow
+                              :label="t('admin.settings.gatewayForwarding.systemBlockCacheControl')"
+                              :on="block.cacheControlEnabled"
+                              :in-summary="false"
+                            >
+                              <template #control>
+                                <Toggle v-model="block.cacheControlEnabled" />
+                              </template>
+                            </SettingRow>
+                            <SettingRow
+                              v-if="block.cacheControlEnabled"
+                              :label="t('admin.settings.gatewayForwarding.systemBlockCacheTTL')"
+                              :on="true"
+                              :in-summary="false"
+                            >
+                              <template #control>
+                                <Select
+                                  v-model="block.cacheControlTTL"
+                                  :options="claudeOAuthSystemPromptCacheTTLOptions"
+                                  :disabled="saving || loadFailed"
+                                  :aria-label="t('admin.settings.gatewayForwarding.systemBlockCacheTTL')"
+                                  class="w-32"
+                                />
+                              </template>
+                            </SettingRow>
+                          </SettingGroup>
                         </div>
                       </div>
                     </div>
@@ -4587,9 +4622,20 @@
                     </div>
 
                     <!-- Expanded content -->
-                    <div v-if="expandedProviders[pIdx]" class="grid gap-3 pb-4 ps-6">                          <!-- API Key with inline show/copy -->
-                          <UFormField :label="t('admin.settings.webSearchEmulation.apiKey')">
-                            <div class="relative">
+                    <!-- Expanded content: the provider's own fields are the same Dense lines as the
+                         rest of the page — name, value inline, control on the right. -->
+                    <div v-if="expandedProviders[pIdx]" class="pb-4 ps-6">
+                      <SettingGroup flush>
+                        <SettingRow
+                          wide-control
+                          :label="t('admin.settings.webSearchEmulation.apiKey')"
+                          :summary="provider.api_key_configured ? t('common.settingsSummary.configured') : t('common.settingsSummary.notSet')"
+                          :on="true"
+                          :in-summary="false"
+                          persistent-summary
+                        >
+                          <template #control>
+                            <div class="relative w-full">
                               <UInput
                                 v-model="provider.api_key"
                                 :type="apiKeyVisible[pIdx] ? 'text' : 'password'"
@@ -4648,86 +4694,101 @@
                                 />
                               </div>
                             </div>
-                          </UFormField>
+                          </template>
+                        </SettingRow>
 
-                          <!-- Quota + Subscription in compact row -->
-                          <div class="grid grid-cols-2 gap-3">
-                            <UFormField
-                              :label="t('admin.settings.webSearchEmulation.quotaLimit')"
-                              :description="t(
-                                    'admin.settings.webSearchEmulation.quotaLimitHint',
-                                  )"
-                            >
-                              <UInput v-model="provider.quota_limit" type="number" min="1" :placeholder="'∞'" class="w-full" />
-                            </UFormField>
-                            <UFormField
-                              :label="t('admin.settings.webSearchEmulation.subscribedAt')"
-                              :description="t(
-                                    'admin.settings.webSearchEmulation.subscribedAtHint',
-                                  )"
-                            >
-                              <UInput
-                                :value="formatSubscribedAt(provider.subscribed_at)"
-                                type="date"
-                                @input="
-                                  provider.subscribed_at = parseSubscribedAt(
-                                    ($event.target as HTMLInputElement).value,
-                                  )
-                                "
-                                class="w-full"
-                              />
-                            </UFormField>
-                          </div>
-
-                          <!-- Usage display -->
-                          <div class="flex items-center gap-2">
-                            <span class="text-xs text-muted">{{ t("admin.settings.webSearchEmulation.quotaUsage") }}:</span>
-                            <div
-                              v-if="
-                                provider.quota_limit != null &&
-                                provider.quota_limit > 0
-                              "
-                              class="flex-1 rounded-full bg-accented"
-                              style="height: 6px"
-                            >
+                        <!-- The quota bar is live state, so it stays outside the collapsible body. -->
+                        <SettingRow
+                          :label="t('admin.settings.webSearchEmulation.quotaLimit')"
+                          :hint="t('admin.settings.webSearchEmulation.quotaLimitHint')"
+                          :summary="webSearchQuotaSummary(provider)"
+                          :on="true"
+                          :in-summary="false"
+                          persistent-summary
+                        >
+                          <template #control>
+                            <UInput v-model="provider.quota_limit" type="number" min="1" :placeholder="'∞'" class="w-28" />
+                          </template>
+                          <template #status>
+                            <div class="flex items-center gap-2 pb-2">
                               <div
-                                class="h-full rounded-full"
-                                :class="
-                                  quotaPercentage(provider) > 90
-                                    ? 'bg-error'
-                                    : quotaPercentage(provider) > 70
-                                      ? 'bg-warning'
-                                      : 'bg-success'
+                                v-if="
+                                  provider.quota_limit != null &&
+                                  provider.quota_limit > 0
                                 "
-                                :style="{
-                                  width:
-                                    Math.min(quotaPercentage(provider), 100) + '%',
-                                }"
-                              />
+                                class="flex-1 rounded-full bg-accented"
+                                style="height: 6px"
+                              >
+                                <div
+                                  class="h-full rounded-full"
+                                  :class="
+                                    quotaPercentage(provider) > 90
+                                      ? 'bg-error'
+                                      : quotaPercentage(provider) > 70
+                                        ? 'bg-warning'
+                                        : 'bg-success'
+                                  "
+                                  :style="{
+                                    width:
+                                      Math.min(quotaPercentage(provider), 100) + '%',
+                                  }"
+                                />
+                              </div>
+                              <div v-else class="flex-1" />
+                              <UButton
+                                v-if="(provider.quota_used ?? 0) > 0"
+                                @click="resetWebSearchUsage(pIdx)"
+                                variant="link"
+                                size="sm"
+                              >
+                                {{ t("admin.settings.webSearchEmulation.resetUsage") }}
+                              </UButton>
                             </div>
-                            <div v-else class="flex-1" />
-                            <span class="text-xs text-muted">{{ provider.quota_used ?? 0 }} /
-                              {{ provider.quota_limit != null && provider.quota_limit > 0 ? provider.quota_limit : "∞" }}</span>
-                            <UButton
-                              v-if="(provider.quota_used ?? 0) > 0"
-                              @click="resetWebSearchUsage(pIdx)"
-                              variant="link"
-                              size="sm"
-                            >
-                              {{ t("admin.settings.webSearchEmulation.resetUsage") }}
-                            </UButton>
-                          </div>
+                          </template>
+                        </SettingRow>
 
-                          <!-- Proxy + Test on same row -->
-                          <div class="flex items-end gap-3">
-                            <UFormField :label="t('admin.settings.webSearchEmulation.proxy')">
-                              <ProxySelector v-model="provider.proxy_id" :proxies="webSearchProxies" />
-                            </UFormField>
-                            <UButton @click="openTestDialog()" color="neutral" variant="outline" size="sm">
-                              {{ t("admin.settings.webSearchEmulation.test") }}
-                            </UButton>
-                          </div>
-                        </div>
+                        <SettingRow
+                          wide-control
+                          :label="t('admin.settings.webSearchEmulation.subscribedAt')"
+                          :hint="t('admin.settings.webSearchEmulation.subscribedAtHint')"
+                          :summary="formatSubscribedAt(provider.subscribed_at) || t('common.settingsSummary.notSet')"
+                          :on="true"
+                          :in-summary="false"
+                          persistent-summary
+                        >
+                          <template #control>
+                            <UInput
+                              :value="formatSubscribedAt(provider.subscribed_at)"
+                              type="date"
+                              @input="
+                                provider.subscribed_at = parseSubscribedAt(
+                                  ($event.target as HTMLInputElement).value,
+                                )
+                              "
+                              class="w-full"
+                            />
+                          </template>
+                        </SettingRow>
+
+                        <SettingRow
+                          wide-control
+                          :label="t('admin.settings.webSearchEmulation.proxy')"
+                          :summary="provider.proxy_id ? t('common.settingsSummary.configured') : t('common.settingsSummary.notSet')"
+                          :on="true"
+                          :in-summary="false"
+                          persistent-summary
+                        >
+                          <template #control>
+                            <ProxySelector v-model="provider.proxy_id" :proxies="webSearchProxies" />
+                          </template>
+                        </SettingRow>
+                      </SettingGroup>
+                      <div class="mt-3 flex flex-wrap gap-2">
+                        <UButton @click="openTestDialog()" color="neutral" variant="outline" size="sm">
+                          {{ t("admin.settings.webSearchEmulation.test") }}
+                        </UButton>
+                      </div>
+                    </div>
                       </div>
                 </template>
               </SettingGroup>
@@ -7541,6 +7602,15 @@ function getClaudeOAuthPresetLabel(
   );
 }
 
+// The block's type is a one-value list today, but it is still a field the admin can see and change.
+function getClaudeOAuthBlockTypeLabel(type: string): string {
+  return (
+    claudeOAuthSystemPromptBlockTypeOptions.value.find(
+      (option) => String(option.value) === String(type),
+    )?.label || String(type)
+  );
+}
+
 function syncClaudeOAuthSystemPromptBlocksFormField(): void {
   form.claude_oauth_system_prompt_blocks =
     serializeClaudeOAuthSystemPromptBlocksToJSON(
@@ -8296,6 +8366,15 @@ function parseSubscribedAt(dateStr: string): number | null {
 function quotaPercentage(provider: WebSearchProviderConfig): number {
   if (!provider.quota_limit || provider.quota_limit <= 0) return 0;
   return ((provider.quota_used ?? 0) / provider.quota_limit) * 100;
+}
+
+// "used / limit" for the row's inline summary; an unset limit reads as unlimited, not as "0".
+function webSearchQuotaSummary(provider: WebSearchProviderConfig): string {
+  const limit =
+    provider.quota_limit != null && provider.quota_limit > 0
+      ? String(provider.quota_limit)
+      : "∞";
+  return `${provider.quota_used ?? 0} / ${limit}`;
 }
 
 async function resetWebSearchUsage(idx: number) {
