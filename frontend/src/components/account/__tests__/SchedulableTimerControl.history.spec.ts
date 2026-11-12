@@ -25,7 +25,10 @@ async function openHistory(history: Audit[]) {
   api.list.mockResolvedValue(snapshot(history))
   wrapper = mount(SchedulableTimerControl, { props: { accountId: 7 } })
   await flushPromises()
-  await wrapper.get('[data-test="timer-history-toggle"]').trigger('click')
+  // The execution log lives on the second page of the timer dialog, not in the table cell.
+  await wrapper.get('[data-test="timer-entry"]').trigger('click')
+  await flushPromises()
+  await wrapper.get('[data-test="timer-tab-history"]').trigger('click')
   await flushPromises()
 }
 const rows = () => wrapper.findAll('[data-test="timer-history-row"]')

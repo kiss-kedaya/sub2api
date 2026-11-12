@@ -1,6 +1,14 @@
 // Adapted from ranxi2001/sub2api (LGPL-3.0); timer-only locale messages.
 export default {
   "title": "定时开关",
+  "tabPlan": "计划",
+  "tabHistory": "执行记录",
+  "noPlan": "还没有定时计划，可以在下面新建。",
+  "noHistory": "暂无执行记录。",
+  "schedulable": "账号调度开关",
+  "schedulableHint": "关闭会立即切换并取消待执行的计划。",
+  "newPlan": "新建计划",
+  "recurringPage": "定时段",
   "action": "操作",
   "open": "定时打开",
   "close": "定时关闭",

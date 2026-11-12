@@ -1,6 +1,14 @@
 // Adapted from ranxi2001/sub2api (LGPL-3.0); timer-only locale messages.
 export default {
   "title": "Schedule",
+  "tabPlan": "Plan",
+  "tabHistory": "Activity",
+  "noPlan": "No schedule yet. Create one below.",
+  "noHistory": "No execution records yet.",
+  "schedulable": "Account scheduling",
+  "schedulableHint": "Turning this off switches the account now and cancels pending plans.",
+  "newPlan": "New schedule",
+  "recurringPage": "Time windows",
   "action": "Action",
   "open": "Timed on",
   "close": "Timed off",

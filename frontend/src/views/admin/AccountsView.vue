@@ -221,8 +221,11 @@
                 v-if="authStore.isAdmin && !authStore.isAdminObserver"
                 :account-id="row.id"
                 :refresh-key="timerRefreshKey"
+                :schedulable="row.schedulable"
+                :schedulable-busy="togglingSchedulable === row.id"
                 @executed="handleTimerExecuted"
                 @schedule-state="setTimerScheduleState(row.id, $event)"
+                @toggle-schedulable="handleToggleSchedulable(row)"
               />
             </div>
           </template>
