@@ -16,14 +16,20 @@ const (
 	MaxListedIPs = 256
 
 	// DefaultSharingWindowMinutes is the sliding window used to decide whether
-	// one source IP is shared by several user accounts. Ten minutes is short
+	// one source IP is shared by several user accounts. Five minutes is short
 	// enough that ordinary NAT churn does not accumulate, long enough to catch
-	// a key-scraping client that rotates accounts.
-	DefaultSharingWindowMinutes = 10
+	// a key-scraping client that rotates accounts within one burst.
+	DefaultSharingWindowMinutes = 5
 	// DefaultSharingThreshold is the number of DISTINCT USER accounts (not API
 	// keys) that must appear behind one IP inside the window before the IP is
-	// appended to the list. The operator asked for "3 or more".
+	// appended to the list. The operator asked for "3 or more"; production sets
+	// 4 through the settings policy.
 	DefaultSharingThreshold = 3
+	// DefaultKeyMinAgeDays is the minimum age of an API key before it may
+	// contribute to sharing detection. A key created minutes ago cannot have
+	// been shared yet, and counting it would let one freshly issued credential
+	// drag a whole IP into the list.
+	DefaultKeyMinAgeDays = 30
 	// DefaultRPM is the per-IP request budget applied to listed addresses.
 	DefaultRPM = 100
 
@@ -69,6 +75,9 @@ type Settings struct {
 	// means "use the default" so older stored policies stay valid.
 	SharingWindowMinutes int `json:"sharing_window_minutes,omitempty"`
 	SharingThreshold     int `json:"sharing_threshold,omitempty"`
+	// KeyMinAgeDays ignores keys younger than this many days. Zero means "use
+	// the default" so older stored policies stay valid.
+	KeyMinAgeDays int `json:"key_min_age_days,omitempty"`
 	// AutoEntries are appended by the gateway, never by the admin form.
 	AutoEntries []AutoEntry `json:"auto_entries"`
 }
@@ -98,6 +107,16 @@ func (s Settings) SharingMinUsers() int {
 		return DefaultSharingThreshold
 	}
 	return s.SharingThreshold
+}
+
+// SharingKeyMinAgeDays returns the minimum key age (in days) a credential must
+// reach before it can count toward sharing detection. A non-positive value
+// falls back to DefaultKeyMinAgeDays.
+func (s Settings) SharingKeyMinAgeDays() int {
+	if s.KeyMinAgeDays <= 0 {
+		return DefaultKeyMinAgeDays
+	}
+	return s.KeyMinAgeDays
 }
 
 // ListedIPs returns the effective exact-address list: manual entries first,

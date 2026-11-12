@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ipquality"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/redis/go-redis/v9"
 )
@@ -39,7 +40,10 @@ type IPKeySharingHit struct {
 	DistinctUsers int
 	WindowMinutes int
 	KeyPrefixes   []string
-	FirstSeenAt   time.Time
+	// KeyIDs are the keys observed from this IP inside the window. They are the
+	// keys the gateway disables; KeyPrefixes is the masked, persistable copy.
+	KeyIDs      []int64
+	FirstSeenAt time.Time
 }
 
 // AutoEntry converts a hit into the persisted policy entry.
@@ -72,17 +76,19 @@ func NewIPKeySharingDetector(settings *service.SettingService, redisClient *redi
 	return &IPKeySharingDetector{settings: settings, redis: redisClient, now: time.Now}
 }
 
-// Observe records that userID (an authenticated account) called the gateway
-// from ip. It returns a hit exactly once per window per IP, when at least
+// Observe records that an authenticated account called the gateway from ip with
+// apiKey. It returns a hit exactly once per window per IP, when at least
 // SharingMinUsers distinct accounts have been seen.
 //
 // The returned ok=false cases are all intentional:
 //   - detection disabled or no Redis;
 //   - the IP is already listed (idempotent, no Redis work);
+//   - the key is younger than the configured minimum age, so it cannot have
+//     been shared yet and must not make the IP look shared by itself;
 //   - the distinct-user count is still below the threshold;
 //   - another request already reported this window.
-func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID int64, apiKey string) (IPKeySharingHit, bool) {
-	if d == nil || d.redis == nil || d.settings == nil || userID <= 0 {
+func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID int64, apiKey *service.APIKey) (IPKeySharingHit, bool) {
+	if d == nil || d.redis == nil || d.settings == nil || userID <= 0 || apiKey == nil {
 		return IPKeySharingHit{}, false
 	}
 	ip = strings.TrimSpace(ip)
@@ -94,22 +100,38 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 		return IPKeySharingHit{}, false
 	}
 
+	now := d.now()
+	// Key age gate: a credential issued moments ago has no sharing history to
+	// detect. Skipping it here (before any Redis write) keeps a freshly created
+	// key from padding the distinct-user count of an otherwise single-user IP.
+	minAge := time.Duration(policy.SharingKeyMinAgeDays()) * 24 * time.Hour
+	if !apiKey.CreatedAt.IsZero() && now.Sub(apiKey.CreatedAt) < minAge {
+		return IPKeySharingHit{}, false
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, ipKeySharingOpsTimeout)
 	defer cancel()
 
 	window := policy.SharingWindow()
 	threshold := policy.SharingMinUsers()
-	now := d.now()
 	cutoff := strconv.FormatInt(now.Add(-window).UnixMilli(), 10)
 	userKey := ipKeySharingUsersPrefix + ip
 	evidenceKey := ipKeySharingEvidencePrefix + ip
 	member := strconv.FormatInt(userID, 10)
 
+	// The evidence value carries the key ID in front of the masked prefix:
+	// "<keyID>:<prefix>". Older rolling-deploy entries hold a bare prefix, so
+	// the parser below treats a missing colon as "prefix only".
+	evidence := maskAPIKeyPrefix(apiKey.Key)
+	if apiKey.ID > 0 {
+		evidence = strconv.FormatInt(apiKey.ID, 10) + ":" + evidence
+	}
+
 	pipe := d.redis.Pipeline()
 	pipe.ZRemRangeByScore(ctx, userKey, "-inf", cutoff)
 	pipe.ZAdd(ctx, userKey, redis.Z{Score: float64(now.UnixMilli()), Member: member})
 	pipe.Expire(ctx, userKey, 2*window)
-	pipe.HSet(ctx, evidenceKey, member, maskAPIKeyPrefix(apiKey))
+	pipe.HSet(ctx, evidenceKey, member, evidence)
 	pipe.Expire(ctx, evidenceKey, 2*window)
 	distinctCmd := pipe.ZCard(ctx, userKey)
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -118,6 +140,12 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 	}
 	distinct := int(distinctCmd.Val())
 	if distinct < threshold {
+		return IPKeySharingHit{}, false
+	}
+	// A home or office NAT can legitimately carry several users, so the count alone
+	// must not stop their keys. Only a hosting/proxy address acts; the classifier is
+	// fail-open, so an unknown or unreachable answer means 'do not act'.
+	if !isDatacenterSourceIP(ctx, ip) {
 		return IPKeySharingHit{}, false
 	}
 
@@ -137,14 +165,27 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 	if users, err := d.redis.ZRange(ctx, userKey, 0, -1).Result(); err == nil && len(users) > 0 {
 		if values, err := d.redis.HMGet(ctx, evidenceKey, users...).Result(); err == nil {
 			for _, value := range values {
-				if prefix, ok := value.(string); ok && prefix != "" {
-					hit.KeyPrefixes = append(hit.KeyPrefixes, prefix)
+				raw, ok := value.(string)
+				if !ok || raw == "" {
+					continue
+				}
+				if idPart, prefix, found := strings.Cut(raw, ":"); found {
+					if id, err := strconv.ParseInt(idPart, 10, 64); err == nil && id > 0 {
+						hit.KeyIDs = append(hit.KeyIDs, id)
+					}
+					raw = prefix
+				}
+				if raw != "" {
+					hit.KeyPrefixes = append(hit.KeyPrefixes, raw)
 				}
 			}
 		}
 	}
-	if len(hit.KeyPrefixes) == 0 && apiKey != "" {
-		hit.KeyPrefixes = []string{maskAPIKeyPrefix(apiKey)}
+	if len(hit.KeyIDs) == 0 && apiKey.ID > 0 {
+		hit.KeyIDs = []int64{apiKey.ID}
+	}
+	if len(hit.KeyPrefixes) == 0 && apiKey.Key != "" {
+		hit.KeyPrefixes = []string{maskAPIKeyPrefix(apiKey.Key)}
 	}
 	return hit, true
 }
@@ -158,3 +199,19 @@ func maskAPIKeyPrefix(key string) string {
 	}
 	return key
 }
+
+// isDatacenterSourceIP reports whether the source address classifies as hosting or
+// proxy infrastructure. It is deliberately fail-open: an error, timeout or empty
+// answer returns false so that shared residential egress is never punished.
+func isDatacenterSourceIP(ctx context.Context, ip string) bool {
+	if datacenterClassifier != nil {
+		return datacenterClassifier(ctx, ip)
+	}
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return ipquality.ClassifyDatacenterIPs(cctx, []string{ip})[ip]
+}
+
+// datacenterClassifier is replaced in tests so the gate can be exercised without
+// calling the external classifier.
+var datacenterClassifier func(context.Context, string) bool

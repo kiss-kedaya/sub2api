@@ -4,14 +4,11 @@ package service
 
 import (
 	"context"
-	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,61 +62,33 @@ func (r *riskKeyRepoStub) ExistsByKey(_ context.Context, key string) (bool, erro
 }
 
 type keyRiskFixture struct {
-	detector *IPKeySharingDetector
-	settings *SettingService
-	keys     *APIKeyService
-	repo     *riskKeyRepoStub
+	keys *APIKeyService
+	repo *riskKeyRepoStub
 }
 
 func newKeyRiskFixture(t *testing.T, keys ...*APIKey) *keyRiskFixture {
 	t.Helper()
 	resetAPIKeyRiskMarkers()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	ConfigureAPIKeyRiskStore(nil)
 
 	repo := newRiskKeyRepo(keys...)
 	cfg := &config.Config{}
 	cfg.Default.APIKeyPrefix = "sk-"
 	svc := NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
-
-	settings := NewSettingService(&panelRateLimitSettingRepo{values: map[string]string{}}, nil)
-	require.NoError(t, settings.SetGatewayIPNotice(context.Background(), ipnotice.Settings{
-		Enabled: true,
-		IPs:     []string{"198.51.100.7"},
-		Message: "operator notice",
-		RPM:     100,
-	}))
-	detector := NewIPKeySharingDetector(settings, client)
-	detector.now = func() time.Time { return time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC) }
-	return &keyRiskFixture{detector: detector, settings: settings, keys: svc, repo: repo}
+	return &keyRiskFixture{keys: svc, repo: repo}
 }
 
-// observe funnels one authenticated gateway call through the detector, mirroring
-// the middleware (userID + keyID + plaintext key).
-func (f *keyRiskFixture) observe(ip string, userID, keyID int64) (IPKeySharingHit, bool) {
-	return f.detector.Observe(context.Background(), ip, userID, keyID, fmt.Sprintf("sk-%d-%d-abcdef", userID, keyID))
-}
-
-// enforce applies what the middleware does with a hit: append the IP, then
-// disable the involved keys.
-func (f *keyRiskFixture) enforce(t *testing.T, hit IPKeySharingHit) []int64 {
-	t.Helper()
-	added, err := f.settings.AppendGatewayIPNoticeAutoEntry(context.Background(), hit.AutoEntry())
-	require.NoError(t, err)
-	require.True(t, added)
-	disabled, err := f.keys.DisableKeysForRisk(context.Background(), hit.KeyIDs, APIKeyRiskInfo{
+func riskInfo(ip string) APIKeyRiskInfo {
+	return APIKeyRiskInfo{
 		Reason:        KeyRiskReasonAutoIPSharing,
-		IP:            hit.IP,
-		DistinctUsers: hit.DistinctUsers,
-		WindowMinutes: hit.WindowMinutes,
-		HitAt:         hit.FirstSeenAt,
-	})
-	require.NoError(t, err)
-	return disabled
+		IP:            ip,
+		DistinctUsers: 3,
+		WindowMinutes: 5,
+		HitAt:         time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC),
+	}
 }
 
-func sharedEgressKeys(ip string) []*APIKey {
+func sharedEgressKeys() []*APIKey {
 	return []*APIKey{
 		{ID: 11, UserID: 101, Key: "sk-user-101-abcdef", Name: "k1", Status: StatusActive},
 		{ID: 12, UserID: 102, Key: "sk-user-102-abcdef", Name: "k2", Status: StatusActive},
@@ -127,190 +96,55 @@ func sharedEgressKeys(ip string) []*APIKey {
 	}
 }
 
-func datacenterClassifier(ips ...string) datacenterIPClassifier {
-	return func(_ context.Context, candidates []string) map[string]bool {
-		out := map[string]bool{}
-		for _, candidate := range candidates {
-			for _, marked := range ips {
-				if candidate == marked {
-					out[candidate] = true
-				}
-			}
-		}
-		return out
-	}
-}
+// TestKeyRiskDisableIsIdempotent pins the write contract: only active keys are
+// flipped, every key is written at most once, and a repeated detection (or a
+// second replica) is a no-op.
+func TestKeyRiskDisableIsIdempotent(t *testing.T) {
+	f := newKeyRiskFixture(t, sharedEgressKeys()...)
+	info := riskInfo("203.0.113.10")
 
-// TestKeyRiskDatacenterSharedEgressDisablesKeys is the positive acceptance case:
-// datacenter IP + 3 distinct users -> IP listed AND the involved keys disabled.
-func TestKeyRiskDatacenterSharedEgressDisablesKeys(t *testing.T) {
-	ip := "203.0.113.10"
-	f := newKeyRiskFixture(t, sharedEgressKeys(ip)...)
-	f.detector.classify = datacenterClassifier(ip)
-
-	for _, userID := range []int64{101, 102} {
-		_, hit := f.observe(ip, userID, userID-90)
-		require.False(t, hit, "below the threshold nothing may happen")
-	}
-	result, hit := f.observe(ip, 103, 13)
-	require.True(t, hit)
-	require.Equal(t, 3, result.DistinctUsers)
-	require.ElementsMatch(t, []int64{11, 12, 13}, result.KeyIDs)
-
-	disabled := f.enforce(t, result)
+	disabled, err := f.keys.DisableKeysForRisk(context.Background(), []int64{11, 12, 13}, info)
+	require.NoError(t, err)
 	require.ElementsMatch(t, []int64{11, 12, 13}, disabled)
+	require.Equal(t, 3, f.repo.updates, "only the three distinct observed keys are disabled")
 	for id, key := range f.repo.keys {
 		require.Equal(t, StatusAPIKeyInactive, key.Status, "key %d must be disabled", id)
 	}
-	policy := f.settings.GatewayIPNoticeSnapshot()
-	require.Len(t, policy.AutoEntries, 1)
-	require.Equal(t, ip, policy.AutoEntries[0].IP)
-	_, matched := policy.Match(ip)
-	require.True(t, matched, "the detected IP must be enforced by the notice policy")
 	for _, id := range []int64{11, 12, 13} {
-		info, ok := APIKeyRiskInfoFor(id)
+		marker, ok := APIKeyRiskInfoFor(id)
 		require.True(t, ok)
-		require.Equal(t, KeyRiskReasonAutoIPSharing, info.Reason)
-		require.Equal(t, ip, info.IP)
-		require.Equal(t, 3, info.DistinctUsers)
+		require.Equal(t, KeyRiskReasonAutoIPSharing, marker.Reason)
+		require.Equal(t, "203.0.113.10", marker.IP)
+		require.Equal(t, 3, marker.DistinctUsers)
+		require.Equal(t, 5, marker.WindowMinutes)
+		require.False(t, marker.HitAt.IsZero())
 	}
-}
-
-// TestKeyRiskResidentialSharedEgressDoesNothing is the anti-false-positive core:
-// an office/home NAT with 3 distinct users must change nothing at all.
-func TestKeyRiskResidentialSharedEgressDoesNothing(t *testing.T) {
-	ip := "203.0.113.20"
-	f := newKeyRiskFixture(t, sharedEgressKeys(ip)...)
-	f.detector.classify = func(context.Context, []string) map[string]bool {
-		// Residential: the classifier returns an empty set.
-		return map[string]bool{}
-	}
-
-	for _, userID := range []int64{101, 102, 103} {
-		_, hit := f.observe(ip, userID, userID-90)
-		require.False(t, hit, "a residential/keyed NAT must never be reported")
-	}
-	require.Empty(t, f.settings.GatewayIPNoticeSnapshot().AutoEntries)
-	require.Zero(t, f.repo.updates, "no key may be touched")
-	for _, key := range f.repo.keys {
-		require.Equal(t, StatusActive, key.Status)
-	}
-}
-
-// TestKeyRiskSameUserMultipleKeysDoesNothing: one account rotating its own keys
-// is not sharing, even from a datacenter.
-func TestKeyRiskSameUserMultipleKeysDoesNothing(t *testing.T) {
-	ip := "203.0.113.30"
-	keys := []*APIKey{
-		{ID: 21, UserID: 777, Key: "sk-777-a", Name: "a", Status: StatusActive},
-		{ID: 22, UserID: 777, Key: "sk-777-b", Name: "b", Status: StatusActive},
-		{ID: 23, UserID: 777, Key: "sk-777-c", Name: "c", Status: StatusActive},
-	}
-	f := newKeyRiskFixture(t, keys...)
-	f.detector.classify = datacenterClassifier(ip)
-
-	for _, keyID := range []int64{21, 22, 23} {
-		_, hit := f.observe(ip, 777, keyID)
-		require.False(t, hit)
-	}
-	require.Empty(t, f.settings.GatewayIPNoticeSnapshot().AutoEntries)
-	require.Zero(t, f.repo.updates)
-}
-
-// TestKeyRiskClassifierFailureFailsOpen: a failing/timed-out classification is
-// "unknown" and must not disable or list anything.
-func TestKeyRiskClassifierFailureFailsOpen(t *testing.T) {
-	ip := "203.0.113.40"
-	f := newKeyRiskFixture(t, sharedEgressKeys(ip)...)
-	f.detector.classify = func(context.Context, []string) map[string]bool { return nil }
-
-	for _, userID := range []int64{101, 102, 103} {
-		_, hit := f.observe(ip, userID, userID-90)
-		require.False(t, hit)
-	}
-	require.Empty(t, f.settings.GatewayIPNoticeSnapshot().AutoEntries)
-	require.Zero(t, f.repo.updates)
-}
-
-// TestKeyRiskMarkerSurvivesProcessCacheMiss proves the marker is shared through
-// Redis, so another replica can still show the "compromised key" hint.
-func TestKeyRiskMarkerSurvivesProcessCacheMiss(t *testing.T) {
-	resetAPIKeyRiskMarkers()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	t.Cleanup(func() {
-		ConfigureAPIKeyRiskStore(nil)
-		resetAPIKeyRiskMarkers()
-		_ = client.Close()
-	})
-	ConfigureAPIKeyRiskStore(client)
-
-	info := APIKeyRiskInfo{
-		Reason:        KeyRiskReasonAutoIPSharing,
-		IP:            "203.0.113.90",
-		DistinctUsers: 4,
-		WindowMinutes: 10,
-		HitAt:         time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC),
-	}
-	markAPIKeyRiskDisabled(4242, info)
-	require.True(t, server.Exists("gateway_key_risk:4242"), "marker must be persisted for other replicas")
-
-	// Drop the local cache: the answer must come from Redis.
-	resetAPIKeyRiskMarkers()
-	got, ok := APIKeyRiskInfoFor(4242)
-	require.True(t, ok)
-	require.Equal(t, info.IP, got.IP)
-	require.Equal(t, info.DistinctUsers, got.DistinctUsers)
-
-	clearAPIKeyRiskDisabled(4242)
-	require.False(t, server.Exists("gateway_key_risk:4242"))
-}
-
-// TestKeyRiskDisableIsIdempotent: a repeated detection never writes the status
-// twice, and an already-inactive key is left alone.
-func TestKeyRiskDisableIsIdempotent(t *testing.T) {
-	ip := "203.0.113.50"
-	f := newKeyRiskFixture(t, sharedEgressKeys(ip)...)
-	f.detector.classify = datacenterClassifier(ip)
-
-	var result IPKeySharingHit
-	hit := false
-	for _, userID := range []int64{101, 102, 103} {
-		result, hit = f.observe(ip, userID, userID-90)
-		if userID != 103 {
-			require.False(t, hit)
-		}
-	}
-	require.True(t, hit)
-	require.Len(t, f.enforce(t, result), 3)
-	require.Equal(t, 3, f.repo.updates, "only the three distinct observed keys are disabled")
-	require.Len(t, f.settings.GatewayIPNoticeSnapshot().AutoEntries, 1)
-
-	_, repeated := f.observe(ip, 104, 14)
-	require.False(t, repeated, "the window is already reported exactly once")
 
 	// Re-running the enforcement (e.g. two replicas, retried request) is a no-op.
-	again, err := f.keys.DisableKeysForRisk(context.Background(), []int64{11, 12, 13}, APIKeyRiskInfo{IP: ip})
+	again, err := f.keys.DisableKeysForRisk(context.Background(), []int64{11, 12, 13}, info)
 	require.NoError(t, err)
 	require.Empty(t, again)
 	require.Equal(t, 3, f.repo.updates)
+
+	// One missing key never aborts the rest of the batch.
+	extra := &APIKey{ID: 14, UserID: 104, Key: "sk-user-104-abcdef", Status: StatusActive}
+	f.repo.keys[extra.ID] = extra
+	disabled, err = f.keys.DisableKeysForRisk(context.Background(), []int64{99, 14}, info)
+	require.Error(t, err, "the missing key is reported")
+	require.Equal(t, []int64{14}, disabled, "the valid key is still disabled")
+	require.Equal(t, 4, f.repo.updates)
 }
 
 // TestKeyRiskRotateRestoresKey covers the user-side recovery path: rotating the
-// key generates a new credential and reactivates the auto-disabled key.
+// key generates a new credential, reactivates the auto-disabled key and clears
+// the risk marker.
 func TestKeyRiskRotateRestoresKey(t *testing.T) {
-	ip := "203.0.113.60"
-	keys := sharedEgressKeys(ip)
+	keys := sharedEgressKeys()
 	f := newKeyRiskFixture(t, keys...)
-	f.detector.classify = datacenterClassifier(ip)
 
-	var result IPKeySharingHit
-	hit := false
-	for _, userID := range []int64{101, 102, 103} {
-		result, hit = f.observe(ip, userID, userID-90)
-	}
-	require.True(t, hit)
-	f.enforce(t, result)
+	disabled, err := f.keys.DisableKeysForRisk(context.Background(), []int64{11}, riskInfo("203.0.113.60"))
+	require.NoError(t, err)
+	require.Equal(t, []int64{11}, disabled)
 	require.Equal(t, StatusAPIKeyInactive, f.repo.keys[11].Status)
 	_, marked := APIKeyRiskInfoFor(11)
 	require.True(t, marked)
@@ -323,4 +157,80 @@ func TestKeyRiskRotateRestoresKey(t *testing.T) {
 	require.Equal(t, rotated.Key, f.repo.keys[11].Key, "the new credential must be persisted")
 	_, marked = APIKeyRiskInfoFor(11)
 	require.False(t, marked, "rotation clears the risk marker")
+}
+
+// memoryRiskStore is the in-memory APIKeyRiskStore used to prove the marker is
+// shared across a process-cache miss. The Redis implementation is exercised in
+// the middleware package, which may import Redis.
+type memoryRiskStore struct {
+	mu     sync.Mutex
+	values map[int64][]byte
+}
+
+func (s *memoryRiskStore) Save(_ context.Context, keyID int64, payload []byte, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.values == nil {
+		s.values = map[int64][]byte{}
+	}
+	s.values[keyID] = append([]byte(nil), payload...)
+	return nil
+}
+
+func (s *memoryRiskStore) Load(_ context.Context, keyID int64) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payload, ok := s.values[keyID]
+	if !ok {
+		return nil, errRiskMarkerNotFound
+	}
+	return payload, nil
+}
+
+func (s *memoryRiskStore) Delete(_ context.Context, keyID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.values, keyID)
+	return nil
+}
+
+var errRiskMarkerNotFound = &riskMarkerNotFoundError{}
+
+type riskMarkerNotFoundError struct{}
+
+func (*riskMarkerNotFoundError) Error() string { return "risk marker not found" }
+
+// TestKeyRiskMarkerSurvivesProcessCacheMiss proves the marker is shared through
+// the store, so another replica can still show the "compromised key" hint.
+func TestKeyRiskMarkerSurvivesProcessCacheMiss(t *testing.T) {
+	store := &memoryRiskStore{}
+	ConfigureAPIKeyRiskStore(store)
+	t.Cleanup(func() {
+		ConfigureAPIKeyRiskStore(nil)
+		resetAPIKeyRiskMarkers()
+	})
+
+	info := riskInfo("203.0.113.90")
+	markAPIKeyRiskDisabled(4242, info)
+	require.Contains(t, store.values, int64(4242), "marker must be persisted for other replicas")
+
+	// Drop the local cache: the answer must come from the store.
+	resetAPIKeyRiskMarkers()
+	got, ok := APIKeyRiskInfoFor(4242)
+	require.True(t, ok)
+	require.Equal(t, info.IP, got.IP)
+	require.Equal(t, info.DistinctUsers, got.DistinctUsers)
+
+	clearAPIKeyRiskDisabled(4242)
+	require.NotContains(t, store.values, int64(4242))
+
+	// Without a store the marker is process-local only: it still works until the
+	// cache is dropped.
+	ConfigureAPIKeyRiskStore(nil)
+	markAPIKeyRiskDisabled(5151, info)
+	_, ok = APIKeyRiskInfoFor(5151)
+	require.True(t, ok)
+	resetAPIKeyRiskMarkers()
+	_, ok = APIKeyRiskInfoFor(5151)
+	require.False(t, ok)
 }

@@ -6,10 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // KeyRiskReasonAutoIPSharing is the machine-readable source recorded for every
@@ -22,14 +19,22 @@ const KeyRiskReasonAutoIPSharing = "auto_ip_sharing"
 // marker only drives the user-facing "this key may be stolen" hint.
 const apiKeyRiskMarkerTTL = 30 * 24 * time.Hour
 
-// apiKeyRiskRedisPrefix stores one JSON marker per auto-disabled key. It is a
-// Redis key, not a database column: the marker is derived state with a TTL, so
-// adding a migration for it would be more than this feature needs.
-const apiKeyRiskRedisPrefix = "gateway_key_risk:"
-
-// apiKeyRiskReadTimeout bounds the Redis read done when the in-process cache
-// misses (another replica disabled the key).
+// apiKeyRiskReadTimeout bounds every store round trip done on the key-list
+// request path.
 const apiKeyRiskReadTimeout = 200 * time.Millisecond
+
+// APIKeyRiskStore persists one JSON risk marker per auto-disabled key so that
+// another replica (or the same process after a restart) can still show the
+// "compromised key" hint. The gateway wires a Redis-backed implementation; a
+// nil store keeps the markers process-local.
+//
+// The interface lives here so the service layer never imports Redis: service
+// must stay free of repository/gorm/redis per the repository's depguard rule.
+type APIKeyRiskStore interface {
+	Save(ctx context.Context, keyID int64, payload []byte, ttl time.Duration) error
+	Load(ctx context.Context, keyID int64) ([]byte, error)
+	Delete(ctx context.Context, keyID int64) error
+}
 
 // APIKeyRiskInfo is the evidence bundle attached to a key that the gateway
 // disabled on its own. It answers "who did it, when, from which IP and how many
@@ -56,17 +61,24 @@ var apiKeyRiskMarkers = struct {
 	byKey map[int64]apiKeyRiskMarker
 }{byKey: map[int64]apiKeyRiskMarker{}}
 
-// apiKeyRiskRedis is configured once at router construction when Redis exists.
-var apiKeyRiskRedis atomic.Pointer[redis.Client]
+// apiKeyRiskStore holds the optional cross-replica store.
+var apiKeyRiskStore = struct {
+	mu    sync.RWMutex
+	store APIKeyRiskStore
+}{}
 
-// ConfigureAPIKeyRiskStore lets the gateway wire the marker store to the shared
-// Redis client. A nil client keeps the markers process-local.
-func ConfigureAPIKeyRiskStore(client *redis.Client) {
-	apiKeyRiskRedis.Store(client)
+// ConfigureAPIKeyRiskStore lets the gateway wire the marker store to its shared
+// storage. Passing nil keeps the markers process-local.
+func ConfigureAPIKeyRiskStore(store APIKeyRiskStore) {
+	apiKeyRiskStore.mu.Lock()
+	apiKeyRiskStore.store = store
+	apiKeyRiskStore.mu.Unlock()
 }
 
-func apiKeyRiskRedisKey(keyID int64) string {
-	return apiKeyRiskRedisPrefix + fmt.Sprintf("%d", keyID)
+func currentAPIKeyRiskStore() APIKeyRiskStore {
+	apiKeyRiskStore.mu.RLock()
+	defer apiKeyRiskStore.mu.RUnlock()
+	return apiKeyRiskStore.store
 }
 
 func markAPIKeyRiskDisabled(keyID int64, info APIKeyRiskInfo) {
@@ -80,14 +92,18 @@ func markAPIKeyRiskDisabled(keyID int64, info APIKeyRiskInfo) {
 		info.Reason = KeyRiskReasonAutoIPSharing
 	}
 	storeAPIKeyRiskMarker(keyID, info)
-	if client := apiKeyRiskRedis.Load(); client != nil {
-		if payload, err := json.Marshal(info); err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), apiKeyRiskReadTimeout)
-			defer cancel()
-			if err := client.Set(ctx, apiKeyRiskRedisKey(keyID), payload, apiKeyRiskMarkerTTL).Err(); err != nil {
-				slog.Warn("gateway key risk marker could not be persisted", "key_id", keyID, "error", err)
-			}
-		}
+	store := currentAPIKeyRiskStore()
+	if store == nil {
+		return
+	}
+	payload, err := json.Marshal(info)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), apiKeyRiskReadTimeout)
+	defer cancel()
+	if err := store.Save(ctx, keyID, payload, apiKeyRiskMarkerTTL); err != nil {
+		slog.Warn("gateway key risk marker could not be persisted", "key_id", keyID, "error", err)
 	}
 }
 
@@ -115,14 +131,14 @@ func APIKeyRiskInfoFor(keyID int64) (APIKeyRiskInfo, bool) {
 	if ok {
 		clearAPIKeyRiskDisabled(keyID)
 	}
-	// Another replica may have disabled this key: fall back to the shared copy.
-	client := apiKeyRiskRedis.Load()
-	if client == nil {
+	// Another replica may have disabled this key: fall back to the shared store.
+	store := currentAPIKeyRiskStore()
+	if store == nil {
 		return APIKeyRiskInfo{}, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), apiKeyRiskReadTimeout)
 	defer cancel()
-	payload, err := client.Get(ctx, apiKeyRiskRedisKey(keyID)).Bytes()
+	payload, err := store.Load(ctx, keyID)
 	if err != nil {
 		return APIKeyRiskInfo{}, false
 	}
@@ -141,14 +157,18 @@ func clearAPIKeyRiskDisabled(keyID int64) {
 	apiKeyRiskMarkers.mu.Lock()
 	delete(apiKeyRiskMarkers.byKey, keyID)
 	apiKeyRiskMarkers.mu.Unlock()
-	if client := apiKeyRiskRedis.Load(); client != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), apiKeyRiskReadTimeout)
-		defer cancel()
-		_ = client.Del(ctx, apiKeyRiskRedisKey(keyID)).Err()
+	store := currentAPIKeyRiskStore()
+	if store == nil {
+		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), apiKeyRiskReadTimeout)
+	defer cancel()
+	_ = store.Delete(ctx, keyID)
 }
 
 // resetAPIKeyRiskMarkers is used by tests to isolate cases.
+//
+//nolint:unused // test-only hook: the unit-tagged tests are not seen by the default lint build.
 func resetAPIKeyRiskMarkers() {
 	apiKeyRiskMarkers.mu.Lock()
 	defer apiKeyRiskMarkers.mu.Unlock()
