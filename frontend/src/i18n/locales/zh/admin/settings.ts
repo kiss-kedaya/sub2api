@@ -543,6 +543,7 @@ export default {
         systemBlockTypeText: '文本',
         systemBlockText: '内容',
         systemBlockCacheControl: 'Cache Control',
+        systemBlockCacheTTL: '缓存时长',
         systemBlockHide: '隐藏 block 详情',
         systemBlockShow: '展示 block 详情',
         addSystemBlock: '添加 block',

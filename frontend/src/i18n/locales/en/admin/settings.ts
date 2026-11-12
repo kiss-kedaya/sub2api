@@ -550,6 +550,7 @@ export default {
         systemBlockTypeText: 'Text',
         systemBlockText: 'Content',
         systemBlockCacheControl: 'Cache control',
+        systemBlockCacheTTL: 'Cache TTL',
         systemBlockHide: 'Hide block details',
         systemBlockShow: 'Show block details',
         addSystemBlock: 'Add block',

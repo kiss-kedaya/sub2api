@@ -18,56 +18,68 @@
     </template>
 
     <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
-    <div v-for="row in rows" :key="row.field" :data-testid="`site-theme-row-${row.field}`">
-      <UButton
-        color="neutral"
-        variant="ghost"
-        class="-mx-2.5 w-[calc(100%+1.25rem)] justify-start gap-3"
-        :aria-expanded="openField === row.field"
-        :aria-controls="`site-theme-options-${row.field}`"
-        :disabled="saving || loadFailed"
-        @click="toggle(row.field)"
-      >
-        <span :id="`site-theme-label-${row.field}`" class="w-24 shrink-0 text-left font-medium text-highlighted">{{ row.label }}</span>
-        <span v-if="row.current.swatch" class="site-theme-swatch" :style="row.current.swatch" aria-hidden="true" />
-        <span class="flex-1 truncate text-left text-toned">{{ row.current.label }}</span>
-        <UIcon name="i-lucide-chevron-right" class="size-4 shrink-0 text-dimmed transition-transform" :class="{ 'rotate-90': openField === row.field }" />
-      </UButton>
-      <div
-        v-if="openField === row.field"
-        :id="`site-theme-options-${row.field}`"
-        role="radiogroup"
-        :aria-labelledby="`site-theme-label-${row.field}`"
-        class="mt-3 flex flex-wrap gap-2"
-      >
-        <UButton
-          v-for="(option, index) in row.options"
-          :key="String(option.value)"
-          role="radio"
-          :aria-checked="option.value === draft[row.field]"
-          :tabindex="option.value === draft[row.field] ? 0 : -1"
-          :data-value="String(option.value)"
-          :color="option.value === draft[row.field] ? 'primary' : 'neutral'"
-          :variant="option.value === draft[row.field] ? 'subtle' : 'outline'"
-          :disabled="saving || loadFailed"
-          @click="select(row.field, option.value)"
-          @keydown="onOptionKeydown($event, row, index)"
+    <!-- One line per theme setting, same shape as every other settings tab: name, the current value
+         inline, a swatch or a quick select on the right, and the full picker under the line. -->
+    <SettingPanel hide-summary>
+      <SettingGroup flush>
+        <SettingRow
+          v-for="row in rows"
+          :key="row.field"
+          :label="row.label"
+          :hint="row.hint"
+          :summary="row.summary"
+          :on="true"
+          :in-summary="false"
+          persistent-summary
+          :default-open="row.field === 'theme_primary'"
+          :test-id="`site-theme-row-${row.field}`"
         >
-          <span v-if="option.swatch" class="site-theme-swatch" :style="option.swatch" aria-hidden="true" />
-          {{ option.label }}
-        </UButton>
-      </div>
-    </div>
+          <template #control>
+            <!-- The swatch is the one setting whose current value is a colour: showing it beside the
+                 name is faster to read than the colour's name. Everything else keeps the value in the
+                 inline summary and puts the picker under the line, per the Dense pattern. -->
+            <span v-if="row.swatch" class="site-theme-swatch" :style="row.swatch" aria-hidden="true" />
+          </template>
+          <template #fields>
+            <!-- Colours and fonts are long lists of long names: each option gets its own line of the
+                 grid instead of being squeezed into a row of unreadable chips. -->
+            <div
+              :id="`site-theme-options-${row.field}`"
+              role="radiogroup"
+              :aria-label="row.label"
+              class="theme-options"
+            >
+              <UButton
+                v-for="(option, index) in row.options"
+                :key="String(option.value)"
+                role="radio"
+                :aria-checked="option.value === draft[row.field]"
+                :tabindex="option.value === draft[row.field] ? 0 : -1"
+                :data-value="String(option.value)"
+                :color="option.value === draft[row.field] ? 'primary' : 'neutral'"
+                :variant="option.value === draft[row.field] ? 'subtle' : 'outline'"
+                :disabled="saving || loadFailed"
+                class="theme-option justify-start"
+                @click="select(row.field, option.value)"
+                @keydown="onOptionKeydown($event, row, index)"
+              >
+                <span v-if="option.swatch" class="site-theme-swatch" :style="option.swatch" aria-hidden="true" />
+                <span class="truncate">{{ option.label }}</span>
+              </UButton>
+            </div>
+          </template>
+        </SettingRow>
+      </SettingGroup>
 
-    <div class="site-theme-preview" :style="previewStyle" data-testid="site-theme-preview">
-      <p class="text-xs font-medium text-muted">{{ t('admin.settings.siteTheme.preview') }}</p>
-      <p class="site-theme-preview-text mt-2 text-sm">{{ t('admin.settings.siteTheme.previewText') }}</p>
-      <div class="mt-3 flex flex-wrap items-center gap-3">
-        <span class="site-theme-preview-button">{{ t('admin.settings.siteTheme.previewButton') }}</span>
-        <span class="site-theme-preview-badge">{{ t('admin.settings.siteTheme.previewBadge') }}</span>
+      <div class="site-theme-preview" :style="previewStyle" data-testid="site-theme-preview">
+        <p class="text-xs font-medium text-muted">{{ t('admin.settings.siteTheme.preview') }}</p>
+        <p class="site-theme-preview-text mt-2 text-sm">{{ t('admin.settings.siteTheme.previewText') }}</p>
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <span class="site-theme-preview-button">{{ t('admin.settings.siteTheme.previewButton') }}</span>
+          <span class="site-theme-preview-badge">{{ t('admin.settings.siteTheme.previewBadge') }}</span>
+        </div>
       </div>
-    </div>
-    <p class="text-xs text-muted">{{ t('admin.settings.siteTheme.modeHint') }}</p>
+    </SettingPanel>
   </SettingsSection>
 </template>
 
@@ -75,6 +87,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsSection from '@/views/admin/settings/SettingsSection.vue'
+import SettingPanel from '@/components/common/SettingPanel.vue'
+import SettingGroup from '@/components/common/SettingGroup.vue'
+import SettingRow from '@/components/common/SettingRow.vue'
 import { getSiteTheme, updateSiteTheme } from '@/api/admin/siteTheme'
 import {
   DEFAULT_SITE_THEME,
@@ -99,7 +114,14 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 type Field = keyof SiteThemeSettings
 type OptionValue = string | number
 interface Option { value: OptionValue; label: string; swatch?: Record<string, string> }
-interface Row { field: Field; label: string; options: Option[]; current: Option }
+interface Row {
+  field: Field
+  label: string
+  hint: string
+  summary: string
+  swatch?: Record<string, string>
+  options: Option[]
+}
 
 const FIELDS: Field[] = ['theme_primary', 'theme_neutral', 'theme_font', 'theme_radius', 'theme_default_mode']
 const FONT_LABEL_KEYS: Record<ThemeFont, string> = { system: 'system', 'public-sans': 'publicSans', inter: 'inter', 'noto-sans-sc': 'notoSansSc' }
@@ -114,7 +136,6 @@ const loadFailed = ref(false)
 const error = ref('')
 const saved = ref<SiteThemeSettings>({ ...DEFAULT_SITE_THEME })
 const draft = ref<SiteThemeSettings>({ ...DEFAULT_SITE_THEME })
-const openField = ref<Field | null>('theme_primary')
 let previewed = false
 let modePreviewed = false
 
@@ -134,26 +155,62 @@ function colorLabel(name: string): string {
   return t(`admin.settings.siteTheme.colors.${name}`)
 }
 
-function makeRow<T extends OptionValue>(field: Field, label: string, values: readonly T[], optionLabel: (value: T) => string, optionSwatch?: (value: T) => Record<string, string>): Row {
-  const options: Option[] = values.map((value) => ({ value, label: optionLabel(value), swatch: optionSwatch?.(value) }))
-  return { field, label, options, current: options.find((option) => option.value === draft.value[field]) ?? options[0] }
+function makeOptions<T extends OptionValue>(values: readonly T[], optionLabel: (value: T) => string, optionSwatch?: (value: T) => Record<string, string>): Option[] {
+  return values.map((value) => ({ value, label: optionLabel(value), swatch: optionSwatch?.(value) }))
 }
 
-const rows = computed<Row[]>(() => [
-  makeRow('theme_primary', t('admin.settings.siteTheme.primary'), THEME_PRIMARY_OPTIONS, colorLabel, primarySwatch),
-  makeRow('theme_neutral', t('admin.settings.siteTheme.neutral'), THEME_NEUTRAL_OPTIONS, colorLabel, (value) => swatch(value, 500, 500)),
-  makeRow('theme_font', t('admin.settings.siteTheme.font'), THEME_FONT_OPTIONS, (value) => t(`admin.settings.siteTheme.fonts.${FONT_LABEL_KEYS[value]}`)),
-  makeRow('theme_radius', t('admin.settings.siteTheme.radius'), THEME_RADIUS_OPTIONS, (value) => String(value)),
-  makeRow('theme_default_mode', t('admin.settings.siteTheme.mode'), THEME_MODE_OPTIONS, (value) => t(`admin.settings.siteTheme.modes.${value}`))
-])
+const rows = computed<Row[]>(() => {
+  const primary = makeOptions(THEME_PRIMARY_OPTIONS, colorLabel, primarySwatch)
+  const neutral = makeOptions(THEME_NEUTRAL_OPTIONS, colorLabel, (value) => swatch(value, 500, 500))
+  const font = makeOptions(THEME_FONT_OPTIONS, (value) => t(`admin.settings.siteTheme.fonts.${FONT_LABEL_KEYS[value]}`))
+  const radius = makeOptions(THEME_RADIUS_OPTIONS, (value) => String(value))
+  const mode = makeOptions(THEME_MODE_OPTIONS, (value) => t(`admin.settings.siteTheme.modes.${value}`))
+  const current = (options: Option[], field: Field): Option =>
+    options.find((option) => option.value === draft.value[field]) ?? options[0]
+  return [
+    {
+      field: 'theme_primary',
+      label: t('admin.settings.siteTheme.primary'),
+      hint: t('admin.settings.siteTheme.primaryHint'),
+      summary: current(primary, 'theme_primary').label,
+      swatch: current(primary, 'theme_primary').swatch,
+      options: primary,
+    },
+    {
+      field: 'theme_neutral',
+      label: t('admin.settings.siteTheme.neutral'),
+      hint: t('admin.settings.siteTheme.neutralHint'),
+      summary: current(neutral, 'theme_neutral').label,
+      swatch: current(neutral, 'theme_neutral').swatch,
+      options: neutral,
+    },
+    {
+      field: 'theme_font',
+      label: t('admin.settings.siteTheme.font'),
+      hint: t('admin.settings.siteTheme.fontHint'),
+      summary: current(font, 'theme_font').label,
+      options: font,
+    },
+    {
+      field: 'theme_radius',
+      label: t('admin.settings.siteTheme.radius'),
+      hint: t('admin.settings.siteTheme.radiusHint'),
+      summary: current(radius, 'theme_radius').label,
+      options: radius,
+    },
+    {
+      field: 'theme_default_mode',
+      label: t('admin.settings.siteTheme.mode'),
+      hint: t('admin.settings.siteTheme.modeHint'),
+      summary: current(mode, 'theme_default_mode').label,
+      options: mode,
+    },
+  ]
+})
 
 const dirty = computed(() => FIELDS.some((field) => draft.value[field] !== saved.value[field]))
 const isDefault = computed(() => FIELDS.every((field) => draft.value[field] === DEFAULT_SITE_THEME[field]))
 const previewStyle = computed(() => ({ '--site-theme-preview-radius': `${draft.value.theme_radius}rem` }))
-
-function toggle(field: Field) {
-  openField.value = openField.value === field ? null : field
-}
 
 function preview(theme: SiteThemeSettings) {
   previewSiteTheme(theme)
@@ -228,6 +285,22 @@ onBeforeUnmount(() => {
   if (previewed || modePreviewed) restoreSiteTheme({ colorMode: modePreviewed })
 })
 </script>
+
+<style scoped>
+/* The expanded picker: options share the row's width and wrap onto several lines, so a colour name or
+   a font name is never cut down to a chip. */
+.theme-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.theme-option {
+  justify-content: flex-start;
+  min-width: 0;
+}
+</style>
 
 <style>
 .site-theme-swatch {
