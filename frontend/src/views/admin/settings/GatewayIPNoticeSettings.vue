@@ -177,12 +177,16 @@
                 </div>
                 <span class="text-xs text-muted">
                   {{
-                    t('admin.settings.gatewayIPNotice.autoEvidence', {
-                      time: formatDateTimeToMinute(entry.first_seen_at) || '—',
-                      users: entry.distinct_users,
-                      window: entry.window_minutes,
+                    t('admin.settings.gatewayIPNotice.autoStats', {
+                      first: entryFirstSeenUsers(entry),
+                      peak: entryPeakUsers(entry),
+                      total: entryTotalKeys(entry),
+                      last: entryLastSeen(entry),
                     })
                   }}
+                </span>
+                <span class="text-xs text-muted">
+                  {{ t('admin.settings.gatewayIPNotice.autoWindowInfo', { window: entry.window_minutes || '—' }) }}
                 </span>
                 <span v-if="entry.key_prefixes?.length" class="font-mono text-xs text-muted">
                   {{ t('admin.settings.gatewayIPNotice.autoKeyPrefixes') }}: {{ entry.key_prefixes.join('、') }}
@@ -203,7 +207,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getGatewayIPNotice, updateGatewayIPNotice, type GatewayIPNoticeSettings } from '@/api/admin/gatewayIpNotice'
+import { getGatewayIPNotice, updateGatewayIPNotice, type GatewayIPNoticeAutoEntry, type GatewayIPNoticeSettings } from '@/api/admin/gatewayIpNotice'
 import { useAppStore } from '@/stores'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTimeToMinute } from '@/utils/format'
@@ -266,6 +270,25 @@ async function load() {
 // disappears from the effective list once the form is saved.
 function removeAutoEntry(ip: string) {
   form.auto_entries = form.auto_entries.filter((entry) => entry.ip !== ip)
+}
+
+// The four evidence counters are all optional on the wire because entries
+// written before they existed only carry distinct_users and key_prefixes. Each
+// helper degrades to the legacy value instead of rendering NaN or "undefined".
+function entryFirstSeenUsers(entry: GatewayIPNoticeAutoEntry): number {
+  return entry.first_seen_users ?? entry.distinct_users ?? 0
+}
+
+function entryPeakUsers(entry: GatewayIPNoticeAutoEntry): number {
+  return entry.peak_users ?? entry.distinct_users ?? 0
+}
+
+function entryTotalKeys(entry: GatewayIPNoticeAutoEntry): number {
+  return entry.total_keys ?? entry.key_prefixes?.length ?? 0
+}
+
+function entryLastSeen(entry: GatewayIPNoticeAutoEntry): string {
+  return formatDateTimeToMinute(entry.last_seen_at || entry.first_seen_at) || '—'
 }
 
 async function save() {
