@@ -12,12 +12,15 @@ import (
 
 // GatewayIPSharing auto-adds a source IP to the "指定 IP 提示与限流" list when
 // several DIFFERENT user accounts call the gateway from it inside the sliding
-// window (default: 3 distinct users / 10 minutes).
+// window (default: 3 distinct users / 5 minutes) AND the address is positively
+// classified as hosting/proxy infrastructure.
 //
 // It sits after API-key authentication and before GatewayIPNotice, so the IP it
-// adds takes effect immediately for the triggering request as well. It is
-// observation-only: it never rejects, blocks or mutates an account or key.
-func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDetector) gin.HandlerFunc {
+// adds takes effect immediately for the triggering request as well. On a hit it
+// also disables the API keys observed from that IP (status=inactive, never
+// deleted, upstream accounts untouched). Otherwise it is observation-only: it
+// never rejects or blocks a request.
+func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDetector, keys *service.APIKeyService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settings == nil || detector == nil {
 			c.Next()
@@ -43,31 +46,55 @@ func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDe
 			return
 		}
 		ip := SecurityClientIP(c)
-		hit, detected := detector.Observe(c.Request.Context(), ip, userID, apiKey.Key)
+		hit, detected := detector.Observe(c.Request.Context(), ip, userID, apiKey)
 		if !detected {
 			c.Next()
 			return
 		}
-
-		// The settings write is bounded and off the request's own context: a
-		// cancelled downstream call must not hide the evidence.
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		added, err := settings.AppendGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+
+		// Record the IP first: the notice policy is the reversible half of the
+		// action. The key write is attempted regardless, so one failing half
+		// never silently leaves the other undone.
+		added, appendErr := settings.AppendGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+		disabled, disableErr := disableSharedKeys(ctx, keys, hit)
 		attrs := []any{
 			"ip", hit.IP,
 			"distinct_users", hit.DistinctUsers,
 			"window_minutes", hit.WindowMinutes,
 			"key_prefixes", hit.KeyPrefixes,
+			"key_ids", hit.KeyIDs,
 			"auto_added", added,
+			"disabled_keys", disabled,
 		}
-		if err != nil {
-			attrs = append(attrs, "error", err)
-			slog.Error("gateway ip key sharing detected but auto add failed", attrs...)
+		if appendErr != nil {
+			attrs = append(attrs, "append_error", appendErr)
+		}
+		if disableErr != nil {
+			attrs = append(attrs, "disable_error", disableErr)
+		}
+		if appendErr != nil || disableErr != nil {
+			slog.Error("gateway ip key sharing detected, action partially failed", attrs...)
 			c.Next()
 			return
 		}
-		slog.Warn("gateway ip key sharing detected, ip auto added to notice policy", attrs...)
+		slog.Warn("gateway ip key sharing detected, ip auto added and shared keys disabled", attrs...)
 		c.Next()
 	}
+}
+
+// disableSharedKeys flips every involved key to inactive. A nil service (tests
+// and deployments without the API-key service) makes it a no-op.
+func disableSharedKeys(ctx context.Context, keys *service.APIKeyService, hit IPKeySharingHit) ([]int64, error) {
+	if keys == nil || len(hit.KeyIDs) == 0 {
+		return nil, nil
+	}
+	return keys.DisableKeysForRisk(ctx, hit.KeyIDs, service.APIKeyRiskInfo{
+		Reason:        service.KeyRiskReasonAutoIPSharing,
+		IP:            hit.IP,
+		DistinctUsers: hit.DistinctUsers,
+		WindowMinutes: hit.WindowMinutes,
+		HitAt:         hit.FirstSeenAt,
+	})
 }

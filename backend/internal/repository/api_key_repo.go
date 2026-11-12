@@ -283,6 +283,9 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 	if fields.Status {
 		builder.SetStatus(key.Status)
 	}
+	if fields.Key {
+		builder.SetKey(key.Key)
+	}
 	if fields.Quota {
 		builder.SetQuota(key.Quota)
 	}

@@ -13,6 +13,11 @@ const (
 	StatusAPIKeyDisabled       = "disabled"
 	StatusAPIKeyQuotaExhausted = "quota_exhausted"
 	StatusAPIKeyExpired        = "expired"
+	// StatusAPIKeyInactive is the value the key API and the console have always
+	// used for "switched off" (the update endpoint accepts active|inactive).
+	// The gateway risk control uses the same value so an auto-disabled key is
+	// indistinguishable from a manually disabled one in the auth path.
+	StatusAPIKeyInactive = "inactive"
 )
 
 // Rate limit window durations

@@ -137,15 +137,38 @@
           </template>
 
           <template #cell-name="{ value, row }">
-            <div class="flex items-center gap-1.5">
-              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
-              <Icon
-                v-if="row.ip_whitelist?.length > 0 || row.ip_blacklist?.length > 0"
-                name="shield"
-                size="sm"
-                class="text-blue-500"
-                :title="t('keys.ipRestrictionEnabled')"
-              />
+            <div class="flex flex-col gap-1">
+              <div class="flex items-center gap-1.5">
+                <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+                <Icon
+                  v-if="row.ip_whitelist?.length > 0 || row.ip_blacklist?.length > 0"
+                  name="shield"
+                  size="sm"
+                  class="text-blue-500"
+                  :title="t('keys.ipRestrictionEnabled')"
+                />
+              </div>
+              <!-- Gateway risk control disabled this key: state the reason and offer the
+                   one-click rotation that restores it. -->
+              <div v-if="row.risk_disabled" class="flex flex-wrap items-center gap-1.5">
+                <span class="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                  <UIcon name="i-lucide-shield-alert" class="size-3.5 shrink-0" />
+                  {{ t('keys.riskWarning') }}
+                </span>
+                <button
+                  type="button"
+                  class="key-risk-rotate"
+                  :disabled="rotatingKeyId === row.id"
+                  :title="t('keys.riskRotateHint')"
+                  @click="rotateRiskKey(row)"
+                >
+                  <UIcon
+                    name="i-lucide-refresh-cw"
+                    :class="['size-3.5', rotatingKeyId === row.id ? 'animate-spin' : '']"
+                  />
+                  <span>{{ t('keys.riskRotateAction') }}</span>
+                </button>
+              </div>
             </div>
           </template>
 
@@ -1409,6 +1432,8 @@ const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
 const showCcsImportModal = ref(false)
 const showColumnDropdown = ref(false)
+// 正在轮换（重置）密钥的 key ID，用于禁用按钮并显示转圈。
+const rotatingKeyId = ref<number | null>(null)
 const pendingCcsRow = ref<ApiKey | null>(null)
 const ccsImportApp = ref<CcSwitchApp>('claude')
 const ccsImportModel = ref('')
@@ -1895,6 +1920,22 @@ const editKey = (key: ApiKey) => {
     auto_block_datacenter_ips: key.auto_block_datacenter_ips === true,
   }
   showEditModal.value = true
+}
+
+// 风控停用的 key 一键轮换：生成新 key 值，旧值立即失效，key 恢复 active。
+// 走的是既有 PUT /keys/:id 更新流程（regenerate_key），不新增后端路由。
+const rotateRiskKey = async (key: ApiKey) => {
+  if (rotatingKeyId.value !== null) return
+  rotatingKeyId.value = key.id
+  try {
+    const updated = await keysAPI.rotateKey(key.id)
+    mergeKeyLocally(updated)
+    appStore.showSuccess(t('keys.riskRotateSuccess'))
+  } catch (error) {
+    appStore.showError(t('keys.riskRotateFailed'))
+  } finally {
+    rotatingKeyId.value = null
+  }
 }
 
 const toggleKeyStatus = async (key: ApiKey) => {
@@ -2569,5 +2610,10 @@ onUnmounted(() => {
 .key-row-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
 .key-row-action:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
 .key-row-action--danger:hover { background: color-mix(in srgb, var(--ui-error) 10%, transparent); color: var(--ui-error); }
+.key-risk-rotate { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--ui-warning) 45%, transparent); color: color-mix(in srgb, var(--ui-warning) 90%, var(--ui-text)); font-size: 11px; line-height: 16px; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
+.key-risk-rotate:hover { background: color-mix(in srgb, var(--ui-warning) 12%, transparent); color: var(--ui-warning); }
+.key-risk-rotate:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
+.key-risk-rotate:disabled { opacity: 0.6; cursor: progress; }
+@media (prefers-reduced-motion: reduce) { .key-risk-rotate { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .key-row-action { transition: none; } }
 </style>

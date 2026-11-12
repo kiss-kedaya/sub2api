@@ -93,6 +93,12 @@ type APIKey struct {
 	Reset1dAt              *time.Time `json:"reset_1d_at,omitempty"`
 	Reset7dAt              *time.Time `json:"reset_7d_at,omitempty"`
 
+	// RiskDisabled 表示这把 key 是被网关风控自动停用的（而不是用户手动停用）。
+	// 用户端据此展示"此 key 有被盗用风险"提示与轮换按钮。
+	RiskDisabled bool       `json:"risk_disabled"`
+	RiskHitIP    *string    `json:"risk_hit_ip,omitempty"`
+	RiskHitAt    *time.Time `json:"risk_hit_at,omitempty"`
+
 	User  *User  `json:"user,omitempty"`
 	Group *Group `json:"group,omitempty"`
 }

@@ -148,6 +148,12 @@ export default {
     failedToSave: 'Failed to save API key',
     failedToDelete: 'Failed to delete API key',
     failedToUpdateStatus: 'Failed to update API key status',
+    // Gateway risk control auto-disabled this key (several accounts on one datacenter egress)
+    riskWarning: 'This key may be compromised',
+    riskRotateAction: 'Rotate key',
+    riskRotateHint: 'Generate a new key value. The old key stops working immediately and this key becomes usable again.',
+    riskRotateSuccess: 'Key rotated. The old key no longer works.',
+    riskRotateFailed: 'Failed to rotate key',
     clickToChangeGroup: 'Click to change group',
     groupChangedSuccess: 'Group changed successfully',
     failedToChangeGroup: 'Failed to change group',

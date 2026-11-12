@@ -69,9 +69,11 @@ type APIKeyUpdateFields struct {
 	ConcurrencyLimit bool
 	Name             bool
 	Status           bool
-	Quota            bool
-	GroupID          bool
-	ExpiresAt        bool
+	// Key 仅供"轮换密钥"路径声明：重新生成 key 值后写回 key 列。
+	Key       bool
+	Quota     bool
+	GroupID   bool
+	ExpiresAt bool
 	// QuotaUsed 仅供"重置配额用量"路径声明；常规计费走 IncrementQuotaUsed。
 	QuotaUsed bool
 	// RateLimits 覆盖 rate_limit_5h / _1d / _7d 三个阈值。
@@ -281,6 +283,9 @@ type UpdateAPIKeyRequest struct {
 	DeepSeekToolInjectionEnabled *bool `json:"deepseek_tool_injection_enabled"`
 	// AutoBlockDatacenterIPs 开关（nil = 不修改）。
 	AutoBlockDatacenterIPs *bool `json:"auto_block_datacenter_ips"`
+	// RegenerateKey 为 true 时重新生成 key 值（轮换：旧 key 立刻失效），
+	// 并把因风控停用的 key 恢复为 active。用于用户端"重置/轮换"按钮。
+	RegenerateKey bool `json:"regenerate_key"`
 }
 
 func validateAPIKeyLimit(v float64) error {
@@ -453,6 +458,26 @@ func (s *APIKeyService) GenerateKey() (string, error) {
 
 	key := prefix + hex.EncodeToString(bytes)
 	return key, nil
+}
+
+// regenerateAPIKeyValue generates a fresh key value and makes sure it does not
+// already exist. Rotation replaces only the credential: the key row, its group,
+// quota and the upstream accounts are untouched.
+func (s *APIKeyService) regenerateAPIKeyValue(ctx context.Context) (string, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		key, err := s.GenerateKey()
+		if err != nil {
+			return "", err
+		}
+		exists, err := s.apiKeyRepo.ExistsByKey(ctx, key)
+		if err != nil {
+			return "", fmt.Errorf("check regenerated api key: %w", err)
+		}
+		if !exists {
+			return key, nil
+		}
+	}
+	return "", fmt.Errorf("generate regenerated api key: too many collisions")
 }
 
 // ValidateCustomKey 验证自定义API Key格式
@@ -896,6 +921,23 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	// 下面若干分支会顺带把 Status 改回 active（配额扩容、清除过期等），
 	// 所以用原始值比对来决定是否写 status，而不是只看 req.Status。
 	originalStatus := apiKey.Status
+
+	// 轮换密钥：只换凭据值，旧 key 立刻失效；key 行、分组、配额和上游账号
+	// 都不动。因风控被停用的 key 轮换后恢复可用——用户已经用新密钥自救。
+	rotatedFrom := ""
+	if req.RegenerateKey {
+		next, err := s.regenerateAPIKeyValue(ctx)
+		if err != nil {
+			return nil, err
+		}
+		rotatedFrom = apiKey.Key
+		apiKey.Key = next
+		fields.Key = true
+		if apiKey.Status == StatusAPIKeyInactive {
+			apiKey.Status = StatusActive
+		}
+		clearAPIKeyRiskDisabled(apiKey.ID)
+	}
 	if req.ConcurrencyLimit != nil {
 		apiKey.ConcurrencyLimit = *req.ConcurrencyLimit
 		fields.ConcurrencyLimit = true
@@ -936,6 +978,10 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	if req.Status != nil {
 		apiKey.Status = *req.Status
 		fields.Status = true
+		if *req.Status == StatusActive {
+			// 手动重新启用后，用户端的"被盗用风险"提示必须一起消失。
+			clearAPIKeyRiskDisabled(apiKey.ID)
+		}
 	}
 
 	// Update quota fields
@@ -1028,6 +1074,11 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	}
 
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	if rotatedFrom != "" && rotatedFrom != apiKey.Key {
+		// The old credential must stop authenticating immediately, so its
+		// cached auth entry is dropped as well.
+		s.InvalidateAuthCacheByKey(ctx, rotatedFrom)
+	}
 	s.compileAPIKeyIPRules(apiKey)
 
 	// 配额被重置/调整后，丢弃 key 配额的实时用量镜像，下一次准入从数据库重新播种；

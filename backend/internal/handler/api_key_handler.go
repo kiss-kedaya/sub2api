@@ -102,6 +102,8 @@ type UpdateAPIKeyRequest struct {
 	DeepSeekToolInjectionEnabled *bool   `json:"deepseek_tool_injection_enabled"`
 	// AutoBlockDatacenterIPs 开关（nil = 不修改）。
 	AutoBlockDatacenterIPs *bool `json:"auto_block_datacenter_ips"`
+	// RegenerateKey 轮换密钥：生成新的 key 值，旧值立刻失效。
+	RegenerateKey bool `json:"regenerate_key"`
 }
 
 func validAPIKeyLimit(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
@@ -310,6 +312,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		DeepSeekToolInjectionEnabled: req.DeepSeekToolInjectionEnabled,
 		AutoBlockDatacenterIPs:       req.AutoBlockDatacenterIPs,
 		ConcurrencyLimit:             req.ConcurrencyLimit,
+		RegenerateKey:                req.RegenerateKey,
 	}
 	if req.Name != "" {
 		svcReq.Name = &req.Name

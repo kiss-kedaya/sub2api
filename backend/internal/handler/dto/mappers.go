@@ -127,6 +127,18 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		t := k.Window7dStart.Add(service.RateLimitWindow7d)
 		out.Reset7dAt = &t
 	}
+	// 被网关风控自动停用的 key 需要让用户看到"被盗用风险"提示和轮换入口；
+	// 用户手动停用的 key 没有 marker，因此不会误报。先看状态再看 marker，
+	// 避免为每一行活跃 key 都做一次存储查询。
+	if k.Status == service.StatusAPIKeyInactive {
+		if info, ok := service.APIKeyRiskInfoFor(k.ID); ok {
+			ip := info.IP
+			hitAt := info.HitAt
+			out.RiskDisabled = true
+			out.RiskHitIP = &ip
+			out.RiskHitAt = &hitAt
+		}
+	}
 	return out
 }
 
