@@ -42,7 +42,8 @@ func TestDepositNetworksHaveVerifiedTokenAndAddressDefinitions(t *testing.T) {
 			// BSC's BEP-20 stablecoins are 18-decimal; every other watched
 			// token uses 6. Both are asserted explicitly because a wrong
 			// exponent moves a deposit by twelve orders of magnitude.
-			if token.Decimals != 6 && !(chain == ChainBSC && token.Decimals == 18) {
+			plausibleDecimals := token.Decimals == 6 || (chain == ChainBSC && token.Decimals == 18)
+			if !plausibleDecimals {
 				t.Fatalf("incorrect stablecoin precision: %+v", token)
 			}
 			if !common.IsHexAddress(token.Contract) || common.HexToAddress(token.Contract) == (common.Address{}) {
