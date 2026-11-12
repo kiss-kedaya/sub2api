@@ -386,3 +386,272 @@ func TestIPKeySharingDatacenterGate(t *testing.T) {
 	}
 	require.Empty(t, settings.GatewayIPNoticeSnapshot().AutoEntries)
 }
+
+// sharingAcceptanceFixture builds a detector plus the settings service and Redis
+// client the acceptance helpers below need. The window and threshold are
+// operator-tunable, so each case declares exactly what it depends on.
+func sharingAcceptanceFixture(t *testing.T, threshold, windowMinutes int) (*IPKeySharingDetector, *service.SettingService, *redis.Client, func(time.Duration)) {
+	t.Helper()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	settings := service.NewSettingService(&panelRateLimitStubRepo{}, nil)
+	require.NoError(t, settings.SetGatewayIPNotice(context.Background(), ipnotice.Settings{
+		Enabled:              true,
+		IPs:                  []string{"198.51.100.7"},
+		Message:              "operator notice",
+		RPM:                  100,
+		SharingThreshold:     threshold,
+		SharingWindowMinutes: windowMinutes,
+	}))
+	clock := sharingTestWindow
+	detector := NewIPKeySharingDetector(settings, client)
+	detector.now = func() time.Time { return clock }
+	// advance moves BOTH clocks. miniredis expires keys from its own internal
+	// clock, so moving only the detector's clock would leave the 30-second write
+	// throttle key alive forever and silently suppress every later hit.
+	advance := func(d time.Duration) {
+		clock = clock.Add(d)
+		server.FastForward(d)
+	}
+	return detector, settings, client, advance
+}
+
+// sharingAcceptanceKey builds an eligible key whose ID and prefix are distinct
+// per keyID, so "how many different keys" is unambiguous.
+func sharingAcceptanceKey(userID, keyID int64, ageDays int) *service.APIKey {
+	return &service.APIKey{
+		ID:        keyID,
+		UserID:    userID,
+		Key:       fmt.Sprintf("sk-%04d-secret", keyID),
+		CreatedAt: sharingTestWindow.Add(-time.Duration(ageDays) * 24 * time.Hour),
+	}
+}
+
+// TestIPKeySharingPeakUsers is the acceptance case for the boss report that
+// distinct_users: 4 read like "only 4 keys were scanned": the first-seen count
+// must stay frozen while the peak follows the real burst.
+func TestIPKeySharingPeakUsers(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("peak grows from 4 to 6 while first seen stays 4", func(t *testing.T) {
+		detector, settings, _, advance := sharingAcceptanceFixture(t, 4, 5)
+		ip := "207.32.218.139"
+
+		var hit IPKeySharingHit
+		var ok bool
+		for userID := int64(101); userID <= 104; userID++ {
+			hit, ok = detector.Observe(ctx, ip, userID, sharingAcceptanceKey(userID, userID, 40))
+			require.Equal(t, userID == 104, ok, "the fourth distinct user crosses the threshold")
+		}
+		require.Equal(t, 4, hit.DistinctUsers)
+		added, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+		require.NoError(t, err)
+		require.True(t, added)
+
+		stored := settings.GatewayIPNoticeSnapshot().AutoEntries
+		require.Len(t, stored, 1)
+		require.Equal(t, 4, stored[0].FirstSeenUsers)
+		require.Equal(t, 4, stored[0].PeakUsers)
+
+		// The 5th user: the peak moves, the first-seen snapshot does not. The
+		// write throttle is 30s, so the clock advances just past it while staying
+		// inside the five-minute window.
+		advance(31 * time.Second)
+		hit, ok = detector.Observe(ctx, ip, 105, sharingAcceptanceKey(105, 105, 40))
+		require.True(t, ok)
+		require.Equal(t, 5, hit.PeakUsers)
+		added, err = settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+		require.NoError(t, err)
+		require.False(t, added, "an existing entry is merged, not duplicated")
+
+		advance(31 * time.Second)
+		hit, ok = detector.Observe(ctx, ip, 106, sharingAcceptanceKey(106, 106, 40))
+		require.True(t, ok)
+		require.Equal(t, 6, hit.PeakUsers)
+		_, err = settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+		require.NoError(t, err)
+
+		stored = settings.GatewayIPNoticeSnapshot().AutoEntries
+		require.Len(t, stored, 1)
+		require.Equal(t, 4, stored[0].FirstSeenUsers, "first_seen_users must stay at the crossing value")
+		require.Equal(t, 6, stored[0].PeakUsers, "peak_users must reach the real burst size")
+		require.Equal(t, 6, stored[0].DistinctUsers, "distinct_users keeps the largest observed count")
+	})
+
+	t.Run("a new window restarts the peak", func(t *testing.T) {
+		detector, settings, _, advance := sharingAcceptanceFixture(t, 4, 5)
+		ip := "207.32.218.140"
+
+		for userID := int64(201); userID <= 204; userID++ {
+			hit, ok := detector.Observe(ctx, ip, userID, sharingAcceptanceKey(userID, userID, 40))
+			if ok {
+				_, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+				require.NoError(t, err)
+			}
+		}
+		advance(31 * time.Second)
+		hit, ok := detector.Observe(ctx, ip, 205, sharingAcceptanceKey(205, 205, 40))
+		require.True(t, ok)
+		_, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+		require.NoError(t, err)
+		require.Equal(t, 5, settings.GatewayIPNoticeSnapshot().AutoEntries[0].PeakUsers)
+
+		// More than one full window later the old users are outside the window,
+		// so the count restarts from the new arrivals only.
+		advance(6 * time.Minute)
+		for userID := int64(301); userID <= 304; userID++ {
+			hit, ok = detector.Observe(ctx, ip, userID, sharingAcceptanceKey(userID, userID, 40))
+			if ok {
+				_, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+				require.NoError(t, err)
+			}
+		}
+		stored := settings.GatewayIPNoticeSnapshot().AutoEntries
+		require.Len(t, stored, 1)
+		require.Equal(t, 4, stored[0].PeakUsers, "the peak restarts with the new burst")
+		require.Equal(t, 4, stored[0].FirstSeenUsers, "the very first snapshot is still the original one")
+	})
+}
+
+// TestIPKeySharingTotalKeys is the acceptance case for "record how many keys this
+// IP called with in total": ten distinct keys inside the retention period, with
+// repeats of the same key counted once.
+func TestIPKeySharingTotalKeys(t *testing.T) {
+	ctx := context.Background()
+	// A one-hour decision window keeps every observation inside it while the
+	// clock advances past the write throttle; the distinct keys are what this
+	// test is about.
+	detector, settings, client, advance := sharingAcceptanceFixture(t, 2, 60)
+	ip := "207.32.218.141"
+
+	// Users alternate so the two-user threshold stays crossed for the whole run.
+	// The first observation only brings one distinct user, so it is below the
+	// threshold; from the second on every new key raises the total.
+	for i := range 10 {
+		userID := int64(1000 + i%2)
+		keyID := int64(2000 + i)
+		hit, ok := detector.Observe(ctx, ip, userID, sharingAcceptanceKey(userID, keyID, 40))
+		require.Equal(t, i >= 1, ok, "hit %d", i)
+		if i >= 1 {
+			require.Equal(t, i+1, hit.TotalKeys, "each new key raises the distinct-key total")
+			_, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+			require.NoError(t, err)
+		}
+		advance(31 * time.Second)
+	}
+
+	stored := settings.GatewayIPNoticeSnapshot().AutoEntries
+	require.Len(t, stored, 1)
+	require.Equal(t, 10, stored[0].TotalKeys, "ten distinct keys are ten, not four")
+	require.EqualValues(t, 10, client.SCard(ctx, ipKeySharingKeysPrefix+ip).Val())
+	require.Greater(t, client.TTL(ctx, ipKeySharingKeysPrefix+ip).Val(), 23*time.Hour,
+		"the distinct-key set lives far longer than the five-minute window")
+
+	// Replaying the same key must not inflate the total.
+	for range 5 {
+		hit, ok := detector.Observe(ctx, ip, 1000, sharingAcceptanceKey(1000, 2009, 40))
+		require.True(t, ok)
+		require.Equal(t, 10, hit.TotalKeys, "the same key is only counted once")
+		_, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+		require.NoError(t, err)
+		advance(31 * time.Second)
+	}
+	require.Equal(t, 10, settings.GatewayIPNoticeSnapshot().AutoEntries[0].TotalKeys)
+}
+
+// TestIPKeySharingExcludedSources is the acceptance case for "make sure this IP is
+// not a shared Cloudflare range", plus the private-network guard: an excluded
+// source must not count, must not be added and must not reach the key-disable
+// path, so it must leave no Redis state at all.
+func TestIPKeySharingExcludedSources(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		ip   string
+	}{
+		{name: "cloudflare ipv4 edge", ip: "104.16.0.1"},
+		{name: "cloudflare ipv6 edge", ip: "2606:4700::1"},
+		{name: "rfc1918 ten", ip: "10.1.2.3"},
+		{name: "rfc1918 172.16", ip: "172.16.5.5"},
+		{name: "rfc1918 192.168", ip: "192.168.1.9"},
+		{name: "loopback", ip: "127.0.0.1"},
+		{name: "loopback ipv6", ip: "::1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			detector, settings, client, _ := sharingAcceptanceFixture(t, 3, 5)
+			for userID := int64(401); userID <= 404; userID++ {
+				hit, ok := detector.Observe(ctx, tc.ip, userID, sharingAcceptanceKey(userID, userID, 40))
+				require.False(t, ok, "%s must never produce a sharing hit", tc.ip)
+				require.Zero(t, hit.DistinctUsers)
+			}
+			require.Empty(t, settings.GatewayIPNoticeSnapshot().AutoEntries, "%s must never be added", tc.ip)
+			require.Empty(t, client.Keys(ctx, "*").Val(), "%s must not write any Redis state", tc.ip)
+		})
+	}
+}
+
+// TestIPKeySharingKeyAgeGate is the acceptance case for "make sure these keys were
+// leaked a month ago": 29 days is too young to count, 31 days counts.
+func TestIPKeySharingKeyAgeGate(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("29 day old keys do not count", func(t *testing.T) {
+		detector, settings, client, _ := sharingAcceptanceFixture(t, 2, 5)
+		ip := "207.32.218.142"
+		for userID := int64(501); userID <= 503; userID++ {
+			_, ok := detector.Observe(ctx, ip, userID, sharingAcceptanceKey(userID, userID, 29))
+			require.False(t, ok, "a 29-day-old key is younger than the 30-day gate")
+		}
+		require.Empty(t, settings.GatewayIPNoticeSnapshot().AutoEntries)
+		require.Empty(t, client.Keys(ctx, "*").Val(), "a too-young key must be filtered before any Redis write")
+	})
+
+	t.Run("31 day old keys do count", func(t *testing.T) {
+		detector, settings, _, _ := sharingAcceptanceFixture(t, 2, 5)
+		ip := "207.32.218.143"
+		_, ok := detector.Observe(ctx, ip, 511, sharingAcceptanceKey(511, 511, 31))
+		require.False(t, ok)
+		hit, ok := detector.Observe(ctx, ip, 512, sharingAcceptanceKey(512, 512, 31))
+		require.True(t, ok, "a 31-day-old key is past the gate")
+		require.Equal(t, 2, hit.DistinctUsers)
+		added, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+		require.NoError(t, err)
+		require.True(t, added)
+	})
+
+	t.Run("the age gate is configurable", func(t *testing.T) {
+		detector, settings, client, _ := sharingAcceptanceFixture(t, 2, 5)
+		require.NoError(t, settings.SetGatewayIPNotice(ctx, ipnotice.Settings{
+			Enabled: true, IPs: []string{"198.51.100.7"}, Message: "operator notice", RPM: 100,
+			SharingThreshold: 2, SharingWindowMinutes: 5, KeyMinAgeDays: 60,
+		}))
+		ip := "207.32.218.144"
+		for userID := int64(521); userID <= 523; userID++ {
+			_, ok := detector.Observe(ctx, ip, userID, sharingAcceptanceKey(userID, userID, 31))
+			require.False(t, ok, "with a 60-day gate a 31-day-old key is still too young")
+		}
+		require.Empty(t, client.Keys(ctx, "*").Val())
+	})
+}
+
+// TestIPKeySharingManualEntryIsNeverRewritten pins the ownership rule: an
+// operator-curated address is not a candidate, so the gateway never creates a
+// second automatic entry beside it.
+func TestIPKeySharingManualEntryIsNeverRewritten(t *testing.T) {
+	ctx := context.Background()
+	detector, settings, client, _ := sharingAcceptanceFixture(t, 3, 5)
+	manual := "198.51.100.7"
+	for userID := int64(601); userID <= 605; userID++ {
+		_, ok := detector.Observe(ctx, manual, userID, sharingAcceptanceKey(userID, userID, 40))
+		require.False(t, ok, "a hand-written entry is not a detection candidate")
+	}
+	added, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, ipnotice.AutoEntry{IP: manual, DistinctUsers: 5, FirstSeenUsers: 5, PeakUsers: 5})
+	require.NoError(t, err)
+	require.False(t, added)
+	policy := settings.GatewayIPNoticeSnapshot()
+	require.Empty(t, policy.AutoEntries)
+	require.Len(t, policy.IPs, 1)
+	require.Empty(t, client.Keys(ctx, "*").Val())
+}

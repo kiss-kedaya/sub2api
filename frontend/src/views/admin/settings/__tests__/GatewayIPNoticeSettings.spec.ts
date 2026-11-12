@@ -6,7 +6,12 @@ const { getPolicy, updatePolicy, showSuccess } = vi.hoisted(() => ({ getPolicy: 
 vi.mock('@/api/admin/gatewayIpNotice', () => ({ getGatewayIPNotice: getPolicy, updateGatewayIPNotice: updatePolicy }))
 vi.mock('@/stores', () => ({ useAppStore: () => ({ showSuccess }) }))
 vi.mock('@/composables/useStepUp', () => ({ useStepUp: () => ({ run: (action: () => Promise<unknown>) => action() }), isStepUpCancelled: () => false }))
-vi.mock('vue-i18n', async (original) => ({ ...(await original<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (original) => ({
+  ...(await original<typeof import('vue-i18n')>()),
+  // Interpolation params are appended so a test can assert the counters the
+  // component actually passes, not just which key it asked for.
+  useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key) }),
+}))
 
 const policy = {
   enabled: true,
@@ -124,5 +129,57 @@ describe('GatewayIPNoticeSettings', () => {
     await wrapper.get('[data-testid="gateway-ip-notice-save"]').trigger('click')
     expect(updatePolicy).not.toHaveBeenCalled()
     expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+  })
+
+  it('shows first seen, peak and the accumulated key total for an entry', async () => {
+    getPolicy.mockResolvedValueOnce({
+      ...policy,
+      auto_entries: [
+        {
+          ip: '207.32.218.139',
+          source: 'auto',
+          first_seen_at: '2026-11-12T04:00:00Z',
+          distinct_users: 6,
+          window_minutes: 5,
+          key_prefixes: ['sk-aaaa1', 'sk-aaaa2'],
+          first_seen_users: 4,
+          peak_users: 6,
+          total_keys: 10,
+          last_seen_at: '2026-11-12T04:20:00Z',
+        },
+      ],
+    })
+    const wrapper = render()
+    await flushPromises()
+    const text = wrapper.get('[data-testid="gateway-ip-notice-auto-entry-207.32.218.139"]').text()
+    expect(text).toContain('"first":4')
+    expect(text).toContain('"peak":6')
+    expect(text).toContain('"total":10')
+    expect(text).toContain('gatewayIPNotice.autoWindowInfo')
+  })
+
+  it('degrades to the legacy fields for entries written before the counters existed', async () => {
+    getPolicy.mockResolvedValueOnce({
+      ...policy,
+      auto_entries: [
+        {
+          ip: '207.32.218.140',
+          source: 'auto',
+          first_seen_at: '2026-11-12T04:00:00Z',
+          distinct_users: 4,
+          window_minutes: 5,
+          key_prefixes: ['sk-bbbb1', 'sk-bbbb2', 'sk-bbbb3'],
+        },
+      ],
+    })
+    const wrapper = render()
+    await flushPromises()
+    const text = wrapper.get('[data-testid="gateway-ip-notice-auto-entry-207.32.218.140"]').text()
+    // first_seen_users and peak_users fall back to distinct_users, and
+    // total_keys falls back to the number of masked prefixes.
+    expect(text).toContain('"first":4')
+    expect(text).toContain('"peak":4')
+    expect(text).toContain('"total":3')
+    expect(text).not.toContain('undefined')
   })
 })

@@ -32,6 +32,13 @@ const (
 	DefaultKeyMinAgeDays = 30
 	// DefaultRPM is the per-IP request budget applied to listed addresses.
 	DefaultRPM = 100
+	// DefaultTotalKeysTTLHours is how long the per-IP "keys seen" set lives.
+	// Distinct keys accumulate over this period, independently of the short
+	// decision window: the five-minute window decides WHETHER an IP looks
+	// shared, this period answers "how many keys did it call with overall".
+	// 24 hours is long enough to catch a slow rotation across one day and short
+	// enough that the Redis set stays bounded and eventually forgets.
+	DefaultTotalKeysTTLHours = 24
 
 	// AutoEntrySourceAuto marks an entry that the gateway appended by itself.
 	// Manual entries live in Settings.IPs and never carry this source.
@@ -58,6 +65,141 @@ type AutoEntry struct {
 	WindowMinutes int `json:"window_minutes"`
 	// KeyPrefixes holds masked API-key prefixes (never the full key).
 	KeyPrefixes []string `json:"key_prefixes"`
+
+	// FirstSeenUsers is the distinct-user count at the moment the threshold was
+	// crossed. It is written once and never changes afterwards: it is the answer
+	// to "how many accounts were already there when we noticed".
+	FirstSeenUsers int `json:"first_seen_users"`
+	// PeakUsers is the largest distinct-user count seen in this entry's current
+	// burst. It grows while the same window keeps producing hits and restarts
+	// from the new burst once a full window passes without one.
+	PeakUsers int `json:"peak_users"`
+	// TotalKeys is how many DISTINCT API keys this IP has called with inside the
+	// total-keys period (24h by default). It is not limited to the decision
+	// window and it never shrinks.
+	TotalKeys int `json:"total_keys"`
+	// LastSeenAt refreshes on every hit that updates the entry. Zero on a legacy
+	// entry; Normalize backfills it from FirstSeenAt.
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+// backfillLegacyCounters makes an entry written by a build that only knew
+// distinct_users and key_prefixes read correctly. Every fill is monotone, so
+// running it repeatedly is safe and it can never shrink a counter that a newer
+// build already advanced.
+func (e *AutoEntry) backfillLegacyCounters() {
+	if e.DistinctUsers < 0 {
+		e.DistinctUsers = 0
+	}
+	if e.WindowMinutes <= 0 {
+		e.WindowMinutes = DefaultSharingWindowMinutes
+	}
+	if e.FirstSeenUsers <= 0 {
+		e.FirstSeenUsers = e.DistinctUsers
+	}
+	if e.PeakUsers < e.DistinctUsers {
+		e.PeakUsers = e.DistinctUsers
+	}
+	if e.PeakUsers < e.FirstSeenUsers {
+		e.PeakUsers = e.FirstSeenUsers
+	}
+	// key_prefixes is capped at maxAutoEntryKeyPrefixes, so it is a lower bound
+	// for the true total. Never let the cap pull an already-larger total down.
+	if e.TotalKeys < len(e.KeyPrefixes) {
+		e.TotalKeys = len(e.KeyPrefixes)
+	}
+	if e.TotalKeys < 0 {
+		e.TotalKeys = 0
+	}
+	if e.LastSeenAt.IsZero() {
+		e.LastSeenAt = e.FirstSeenAt
+	}
+}
+
+// EffectiveFirstSeenUsers is the first-seen count with the legacy fallback
+// applied, for readers that did not go through Normalize.
+func (e AutoEntry) EffectiveFirstSeenUsers() int {
+	if e.FirstSeenUsers > 0 {
+		return e.FirstSeenUsers
+	}
+	return e.DistinctUsers
+}
+
+// EffectivePeakUsers is the peak count with the legacy fallback applied.
+func (e AutoEntry) EffectivePeakUsers() int {
+	if e.PeakUsers > 0 {
+		return e.PeakUsers
+	}
+	return e.DistinctUsers
+}
+
+// EffectiveTotalKeys is the distinct-key total with the legacy fallback applied.
+// A legacy entry has no total, so the masked prefix count is the best available
+// lower bound.
+func (e AutoEntry) EffectiveTotalKeys() int {
+	if e.TotalKeys > 0 {
+		return e.TotalKeys
+	}
+	return len(e.KeyPrefixes)
+}
+
+// EffectiveLastSeenAt is the last-seen time with the legacy fallback applied.
+func (e AutoEntry) EffectiveLastSeenAt() time.Time {
+	if !e.LastSeenAt.IsZero() {
+		return e.LastSeenAt
+	}
+	return e.FirstSeenAt
+}
+
+// mergeAutoEntry folds a later hit into the stored entry for the same IP.
+//
+// The rules are deliberately asymmetric:
+//   - first_seen_users is frozen — it records the burst's opening state;
+//   - peak_users is the max inside one burst, and a gap of more than one window
+//     since the previous hit means a new burst, so the peak restarts instead of
+//     remembering a week-old maximum;
+//   - total_keys only ever grows, because the Redis key set it comes from is
+//     additive over its own (much longer) period;
+//   - last_seen_at moves forward;
+//   - window_minutes keeps the value that was in force when the IP was added, so
+//     the displayed evidence never silently rewrites history.
+func mergeAutoEntry(existing, incoming AutoEntry) AutoEntry {
+	existing.backfillLegacyCounters()
+	incoming.backfillLegacyCounters()
+
+	window := time.Duration(existing.WindowMinutes) * time.Minute
+	if window <= 0 {
+		window = time.Duration(DefaultSharingWindowMinutes) * time.Minute
+	}
+	newBurst := existing.LastSeenAt.IsZero() ||
+		(!incoming.LastSeenAt.IsZero() && incoming.LastSeenAt.Sub(existing.LastSeenAt) > window)
+
+	if newBurst {
+		existing.PeakUsers = incoming.PeakUsers
+	} else if incoming.PeakUsers > existing.PeakUsers {
+		existing.PeakUsers = incoming.PeakUsers
+	}
+	// distinct_users is the field every existing consumer already reads, so it
+	// must not stay frozen at the crossing value: that snapshot is exactly what
+	// made a six-user burst read as "4". It tracks the peak, while
+	// first_seen_users keeps the frozen opening state.
+	existing.DistinctUsers = existing.PeakUsers
+	if incoming.TotalKeys > existing.TotalKeys {
+		existing.TotalKeys = incoming.TotalKeys
+	}
+	// A new burst means the window that noticed the sharing is the new one; keep
+	// the recorded window consistent with the peak it now describes.
+	if newBurst {
+		existing.WindowMinutes = incoming.WindowMinutes
+	}
+	if incoming.LastSeenAt.After(existing.LastSeenAt) {
+		existing.LastSeenAt = incoming.LastSeenAt
+	}
+	if incoming.FirstSeenUsers > 0 && existing.FirstSeenUsers <= 0 {
+		existing.FirstSeenUsers = incoming.FirstSeenUsers
+	}
+	existing.KeyPrefixes = normalizeKeyPrefixes(append(append([]string{}, existing.KeyPrefixes...), incoming.KeyPrefixes...))
+	return existing
 }
 
 // Settings is an IP-only policy. It deliberately contains no user or key IDs.
@@ -78,6 +220,12 @@ type Settings struct {
 	// KeyMinAgeDays ignores keys younger than this many days. Zero means "use
 	// the default" so older stored policies stay valid.
 	KeyMinAgeDays int `json:"key_min_age_days,omitempty"`
+	// TotalKeysTTLHours is how long one source IP's "distinct keys seen" set is
+	// remembered. It is independent of SharingWindowMinutes on purpose: the
+	// window decides whether an IP looks shared, this period decides how far
+	// back "total keys" counts. Zero means "use the default" (24h) so older
+	// stored policies stay valid.
+	TotalKeysTTLHours int `json:"total_keys_ttl_hours,omitempty"`
 	// KeyDisableEnabled is the opt-in escalation switch. When it is true a
 	// sharing hit also flips the involved API keys to inactive; when it is
 	// false (the product default, and what an older stored policy means) the
@@ -132,6 +280,16 @@ func (s Settings) SharingKeyMinAgeDays() int {
 	return s.KeyMinAgeDays
 }
 
+// TotalKeysTTL is how long the per-IP distinct-key set is remembered. A
+// non-positive value falls back to DefaultTotalKeysTTLHours.
+func (s Settings) TotalKeysTTL() time.Duration {
+	hours := s.TotalKeysTTLHours
+	if hours <= 0 {
+		hours = DefaultTotalKeysTTLHours
+	}
+	return time.Duration(hours) * time.Hour
+}
+
 // ListedIPs returns the effective exact-address list: manual entries first,
 // then gateway-appended ones. Callers that only need membership should use
 // HasListedIP.
@@ -163,6 +321,63 @@ func (s Settings) HasListedIP(raw string) bool {
 		}
 	}
 	return false
+}
+
+// HasManualIP reports whether raw is on the hand-written list. The detector uses
+// it to stay silent for operator-curated addresses: a manual entry is never
+// updated, disabled or re-logged by the gateway.
+func (s Settings) HasManualIP(raw string) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	canonical := addr.Unmap().String()
+	for _, allowed := range s.IPs {
+		if allowed == canonical {
+			return true
+		}
+	}
+	return false
+}
+
+// UpsertAutoEntry folds one detected hit into the policy and reports whether the
+// entry is new. An existing automatic entry is merged (peak, total keys and
+// last-seen move forward) instead of duplicating, which is what lets the admin
+// page show the real peak and the true distinct-key total rather than the
+// snapshot taken the first time the threshold was crossed.
+//
+// The receiver is normalized first so a legacy entry is compared on backfilled
+// counters; callers persist the returned value through Normalize.
+func (s Settings) UpsertAutoEntry(entry AutoEntry) (Settings, bool) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(entry.IP))
+	if err != nil || addr.Zone() != "" || !addr.IsGlobalUnicast() || addr.IsPrivate() {
+		// An address that can never be stored is left out entirely; the caller
+		// treats "not added" as "nothing to write".
+		return s, false
+	}
+	canonical := addr.Unmap().String()
+	entry.IP = canonical
+	entry.Source = AutoEntrySourceAuto
+	entry.backfillLegacyCounters()
+
+	// Copy before merging. A value receiver shares the backing array with the
+	// caller, so writing through s.AutoEntries[i] would mutate the caller's slice
+	// too and make "did anything change?" comparisons alias — which silently
+	// swallowed every merge before this line existed.
+	out := make([]AutoEntry, len(s.AutoEntries))
+	copy(out, s.AutoEntries)
+	for i := range out {
+		stored := out[i]
+		storedAddr, err := netip.ParseAddr(strings.TrimSpace(stored.IP))
+		if err != nil || storedAddr.Unmap().String() != canonical {
+			continue
+		}
+		out[i] = mergeAutoEntry(stored, entry)
+		s.AutoEntries = out
+		return s, false
+	}
+	s.AutoEntries = append(out, entry)
+	return s, true
 }
 
 // Normalize validates an exact-address list and returns an independent copy.
@@ -209,6 +424,12 @@ func (s Settings) Normalize() (Settings, error) {
 	if s.SharingThreshold < 2 || s.SharingThreshold > 100 {
 		return Settings{}, fmt.Errorf("sharing threshold must be between 2 and 100 users")
 	}
+	if s.TotalKeysTTLHours == 0 {
+		s.TotalKeysTTLHours = DefaultTotalKeysTTLHours
+	}
+	if s.TotalKeysTTLHours < 1 || s.TotalKeysTTLHours > 168 {
+		return Settings{}, fmt.Errorf("total keys retention must be between 1 and 168 hours")
+	}
 
 	ips := make([]string, 0, len(s.IPs))
 	seen := make(map[string]bool, len(s.IPs))
@@ -242,6 +463,10 @@ func (s Settings) Normalize() (Settings, error) {
 		entry.IP = value
 		entry.Source = AutoEntrySourceAuto
 		entry.KeyPrefixes = normalizeKeyPrefixes(entry.KeyPrefixes)
+		// Backfill after the prefix list is normalized: a legacy entry has no
+		// first_seen_users/peak_users/total_keys at all, and the prefix count is
+		// the only lower bound available for its distinct-key total.
+		entry.backfillLegacyCounters()
 		auto = append(auto, entry)
 	}
 	s.AutoEntries = auto

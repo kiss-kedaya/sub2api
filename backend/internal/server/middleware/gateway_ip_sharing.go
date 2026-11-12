@@ -22,6 +22,10 @@ import (
 // (Settings.KeyDisableEnabled); only then does it flip them to inactive
 // (status=inactive, never deleted, upstream accounts untouched).
 func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDetector, keys *service.APIKeyService) gin.HandlerFunc {
+	// The Cloudflare range list is refreshed once per process: immediately here
+	// and then daily. A failed fetch keeps the embedded snapshot, so detection
+	// never loses the exclusion because of a network problem.
+	ipnotice.StartCloudflareRangesRefresher()
 	return func(c *gin.Context) {
 		if settings == nil || detector == nil {
 			c.Next()
@@ -64,10 +68,16 @@ func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDe
 		// Record the IP first: the notice policy is the reversible half of the
 		// action. In opt-in mode the key write still runs when the append fails,
 		// so one failing half never silently leaves the other undone.
-		added, appendErr := settings.AppendGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+		//
+		// Upsert rather than append: a later, larger burst from an IP that is
+		// already listed must move peak_users, total_keys and last_seen_at
+		// forward instead of being dropped as a duplicate.
+		added, appendErr := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
 		attrs := []any{
 			"ip", hit.IP,
 			"distinct_users", hit.DistinctUsers,
+			"peak_users", hit.PeakUsers,
+			"total_keys", hit.TotalKeys,
 			"window_minutes", hit.WindowMinutes,
 			"key_prefixes", hit.KeyPrefixes,
 			"auto_added", added,

@@ -110,6 +110,74 @@ func (s *SettingService) AppendGatewayIPNoticeAutoEntry(ctx context.Context, ent
 	return true, nil
 }
 
+// UpsertGatewayIPNoticeAutoEntry records one gateway-detected hit and returns
+// whether the IP is NEW to the list.
+//
+// It is the write path used by the sharing detector, and it deliberately differs
+// from AppendGatewayIPNoticeAutoEntry: a later hit for an already-listed IP is
+// merged instead of dropped, so peak_users, total_keys and last_seen_at describe
+// the real burst rather than the snapshot taken the first time the threshold was
+// crossed. first_seen_users and first_seen_at stay frozen.
+//
+// A hand-written entry always wins: the operator owns that address, so the
+// gateway never creates a second, automatic entry beside it and never implies it
+// changed something it did not.
+func (s *SettingService) UpsertGatewayIPNoticeAutoEntry(ctx context.Context, entry ipnotice.AutoEntry) (bool, error) {
+	if s == nil || s.settingRepo == nil {
+		return false, nil
+	}
+	s.gatewayIPNoticeMu.Lock()
+	defer s.gatewayIPNoticeMu.Unlock()
+	current, err := s.readGatewayIPNotice(ctx)
+	if err != nil {
+		return false, err
+	}
+	if current.HasManualIP(entry.IP) {
+		return false, nil
+	}
+	updated, added := current.UpsertAutoEntry(entry)
+	if !added && sameAutoEntries(current.AutoEntries, updated.AutoEntries) {
+		// Nothing moved: the merge was a no-op, so skip the settings write.
+		return false, nil
+	}
+	if added && len(current.IPs)+len(current.AutoEntries) >= ipnotice.MaxListedIPs {
+		return false, fmt.Errorf("gateway IP notice list is full (%d entries)", ipnotice.MaxListedIPs)
+	}
+	normalized, err := updated.Normalize()
+	if err != nil {
+		return false, err
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return false, err
+	}
+	if err := s.settingRepo.Set(ctx, SettingKeyGatewayIPNotice, string(data)); err != nil {
+		return false, err
+	}
+	s.gatewayIPNoticeCache.Store(&cachedGatewayIPNotice{settings: normalized, expiresAt: time.Now().Add(5 * time.Second)})
+	return added, nil
+}
+
+// sameAutoEntries reports whether two entry slices carry identical evidence. It
+// is a cheap equality check on the fields the detector can move, used to avoid
+// rewriting the settings row when a throttled hit changes nothing.
+func sameAutoEntries(a, b []ipnotice.AutoEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].IP != b[i].IP ||
+			a[i].PeakUsers != b[i].PeakUsers ||
+			a[i].TotalKeys != b[i].TotalKeys ||
+			!a[i].LastSeenAt.Equal(b[i].LastSeenAt) ||
+			a[i].WindowMinutes != b[i].WindowMinutes ||
+			len(a[i].KeyPrefixes) != len(b[i].KeyPrefixes) {
+			return false
+		}
+	}
+	return true
+}
+
 // RefreshGatewayIPNotice primes the snapshot during router construction. A
 // failed refresh preserves the last known policy and backs off for five seconds.
 func (s *SettingService) RefreshGatewayIPNotice(ctx context.Context) error {
