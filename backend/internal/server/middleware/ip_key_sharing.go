@@ -187,7 +187,7 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 		WindowMinutes: int(window / time.Minute),
 		FirstSeenAt:   now,
 	}
-	if users, err := d.redis.ZRangeByScore(ctx, userKey, &redis.ZRangeBy{Min: cutoff, Max: "+inf"}).Result(); err == nil && len(users) > 0 {
+	if users, err := d.redis.ZRangeArgs(ctx, redis.ZRangeArgs{Key: userKey, Start: cutoff, Stop: "+inf", ByScore: true}).Result(); err == nil && len(users) > 0 {
 		if values, err := d.redis.HMGet(ctx, evidenceKey, users...).Result(); err == nil {
 			for _, value := range values {
 				raw, ok := value.(string)
