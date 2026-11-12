@@ -37,6 +37,60 @@ func TestNormalizeBaseURLAllowsAdministratorConfiguredDestinations(t *testing.T)
 	require.Equal(t, "https://guard.example.com/v1/chat/completions", url)
 }
 
+// TestPromptAuditURLsAreIdempotentForVersionedBases covers the reported 404:
+// a guard base that keeps the API version inside a path prefix must not gain a
+// second version segment when the endpoint is appended.
+func TestPromptAuditURLsAreIdempotentForVersionedBases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		base     string
+		wantBase string
+	}{
+		{base: "https://guard.example.com", wantBase: "https://guard.example.com/v1"},
+		{base: "https://guard.example.com/", wantBase: "https://guard.example.com/v1"},
+		{base: "https://guard.example.com/v1", wantBase: "https://guard.example.com/v1"},
+		{base: "https://guard.example.com/v1/", wantBase: "https://guard.example.com/v1"},
+		{base: "https://guard.example.com/api/openai/v1", wantBase: "https://guard.example.com/api/openai/v1"},
+		{base: "https://guard.example.com/prefix", wantBase: "https://guard.example.com/prefix/v1"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.base, func(t *testing.T) {
+			t.Parallel()
+
+			modelsURL, err := ModelsURL(tt.base)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantBase+"/models", modelsURL)
+
+			chatURL, err := ChatCompletionsURL(tt.base)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantBase+"/chat/completions", chatURL)
+		})
+	}
+}
+
+// TestPromptAuditProbeUsesSingleVersionSegment is the end-to-end regression for
+// the probe that pulls the model list before falling back to a chat call.
+func TestPromptAuditProbeUsesSingleVersionSegment(t *testing.T) {
+	t.Parallel()
+
+	var modelPathHits atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/claude/v1/models" {
+			modelPathHits.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"` + DefaultGuardModel + `"}]}`))
+	}))
+	defer server.Close()
+
+	result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL+"/claude/v1", "temporary-token")})
+	require.True(t, result.OK)
+	require.Zero(t, modelPathHits.Load())
+}
+
 func TestHTTPClientUsesDirectStandardDialer(t *testing.T) {
 	client, err := NewSecureHTTPClient(ActiveEndpoint{BaseURL: "https://guard.example.com", TimeoutMS: 1000})
 	require.NoError(t, err)

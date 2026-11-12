@@ -66,10 +66,30 @@ func grokOAuthModelSyncTestAccount(baseURL string) *Account {
 func TestBuildV1ModelsURL(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, "https://api.anthropic.com/v1/models", buildV1ModelsURL("https://api.anthropic.com"))
-	require.Equal(t, "https://api.anthropic.com/v1/models", buildV1ModelsURL("https://api.anthropic.com/v1"))
-	require.Equal(t, "https://api.anthropic.com/v1/models", buildV1ModelsURL("https://api.anthropic.com/v1/models"))
-	require.Equal(t, "https://gateway.example.com/antigravity/v1/models", buildV1ModelsURL("https://gateway.example.com/antigravity/"))
+	tests := []struct {
+		name string
+		base string
+		want string
+	}{
+		{name: "origin", base: "https://x", want: "https://x/v1/models"},
+		{name: "origin trailing slash", base: "https://x/", want: "https://x/v1/models"},
+		{name: "version suffix", base: "https://x/v1", want: "https://x/v1/models"},
+		{name: "version suffix trailing slash", base: "https://x/v1/", want: "https://x/v1/models"},
+		{name: "versioned prefix", base: "https://x/api/openai/v1", want: "https://x/api/openai/v1/models"},
+		{name: "plain prefix", base: "https://x/prefix", want: "https://x/prefix/v1/models"},
+		{name: "already complete", base: "https://x/v1/models", want: "https://x/v1/models"},
+		{name: "antigravity prefix", base: "https://gateway.example.com/antigravity/", want: "https://gateway.example.com/antigravity/v1/models"},
+		{name: "query preserved", base: "https://x/v1?tenant=a", want: "https://x/v1/models?tenant=a"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, buildV1ModelsURL(tt.base))
+		})
+	}
 }
 
 func TestBuildOpenAIModelsURL(t *testing.T) {
