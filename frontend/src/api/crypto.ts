@@ -7,6 +7,15 @@ import { apiClient } from '@/api/client'
 export interface DepositAsset {
   symbol: string
   native: boolean
+  // True when the asset is credited at the market price observed at credit
+  // time (ETH, BNB). The page must not render a fixed rate for it.
+  market_priced?: boolean
+  // Balance units per whole asset under the fixed rate. Null (or absent) for
+  // market-priced assets, where a constant rate would misstate the payout.
+  rate?: number | null
+  // Display-only market quote. Best effort: absent whenever the price feed is
+  // unavailable, and never used to compute a credit.
+  reference_price_usd?: string | null
 }
 
 export interface DepositChain {
@@ -21,7 +30,9 @@ export interface DepositChain {
 export interface DepositInfo {
   enabled: boolean
   chains: DepositChain[]
-  rate: number
+  // Deprecated: older backends send one asset-independent rate. New backends
+  // send the rate per asset because native coins settle at market price.
+  rate?: number
   min_amount: number
   max_amount: number
 }

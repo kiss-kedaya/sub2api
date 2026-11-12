@@ -1367,12 +1367,21 @@ func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status stri
 }
 
 // DepositInfo is everything the standalone deposit page needs.
+//
+// There is deliberately no response-wide rate. A rate is a property of the
+// asset being sent, not of the account: since native deposits settle at the
+// market price observed when they are credited (PR #306), the old top-level
+// `rate` told every client that 1 ETH was worth the stablecoin multiplier.
+// Clients must read DepositAsset.Rate / MarketPriced instead.
 type DepositInfo struct {
-	Enabled   bool           `json:"enabled"`
-	Chains    []DepositChain `json:"chains"`
-	Rate      float64        `json:"rate"`       // balance units per USDT
-	MinAmount float64        `json:"min_amount"` // smallest credit
-	MaxAmount float64        `json:"max_amount"` // largest single credit
+	Enabled bool           `json:"enabled"`
+	Chains  []DepositChain `json:"chains"`
+	// MinAmount / MaxAmount are the credit thresholds. A stablecoin is
+	// compared by its token amount (already USD-denominated); a market-priced
+	// asset is compared by USD notional (amount × price at credit time), so a
+	// client must label them as USD for that asset, never as a coin amount.
+	MinAmount float64 `json:"min_amount"`
+	MaxAmount float64 `json:"max_amount"`
 }
 
 // DepositAsset is one asset a user can send to a chain's deposit address.
@@ -1381,6 +1390,18 @@ type DepositInfo struct {
 type DepositAsset struct {
 	Symbol string `json:"symbol"`
 	Native bool   `json:"native"`
+	// MarketPriced marks an asset that is settled at the market price
+	// observed when the deposit is credited (ETH, BNB). A fixed rate must
+	// never be rendered for it: Rate is null.
+	MarketPriced bool `json:"market_priced"`
+	// Rate is how many balance units one whole asset is worth under the fixed
+	// rate. It is set for stablecoins and null for market-priced assets,
+	// where a constant number would misstate what the user receives.
+	Rate *float64 `json:"rate"`
+	// ReferencePriceUSD is a display-only quote for a market-priced asset
+	// ("about $3,210 per ETH"). It is best-effort: absent whenever the feed is
+	// unavailable, and it is never used to compute a credit.
+	ReferencePriceUSD *string `json:"reference_price_usd,omitempty"`
 }
 
 // DepositChain is one chain's deposit address.
@@ -1394,6 +1415,11 @@ type DepositChain struct {
 	Assets []DepositAsset `json:"assets"`
 }
 
+// nativeReferencePriceTimeout caps the whole "about $X" decoration pass, so a
+// hung ticker can delay the deposit page by seconds but never fail it. The
+// price is a courtesy for the user, not part of the credit calculation.
+const nativeReferencePriceTimeout = 2 * time.Second
+
 // DepositInfo resolves (assigning on first use) the user's addresses.
 func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, error) {
 	cfg := s.Config()
@@ -1404,9 +1430,20 @@ func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, 
 	if err != nil {
 		return nil, err
 	}
+	info := buildDepositInfo(cfg, assigned)
+	s.attachNativeReferencePrices(ctx, info)
+	return info, nil
+}
+
+// buildDepositInfo renders the public deposit page from config alone. Kept
+// pure so the pricing contract can be tested without a database: every asset
+// declares how it is priced, and only fixed-rate assets carry a rate.
+func buildDepositInfo(cfg CryptoConfig, assigned map[string]string) *DepositInfo {
+	rate := cfg.CreditMultiplier
 	info := &DepositInfo{
-		Enabled: true, Rate: cfg.CreditMultiplier,
-		MinAmount: cfg.CreditMinAmount, MaxAmount: cfg.CreditMaxAmount,
+		Enabled:   true,
+		MinAmount: cfg.CreditMinAmount,
+		MaxAmount: cfg.CreditMaxAmount,
 	}
 	for _, chain := range cfg.Chains {
 		family := addresses.FamilyEVM
@@ -1424,14 +1461,57 @@ func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, 
 				continue
 			}
 			symbols = append(symbols, token.Symbol)
-			assets = append(assets, DepositAsset{Symbol: token.Symbol, Native: token.Native})
+			asset := DepositAsset{Symbol: token.Symbol, Native: token.Native}
+			if token.Native {
+				// Native coin: settled at the market price at credit time, so
+				// no fixed rate is exposed at all.
+				asset.MarketPriced = true
+			} else {
+				// Stablecoin: the token amount is the USD amount, so the
+				// configured multiplier still applies directly.
+				fixed := rate
+				asset.Rate = &fixed
+			}
+			assets = append(assets, asset)
 		}
 		if len(symbols) == 0 {
 			continue
 		}
 		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Tokens: symbols, Assets: assets})
 	}
-	return info, nil
+	return info
+}
+
+// attachNativeReferencePrices fills ReferencePriceUSD for market-priced assets.
+// Every failure path is silent by design: no quote, stale quote, unmapped
+// chain, no configured feed or an exhausted time budget all leave the field
+// absent. The deposit page must render with or without a market quote.
+func (s *Service) attachNativeReferencePrices(parent context.Context, info *DepositInfo) {
+	if info == nil || s.nativePrice == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, nativeReferencePriceTimeout)
+	defer cancel()
+	for ci := range info.Chains {
+		chain := info.Chains[ci].Chain
+		for ai := range info.Chains[ci].Assets {
+			asset := &info.Chains[ci].Assets[ai]
+			if !asset.MarketPriced || asset.ReferencePriceUSD != nil {
+				continue
+			}
+			if ctx.Err() != nil {
+				// The budget is spent: leave the remaining assets unquoted
+				// rather than making the page wait for another exchange call.
+				return
+			}
+			quote, err := s.nativePrice.Quote(ctx, chain)
+			if err != nil || !quote.Usable(time.Now()) {
+				continue
+			}
+			price := trimDecimalZeros(quote.USD.String())
+			asset.ReferencePriceUSD = &price
+		}
+	}
 }
 
 // UserDepositRecord is one deposit row for the user's own history.
