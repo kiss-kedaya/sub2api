@@ -705,13 +705,13 @@ func TestUpstreamProbeRedirectTarget(t *testing.T) {
 		status   int
 		location string
 	}{
-		"cross origin":       {http.StatusFound, "https://evil.example/api/usage/token"},
-		"scheme downgrade":   {http.StatusFound, "http://relay.example/api/usage/token"},
-		"login page":         {http.StatusFound, "/login"},
-		"sign-in page":       {http.StatusFound, "/signin?next=/api"},
-		"no location":        {http.StatusFound, ""},
-		"not a redirect":     {http.StatusOK, "/api/usage/token"},
-		"transport failure":  {http.StatusFound, "/api/usage/token"},
+		"cross origin":      {http.StatusFound, "https://evil.example/api/usage/token"},
+		"scheme downgrade":  {http.StatusFound, "http://relay.example/api/usage/token"},
+		"login page":        {http.StatusFound, "/login"},
+		"sign-in page":      {http.StatusFound, "/signin?next=/api"},
+		"no location":       {http.StatusFound, ""},
+		"not a redirect":    {http.StatusOK, "/api/usage/token"},
+		"transport failure": {http.StatusFound, "/api/usage/token"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			result := upstreamBillingProbeHTTPResult{statusCode: tc.status, header: header(tc.location)}
