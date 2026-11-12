@@ -7,7 +7,7 @@
       data-test="timer-entry"
       class="w-full min-w-0 justify-start overflow-hidden"
       :color="hasSchedule ? 'primary' : 'neutral'"
-      :variant="hasSchedule ? 'soft' : 'ghost'"
+      :variant="hasSchedule ? 'soft' : 'outline'"
       size="xs"
       :disabled="busy || loading"
       :aria-expanded="expanded"
