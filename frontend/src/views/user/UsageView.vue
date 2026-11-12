@@ -7,7 +7,12 @@
         </template>
       </UserPageHeader>
 
-      <div class="usage-stats-strip overflow-hidden rounded-lg shadow-xs ring ring-default dark:shadow-none">
+      <!--
+        No overflow clipping here: the rounded ring/corner is painted by the element itself
+        (background + ring both follow border-radius), so nothing needs to be cropped. Clipping
+        the content used to slice the cache-detail popover that opens out of the 总 Token cell.
+      -->
+      <div class="usage-stats-strip rounded-lg shadow-xs ring ring-default dark:shadow-none">
         <UsageStatsCards class="signal-usage-metrics" :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
       </div>
 

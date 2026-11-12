@@ -86,4 +86,26 @@ describe('UsageStatsCards', () => {
     expect(tooltip?.classes()).toContain('hidden')
     expect(tooltip?.classes()).not.toContain('opacity-0')
   })
+
+  it('anchors the cache tooltip to the trigger right edge', () => {
+    const wrapper = mount(UsageStatsCards, {
+      props: {
+        stats,
+      },
+      global: {
+        stubs: {
+          Icon: true,
+        },
+      },
+    })
+
+    const tooltip = wrapper.findAll('span').find((el) => el.classes().includes('group-hover:block'))
+
+    // Centring a fixed 14rem panel on a trigger that sits at the end of the meta line pushed it
+    // past the stats strip's right edge (768px: 18.7px, 390px: 15.1px), which is what forced the
+    // layout to clip it in the first place. The trigger's right edge can never pass the cell edge.
+    expect(tooltip?.classes()).toContain('right-0')
+    expect(tooltip?.classes()).not.toContain('left-1/2')
+    expect(tooltip?.classes()).not.toContain('-translate-x-1/2')
+  })
 })
