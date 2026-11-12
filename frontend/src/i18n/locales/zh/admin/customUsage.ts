@@ -1,6 +1,5 @@
 export default {
   "title": "余额查询",
-  "column": "上游余额",
   "enabled": "自动查询",
   "enableHint": "仅查询当前账号的自定义上游，不影响本站计费或账号调度。",
   "template": "查询模板",
@@ -18,7 +17,7 @@ export default {
   "userId": "用户 ID",
   "timeout": "超时（秒）",
   "interval": "刷新间隔（分钟）",
-  "intervalDefault": "默认每 10 分钟刷新一次，仅处理当前可见账号。",
+  "intervalDefault": "默认每 10 分钟刷新一次；识别为 Sub2API / New API 的账号会自动填好地址、凭据和提取器。",
   "secretSaved": "已保存，留空保留",
   "secretPlaceholder": "输入新凭据",
   "clearSecret": "显式清空已保存凭据",

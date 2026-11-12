@@ -239,6 +239,7 @@ export default {
         official: '官方接口',
         unsupported: '不支持',
         failed: '读取失败',
+        reading: '读取中',
         notRead: '未读取',
         keyQuotaShort: '密钥额度',
         walletShort: '账户 {value}',
@@ -253,6 +254,8 @@ export default {
         notReadNote: '还没有读到过余额。打开“自动探测上游声明倍率”或点右侧按钮读取一次。',
         unlimitedNote: '上游把这个密钥设成了无限额度，所以没有剩余金额。',
         keptLastValueNote: '最近一次读取失败，显示的是上次成功读到的值。',
+        readingNote: '上游已识别为 Sub2API / New API，余额读取失败时后台会自动重试（1 秒、3 秒、9 秒退避），读到之前只显示上次成功的值，不显示失败。',
+        refreshHint: '余额默认每 10 分钟刷新一次；识别到 Sub2API / New API 的上游，读取失败会一直重试，列表只显示上次成功读到的值。',
         staleNote: '已超过有效期，显示的是上次读到的值，可能已经变了。',
         detail: {
           kind: '上游类型',

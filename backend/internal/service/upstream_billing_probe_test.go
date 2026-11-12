@@ -338,10 +338,7 @@ func TestUpstreamBillingProbeSuccessPersistsSanitizedSnapshot(t *testing.T) {
 		RateMultiplier: &initialRate,
 	}
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body: io.NopCloser(strings.NewReader(`{
+	billingAndBalanceBody := `{
 			"object":"sub2api.key_billing",
 			"schema_version":1,
 			"billing_scope":"token",
@@ -356,8 +353,14 @@ func TestUpstreamBillingProbeSuccessPersistsSanitizedSnapshot(t *testing.T) {
 			"effective_rate_multiplier":0.9,
 			"timezone":"Asia/Shanghai",
 			"observed_at":"2026-07-13T01:00:00Z",
-			"unexpected_secret":"must-not-persist"
-		}`)),
+			"unexpected_secret":"must-not-persist",
+			"isValid":true,"remaining":12,"unit":"USD"
+		}`
+	// The rate request and the balance request each get their own response: a
+	// successful probe reads both, and the same body satisfies both parsers.
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(billingAndBalanceBody))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(billingAndBalanceBody))},
 	}}
 	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
 	fixedNow := time.Date(2026, time.July, 13, 2, 0, 0, 0, time.UTC)

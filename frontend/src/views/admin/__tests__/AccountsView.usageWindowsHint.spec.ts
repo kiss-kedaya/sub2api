@@ -181,13 +181,17 @@ describe('admin AccountsView usage windows hint', () => {
     expect(wrapper.get('[data-test="account-filters"]').attributes('data-group-count')).toBe('1')
   })
 
-  it('places upstream balance immediately to the right of usage windows once shown', async () => {
+  it('renders a single upstream balance column to the right of usage windows', async () => {
     const wrapper = mountView()
     await flushPromises()
-    await enableColumn(wrapper, 'admin.accounts.customUsage.column')
     const columns = wrapper.findComponent(DataTableStub).props('columns') as Array<{ key: string }>
+    // The separate custom usage (balance query) column was removed: the upstream
+    // balance column already shows the same upstream read.
+    expect(columns.some(column => column.key === 'custom_usage')).toBe(false)
     const usage = columns.findIndex(column => column.key === 'usage')
-    expect(columns[usage + 1].key).toBe('custom_usage')
+    expect(usage).toBeGreaterThan(-1)
+    expect(columns[usage + 1].key).not.toBe('custom_usage')
+    expect(columns.some(column => column.key === 'upstream_balance')).toBe(true)
     wrapper.unmount()
   })
 

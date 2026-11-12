@@ -325,7 +325,10 @@ func TestUpstreamKindProbeKeepsKindAcrossATransientFailure(t *testing.T) {
 	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(79, extra), upstream)
 
 	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
-	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Balance.Status)
+	// A recognised upstream never reports a failed read any more: the last good
+	// balance stays on screen while the retry rounds continue.
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.Equal(t, 1, snapshot.Balance.RetryCount)
 	require.Equal(t, 7.6, snapshot.Balance.Data["remaining"], "the last good balance stays readable")
 }
 

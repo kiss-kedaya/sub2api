@@ -38,6 +38,7 @@ export type UpstreamBalanceState =
   | 'official' // provider's own API: nothing is requested
   | 'unsupported' // reached the upstream, no known balance endpoint answered
   | 'failed' // read failed and there is no earlier value to show
+  | 'reading' // an identified Sub2API / New API read is still being retried
   | 'unlimited'
   | 'value' // remaining (key quota) is the headline number
   | 'wallet' // only the account wallet balance is known
@@ -72,13 +73,18 @@ export function upstreamBalanceView(account: Pick<Account, 'type' | 'extra'>, no
   if (!hasData) {
     if (kind === 'official') return { ...base, state: 'official', balance }
     if (!balance) return { ...base, state: 'not_read' }
+    // A recognised Sub2API / New API upstream whose read is still being retried:
+    // show a read in progress instead of "Read failed".
+    if (balance.status === 'pending') return { ...base, state: 'reading', balance }
     if (balance.status === 'unsupported' || kind === 'custom') return { ...base, state: 'unsupported', balance }
     if (balance.status === 'failed') return { ...base, state: 'failed', balance }
     return { ...base, state: 'not_read', balance }
   }
 
   const freshUntil = typeof balance?.fresh_until === 'string' ? Date.parse(balance.fresh_until) : Number.NaN
-  const lastReadFailed = balance?.status !== 'ok'
+  // "pending" means the backend is still retrying a recognised upstream; the
+  // value on screen is the last successful read, not a failed one.
+  const lastReadFailed = balance?.status !== 'ok' && balance?.status !== 'pending'
   const stale = lastReadFailed || (Number.isFinite(freshUntil) && now > freshUntil)
   const unitAssumed = data.unit_assumed === true
   const walletBalance = finite(data.wallet_balance) ? data.wallet_balance : undefined
