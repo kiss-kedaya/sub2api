@@ -29,6 +29,12 @@ type Pool struct {
 	client       *http.Client
 	verification *verificationPolicy
 	health       *endpointHealthTracker
+	// gasMu guards a short-lived quote cache. A sweep run asks for the same
+	// chain price once per address; sampling the whole pool for every job would
+	// multiply provider quota for one number that does not move within a block.
+	gasMu    sync.Mutex
+	gasAt    time.Time
+	gasValue *big.Int
 }
 
 // NewPool builds a pool from a comma-separated endpoint list.
@@ -492,20 +498,20 @@ func (p *Pool) transactionCount(ctx context.Context, address, tag string) (uint6
 }
 
 // GasPrice returns the current gas price in wei.
+//
+// It is the median of what the healthy endpoints answer, so a single endpoint
+// reporting a nonsense fee — 0x1 on BSC — cannot set the price the sweeper
+// signs with.
 func (p *Pool) GasPrice(ctx context.Context) (*big.Int, error) {
-	result, err := p.Call(ctx, "eth_gasPrice", nil)
+	if cached := p.cachedGasPrice(); cached != nil {
+		return cached, nil
+	}
+	price, err := p.robustGasPrice(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var hex string
-	if err := json.Unmarshal(result, &hex); err != nil {
-		return nil, &Failure{Kind: "response"}
-	}
-	value, err := hexutil.DecodeBig(hex)
-	if err != nil || value.Sign() <= 0 {
-		return nil, &Failure{Kind: "response"}
-	}
-	return value, nil
+	p.storeGasPrice(price)
+	return price, nil
 }
 
 // SendRawTransaction broadcasts a signed transaction and returns its hash.
