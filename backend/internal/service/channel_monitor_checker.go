@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/urljoin"
 	"github.com/tidwall/gjson"
 )
 
@@ -557,24 +558,10 @@ func postRawJSON(ctx context.Context, fullURL string, payload []byte, headers ma
 }
 
 // joinURL 保留 base 的上游路径前缀，并避免重复追加已有的 API 路径前缀。
-// 使用 EscapedPath 匹配完整路径段，避免把 hostname 或编码斜杠当作路径。
+// 拼接口径与出站 models/messages 构建共用 urljoin.APIPath，避免监控探测与真实
+// 转发出现两套 trim 规则。
 func joinURL(base, path string) string {
-	base = strings.TrimRight(base, "/")
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	if u, err := url.Parse(base); err == nil {
-		basePath := u.EscapedPath()
-		if basePath == path || (path != "/" && strings.HasSuffix(basePath, path)) {
-			return base
-		}
-		for end := strings.LastIndex(path, "/"); end > 0; end = strings.LastIndex(path[:end], "/") {
-			if strings.HasSuffix(basePath, path[:end]) {
-				return base + path[end:]
-			}
-		}
-	}
-	return base + path
+	return urljoin.APIPath(base, path)
 }
 
 // extractOrigin 从一个 endpoint URL 中提取 scheme://host[:port] 部分。

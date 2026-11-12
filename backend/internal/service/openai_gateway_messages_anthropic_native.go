@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -160,21 +159,9 @@ func (s *OpenAIGatewayService) nativeAnthropicTargetURL(account *Account) (strin
 	if err != nil {
 		return "", fmt.Errorf("invalid base_url: %w", err)
 	}
-	u, err := url.Parse(validatedURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid base_url: %w", err)
-	}
-	path := strings.TrimRight(u.Path, "/")
-	switch {
-	case strings.HasSuffix(path, "/v1/messages"):
-		u.Path = path
-	case strings.HasSuffix(path, "/v1"):
-		u.Path = path + "/messages"
-	default:
-		u.Path = path + "/v1/messages"
-	}
-	u.RawPath = ""
-	return u.String(), nil
+	// 与 /v1/messages 的其它出站路径共用同一套幂等拼接：base 已带 /v1 时不再
+	// 追加第二个版本段（第三方中转常见写法）。
+	return buildAnthropicMessagesURL(validatedURL), nil
 }
 
 func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
