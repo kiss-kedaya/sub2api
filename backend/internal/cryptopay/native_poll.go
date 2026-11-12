@@ -15,18 +15,20 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
 )
 
-// NativeScanTxList is the default native-coin scan source: one account-API
-// request per watched address per poll interval. NativeScanBlocks keeps the
-// original per-block eth_getBlockByNumber scan as an explicit fallback.
+// NativeScanBlocks is the default native-coin scan source: the original
+// per-block eth_getBlockByNumber scan. NativeScanTxList keeps the account-API
+// path (one request per watched address per poll interval) as an explicit
+// operator choice.
 const (
 	NativeScanTxList = scanner.NativeScanTxList
 	NativeScanBlocks = scanner.NativeScanBlocks
 )
 
-// DefaultNativePollSeconds paces the address-based native scan. It is a
-// per-address interval, not a block cursor: the call count is
-// addresses × (86400 / interval) and does not depend on the chain's block rate.
-const DefaultNativePollSeconds = 30
+// DefaultNativePollSeconds paces the native poll. It is a per-address
+// interval, not a block cursor: in txlist mode the call count is
+// addresses × (86400 / interval) and does not depend on the chain's block rate;
+// in the default blocks mode it paces the hot-wallet native-outflow guard.
+const DefaultNativePollSeconds = 10
 
 // txListPageLimit is the account API's maximum rows per answer. A full page may
 // have truncated the range, so the cursor re-reads the last returned block
@@ -399,13 +401,16 @@ func (s *Service) startNativePoller(parent context.Context, interval time.Durati
 		defer cancel()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		poll.runOnce(ctx)
+		// runOnce already reports every failing chain through report(), which
+		// logs at error level and leaves the cursor in place. The aggregate
+		// error would only duplicate that line, so it is deliberately dropped.
+		_ = poll.runOnce(ctx)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				poll.runOnce(ctx)
+				_ = poll.runOnce(ctx)
 			}
 		}
 	}()

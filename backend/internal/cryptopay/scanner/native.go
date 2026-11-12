@@ -34,9 +34,9 @@ const NativeLogIndex = 2_000_000_000
 
 // Native discovery sources. TxList polls an Etherscan-compatible account API
 // once per watched address per interval; Blocks reads every block with full
-// transactions (one request per block: 28800/day on BSC). Blocks is the
-// explicit fallback; an unset source keeps the block behaviour so existing
-// workers and tests are unchanged.
+// transactions (one request per block: 28800/day on BSC). Blocks is the default
+// and the zero value, so an unset source keeps the existing block behaviour;
+// TxList is an explicit operator choice.
 const (
 	NativeScanTxList = "txlist"
 	NativeScanBlocks = "blocks"

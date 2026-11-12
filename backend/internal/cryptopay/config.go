@@ -123,15 +123,16 @@ type CryptoConfig struct {
 	SweepAuto bool `json:"sweep_auto"`
 
 	// NativeScan selects how native-coin (ETH/BNB) deposits are discovered.
-	// "txlist" (default) polls an Etherscan-compatible account API once per
-	// watched address per poll interval, so the request count scales with
-	// addresses × interval instead of with the chain's block rate. "blocks"
-	// restores the original per-block eth_getBlockByNumber scan as an explicit
-	// fallback (one request per block: 28800/day on BSC).
+	// "blocks" (default) keeps the per-block eth_getBlockByNumber scan: one
+	// request per block, so the count follows the chain's block rate. "txlist"
+	// is the optional account-API path: one request per watched address per
+	// poll interval, so the request count scales with addresses × interval
+	// instead of with the block rate.
 	NativeScan string `json:"native_scan"`
-	// NativePollSeconds paces the address poll. Default 30. It is deliberately
-	// a wall-clock interval, not a block window: the cost of the txlist scan is
-	// addresses × (86400 / interval).
+	// NativePollSeconds paces the native poll. Default 10. It is deliberately a
+	// wall-clock interval, not a block window: in txlist mode the cost is
+	// addresses × (86400 / interval); in blocks mode it paces the hot-wallet
+	// native-outflow guard.
 	NativePollSeconds int `json:"native_poll_seconds"`
 	// ExplorerAPIKey authenticates the account API. When it is empty the
 	// txlist scan reports an error and keeps its cursor instead of silently
@@ -177,9 +178,10 @@ func DefaultCryptoConfig() CryptoConfig {
 		// 1 USDT credits 6.7 balance units (operator-confirmed 2026-10-12).
 		CreditMultiplier: 6.7,
 		NativePriceURL:   nativeprice.DefaultBaseURL,
-		// The address poll is the default native source: it costs one request
-		// per address per interval instead of one request per block.
-		NativeScan:        NativeScanTxList,
+		// The block scan is the default native source. The address poll is an
+		// operator choice: it costs one request per address per interval
+		// instead of one request per block, but needs an explorer key.
+		NativeScan:        NativeScanBlocks,
 		NativePollSeconds: DefaultNativePollSeconds,
 		ExplorerAPIURL:    DefaultExplorerAPIURLs(),
 	}

@@ -549,14 +549,18 @@ func (s *Service) reload(ctx context.Context) {
 		s.worker.Start()
 	}
 
-	// Native-coin source. The default txlist poll costs one request per watched
-	// address per interval, independent of the chain's block rate; the block
-	// scan stays available as an explicit fallback, and even then the poller
-	// still guards the hot wallet's native spend (deposits are already covered
-	// by the block scan). A missing key is reported by the poller instead of
-	// silently degrading to a block-rate scan that would exhaust the provider.
+	// Native-coin source. The default block scan reads every block with full
+	// transactions; the txlist poll is an explicit operator choice that costs
+	// one request per watched address per interval, independent of the chain's
+	// block rate. Either way the poller guards the hot wallet's native spend
+	// (deposits are already covered by the block scan). A missing key is
+	// reported instead of silently degrading to a block-rate scan that would
+	// exhaust the provider.
 	if client, err := newExplorerClient(cfg); err != nil {
-		slog.Error("[cryptopay] native txlist client unavailable", "cause", err)
+		// The poller is the only native-outflow guard, so say what is lost
+		// rather than leaving an unexplained startup error.
+		slog.Error("[cryptopay] native txlist client unavailable: native outflow alerting is off",
+			"cause", err, "native_scan", cfg.NativeScan)
 	} else {
 		poll := s.newNativePoll(cfg, chainConfigs, s.worker, client, addressLister)
 		if cryptoWorkersAllowed() {
