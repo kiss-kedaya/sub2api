@@ -19,11 +19,14 @@ export default {
         saved: 'IP notice policy saved',
         autoAdd: 'Auto-add: one IP sharing several accounts',
         autoAddHint:
-          'When distinct user accounts reach the threshold from one source IP inside the window, that IP is appended to the list above with its evidence. Only the IP is added — no account is banned and no API key is modified.',
+          'When distinct user accounts reach the threshold from one source IP inside the window, that IP is appended to the list above with its evidence. Whether the involved keys are also disabled is controlled by the switch below; by default only the IP is added and no key is touched.',
         autoThreshold: 'Distinct users required',
         autoThresholdHint: 'Counted per user: several keys of one account count as one. Default 3, minimum 2.',
         autoWindow: 'Window (minutes)',
         autoWindowHint: 'Sliding window length, 10 minutes by default. Calls outside the window do not count.',
+        keyDisable: 'Disable the involved keys on a hit (default: off)',
+        keyDisableHint:
+          'Off: only the IP is added to the list and no key is touched. On: the keys of the accounts seen from that IP are set to inactive (status only — keys are never deleted and upstream accounts are untouched); you can turn it off again at any time.',
         autoEntries: 'Automatically added IPs',
         autoEntriesHint: 'Automatic entries are kept separate from the hand-written list so their source is obvious. Only API-key authenticated /v1-style endpoints count; health checks, probes and static assets never do.',
         autoEntriesEmpty: 'No automatically added IPs.',

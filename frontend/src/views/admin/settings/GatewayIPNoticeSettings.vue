@@ -117,6 +117,22 @@
             />
           </template>
         </SettingRow>
+        <!-- Default off: the hit only appends the IP. Turning this on is the
+             single explicit opt-in that lets a hit touch key statuses. -->
+        <SettingRow
+          :label="t('admin.settings.gatewayIPNotice.keyDisable')"
+          :hint="t('admin.settings.gatewayIPNotice.keyDisableHint')"
+          :on="form.key_disable_enabled"
+        >
+          <template #control>
+            <Toggle
+              id="gateway-ip-notice-key-disable"
+              v-model="form.key_disable_enabled"
+              data-testid="gateway-ip-notice-key-disable"
+              :disabled="saving || loadFailed || !form.auto_add_enabled"
+            />
+          </template>
+        </SettingRow>
         <SettingRow
           :label="t('admin.settings.gatewayIPNotice.autoEntries')"
           :hint="t('admin.settings.gatewayIPNotice.autoEntriesHint')"
@@ -215,6 +231,7 @@ const emptyForm = (): GatewayIPNoticeSettings => ({
   auto_add_enabled: true,
   sharing_window_minutes: 10,
   sharing_threshold: 3,
+  key_disable_enabled: false,
   auto_entries: [],
 })
 const form = reactive<GatewayIPNoticeSettings>(emptyForm())
@@ -225,6 +242,8 @@ function applyPolicy(policy: GatewayIPNoticeSettings) {
   form.auto_add_enabled = policy.auto_add_enabled ?? true
   form.sharing_window_minutes = policy.sharing_window_minutes || 10
   form.sharing_threshold = policy.sharing_threshold || 3
+  // Observe-only is the product default: an older policy has no field at all.
+  form.key_disable_enabled = policy.key_disable_enabled ?? false
   form.auto_entries = [...(policy.auto_entries ?? [])]
   ipText.value = form.ips.join('\n')
 }

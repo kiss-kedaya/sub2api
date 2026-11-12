@@ -78,6 +78,12 @@ type Settings struct {
 	// KeyMinAgeDays ignores keys younger than this many days. Zero means "use
 	// the default" so older stored policies stay valid.
 	KeyMinAgeDays int `json:"key_min_age_days,omitempty"`
+	// KeyDisableEnabled is the opt-in escalation switch. When it is true a
+	// sharing hit also flips the involved API keys to inactive; when it is
+	// false (the product default, and what an older stored policy means) the
+	// gateway only appends the IP and logs the hit. Nil therefore means "off",
+	// not "unset protection": detection itself stays governed by AutoAddEnabled.
+	KeyDisableEnabled *bool `json:"key_disable_enabled,omitempty"`
 	// AutoEntries are appended by the gateway, never by the admin form.
 	AutoEntries []AutoEntry `json:"auto_entries"`
 }
@@ -85,12 +91,19 @@ type Settings struct {
 // DefaultSettings leaves the policy disabled until the operator supplies IPs.
 func DefaultSettings() Settings {
 	enabled := true
+	keyDisable := false
 	return Settings{IPs: []string{}, RPM: DefaultRPM, AutoAddEnabled: &enabled,
+		KeyDisableEnabled:    &keyDisable,
 		SharingWindowMinutes: DefaultSharingWindowMinutes, SharingThreshold: DefaultSharingThreshold}
 }
 
 // AutoAdd reports whether distinct-user detection is on.
 func (s Settings) AutoAdd() bool { return s.AutoAddEnabled == nil || *s.AutoAddEnabled }
+
+// KeyDisable reports whether a sharing hit may also disable the involved API
+// keys. Nil (never configured, e.g. a policy stored before this switch
+// existed) reports false: the gateway appends the IP and leaves keys alone.
+func (s Settings) KeyDisable() bool { return s.KeyDisableEnabled != nil && *s.KeyDisableEnabled }
 
 // SharingWindow returns the configured window, falling back to the default.
 func (s Settings) SharingWindow() time.Duration {
@@ -176,6 +189,13 @@ func (s Settings) Normalize() (Settings, error) {
 	if s.AutoAddEnabled == nil {
 		enabled := true
 		s.AutoAddEnabled = &enabled
+	}
+	// Materialize the key-disable switch so the admin API always returns an
+	// explicit boolean and the persisted policy says what it does. A stored
+	// policy without the field normalizes to false (observe-only).
+	if s.KeyDisableEnabled == nil {
+		disabled := false
+		s.KeyDisableEnabled = &disabled
 	}
 	if s.SharingWindowMinutes == 0 {
 		s.SharingWindowMinutes = DefaultSharingWindowMinutes
