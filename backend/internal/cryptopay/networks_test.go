@@ -112,3 +112,106 @@ func nativeCount(chain string) int {
 	}
 	return count
 }
+
+// The executor decides "value transfer or ERC-20 transfer" from this map, so a
+// missing Native flag would silently disable native sweeping.
+func TestSweepSpecsCarryTheNativeFlag(t *testing.T) {
+	specs := sweepTokenSpecs()
+	for chain, symbol := range map[string]string{ChainEthereum: "ETH", ChainBSC: "BNB"} {
+		spec, ok := specs[tokenDecimalsKey(chain, scanner.NativeToken)]
+		if !ok {
+			t.Fatalf("%s native asset is missing from the sweep specs", chain)
+		}
+		if !spec.Native || spec.Decimals != 18 || spec.Contract != scanner.NativeToken {
+			t.Fatalf("%s native spec = %+v (want Native/18/%s)", chain, spec, symbol)
+		}
+	}
+	// Stablecoins must stay non-native, and must keep their own decimals.
+	for _, chain := range []string{ChainEthereum, ChainBSC, ChainPolygon} {
+		for _, token := range watchedTokens[chain] {
+			if token.Native {
+				continue
+			}
+			spec, ok := specs[tokenDecimalsKey(chain, token.Contract)]
+			if !ok || spec.Native || spec.Decimals != token.Decimals || spec.Contract != token.Contract {
+				t.Fatalf("%s stablecoin spec regressed: %+v", chain, spec)
+			}
+		}
+	}
+	if len(specs) != lenAllWatchedAssets() {
+		t.Fatalf("sweep specs = %d entries, want %d", len(specs), lenAllWatchedAssets())
+	}
+}
+
+// The balance reader rebuilds raw amounts with this map: a native row resolved
+// through the stablecoin fallback would be 1e12 too small.
+func TestSweepDecimalsIncludeNativeAt18(t *testing.T) {
+	decimals := sweepDecimalsByAsset()
+	for _, chain := range []string{ChainEthereum, ChainBSC} {
+		if got := decimals[tokenDecimalsKey(chain, scanner.NativeToken)]; got != 18 {
+			t.Fatalf("%s native decimals = %d, want 18", chain, got)
+		}
+	}
+	if got := decimals[tokenDecimalsKey(ChainEthereum, "0xdac17f958d2ee523a2206206994597c13d831ec7")]; got != 6 {
+		t.Fatalf("ethereum USDT decimals = %d, want 6", got)
+	}
+	if got := decimals[tokenDecimalsKey(ChainBSC, "0x55d398326f99059ff775485246999027b3197955")]; got != 18 {
+		t.Fatalf("bsc USDT decimals = %d, want 18", got)
+	}
+}
+
+func lenAllWatchedAssets() int {
+	total := 0
+	for _, tokens := range watchedTokens {
+		total += len(tokens)
+	}
+	return total
+}
+
+// The scanner only sees a native deposit when Native/NativeDecimals are set,
+// and an eth_getLogs filter breaks if the sentinel leaks into Tokens.
+func TestChainScanConfigWiresNativeScanning(t *testing.T) {
+	for chain, want := range map[string]struct {
+		native   bool
+		symbol   string
+		contract int
+	}{
+		ChainEthereum: {native: true, symbol: "ETH", contract: 2},
+		ChainBSC:      {native: true, symbol: "BNB", contract: 2},
+		ChainPolygon:  {native: false, contract: 2},
+	} {
+		config, ok := chainScanConfig(chain, 7, 1234)
+		if !ok {
+			t.Fatalf("%s produced no scan config", chain)
+		}
+		if config.Native != want.native {
+			t.Fatalf("%s Native = %v, want %v", chain, config.Native, want.native)
+		}
+		if config.Confirmations != 7 || config.MaxRange != 1234 {
+			t.Fatalf("%s scan config dropped chain settings: %+v", chain, config)
+		}
+		if len(config.Tokens) != want.contract {
+			t.Fatalf("%s watched %d contracts, want %d", chain, len(config.Tokens), want.contract)
+		}
+		for _, contract := range config.Tokens {
+			if contract == scanner.NativeToken {
+				t.Fatalf("%s put the native sentinel into the eth_getLogs filter", chain)
+			}
+		}
+		if !want.native {
+			if config.NativeDecimals != 0 {
+				t.Fatalf("%s set native decimals without a native asset", chain)
+			}
+			continue
+		}
+		if config.NativeDecimals != 18 {
+			t.Fatalf("%s NativeDecimals = %d, want 18", chain, config.NativeDecimals)
+		}
+		if config.Decimals[scanner.NativeToken] != 18 {
+			t.Fatalf("%s scanner cannot resolve the native exponent", chain)
+		}
+		if token, ok := nativeToken(chain); !ok || token.Symbol != want.symbol {
+			t.Fatalf("%s native symbol = %q, want %q", chain, token.Symbol, want.symbol)
+		}
+	}
+}

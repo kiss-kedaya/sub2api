@@ -208,6 +208,75 @@ func nativeToken(chain string) (TokenConfig, bool) {
 	return TokenConfig{}, false
 }
 
+// chainScanConfig renders one chain's scanner configuration from the watched
+// asset table.
+//
+// The native coin is the fragile part: it must set Native/NativeDecimals (the
+// block-level scan is the only way to see it) while staying out of Tokens,
+// which is the eth_getLogs address filter and cannot contain a non-address
+// sentinel. ok is false for a chain with nothing to watch.
+func chainScanConfig(chain string, confirmations, maxRange int) (scanner.ChainConfig, bool) {
+	tokens := watchedTokens[chain]
+	if len(tokens) == 0 {
+		return scanner.ChainConfig{}, false
+	}
+	contracts := make([]string, 0, len(tokens))
+	decimals := make(map[string]int, len(tokens))
+	config := scanner.ChainConfig{Chain: chain, MaxRange: uint64(maxRange)}
+	for _, token := range tokens {
+		decimals[token.Contract] = token.Decimals
+		if token.Native {
+			config.Native = true
+			config.NativeDecimals = token.Decimals
+			continue
+		}
+		contracts = append(contracts, token.Contract)
+	}
+	if len(contracts) == 0 && !config.Native {
+		return scanner.ChainConfig{}, false
+	}
+	config.Tokens = contracts
+	config.Confirmations = uint64(confirmations)
+	config.Decimals = decimals
+	return config, true
+}
+
+// sweepDecimalsByAsset maps chain|contract -> decimals for the balance reader.
+// Native coin is included under its sentinel key, so a stored native row is
+// rebuilt with 18 decimals instead of the stablecoin fallback of 6 (which would
+// shift the amount by twelve orders of magnitude).
+func sweepDecimalsByAsset() map[string]int {
+	decimals := map[string]int{}
+	for chain, tokens := range watchedTokens {
+		for _, token := range tokens {
+			decimals[tokenDecimalsKey(chain, token.Contract)] = token.Decimals
+		}
+	}
+	return decimals
+}
+
+// sweepTokenSpecs renders the watched asset table into the executor's
+// (chain|contract) -> TokenSpec map.
+//
+// The Native flag is load-bearing: the executor decides there whether a sweep
+// is a plain value transfer (21000 gas, no calldata) or an ERC-20 transfer to
+// a token contract. Dropping it here would make every native sweep fail
+// validation as a malformed contract address.
+func sweepTokenSpecs() map[string]sweeper.TokenSpec {
+	specs := map[string]sweeper.TokenSpec{}
+	for chain, tokens := range watchedTokens {
+		for _, token := range tokens {
+			if token.Contract == "" {
+				continue
+			}
+			specs[tokenDecimalsKey(chain, token.Contract)] = sweeper.TokenSpec{
+				Contract: token.Contract, Decimals: token.Decimals, Native: token.Native,
+			}
+		}
+	}
+	return specs
+}
+
 // evmContracts returns only the ERC-20 contract addresses watched on a chain.
 // The native coin has no contract: scanner.NativeToken is not a hex address, so
 // it must never reach an eth_getLogs address filter, a balanceOf call or a
@@ -386,31 +455,10 @@ func (s *Service) reload(ctx context.Context) {
 		if !IsEVMChain(chain) {
 			continue
 		}
-		tokens := watchedTokens[chain]
-		if len(tokens) == 0 {
+		chainConfig, ok := chainScanConfig(chain, cfg.Confirmations[chain], cfg.ScanRange[chain])
+		if !ok {
 			continue
 		}
-		contracts := make([]string, 0, len(tokens))
-		decimals := make(map[string]int, len(tokens))
-		chainConfig := scanner.ChainConfig{Chain: chain, MaxRange: uint64(cfg.ScanRange[chain])}
-		for _, token := range tokens {
-			decimals[token.Contract] = token.Decimals
-			if token.Native {
-				// Native coin is scanned from transactions, not from logs, so
-				// its sentinel must stay out of the eth_getLogs filter while
-				// still resolving decimals through the same map.
-				chainConfig.Native = true
-				chainConfig.NativeDecimals = token.Decimals
-				continue
-			}
-			contracts = append(contracts, token.Contract)
-		}
-		if len(contracts) == 0 && !chainConfig.Native {
-			continue
-		}
-		chainConfig.Tokens = contracts
-		chainConfig.Confirmations = uint64(cfg.Confirmations[chain])
-		chainConfig.Decimals = decimals
 		chainConfigs = append(chainConfigs, chainConfig)
 	}
 
@@ -471,13 +519,8 @@ func (s *Service) reload(ctx context.Context) {
 
 	// Token decimals per chain: the planner and executor rebuild raw amounts
 	// from NUMERIC columns, and a wrong exponent moves money by 1e12. The
-	// key is chain|contract because one chain watches several tokens.
-	sweepDecimals := map[string]int{}
-	for chain, tokens := range watchedTokens {
-		for _, token := range tokens {
-			sweepDecimals[tokenDecimalsKey(chain, token.Contract)] = token.Decimals
-		}
-	}
+	// key is chain|contract because one chain watches several assets.
+	sweepDecimals := sweepDecimalsByAsset()
 	sweepMin := make(map[string]float64, len(cfg.Chains))
 	sweepConfirmations := make(map[string]uint64, len(pools))
 	for _, chain := range cfg.Chains {
@@ -498,17 +541,10 @@ func (s *Service) reload(ctx context.Context) {
 		HotWalletSolana: cfg.HotWalletSolana,
 	}, pools)
 	// The executor keys specs by chain|contract: one address may hold both
-	// USDT and USDC, and each needs its own transfer spec.
-	sweepTokens := map[string]sweeper.TokenSpec{}
-	for chain, tokens := range watchedTokens {
-		for _, token := range tokens {
-			if token.Contract != "" {
-				sweepTokens[tokenDecimalsKey(chain, token.Contract)] = sweeper.TokenSpec{
-					Contract: token.Contract, Decimals: token.Decimals,
-				}
-			}
-		}
-	}
+	// USDT and USDC, and each needs its own transfer spec. The Native flag is
+	// what tells the executor to sign a value transfer instead of an ERC-20
+	// transfer, so it must be carried through here.
+	sweepTokens := sweepTokenSpecs()
 	s.executor = sweeper.NewExecutor(s.db, pools, s.wallet, sweeper.Config{
 		Confirmations:   sweepConfirmations,
 		GlobalThreshold: cfg.SweepGlobalThreshold,
