@@ -17,7 +17,7 @@ import (
 // It sits after API-key authentication and before GatewayIPNotice, so the IP it
 // adds takes effect immediately for the triggering request as well. It is
 // observation-only: it never rejects, blocks or mutates an account or key.
-func GatewayIPSharing(settings *service.SettingService, detector *service.IPKeySharingDetector) gin.HandlerFunc {
+func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDetector) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if settings == nil || detector == nil {
 			c.Next()

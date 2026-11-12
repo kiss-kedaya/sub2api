@@ -27,7 +27,7 @@ func TestGatewayIPSharingBusinessPathsOnly(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 
 	settings := noticeTestSettings(t)
-	detector := service.NewIPKeySharingDetector(settings, client)
+	detector := NewIPKeySharingDetector(settings, client)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

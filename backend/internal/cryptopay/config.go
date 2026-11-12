@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
 	"maps"
 	"net/url"
 	"slices"
@@ -106,6 +107,13 @@ type CryptoConfig struct {
 	CreditMaxAmount  float64 `json:"credit_max_amount"`
 	CreditMultiplier float64 `json:"credit_multiplier"`
 
+	// NativePriceURL is the market feed that settles native-coin (ETH/BNB)
+	// deposits. It is a ticker endpoint: the symbol is passed either as
+	// Binance's `?symbol=` query parameter or through a `{symbol}` placeholder
+	// in the URL. Empty uses nativeprice.DefaultBaseURL. Native deposits are
+	// never credited without a fresh quote from this feed.
+	NativePriceURL string `json:"native_price_url"`
+
 	// HotIndex is the HD index of the hot/gas wallet. 0 = the first derived
 	// address, which is also the default hot wallet.
 	HotIndex uint32 `json:"hot_index"`
@@ -147,6 +155,7 @@ func DefaultCryptoConfig() CryptoConfig {
 		CreditMaxAmount: 10000,
 		// 1 USDT credits 6.7 balance units (operator-confirmed 2026-10-12).
 		CreditMultiplier: 6.7,
+		NativePriceURL:   nativeprice.DefaultBaseURL,
 	}
 }
 
@@ -289,6 +298,17 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	if cfg.CreditMultiplier <= 0 {
 		cfg.CreditMultiplier = def.CreditMultiplier
 	}
+	// The native price feed is the only external dependency of crediting. An
+	// empty value means "use the public default"; anything else must be an
+	// absolute http(s) endpoint so a typo fails at config load, not silently
+	// at every native deposit.
+	cfg.NativePriceURL = strings.TrimSpace(cfg.NativePriceURL)
+	if cfg.NativePriceURL == "" {
+		cfg.NativePriceURL = def.NativePriceURL
+	}
+	if err := validateNativePriceURL(cfg.NativePriceURL); err != nil {
+		return cfg, err
+	}
 	// Hot wallets may stay empty: deposits, scanning and crediting all work
 	// without them. Only the sweep path needs a destination, and it refuses
 	// to run until one is configured (see ValidateSweepReady). When set,
@@ -342,8 +362,32 @@ func isZeroAddress(address string) bool {
 	return strings.Trim(trimmed, "0") == ""
 }
 
-// validEVMAddress accepts only the canonical 0x-prefixed 20-byte hex form.
-// common.HexToAddress pads or truncates anything else without an error, so
+// validateNativePriceURL accepts an absolute http(s) ticker endpoint or a
+// template carrying {symbol}. It runs at config load so a typo is reported to
+// the operator instead of failing each native deposit later.
+func validateNativePriceURL(raw string) error {
+	if !strings.Contains(raw, "{symbol}") {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Host == "" {
+			return fmt.Errorf("crypto config: native_price_url must be an absolute URL")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("crypto config: native_price_url must use http or https")
+		}
+		return nil
+	}
+	// A template still has to be absolute once the placeholder is filled.
+	parsed, err := url.Parse(strings.ReplaceAll(raw, "{symbol}", "ETHUSDT"))
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("crypto config: native_price_url template must be an absolute URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("crypto config: native_price_url must use http or https")
+	}
+	return nil
+}
+
+// validEVMAddress accepts only the canonical 0x-prefixed 20-byte hex form.// common.HexToAddress pads or truncates anything else without an error, so
 // "0x" or a short string would silently become a different destination.
 func validEVMAddress(address string) bool {
 	trimmed := strings.TrimSpace(address)
@@ -450,6 +494,7 @@ type CryptoConfigPatch struct {
 	CreditMinAmount      *float64                      `json:"credit_min_amount"`
 	CreditMaxAmount      *float64                      `json:"credit_max_amount"`
 	CreditMultiplier     *float64                      `json:"credit_multiplier"`
+	NativePriceURL       *string                       `json:"native_price_url"`
 	HotIndex             *uint32                       `json:"hot_index"`
 	SweepAuto            *bool                         `json:"sweep_auto"`
 }
@@ -502,6 +547,9 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	if p.CreditMultiplier != nil {
 		out.CreditMultiplier = *p.CreditMultiplier
 	}
+	if p.NativePriceURL != nil {
+		out.NativePriceURL = *p.NativePriceURL
+	}
 	if p.HotIndex != nil {
 		out.HotIndex = *p.HotIndex
 	}
@@ -524,6 +572,8 @@ func configFingerprint(cfg CryptoConfig) string {
 	_, _ = b.WriteString(strings.Join(cfg.Chains, ","))
 	_, _ = b.WriteString("|throttle_ms=")
 	_, _ = b.WriteString(strconv.Itoa(cfg.RPCThrottleMs))
+	_, _ = b.WriteString("|native_price_url=")
+	_, _ = b.WriteString(cfg.NativePriceURL)
 	for _, chain := range sortedKeys(cfg.RPC) {
 		_, _ = b.WriteString("|rpc.")
 		_, _ = b.WriteString(chain)

@@ -46,6 +46,12 @@ type ChainConfig struct {
 	// a chain that needs smaller chunks must be able to say so. 0 = use the
 	// worker default.
 	MaxRange uint64
+	// Native enables mainnet-coin (ETH/BNB) scanning for this chain, which
+	// cannot ride the eth_getLogs path: native value transfers exist only in
+	// transactions. NativeDecimals is that coin's exponent (18 on both
+	// supported chains) and is never guessed.
+	Native         bool
+	NativeDecimals int
 }
 
 // DepositHandler receives observed transfers (the ledger).
@@ -891,6 +897,16 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 	if err != nil {
 		return err
 	}
+	if chain.Native {
+		// Native coin transfers have no logs, so they are read from the blocks
+		// themselves. A failure here must fail the range: the cursor may only
+		// advance over blocks whose native transfers were actually inspected.
+		nativeTransfers, nativeErr := scanner.ScanNativeRange(ctx, chain.Chain, from, to, recipients)
+		if nativeErr != nil {
+			return nativeErr
+		}
+		transfers = append(transfers, nativeTransfers...)
+	}
 	for _, transfer := range transfers {
 		// Ignore out-of-range results even if a faulty endpoint returns them.
 		if transfer.BlockNumber < from || transfer.BlockNumber > to {
@@ -898,7 +914,7 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 		}
 		// Decimals come from the allowlist before either ledger path; a wrong
 		// exponent could inflate an 18-decimal token by twelve orders.
-		decimals, watched := watchedDecimals(chain, transfer.Token)
+		decimals, watched := transferDecimals(chain, transfer.Token)
 		if !watched {
 			slog.Warn("[cryptopay] ignored transfer for unwatched token",
 				"chain", transfer.Chain, "tx", transfer.TxHash, "token", transfer.Token)
@@ -957,7 +973,13 @@ func (w *Worker) processTransfer(ctx context.Context, pool *rpc.Pool, chain Chai
 		verifyErr = verifyCanonicalBlock(verifyCtx, pool, receipt)
 	}
 	if verifyErr == nil {
-		verifyErr = verifyReceiptTransfer(transfer, receipt)
+		if transfer.Native {
+			// A native transfer has no log: prove it with the transaction's
+			// own to/value instead of a Transfer event.
+			verifyErr = verifyNativeTransfer(verifyCtx, pool, transfer, receipt)
+		} else {
+			verifyErr = verifyReceiptTransfer(transfer, receipt)
+		}
 	}
 	final := false
 	if verifyErr == nil {
@@ -1033,6 +1055,14 @@ func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainCon
 	observeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	transfers, scanErr := NewEVMScanner(pool).ScanRange(observeCtx, chain.Chain, from, head, chain.Tokens, recipients)
+	if scanErr == nil && chain.Native {
+		// The unconfirmed window must count native deposits too, otherwise a
+		// user who paid ETH/BNB sees nothing until the cursor reaches the
+		// block. A failure here is best effort, like the log scan above.
+		var nativeTransfers []Transfer
+		nativeTransfers, scanErr = NewEVMScanner(pool).ScanNativeRange(observeCtx, chain.Chain, from, head, recipients)
+		transfers = append(transfers, nativeTransfers...)
+	}
 	recorded, _ := w.handler.(recordedTransferHandler)
 	var errs []error
 	if scanErr != nil {
@@ -1042,7 +1072,7 @@ func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainCon
 		if transfer.BlockNumber < from || transfer.BlockNumber > head || transfer.Amount == nil || transfer.Amount.Sign() <= 0 {
 			continue
 		}
-		decimals, watched := watchedDecimals(chain, transfer.Token)
+		decimals, watched := transferDecimals(chain, transfer.Token)
 		if !watched {
 			continue
 		}

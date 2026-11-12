@@ -21,6 +21,9 @@ export interface CryptoConfig {
   credit_min_amount: number
   credit_max_amount: number
   credit_multiplier: number
+  // Ticker endpoint that settles native-coin (ETH/BNB) credits. Empty uses the
+  // server's public default.
+  native_price_url: string
 }
 
 export type CryptoConfigPatch = Partial<Omit<CryptoConfig, 'hot_index' | 'rpc_configured'>>
@@ -68,6 +71,11 @@ export interface DepositRecord {
   amount: string
   status: string
   created_at: string
+  // Settlement basis for native-coin deposits (ETH/BNB); absent for
+  // stablecoins, whose token amount is already USD.
+  native_price_usd?: string
+  native_price_at?: string
+  native_price_source?: string
 }
 
 export interface SweepPlan {

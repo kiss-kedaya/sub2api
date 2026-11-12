@@ -149,6 +149,11 @@ func (h *CryptoHandler) AdminGetConfig(c *gin.Context) {
 	// RPCLimits is keyed by the full endpoint URL, which may embed provider
 	// credentials. Only the fresh-2FA private view may return it.
 	cfg.RPCLimits = nil
+	// The market feed may be a private mirror carrying credentials in its URL.
+	// Like RPC endpoints, the public settings view hides it; the fresh-2FA
+	// private view returns it. A blank value on save keeps the stored one
+	// because the console saves a diff, not the whole object.
+	cfg.NativePriceURL = ""
 	cryptoNoStore(c)
 	c.JSON(http.StatusOK, gin.H{"data": struct {
 		cryptopay.CryptoConfig

@@ -80,10 +80,7 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 		} else {
 			continue
 		}
-		tokens := make([]string, 0, len(watchedTokens[chain]))
-		for _, token := range watchedTokens[chain] {
-			tokens = append(tokens, token.Contract)
-		}
+		tokens := evmContracts(chain)
 		chains = append(chains, scanner.ChainConfig{Chain: chain, Tokens: tokens, MaxRange: uint64(cfg.ScanRange[chain])})
 	}
 	if len(chains) == 0 {

@@ -221,6 +221,20 @@ func watchedDecimals(chain ChainConfig, token string) (int, bool) {
 	return 0, false
 }
 
+// transferDecimals resolves the exponent of any observed transfer. The native
+// coin is not in the token contract list (it has no contract), so it is
+// answered from the chain's own native settings; a chain that does not scan
+// native coin reports it unwatched instead of guessing 18.
+func transferDecimals(chain ChainConfig, token string) (int, bool) {
+	if strings.EqualFold(token, NativeToken) {
+		if !chain.Native || chain.NativeDecimals <= 0 || chain.NativeDecimals > 255 {
+			return 0, false
+		}
+		return chain.NativeDecimals, true
+	}
+	return watchedDecimals(chain, token)
+}
+
 func (p depositObservation) transfer(decimals int) (Transfer, error) {
 	raw, err := decimalToRawUnits(p.amount, decimals)
 	if err != nil {
@@ -228,6 +242,7 @@ func (p depositObservation) transfer(decimals int) (Transfer, error) {
 	}
 	return Transfer{Chain: p.chain, TxHash: p.txHash, LogIndex: p.logIndex,
 		From: p.from, To: p.to, Token: p.token, Amount: raw,
+		Native:      strings.EqualFold(p.token, NativeToken),
 		BlockNumber: p.blockNumber, BlockHash: p.blockHash}, nil
 }
 
@@ -249,7 +264,7 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 		}
 		pool := w.pools[p.chain]
 		chain, configured := w.chainConfig(p.chain)
-		decimals, watched := watchedDecimals(chain, p.token)
+		decimals, watched := transferDecimals(chain, p.token)
 		if !configured || !watched {
 			// Disabled chains/tokens can otherwise occupy the first page
 			// forever and starve every configured chain behind them.
@@ -347,10 +362,17 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 					transfer, err := p.transfer(decimals)
 					verifyErr = err
 					if verifyErr == nil {
-						verifyErr = verifyReceiptTransfer(transfer, receipt)
+						if transfer.Native {
+							// The transaction itself is the evidence; a native
+							// transfer has no log to relocate, so a mismatch
+							// means the row no longer describes this chain.
+							verifyErr = verifyNativeTransfer(rpcCtx, pool, transfer, receipt)
+						} else {
+							verifyErr = verifyReceiptTransfer(transfer, receipt)
+						}
 					}
 					if errors.Is(verifyErr, ErrTransferMismatch) {
-						if p.status == "pending" {
+						if p.status == "pending" && !transfer.Native {
 							transfer, verifyErr = findReincludedTransfer(receipt, p, decimals)
 							if errors.Is(verifyErr, ErrTransferMismatch) {
 								status, reason, verifyErr = "reverted", "reorg_transfer_changed", nil

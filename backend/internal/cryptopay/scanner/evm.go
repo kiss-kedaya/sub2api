@@ -17,12 +17,16 @@ import (
 
 // Transfer is one observed token transfer.
 type Transfer struct {
-	Chain       string
-	TxHash      string
-	LogIndex    int
-	From        string
-	To          string
-	Token       string // contract address (lowercase)
+	Chain    string
+	TxHash   string
+	LogIndex int
+	From     string
+	To       string
+	Token    string // contract address (lowercase), or NativeToken
+	// Native marks a mainnet-coin transfer (ETH/BNB). It carries no ERC-20
+	// log, so it is verified against the transaction's to/value instead of a
+	// Transfer event; see verifyNativeTransfer.
+	Native      bool
 	Amount      *big.Int
 	Decimals    int
 	BlockNumber uint64

@@ -1,4 +1,4 @@
-package service
+package middleware
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -59,7 +60,7 @@ func (h IPKeySharingHit) AutoEntry() ipnotice.AutoEntry {
 // It only observes: it never blocks a request, never touches users, keys or
 // accounts, and any Redis failure degrades to "not detected".
 type IPKeySharingDetector struct {
-	settings *SettingService
+	settings *service.SettingService
 	redis    *redis.Client
 	now      func() time.Time
 }
@@ -67,7 +68,7 @@ type IPKeySharingDetector struct {
 // NewIPKeySharingDetector builds the detector used by the gateway routes. A nil
 // Redis client disables it (single-node deployments without Redis simply keep
 // the manual list).
-func NewIPKeySharingDetector(settings *SettingService, redisClient *redis.Client) *IPKeySharingDetector {
+func NewIPKeySharingDetector(settings *service.SettingService, redisClient *redis.Client) *IPKeySharingDetector {
 	return &IPKeySharingDetector{settings: settings, redis: redisClient, now: time.Now}
 }
 

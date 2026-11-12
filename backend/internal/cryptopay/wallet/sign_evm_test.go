@@ -173,7 +173,7 @@ func TestExportedDefaultGasMnemonicRecoversOfflineSigningKey(t *testing.T) {
 }
 
 func TestSignRejectsLockedDisabledWrongDestinationsAndUnauthorizedGas(t *testing.T) {
-	for _, name := range []string{"unconfigured", "disabled", "native sweep", "wrong destination", "gas missing index", "gas to arbitrary address", "gas token"} {
+	for _, name := range []string{"unconfigured", "disabled", "native sweep with erc20 gas limit", "wrong destination", "gas missing index", "gas to arbitrary address", "gas token"} {
 		t.Run(name, func(t *testing.T) {
 			m, mock, raw := residentManager(t)
 			req := sweepRequest()
@@ -185,10 +185,13 @@ func TestSignRejectsLockedDisabledWrongDestinationsAndUnauthorizedGas(t *testing
 				mock.ExpectRollback()
 			case "disabled":
 				m.SetEnabled(false)
+			case "native sweep with erc20 gas limit":
+				// A native coin sweep is a plain value transfer, so only the
+				// intrinsic limit is accepted. This is refused during request
+				// validation, before any seed or destination is consulted.
+				req.Token = "native"
 			default:
 				switch name {
-				case "native sweep":
-					req.Token = "native"
 				case "wrong destination":
 					req.To = testToken
 				default:

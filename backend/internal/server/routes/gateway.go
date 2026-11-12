@@ -45,7 +45,7 @@ func RegisterGatewayRoutes(
 	ipNotice := middleware.GatewayIPNotice(settingService, redisClient)
 	// Distinct-user IP sharing detection runs before the notice middleware so an
 	// IP that is appended by this very request is throttled immediately.
-	ipSharing := middleware.GatewayIPSharing(settingService, service.NewIPKeySharingDetector(settingService, redisClient))
+	ipSharing := middleware.GatewayIPSharing(settingService, middleware.NewIPKeySharingDetector(settingService, redisClient))
 	regional := func(c *gin.Context) { c.Next() }
 	if h.Admin != nil && h.Admin.Serverless != nil {
 		regional = func(c *gin.Context) {

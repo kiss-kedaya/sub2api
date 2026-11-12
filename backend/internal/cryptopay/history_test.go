@@ -76,8 +76,8 @@ func TestListDepositsExportPageUsesPrimaryKeyCursorWithoutSummaryScan(t *testing
 	created := time.Date(2026, 10, 21, 8, 0, 0, 0, time.FixedZone("CST", 8*60*60))
 	mock.ExpectQuery(`(?s)SELECT id, chain, tx_hash, log_index.*WHERE id < \$1 AND chain = \$2 AND status = \$3 ORDER BY id DESC LIMIT \$4`).
 		WithArgs(int64(150), "bsc", "credited", 100).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "chain", "tx_hash", "log_index", "from_address", "to_address", "token", "amount", "status", "reason", "created_at"}).
-			AddRow(149, "bsc", "0xhash", 3, "from", "to", "token", "2.500000000000000000", "credited", "", created))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "chain", "tx_hash", "log_index", "from_address", "to_address", "token", "amount", "status", "reason", "created_at", "native_price_usd", "native_price_at", "native_price_source"}).
+			AddRow(149, "bsc", "0xhash", 3, "from", "to", "token", "2.500000000000000000", "credited", "", created, "", nil, ""))
 
 	s := &Service{db: db}
 	rows, err := s.ListDepositsExportPage(t.Context(), "bsc", "credited", 150, 100)
@@ -107,13 +107,16 @@ func TestListDepositsExportPageStartsWithNewestRecord(t *testing.T) {
 			} else {
 				expected.WithArgs(200)
 			}
-			expected.WillReturnRows(sqlmock.NewRows([]string{"id", "chain", "tx_hash", "log_index", "from_address", "to_address", "token", "amount", "status", "reason", "created_at"}).
-				AddRow(250, "bsc", "0xhash", 0, "from", "to", "token", "1.000", "credited", "", time.Now()))
+			expected.WillReturnRows(sqlmock.NewRows([]string{"id", "chain", "tx_hash", "log_index", "from_address", "to_address", "token", "amount", "status", "reason", "created_at", "native_price_usd", "native_price_at", "native_price_source"}).
+				AddRow(250, "bsc", "0xhash", 0, "from", "to", "native", "1.000", "credited", "", time.Now(), "2000.500000000000000000", time.Now(), "stub"))
 			s := &Service{db: db}
 			rows, err := s.ListDepositsExportPage(t.Context(), chain, status, 0, 200)
 			require.NoError(t, err)
 			require.Len(t, rows, 1)
 			require.Equal(t, int64(250), rows[0].ID)
+			require.Equal(t, "2000.5", rows[0].NativePriceUSD)
+			require.NotEmpty(t, rows[0].NativePriceAt)
+			require.Equal(t, "stub", rows[0].NativePriceSource)
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}

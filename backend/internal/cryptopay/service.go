@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/ledger"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/sweeper"
@@ -26,12 +27,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// TokenConfig is one watched token on a chain. Symbol is display-only:
-// crediting and sweeping always key on the contract address.
+// TokenConfig is one watched asset on a chain. Symbol is display-only:
+// crediting and sweeping key on Contract, and native coin uses the
+// scanner.NativeToken sentinel in that field so it shares one key space with
+// the ERC-20 contracts.
 type TokenConfig struct {
 	Contract string
 	Decimals int
 	Symbol   string
+	// Native marks the chain's mainnet coin (ETH/BNB). It has no contract and
+	// no Transfer event: the scanner finds it from transactions, and the
+	// sweeper signs a plain value transfer instead of an ERC-20 transfer.
+	Native bool
 }
 
 // PushNotifier delivers operator alerts. Implemented by the notify adapter;
@@ -129,10 +136,16 @@ func toDisplayAmount(raw *big.Int, decimals int) string {
 // The previously accepted X Layer bridge remains explicit as USDC.e.
 var watchedTokens = map[string][]TokenConfig{
 	ChainEthereum: {
+		// ETH is the chain's mainnet coin: no contract, 18 decimals, and it
+		// arrives as a transaction value transfer rather than a Transfer log.
+		{Contract: scanner.NativeToken, Decimals: 18, Symbol: "ETH", Native: true},
 		{Contract: "0xdac17f958d2ee523a2206206994597c13d831ec7", Decimals: 6, Symbol: "USDT"},
 		{Contract: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", Decimals: 6, Symbol: "USDC"},
 	},
 	ChainBSC: {
+		// BNB is the chain's mainnet coin; USDT/USDC on BSC are 18-decimal
+		// BEP-20 tokens whose contracts are unrelated to the native coin.
+		{Contract: scanner.NativeToken, Decimals: 18, Symbol: "BNB", Native: true},
 		{Contract: "0x55d398326f99059ff775485246999027b3197955", Decimals: 18, Symbol: "USDT"}, // BSC-USD (Tether)
 		{Contract: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", Decimals: 18, Symbol: "USDC"}, // USD Coin (Circle)
 	},
@@ -185,6 +198,102 @@ func tokenSymbol(chain, contract string) string {
 	return "USDT"
 }
 
+// nativeToken returns the chain's native-coin entry when that chain watches a
+// mainnet coin. Chains without one keep their previous behaviour exactly.
+func nativeToken(chain string) (TokenConfig, bool) {
+	for _, t := range watchedTokens[chain] {
+		if t.Native {
+			return t, true
+		}
+	}
+	return TokenConfig{}, false
+}
+
+// chainScanConfig renders one chain's scanner configuration from the watched
+// asset table.
+//
+// The native coin is the fragile part: it must set Native/NativeDecimals (the
+// block-level scan is the only way to see it) while staying out of Tokens,
+// which is the eth_getLogs address filter and cannot contain a non-address
+// sentinel. ok is false for a chain with nothing to watch.
+func chainScanConfig(chain string, confirmations, maxRange int) (scanner.ChainConfig, bool) {
+	tokens := watchedTokens[chain]
+	if len(tokens) == 0 {
+		return scanner.ChainConfig{}, false
+	}
+	contracts := make([]string, 0, len(tokens))
+	decimals := make(map[string]int, len(tokens))
+	config := scanner.ChainConfig{Chain: chain, MaxRange: uint64(maxRange)}
+	for _, token := range tokens {
+		decimals[token.Contract] = token.Decimals
+		if token.Native {
+			config.Native = true
+			config.NativeDecimals = token.Decimals
+			continue
+		}
+		contracts = append(contracts, token.Contract)
+	}
+	if len(contracts) == 0 && !config.Native {
+		return scanner.ChainConfig{}, false
+	}
+	config.Tokens = contracts
+	config.Confirmations = uint64(confirmations)
+	config.Decimals = decimals
+	return config, true
+}
+
+// sweepDecimalsByAsset maps chain|contract -> decimals for the balance reader.
+// Native coin is included under its sentinel key, so a stored native row is
+// rebuilt with 18 decimals instead of the stablecoin fallback of 6 (which would
+// shift the amount by twelve orders of magnitude).
+func sweepDecimalsByAsset() map[string]int {
+	decimals := map[string]int{}
+	for chain, tokens := range watchedTokens {
+		for _, token := range tokens {
+			decimals[tokenDecimalsKey(chain, token.Contract)] = token.Decimals
+		}
+	}
+	return decimals
+}
+
+// sweepTokenSpecs renders the watched asset table into the executor's
+// (chain|contract) -> TokenSpec map.
+//
+// The Native flag is load-bearing: the executor decides there whether a sweep
+// is a plain value transfer (21000 gas, no calldata) or an ERC-20 transfer to
+// a token contract. Dropping it here would make every native sweep fail
+// validation as a malformed contract address.
+func sweepTokenSpecs() map[string]sweeper.TokenSpec {
+	specs := map[string]sweeper.TokenSpec{}
+	for chain, tokens := range watchedTokens {
+		for _, token := range tokens {
+			if token.Contract == "" {
+				continue
+			}
+			specs[tokenDecimalsKey(chain, token.Contract)] = sweeper.TokenSpec{
+				Contract: token.Contract, Decimals: token.Decimals, Native: token.Native,
+			}
+		}
+	}
+	return specs
+}
+
+// evmContracts returns only the ERC-20 contract addresses watched on a chain.
+// The native coin has no contract: scanner.NativeToken is not a hex address, so
+// it must never reach an eth_getLogs address filter, a balanceOf call or a
+// signed ERC-20 transfer.
+func evmContracts(chain string) []string {
+	tokens := watchedTokens[chain]
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if t.Native || t.Contract == "" {
+			continue
+		}
+		out = append(out, t.Contract)
+	}
+	return out
+}
+
 // Service is the cryptopay facade: owns config snapshots, the RPC pools,
 // the scanner worker, the ledger and the sweeper.
 type Service struct {
@@ -200,6 +309,10 @@ type Service struct {
 	wallet    *wallet.Manager
 	executor  *sweeper.Executor
 	addresses *addresses.Service
+	// nativePrice is the process-wide market feed. It is rebuilt only when the
+	// configured endpoint changes, so its 60s cache survives scan passes and
+	// manual confirmations share the same observations.
+	nativePrice *nativeprice.Provider
 
 	// maintCancel stops the pool top-up / scheduled sweep loop.
 	maintCancel     context.CancelFunc
@@ -295,6 +408,8 @@ func (s *Service) reload(ctx context.Context) {
 	// A queued run must not retain an executor built from obsolete config.
 	s.sweepMu.Lock()
 	defer s.sweepMu.Unlock()
+	// The feed is cheap to build; its quote cache lives inside the provider.
+	priceProvider := nativeprice.New(cfg.NativePriceURL)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.discoveryCancel != nil {
@@ -302,6 +417,7 @@ func (s *Service) reload(ctx context.Context) {
 		s.discoveryCancel = nil
 	}
 	s.config = cfg
+	s.nativePrice = priceProvider
 	if cfg.Enabled {
 		s.securityPaused.Store(false)
 	}
@@ -347,28 +463,17 @@ func (s *Service) reload(ctx context.Context) {
 		if !IsEVMChain(chain) {
 			continue
 		}
-		tokens := watchedTokens[chain]
-		if len(tokens) == 0 {
+		chainConfig, ok := chainScanConfig(chain, cfg.Confirmations[chain], cfg.ScanRange[chain])
+		if !ok {
 			continue
 		}
-		contracts := make([]string, 0, len(tokens))
-		decimals := make(map[string]int, len(tokens))
-		for _, token := range tokens {
-			contracts = append(contracts, token.Contract)
-			decimals[token.Contract] = token.Decimals
-		}
-		chainConfigs = append(chainConfigs, scanner.ChainConfig{
-			Chain:         chain,
-			Tokens:        contracts,
-			Confirmations: uint64(cfg.Confirmations[chain]),
-			Decimals:      decimals,
-			MaxRange:      uint64(cfg.ScanRange[chain]),
-		})
+		chainConfigs = append(chainConfigs, chainConfig)
 	}
 
 	cursor := scanner.NewCursorStore(s.db)
 	led := ledger.New(s.db, s.creditor, newAddressResolver(s.addresses),
 		cfg.CreditMinAmount, cfg.CreditMaxAmount, cfg.CreditMultiplier)
+	led.SetNativePricer(priceProvider)
 	// Funds that arrived but could not be credited are usually a mistyped
 	// deposit or a probe: tell the operator instead of leaving it in a table.
 	led.SetUnmatchedNotifier(func(ctx context.Context, t scanner.Transfer, reason string) {
@@ -423,13 +528,8 @@ func (s *Service) reload(ctx context.Context) {
 
 	// Token decimals per chain: the planner and executor rebuild raw amounts
 	// from NUMERIC columns, and a wrong exponent moves money by 1e12. The
-	// key is chain|contract because one chain watches several tokens.
-	sweepDecimals := map[string]int{}
-	for chain, tokens := range watchedTokens {
-		for _, token := range tokens {
-			sweepDecimals[tokenDecimalsKey(chain, token.Contract)] = token.Decimals
-		}
-	}
+	// key is chain|contract because one chain watches several assets.
+	sweepDecimals := sweepDecimalsByAsset()
 	sweepMin := make(map[string]float64, len(cfg.Chains))
 	sweepConfirmations := make(map[string]uint64, len(pools))
 	for _, chain := range cfg.Chains {
@@ -450,17 +550,10 @@ func (s *Service) reload(ctx context.Context) {
 		HotWalletSolana: cfg.HotWalletSolana,
 	}, pools)
 	// The executor keys specs by chain|contract: one address may hold both
-	// USDT and USDC, and each needs its own transfer spec.
-	sweepTokens := map[string]sweeper.TokenSpec{}
-	for chain, tokens := range watchedTokens {
-		for _, token := range tokens {
-			if token.Contract != "" {
-				sweepTokens[tokenDecimalsKey(chain, token.Contract)] = sweeper.TokenSpec{
-					Contract: token.Contract, Decimals: token.Decimals,
-				}
-			}
-		}
-	}
+	// USDT and USDC, and each needs its own transfer spec. The Native flag is
+	// what tells the executor to sign a value transfer instead of an ERC-20
+	// transfer, so it must be carried through here.
+	sweepTokens := sweepTokenSpecs()
 	s.executor = sweeper.NewExecutor(s.db, pools, s.wallet, sweeper.Config{
 		Confirmations:   sweepConfirmations,
 		GlobalThreshold: cfg.SweepGlobalThreshold,
@@ -1085,6 +1178,21 @@ type DepositRecord struct {
 	Status      string `json:"status"`
 	Reason      string `json:"reason,omitempty"`
 	CreatedAt   string `json:"created_at"`
+	// NativePriceUSD/At/Source answer "which price, observed when" for a
+	// native-coin deposit. Empty for stablecoins, whose amount is already USD.
+	NativePriceUSD    string `json:"native_price_usd,omitempty"`
+	NativePriceAt     string `json:"native_price_at,omitempty"`
+	NativePriceSource string `json:"native_price_source,omitempty"`
+}
+
+// scanDepositPrice fills the native settlement fields from nullable columns.
+// Kept in one place so the three list/export queries cannot drift.
+func (r *DepositRecord) scanDepositPrice(priceUSD sql.NullString, priceAt sql.NullTime, source sql.NullString) {
+	r.NativePriceUSD = trimDecimalZeros(priceUSD.String)
+	if priceAt.Valid {
+		r.NativePriceAt = priceAt.Time.UTC().Format(time.RFC3339)
+	}
+	r.NativePriceSource = source.String
 }
 
 // ListDeposits returns recent deposit observations, optionally filtered.
@@ -1093,7 +1201,8 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 		limit = 100
 	}
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-		       token, amount::text, status, reason, created_at
+		       token, amount::text, status, reason, created_at,
+		       COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
 	            FROM deposit_transactions WHERE 1=1`
 	args := []any{}
 	if chain != "" {
@@ -1114,14 +1223,19 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 	for rows.Next() {
 		var r DepositRecord
 		var created time.Time
+		var priceUSD sql.NullString
+		var priceAt sql.NullTime
+		var source sql.NullString
 		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
+			&priceUSD, &priceAt, &source); err != nil {
 			return nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -1167,7 +1281,8 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 	}
 
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-	                 token, amount::text, status, reason, created_at
+	                 token, amount::text, status, reason, created_at,
+	                 COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
 	            FROM deposit_transactions` + where +
 		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
 	rows, err := s.db.QueryContext(ctx, query, append(args, limit, offset)...)
@@ -1179,14 +1294,19 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 	for rows.Next() {
 		var r DepositRecord
 		var created time.Time
+		var priceUSD sql.NullString
+		var priceAt sql.NullTime
+		var source sql.NullString
 		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
+			&priceUSD, &priceAt, &source); err != nil {
 			return nil, nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, &summary, rows.Err()
@@ -1216,7 +1336,8 @@ func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status stri
 	}
 	args = append(args, limit)
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
-	                 token, amount::text, status, reason, created_at
+	                 token, amount::text, status, reason, created_at,
+	                 COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
 	            FROM deposit_transactions` + where +
 		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args))
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -1228,13 +1349,18 @@ func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status stri
 	for rows.Next() {
 		var r DepositRecord
 		var created time.Time
+		var priceUSD sql.NullString
+		var priceAt sql.NullTime
+		var source sql.NullString
 		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created); err != nil {
+			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
+			&priceUSD, &priceAt, &source); err != nil {
 			return nil, err
 		}
 		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
 		r.Amount = trimDecimalZeros(r.Amount)
 		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -1249,11 +1375,23 @@ type DepositInfo struct {
 	MaxAmount float64        `json:"max_amount"` // largest single credit
 }
 
+// DepositAsset is one asset a user can send to a chain's deposit address.
+// Native distinguishes ETH/BNB from the ERC-20 tokens so the UI can label the
+// asset correctly: the address and QR code are the same for both.
+type DepositAsset struct {
+	Symbol string `json:"symbol"`
+	Native bool   `json:"native"`
+}
+
 // DepositChain is one chain's deposit address.
 type DepositChain struct {
 	Chain   string   `json:"chain"`
 	Address string   `json:"address"`
 	Tokens  []string `json:"tokens"` // supported symbols on this chain, e.g. ["USDT","USDC"]
+	// Assets is Tokens with the native-coin flag, in the same order. Kept
+	// alongside Tokens so an older client that only reads Tokens still shows
+	// every accepted symbol.
+	Assets []DepositAsset `json:"assets"`
 }
 
 // DepositInfo resolves (assigning on first use) the user's addresses.
@@ -1280,15 +1418,18 @@ func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, 
 			continue
 		}
 		symbols := make([]string, 0, len(watchedTokens[chain]))
+		assets := make([]DepositAsset, 0, len(watchedTokens[chain]))
 		for _, token := range watchedTokens[chain] {
-			if token.Symbol != "" {
-				symbols = append(symbols, token.Symbol)
+			if token.Symbol == "" {
+				continue
 			}
+			symbols = append(symbols, token.Symbol)
+			assets = append(assets, DepositAsset{Symbol: token.Symbol, Native: token.Native})
 		}
 		if len(symbols) == 0 {
 			continue
 		}
-		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Tokens: symbols})
+		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Tokens: symbols, Assets: assets})
 	}
 	return info, nil
 }

@@ -394,7 +394,7 @@ describe('user KeysView column settings', () => {
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('Provider key', 3, undefined, [], [], 0, undefined,
       { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined, 'inherit',
-      { deepseekToolInjectionEnabled: true })
+      { deepseekToolInjectionEnabled: true, autoBlockDatacenterIPs: false })
     wrapper.unmount()
   })
 
@@ -412,7 +412,7 @@ describe('user KeysView column settings', () => {
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('Web tools key', 3, undefined, [], [], 0, undefined,
       { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, undefined, 'inherit',
-      { deepseekToolInjectionEnabled: enabled })
+      { deepseekToolInjectionEnabled: enabled, autoBlockDatacenterIPs: false })
     wrapper.unmount()
   })
 
@@ -950,7 +950,7 @@ describe('user KeysView mutations', () => {
 
     expect(createKey).toHaveBeenCalledWith('mapped key', 2, undefined, [], [], 0, undefined,
       { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, [2, 3], 'inherit',
-      { deepseekToolInjectionEnabled: true })
+      { deepseekToolInjectionEnabled: true, autoBlockDatacenterIPs: false })
     expect(listKeys).not.toHaveBeenCalled()
     // The first returned route renders immediately; the rest collapse into the count.
     expect(wrapper.findAll('[data-test="key-bound-group"]').map((node) => node.attributes('data-group-id'))).toEqual(['2'])

@@ -134,6 +134,11 @@ func (w *Worker) replayRecentRange(ctx context.Context, scanner *EVMScanner, poo
 		if err != nil {
 			return fmt.Errorf("recent replay logs: %w", err)
 		}
+		// Native coin deposits are deliberately not replayed here. This window
+		// exists to recover late eth_getLogs indexing and recipient races; a
+		// native transfer is read straight from the block, which a node cannot
+		// answer lazily, so replaying it would only spend the same tight budget
+		// on blocks the forward scan already covered.
 		sort.Slice(transfers, func(i, j int) bool {
 			if transfers[i].BlockNumber != transfers[j].BlockNumber {
 				return transfers[i].BlockNumber < transfers[j].BlockNumber
@@ -147,7 +152,7 @@ func (w *Worker) replayRecentRange(ctx context.Context, scanner *EVMScanner, poo
 			if transfer.BlockNumber == state.Next && transfer.LogIndex <= state.After && strings.EqualFold(transfer.BlockHash, state.Hash) {
 				continue
 			}
-			decimals, watched := watchedDecimals(chain, transfer.Token)
+			decimals, watched := transferDecimals(chain, transfer.Token)
 			if !watched {
 				continue
 			}

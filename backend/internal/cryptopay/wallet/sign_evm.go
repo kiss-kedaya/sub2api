@@ -15,8 +15,10 @@ import (
 var erc20TransferSelector = []byte{0xa9, 0x05, 0x9c, 0xbb}
 
 // SignEVM signs an EIP-1559 transaction offline. Gas is always funded by hot
-// index zero to a verified deposit child; deposits can only send ERC20 tokens
-// to the configured destination. It never makes an RPC or HTTP request.
+// index zero to a verified deposit child; a deposit child may send either an
+// ERC-20 token or its own mainnet coin (ETH/BNB) to the configured
+// destination, never to any other address. It never makes an RPC or HTTP
+// request.
 func (m *Manager) SignEVM(ctx context.Context, req EVMSignRequest) (string, error) {
 	if err := mode.CheckWritable(); err != nil {
 		return "", err
@@ -75,9 +77,10 @@ func (m *Manager) SignEVM(ctx context.Context, req EVMSignRequest) (string, erro
 		deriver = m.hot
 		req.Index = 0
 	} else {
-		if isEVMNative(req.Token) {
-			return deny(errors.New("deposit sweeps must be ERC20 transfers"))
-		}
+		// A native coin sweep is a plain value transfer to the very same
+		// configured destination, so it gets the identical destination check as
+		// an ERC-20 sweep. The amount is capped by the executor to leave the gas
+		// reserve behind; the signer never adds or moves funds by itself.
 		if m.destination == "" || !strings.EqualFold(m.destination, req.To) {
 			return deny(errors.New("sweep destination is not configured or does not match"))
 		}
@@ -173,9 +176,15 @@ func validateEVMRequest(req EVMSignRequest) (*big.Int, *big.Int, error) {
 	// Gas top-ups keep the exact intrinsic limit. ERC20 sweeps need headroom:
 	// the first transfer to a fresh recipient can need ~70-80k, so the legacy
 	// 65k floor is kept for bytes signed earlier while current callers may ask
-	// for more. The ceiling stays well below a pathological limit.
+	// for more. A native coin sweep is a value transfer with no calldata, so it
+	// keeps the intrinsic limit exactly. The ceiling stays well below a
+	// pathological limit.
 	switch {
 	case req.Kind == "gas":
+		if req.GasLimit != 21_000 {
+			return nil, nil, errors.New("gas limit does not match wallet transaction kind")
+		}
+	case isEVMNative(req.Token) && req.Kind == "sweep":
 		if req.GasLimit != 21_000 {
 			return nil, nil, errors.New("gas limit does not match wallet transaction kind")
 		}

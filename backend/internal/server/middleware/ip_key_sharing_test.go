@@ -1,6 +1,6 @@
 //go:build unit
 
-package service
+package middleware
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
@@ -20,13 +21,13 @@ import (
 func TestIPKeySharingAutoBan(t *testing.T) {
 	ctx := context.Background()
 
-	newFixture := func(t *testing.T) (*IPKeySharingDetector, *SettingService, *time.Time) {
+	newFixture := func(t *testing.T) (*IPKeySharingDetector, *service.SettingService, *time.Time) {
 		t.Helper()
 		server := miniredis.RunT(t)
 		client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 		t.Cleanup(func() { _ = client.Close() })
-		repo := &panelRateLimitSettingRepo{values: map[string]string{}}
-		settings := NewSettingService(repo, nil)
+		repo := &panelRateLimitStubRepo{}
+		settings := service.NewSettingService(repo, nil)
 		require.NoError(t, settings.SetGatewayIPNotice(ctx, ipnotice.Settings{
 			Enabled: true,
 			IPs:     []string{"198.51.100.7"}, // manual entry, must never be duplicated

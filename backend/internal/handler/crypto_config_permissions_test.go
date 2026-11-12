@@ -66,6 +66,32 @@ func TestCryptoConfigPublicViewNeverReturnsRPCURLsOrCredentialFragments(t *testi
 	require.Contains(t, store.values[cryptopay.SettingKeyCryptoConfig], secretURL, "redacting a response must not clear persisted endpoints")
 }
 
+func TestCryptoConfigPublicViewHidesNativePriceFeed(t *testing.T) {
+	const feed = "https://feed-user:feed-secret@price.example.test/v3/ticker/price?token=feed-token"
+	store := &cryptoConfigStore{values: map[string]string{
+		cryptopay.SettingKeyCryptoConfig: `{"native_price_url":"` + feed + `"}`,
+	}}
+	router := gin.New()
+	router.GET("/config", (&CryptoHandler{store: store}).AdminGetConfig)
+	router.GET("/private", (&CryptoHandler{store: store}).AdminGetPrivateConfig)
+
+	public := httptest.NewRecorder()
+	router.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/config", nil))
+	require.Equal(t, http.StatusOK, public.Code, public.Body.String())
+	require.Equal(t, "", gjson.Get(public.Body.String(), "data.native_price_url").String())
+	for _, secret := range []string{"https://", "feed-user", "feed-secret", "feed-token", "price.example.test"} {
+		require.NotContains(t, public.Body.String(), secret)
+	}
+	require.Contains(t, store.values[cryptopay.SettingKeyCryptoConfig], feed,
+		"redacting the public view must not clear the persisted feed")
+
+	private := httptest.NewRecorder()
+	router.ServeHTTP(private, httptest.NewRequest(http.MethodGet, "/private", nil))
+	require.Equal(t, http.StatusOK, private.Code, private.Body.String())
+	require.Equal(t, feed, gjson.Get(private.Body.String(), "data.native_price_url").String(),
+		"the audited 2FA view must show which feed settles native deposits")
+}
+
 func TestCryptoConfigOnlyFiveEffectiveFieldsMayChangeWithoutFreshCode(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	for _, body := range []string{
