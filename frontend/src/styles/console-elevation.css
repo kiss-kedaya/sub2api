@@ -36,30 +36,5 @@ html:not(.dark) .auth-paper .btn-primary {
   }
 }
 
-html:not(.dark) .auth-paper .input {
-  border-color: var(--elev-line);
-  border-radius: var(--elev-radius-sm);
-  box-shadow: var(--elev-shadow-xs);
-  transition: border-color 150ms var(--elev-ease), box-shadow 150ms var(--elev-ease);
-}
+/* Auth pages are styled by auth-quiet.css (Quiet variant). */
 
-html:not(.dark) .auth-paper .input:focus {
-  border-color: #171717;
-  box-shadow: var(--elev-halo);
-}
-
-/* Login / register card. */
-html:not(.dark) .auth-paper .auth-card {
-  border-color: var(--elev-line);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: var(--elev-shadow-lg);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  html:not(.dark) .auth-paper :is(.btn-primary, .btn-secondary):active:not(:disabled) {
-    transform: scale(0.98);
-    translate: none;
-    scale: none;
-  }
-}

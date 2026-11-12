@@ -1,0 +1,229 @@
+/* Quiet auth surface.
+   Values are copied from the "Quiet" prototype variant on aiforui.dev/skills/prototype:
+   - card container: `overflow-hidden rounded-2xl bg-white shadow-md dark:bg-gray-200`
+   - heading 19px / medium / tracking -0.011em, sub 14px
+   - field label 13px, input h-10 / rounded-[10px] / px-3.5 / text-[16px]
+   - footer h-9, Back `rounded-full px-3 text-[14px]`, Continue `rounded-full px-5 text-[14px] font-medium`
+     with `transition-transform duration-150 ease-[cubic-bezier(0.25,0.46,0.45,0.94)] active:scale-[0.97]`
+   - step label 13px cross-fade, dotted progress (6px dots, 24px apart)
+   - step panes: measured 320ms exit / 200ms enter, cubic-bezier(0.25, 0.46, 0.45, 0.94)
+   Light and dark both come from the Nuxt UI semantic tokens (--ui-*), never raw grays. */
+
+.auth-card {
+  overflow: hidden;
+  border: 0;
+  border-radius: 1rem;
+  background: var(--ui-bg);
+  box-shadow:
+    0 4px 6px -1px rgb(0 0 0 / 0.1),
+    0 2px 4px -2px rgb(0 0 0 / 0.1);
+  animation: auth-card-rise 320ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+html.dark .auth-card {
+  background: var(--ui-bg-elevated);
+}
+
+@keyframes auth-card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Type scale: hierarchy comes from size/weight, not rules or borders. */
+.auth-heading {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.011em;
+  line-height: 1.3;
+  color: var(--ui-text-highlighted);
+}
+
+.auth-sub {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ui-text-muted);
+}
+
+/* Fields: a single hairline ring, no borders, no dividers. */
+.auth-card .input {
+  height: 2.5rem;
+  border-width: 0;
+  border-radius: 10px;
+  padding: 0 0.875rem;
+  font-size: 16px;
+  line-height: 1.25;
+  background: var(--ui-bg);
+  box-shadow: inset 0 0 0 1px var(--ui-border);
+}
+
+html.dark .auth-card .input {
+  background: var(--ui-bg-muted);
+}
+
+.auth-card .input:focus {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--ui-primary),
+    0 0 0 3px color-mix(in srgb, var(--ui-primary) 20%, transparent);
+}
+
+.auth-card .input-error {
+  box-shadow: inset 0 0 0 1px var(--ui-error);
+}
+
+.auth-card .input-label {
+  margin-bottom: 0.375rem;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ui-text);
+}
+
+/* Buttons: pill, 36px tall, press feedback only. */
+.auth-card .btn {
+  height: 2.25rem;
+  padding-block: 0;
+  border-radius: 9999px;
+  font-size: 14px;
+  font-weight: 500;
+  transition:
+    transform 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    background-color 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    color 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    opacity 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.auth-card .btn:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+/* Step header: "Step N of M" on the left, dotted progress on the right. */
+.auth-step-head {
+  display: flex;
+  height: 18px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.auth-step-label {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--ui-text);
+  transition: opacity 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.auth-step-dots {
+  position: relative;
+  height: 6px;
+}
+
+.auth-step-dot {
+  position: absolute;
+  top: 0;
+  height: 6px;
+  width: 6px;
+  border-radius: 9999px;
+  background: var(--ui-border-accented);
+}
+
+.auth-step-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 6px;
+  width: 18px;
+  border-radius: 9999px;
+  background: var(--ui-text-highlighted);
+  transition: transform 320ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Step panes stay mounted so field state survives navigation. The reserved
+   height keeps the footer (Back / primary action) in one place across steps. */
+.auth-step-pane {
+  display: none;
+  min-height: 210px;
+}
+
+.auth-step-pane[data-pane-state='active'] {
+  display: block;
+  animation: auth-step-in 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+.auth-step-pane[data-pane-state='leaving'] {
+  display: block;
+  animation: auth-step-out 320ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+@keyframes auth-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes auth-step-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* Footer: Back on the left, primary action on the right, always at the card bottom. */
+.auth-step-footer {
+  display: flex;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1.5rem;
+}
+
+.auth-step-back {
+  display: inline-flex;
+  height: 2.25rem;
+  align-items: center;
+  margin-left: -0.75rem;
+  padding: 0 0.75rem;
+  border-radius: 9999px;
+  font-size: 14px;
+  color: var(--ui-text-muted);
+  background: transparent;
+  transition: color 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.auth-step-back:hover:not(:disabled) {
+  color: var(--ui-text-highlighted);
+}
+
+.auth-step-back:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-card,
+  .auth-step-pane[data-pane-state='active'],
+  .auth-step-pane[data-pane-state='leaving'] {
+    animation: none;
+  }
+
+  .auth-step-fill,
+  .auth-step-label,
+  .auth-card .btn {
+    transition: none;
+  }
+}

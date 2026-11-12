@@ -251,6 +251,8 @@ export default {
     signUp: '注册',
     processing: '处理中...',
     continue: '继续',
+    back: '上一步',
+    stepProgress: '第 {current} 步 / 共 {total} 步',
     rememberMe: '记住我',
     dontHaveAccount: '还没有账户？',
     alreadyHaveAccount: '已有账户？',
