@@ -311,12 +311,12 @@ describe('user deposit currency selection', () => {
       chains: [{
         chain: 'ethereum', address, tokens: ['ETH', 'USDT', 'USDC'],
         assets: [
-          { symbol: 'ETH', native: true },
-          { symbol: 'USDT', native: false },
-          { symbol: 'USDC', native: false }
+          { symbol: 'ETH', native: true, market_priced: true, rate: null, reference_price_usd: '3210.12' },
+          { symbol: 'USDT', native: false, market_priced: false, rate: 6.7 },
+          { symbol: 'USDC', native: false, market_priced: false, rate: 6.7 }
         ]
       }],
-      rate: 6.7, min_amount: 0.001, max_amount: 0
+      min_amount: 0.001, max_amount: 0
     }
   }
 
@@ -359,5 +359,106 @@ describe('user deposit currency selection', () => {
     // One asset needs no selector, and the notice keeps the legacy wording.
     expect(wrapper.find('.deposit-view__assets').exists()).toBe(false)
     expect(wrapper.get('.deposit-view__notice').text()).toContain('deposit.networkNotice')
+    // An asset-independent rate from an old backend still renders for a
+    // stablecoin, so a rolling deploy does not blank the sidebar.
+    expect(wrapper.get('.deposit-view__terms').text()).toContain('1 USDT = 6.7 deposit.balanceUnits')
+  })
+})
+
+describe('user deposit credit details', () => {
+  const address = '0x' + '12'.repeat(20)
+
+  // The shape the current backend returns: the rate lives on the asset, and a
+  // market-priced native coin carries no rate at all.
+  function marketChain(overrides: Record<string, unknown> = {}) {
+    return {
+      enabled: true,
+      chains: [{
+        chain: 'ethereum', address, tokens: ['ETH', 'USDT'],
+        assets: [
+          { symbol: 'ETH', native: true, market_priced: true, rate: null, reference_price_usd: '3210.12' },
+          { symbol: 'USDT', native: false, market_priced: false, rate: 6.7 }
+        ]
+      }],
+      min_amount: 0.001, max_amount: 10000,
+      ...overrides
+    }
+  }
+
+  async function selectAsset(wrapper: ReturnType<typeof render>, index: number) {
+    await wrapper.findAll('.deposit-view__asset')[index].trigger('click')
+  }
+
+  it('replaces the fixed rate with the market settlement wording for a native coin', async () => {
+    mocks.getDepositInfo.mockResolvedValue(marketChain())
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+    await selectAsset(wrapper, 1)
+
+    const terms = wrapper.get('.deposit-view__terms').text()
+    expect(terms).toContain('deposit.settlementLabel')
+    expect(terms).toContain('deposit.settlementMarket')
+    // The bug report: "1 ETH = 6.7 balance units" must be impossible.
+    expect(terms).not.toContain('deposit.rateLabel')
+    expect(terms).not.toContain('= 6.7')
+    expect(terms).not.toContain('balanceUnits')
+    // Limits are compared as USD notional for a native coin, not as ETH.
+    expect(terms).toContain('deposit.minLabelUsd')
+    expect(terms).toContain('0.001 USD')
+    expect(terms).toContain('deposit.maxLabelUsd')
+    expect(terms).toContain('10000 USD')
+  })
+
+  it('shows the display-only market quote under the settlement line', async () => {
+    mocks.getDepositInfo.mockResolvedValue(marketChain())
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+    await selectAsset(wrapper, 1)
+    expect(wrapper.get('.deposit-view__reference').text()).toBe('deposit.referencePrice {"price":"$3210.12"}')
+  })
+
+  it('omits the quote when the price feed was unavailable', async () => {
+    mocks.getDepositInfo.mockResolvedValue(marketChain({
+      chains: [{
+        chain: 'ethereum', address, tokens: ['ETH', 'USDT'],
+        assets: [
+          { symbol: 'ETH', native: true, market_priced: true, rate: null },
+          { symbol: 'USDT', native: false, market_priced: false, rate: 6.7 }
+        ]
+      }]
+    }))
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+    await selectAsset(wrapper, 1)
+    expect(wrapper.get('.deposit-view__terms').text()).toContain('deposit.settlementMarket')
+    expect(wrapper.find('.deposit-view__reference').exists()).toBe(false)
+  })
+
+  it('keeps the fixed rate line and token-unit limits for a stablecoin', async () => {
+    mocks.getDepositInfo.mockResolvedValue(marketChain())
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+    // USDT is selected by default so an existing user never lands on ETH.
+    const terms = wrapper.get('.deposit-view__terms').text()
+    expect(terms).toContain('1 USDT = 6.7 deposit.balanceUnits')
+    expect(terms).toContain('deposit.minLabel')
+    expect(terms).toContain('0.001 USDT')
+    expect(terms).not.toContain('deposit.settlementMarket')
+    expect(wrapper.find('.deposit-view__reference').exists()).toBe(false)
+  })
+
+  it('explains a rejected native deposit with the USD threshold, not USDT', async () => {
+    mocks.getDepositInfo.mockResolvedValue(marketChain())
+    mocks.getDepositHistory.mockResolvedValue([{
+      chain: 'ethereum', tx_hash: hash, token: 'native', amount: '0.0000001',
+      status: 'ignored', reason: 'below_min', credited: 0, created_at: '2026-01-01T00:00:00Z'
+    }])
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__reason').text()).toBe('deposit.reasonBelowMinUsd {"min":0.001}')
   })
 })
