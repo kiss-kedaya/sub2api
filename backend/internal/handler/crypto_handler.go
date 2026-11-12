@@ -154,6 +154,12 @@ func (h *CryptoHandler) AdminGetConfig(c *gin.Context) {
 	// private view returns it. A blank value on save keeps the stored one
 	// because the console saves a diff, not the whole object.
 	cfg.NativePriceURL = ""
+	// The explorer key authenticates paid account-API quota: like RPC
+	// credentials it is returned only from the fresh-2FA private view. The
+	// endpoints themselves may embed a provider key in the path, so they are
+	// withheld from the public view too.
+	cfg.ExplorerAPIKey = ""
+	cfg.ExplorerAPIURL = nil
 	cryptoNoStore(c)
 	c.JSON(http.StatusOK, gin.H{"data": struct {
 		cryptopay.CryptoConfig

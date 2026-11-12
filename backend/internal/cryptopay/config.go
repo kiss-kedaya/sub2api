@@ -7,6 +7,7 @@ package cryptopay
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -120,6 +121,26 @@ type CryptoConfig struct {
 
 	// SweepAuto enables the scheduled sweep run (still manual by default).
 	SweepAuto bool `json:"sweep_auto"`
+
+	// NativeScan selects how native-coin (ETH/BNB) deposits are discovered.
+	// "txlist" (default) polls an Etherscan-compatible account API once per
+	// watched address per poll interval, so the request count scales with
+	// addresses × interval instead of with the chain's block rate. "blocks"
+	// restores the original per-block eth_getBlockByNumber scan as an explicit
+	// fallback (one request per block: 28800/day on BSC).
+	NativeScan string `json:"native_scan"`
+	// NativePollSeconds paces the address poll. Default 30. It is deliberately
+	// a wall-clock interval, not a block window: the cost of the txlist scan is
+	// addresses × (86400 / interval).
+	NativePollSeconds int `json:"native_poll_seconds"`
+	// ExplorerAPIKey authenticates the account API. When it is empty the
+	// txlist scan reports an error and keeps its cursor instead of silently
+	// falling back to the block-rate scan, which would exhaust the provider
+	// plan.
+	ExplorerAPIKey string `json:"explorer_api_key"`
+	// ExplorerAPIURL overrides the account-API root per chain (no query
+	// string). The v2 endpoints receive chainid from the client.
+	ExplorerAPIURL map[string]string `json:"explorer_api_url"`
 }
 
 // DefaultCryptoConfig returns the disabled default with sane thresholds.
@@ -156,6 +177,29 @@ func DefaultCryptoConfig() CryptoConfig {
 		// 1 USDT credits 6.7 balance units (operator-confirmed 2026-10-12).
 		CreditMultiplier: 6.7,
 		NativePriceURL:   nativeprice.DefaultBaseURL,
+		// The address poll is the default native source: it costs one request
+		// per address per interval instead of one request per block.
+		NativeScan:        NativeScanTxList,
+		NativePollSeconds: DefaultNativePollSeconds,
+		ExplorerAPIURL:    DefaultExplorerAPIURLs(),
+	}
+}
+
+// DefaultExplorerAPIURLs returns the Etherscan v2 account-API roots. Both
+// Etherscan and BscScan v2 answer module=account&action=txlist; the client
+// appends the chainid the v2 API requires.
+func DefaultExplorerAPIURLs() map[string]string {
+	return map[string]string{
+		ChainEthereum: "https://api.etherscan.io/v2/api",
+		ChainBSC:      "https://api.bscscan.com/v2/api",
+	}
+}
+
+// explorerChainIDs maps a chain to the chainid parameter of its account API.
+func explorerChainIDs() map[string]int64 {
+	return map[string]int64{
+		ChainEthereum: 1,
+		ChainBSC:      56,
 	}
 }
 
@@ -188,6 +232,49 @@ func normalizeRPCLimits(cfg *CryptoConfig) error {
 		limits[key] = value
 	}
 	cfg.RPCLimits = limits
+	return nil
+}
+
+// normalizeNativeScan validates the address-based native scan settings. It
+// refuses values that would make the poller useless (a typo'd mode, a poll
+// interval that drains the provider plan) instead of clamping them silently.
+func normalizeNativeScan(cfg *CryptoConfig, def CryptoConfig) error {
+	switch strings.ToLower(strings.TrimSpace(cfg.NativeScan)) {
+	case "":
+		cfg.NativeScan = def.NativeScan
+	case NativeScanTxList:
+		cfg.NativeScan = NativeScanTxList
+	case NativeScanBlocks:
+		cfg.NativeScan = NativeScanBlocks
+	default:
+		return fmt.Errorf("crypto config: native_scan must be %q or %q", NativeScanTxList, NativeScanBlocks)
+	}
+	if cfg.NativePollSeconds == 0 {
+		cfg.NativePollSeconds = def.NativePollSeconds
+	}
+	if cfg.NativePollSeconds < 10 || cfg.NativePollSeconds > 3600 {
+		return fmt.Errorf("crypto config: native_poll_seconds must be between 10 and 3600")
+	}
+	cfg.ExplorerAPIKey = strings.TrimSpace(cfg.ExplorerAPIKey)
+	urls := make(map[string]string, len(def.ExplorerAPIURL))
+	for chain, root := range def.ExplorerAPIURL {
+		urls[chain] = root
+	}
+	for chain, root := range cfg.ExplorerAPIURL {
+		key := strings.ToLower(strings.TrimSpace(chain))
+		root = strings.TrimSpace(root)
+		if _, ok := explorerChainIDs()[key]; !ok {
+			continue
+		}
+		if root == "" {
+			continue // keep the built-in default for this chain
+		}
+		if !validRPCURL(root) {
+			return fmt.Errorf("crypto config: explorer_api_url for chain %q is not an absolute http(s) URL", chain)
+		}
+		urls[key] = strings.TrimSuffix(root, "/")
+	}
+	cfg.ExplorerAPIURL = urls
 	return nil
 }
 
@@ -246,6 +333,9 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 		return cfg, fmt.Errorf("crypto config: rpc_throttle_ms must be between 0 and %d", maxRPCThrottleMs)
 	}
 	if err := normalizeRPCLimits(&cfg); err != nil {
+		return cfg, err
+	}
+	if err := normalizeNativeScan(&cfg, def); err != nil {
 		return cfg, err
 	}
 	seen := make(map[string]bool, len(cfg.Chains))
@@ -497,6 +587,10 @@ type CryptoConfigPatch struct {
 	NativePriceURL       *string                       `json:"native_price_url"`
 	HotIndex             *uint32                       `json:"hot_index"`
 	SweepAuto            *bool                         `json:"sweep_auto"`
+	NativeScan           *string                       `json:"native_scan"`
+	NativePollSeconds    *int                          `json:"native_poll_seconds"`
+	ExplorerAPIKey       *string                       `json:"explorer_api_key"`
+	ExplorerAPIURL       *map[string]string            `json:"explorer_api_url"`
 }
 
 // Apply overlays the patch onto base, leaving omitted fields untouched.
@@ -556,6 +650,18 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	if p.SweepAuto != nil {
 		out.SweepAuto = *p.SweepAuto
 	}
+	if p.NativeScan != nil {
+		out.NativeScan = *p.NativeScan
+	}
+	if p.NativePollSeconds != nil {
+		out.NativePollSeconds = *p.NativePollSeconds
+	}
+	if p.ExplorerAPIKey != nil {
+		out.ExplorerAPIKey = *p.ExplorerAPIKey
+	}
+	if p.ExplorerAPIURL != nil {
+		out.ExplorerAPIURL = *p.ExplorerAPIURL
+	}
 	return out
 }
 
@@ -601,7 +707,33 @@ func configFingerprint(cfg CryptoConfig) string {
 		_, _ = b.WriteString("=")
 		_, _ = b.WriteString(strconv.Itoa(cfg.Confirmations[chain]))
 	}
+	// The native source changes which loop touches the chain, so it must
+	// reload; rotating only the provider key must reload too, without putting
+	// the key itself into a fingerprint string.
+	_, _ = b.WriteString("|native=")
+	_, _ = b.WriteString(cfg.NativeScan)
+	_, _ = b.WriteString("|native_poll_s=")
+	_, _ = b.WriteString(strconv.Itoa(cfg.NativePollSeconds))
+	for _, chain := range sortedKeys(cfg.ExplorerAPIURL) {
+		_, _ = b.WriteString("|explorer.")
+		_, _ = b.WriteString(chain)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(cfg.ExplorerAPIURL[chain])
+	}
+	_, _ = b.WriteString("|explorer_key=")
+	_, _ = b.WriteString(secretFingerprint(cfg.ExplorerAPIKey))
 	return b.String()
+}
+
+// secretFingerprint is a short, non-reversible marker of a credential: enough
+// to notice a rotation, not enough to recover the value from a fingerprint.
+func secretFingerprint(secret string) string {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return "-"
+	}
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:8])
 }
 
 func sortedKeys[V any](m map[string]V) []string {

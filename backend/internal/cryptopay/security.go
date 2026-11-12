@@ -90,7 +90,12 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 	}
 	worker := scanner.NewWorker(s.db, pools, chains, scanner.NewNamespacedCursorStore(s.db, "wallet-security:"), nil, func(context.Context, string) ([]string, error) { return nil, nil }, 5*time.Second, 2000)
 	worker.SetSecurityGuards(s.checkWalletSecurity, s.scanWalletOutflows)
-	return worker.RunGuardScan(ctx)
+	guardErr := worker.RunGuardScan(ctx)
+	// ERC-20 outflows are covered by the block guard above; a native spend has
+	// no log, so the same idle window must poll the hot wallet through the
+	// address API or a drained ETH/BNB balance stays silent.
+	nativeErr := s.pollNativeOutflowsIdle(ctx, cfg, pools)
+	return errors.Join(guardErr, nativeErr)
 }
 
 // Atomic field update avoids overwriting a concurrent admin RPC/chain change.
@@ -209,12 +214,71 @@ func (s *Service) scanWalletOutflows(ctx context.Context, evm *scanner.EVMScanne
 		if authorized {
 			continue
 		}
-		lockErr := s.wallet.LockSecurity(ctx, "unauthorized_token_outflow", chain.Chain, transfer.TxHash)
-		status, _ := s.WalletSecurity(ctx)
-		_ = s.handleSecurityIncident(ctx, status)
-		return errors.Join(wallet.ErrSecurityLocked, lockErr)
+		return s.lockOnOutflow(ctx, chain.Chain, transfer.TxHash)
 	}
 	return nil
+}
+
+// scanNativeOutflow applies the same protection as scanWalletOutflows to a
+// native-coin (ETH/BNB) transfer out of a watched address.
+//
+// It is fed by the address-based txlist poll (from == hot wallet && value > 0)
+// rather than by the block-range log scan, because a native spend has no log.
+// The decision rule is deliberately the existing one, not a second threshold:
+// a positive native amount that the signer did not authorise is an incident,
+// exactly like an unauthorised ERC-20 transfer. A spend to one of our own
+// addresses is the gas top-up the sweeper signs from the hot wallet, so it is
+// internal movement, not theft.
+func (s *Service) scanNativeOutflow(ctx context.Context, chain scanner.ChainConfig, transfer scanner.Transfer) error {
+	if err := s.checkWalletSecurity(ctx); err != nil {
+		return err
+	}
+	if transfer.Amount == nil || transfer.Amount.Sign() <= 0 || !transfer.Native {
+		return nil
+	}
+	watch, err := s.wallet.SecurityWatchEVMAddresses(ctx)
+	if err != nil {
+		return err
+	}
+	chainID := cryptoSecurityChainID(chain.Chain)
+	authorized, err := s.wallet.AuthorizedTokenTransfer(ctx, chain.Chain, chainID, transfer.TxHash,
+		transfer.From, transfer.To, scanner.NativeToken, transfer.Amount.String())
+	if err != nil {
+		return err
+	}
+	if !nativeOutflowVerdict(transfer, watch, authorized) {
+		return nil
+	}
+	slog.Warn("[cryptopay] unauthorised native-coin outflow",
+		"chain", chain.Chain, "tx", transfer.TxHash, "to", transfer.To)
+	return s.lockOnOutflow(ctx, chain.Chain, transfer.TxHash)
+}
+
+// nativeOutflowVerdict is the native-coin rule, expressed once so the policy
+// is testable without a wallet vault: a positive native spend that our signer
+// did not authorise, to an address we do not own, is an incident. A spend to
+// one of our own watch addresses is the gas top-up the sweeper signs from the
+// hot wallet, so it is internal movement, not theft.
+func nativeOutflowVerdict(transfer scanner.Transfer, watch []string, authorized bool) bool {
+	if transfer.Amount == nil || transfer.Amount.Sign() <= 0 || !transfer.Native {
+		return false
+	}
+	for _, own := range watch {
+		if strings.EqualFold(own, transfer.To) {
+			return false
+		}
+	}
+	return !authorized
+}
+
+// lockOnOutflow is the single incident path for both asset classes: the stored
+// reason, the wallet security lock, the pause of the recharge channel and the
+// admin alert are shared, so a native outflow cannot alert differently.
+func (s *Service) lockOnOutflow(ctx context.Context, chain, txHash string) error {
+	lockErr := s.wallet.LockSecurity(ctx, "unauthorized_token_outflow", chain, txHash)
+	status, _ := s.WalletSecurity(ctx)
+	_ = s.handleSecurityIncident(ctx, status)
+	return errors.Join(wallet.ErrSecurityLocked, lockErr)
 }
 
 func cryptoSecurityChainID(chain string) int64 {
@@ -278,6 +342,7 @@ func (s *Service) Close() {
 		s.securityCancel()
 		s.securityCancel = nil
 	}
+	s.stopNativePollerLocked()
 	if s.maintCancel != nil {
 		s.maintCancel()
 		s.maintCancel = nil

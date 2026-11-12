@@ -32,6 +32,16 @@ const NativeToken = "native"
 // distinct rows.
 const NativeLogIndex = 2_000_000_000
 
+// Native discovery sources. TxList polls an Etherscan-compatible account API
+// once per watched address per interval; Blocks reads every block with full
+// transactions (one request per block: 28800/day on BSC). Blocks is the
+// explicit fallback; an unset source keeps the block behaviour so existing
+// workers and tests are unchanged.
+const (
+	NativeScanTxList = "txlist"
+	NativeScanBlocks = "blocks"
+)
+
 // ErrTransactionNotFound means the node answered null for a transaction hash
 // whose receipt it already served. That is a lagging endpoint, not a reorg, so
 // callers keep the observation retryable instead of concluding anything.
@@ -196,7 +206,12 @@ func fetchNativeTransaction(ctx context.Context, pool *rpc.Pool, txHash string) 
 func verifyNativeTransfer(ctx context.Context, pool *rpc.Pool, t Transfer, receipt *ReceiptCheck) error {
 	if t.Amount == nil || t.Amount.Sign() <= 0 || !t.Native ||
 		!validHex(t.From, 20) || !validHex(t.To, 20) ||
-		t.BlockNumber != receipt.BlockNumber || !strings.EqualFold(t.BlockHash, receipt.BlockHash) ||
+		t.BlockNumber != receipt.BlockNumber ||
+		// The txlist scan path has no block hash to compare (an account API
+		// answers transactions, not blocks). The receipt below still proves the
+		// canonical block for this exact transaction hash, and the height must
+		// match what was reported. An observed block hash is always enforced.
+		(t.BlockHash != "" && !strings.EqualFold(t.BlockHash, receipt.BlockHash)) ||
 		!strings.EqualFold(t.TxHash, receipt.TxHash) {
 		return ErrTransferMismatch
 	}
