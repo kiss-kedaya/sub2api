@@ -9,8 +9,10 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	gocache "github.com/patrickmn/go-cache"
+	"github.com/redis/go-redis/v9"
 )
 
 const rawUsageLogModelColumn = "model"
@@ -155,10 +157,19 @@ type usageLogRepository struct {
 	bestEffortRecent     *gocache.Cache
 	rollupReadEnabled    atomic.Bool
 	rollupStalenessNanos atomic.Int64
+	// statsCache is the optional short-TTL Redis cache for dashboard/usage
+	// aggregates. Nil (no Redis, disabled, or a transaction-scoped repo) keeps
+	// the plain database path.
+	statsCache *usageStatsCache
 }
 
-func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB) service.UsageLogRepository {
-	return newUsageLogRepositoryWithSQL(client, sqlDB)
+// NewUsageLogRepository builds the usage log repository. rdb and cfg feed the
+// short-TTL stats cache; both may be nil/unset, in which case every aggregate
+// reads the database directly.
+func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB, rdb *redis.Client, cfg *config.Config) service.UsageLogRepository {
+	repo := newUsageLogRepositoryWithSQL(client, sqlDB)
+	repo.statsCache = newUsageStatsCache(rdb, cfg)
+	return repo
 }
 
 func newUsageLogRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *usageLogRepository {

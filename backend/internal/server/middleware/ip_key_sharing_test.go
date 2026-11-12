@@ -235,6 +235,88 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 	})
 }
 
+// TestIPKeySharingWritesOncePerWindow pins the Redis traffic shape: a repeat
+// request from an (ip,user) pair that is already recorded in the window must not
+// rewrite the sorted set (its score stays at the first write), while the window
+// still refreshes the pair once the old record falls out.
+func TestIPKeySharingWritesOncePerWindow(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	settings := service.NewSettingService(&panelRateLimitStubRepo{}, nil)
+	require.NoError(t, settings.SetGatewayIPNotice(ctx, ipnotice.Settings{
+		Enabled: true, IPs: []string{"198.51.100.7"}, Message: "operator notice", RPM: 100,
+	}))
+	clock := sharingTestWindow
+	detector := NewIPKeySharingDetector(settings, client)
+	detector.now = func() time.Time { return clock }
+	ip := "203.0.113.80"
+	userKey := ipKeySharingUsersPrefix + ip
+
+	_, hit := detector.Observe(ctx, ip, 801, sharingTestKey(801))
+	require.False(t, hit)
+	firstScore, err := client.ZScore(ctx, userKey, "801").Result()
+	require.NoError(t, err)
+
+	// Twenty repeats inside the same window: the score must not move and the set
+	// must not grow, so these requests cost one ZSCORE + one ZCOUNT each.
+	for range 20 {
+		_, hit = detector.Observe(ctx, ip, 801, sharingTestKey(801))
+		require.False(t, hit)
+	}
+	repeatScore, err := client.ZScore(ctx, userKey, "801").Result()
+	require.NoError(t, err)
+	require.Equal(t, firstScore, repeatScore, "a repeat request must not rewrite the member")
+	require.EqualValues(t, 1, client.ZCard(ctx, userKey).Val())
+
+	// Once the recorded score falls outside the window, the next request for the
+	// same pair refreshes it so an active sharer keeps counting.
+	clock = clock.Add(6 * time.Minute)
+	_, hit = detector.Observe(ctx, ip, 801, sharingTestKey(801))
+	require.False(t, hit)
+	refreshedScore, err := client.ZScore(ctx, userKey, "801").Result()
+	require.NoError(t, err)
+	require.Greater(t, refreshedScore, repeatScore, "an expired record is refreshed on the next request")
+}
+
+// TestIPKeySharingEvidenceExcludesStaleUsers guards the window boundary after
+// writes are coalesced: members older than the window stay in the sorted set
+// until the key expires, so both the count and the evidence read must filter by
+// score. Otherwise an out-of-window key would be disabled by mistake.
+func TestIPKeySharingEvidenceExcludesStaleUsers(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	settings := service.NewSettingService(&panelRateLimitStubRepo{}, nil)
+	require.NoError(t, settings.SetGatewayIPNotice(ctx, ipnotice.Settings{
+		Enabled: true, IPs: []string{"198.51.100.7"}, Message: "operator notice", RPM: 100,
+	}))
+	clock := sharingTestWindow
+	detector := NewIPKeySharingDetector(settings, client)
+	detector.now = func() time.Time { return clock }
+	ip := "203.0.113.81"
+
+	for _, userID := range []int64{811, 812} {
+		_, hit := detector.Observe(ctx, ip, userID, sharingTestKey(userID))
+		require.False(t, hit)
+	}
+	clock = clock.Add(11 * time.Minute)
+	// The two old users are still physically present in the sorted set; only the
+	// three users inside the window may be reported.
+	for _, userID := range []int64{813, 814} {
+		_, hit := detector.Observe(ctx, ip, userID, sharingTestKey(userID))
+		require.False(t, hit)
+	}
+	result, hit := detector.Observe(ctx, ip, 815, sharingTestKey(815))
+	require.True(t, hit)
+	require.Equal(t, 3, result.DistinctUsers)
+	require.ElementsMatch(t, []int64{813, 814, 815}, result.KeyIDs,
+		"users outside the five-minute window must not be disabled")
+	require.Len(t, result.KeyPrefixes, 3)
+}
+
 // TestIPKeySharingPolicyNormalization locks the shape of the auto entries that
 // the admin page renders and edits.
 func TestIPKeySharingPolicyNormalization(t *testing.T) {

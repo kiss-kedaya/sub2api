@@ -34,6 +34,27 @@ const (
 	ipKeySharingKeyPrefix  = 8
 )
 
+// ipSharingWindowScript is the whole detection write path in ONE round trip.
+// It records the member only when it has not been written inside the current
+// window (ZSCORE < cutoff), then counts the members whose score is still inside
+// the window. Counting by score instead of ZCARD keeps stale members harmless:
+// they expire with the key at 2*window and are filtered out in the meantime.
+//
+// KEYS[1] = users zset, KEYS[2] = evidence hash
+// ARGV[1] = member (user ID), ARGV[2] = cutoff millis, ARGV[3] = now millis,
+// ARGV[4] = key TTL seconds, ARGV[5] = evidence value
+var ipSharingWindowScript = redis.NewScript(`
+local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not score or tonumber(score) < tonumber(ARGV[2]) then
+  redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[2])
+  redis.call('ZADD', KEYS[1], ARGV[3], ARGV[1])
+  redis.call('EXPIRE', KEYS[1], ARGV[4])
+  redis.call('HSET', KEYS[2], ARGV[1], ARGV[5])
+  redis.call('EXPIRE', KEYS[2], ARGV[4])
+end
+return redis.call('ZCOUNT', KEYS[1], ARGV[2], '+inf')
+`)
+
 // IPKeySharingHit is the evidence bundle for one detected IP.
 type IPKeySharingHit struct {
 	IP            string
@@ -127,18 +148,22 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 		evidence = strconv.FormatInt(apiKey.ID, 10) + ":" + evidence
 	}
 
-	pipe := d.redis.Pipeline()
-	pipe.ZRemRangeByScore(ctx, userKey, "-inf", cutoff)
-	pipe.ZAdd(ctx, userKey, redis.Z{Score: float64(now.UnixMilli()), Member: member})
-	pipe.Expire(ctx, userKey, 2*window)
-	pipe.HSet(ctx, evidenceKey, member, evidence)
-	pipe.Expire(ctx, evidenceKey, 2*window)
-	distinctCmd := pipe.ZCard(ctx, userKey)
-	if _, err := pipe.Exec(ctx); err != nil {
+	// Hot path: one round trip, two commands. The sorted-set score is the user's
+	// last write, so ZSCORE is the "has this (ip,user) already been recorded in
+	// this window" check: a repeat request only counts, it never writes. That
+	// keeps the write volume proportional to distinct users per window instead
+	// of gateway requests, without adding a second key per (ip,user).
+	ttlSeconds := int64(2 * window / time.Second)
+	if ttlSeconds < 1 {
+		ttlSeconds = 1
+	}
+	distinct, err := ipSharingWindowScript.Run(ctx, d.redis, []string{userKey, evidenceKey},
+		member, cutoff, now.UnixMilli(), ttlSeconds, evidence,
+	).Int()
+	if err != nil {
 		slog.Debug("gateway IP sharing counter unavailable", "ip", ip, "error", err)
 		return IPKeySharingHit{}, false
 	}
-	distinct := int(distinctCmd.Val())
 	if distinct < threshold {
 		return IPKeySharingHit{}, false
 	}
@@ -162,7 +187,7 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 		WindowMinutes: int(window / time.Minute),
 		FirstSeenAt:   now,
 	}
-	if users, err := d.redis.ZRange(ctx, userKey, 0, -1).Result(); err == nil && len(users) > 0 {
+	if users, err := d.redis.ZRangeByScore(ctx, userKey, &redis.ZRangeBy{Min: cutoff, Max: "+inf"}).Result(); err == nil && len(users) > 0 {
 		if values, err := d.redis.HMGet(ctx, evidenceKey, users...).Result(); err == nil {
 			for _, value := range values {
 				raw, ok := value.(string)

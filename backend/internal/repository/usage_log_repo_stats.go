@@ -18,6 +18,15 @@ import (
 
 // GetUserStatsAggregated returns aggregated usage statistics for a user using database-level aggregation
 func (r *usageLogRepository) GetUserStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "user_stats_aggregated", UserID: userID,
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+	}, func() (*usagestats.UsageStats, error) {
+		return r.getUserStatsAggregatedUncached(ctx, userID, startTime, endTime)
+	})
+}
+
+func (r *usageLogRepository) getUserStatsAggregatedUncached(ctx context.Context, userID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	query := `
 		SELECT
 			COUNT(*) as total_requests,
@@ -57,6 +66,15 @@ func (r *usageLogRepository) GetUserStatsAggregated(ctx context.Context, userID 
 
 // GetAPIKeyStatsAggregated returns aggregated usage statistics for an API key using database-level aggregation
 func (r *usageLogRepository) GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "api_key_stats_aggregated", APIKeyID: apiKeyID,
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+	}, func() (*usagestats.UsageStats, error) {
+		return r.getAPIKeyStatsAggregatedUncached(ctx, apiKeyID, startTime, endTime)
+	})
+}
+
+func (r *usageLogRepository) getAPIKeyStatsAggregatedUncached(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	query := `
 		SELECT
 			COUNT(*) as total_requests,
@@ -106,6 +124,15 @@ func (r *usageLogRepository) GetAPIKeyStatsAggregated(ctx context.Context, apiKe
 // 2. 只返回单行聚合结果，大幅减少数据传输量
 // 3. 利用数据库索引优化聚合查询性能
 func (r *usageLogRepository) GetAccountStatsAggregated(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "account_stats_aggregated", AccountID: accountID,
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+	}, func() (*usagestats.UsageStats, error) {
+		return r.getAccountStatsAggregatedUncached(ctx, accountID, startTime, endTime)
+	})
+}
+
+func (r *usageLogRepository) getAccountStatsAggregatedUncached(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	query := `
 		SELECT
 			COUNT(*) as total_requests,
@@ -146,6 +173,15 @@ func (r *usageLogRepository) GetAccountStatsAggregated(ctx context.Context, acco
 // GetModelStatsAggregated 使用 SQL 聚合统计模型使用数据
 // 性能优化：数据库层聚合计算，避免应用层循环统计
 func (r *usageLogRepository) GetModelStatsAggregated(ctx context.Context, modelName string, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "model_stats_aggregated", Model: modelName,
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+	}, func() (*usagestats.UsageStats, error) {
+		return r.getModelStatsAggregatedUncached(ctx, modelName, startTime, endTime)
+	})
+}
+
+func (r *usageLogRepository) getModelStatsAggregatedUncached(ctx context.Context, modelName string, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
 	query := fmt.Sprintf(`
 		SELECT
 			COUNT(*) as total_requests,
@@ -185,7 +221,16 @@ func (r *usageLogRepository) GetModelStatsAggregated(ctx context.Context, modelN
 
 // GetDailyStatsAggregated 使用 SQL 聚合统计用户的每日使用数据
 // 性能优化：使用 GROUP BY 在数据库层按日期分组聚合，避免应用层循环分组统计
-func (r *usageLogRepository) GetDailyStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) (result []map[string]any, err error) {
+func (r *usageLogRepository) GetDailyStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) ([]map[string]any, error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "daily_stats_aggregated", UserID: userID, Timezone: resolveUsageStatsTimezone(),
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+	}, func() ([]map[string]any, error) {
+		return r.getDailyStatsAggregatedUncached(ctx, userID, startTime, endTime)
+	})
+}
+
+func (r *usageLogRepository) getDailyStatsAggregatedUncached(ctx context.Context, userID int64, startTime, endTime time.Time) (result []map[string]any, err error) {
 	tzName := resolveUsageStatsTimezone()
 	query := `
 		SELECT
@@ -818,12 +863,16 @@ func (r *usageLogRepository) GetGlobalStats(ctx context.Context, startTime, endT
 
 // GetStatsWithFilters gets usage statistics with optional filters.
 func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
-	if r.rollupReadEnabled.Load() {
-		if stats, covered, err := r.GetStatsWithRollups(ctx, filters); err == nil && covered {
-			return stats, nil
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "stats_with_filters", Filters: usageFiltersFingerprintOf(filters),
+	}, func() (*UsageStats, error) {
+		if r.rollupReadEnabled.Load() {
+			if stats, covered, err := r.GetStatsWithRollups(ctx, filters); err == nil && covered {
+				return stats, nil
+			}
 		}
-	}
-	return r.getStatsWithFiltersRaw(ctx, filters)
+		return r.getStatsWithFiltersRaw(ctx, filters)
+	})
 }
 
 // getStatsWithFiltersRaw gets usage statistics with optional filters.
