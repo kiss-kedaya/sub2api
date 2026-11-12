@@ -68,6 +68,117 @@
           </template>
         </SettingRow>
       </SettingGroup>
+
+      <SettingGroup>
+        <SettingRow
+          :label="t('admin.settings.gatewayIPNotice.autoAdd')"
+          :hint="t('admin.settings.gatewayIPNotice.autoAddHint')"
+          :on="form.auto_add_enabled"
+        >
+          <template #control>
+            <Toggle id="gateway-ip-notice-auto-add" v-model="form.auto_add_enabled" :disabled="saving || loadFailed" />
+          </template>
+        </SettingRow>
+        <SettingRow
+          :label="t('admin.settings.gatewayIPNotice.autoThreshold')"
+          :hint="t('admin.settings.gatewayIPNotice.autoThresholdHint')"
+          :on="true"
+          :in-summary="false"
+        >
+          <template #control>
+            <UInput
+              id="gateway-ip-notice-auto-threshold"
+              v-model.number="form.sharing_threshold"
+              type="number"
+              min="2"
+              max="100"
+              step="1"
+              :disabled="saving || loadFailed || !form.auto_add_enabled"
+              class="w-28"
+            />
+          </template>
+        </SettingRow>
+        <SettingRow
+          :label="t('admin.settings.gatewayIPNotice.autoWindow')"
+          :hint="t('admin.settings.gatewayIPNotice.autoWindowHint')"
+          :on="true"
+          :in-summary="false"
+        >
+          <template #control>
+            <UInput
+              id="gateway-ip-notice-auto-window"
+              v-model.number="form.sharing_window_minutes"
+              type="number"
+              min="1"
+              max="1440"
+              step="1"
+              :disabled="saving || loadFailed || !form.auto_add_enabled"
+              class="w-28"
+            />
+          </template>
+        </SettingRow>
+        <SettingRow
+          :label="t('admin.settings.gatewayIPNotice.autoEntries')"
+          :hint="t('admin.settings.gatewayIPNotice.autoEntriesHint')"
+          :summary="t('common.settingsSummary.itemCount', { count: form.auto_entries.length })"
+          :on="true"
+          :in-summary="false"
+          persistent-summary
+        >
+          <template #fields>
+            <UAlert
+              v-if="form.auto_entries.length && !form.enabled"
+              color="warning"
+              variant="subtle"
+              icon="i-lucide-triangle-alert"
+              :description="t('admin.settings.gatewayIPNotice.autoEntriesInactive')"
+            />
+            <p v-if="!form.auto_entries.length" class="text-sm text-muted">
+              {{ t('admin.settings.gatewayIPNotice.autoEntriesEmpty') }}
+            </p>
+            <ul v-else class="grid gap-2">
+              <li
+                v-for="entry in form.auto_entries"
+                :key="entry.ip"
+                class="grid gap-1 rounded-lg border border-default px-3 py-2 text-sm"
+                :data-testid="`gateway-ip-notice-auto-entry-${entry.ip}`"
+              >
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-mono text-highlighted">{{ entry.ip }}</span>
+                  <span class="rounded-md border border-default px-1.5 py-0.5 text-xs text-muted">
+                    {{ t('admin.settings.gatewayIPNotice.autoBadge') }}
+                  </span>
+                  <UButton
+                    size="xs"
+                    color="error"
+                    variant="ghost"
+                    :disabled="saving || loadFailed"
+                    :data-testid="`gateway-ip-notice-remove-auto-${entry.ip}`"
+                    @click="removeAutoEntry(entry.ip)"
+                  >
+                    {{ t('admin.settings.gatewayIPNotice.autoRemove') }}
+                  </UButton>
+                </div>
+                <span class="text-xs text-muted">
+                  {{
+                    t('admin.settings.gatewayIPNotice.autoEvidence', {
+                      time: formatDateTimeToMinute(entry.first_seen_at) || '—',
+                      users: entry.distinct_users,
+                      window: entry.window_minutes,
+                    })
+                  }}
+                </span>
+                <span v-if="entry.key_prefixes?.length" class="font-mono text-xs text-muted">
+                  {{ t('admin.settings.gatewayIPNotice.autoKeyPrefixes') }}: {{ entry.key_prefixes.join('、') }}
+                </span>
+              </li>
+            </ul>
+            <p v-if="form.auto_entries.length" class="text-xs text-muted">
+              {{ t('admin.settings.gatewayIPNotice.autoRemoveHint') }}
+            </p>
+          </template>
+        </SettingRow>
+      </SettingGroup>
     </SettingPanel>
   </SettingsSection>
   <TotpStepUpDialog :controller="stepUp" />
@@ -79,6 +190,7 @@ import { useI18n } from 'vue-i18n'
 import { getGatewayIPNotice, updateGatewayIPNotice, type GatewayIPNoticeSettings } from '@/api/admin/gatewayIpNotice'
 import { useAppStore } from '@/stores'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { formatDateTimeToMinute } from '@/utils/format'
 import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
@@ -95,14 +207,33 @@ const saving = ref(false)
 const loadFailed = ref(false)
 const error = ref('')
 const ipText = ref('')
-const form = reactive<GatewayIPNoticeSettings>({ enabled: false, ips: [], message: '', rpm: 100 })
+const emptyForm = (): GatewayIPNoticeSettings => ({
+  enabled: false,
+  ips: [],
+  message: '',
+  rpm: 100,
+  auto_add_enabled: true,
+  sharing_window_minutes: 10,
+  sharing_threshold: 3,
+  auto_entries: [],
+})
+const form = reactive<GatewayIPNoticeSettings>(emptyForm())
+
+function applyPolicy(policy: GatewayIPNoticeSettings) {
+  Object.assign(form, policy)
+  // Older stored policies predate these fields; keep the UI usable.
+  form.auto_add_enabled = policy.auto_add_enabled ?? true
+  form.sharing_window_minutes = policy.sharing_window_minutes || 10
+  form.sharing_threshold = policy.sharing_threshold || 3
+  form.auto_entries = [...(policy.auto_entries ?? [])]
+  ipText.value = form.ips.join('\n')
+}
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    Object.assign(form, await getGatewayIPNotice())
-    ipText.value = form.ips.join('\n')
+    applyPolicy(await getGatewayIPNotice())
     loadFailed.value = false
   } catch (err) {
     loadFailed.value = true
@@ -112,18 +243,33 @@ async function load() {
   }
 }
 
+// Removal reuses the same save path as the hand-written list: the entry
+// disappears from the effective list once the form is saved.
+function removeAutoEntry(ip: string) {
+  form.auto_entries = form.auto_entries.filter((entry) => entry.ip !== ip)
+}
+
 async function save() {
   if (saving.value || loadFailed.value) return
   const ips = [...new Set(ipText.value.split(/[\s,，;；]+/).filter(Boolean))]
-  if (!Number.isInteger(form.rpm) || form.rpm < 1 || form.rpm > 100000 || ips.length > 256 || (form.enabled && (!ips.length || !form.message.trim()))) {
+  const validThreshold = Number.isInteger(form.sharing_threshold) && form.sharing_threshold >= 2 && form.sharing_threshold <= 100
+  const validWindow = Number.isInteger(form.sharing_window_minutes) && form.sharing_window_minutes >= 1 && form.sharing_window_minutes <= 1440
+  if (
+    !Number.isInteger(form.rpm) ||
+    form.rpm < 1 ||
+    form.rpm > 100000 ||
+    !validThreshold ||
+    !validWindow ||
+    ips.length + form.auto_entries.length > 256 ||
+    (form.enabled && ((!ips.length && !form.auto_entries.length) || !form.message.trim()))
+  ) {
     error.value = t('admin.settings.gatewayIPNotice.invalid')
     return
   }
   saving.value = true
   error.value = ''
   try {
-    Object.assign(form, await stepUp.run(() => updateGatewayIPNotice({ ...form, ips })))
-    ipText.value = form.ips.join('\n')
+    applyPolicy(await stepUp.run(() => updateGatewayIPNotice({ ...form, ips, auto_entries: [...form.auto_entries] })))
     appStore.showSuccess(t('admin.settings.gatewayIPNotice.saved'))
   } catch (err) {
     if (isStepUpCancelled(err)) return
