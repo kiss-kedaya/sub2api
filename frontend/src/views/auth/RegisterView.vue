@@ -2,11 +2,11 @@
   <AuthLayout>
     <div class="space-y-6">
       <!-- Title -->
-      <div class="text-center">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
+      <div>
+        <h2 class="auth-heading">
           {{ t('auth.createAccount') }}
         </h2>
-        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+        <p class="auth-sub">
           {{ t('auth.signUpToStart', { siteName }) }}
         </p>
       </div>
@@ -28,15 +28,35 @@
 
       <!-- Registration Form -->
       <form v-else @submit.prevent="handleRegister" class="space-y-5">
+        <!-- Step head: "Step N of M" on the left, dotted progress on the right -->
+        <div v-if="totalSteps > 1" class="auth-step-head" data-testid="register-step-head">
+          <span class="auth-step-label">{{ stepLabel }}</span>
+          <span
+            aria-hidden="true"
+            class="auth-step-dots"
+            :style="{ width: `${24 * (totalSteps - 1) + 18}px` }"
+          >
+            <span
+              v-for="dot in totalSteps"
+              :key="dot"
+              class="auth-step-dot"
+              :style="{ left: `${(dot - 1) * 24}px` }"
+            ></span>
+            <span
+              class="auth-step-fill"
+              :style="{ transform: `translateX(${stepIndex * 24}px)` }"
+            ></span>
+          </span>
+        </div>
+
+        <!-- Step 1: account. Panes stay mounted so field values survive navigation. -->
+        <div class="auth-step-pane" :data-pane-state="paneState('account')">
         <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
             {{ t('auth.emailLabel') }}
           </label>
           <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="mail" size="md" class="text-gray-400 dark:text-dark-500" />
-            </div>
             <input
               id="email"
               v-model="formData.email"
@@ -46,7 +66,7 @@
               autofocus
               autocomplete="email"
               :disabled="registrationActionDisabled"
-              class="input pl-11"
+              class="input"
               :class="{ 'input-error': errors.email }"
               :placeholder="t('auth.emailPlaceholder')"
             />
@@ -59,9 +79,6 @@
             {{ t('auth.passwordLabel') }}
           </label>
           <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="lock" size="md" class="text-gray-400 dark:text-dark-500" />
-            </div>
             <input
               id="password"
               v-model="formData.password"
@@ -69,7 +86,7 @@
               required
               autocomplete="new-password"
               :disabled="registrationActionDisabled"
-              class="input pl-11 pr-11"
+              class="input pr-10"
               :class="{ 'input-error': errors.password }"
               :placeholder="t('auth.createPasswordPlaceholder')"
             />
@@ -77,7 +94,7 @@
               type="button"
               :disabled="registrationActionDisabled"
               @click="showPassword = !showPassword"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              class="absolute inset-y-0 right-0 flex items-center pr-3 text-dimmed transition-colors hover:text-default"
             >
               <Icon v-if="showPassword" name="eyeOff" size="md" />
               <Icon v-else name="eye" size="md" />
@@ -88,21 +105,22 @@
           </p>
         </div>
 
+        </div>
+
+        <!-- Step 2: invitation / promo, only when one of those fields exists -->
+        <div v-if="hasDetailsStep" class="auth-step-pane" :data-pane-state="paneState('details')">
         <!-- Invitation Code Input (Required when enabled) -->
         <div v-if="invitationCodeEnabled">
           <label for="invitation_code" class="input-label">
             {{ t('auth.invitationCodeLabel') }}
           </label>
           <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="key" size="md" :class="invitationValidation.valid ? 'text-green-500' : 'text-gray-400 dark:text-dark-500'" />
-            </div>
             <input
               id="invitation_code"
               v-model="formData.invitation_code"
               type="text"
               :disabled="registrationActionDisabled"
-              class="input pl-11 pr-10"
+              class="input pr-10"
               :class="{
                 'border-green-500 focus:border-green-500 focus:ring-green-500': invitationValidation.valid,
                 'border-red-500 focus:border-red-500 focus:ring-red-500': invitationValidation.invalid || errors.invitation_code
@@ -142,15 +160,12 @@
             <span class="ml-1 text-xs font-normal text-gray-400 dark:text-dark-500">({{ t('common.optional') }})</span>
           </label>
           <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="key" size="md" class="text-gray-400 dark:text-dark-500" />
-            </div>
             <input
               id="affiliate_code"
               v-model="formData.aff_code"
               type="text"
               :disabled="registrationActionDisabled"
-              class="input pl-11"
+              class="input"
               :placeholder="t('auth.invitationCodePlaceholder')"
             />
           </div>
@@ -163,15 +178,12 @@
             <span class="ml-1 text-xs font-normal text-gray-400 dark:text-dark-500">({{ t('common.optional') }})</span>
           </label>
           <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="gift" size="md" :class="promoValidation.valid ? 'text-green-500' : 'text-gray-400 dark:text-dark-500'" />
-            </div>
             <input
               id="promo_code"
               v-model="formData.promo_code"
               type="text"
               :disabled="registrationActionDisabled"
-              class="input pl-11 pr-10"
+              class="input pr-10"
               :class="{
                 'border-green-500 focus:border-green-500 focus:ring-green-500': promoValidation.valid,
                 'border-red-500 focus:border-red-500 focus:ring-red-500': promoValidation.invalid
@@ -204,6 +216,10 @@
           </transition>
         </div>
 
+        </div>
+
+        <!-- Step 3: verification / agreement, only when one of those is required -->
+        <div v-if="hasVerifyStep" class="auth-step-pane" :data-pane-state="paneState('verify')">
         <!-- Turnstile Widget -->
         <div v-if="captchaEnabled" data-testid="registration-turnstile">
           <TurnstileWidget
@@ -234,52 +250,65 @@
           @reject="rejectLoginAgreement"
           @open="showAgreementModal = true"
         />
+        </div>
 
-        <!-- Submit Button -->
-        <button
-          type="submit"
-          :disabled="registrationActionDisabled || (turnstileEnabled && !turnstileToken)"
-          class="btn btn-primary w-full"
-        >
-          <svg
-            v-if="isLoading"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
-            fill="none"
-            viewBox="0 0 24 24"
+        <!-- Footer: Back pinned left, primary action pinned right -->
+        <div class="auth-step-footer">
+          <button
+            v-if="totalSteps > 1"
+            type="button"
+            class="auth-step-back"
+            :disabled="stepIndex === 0 || isLoading"
+            @click="goBack"
           >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
-          <Icon v-else name="userPlus" size="md" class="mr-2" />
-          {{
-            isLoading
-              ? t('auth.processing')
-              : emailVerifyEnabled
-                ? t('auth.continue')
-                : t('auth.createAccount')
-          }}
-        </button>
+            {{ t('auth.back') }}
+          </button>
+          <span v-else></span>
+
+          <button
+            v-if="!isLastStep"
+            type="button"
+            class="btn btn-primary ml-auto px-5"
+            @click="goNext"
+          >
+            {{ t('auth.continue') }}
+          </button>
+          <button
+            v-else
+            type="submit"
+            :disabled="registrationActionDisabled || (turnstileEnabled && !turnstileToken)"
+            class="btn btn-primary ml-auto px-5"
+          >
+            <svg
+              v-if="isLoading"
+              class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              ></circle>
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+            <Icon v-else name="userPlus" size="md" class="mr-2" />
+            {{ submitLabel }}
+          </button>
+        </div>
 
       </form>
 
       <div v-if="showOAuthLogin" class="space-y-3 pt-1">
-        <div class="flex items-center gap-3">
-          <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-          <span class="text-xs text-gray-500 dark:text-dark-400">
-            {{ t('auth.oauthOrContinue') }}
-          </span>
-          <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
+        <div class="pt-2 text-center text-[13px] text-muted">
+          {{ t('auth.oauthOrContinue') }}
         </div>
 
         <EmailOAuthButtons
@@ -388,6 +417,12 @@ const settingsLoaded = ref<boolean>(false)
 const errorMessage = ref<string>('')
 const showPassword = ref<boolean>(false)
 
+// Quiet step flow. Presentation only: the form model, validation rules, error
+// copy, navigation targets and i18n keys are untouched.
+const stepIndex = ref<number>(0)
+const leavingPane = ref<string | null>(null)
+let stepSwapTimer: ReturnType<typeof setTimeout> | null = null
+
 // Public settings
 const registrationEnabled = ref<boolean>(true)
 const emailVerifyEnabled = ref<boolean>(false)
@@ -448,6 +483,84 @@ const captchaEnabled = computed(
   () =>
     (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value
 )
+
+// ==================== Quiet step flow ====================
+// Each step only asks for the fields it owns; a step is skipped entirely when it
+// would have no field, so the indicator never shows an empty pane.
+const hasDetailsStep = computed(
+  () => invitationCodeEnabled.value || affiliateEnabled.value || promoCodeEnabled.value
+)
+const hasVerifyStep = computed(() => captchaEnabled.value || loginAgreementEnabled.value)
+const stepKeys = computed<string[]>(() => {
+  const keys = ['account']
+  if (hasDetailsStep.value) keys.push('details')
+  if (hasVerifyStep.value) keys.push('verify')
+  return keys
+})
+const totalSteps = computed(() => stepKeys.value.length)
+const currentStepKey = computed(
+  () => stepKeys.value[Math.min(stepIndex.value, stepKeys.value.length - 1)] || 'account'
+)
+const isLastStep = computed(() => stepIndex.value >= stepKeys.value.length - 1)
+const stepLabel = computed(() =>
+  t('auth.stepProgress', { current: Math.min(stepIndex.value + 1, stepKeys.value.length), total: totalSteps.value })
+)
+const submitLabel = computed(() =>
+  isLoading.value
+    ? t('auth.processing')
+    : emailVerifyEnabled.value
+      ? t('auth.continue')
+      : t('auth.createAccount')
+)
+
+function paneState(key: string): 'active' | 'leaving' | 'idle' {
+  if (key !== currentStepKey.value) return 'idle'
+  return leavingPane.value === key ? 'leaving' : 'active'
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+// 320ms is the exit duration measured on the reference page; the incoming pane
+// then runs its own 200ms enter animation (see auth-quiet.css).
+const STEP_EXIT_MS = 320
+
+function goToStep(nextIndex: number): void {
+  const clamped = Math.max(0, Math.min(nextIndex, stepKeys.value.length - 1))
+  if (clamped === stepIndex.value) return
+  if (stepSwapTimer) {
+    clearTimeout(stepSwapTimer)
+    stepSwapTimer = null
+  }
+  if (prefersReducedMotion()) {
+    leavingPane.value = null
+    stepIndex.value = clamped
+    return
+  }
+  leavingPane.value = stepKeys.value[stepIndex.value] || null
+  stepSwapTimer = setTimeout(() => {
+    leavingPane.value = null
+    stepIndex.value = clamped
+    stepSwapTimer = null
+  }, STEP_EXIT_MS)
+}
+
+function goNext(): void {
+  if (isLastStep.value) return
+  const scope = currentStepKey.value === 'account' ? 'account' : 'details'
+  if (!validateForm(scope)) return
+  goToStep(stepIndex.value + 1)
+}
+
+function goBack(): void {
+  if (stepIndex.value === 0) return
+  goToStep(stepIndex.value - 1)
+}
 
 // Promo code validation
 const promoValidating = ref<boolean>(false)
@@ -515,6 +628,17 @@ watch(validationToastMessage, (value, previousValue) => {
     appStore.showError(value)
   }
 })
+
+// Settings arrive after mount; keep the active step inside the rebuilt list.
+watch(
+  () => stepKeys.value.length,
+  (length) => {
+    if (stepIndex.value > length - 1) {
+      leavingPane.value = null
+      stepIndex.value = Math.max(0, length - 1)
+    }
+  }
+)
 
 function syncAffiliateReferralCode(): string {
   const code = resolveAffiliateReferralCode(route.query.aff, route.query.aff_code)
@@ -591,6 +715,10 @@ onUnmounted(() => {
   }
   if (invitationValidateTimeout) {
     clearTimeout(invitationValidateTimeout)
+  }
+  if (stepSwapTimer) {
+    clearTimeout(stepSwapTimer)
+    stepSwapTimer = null
   }
 })
 
@@ -891,7 +1019,7 @@ function buildEmailSuffixNotAllowedMessage(): string {
   })
 }
 
-function validateForm(): boolean {
+function validateForm(scope: 'account' | 'details' | 'full' = 'full'): boolean {
   // Reset errors
   errors.email = ''
   errors.password = ''
@@ -900,7 +1028,9 @@ function validateForm(): boolean {
 
   let isValid = true
 
-  if (agreementGateActive.value) {
+  // The agreement gate only belongs to the final submit; pressing Continue on a
+  // step must not open the agreement dialog.
+  if (scope === 'full' && agreementGateActive.value) {
     appStore.showWarning(t('legal.loginAgreementPrompt.registerRequiredWarning'))
     if (loginAgreementMode.value !== 'checkbox') {
       showAgreementModal.value = true
@@ -941,7 +1071,7 @@ function validateForm(): boolean {
   }
 
   // Invitation code validation (required when enabled)
-  if (invitationCodeEnabled.value) {
+  if (scope !== 'account' && invitationCodeEnabled.value) {
     if (!formData.invitation_code.trim()) {
       errors.invitation_code = t('auth.invitationCodeRequired')
       isValid = false
@@ -949,7 +1079,7 @@ function validateForm(): boolean {
   }
 
   // Turnstile validation
-  if (turnstileEnabled.value && !turnstileToken.value) {
+  if (scope === 'full' && turnstileEnabled.value && !turnstileToken.value) {
     errors.turnstile = t('auth.completeVerification')
     isValid = false
   }

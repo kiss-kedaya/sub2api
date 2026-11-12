@@ -31,8 +31,8 @@
         </template>
       </div>
 
-      <!-- Card Container -->
-      <div class="auth-card rounded-2xl border border-[#ebe8e9] bg-white/85 p-6 sm:p-8 dark:border-dark-700/50 dark:bg-dark-800/70 dark:shadow-glass dark:backdrop-blur-xl">
+      <!-- Card Container: Quiet variant — one card, 2xl corners, hairline-free, light shadow -->
+      <div class="auth-card overflow-hidden rounded-2xl bg-default p-5 sm:p-6">
         <slot />
       </div>
 
@@ -59,6 +59,7 @@ import { useAppStore } from '@/stores'
 import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import InkSakura from './InkSakura.vue'
 import '@/styles/console-elevation.css'
+import '@/styles/auth-quiet.css'
 import { sanitizeUrl } from '@/utils/url'
 
 const appStore = useAppStore()
@@ -111,13 +112,4 @@ onMounted(() => {
 }
 </style>
 
-<style>
-/* By day the card is a Nuxt UI card: white, hairline ring, 8px corners, a small shadow,
-   no glass. `div.auth-card` outranks console-elevation.css in any load order. */
-html:not(.dark) .auth-paper div.auth-card {
-  border-color: #e5e5e5;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgb(10 10 10 / 0.06), 0 1px 2px -1px rgb(10 10 10 / 0.06);
-}
-</style>
+
