@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -445,8 +446,52 @@ func (w *Worker) scanAll(ctx context.Context) {
 		return
 	}
 	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) && ctx.Err() == nil {
+		// A node rate limit says nothing about the block range: the same pass
+		// succeeds once the burst has drained. Waiting out one backoff keeps the
+		// cursor moving inside the tick instead of losing the whole interval —
+		// repeated 429s across ticks are what left the BSC cursor parked for
+		// hours while the other chains advanced.
+		if isRateLimitedScan(err) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(scanRateLimitRoundBackoff):
+			}
+			if retried := w.RunOnce(ctx); retried == nil {
+				return
+			} else if ctx.Err() != nil {
+				return
+			} else {
+				err = retried
+			}
+		}
 		w.reportScanFailure(err)
 	}
+}
+
+// scanRateLimitRoundBackoff is how long one pass waits before repeating a round
+// that a node throttled. Short enough to stay inside the scan interval, long
+// enough for a per-second budget to refill.
+const scanRateLimitRoundBackoff = 3 * time.Second
+
+// isRateLimitedScan reports whether any failure in err is an HTTP/RPC 429.
+func isRateLimitedScan(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, inner := range joined.Unwrap() {
+			if isRateLimitedScan(inner) {
+				return true
+			}
+		}
+		return false
+	}
+	var failure *rpc.Failure
+	if errors.As(err, &failure) {
+		return failure.HTTPStatus == http.StatusTooManyRequests || failure.RPCCode == 429
+	}
+	return false
 }
 
 // reportScanFailure keeps failures visible at error-only production logging.
