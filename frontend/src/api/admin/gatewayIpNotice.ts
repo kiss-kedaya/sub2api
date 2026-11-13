@@ -9,6 +9,12 @@ export interface GatewayIPNoticeAutoEntry {
   window_minutes: number
   key_prefixes: string[]
   /**
+   * The accounts this IP has called with. The distinct-user count says how many;
+   * this says which, which is what a false positive is judged on. Absent on
+   * entries written before the roster existed.
+   */
+  users?: GatewayIPNoticeAutoEntryUser[]
+  /**
    * Distinct users at the moment the threshold was first crossed. Frozen for
    * the lifetime of the entry. Absent on entries written before this field
    * existed: fall back to distinct_users.
@@ -28,6 +34,11 @@ export interface GatewayIPNoticeAutoEntry {
   total_keys?: number
   /** Refreshed on every hit that updated the entry. Falls back to first_seen_at. */
   last_seen_at?: string
+}
+
+export interface GatewayIPNoticeAutoEntryUser {
+  id: number
+  email?: string
 }
 
 export interface GatewayIPNoticeSettings {

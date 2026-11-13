@@ -65,6 +65,11 @@ type AutoEntry struct {
 	WindowMinutes int `json:"window_minutes"`
 	// KeyPrefixes holds masked API-key prefixes (never the full key).
 	KeyPrefixes []string `json:"key_prefixes"`
+	// Users lists the accounts this IP has called with, so an operator can see
+	// WHO is behind an entry instead of only how many keys passed through. Key
+	// prefixes answer "how many keys", which is not the question: one user may
+	// hold many keys, and a relay shows a different set every rotation.
+	Users []AutoEntryUser `json:"users,omitempty"`
 
 	// FirstSeenUsers is the distinct-user count at the moment the threshold was
 	// crossed. It is written once and never changes afterwards: it is the answer
@@ -81,6 +86,44 @@ type AutoEntry struct {
 	// LastSeenAt refreshes on every hit that updates the entry. Zero on a legacy
 	// entry; Normalize backfills it from FirstSeenAt.
 	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+// MaxAutoEntryUsers caps the account list on one entry. The count stays exact;
+// only the roster is truncated, so the payload cannot grow with a long-lived IP.
+const MaxAutoEntryUsers = 20
+
+// AutoEntryUser is one account an entry's IP called with. ID is always present;
+// Email is best-effort, because the gateway only holds it when the request's key
+// was loaded with its user.
+type AutoEntryUser struct {
+	ID    int64  `json:"id"`
+	Email string `json:"email,omitempty"`
+}
+
+// MergeUsers unions new users into the entry's roster without reordering it and
+// without exceeding MaxAutoEntryUsers. It fills in an email learned later for an
+// ID already on the roster.
+func (e *AutoEntry) MergeUsers(users []AutoEntryUser) {
+	for _, user := range users {
+		if user.ID <= 0 {
+			continue
+		}
+		merged := false
+		for i := range e.Users {
+			if e.Users[i].ID != user.ID {
+				continue
+			}
+			if e.Users[i].Email == "" && user.Email != "" {
+				e.Users[i].Email = user.Email
+			}
+			merged = true
+			break
+		}
+		if merged || len(e.Users) >= MaxAutoEntryUsers {
+			continue
+		}
+		e.Users = append(e.Users, user)
+	}
 }
 
 // backfillLegacyCounters makes an entry written by a build that only knew
@@ -199,6 +242,10 @@ func mergeAutoEntry(existing, incoming AutoEntry) AutoEntry {
 		existing.FirstSeenUsers = incoming.FirstSeenUsers
 	}
 	existing.KeyPrefixes = normalizeKeyPrefixes(append(append([]string{}, existing.KeyPrefixes...), incoming.KeyPrefixes...))
+	// The roster is a union, never a replacement: an entry is judged on every
+	// account that ever appeared behind it, not only the ones in the burst that
+	// happened to trip the write throttle.
+	existing.MergeUsers(incoming.Users)
 	return existing
 }
 

@@ -90,6 +90,10 @@ type IPKeySharingHit struct {
 	DistinctUsers int
 	WindowMinutes int
 	KeyPrefixes   []string
+	// Users is the account roster behind this IP. The distinct-user count tells
+	// an operator how many; this says which, which is what a false positive is
+	// judged on.
+	Users []ipnotice.AutoEntryUser
 	// KeyIDs are the keys observed from this IP inside the window. They are the
 	// keys the gateway disables; KeyPrefixes is the masked, persistable copy.
 	KeyIDs      []int64
@@ -102,6 +106,19 @@ type IPKeySharingHit struct {
 	TotalKeys int
 	// LastSeenAt is the moment of this observation.
 	LastSeenAt time.Time
+}
+
+// observedAutoEntryUsers returns the account behind this request as a roster
+// entry. Email is only known when the key arrived with its user loaded; the ID
+// alone still identifies the account on the settings page.
+func observedAutoEntryUsers(userID int64, apiKey *service.APIKey) []ipnotice.AutoEntryUser {
+	user := ipnotice.AutoEntryUser{ID: userID}
+	if apiKey != nil && apiKey.User != nil && apiKey.User.ID == userID {
+		if email := strings.TrimSpace(apiKey.User.Email); email != "" {
+			user.Email = email
+		}
+	}
+	return []ipnotice.AutoEntryUser{user}
 }
 
 // AutoEntry converts a hit into the persisted policy entry.
@@ -121,6 +138,7 @@ func (h IPKeySharingHit) AutoEntry() ipnotice.AutoEntry {
 		PeakUsers:      h.PeakUsers,
 		TotalKeys:      h.TotalKeys,
 		LastSeenAt:     lastSeen,
+		Users:          h.Users,
 	}
 }
 
@@ -276,6 +294,9 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 		PeakUsers:     distinct,
 		TotalKeys:     totalKeys,
 		LastSeenAt:    now,
+		// The roster is filled from the same sorted set the count came from, so
+		// the number and the names can never disagree.
+		Users: observedAutoEntryUsers(userID, apiKey),
 	}
 	if users, err := d.redis.ZRangeArgs(ctx, redis.ZRangeArgs{Key: userKey, Start: cutoff, Stop: "+inf", ByScore: true}).Result(); err == nil && len(users) > 0 {
 		if values, err := d.redis.HMGet(ctx, evidenceKey, users...).Result(); err == nil {

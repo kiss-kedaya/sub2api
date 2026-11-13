@@ -268,3 +268,29 @@ func TestUpsertAutoEntryDoesNotMutateReceiver(t *testing.T) {
 	require.Equal(t, 4, original.AutoEntries[0].PeakUsers, "the receiver must not be mutated")
 	require.Equal(t, 4, original.AutoEntries[0].TotalKeys)
 }
+
+func TestMergeAutoEntryUnionsUsersWithoutReordering(t *testing.T) {
+	entry := AutoEntry{IP: "203.0.113.9"}
+	entry.MergeUsers([]AutoEntryUser{{ID: 937, Email: "a@qq.com"}, {ID: 10945}})
+	entry.MergeUsers([]AutoEntryUser{
+		{ID: 10945, Email: "b@gmail.com"}, // email learned later fills the gap
+		{ID: 937, Email: "a@qq.com"},      // duplicate is a no-op
+		{ID: 10804},
+	})
+
+	require.Equal(t, []AutoEntryUser{
+		{ID: 937, Email: "a@qq.com"},
+		{ID: 10945, Email: "b@gmail.com"},
+		{ID: 10804},
+	}, entry.Users)
+}
+
+func TestMergeAutoEntryCapsTheUserRoster(t *testing.T) {
+	entry := AutoEntry{IP: "203.0.113.9"}
+	for i := 1; i <= MaxAutoEntryUsers+5; i++ {
+		entry.MergeUsers([]AutoEntryUser{{ID: int64(i)}})
+	}
+	require.Len(t, entry.Users, MaxAutoEntryUsers)
+	// The cap truncates the roster only: the first accounts seen stay named.
+	require.Equal(t, int64(1), entry.Users[0].ID)
+}
