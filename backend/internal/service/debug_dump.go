@@ -73,10 +73,10 @@ func WriteUpstreamFailureDump(
 	}
 
 	fmt.Fprintf(&b, "\n## outbound body (what sub2api sent, %d bytes)\n", len(outboundBody))
-	b.WriteString(truncateDumpBody(string(outboundBody)))
+	_, _ = b.WriteString(truncateDumpBody(string(outboundBody)))
 	fmt.Fprintf(&b, "\n\n## upstream response body (%d bytes)\n", len(responseBody))
-	b.WriteString(truncateDumpBody(string(responseBody)))
-	b.WriteString("\n")
+	_, _ = b.WriteString(truncateDumpBody(string(responseBody)))
+	_, _ = b.WriteString("\n")
 
 	name := fmt.Sprintf("%s_%s.txt", stamp.Format("20060102-150405.000000000"), dumpFileSlug(account, c))
 	_ = os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o640)
@@ -84,7 +84,7 @@ func WriteUpstreamFailureDump(
 
 func writeDumpHeaders(b *strings.Builder, req *http.Request) {
 	if req == nil {
-		b.WriteString("(none)\n")
+		_, _ = b.WriteString("(none)\n")
 		return
 	}
 	writeDumpHeaderMap(b, req.Header)
@@ -92,7 +92,7 @@ func writeDumpHeaders(b *strings.Builder, req *http.Request) {
 
 func writeDumpHeaderMap(b *strings.Builder, header http.Header) {
 	if len(header) == 0 {
-		b.WriteString("(none)\n")
+		_, _ = b.WriteString("(none)\n")
 		return
 	}
 	keys := make([]string, 0, len(header))
@@ -149,9 +149,9 @@ func sanitizeDumpSlug(s string) string {
 	for _, r := range s {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.':
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		default:
-			b.WriteByte('_')
+			_ = b.WriteByte('_')
 		}
 	}
 	out := b.String()
