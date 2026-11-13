@@ -529,3 +529,37 @@ describe('useAppStore', () => {
     })
   })
 })
+
+
+
+  describe('公开设置失败退避', () => {
+    beforeEach(() => {
+      setActivePinia(createPinia())
+      vi.useFakeTimers()
+      vi.mocked(getPublicSettings).mockReset()
+      delete (window as any).__APP_CONFIG__
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('失败后非强制调用不再发起请求，force 仍可穿过退避', async () => {
+      vi.mocked(getPublicSettings).mockRejectedValueOnce(new Error('429 Too Many Requests'))
+      const recovered = createPublicSettings({ site_name: 'Recovered' })
+      vi.mocked(getPublicSettings).mockResolvedValue(recovered)
+      const store = useAppStore()
+
+      await expect(store.fetchPublicSettings()).resolves.toBeNull()
+      expect(getPublicSettings).toHaveBeenCalledTimes(1)
+
+      // A remount of the login page immediately after a failure used to fire
+      // another request; that is what amplified one 429 into a storm.
+      await expect(store.fetchPublicSettings()).resolves.toBeNull()
+      expect(getPublicSettings).toHaveBeenCalledTimes(1)
+
+      // An explicit refresh is still allowed through.
+      await expect(store.fetchPublicSettings(true)).resolves.toEqual(recovered)
+      expect(getPublicSettings).toHaveBeenCalledTimes(2)
+    })
+  })

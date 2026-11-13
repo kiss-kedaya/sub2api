@@ -155,3 +155,23 @@ func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *
 	require.True(t, resp.Data.WeChatOAuthOpenEnabled)
 	require.True(t, resp.Data.WeChatOAuthMPEnabled)
 }
+
+// A login page that remounts on every redirect must not be able to re-download the
+// public settings payload (100 KB+) once per mount: an uncached, rate-limited
+// response turned into thousands of requests per second. The endpoint is public and
+// read-only, so it carries a short shared-cache directive.
+func TestSettingHandler_GetPublicSettings_AllowsShortSharedCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := &settingHandlerPublicRepoStub{values: map[string]string{}}
+	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
+
+	h.GetPublicSettings(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "public, max-age=30", recorder.Header().Get("Cache-Control"))
+}
