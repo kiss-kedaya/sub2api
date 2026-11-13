@@ -778,9 +778,17 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 	// "unsupported" delay is for upstreams that return nothing useful; applying
 	// it to one with a readable balance would leave that balance stale.
 	readable := func() {
-		if snapshot.Status == UpstreamBillingProbeStatusUnsupported {
-			snapshot.NextProbeAt = now.Add(nextProbeDelay(intervalMinutes, retryAfter(rateResult.header, now)))
+		// Reading a balance is proof the upstream answers balance queries, so the
+		// snapshot must not stay "unsupported". Status comes from
+		// /v1/sub2api/billing, which every new-api site answers with 404: without
+		// this the account page showed "unsupported" and hid a balance that had
+		// just been read successfully from /api/usage/token/.
+		if snapshot.Status != UpstreamBillingProbeStatusOK {
+			snapshot.Status = UpstreamBillingProbeStatusOK
+			snapshot.LastError = ""
+			snapshot.FailureCount = 0
 		}
+		snapshot.NextProbeAt = now.Add(nextProbeDelay(intervalMinutes, retryAfter(rateResult.header, now)))
 	}
 
 	// newAPISignal is the first new-api fingerprint this probe saw. It outranks
