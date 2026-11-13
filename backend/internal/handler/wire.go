@@ -63,6 +63,7 @@ func ProvideAdminHandlers(
 	accountHandler.SetCodexTicketSettings(settingService)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
 	return &AdminHandlers{
+		DebugDump:              admin.NewDebugDumpHandler(),
 		ExcelGrant:             excelGrant,
 		OpsAutomation:          opsAutomation,
 		CredentialGuard:        credentialGuard,
