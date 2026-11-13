@@ -172,14 +172,53 @@ const (
 	receiptReverted
 )
 
+// Receipt observation reasons. This is the complete diagnostic vocabulary for
+// "why did a mined sweep not advance": the durable payment record is redacted
+// (rpc.SafeRecordedError collapses anything it cannot classify into one
+// sentence), so the only place the real cause can survive is a structured log
+// with a fixed reason. Keep every value short, stable and free of node text.
+const (
+	reasonReceiptConfirmed  = "receipt_confirmed"
+	reasonReceiptAbsent     = "receipt_absent"
+	reasonReceiptIncomplete = "receipt_incomplete"
+	reasonReceiptReverted   = "receipt_reverted"
+	reasonCanonicalMismatch = "canonical_mismatch"
+	reasonCanonicalUnread   = "canonical_unreadable"
+	reasonDepthShort        = "depth_insufficient"
+	reasonFinalityPending   = "finality_pending"
+	reasonFinalityMissing   = "finality_unavailable"
+	reasonRPCFailure        = "rpc_failure"
+)
+
+// observeTransaction logs one receipt observation. It never receives an
+// endpoint URL, a credential or raw node text: rpc.HostOf keeps only the
+// hostname and rpc.DetailOf sanitises the node's own words before they are
+// logged, which is why the same fields cannot enter the payment record.
+func observeTransaction(chain, hash, reason string, attrs ...any) {
+	fields := []any{"chain", chain, "tx_hash", hash, "reason", reason}
+	slog.Info("[cryptopay] sweep receipt observation", append(fields, attrs...)...)
+}
+
+// logRPCFailure records the classified failure that made an observation
+// inconclusive. Without it every RPC-shaped failure looks identical to the
+// generic sentence that reaches the database.
+func logRPCFailure(chain, hash, reason string, err error) {
+	slog.Warn("[cryptopay] sweep receipt observation failed",
+		"chain", chain, "tx_hash", hash, "reason", reason,
+		"category", rpc.CategoryOf(err), "endpoint_host", rpc.HostOf(err),
+		"detail", rpc.DetailOf(err), "error", rpc.SafeError(err))
+}
+
 // No polling loops: a pending job returns control to the rest of the group.
 // Missing confirmation policy permits observation, never finalization.
 func checkReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string, required uint64) (receiptState, error) {
 	result, err := pool.Call(ctx, "eth_getTransactionReceipt", []any{hash})
 	if err != nil {
+		logRPCFailure(chain, hash, reasonRPCFailure, err)
 		return receiptWaiting, err
 	}
 	if len(result) == 0 || string(result) == "null" {
+		observeTransaction(chain, hash, reasonReceiptAbsent)
 		return receiptAbsent, nil
 	}
 	var r struct {
@@ -189,34 +228,44 @@ func checkReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string, requi
 		BlockHash   string `json:"blockHash"`
 	}
 	if err := json.Unmarshal(result, &r); err != nil {
+		observeTransaction(chain, hash, reasonReceiptIncomplete, "cause", "undecodable receipt")
 		return receiptWaiting, err
 	}
 	if !strings.EqualFold(r.Hash, hash) || len(r.BlockHash) != 66 ||
 		(r.Status != "0x1" && r.Status != "0x0") {
+		observeTransaction(chain, hash, reasonReceiptIncomplete, "cause", "hash or status mismatch")
 		return receiptWaiting, fmt.Errorf("incomplete or mismatched receipt")
 	}
 	block, err := strconv.ParseUint(strings.TrimPrefix(r.BlockNumber, "0x"), 16, 64)
 	if err != nil {
+		observeTransaction(chain, hash, reasonReceiptIncomplete, "cause", "undecodable block number")
 		return receiptWaiting, err
 	}
 	canonical, err := pool.Call(ctx, "eth_getBlockByNumber", []any{r.BlockNumber, false})
 	if err != nil {
+		logRPCFailure(chain, hash, reasonRPCFailure, err)
 		return receiptWaiting, err
 	}
 	var header struct {
 		Hash string `json:"hash"`
 	}
 	if err := json.Unmarshal(canonical, &header); err != nil {
+		observeTransaction(chain, hash, reasonCanonicalUnread, "block", block)
 		return receiptWaiting, err
 	}
 	if !strings.EqualFold(header.Hash, r.BlockHash) {
+		observeTransaction(chain, hash, reasonCanonicalMismatch, "block", block,
+			"receipt_block_hash", r.BlockHash, "canonical_block_hash", header.Hash)
 		return receiptWaiting, fmt.Errorf("receipt block is no longer canonical")
 	}
 	head, err := pool.MaxBlockNumber(ctx)
 	if err != nil {
+		logRPCFailure(chain, hash, reasonRPCFailure, err)
 		return receiptWaiting, err
 	}
 	if required == 0 || head < block || head-block < required {
+		observeTransaction(chain, hash, reasonDepthShort, "block", block,
+			"head", head, "depth", depthOf(head, block), "required", required)
 		return receiptWaiting, nil
 	}
 	// Depth is measured from a head that can itself be reorged, so it is not
@@ -224,15 +273,31 @@ func checkReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string, requi
 	// be behind it; only chains that do not serve the tag keep depth alone.
 	final, err := blockIsFinal(ctx, pool, chain, block)
 	if err != nil {
+		logRPCFailure(chain, hash, reasonFinalityMissing, err)
 		return receiptWaiting, err
 	}
 	if !final {
+		observeTransaction(chain, hash, reasonFinalityPending, "block", block,
+			"head", head, "depth", depthOf(head, block), "required", required)
 		return receiptWaiting, nil
 	}
 	if r.Status == "0x0" {
+		observeTransaction(chain, hash, reasonReceiptReverted, "block", block)
 		return receiptReverted, nil
 	}
+	observeTransaction(chain, hash, reasonReceiptConfirmed, "block", block,
+		"head", head, "depth", depthOf(head, block), "required", required)
 	return receiptConfirmed, nil
+}
+
+// depthOf reports how many blocks a mined transaction is buried under. It is
+// only used for diagnostics; a negative value cannot occur because callers
+// check head >= block first.
+func depthOf(head, block uint64) uint64 {
+	if head < block {
+		return 0
+	}
+	return head - block
 }
 
 // finalityTags lists the block tags that prove finality, strongest first. BSC's
