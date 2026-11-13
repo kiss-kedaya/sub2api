@@ -889,3 +889,67 @@ func TestUpstreamNewAPIHeaderEvidence(t *testing.T) {
 	_, ok = upstreamNewAPIHeaderEvidence(nil)
 	require.False(t, ok)
 }
+
+// new-api forces unlimited_quota on the default token it creates for a user. The
+// token has no cap of its own, but the account does, and that is the balance the
+// operator is looking at. Reporting "unlimited" hid the money on most relays.
+func TestParseUpstreamNewAPIUsagePrefersAccountQuotaOverUnlimitedToken(t *testing.T) {
+	body := []byte(`{"code":true,"message":"ok","data":{"object":"token_usage","name":"默认令牌","total_granted":0,"total_used":0,"total_available":0,"unlimited_quota":true,"expires_at":0,"user_quota":{"total_available":104941429.0,"total_used":52161124.0}}}`)
+
+	data, err := parseUpstreamNewAPIUsageResponse(body)
+	require.NoError(t, err)
+
+	require.NotContains(t, data, "unlimited", "an unlimited token still has a finite account balance to show")
+	// 104941429 / 500000 = 209.88..., 52161124 / 500000 = 104.32...
+	require.InDelta(t, 209.882858, data["remaining"], 1e-6)
+	require.InDelta(t, 104.322248, data["quota_used"], 1e-6)
+	require.InDelta(t, 314.205106, data["quota_limit"], 1e-6)
+	require.NotContains(t, data, "wallet_balance", "the account quota is already the headline, not a second number")
+}
+
+// The account quota is unknown when the token predates allow_user_quota_query or
+// the site turned it off. new-api's legacy billing pair does not depend on that
+// switch, so it supplies the account balance instead of leaving the cell blank.
+func TestParseUpstreamNewAPILegacyAccountBalance(t *testing.T) {
+	subscription := []byte(`{"object":"billing_subscription","hard_limit_usd":300.5,"soft_limit_usd":300.5,"system_hard_limit_usd":300.5,"access_until":0}`)
+	usage := []byte(`{"object":"list","total_usage":12500}`)
+
+	data, err := parseUpstreamNewAPILegacyAccountBalance(subscription, usage)
+	require.NoError(t, err)
+
+	require.InDelta(t, 300.5, data["quota_limit"], 1e-9)
+	require.InDelta(t, 125.0, data["quota_used"], 1e-9)
+	require.InDelta(t, 175.5, data["remaining"], 1e-9)
+	require.Equal(t, "USD", data["unit"])
+
+	// Without the spend the limit is still the granted total: remaining is not
+	// invented from a figure that includes money already spent.
+	data, err = parseUpstreamNewAPILegacyAccountBalance(subscription, nil)
+	require.NoError(t, err)
+	require.InDelta(t, 300.5, data["remaining"], 1e-9)
+
+	// The 1e8 sentinel marks an unlimited token, not a 100-million-dollar
+	// account, so it is never turned into a balance.
+	_, err = parseUpstreamNewAPILegacyAccountBalance([]byte(upstreamKindTestUnlimitedBilling), usage)
+	require.Error(t, err)
+}
+
+// End to end: an unlimited token with no account quota in the usage answer keeps
+// the balance readable by asking the legacy billing endpoints.
+func TestUpstreamKindProbeReadsNewAPIAccountBalanceFromLegacyBilling(t *testing.T) {
+	unlimitedToken := `{"code":true,"message":"ok","data":{"object":"token_usage","name":"默认令牌","total_granted":0,"total_used":0,"total_available":0,"unlimited_quota":true,"expires_at":0}}`
+	upstream := &upstreamKindRouteStub{routes: map[string]upstreamKindRoute{
+		upstreamNewAPIUsagePath:        {http.StatusOK, unlimitedToken},
+		upstreamLegacySubscriptionPath: {http.StatusOK, `{"object":"billing_subscription","hard_limit_usd":300.5,"soft_limit_usd":300.5,"system_hard_limit_usd":300.5,"access_until":0}`},
+		upstreamLegacyUsagePath:        {http.StatusOK, `{"object":"list","total_usage":12500}`},
+	}}
+
+	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(78, nil), upstream)
+
+	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.NotNil(t, snapshot.Balance)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	require.NotContains(t, snapshot.Balance.Data, "unlimited")
+	require.InDelta(t, 175.5, snapshot.Balance.Data["remaining"], 1e-9)
+}

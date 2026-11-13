@@ -112,13 +112,37 @@ func parseUpstreamNewAPIUsageResponse(body []byte) (map[string]any, error) {
 		}
 	}
 	unlimited := usage.UnlimitedQuota != nil && *usage.UnlimitedQuota
-	if unlimited {
+	// unlimited_quota is a per-token cap flag, not a statement about the account.
+	// new-api forces it true on the default token it creates for every user, so
+	// treating it as "no number to show" hid the account balance on most relays.
+	// The account quota is finite and is the figure an operator is looking at, so
+	// it becomes the headline instead of the word "unlimited".
+	accountRemaining, hasAccountQuota := 0.0, false
+	accountUsed, _ := 0.0, false
+	if usage.UserQuota != nil {
+		if balance, ok := upstreamNewAPIQuotaToUSD(usage.UserQuota.TotalAvailable); ok {
+			accountRemaining, hasAccountQuota = balance, true
+		}
+		if used, ok := upstreamNewAPIQuotaToUSD(usage.UserQuota.TotalUsed); ok {
+			accountUsed = used
+		}
+	}
+	promoteAccountQuota := unlimited && hasAccountQuota
+	if unlimited && !promoteAccountQuota {
 		data["unlimited"] = true
 	}
 	if used, ok := upstreamNewAPIQuotaToUSD(usage.TotalUsed); ok {
 		data["quota_used"] = used
 	}
-	if !unlimited {
+	switch {
+	case promoteAccountQuota:
+		// The token has no cap of its own, so the account quota is the balance.
+		data["remaining"] = accountRemaining
+		data["quota_limit"] = accountRemaining + accountUsed
+		if accountUsed > 0 {
+			data["quota_used"] = accountUsed
+		}
+	case !unlimited:
 		if remaining, ok := upstreamNewAPIQuotaToUSD(usage.TotalAvailable); ok {
 			data["remaining"] = remaining
 		}
@@ -126,7 +150,7 @@ func parseUpstreamNewAPIUsageResponse(body []byte) (map[string]any, error) {
 			data["quota_limit"] = granted
 		}
 	}
-	if usage.UserQuota != nil {
+	if usage.UserQuota != nil && !promoteAccountQuota {
 		if balance, ok := upstreamNewAPIQuotaToUSD(usage.UserQuota.TotalAvailable); ok {
 			data["wallet_balance"] = balance
 		}
@@ -143,6 +167,56 @@ func parseUpstreamNewAPIUsageResponse(body []byte) (map[string]any, error) {
 	if _, hasRemaining := data["remaining"]; !hasRemaining && !unlimited {
 		if _, hasWallet := data["wallet_balance"]; !hasWallet {
 			return nil, fmt.Errorf("new-api usage response carries no balance")
+		}
+	}
+	return data, nil
+}
+
+// parseUpstreamNewAPILegacyAccountBalance reads new-api's legacy
+// OpenAI-compatible billing pair as an account balance, for tokens whose
+// /api/usage/token/ answer carries no account quota at all.
+//
+// new-api serves /v1/dashboard/billing/subscription and .../usage for client
+// compatibility and, unlike /api/usage/token/, they do not depend on the
+// per-token allow_user_quota_query switch. When the site's "show token stats"
+// setting is off they report the account's granted total and spend, which is
+// exactly the balance the token usage endpoint refused to give.
+//
+// The 1e8 sentinel is new-api's "unlimited quota" marker and is never treated
+// as a granted total: a token whose cap is unlimited cannot be told apart from
+// an account holding 100 million dollars, so no balance is claimed.
+func parseUpstreamNewAPILegacyAccountBalance(subscriptionBody, usageBody []byte) (map[string]any, error) {
+	var subscription upstreamLegacySubscriptionResponse
+	if err := json.Unmarshal(subscriptionBody, &subscription); err != nil {
+		return nil, err
+	}
+	if upstreamLegacyBillingIsNewAPISentinel(subscriptionBody) {
+		return nil, fmt.Errorf("new-api billing sentinel is not an account balance")
+	}
+	hardLimit, ok := finiteUpstreamBalanceNumber(subscription.HardLimitUSD)
+	if !ok || hardLimit <= 0 {
+		return nil, fmt.Errorf("unexpected billing subscription response schema")
+	}
+	data := map[string]any{
+		"is_valid":     true,
+		"unit":         "USD",
+		"unit_assumed": true,
+		"quota_limit":  hardLimit,
+	}
+	used := 0.0
+	if len(usageBody) > 0 {
+		var usage upstreamLegacyUsageResponse
+		if err := json.Unmarshal(usageBody, &usage); err == nil {
+			if cents, ok := finiteUpstreamBalanceNumber(usage.TotalUsage); ok && cents >= 0 {
+				used = cents / 100
+			}
+		}
+	}
+	data["quota_used"] = used
+	data["remaining"] = math.Max(hardLimit-used, 0)
+	if accessUntil, ok := finiteUpstreamBalanceNumber(subscription.AccessUntil); ok && accessUntil > 0 {
+		if formatted, ok := upstreamUnixSecondsToRFC3339(accessUntil); ok {
+			data["expires_at"] = formatted
 		}
 	}
 	return data, nil

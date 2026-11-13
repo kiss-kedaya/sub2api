@@ -832,6 +832,34 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		return newAPIUsageResult
 	}
 
+	// newAPIAccountBalanceFallback fills in the account balance for a token whose
+	// /api/usage/token/ answer is "unlimited" with no user_quota to promote.
+	//
+	// new-api forces unlimited_quota on the default token it creates for every
+	// user and leaves allow_user_quota_query off for tokens that predate that
+	// field, so the usage payload can legitimately carry no number at all. The
+	// legacy billing pair reports the account's granted total and spend and does
+	// not depend on that switch, so it is asked before giving up on the balance.
+	newAPIAccountBalanceFallback := func(data map[string]any) map[string]any {
+		if data == nil || data["unlimited"] != true {
+			return data
+		}
+		subscription := fetch(upstreamLegacySubscriptionPath, upstreamKindProbeMaxBodyBytes)
+		noteResponse(subscription)
+		if !upstreamProbeAnswered(subscription) {
+			return data
+		}
+		var usageBody []byte
+		if usage := fetch(upstreamLegacyUsagePath, upstreamKindProbeMaxBodyBytes); upstreamProbeAnswered(usage) {
+			usageBody = usage.body
+		}
+		account, err := parseUpstreamNewAPILegacyAccountBalance(subscription.body, usageBody)
+		if err != nil {
+			return data
+		}
+		return account
+	}
+
 	// adoptNewAPIFromEvidence records new-api from a fingerprint rather than
 	// from the usage payload. The balance still has to come from
 	// /api/usage/token/: borrowing the billing numbers is what used to render a
@@ -847,7 +875,7 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		snapshot.UpstreamKind = UpstreamKindNewAPI
 		if upstreamProbeAnswered(usage) {
 			if data, err := parseUpstreamNewAPIUsageResponse(usage.body); err == nil {
-				snapshot.Balance = fresh(data, UpstreamBalanceSourceNewAPITokenUsage, usage.statusCode)
+				snapshot.Balance = fresh(newAPIAccountBalanceFallback(data), UpstreamBalanceSourceNewAPITokenUsage, usage.statusCode)
 				readable()
 				return
 			}
@@ -973,14 +1001,20 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		// Site root, not the model base path: see upstreamSiteRootURL.
 		fetchBalance := fetchNewAPIUsage
 		if snapshot.UpstreamKind == UpstreamKindNewAPI {
-			readRecognisedBalance(UpstreamKindNewAPI, UpstreamBalanceSourceNewAPITokenUsage, fetchBalance, parseUpstreamNewAPIUsageResponse)
+			readRecognisedBalance(UpstreamKindNewAPI, UpstreamBalanceSourceNewAPITokenUsage, fetchBalance, func(body []byte) (map[string]any, error) {
+				data, err := parseUpstreamNewAPIUsageResponse(body)
+				if err != nil {
+					return nil, err
+				}
+				return newAPIAccountBalanceFallback(data), nil
+			})
 			return true
 		}
 		result := fetchBalance()
 		if upstreamProbeAnswered(result) {
 			if data, err := parseUpstreamNewAPIUsageResponse(result.body); err == nil {
 				snapshot.UpstreamKind = UpstreamKindNewAPI
-				snapshot.Balance = fresh(data, UpstreamBalanceSourceNewAPITokenUsage, result.statusCode)
+				snapshot.Balance = fresh(newAPIAccountBalanceFallback(data), UpstreamBalanceSourceNewAPITokenUsage, result.statusCode)
 				readable()
 				return true
 			}
