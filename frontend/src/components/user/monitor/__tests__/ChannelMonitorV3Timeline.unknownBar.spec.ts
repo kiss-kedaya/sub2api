@@ -60,6 +60,20 @@ describe('ChannelMonitorV3Timeline unknown bars', () => {
     expect(bar.classes()).not.toContain('bg-gray-950')
   })
 
+  it('draws nothing for slots the window has not aggregated yet', () => {
+    const wrapper = mount(ChannelMonitorV3Timeline, {
+      props: {
+        buckets: [bucket('healthy', 0, '2026-09-11T12:00:00Z')],
+        countdownSeconds: 0,
+        length: 4,
+      },
+    })
+    // One real bucket, one bar: the three empty slots keep their grid space but
+    // must not paint placeholder grey, which used to read as "no traffic".
+    expect(wrapper.findAll('.v3-soft-glass-bar')).toHaveLength(1)
+    expect(wrapper.findAll('.v3-bar-slot')).toHaveLength(4)
+  })
+
   it('keeps true low availability on the black band', () => {
     const wrapper = mount(ChannelMonitorV3Timeline, {
       props: {

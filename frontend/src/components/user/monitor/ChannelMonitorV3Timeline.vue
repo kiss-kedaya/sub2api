@@ -26,6 +26,7 @@
         >
           <span class="v3-bar-visual" :style="barMotionStyle(index)" aria-hidden="true">
             <span
+              v-if="bar.colorClass"
               class="v3-soft-glass-bar"
               :class="bar.colorClass"
               :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
@@ -180,9 +181,12 @@ const displayBars = computed<TimelineBar[]>(() => {
     })
   }
 
+  // Slots the window has not aggregated yet stay empty: they keep the grid
+  // rhythm but draw nothing. A grey bar now means one thing only — the bucket
+  // exists and nobody used this group during it.
   const missing = Math.max(0, props.length - real.length)
   for (let index = 0; index < missing; index += 1) {
-    bars.push({ key: `empty-${index}`, ...STATUS_STYLE.unknown, title: '' })
+    bars.push({ key: `empty-${index}`, colorClass: '', heightPct: 0, title: '' })
   }
   return bars
 })
@@ -199,7 +203,7 @@ const tooltipStyle = computed(() => ({
 	display: block;
 	width: 100%;
 	min-height: 3px;
-	border-radius: 3px;
+	border-radius: 4px;
   transform-origin: bottom;
   animation: v3-soft-glass-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
