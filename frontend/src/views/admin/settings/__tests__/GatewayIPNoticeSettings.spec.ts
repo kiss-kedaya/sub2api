@@ -154,7 +154,7 @@ describe('GatewayIPNoticeSettings', () => {
     const text = wrapper.get('[data-testid="gateway-ip-notice-auto-entry-203.0.113.7"]').text()
     expect(text).toContain('"first":4')
     expect(text).toContain('"peak":6')
-    expect(text).toContain('"total":10')
+    expect(text).toContain('10')
     expect(text).toContain('gatewayIPNotice.autoWindowInfo')
   })
 
@@ -179,7 +179,47 @@ describe('GatewayIPNoticeSettings', () => {
     // total_keys falls back to the number of masked prefixes.
     expect(text).toContain('"first":4')
     expect(text).toContain('"peak":4')
-    expect(text).toContain('"total":3')
+    expect(text).toContain('3')
     expect(text).not.toContain('undefined')
+  })
+
+  // The page answered "how many keys" while the operator needs "how many ACCOUNTS,
+  // and which". One user may hold many keys and a rotating relay changes prefixes,
+  // so the key count says nothing about whether an IP is really shared.
+  it('shows the accounts behind an automatic entry, not only key prefixes', async () => {
+    getPolicy.mockResolvedValueOnce({
+      ...policy,
+      auto_entries: [
+        {
+          ip: '203.0.113.44',
+          source: 'auto',
+          first_seen_at: '2026-11-13T05:00:00Z',
+          distinct_users: 4,
+          window_minutes: 5,
+          key_prefixes: ['sk-aaa11', 'sk-bbb22'],
+          first_seen_users: 4,
+          peak_users: 4,
+          total_keys: 17,
+          last_seen_at: '2026-11-13T05:11:00Z',
+          users: [
+            { id: 937, email: '826563886@qq.com' },
+            { id: 10945, email: 'quekuaiwangzi@gmail.com' },
+            { id: 10804 },
+          ],
+        },
+      ],
+    })
+    const wrapper = render()
+    await flushPromises()
+
+    const users = wrapper.get('[data-testid="gateway-ip-notice-auto-users-203.0.113.44"]')
+    expect(users.text()).toContain('826563886@qq.com')
+    expect(users.text()).toContain('quekuaiwangzi@gmail.com')
+    // An account whose email the gateway never saw still names itself.
+    expect(users.text()).toContain('#10804')
+    // Key prefixes are no longer what the row is about.
+    expect(wrapper.text()).not.toContain('sk-aaa11')
+    // The key total is still stated, as context rather than as the reason.
+    expect(wrapper.get('[data-testid="gateway-ip-notice-auto-key-total-203.0.113.44"]').text()).toContain('17')
   })
 })

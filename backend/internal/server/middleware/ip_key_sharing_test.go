@@ -655,3 +655,50 @@ func TestIPKeySharingManualEntryIsNeverRewritten(t *testing.T) {
 	require.Len(t, policy.IPs, 1)
 	require.Empty(t, client.Keys(ctx, "*").Val())
 }
+
+// TestIPKeySharingOneUserManyKeysIsNotSharing pins the rule down: the trigger is
+// one address reaching DIFFERENT ACCOUNTS, never one account rotating its own
+// keys. A single user legitimately holding many keys, or a relay that reissues
+// them, must leave no entry and must never reach the disable path — otherwise
+// every busy customer would ban themselves.
+func TestIPKeySharingOneUserManyKeysIsNotSharing(t *testing.T) {
+	ctx := context.Background()
+	detector, settings, client, advance := sharingAcceptanceFixture(t, 3, 60)
+	ip := "207.32.218.142"
+	const soleUser = int64(4242)
+
+	for i := range 20 {
+		key := sharingAcceptanceKey(soleUser, int64(9000+i), 40)
+		_, ok := detector.Observe(ctx, ip, soleUser, key)
+		require.False(t, ok, "one account with %d keys is not sharing", i+1)
+		advance(31 * time.Second)
+	}
+
+	require.Empty(t, settings.GatewayIPNoticeSnapshot().AutoEntries,
+		"a single account must never be listed")
+	require.EqualValues(t, 20, client.SCard(ctx, ipKeySharingKeysPrefix+ip).Val(),
+		"the keys are still counted as context")
+	require.EqualValues(t, 1, client.ZCard(ctx, ipKeySharingUsersPrefix+ip).Val(),
+		"only one ACCOUNT was seen")
+
+	// The same account's keys stay uncounted as users even after the real users
+	// that would cross the threshold appear: the account set is what triggers.
+	var crossing *IPKeySharingHit
+	for i := range 3 {
+		userID := int64(5000 + i)
+		hit, ok := detector.Observe(ctx, ip, userID, sharingAcceptanceKey(userID, int64(9100+i), 40))
+		if ok {
+			// Whatever trips it must be an account count at or above the
+			// threshold, and each hit names the account that produced it.
+			require.GreaterOrEqual(t, hit.DistinctUsers, 3)
+			require.Len(t, hit.Users, 1)
+			require.Equal(t, userID, hit.Users[0].ID)
+			if crossing == nil {
+				first := hit
+				crossing = &first
+			}
+		}
+		advance(31 * time.Second)
+	}
+	require.NotNil(t, crossing, "different accounts must eventually trip the rule")
+}

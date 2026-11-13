@@ -149,7 +149,7 @@ export default {
     failedToDelete: 'Failed to delete API key',
     failedToUpdateStatus: 'Failed to update API key status',
     // Gateway risk control auto-disabled this key (several accounts on one datacenter egress)
-    riskWarning: 'This key may be compromised',
+    riskWarning: 'This key may be compromised and is paused. Rotate it to resume',
     riskRotateAction: 'Rotate key',
     riskRotateHint: 'Generate a new key value. The old key stops working immediately and this key becomes usable again.',
     riskRotateSuccess: 'Key rotated. The old key no longer works.',

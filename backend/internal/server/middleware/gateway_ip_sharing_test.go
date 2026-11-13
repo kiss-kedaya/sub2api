@@ -212,10 +212,11 @@ func TestGatewayIPSharingDisablesKeysOnDatacenterSharedEgress(t *testing.T) {
 	for id := range keysByUser {
 		require.Equal(t, service.StatusAPIKeyInactive, repo.keys[id].Status, "key %d must be disabled", id)
 	}
+	// The address is deliberately NOT listed: several customers sharing one VPN
+	// exit is normal, so only the shared credential is acted on.
 	policy := settings.GatewayIPNoticeSnapshot()
-	require.Len(t, policy.AutoEntries, 1)
-	require.Equal(t, 3, policy.AutoEntries[0].DistinctUsers)
-	require.Len(t, policy.AutoEntries[0].KeyPrefixes, 3)
+	require.Empty(t, policy.AutoEntries, "key disable must not block the address")
+	require.NotContains(t, policy.IPs, "203.0.113.77")
 }
 
 // TestGatewayIPSharingObserveOnlyLeavesKeysActive pins the product default:

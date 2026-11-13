@@ -180,7 +180,6 @@
                     t('admin.settings.gatewayIPNotice.autoStats', {
                       first: entryFirstSeenUsers(entry),
                       peak: entryPeakUsers(entry),
-                      total: entryTotalKeys(entry),
                       last: entryLastSeen(entry),
                     })
                   }}
@@ -188,8 +187,25 @@
                 <span class="text-xs text-muted">
                   {{ t('admin.settings.gatewayIPNotice.autoWindowInfo', { window: entry.window_minutes || '—' }) }}
                 </span>
-                <span v-if="entry.key_prefixes?.length" class="font-mono text-xs text-muted">
-                  {{ t('admin.settings.gatewayIPNotice.autoKeyPrefixes') }}: {{ entry.key_prefixes.join('、') }}
+                <!-- Which accounts, not how many keys: one user may hold several keys,
+                     and a rotating relay shows a different prefix every time. -->
+                <span
+                  v-if="entryUserLabels(entry).length"
+                  class="text-xs text-muted"
+                  :data-testid="`gateway-ip-notice-auto-users-${entry.ip}`"
+                >
+                  {{ t('admin.settings.gatewayIPNotice.autoUsers', { count: entryDistinctUsers(entry) }) }}:
+                  {{ entryUserLabels(entry).join('、') }}
+                </span>
+                <span v-else class="text-xs text-muted">
+                  {{ t('admin.settings.gatewayIPNotice.autoUsersUnknown') }}
+                </span>
+                <span
+                  v-if="entryTotalKeys(entry) > 0"
+                  class="text-xs text-muted"
+                  :data-testid="`gateway-ip-notice-auto-key-total-${entry.ip}`"
+                >
+                  {{ t('admin.settings.gatewayIPNotice.autoKeyTotal', { total: entryTotalKeys(entry) }) }}
                 </span>
               </li>
             </ul>
@@ -207,7 +223,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getGatewayIPNotice, updateGatewayIPNotice, type GatewayIPNoticeAutoEntry, type GatewayIPNoticeSettings } from '@/api/admin/gatewayIpNotice'
+import { getGatewayIPNotice, updateGatewayIPNotice, type GatewayIPNoticeAutoEntry, type GatewayIPNoticeAutoEntryUser, type GatewayIPNoticeSettings } from '@/api/admin/gatewayIpNotice'
 import { useAppStore } from '@/stores'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTimeToMinute } from '@/utils/format'
@@ -285,6 +301,24 @@ function entryPeakUsers(entry: GatewayIPNoticeAutoEntry): number {
 
 function entryTotalKeys(entry: GatewayIPNoticeAutoEntry): number {
   return entry.total_keys ?? entry.key_prefixes?.length ?? 0
+}
+
+// entryDistinctUsers is the headline number: how many ACCOUNTS share this IP.
+// entryTotalKeys below is context, never the entry's reason for existing.
+function entryDistinctUsers(entry: GatewayIPNoticeAutoEntry): number {
+  return entryPeakUsers(entry)
+}
+
+// entryUserLabels renders the roster as "email" (or "#id" when the gateway never
+// saw the key's user loaded), capped so one long-lived entry cannot flood the page.
+function entryUserLabels(entry: GatewayIPNoticeAutoEntry): string[] {
+  const users = entry.users ?? []
+  return users.slice(0, 8).map(inspectUserLabel)
+}
+
+function inspectUserLabel(user: GatewayIPNoticeAutoEntryUser): string {
+  const email = user.email?.trim()
+  return email || `#${user.id}`
 }
 
 function entryLastSeen(entry: GatewayIPNoticeAutoEntry): string {
