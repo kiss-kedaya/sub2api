@@ -529,6 +529,28 @@ func (s *Service) reload(ctx context.Context) {
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
 	s.worker.SetSecurityGuards(s.checkWalletActivity, s.scanWalletOutflows)
+	// A gas top-up we send to a deposit address is our own money moving, not a
+	// user deposit. Excluding our wallets here keeps the user's deposit list
+	// free of the phantom pending rows every funded sweep used to create.
+	s.worker.SetOwnWallets(func(ctx context.Context, chain string) ([]string, error) {
+		if !IsEVMChain(chain) {
+			return nil, nil
+		}
+		var own []string
+		if hot := strings.TrimSpace(s.Config().HotWalletEVM); validEVMAddress(hot) {
+			own = append(own, hot)
+		}
+		addr, err := s.HotAddresses(ctx)
+		if err != nil {
+			// The configured hot wallet is still worth excluding even when the
+			// gas payer cannot be resolved right now.
+			return own, nil
+		}
+		if gas := strings.TrimSpace(addr.EVM); validEVMAddress(gas) {
+			own = append(own, gas)
+		}
+		return own, nil
+	})
 	// A reorged credited deposit means we paid out on a block that no longer
 	// exists: the operator must reconcile it by hand.
 	s.worker.SetReorgNotifier(func(chain, txHash string) {
@@ -1577,12 +1599,36 @@ type UserDepositRecord struct {
 	RequiredConfirmations int    `json:"required_confirmations"`
 }
 
+// ownWalletAddresses returns the operator's wallet addresses lowercased for
+// comparison. A lookup failure is reported as an empty list: the deposit list
+// must still render when the wallet service is having a bad minute.
+func (s *Service) ownWalletAddresses(ctx context.Context) []string {
+	var out []string
+	if hot := strings.TrimSpace(s.Config().HotWalletEVM); validEVMAddress(hot) {
+		out = append(out, strings.ToLower(hot))
+	}
+	addr, err := s.HotAddresses(ctx)
+	if err != nil {
+		return out
+	}
+	if gas := strings.TrimSpace(addr.EVM); validEVMAddress(gas) {
+		lowered := strings.ToLower(gas)
+		if len(out) == 0 || out[0] != lowered {
+			out = append(out, lowered)
+		}
+	}
+	return out
+}
+
 // UserDepositHistory lists the caller's deposits against their addresses.
 func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit int) ([]UserDepositRecord, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	// A gas top-up we send to fund a sweep is our own money moving, so it is not
+	// a deposit the user should see — least of all as an uncredited row. Rows
+	// recorded before the scanner learned to skip them are filtered here.
+	query := `
 		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.reason, d.created_at,
 		       COALESCE(o.amount, 0), d.log_index, d.order_id, d.block_number, d.confirmations
 		  FROM deposit_transactions d
@@ -1590,8 +1636,20 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		       (a.chain = 'evm' AND d.chain <> 'solana' AND lower(a.address) = lower(d.to_address))
 		       OR (a.chain = 'solana' AND d.chain = 'solana' AND a.address = d.to_address)
 		  LEFT JOIN payment_orders o ON o.id = d.order_id AND o.user_id = a.user_id
-		 WHERE a.user_id = $1
-		 ORDER BY d.id DESC LIMIT $2`, userID, limit)
+		 WHERE a.user_id = $1`
+	args := []any{userID}
+	if own := s.ownWalletAddresses(ctx); len(own) > 0 {
+		placeholders := make([]string, 0, len(own))
+		for _, addr := range own {
+			args = append(args, addr)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+		}
+		query += fmt.Sprintf(" AND NOT (d.token = 'native' AND lower(d.from_address) IN (%s))",
+			strings.Join(placeholders, ", "))
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(" ORDER BY d.id DESC LIMIT $%d", len(args))
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("user deposit history: %w", err)
 	}
