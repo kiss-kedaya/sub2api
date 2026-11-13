@@ -106,6 +106,12 @@ type Worker struct {
 	// coverage is the per-pass record of security-scanned blocks. Pending
 	// credit is allowed only for blocks this pass proved were security-scanned.
 	coverage map[string]*chainCoverage
+	// ownWallets returns the operator's own EVM wallet addresses (hot wallet and
+	// the gas payer). Native transfers sent from one of them are our own gas
+	// top-up, not a user deposit: crediting them would hand a user BNB/ETH for
+	// money we moved ourselves, and the deposit list would show a phantom
+	// "未入账" row for every sweep we fund.
+	ownWallets func(ctx context.Context, chain string) ([]string, error)
 }
 
 // chainCoverage records, for one chain and one pass, the durable cursor seen
@@ -340,6 +346,51 @@ func collectScanFailures(err error, byChain map[string][]*scanStageError, other 
 // after the normal pending/recheck path observes the security window.
 func (w *Worker) SetSecurityGuards(before func(context.Context) error, scan func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error) {
 	w.beforePass, w.securityRange = before, scan
+}
+
+// SetOwnWallets wires the operator's own wallet addresses so a gas top-up we
+// send to a deposit address is not read back as that user's deposit. Without it
+// every funded sweep leaves a phantom pending deposit in the user's list.
+func (w *Worker) SetOwnWallets(fn func(ctx context.Context, chain string) ([]string, error)) {
+	if w != nil {
+		w.ownWallets = fn
+	}
+}
+
+// ownAddressSet resolves the operator wallet set once per scanned range. A
+// lookup failure is not fatal: the scan still reports what it found, and the
+// next pass retries. Treating it as fatal would stall the cursor on a problem
+// that has nothing to do with the blocks being read.
+func (w *Worker) ownAddressSet(ctx context.Context, chain string) map[string]struct{} {
+	if w == nil || w.ownWallets == nil {
+		return nil
+	}
+	addrs, err := w.ownWallets(ctx, chain)
+	if err != nil {
+		slog.Warn("[cryptopay] own wallet list unavailable; native transfers credited as deposits",
+			"chain", chain, "cause", rpc.SafeError(err))
+		return nil
+	}
+	if len(addrs) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(addrs))
+	for _, addr := range addrs {
+		if trimmed := strings.ToLower(strings.TrimSpace(addr)); trimmed != "" {
+			set[trimmed] = struct{}{}
+		}
+	}
+	return set
+}
+
+// isOwnTransfer reports whether a transfer is our own native movement, which is
+// the gas top-up funding a sweep rather than a user deposit.
+func isOwnTransfer(own map[string]struct{}, transfer Transfer) bool {
+	if len(own) == 0 || !transfer.Native {
+		return false
+	}
+	_, self := own[strings.ToLower(transfer.From)]
+	return self
 }
 
 // SetReorgNotifier wires the alert for reorged credited deposits.
@@ -964,9 +1015,16 @@ func (w *Worker) processScanRange(ctx context.Context, scanner *EVMScanner, pool
 		}
 		transfers = append(transfers, nativeTransfers...)
 	}
+	own := w.ownAddressSet(ctx, chain.Chain)
 	for _, transfer := range transfers {
 		// Ignore out-of-range results even if a faulty endpoint returns them.
 		if transfer.BlockNumber < from || transfer.BlockNumber > to {
+			continue
+		}
+		// A native transfer we sent ourselves is the gas top-up that funds a
+		// sweep, never a deposit. Token transfers are unaffected: their sender is
+		// a user, and a watched address cannot be both a depositor and our wallet.
+		if isOwnTransfer(own, transfer) {
 			continue
 		}
 		// Decimals come from the allowlist before either ledger path; a wrong
@@ -1142,6 +1200,19 @@ func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainCon
 		var nativeTransfers []Transfer
 		nativeTransfers, scanErr = NewEVMScanner(pool).ScanNativeRange(observeCtx, chain.Chain, from, head, recipients)
 		transfers = append(transfers, nativeTransfers...)
+	}
+	if own := w.ownAddressSet(ctx, chain.Chain); len(own) > 0 {
+		// The same exclusion the durable pass applies: a gas top-up is our money
+		// moving, and the observation window must not turn it into a pending
+		// deposit either.
+		kept := transfers[:0]
+		for _, transfer := range transfers {
+			if isOwnTransfer(own, transfer) {
+				continue
+			}
+			kept = append(kept, transfer)
+		}
+		transfers = kept
 	}
 	recorded, _ := w.handler.(recordedTransferHandler)
 	var errs []error

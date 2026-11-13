@@ -529,6 +529,28 @@ func (s *Service) reload(ctx context.Context) {
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
 	s.worker.SetSecurityGuards(s.checkWalletActivity, s.scanWalletOutflows)
+	// A gas top-up we send to a deposit address is our own money moving, not a
+	// user deposit. Excluding our wallets here keeps the user's deposit list
+	// free of the phantom pending rows every funded sweep used to create.
+	s.worker.SetOwnWallets(func(ctx context.Context, chain string) ([]string, error) {
+		if !IsEVMChain(chain) {
+			return nil, nil
+		}
+		var own []string
+		if hot := strings.TrimSpace(s.Config().HotWalletEVM); validEVMAddress(hot) {
+			own = append(own, hot)
+		}
+		addr, err := s.HotAddresses(ctx)
+		if err != nil {
+			// The configured hot wallet is still worth excluding even when the
+			// gas payer cannot be resolved right now.
+			return own, nil
+		}
+		if gas := strings.TrimSpace(addr.EVM); validEVMAddress(gas) {
+			own = append(own, gas)
+		}
+		return own, nil
+	})
 	// A reorged credited deposit means we paid out on a block that no longer
 	// exists: the operator must reconcile it by hand.
 	s.worker.SetReorgNotifier(func(chain, txHash string) {
