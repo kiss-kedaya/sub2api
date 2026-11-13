@@ -660,6 +660,7 @@
                 :description="(option as unknown as GroupOption).description"
                 :signals="(option as unknown as GroupOption).signals"
                 :show-rate-change="(option as unknown as GroupOption).showRateChange"
+                :status-class="groupStatusClasses[(option as unknown as GroupOption).value] ?? null"
                 :selected="selected"
               />
             </template>
@@ -1187,6 +1188,7 @@
               :description="option.description"
               :signals="option.signals"
               :show-rate-change="option.showRateChange"
+              :status-class="groupStatusClasses[option.value] ?? null"
               :selected="
                 selectedKeyForGroup?.group_id === option.value ||
                 (!selectedKeyForGroup?.group_id && option.value === null)
@@ -1237,6 +1239,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+	import { loadGroupStatusClasses } from '@/features/channel-monitor-v2/groupStatusDot'
 	import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
 	import PlatformIcon from '@/components/common/PlatformIcon.vue'
 	import UserPageHeader from '@/components/user/UserPageHeader.vue'
@@ -1467,6 +1470,9 @@ const ccsModelOptions = computed(() => {
 const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
+// Group health dots, keyed by group id. Loaded lazily the first time a picker
+// opens and cached for a minute, so the key page never pays for it up front.
+const groupStatusClasses = ref<Record<number, string>>({})
 const publicSettings = ref<PublicSettings | null>(null)
 const customEndpoints = ref<CustomEndpoint[]>([])
 const dropdownRef = ref<HTMLElement | null>(null)
@@ -1999,6 +2005,9 @@ const openGroupSelector = (key: ApiKey) => {
     }
     groupSelectorKeyId.value = key.id
     groupSearchQuery.value = ''
+    void loadGroupStatusClasses().then((classes) => {
+      groupStatusClasses.value = classes
+    })
   }
 }
 

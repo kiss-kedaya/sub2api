@@ -28,7 +28,7 @@
       <GroupRateSignals :signals="signals" :show-rate-change="showRateChange" :interactive="false" />
       <div class="flex shrink-0 flex-col items-end gap-1">
         <!-- Rate pill (platform color) -->
-        <span v-if="rateMultiplier !== undefined" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
+        <span v-if="rateMultiplier !== undefined" :class="['inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
           <template v-if="hasCustomRate">
             <span class="mr-1 line-through opacity-50">{{ rateMultiplier }}x</span>
             <span class="font-bold">{{ userRateMultiplier }}x</span>
@@ -36,6 +36,20 @@
           <template v-else>
             {{ rateMultiplier }}x {{ t('admin.groups.rateLabel') }}
           </template>
+          <!--
+            Health dot: the same colour as this group's newest bar in /monitor.
+            Rendered inside the pill so it tracks the badge's baseline instead of
+            floating on its own, and ringed in the pill's own surface so the two
+            never bleed into each other.
+          -->
+          <span
+            v-if="statusClass"
+            class="size-1.5 shrink-0 rounded-full ring-2 ring-white/70 dark:ring-dark-900/70"
+            :class="statusClass"
+            :title="statusTitle || undefined"
+            :aria-label="statusTitle || undefined"
+            data-testid="group-option-status-dot"
+          />
         </span>
         <span
           v-if="hasPeakRate"
@@ -89,6 +103,13 @@ interface Props {
   signals?: GroupSignalSource | null
   /** False for subscription groups, whose pill shows no per-token rate. */
   showRateChange?: boolean
+  /**
+   * Tailwind background class for the health dot, taken from this group's newest
+   * bar in /monitor. Null hides the dot entirely (monitor has no data yet).
+   */
+  statusClass?: string | null
+  /** Tooltip for the health dot, e.g. the same text the bar shows. */
+  statusTitle?: string | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -98,7 +119,9 @@ const props = withDefaults(defineProps<Props>(), {
   userRateMultiplier: null,
   peakRateEnabled: false,
   signals: null,
-  showRateChange: true
+  showRateChange: true,
+  statusClass: null,
+  statusTitle: null
 })
 
 // Whether user has a custom rate different from default
