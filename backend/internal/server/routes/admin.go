@@ -499,6 +499,13 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.PUT("/:id/grok-media-eligibility", h.Admin.Account.UpdateGrokMediaEligibility)
 		accounts.PUT("/:id/upstream-billing-probe", h.Admin.Account.SetUpstreamBillingProbeEnabled)
 		accounts.POST("/:id/upstream-billing-probe", h.Admin.Account.ProbeUpstreamBilling)
+
+		// 上游失败现场：SUB2API_DEBUG_DUMP_DIR 打开时落盘的 txt，可直接下载。
+		debugDumps := admin.Group("/debug-dumps")
+		{
+			debugDumps.GET("", h.Admin.DebugDump.List)
+			debugDumps.GET("/:name", h.Admin.DebugDump.Download)
+		}
 		accounts.GET("/:id/ollama-cloud-usage", h.Admin.Account.GetOllamaCloudUsage)
 		accounts.PUT("/:id/ollama-cloud-usage/session", h.Admin.Account.SaveOllamaCloudUsageSession)
 		accounts.DELETE("/:id/ollama-cloud-usage/session", h.Admin.Account.DeleteOllamaCloudUsageSession)

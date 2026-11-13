@@ -21,6 +21,7 @@ type AdminHandlers struct {
 	User                   *admin.UserHandler
 	Group                  *admin.GroupHandler
 	Account                *admin.AccountHandler
+	DebugDump              *admin.DebugDumpHandler
 	Announcement           *admin.AnnouncementHandler
 	DataManagement         *admin.DataManagementHandler
 	Backup                 *admin.BackupHandler

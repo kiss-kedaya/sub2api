@@ -1072,6 +1072,11 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	responseBody []byte,
 ) error {
 
+	// Opt-in forensic dump: the exact body sub2api sent, plus the upstream
+	// headers and error, in one text file. Only failures are recorded.
+	if DebugDumpEnabled() && account != nil && account.Platform == PlatformDeepseek {
+		WriteUpstreamFailureDump(c, account, requestBody, resp, responseBody)
+	}
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, responseBody)()
 	if IsGlobalIPBlacklistResponse(responseBody) {
 		MarkGlobalIPBlacklistRejection(c)
