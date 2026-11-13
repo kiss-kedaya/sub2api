@@ -292,6 +292,8 @@ export function createMockApi(now = new Date()) {
       today_new_users: data.adminUsers.filter(user => dateLabel(user.created_at, 'UTC') === todayLabel).length,
       active_users: new Set(todayRows.map(row => row.user_id)).size,
       hourly_active_users: new Set(todayRows.filter(row => Date.parse(row.created_at) > now.getTime() - 60 * 60_000).map(row => row.user_id)).size,
+      users_with_balance: data.adminUsers.filter(user => (user.balance ?? 0) > 0).length,
+      users_with_balance_total: data.adminUsers.reduce((sum, user) => sum + Math.max(user.balance ?? 0, 0), 0),
       stats_updated_at: data.now,
       stats_stale: false,
       total_api_keys: data.adminKeys.length,

@@ -23,6 +23,8 @@ export default {
       cacheToday: 'Cache (Today)',
       performance: 'Performance',
       avgResponse: 'Avg Response',
+      usersWithBalance: 'User balance',
+      usersWithBalanceUnit: 'users hold a balance',
       averageTime: 'Average Time',
       active: 'active',
       ok: 'ok',

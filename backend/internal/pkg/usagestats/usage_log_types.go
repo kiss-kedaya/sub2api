@@ -31,6 +31,9 @@ type DashboardStats struct {
 	TotalUsers    int64 `json:"total_users"`
 	TodayNewUsers int64 `json:"today_new_users"` // 今日新增用户数
 	ActiveUsers   int64 `json:"active_users"`    // 今日有请求的用户数
+	// 有余额的用户数与他们的余额合计（只统计 balance > 0 的账号）。
+	UsersWithBalance      int64   `json:"users_with_balance"`
+	UsersWithBalanceTotal float64 `json:"users_with_balance_total"`
 	// 小时活跃用户数（UTC 当前小时）
 	HourlyActiveUsers int64 `json:"hourly_active_users"`
 

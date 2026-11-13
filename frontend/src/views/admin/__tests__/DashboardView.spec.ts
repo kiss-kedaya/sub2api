@@ -64,6 +64,8 @@ const createDashboardStats = (): DashboardStats => ({
   today_new_users: 0,
   active_users: 0,
   hourly_active_users: 0,
+  users_with_balance: 0,
+  users_with_balance_total: 0,
   stats_updated_at: '',
   stats_stale: false,
   total_api_keys: 0,
@@ -163,7 +165,8 @@ describe('admin DashboardView', () => {
         total_users: 34, today_new_users: 4, active_users: 26,
         today_tokens: 564180, today_actual_cost: 2.35, today_account_cost: 2.25, today_cost: 2.4,
         total_tokens: 2450000, total_actual_cost: 10.02, total_account_cost: 9.58, total_cost: 10.5,
-        rpm: 7, tpm: 2620, average_duration_ms: 1340
+        rpm: 7, tpm: 2620, average_duration_ms: 1340,
+        users_with_balance: 128, users_with_balance_total: 4321.5
       },
       trend: [],
       models: []
@@ -185,9 +188,10 @@ describe('admin DashboardView', () => {
     const text = wrapper.text()
     for (const value of [
       '26', '23 common.active', '24', '19 common.active', '2 common.error',
-      '49', '1,233', '34', '+4', '26 admin.dashboard.activeUsers',
+      '49', '1,233', '34', '+4',
       '564.18K', '$2.35', '$2.25', '$2.40', '2.45M', '$10.02', '$9.58', '$10.50',
-      '7', 'RPM', '2.62K', 'TPM', '1.34s'
+      // 余额卡：总余额在上，有余额的用户数在下。
+      '7', 'RPM', '2.62K', 'TPM', '4.32K', '128 admin.dashboard.usersWithBalanceUnit'
     ]) expect(text).toContain(value)
     const links = wrapper.findAllComponents({ name: 'RouterLink' }).map((link) => link.props('to'))
     expect(links).toContain('/admin/groups')
