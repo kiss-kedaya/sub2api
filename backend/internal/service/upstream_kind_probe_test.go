@@ -122,7 +122,9 @@ func TestUpstreamKindProbeRecognisesSub2APIWithoutBillingEndpoint(t *testing.T) 
 	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(72, nil), upstream)
 
 	require.Equal(t, UpstreamKindSub2API, snapshot.UpstreamKind)
-	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Status, "there is still no rate to read")
+	// No rate endpoint, but the balance endpoint answered: the upstream does
+	// support balance queries, so the snapshot must not report "unsupported".
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
 	// A readable balance keeps the normal interval, not the stretched one.
 	requireNormalProbeInterval(t, snapshot)
@@ -151,7 +153,10 @@ func TestUpstreamKindProbeRecognisesNewAPI(t *testing.T) {
 	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(73, nil), upstream)
 
 	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
-	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Status, "new-api serves no rate this probe reads")
+	// /v1/sub2api/billing answers 404 on every new-api site, so Status cannot be
+	// left "unsupported" once /api/usage/token/ has been parsed: the account page
+	// gates the balance on it and used to hide a balance it had just read.
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
 	require.Nil(t, snapshot.SyncedRateMultiplier)
 	require.NotNil(t, snapshot.Balance)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)

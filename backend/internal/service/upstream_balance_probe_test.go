@@ -266,7 +266,9 @@ func TestUpstreamBalanceProbeReadsBalanceWhenRateIsUnsupported(t *testing.T) {
 
 	snapshot := runUpstreamBalanceProbe(t, newUpstreamBalanceProbeTestAccount(61, nil), upstream)
 
-	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Status)
+	// The rate endpoint 404s but the balance endpoint answered, so the account is
+	// not "unsupported": a readable balance is what the account page renders.
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
 	require.NotNil(t, snapshot.Balance)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
 	require.Equal(t, 42.0, snapshot.Balance.Data["remaining"])
