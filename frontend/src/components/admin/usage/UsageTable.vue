@@ -261,7 +261,7 @@
                 class="font-medium tabular-nums text-violet-600 dark:text-violet-400"
                 :title="t('usage.outputRateHint')"
               >
-                {{ formatOutputRate(row.output_tokens, row.first_token_ms, displayDuration(row)) }}
+                {{ formatOutputRate(row.output_tokens, displayDuration(row)) }}
               </span>
             </div>
           </div>
@@ -761,31 +761,31 @@ const formatDuration = (ms: number | null | undefined): string => {
   return `${Math.floor(totalSec / 3600)}h ${Math.floor((totalSec % 3600) / 60)}m`
 }
 
-/** Average generated-token throughput after the first token, in output tokens/sec. */
+/**
+ * Average output throughput for the whole request, in output tokens/sec.
+ *
+ * The column tooltip promises an average, and `first_token_ms` is not a
+ * consistent signal across upstreams (a Responses upstream can report a
+ * semantic TTFT that is not the first byte), so the post-first-token window is
+ * not a trustworthy denominator. Dividing by the full duration matches both the
+ * tooltip and the ops dashboard. Requests too small or too short to say anything
+ * about throughput show nothing instead of a misleading number.
+ */
 const MIN_OUTPUT_TOKENS_FOR_RATE = 20
-const MIN_GENERATION_WINDOW_MS_FOR_RATE = 500
+const MIN_DURATION_MS_FOR_RATE = 500
 
 const formatOutputRate = (
   outputTokens: number | null | undefined,
-  firstTokenMs: number | null | undefined,
   durationMs: number | null | undefined,
 ): string => {
-  if (outputTokens == null || firstTokenMs == null || durationMs == null) return '-'
+  if (outputTokens == null || durationMs == null) return '-'
   const tokens = Number(outputTokens)
-  const firstToken = Number(firstTokenMs)
   const duration = Number(durationMs)
-  const generationDuration = duration - firstToken
-  const durationsRoundToSameDisplay = formatDuration(firstTokenMs) === formatDuration(durationMs)
   if (
     !Number.isFinite(tokens) || tokens < MIN_OUTPUT_TOKENS_FOR_RATE
-    || !Number.isFinite(firstToken) || firstToken < 0
-    || !Number.isFinite(duration) || duration <= 0
-    || generationDuration < MIN_GENERATION_WINDOW_MS_FOR_RATE
-    || durationsRoundToSameDisplay
+    || !Number.isFinite(duration) || duration < MIN_DURATION_MS_FOR_RATE
   ) return '-'
-  const outputRate = tokens * 1000 / generationDuration
-  if (outputRate > tokens) return '-'
-  return `${outputRate.toFixed(1)} t/s`
+  return `${(tokens * 1000 / duration).toFixed(1)} t/s`
 }
 
 const clampTooltipX = (rect: DOMRect, width: number): number => {

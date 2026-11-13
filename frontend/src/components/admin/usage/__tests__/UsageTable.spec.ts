@@ -341,10 +341,10 @@ describe('admin UsageTable tooltip', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('57.5 t/s')
+    expect(wrapper.text()).toContain('52.1 t/s')
   })
 
-  it('hides output rate when the generation window is unavailable', () => {
+  it('shows the average even when the first token time is missing', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{
@@ -366,7 +366,7 @@ describe('admin UsageTable tooltip', () => {
       },
     })
 
-    expect(wrapper.text()).not.toContain('t/s')
+    expect(wrapper.text()).toContain('52.1 t/s')
   })
 
   it('hides output rate when first-token and total durations round to the same value', () => {
@@ -421,14 +421,14 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).not.toContain('t/s')
   })
 
-  it('hides output rate for a very short generation window', () => {
+  it('hides output rate for a very short request', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{
           request_id: 'req-throughput-short-window',
           output_tokens: 100,
-          first_token_ms: 6900,
-          duration_ms: 7390,
+          first_token_ms: 60,
+          duration_ms: 400,
           input_tokens: 10,
         }],
         loading: false,
@@ -447,14 +447,13 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).not.toContain('t/s')
   })
 
-  it('hides output rate when it exceeds the output token count', () => {
+  it('hides output rate when the total duration is unknown', () => {
     const wrapper = mount(UsageTable, {
       props: {
         data: [{
           request_id: 'req-throughput-exceeds-output',
           output_tokens: 100,
           first_token_ms: 200,
-          duration_ms: 1000,
           input_tokens: 10,
         }],
         loading: false,
