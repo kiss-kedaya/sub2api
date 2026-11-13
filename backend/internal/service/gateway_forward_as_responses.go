@@ -339,7 +339,10 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 		dst.CacheReadInputTokens = cacheReadTokens
 		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
 	} else {
-		if src.HasInputTokens() {
+		// An explicit input_tokens=0 is only authoritative when the same event
+		// restates the cache split; a bare placeholder zero must keep the
+		// message_start input instead of dropping the uncached-input bucket.
+		if src.HasInputTokens() && (src.InputTokens != 0 || src.HasPositiveCacheTokens()) {
 			dst.InputTokens = src.InputTokens
 		}
 		if src.HasCacheReadInputTokens() {

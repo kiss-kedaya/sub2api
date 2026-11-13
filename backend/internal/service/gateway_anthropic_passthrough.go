@@ -884,8 +884,15 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	case "message_delta":
 		deltaUsage := parsed.Get("usage")
 		if deltaUsage.Exists() {
+			// An explicit input_tokens=0 is only authoritative when the same
+			// event restates the cache split (Kiro-style final usage, upstream
+			// issue #8407). A bare placeholder zero - what re-serializing
+			// relays emit - must keep the message_start input, otherwise the
+			// whole uncached-input bucket disappears from billing.
 			if v := deltaUsage.Get("input_tokens"); v.Exists() && v.Type != gjson.Null {
-				usage.InputTokens = int(v.Int())
+				if v.Int() != 0 || anthropicDeltaCarriesPositiveCacheUsage(deltaUsage) {
+					usage.InputTokens = int(v.Int())
+				}
 			}
 			if v := deltaUsage.Get("output_tokens"); v.Exists() && v.Type != gjson.Null {
 				usage.OutputTokens = int(v.Int())
@@ -943,6 +950,30 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 		usageNode = parsed.Get("message.usage")
 	}
 	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
+}
+
+// anthropicDeltaCarriesPositiveCacheUsage reports whether a message_delta usage
+// object restates the cached portion of the prompt in the same event. Providers
+// that report the final usage split there (Kiro-style, and OpenAI-style aliases
+// from CN providers) are the only ones whose explicit input_tokens=0 describes
+// a real final value; a relay that merely re-serializes usage with a zero-value
+// input_tokens but no cache counters is not authoritative (see the
+// message_delta branch in parseSSEUsagePassthrough).
+func anthropicDeltaCarriesPositiveCacheUsage(deltaUsage gjson.Result) bool {
+	for _, path := range []string{
+		"cache_read_input_tokens",
+		"cache_creation_input_tokens",
+		"cache_creation.ephemeral_5m_input_tokens",
+		"cache_creation.ephemeral_1h_input_tokens",
+		"cached_tokens",
+		"prompt_tokens_details.cached_tokens",
+		"prompt_cache_hit_tokens",
+	} {
+		if v := deltaUsage.Get(path); v.Exists() && v.Type != gjson.Null && v.Int() > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeAnthropicCompatiblePromptUsage converts provider-native OpenAI-style
