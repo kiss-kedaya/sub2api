@@ -319,3 +319,31 @@ func setGroupUsageRollupTestTimezone(t *testing.T) {
 	t.Helper()
 	useGroupUsageRepositoryTestTimezone(t, "Asia/Shanghai")
 }
+
+// A retention cleanup deletes rows older than the retained window and then
+// reports the oldest deleted row as the invalidation point. That row is already
+// outside the rollup, so rewinding the watermark to it ordered a rebuild of
+// every retained day — fourteen days of usage_logs — on a loop. The rewind must
+// leave the watermark alone for a point at or before the retained start, and
+// still move it back for an edit inside the window.
+func TestInvalidateGroupUsageRollupsAtKeepsWatermarkForTrimmedRows(t *testing.T) {
+	timezone := service.GroupUsageTimezoneName()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`SET closed_before = CASE`).
+		WithArgs(sqlmock.AnyArg(), timezone).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	// The oldest deleted row of a retention trim: the retained start itself.
+	require.NoError(t, invalidateGroupUsageRollupsAt(
+		context.Background(), tx, time.Date(2026, time.October, 29, 8, 57, 28, 0, time.UTC)))
+	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}

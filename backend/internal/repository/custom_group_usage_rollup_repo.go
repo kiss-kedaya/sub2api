@@ -316,12 +316,23 @@ func lockGroupUsageRollupState(ctx context.Context, tx *sql.Tx) error {
 
 func invalidateGroupUsageRollupsAt(ctx context.Context, tx *sql.Tx, affectedAt time.Time) error {
 	timezoneName := service.GroupUsageTimezoneName()
+	// The rewind is clamped to the retained window: a day that is already older
+	// than `retained_from` is not in the rollup anymore (SyncGroupUsageRollups
+	// drops it), so rewinding to it would order a rebuild of every retained day
+	// — the whole table — for a change that cannot affect any of them.
+	//
+	// Retention cleanup deletes exactly those rows, and it ran on every cycle, so
+	// the unclamped LEAST() pinned closed_before at the retention boundary and
+	// re-aggregated fourteen days of usage on a loop. The clamp makes the rewind
+	// a no-op for that case while a real edit inside the window still moves the
+	// watermark back to the day it touched.
 	_, err := tx.ExecContext(ctx, `
 		UPDATE usage_group_rollup_state
-		SET closed_before = LEAST(
-			closed_before,
-			($1::timestamptz AT TIME ZONE $2::text)::date
-		),
+		SET closed_before = CASE
+			WHEN ($1::timestamptz AT TIME ZONE $2::text)::date <= retained_from::date
+			THEN closed_before
+			ELSE LEAST(closed_before, ($1::timestamptz AT TIME ZONE $2::text)::date)
+		END,
 			updated_at = NOW()
 		WHERE id = 1
 	`, affectedAt.UTC(), timezoneName)
