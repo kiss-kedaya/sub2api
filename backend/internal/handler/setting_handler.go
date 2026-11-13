@@ -44,6 +44,11 @@ func (h *SettingHandler) SetNotificationEmailService(notificationEmailService *s
 // GetPublicSettings 获取公开设置
 // GET /api/v1/settings/public
 func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
+	// The payload is public, read-only, and large (it has crossed 100 KB). A login
+	// page that remounts on every redirect used to refetch it several times a
+	// second per tab and amplify into a rate-limit storm, so let browsers and any
+	// CDN in front of us reuse it for a short window instead.
+	c.Header("Cache-Control", "public, max-age=30")
 	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
