@@ -604,6 +604,12 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
 	body := s.readUpstreamErrorBody(resp)
+	// Opt-in forensic dump. This is the handler the Responses gateway uses, so
+	// the passthrough hook alone missed every /v1/responses failure — the exact
+	// requests being diagnosed never produced a file.
+	if DebugDumpEnabled() {
+		WriteUpstreamFailureDump(c, account, requestBody, resp, body)
+	}
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()
 	body = s.redactAgentIdentitySensitiveBody(ctx, account, body)
 	if IsGlobalIPBlacklistResponse(body) && (account == nil || account.Platform != PlatformGrok || resp.StatusCode == http.StatusForbidden) {
