@@ -65,7 +65,7 @@
               required
               autofocus
               autocomplete="email"
-              :disabled="registrationActionDisabled"
+              :disabled="registrationFieldsDisabled"
               class="input"
               :class="{ 'input-error': errors.email }"
               :placeholder="t('auth.emailPlaceholder')"
@@ -85,14 +85,14 @@
               :type="showPassword ? 'text' : 'password'"
               required
               autocomplete="new-password"
-              :disabled="registrationActionDisabled"
+              :disabled="registrationFieldsDisabled"
               class="input pr-10"
               :class="{ 'input-error': errors.password }"
               :placeholder="t('auth.createPasswordPlaceholder')"
             />
             <button
               type="button"
-              :disabled="registrationActionDisabled"
+              :disabled="registrationFieldsDisabled"
               @click="showPassword = !showPassword"
               class="absolute inset-y-0 right-0 flex items-center pr-3 text-dimmed transition-colors hover:text-default"
             >
@@ -119,7 +119,7 @@
               id="invitation_code"
               v-model="formData.invitation_code"
               type="text"
-              :disabled="registrationActionDisabled"
+              :disabled="registrationFieldsDisabled"
               class="input pr-10"
               :class="{
                 'border-green-500 focus:border-green-500 focus:ring-green-500': invitationValidation.valid,
@@ -164,7 +164,7 @@
               id="affiliate_code"
               v-model="formData.aff_code"
               type="text"
-              :disabled="registrationActionDisabled"
+              :disabled="registrationFieldsDisabled"
               class="input"
               :placeholder="t('auth.invitationCodePlaceholder')"
             />
@@ -182,7 +182,7 @@
               id="promo_code"
               v-model="formData.promo_code"
               type="text"
-              :disabled="registrationActionDisabled"
+              :disabled="registrationFieldsDisabled"
               class="input pr-10"
               :class="{
                 'border-green-500 focus:border-green-500 focus:ring-green-500': promoValidation.valid,
@@ -619,8 +619,15 @@ const agreementGateActive = computed(
   () => loginAgreementEnabled.value && !agreementAccepted.value
 )
 
+// The agreement gate belongs to the registration action (final submit, OAuth
+// start), not to typing: gating the fields would leave the account step
+// unfillable whenever the consent checkbox only shows on a later step.
+const registrationFieldsDisabled = computed(
+  () => isLoading.value || !settingsLoaded.value
+)
+
 const registrationActionDisabled = computed(
-  () => isLoading.value || !settingsLoaded.value || agreementGateActive.value
+  () => registrationFieldsDisabled.value || agreementGateActive.value
 )
 
 watch(validationToastMessage, (value, previousValue) => {
