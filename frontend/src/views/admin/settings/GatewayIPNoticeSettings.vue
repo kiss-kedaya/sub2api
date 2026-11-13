@@ -156,18 +156,65 @@
               <li
                 v-for="entry in form.auto_entries"
                 :key="entry.ip"
-                class="grid gap-1 rounded-lg border border-default px-3 py-2 text-sm"
+                class="grid gap-2 rounded-lg border border-default bg-elevated/40 px-3 py-2.5"
                 :data-testid="`gateway-ip-notice-auto-entry-${entry.ip}`"
               >
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="font-mono text-highlighted">{{ entry.ip }}</span>
-                  <span class="rounded-md border border-default px-1.5 py-0.5 text-xs text-muted">
-                    {{ t('admin.settings.gatewayIPNotice.autoBadge') }}
-                  </span>
+                <div class="flex items-start justify-between gap-3">
+                  <div class="grid min-w-0 gap-1.5">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="font-mono text-sm text-highlighted">{{ entry.ip }}</span>
+                      <UBadge color="neutral" variant="subtle" size="sm">
+                        {{ t('admin.settings.gatewayIPNotice.autoBadge') }}
+                      </UBadge>
+                      <UBadge
+                        v-if="entryPeakUsers(entry) > 0"
+                        color="warning"
+                        variant="subtle"
+                        size="sm"
+                        icon="i-lucide-users"
+                      >
+                        {{ t('admin.settings.gatewayIPNotice.autoPeakBadge', { peak: entryPeakUsers(entry) }) }}
+                      </UBadge>
+                    </div>
+                    <!-- One line of metadata, separated by dots: a stack of identical
+                         muted lines read as an unstyled block. -->
+                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                      <span>{{ t('admin.settings.gatewayIPNotice.autoFirst', { first: entryFirstSeenUsers(entry) }) }}</span>
+                      <span aria-hidden="true" class="text-dimmed">·</span>
+                      <span>{{ entryLastSeen(entry) }}</span>
+                      <span aria-hidden="true" class="text-dimmed">·</span>
+                      <span>{{ t('admin.settings.gatewayIPNotice.autoWindowInfo', { window: entry.window_minutes || '—' }) }}</span>
+                    </div>
+                    <!-- Which accounts, not how many keys: one user may hold several
+                         keys, and a rotating relay shows a different prefix every time. -->
+                    <div
+                      v-if="entryUserLabels(entry).length"
+                      class="flex flex-wrap items-center gap-1.5"
+                      :data-testid="`gateway-ip-notice-auto-users-${entry.ip}`"
+                    >
+                      <UBadge
+                        v-for="label in entryUserLabels(entry)"
+                        :key="label"
+                        color="neutral"
+                        variant="outline"
+                        size="sm"
+                        class="max-w-[15rem] font-normal"
+                      >
+                        <span class="truncate">{{ label }}</span>
+                      </UBadge>
+                      <span v-if="entryHiddenUserCount(entry) > 0" class="text-xs text-dimmed">
+                        {{ t('admin.settings.gatewayIPNotice.autoUsersMore', { count: entryHiddenUserCount(entry) }) }}
+                      </span>
+                    </div>
+                    <p v-else class="text-xs text-dimmed">
+                      {{ t('admin.settings.gatewayIPNotice.autoUsersUnknown') }}
+                    </p>
+                  </div>
                   <UButton
                     size="xs"
                     color="error"
                     variant="ghost"
+                    icon="i-lucide-trash-2"
                     :disabled="saving || loadFailed"
                     :data-testid="`gateway-ip-notice-remove-auto-${entry.ip}`"
                     @click="removeAutoEntry(entry.ip)"
@@ -175,38 +222,13 @@
                     {{ t('admin.settings.gatewayIPNotice.autoRemove') }}
                   </UButton>
                 </div>
-                <span class="text-xs text-muted">
-                  {{
-                    t('admin.settings.gatewayIPNotice.autoStats', {
-                      first: entryFirstSeenUsers(entry),
-                      peak: entryPeakUsers(entry),
-                      last: entryLastSeen(entry),
-                    })
-                  }}
-                </span>
-                <span class="text-xs text-muted">
-                  {{ t('admin.settings.gatewayIPNotice.autoWindowInfo', { window: entry.window_minutes || '—' }) }}
-                </span>
-                <!-- Which accounts, not how many keys: one user may hold several keys,
-                     and a rotating relay shows a different prefix every time. -->
-                <span
-                  v-if="entryUserLabels(entry).length"
-                  class="text-xs text-muted"
-                  :data-testid="`gateway-ip-notice-auto-users-${entry.ip}`"
-                >
-                  {{ t('admin.settings.gatewayIPNotice.autoUsers', { count: entryDistinctUsers(entry) }) }}:
-                  {{ entryUserLabels(entry).join('、') }}
-                </span>
-                <span v-else class="text-xs text-muted">
-                  {{ t('admin.settings.gatewayIPNotice.autoUsersUnknown') }}
-                </span>
-                <span
+                <p
                   v-if="entryTotalKeys(entry) > 0"
-                  class="text-xs text-muted"
+                  class="text-xs text-dimmed"
                   :data-testid="`gateway-ip-notice-auto-key-total-${entry.ip}`"
                 >
                   {{ t('admin.settings.gatewayIPNotice.autoKeyTotal', { total: entryTotalKeys(entry) }) }}
-                </span>
+                </p>
               </li>
             </ul>
             <p v-if="form.auto_entries.length" class="text-xs text-muted">
@@ -303,22 +325,24 @@ function entryTotalKeys(entry: GatewayIPNoticeAutoEntry): number {
   return entry.total_keys ?? entry.key_prefixes?.length ?? 0
 }
 
-// entryDistinctUsers is the headline number: how many ACCOUNTS share this IP.
-// entryTotalKeys below is context, never the entry's reason for existing.
-function entryDistinctUsers(entry: GatewayIPNoticeAutoEntry): number {
-  return entryPeakUsers(entry)
-}
-
 // entryUserLabels renders the roster as "email" (or "#id" when the gateway never
 // saw the key's user loaded), capped so one long-lived entry cannot flood the page.
 function entryUserLabels(entry: GatewayIPNoticeAutoEntry): string[] {
   const users = entry.users ?? []
-  return users.slice(0, 8).map(inspectUserLabel)
+  return users.slice(0, 6).map(inspectUserLabel)
 }
 
 function inspectUserLabel(user: GatewayIPNoticeAutoEntryUser): string {
   const email = user.email?.trim()
   return email || `#${user.id}`
+}
+
+// entryHiddenUserCount reports how many accounts the chip row had to drop, so a
+// truncated roster says so instead of silently looking complete.
+function entryHiddenUserCount(entry: GatewayIPNoticeAutoEntry): number {
+  const total = entry.users?.length ?? 0
+  const shown = 6
+  return total > shown ? total - shown : 0
 }
 
 function entryLastSeen(entry: GatewayIPNoticeAutoEntry): string {
