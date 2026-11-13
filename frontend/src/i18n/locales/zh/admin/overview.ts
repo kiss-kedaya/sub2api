@@ -27,6 +27,8 @@ export default {
       cacheToday: '今日缓存',
       performance: '性能指标',
       avgResponse: '平均响应',
+      usersWithBalance: '用户余额',
+      usersWithBalanceUnit: '个用户有余额',
       averageTime: '平均时间',
       active: '活跃',
       ok: '正常',

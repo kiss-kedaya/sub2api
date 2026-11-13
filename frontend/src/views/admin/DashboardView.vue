@@ -67,8 +67,9 @@
             <template #value>{{ formatTokens(stats.rpm) }} <span class="text-sm font-normal text-muted">RPM</span></template>
             <template #sub><span class="text-highlighted">{{ formatTokens(stats.tpm) }}</span> TPM</template>
           </DashboardStat>
-          <DashboardStat icon="i-lucide-clock" :title="t('admin.dashboard.avgResponse')" :value="formatDuration(stats.average_duration_ms)" :class="corner(7)">
-            <template #sub>{{ stats.active_users }} {{ t('admin.dashboard.activeUsers') }}</template>
+          <!-- 余额卡：上面是有余额用户的总余额，下面是这些用户的数量。 -->
+          <DashboardStat icon="i-lucide-wallet" :title="t('admin.dashboard.usersWithBalance')" :value="formatCost(stats.users_with_balance_total)" :class="corner(7)">
+            <template #sub>{{ stats.users_with_balance }} {{ t('admin.dashboard.usersWithBalanceUnit') }}</template>
           </DashboardStat>
         </UPageGrid>
 
@@ -407,13 +408,6 @@ const formatCost = (value: number | null | undefined): string => {
     return safeValue.toFixed(3)
   }
   return safeValue.toFixed(4)
-}
-
-const formatDuration = (ms: number): string => {
-  if (ms >= 1000) {
-    return `${(ms / 1000).toFixed(2)}s`
-  }
-  return `${Math.round(ms)}ms`
 }
 
 const goToUserUsage = (item: UserSpendingRankingItem) => {

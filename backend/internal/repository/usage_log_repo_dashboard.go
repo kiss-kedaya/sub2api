@@ -136,10 +136,15 @@ func (r *usageLogRepository) GetDashboardStatsWithRange(ctx context.Context, sta
 }
 
 func (r *usageLogRepository) fillDashboardEntityStats(ctx context.Context, stats *DashboardStats, todayUTC, now time.Time) error {
+	// users_with_balance counts the accounts that still hold money and sums what
+	// they hold. Both come from the same scan so the card can never show a total
+	// that belongs to a different set of users than its own count.
 	userStatsQuery := `
 		SELECT
 			COUNT(*) as total_users,
-			COUNT(CASE WHEN created_at >= $1 THEN 1 END) as today_new_users
+			COUNT(CASE WHEN created_at >= $1 THEN 1 END) as today_new_users,
+			COUNT(CASE WHEN balance > 0 THEN 1 END) as users_with_balance,
+			COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) as users_with_balance_total
 		FROM users
 		WHERE deleted_at IS NULL
 	`
@@ -150,6 +155,8 @@ func (r *usageLogRepository) fillDashboardEntityStats(ctx context.Context, stats
 		[]any{todayUTC},
 		&stats.TotalUsers,
 		&stats.TodayNewUsers,
+		&stats.UsersWithBalance,
+		&stats.UsersWithBalanceTotal,
 	); err != nil {
 		return err
 	}
