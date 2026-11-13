@@ -37,6 +37,10 @@ export const useAppStore = defineStore('app', () => {
   // Bumped whenever the cache is patched or cleared locally. A settings request
   // that started before the patch must not overwrite the newer local state.
   let publicSettingsVersion = 0
+  // Epoch ms before which a non-forced fetch is skipped after a failure. Without
+  // it, a rate-limited response is retried by every remount of the login page.
+  const PUBLIC_SETTINGS_RETRY_COOLDOWN_MS = 30_000
+  let publicSettingsRetryAfter = 0
 
   // Version cache state
   const versionLoaded = ref<boolean>(false)
@@ -329,6 +333,13 @@ export const useAppStore = defineStore('app', () => {
       return publicSettingsRequest
     }
 
+    // A failed load must not be retried on the next mount: the login page remounts on
+    // every redirect, and retrying a rate-limited endpoint from there turned one 429
+    // into thousands of requests a second. Back off for 30s unless a caller forces it.
+    if (!force && Date.now() < publicSettingsRetryAfter) {
+      return Promise.resolve(cachedPublicSettings.value ?? null)
+    }
+
     // Check for injected config from server (eliminates flash)
     if (
       !publicSettingsLoaded.value &&
@@ -425,10 +436,12 @@ export const useAppStore = defineStore('app', () => {
           return cachedPublicSettings.value ?? data
         }
         applySettings(data)
+        publicSettingsRetryAfter = 0
         return data
       })
       .catch((error) => {
         console.error('Failed to fetch public settings:', error)
+        publicSettingsRetryAfter = Date.now() + PUBLIC_SETTINGS_RETRY_COOLDOWN_MS
         return null
       })
       .finally(() => {
