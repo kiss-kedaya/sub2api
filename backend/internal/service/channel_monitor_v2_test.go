@@ -337,7 +337,7 @@ func TestChannelMonitorV2HealthLeavesMissingTTFTUnknown(t *testing.T) {
 	health := ChannelMonitorV2HealthFor(ChannelMonitorV2Metric{
 		RequestCount:         200,
 		ErrorRate:            0,
-		CacheRate:            0,
+		CacheRate:            0.9,
 		CacheRateDenominator: 200,
 		TTFT:                 ChannelMonitorV2Latency{SampleCount: 0},
 	})
@@ -587,4 +587,25 @@ func TestChannelMonitorV2HealthTTFTAtTargetIsHealthy(t *testing.T) {
 	require.Equal(t, "healthy", h.TTFT)
 	require.NotNil(t, h.TTFTScore)
 	require.InDelta(t, 100.0, *h.TTFTScore, 0.01)
+}
+
+func TestChannelMonitorV2HealthCacheBelowThirtyPercentIsCritical(t *testing.T) {
+	health := ChannelMonitorV2HealthForWithThresholds(ChannelMonitorV2Metric{
+		RequestCount:         100,
+		ErrorRate:            0,
+		CacheRate:            0.29,
+		CacheRateDenominator: 100,
+	}, ChannelMonitorV2HealthThresholds{WarningCacheRate: 0.85, CriticalCacheRate: 0.6})
+	require.Equal(t, "critical", health.Overall)
+	require.Equal(t, "critical", health.Cache)
+}
+
+func TestChannelMonitorV2HealthCacheThirtyPercentStaysScored(t *testing.T) {
+	health := ChannelMonitorV2HealthForWithThresholds(ChannelMonitorV2Metric{
+		RequestCount:         100,
+		ErrorRate:            0,
+		CacheRate:            0.30,
+		CacheRateDenominator: 100,
+	}, ChannelMonitorV2HealthThresholds{WarningCacheRate: 0.85, CriticalCacheRate: 0.6})
+	require.NotEqual(t, "critical", health.Overall)
 }
