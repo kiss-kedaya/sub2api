@@ -83,3 +83,33 @@ func TestTruncateDumpBody(t *testing.T) {
 	require.LessOrEqual(t, len(out), debugDumpMaxBody+80)
 	require.Contains(t, out, fmt.Sprintf("%d bytes total", len(big)))
 }
+
+func TestCountReasoningItemsSeparatesItemsFromText(t *testing.T) {
+	body := []byte(`{"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
+		{"type":"reasoning","id":"r1","summary":[{"type":"summary_text","text":"s"}],"content":[{"type":"reasoning_text","text":"real"}]},
+		{"type":"reasoning","id":"r2","summary":[],"content":[]},
+		{"type":"reasoning","id":"r3","content":[{"type":"reasoning_text","text":"  "}]}
+	]}`)
+	items, withText := countReasoningItems(body)
+	require.Equal(t, 3, items)
+	require.Equal(t, 1, withText, "only the item with non-empty reasoning_text replays")
+}
+
+func TestRecordDebugStepAppearsInTheDump(t *testing.T) {
+	t.Setenv(DebugDumpDirEnv, t.TempDir())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	RecordDebugStep(c, "normalize.out", "bytes=10 reasoning_items=0")
+
+	resp := &http.Response{StatusCode: http.StatusBadRequest, Header: http.Header{}, Request: c.Request}
+	WriteUpstreamFailureDump(c, &Account{ID: 4242, Platform: PlatformDeepseek}, []byte(`{}`), resp, []byte(`{}`))
+
+	files, err := ListDebugDumps()
+	require.NoError(t, err)
+	body, err := ReadDebugDump(files[0])
+	require.NoError(t, err)
+	require.Contains(t, string(body), "## request path")
+	require.Contains(t, string(body), "normalize.out")
+	require.Contains(t, string(body), "reasoning_items=0")
+}

@@ -708,11 +708,22 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
 
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
+	if DebugDumpEnabled() {
+		items, withText := countReasoningItems(body)
+		RecordDebugStep(c, "target", strings.TrimSpace(targetURL))
+		RecordDebugStep(c, "normalize.in", fmt.Sprintf("bytes=%d reasoning_items=%d reasoning_text=%d native=%t",
+			len(body), items, withText, account != nil && account.UsesNativeCNResponses()))
+	}
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
+	if DebugDumpEnabled() {
+		items, withText := countReasoningItems(body)
+		RecordDebugStep(c, "normalize.out", fmt.Sprintf("bytes=%d reasoning_items=%d reasoning_text=%d", len(body), items, withText))
+	}
 	// Keep the deprecated injection out of native hosted-search rounds.
 	if _, enabled := deepSeekSearchGroupEnabled(c, account); enabled && deepSeekToolInjectionEnabled(c) && s.deepSeekResponseCompatEnabled() && ctx.Value(deepSeekHostedSearchSkipContextKey{}) != true {
 		if injected, changed := injectDeepSeekSearchTool(body); changed {
 			body = injected
+			RecordDebugStep(c, "inject.web_search", "tool injected into tools[]")
 		}
 	}
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -70,6 +71,13 @@ func WriteUpstreamFailureDump(
 		writeDumpHeaders(&b, resp.Request)
 		fmt.Fprintf(&b, "\n## upstream response headers\n")
 		writeDumpHeaderMap(&b, resp.Header)
+	}
+
+	if steps := debugStepsOf(c); len(steps) > 0 {
+		fmt.Fprintf(&b, "\n## request path (what sub2api did, in order)\n")
+		for _, step := range steps {
+			fmt.Fprintf(&b, "%s  %-22s %s\n", step.At.Format("15:04:05.000"), step.Name, step.Detail)
+		}
 	}
 
 	fmt.Fprintf(&b, "\n## outbound body (what sub2api sent, %d bytes)\n", len(outboundBody))
@@ -196,4 +204,76 @@ func ReadDebugDump(name string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid dump name")
 	}
 	return os.ReadFile(filepath.Join(dir, name))
+}
+
+// --- request path breadcrumbs -------------------------------------------------
+
+const debugStepsCtxKey = "__sub2api_debug_steps"
+
+type debugStep struct {
+	At     time.Time
+	Name   string
+	Detail string
+}
+
+// RecordDebugStep appends one breadcrumb describing what the gateway did to the
+// request. It is a no-op unless dumps are enabled, so the hot path pays one
+// string comparison when debugging is off.
+func RecordDebugStep(c *gin.Context, name, detail string) {
+	if c == nil || !DebugDumpEnabled() {
+		return
+	}
+	steps, _ := c.Get(debugStepsCtxKey)
+	list, _ := steps.([]debugStep)
+	list = append(list, debugStep{At: time.Now(), Name: name, Detail: detail})
+	c.Set(debugStepsCtxKey, list)
+}
+
+func debugStepsOf(c *gin.Context) []debugStep {
+	if c == nil {
+		return nil
+	}
+	steps, _ := c.Get(debugStepsCtxKey)
+	list, _ := steps.([]debugStep)
+	return list
+}
+
+// countReasoningItems reports how many reasoning items the body carries and how
+// many of them actually hold replayable text. A transform that lowers these
+// numbers is the transform that broke the DeepSeek thinking-mode contract.
+func countReasoningItems(body []byte) (items, withText int) {
+	if len(body) == 0 {
+		return 0, 0
+	}
+	var payload struct {
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || len(payload.Input) == 0 {
+		return 0, 0
+	}
+	var list []map[string]json.RawMessage
+	if err := json.Unmarshal(payload.Input, &list); err != nil {
+		return 0, 0
+	}
+	for _, item := range list {
+		var typ string
+		if err := json.Unmarshal(item["type"], &typ); err != nil || typ != "reasoning" {
+			continue
+		}
+		items++
+		var content []map[string]json.RawMessage
+		if err := json.Unmarshal(item["content"], &content); err != nil {
+			continue
+		}
+		for _, part := range content {
+			var partType, text string
+			_ = json.Unmarshal(part["type"], &partType)
+			_ = json.Unmarshal(part["text"], &text)
+			if partType == "reasoning_text" && strings.TrimSpace(text) != "" {
+				withText++
+				break
+			}
+		}
+	}
+	return items, withText
 }
