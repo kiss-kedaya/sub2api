@@ -45,8 +45,12 @@ func (Proxy) Fields() []ent.Field {
 			MaxLen(100).
 			Optional().
 			Nillable(),
+		// Managed proxy credentials are stored as "enc:managed:v1:" +
+		// base64(nonce + AES-256-GCM ciphertext + tag), so a 64-character
+		// generated password becomes 139 bytes at rest and must not be
+		// truncated by the entity validator.
 		field.String("password").
-			MaxLen(100).
+			MaxLen(255).
 			Optional().
 			Nillable(),
 		field.String("status").
