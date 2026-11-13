@@ -240,10 +240,45 @@ func (u AnthropicUsage) HasCacheReadInputTokens() bool {
 	return u.cacheReadInputTokensPresent || u.CacheReadInputTokens != 0
 }
 
+// HasPositiveCacheTokens reports whether this usage event itself carries a
+// positive cache bucket (including OpenAI-style aliases used by
+// Anthropic-compatible providers).
+//
+// It separates a cumulative message_delta restatement from a placeholder zero:
+// a provider that reports the final split in message_delta also reports the
+// cached portion, so an explicit input_tokens=0 in the same event is
+// authoritative (upstream issue #8407: message_start only carried a pre-cache
+// estimate). A delta that merely re-serializes usage with a zero value for
+// input_tokens - while reporting no cache tokens at all - must not erase the
+// message_start input, which would drop the whole uncached-input bucket from
+// billing.
+func (u AnthropicUsage) HasPositiveCacheTokens() bool {
+	if u.CacheReadInputTokens > 0 || u.CacheCreationInputTokens > 0 || u.CachedTokens > 0 {
+		return true
+	}
+	if u.CacheCreation != nil {
+		if u.CacheCreation.Ephemeral5mInputTokens != nil && *u.CacheCreation.Ephemeral5mInputTokens > 0 {
+			return true
+		}
+		if u.CacheCreation.Ephemeral1hInputTokens != nil && *u.CacheCreation.Ephemeral1hInputTokens > 0 {
+			return true
+		}
+	}
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		return true
+	}
+	if u.PromptCacheHitTokens != nil && *u.PromptCacheHitTokens > 0 {
+		return true
+	}
+	return false
+}
+
 // Merge applies cumulative usage from a streaming event. Missing fields retain
 // their preceding values; explicit zeroes clear them rather than double billing.
+// An explicit input_tokens=0 only replaces the earlier input value when the same
+// event also carries a positive cache bucket (see HasPositiveCacheTokens).
 func (u *AnthropicUsage) Merge(src AnthropicUsage) {
-	if src.HasInputTokens() {
+	if src.HasInputTokens() && (src.InputTokens != 0 || src.HasPositiveCacheTokens()) {
 		u.InputTokens, u.inputTokensPresent = src.InputTokens, true
 	}
 	if src.HasOutputTokens() {

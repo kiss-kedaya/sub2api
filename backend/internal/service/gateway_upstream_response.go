@@ -1365,9 +1365,16 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 		}
 
 		patch := &sseUsagePatch{}
+		// An explicit input_tokens=0 is only authoritative when the same event
+		// restates the cache split (Kiro-style final usage, upstream issue
+		// #8407). A bare placeholder zero - what re-serializing relays emit -
+		// must keep the message_start input, otherwise the whole
+		// uncached-input bucket disappears from billing.
 		if v, ok := parseSSEUsageInt(usageObj["input_tokens"]); ok {
-			patch.inputTokens = v
-			patch.hasInputTokens = true
+			if v != 0 || sseDeltaReportsPositiveCacheUsage(usageObj) {
+				patch.inputTokens = v
+				patch.hasInputTokens = true
+			}
 		}
 		if v, ok := parseSSEUsageInt(usageObj["output_tokens"]); ok {
 			patch.outputTokens = v
@@ -1395,6 +1402,26 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 	}
 
 	return nil
+}
+
+// sseDeltaReportsPositiveCacheUsage reports whether a message_delta usage
+// object restates the cached portion of the prompt in the same event. The
+// helper mirrors anthropicDeltaCarriesPositiveCacheUsage for the map-based
+// event parser; see the message_delta branch in extractSSEUsagePatch.
+func sseDeltaReportsPositiveCacheUsage(usageObj map[string]any) bool {
+	for _, key := range []string{"cache_read_input_tokens", "cache_creation_input_tokens", "cached_tokens"} {
+		if v, ok := parseSSEUsageInt(usageObj[key]); ok && v > 0 {
+			return true
+		}
+	}
+	if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
+		for _, key := range []string{"ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"} {
+			if v, ok := parseSSEUsageInt(cc[key]); ok && v > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {

@@ -82,3 +82,26 @@ func TestAnthropicUsagePresencePartialTTLAndSplitOnly(t *testing.T) {
 	require.Equal(t, 0, *usage.CacheCreation.Ephemeral5mInputTokens)
 	require.Equal(t, 500, *usage.CacheCreation.Ephemeral1hInputTokens)
 }
+
+// A relay can re-serialize message_delta with a zero-valued input_tokens and no
+// cache counters at all. That placeholder must not erase the input reported by
+// message_start (#320); only a delta that restates the cache split carries an
+// authoritative explicit zero (#8407).
+func TestAnthropicUsagePresencePlaceholderZeroInputKeepsEarlierInput(t *testing.T) {
+	var usage AnthropicUsage
+	require.NoError(t, json.Unmarshal([]byte(`{"input_tokens":47168,"output_tokens":1,"cache_creation_input_tokens":787,"cache_read_input_tokens":186900}`), &usage))
+
+	var placeholder AnthropicUsage
+	require.NoError(t, json.Unmarshal([]byte(`{"input_tokens":0,"output_tokens":2876}`), &placeholder))
+	usage.Merge(placeholder)
+	require.Equal(t, 47168, usage.InputTokens)
+	require.Equal(t, 2876, usage.OutputTokens)
+	require.Equal(t, 787, usage.CacheCreationInputTokens)
+	require.Equal(t, 186900, usage.CacheReadInputTokens)
+
+	var cumulative AnthropicUsage
+	require.NoError(t, json.Unmarshal([]byte(`{"input_tokens":0,"output_tokens":33,"cache_creation_input_tokens":0,"cache_read_input_tokens":4004}`), &cumulative))
+	usage.Merge(cumulative)
+	require.Zero(t, usage.InputTokens)
+	require.Equal(t, 4004, usage.CacheReadInputTokens)
+}
