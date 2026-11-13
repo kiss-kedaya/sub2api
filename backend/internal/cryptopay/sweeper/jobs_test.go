@@ -398,6 +398,7 @@ func jobRows(jobs ...*sweepJob) *sqlmock.Rows {
 func expectRunStart(m sqlmock.Sqlmock, jobs ...*sweepJob) {
 	m.ExpectQuery(`SELECT pg_try_advisory_lock`).WithArgs(sweepLockKey).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	m.ExpectQuery("SELECT id FROM sweep_records").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	m.ExpectQuery("SELECT id, chain, from_address").WillReturnRows(jobRows(jobs...))
 }
 
@@ -659,6 +660,7 @@ func TestSweepLockReleasedOnPersistenceFailure(t *testing.T) {
 	e, m, _, _ := setupExecutor(t)
 	m.ExpectQuery(`SELECT pg_try_advisory_lock`).WithArgs(sweepLockKey).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	m.ExpectQuery("SELECT id FROM sweep_records").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	m.ExpectQuery("SELECT id, chain, from_address").WillReturnError(errors.New("database offline"))
 	expectUnlock(m)
 	_, err := e.Run(t.Context(), false)

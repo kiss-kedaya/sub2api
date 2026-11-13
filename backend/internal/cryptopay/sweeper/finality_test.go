@@ -73,12 +73,15 @@ func TestTagHeightReportsNullAsUnavailable(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	pool := rpc.NewPoolWithHTTPClient(server.URL, server.Client())
-	height, ok, err := tagHeight(t.Context(), pool, "finalized")
+	height, ok, err := pool.MaxBlockTagHeight(t.Context(), "finalized")
 	if err != nil || ok || height != 0 {
 		t.Fatalf("null tag must be reported as unavailable: height=%d ok=%t err=%v", height, ok, err)
 	}
 }
 
+// A provider answering a finality tag with something that is not a block header
+// must yield a classified failure, so the caller cannot mistake it for a final
+// block and a durable record cannot receive an unclassifiable decode error.
 func TestTagHeightRejectsMalformedBlock(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -86,7 +89,11 @@ func TestTagHeightRejectsMalformedBlock(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	pool := rpc.NewPoolWithHTTPClient(server.URL, server.Client())
-	if _, _, err := tagHeight(t.Context(), pool, "finalized"); err == nil {
+	_, _, err := pool.MaxBlockTagHeight(t.Context(), "finalized")
+	if err == nil {
 		t.Fatal("a malformed tag height must not silently pass as final")
+	}
+	if _, ok := err.(*rpc.Failure); !ok {
+		t.Fatalf("a malformed tag answer must be a classified rpc.Failure, got %T: %v", err, err)
 	}
 }

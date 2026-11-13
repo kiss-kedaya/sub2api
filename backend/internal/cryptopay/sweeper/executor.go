@@ -211,6 +211,19 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 	var runErrors error
 	storageFailures := 0
 	if !dryRun {
+		// Prove already-mined rows first: a record whose transaction is buried
+		// behind the configured depth is a chain fact, and writing it costs one
+		// read. Doing this before the resume loop keeps such a row away from the
+		// stale-release and replacement checks, which are only correct for a
+		// transaction that might still be mined. No operator, no manual SQL.
+		recovered, recoveryErr := e.recoverMinedSweeps(ctx)
+		if recoveryErr != nil {
+			slog.Warn("[cryptopay] mined sweep recovery incomplete", "error", rpc.SafeError(recoveryErr))
+			runErrors = joinErrors(runErrors, recoveryErr)
+		}
+		if recovered > 0 {
+			slog.Warn("[cryptopay] mined sweep records recovered", "count", recovered)
+		}
 		jobs, loadErr := e.loadUnfinished(ctx)
 		if loadErr != nil {
 			slog.Error("[cryptopay] sweep could not load unfinished jobs", "error", rpc.SafeError(loadErr))
