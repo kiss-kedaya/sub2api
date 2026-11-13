@@ -149,7 +149,7 @@ export default {
     failedToDelete: '删除 API 密钥失败',
     failedToUpdateStatus: '更新 API 密钥状态失败',
     // 网关风控自动停用（多个账号共用一个机房/代理出口）
-    riskWarning: '此 key 有被盗用风险',
+    riskWarning: '此 key 被多个账号共用，已暂停。轮换后可继续用',
     riskRotateAction: '轮换密钥',
     riskRotateHint: '重新生成一个 key 值，旧 key 立即失效，此 key 恢复可用',
     riskRotateSuccess: '密钥已轮换，旧密钥立即失效',

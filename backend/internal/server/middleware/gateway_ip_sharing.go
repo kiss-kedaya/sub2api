@@ -65,32 +65,24 @@ func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDe
 		// unreadable policy stays at the safe default (observe only).
 		keyDisable := settings.GatewayIPNoticeSnapshot().KeyDisable()
 
-		// Record the IP first: the notice policy is the reversible half of the
-		// action. In opt-in mode the key write still runs when the append fails,
-		// so one failing half never silently leaves the other undone.
-		//
-		// Upsert rather than append: a later, larger burst from an IP that is
-		// already listed must move peak_users, total_keys and last_seen_at
-		// forward instead of being dropped as a duplicate.
-		added, appendErr := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
-		attrs := []any{
-			"ip", hit.IP,
-			"distinct_users", hit.DistinctUsers,
-			"peak_users", hit.PeakUsers,
-			"total_keys", hit.TotalKeys,
-			"window_minutes", hit.WindowMinutes,
-			"key_prefixes", hit.KeyPrefixes,
-			"auto_added", added,
-		}
-		if appendErr != nil {
-			attrs = append(attrs, "append_error", appendErr)
-		}
 		if !keyDisable {
 			// Default mode: append the IP and keep every key exactly as it is.
-			// mode=observe_only is the operator-facing marker that makes this
-			// line distinguishable from the opt-in action below.
-			attrs = append(attrs, "mode", ipSharingModeObserveOnly)
+			// Upsert rather than append: a later, larger burst from an IP that is
+			// already listed must move peak_users, total_keys and last_seen_at
+			// forward instead of being dropped as a duplicate.
+			added, appendErr := settings.UpsertGatewayIPNoticeAutoEntry(ctx, hit.AutoEntry())
+			attrs := []any{
+				"ip", hit.IP,
+				"distinct_users", hit.DistinctUsers,
+				"peak_users", hit.PeakUsers,
+				"total_keys", hit.TotalKeys,
+				"window_minutes", hit.WindowMinutes,
+				"key_prefixes", hit.KeyPrefixes,
+				"auto_added", added,
+				"mode", ipSharingModeObserveOnly,
+			}
 			if appendErr != nil {
+				attrs = append(attrs, "append_error", appendErr)
 				slog.Error("gateway ip key sharing detected, observe only, ip append failed", attrs...)
 				c.Next()
 				return
@@ -99,17 +91,35 @@ func GatewayIPSharing(settings *service.SettingService, detector *IPKeySharingDe
 			c.Next()
 			return
 		}
+
+		// Opt-in mode: act on the KEY, never on the address.
+		//
+		// Several customers legitimately share one VPN or proxy exit, so the same
+		// public IP carrying different paid accounts is normal traffic, not an
+		// attack. Blocking the address would cut all of them off; the credential
+		// that is actually shared is the thing to rotate. The IP is therefore left
+		// off the notice list here on purpose — the operator's hand-written list
+		// stays the only source of address blocks.
 		disabled, disableErr := disableSharedKeys(ctx, keys, hit)
-		attrs = append(attrs, "mode", ipSharingModeKeyDisable, "key_ids", hit.KeyIDs, "disabled_keys", disabled)
+		attrs := []any{
+			"ip", hit.IP,
+			"distinct_users", hit.DistinctUsers,
+			"peak_users", hit.PeakUsers,
+			"total_keys", hit.TotalKeys,
+			"window_minutes", hit.WindowMinutes,
+			"key_prefixes", hit.KeyPrefixes,
+			"mode", ipSharingModeKeyDisable,
+			"key_ids", hit.KeyIDs,
+			"disabled_keys", disabled,
+			"ip_blocked", false,
+		}
 		if disableErr != nil {
 			attrs = append(attrs, "disable_error", disableErr)
-		}
-		if appendErr != nil || disableErr != nil {
-			slog.Error("gateway ip key sharing detected, action partially failed", attrs...)
+			slog.Error("gateway ip key sharing detected, key disable failed", attrs...)
 			c.Next()
 			return
 		}
-		slog.Warn("gateway ip key sharing detected, ip auto added and shared keys disabled", attrs...)
+		slog.Warn("gateway ip key sharing detected: shared keys disabled, address left unblocked", attrs...)
 		c.Next()
 	}
 }

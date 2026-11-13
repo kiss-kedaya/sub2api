@@ -187,7 +187,11 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 		return IPKeySharingHit{}, false
 	}
 	policy := d.settings.GatewayIPNoticeSnapshot()
-	if !policy.AutoAdd() || policy.HasManualIP(ip) {
+	// Detection is needed for two independent actions: listing the address
+	// (AutoAdd) and disabling the shared credential (KeyDisable). Either one
+	// being on is enough to observe; a manual entry always wins over both,
+	// because the operator has taken ownership of that address.
+	if (!policy.AutoAdd() && !policy.KeyDisable()) || policy.HasManualIP(ip) {
 		return IPKeySharingHit{}, false
 	}
 
