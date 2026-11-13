@@ -1084,8 +1084,15 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 ) error {
 
 	// Opt-in forensic dump: the exact body sub2api sent, plus the upstream
-	// headers and error, in one text file. Only failures are recorded.
-	if DebugDumpEnabled() && account != nil && account.Platform == PlatformDeepseek {
+	// headers and error, in one text file. Only failures are recorded, and only
+	// while SUB2API_DEBUG_DUMP_DIR is set.
+	//
+	// The filter is deliberately not per-platform: a relay that serves
+	// deepseek-* models is frequently registered as an openai-type account, and
+	// an earlier version of this hook skipped exactly those rows and captured
+	// nothing. The dump is temporary diagnostic output, so catching every
+	// upstream failure is the right default when it is switched on.
+	if DebugDumpEnabled() {
 		WriteUpstreamFailureDump(c, account, requestBody, resp, responseBody)
 	}
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, responseBody)()
