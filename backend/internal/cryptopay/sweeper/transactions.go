@@ -270,15 +270,18 @@ func checkReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string, requi
 	}
 	// Depth is measured from a head that can itself be reorged, so it is not
 	// finality. When the chain exposes a finality tag the mined block must also
-	// be behind it; only chains that do not serve the tag keep depth alone.
-	final, err := blockIsFinal(ctx, pool, chain, block)
-	if err != nil {
-		logRPCFailure(chain, hash, reasonFinalityMissing, err)
-		return receiptWaiting, err
+	// be behind it; a chain or endpoint that cannot serve a tag keeps the depth
+	// rule instead of failing the confirmation for ever.
+	finality := blockIsFinal(ctx, pool, chain, block)
+	if !finality.Available {
+		observeTransaction(chain, hash, reasonFinalityMissing, "block", block,
+			"head", head, "depth", depthOf(head, block), "required", required,
+			"finality_tags", strings.Join(finalityTags(chain), ","))
 	}
-	if !final {
+	if !finality.Final {
 		observeTransaction(chain, hash, reasonFinalityPending, "block", block,
-			"head", head, "depth", depthOf(head, block), "required", required)
+			"head", head, "depth", depthOf(head, block), "required", required,
+			"finality_tag", finality.Tag, "finality_height", finality.Height)
 		return receiptWaiting, nil
 	}
 	if r.Status == "0x0" {
@@ -309,54 +312,46 @@ func finalityTags(chain string) []string {
 	return []string{"finalized", "safe"}
 }
 
-// tagHeight reads one finality tag. ok is false when this node does not serve
-// the tag at all (JSON null, or an explicit RPC rejection): the caller then
-// keeps the configured depth rule that predates the tag check. Transport and
-// malformed answers stay errors so an unreadable chain is never mistaken for a
-// final one.
-func tagHeight(ctx context.Context, pool *rpc.Pool, tag string) (uint64, bool, error) {
-	result, err := pool.Call(ctx, "eth_getBlockByNumber", []any{tag, false})
-	if err != nil {
-		var failure *rpc.Failure
-		// A node rejecting the tag itself (unknown tag, method not supported)
-		// is "does not serve it". A rate limit is not: treating it as
-		// unsupported would silently drop finality while the provider throttles.
-		if errors.As(err, &failure) && failure.Kind == "remote" &&
-			failure.RPCCode != 429 && failure.Reason != "rate limited" {
-			return 0, false, nil
-		}
-		return 0, false, err
-	}
-	if bytes.Equal(bytes.TrimSpace(result), []byte("null")) {
-		return 0, false, nil
-	}
-	var header struct {
-		Number string `json:"number"`
-	}
-	if err := json.Unmarshal(result, &header); err != nil {
-		return 0, false, err
-	}
-	number, err := strconv.ParseUint(strings.TrimPrefix(header.Number, "0x"), 16, 64)
-	if err != nil {
-		return 0, false, fmt.Errorf("invalid finality tag height")
-	}
-	return number, true, nil
+// finalityOutcome is the result of asking the chain where its finality tag is.
+// Available is false when no configured endpoint serves any tag for this chain:
+// the caller then keeps the configured depth rule, which is the policy that
+// governed confirmation before the tag check existed. Reason is the fixed
+// diagnostic phrase to log, never node text.
+type finalityOutcome struct {
+	Final     bool
+	Available bool
+	Tag       string
+	Height    uint64
 }
 
-// blockIsFinal reports whether the chain considers block final. Chains served
-// by nodes that do not answer any finality tag fall back to the configured
-// depth that already governed confirmation.
-func blockIsFinal(ctx context.Context, pool *rpc.Pool, chain string, block uint64) (bool, error) {
-	for _, tag := range finalityTags(chain) {
+// blockIsFinal reports whether the chain considers a block final.
+//
+// It never fails the caller. A chain that does not expose a finality tag, a
+// provider that rejects the tag, and a provider that answers with something
+// that does not decode all mean the same thing for confirmation: this endpoint
+// cannot contribute finality evidence, so the receipt, its canonical block and
+// the configured depth remain the whole rule. Before this change a single such
+// endpoint made every confirmation check return an error, which the durable
+// record redacted to one sentence and the job never advanced: on 2026-11-13 a
+// BSC sweep stayed at sweep_pending for five hours and 13,182 confirmations.
+func blockIsFinal(ctx context.Context, pool *rpc.Pool, chain string, block uint64) finalityOutcome {
+	tags := finalityTags(chain)
+	for _, tag := range tags {
 		height, ok, err := pool.MaxBlockTagHeight(ctx, tag)
 		if err != nil {
-			return false, err
+			// An endpoint that cannot serve the tag is not a verdict on the
+			// payment. Keep the reason for the log and try the next tag.
+			slog.Warn("[cryptopay] finality tag unavailable; keeping the depth rule",
+				"chain", chain, "tag", tag, "block", block,
+				"category", rpc.CategoryOf(err), "endpoint_host", rpc.HostOf(err),
+				"detail", rpc.DetailOf(err), "error", rpc.SafeError(err))
+			continue
 		}
 		if ok {
-			return block <= height, nil
+			return finalityOutcome{Final: block <= height, Available: true, Tag: tag, Height: height}
 		}
 	}
-	return true, nil
+	return finalityOutcome{Final: true}
 }
 
 // settle only rebroadcasts identical persisted bytes, and only after a

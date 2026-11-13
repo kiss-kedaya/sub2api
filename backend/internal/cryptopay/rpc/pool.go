@@ -156,36 +156,56 @@ func (p *Pool) MaxBlockNumber(ctx context.Context) (uint64, error) {
 // MaxBlockTagHeight returns the highest height any endpoint reports for a
 // finality tag. A single lagging node must not keep an old transaction
 // unconfirmed forever, which is what rotating Call would do.
+//
+// The boolean is false when no configured endpoint serves the tag at all: JSON
+// null, an explicit rejection, an HTTP error, or an answer that is not a block
+// header. That is "this node does not expose the tag", not a reason to fail the
+// caller's confirmation check, so the caller keeps the depth rule that governed
+// confirmation before the tag existed.
+//
+// A returned error is always a *Failure. A provider that answers the tag with
+// something that does not decode used to surface its raw JSON/quantity error,
+// which no durable-record boundary recognises; that error was then rewritten to
+// the generic "Payment operation failed" sentence and the real cause was lost.
 func (p *Pool) MaxBlockTagHeight(ctx context.Context, tag string) (uint64, bool, error) {
 	p.mu.RLock()
 	endpoints := append([]string(nil), p.endpoints...)
 	p.mu.RUnlock()
 	if len(endpoints) == 0 {
-		return 0, false, fmt.Errorf("no rpc endpoints configured")
+		return 0, false, &Failure{Kind: "request"}
 	}
 	var best uint64
 	var answered bool
-	var lastErr error
-	var unsupported bool
+	var failure *Failure
 	for _, endpoint := range endpoints {
 		result, err := p.callOne(ctx, endpoint, "eth_getBlockByNumber", []any{tag, false})
 		if err != nil {
-			lastErr = err
+			var observed *Failure
+			if errors.As(err, &observed) && failure == nil {
+				failure = observed
+			} else if failure == nil {
+				failure = &Failure{Kind: "response", Host: endpointHost(endpoint)}
+			}
 			continue
 		}
-		if string(result) == "null" {
+		trimmed := bytes.TrimSpace(result)
+		if len(trimmed) == 0 || string(trimmed) == "null" {
 			continue
 		}
 		var header struct {
 			Number string `json:"number"`
 		}
-		if err := json.Unmarshal(result, &header); err != nil || header.Number == "" {
-			lastErr = err
+		if err := json.Unmarshal(trimmed, &header); err != nil || header.Number == "" {
+			if failure == nil {
+				failure = &Failure{Kind: "response", Host: endpointHost(endpoint)}
+			}
 			continue
 		}
 		height, err := hexutil.DecodeUint64(header.Number)
 		if err != nil {
-			lastErr = err
+			if failure == nil {
+				failure = &Failure{Kind: "response", Host: endpointHost(endpoint)}
+			}
 			continue
 		}
 		answered = true
@@ -193,20 +213,13 @@ func (p *Pool) MaxBlockTagHeight(ctx context.Context, tag string) (uint64, bool,
 			best = height
 		}
 	}
-	if !answered && lastErr != nil {
-		var failure *Failure
-		if errors.As(lastErr, &failure) && failure.Kind == "remote" &&
-			failure.RPCCode != 429 && failure.Reason != "rate limited" {
-			unsupported = true
-		}
+	if answered {
+		return best, true, nil
 	}
-	if unsupported {
-		return 0, false, nil
+	if failure != nil {
+		return 0, false, failure
 	}
-	if !answered && lastErr != nil {
-		return 0, false, lastErr
-	}
-	return best, answered, nil
+	return 0, false, nil
 }
 
 // healthTracker lazily initialises the endpoint health state so pools built
