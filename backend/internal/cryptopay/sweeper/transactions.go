@@ -209,54 +209,149 @@ func logRPCFailure(chain, hash, reason string, err error) {
 		"detail", rpc.DetailOf(err), "error", rpc.SafeError(err))
 }
 
+// maxObservationAttempts bounds how many endpoints one positive-evidence search
+// may ask. A negative answer is only believed after every allowed attempt, so
+// one endpoint that lags, prunes or lies cannot veto a receipt another endpoint
+// already has. Three is enough to survive one lagging and one failing node
+// without turning every poll into a pool-wide scan; rotation advances the start
+// index on each call, so consecutive attempts land on different endpoints.
+const maxObservationAttempts = 3
+
+func observationAttempts(pool *rpc.Pool) int {
+	n := len(pool.Endpoints())
+	switch {
+	case n <= 0:
+		return 1
+	case n > maxObservationAttempts:
+		return maxObservationAttempts
+	}
+	return n
+}
+
+// Durable phrases for an observation that is not (yet) a confirmation. Both are
+// recognised by rpc.SafeRecordedError, so a payment record keeps the reason
+// instead of collapsing it into the generic operation sentence.
+var (
+	errReceiptIncomplete = errors.New("incomplete or mismatched receipt")
+	errNotCanonical      = errors.New("receipt block is no longer canonical")
+)
+
+// receiptFields is the part of a receipt that decides confirmation.
+type receiptFields struct {
+	Status      string
+	BlockNumber string
+	BlockHash   string
+}
+
+// readReceipt asks the pool for the receipt until an endpoint returns a usable
+// one. absent is true only when at least one endpoint answered JSON null and no
+// attempt failed: a null from a node that lags behind a peer is not proof the
+// transaction is missing. A failed attempt stops the search because Pool.Call
+// has already rotated over every endpoint before it reports a failure.
+func readReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string) (receiptFields, bool, bool, error) {
+	attempts := observationAttempts(pool)
+	var absent bool
+	for i := 0; i < attempts; i++ {
+		result, err := pool.Call(ctx, "eth_getTransactionReceipt", []any{hash})
+		if err != nil {
+			return receiptFields{}, false, false, err
+		}
+		if len(result) == 0 || string(result) == "null" {
+			absent = true
+			continue
+		}
+		var r struct {
+			Hash        string `json:"transactionHash"`
+			Status      string `json:"status"`
+			BlockNumber string `json:"blockNumber"`
+			BlockHash   string `json:"blockHash"`
+		}
+		if err := json.Unmarshal(result, &r); err != nil {
+			observeTransaction(chain, hash, reasonReceiptIncomplete, "cause", "undecodable receipt")
+			continue
+		}
+		if !strings.EqualFold(r.Hash, hash) || len(r.BlockHash) != 66 ||
+			(r.Status != "0x1" && r.Status != "0x0") {
+			observeTransaction(chain, hash, reasonReceiptIncomplete, "cause", "hash or status mismatch")
+			continue
+		}
+		return receiptFields{Status: r.Status, BlockNumber: r.BlockNumber, BlockHash: r.BlockHash}, true, false, nil
+	}
+	return receiptFields{}, false, absent, nil
+}
+
+// canonicalBlock asks the pool until an endpoint answers the receipt's block
+// number with the receipt's block hash. A null or a different hash from one
+// node means that node has not seen this block (yet); only every attempt
+// disagreeing is a real canonical mismatch. A failed attempt stops the search,
+// because Pool.Call already rotated over every endpoint.
+func canonicalBlock(ctx context.Context, pool *rpc.Pool, chain, hash string, receipt receiptFields, block uint64) (bool, error) {
+	attempts := observationAttempts(pool)
+	mismatch := false
+	for i := 0; i < attempts; i++ {
+		canonical, err := pool.Call(ctx, "eth_getBlockByNumber", []any{receipt.BlockNumber, false})
+		if err != nil {
+			return false, err
+		}
+		var header struct {
+			Hash string `json:"hash"`
+		}
+		if err := json.Unmarshal(canonical, &header); err != nil {
+			observeTransaction(chain, hash, reasonCanonicalUnread, "block", block)
+			mismatch = true
+			continue
+		}
+		if strings.EqualFold(header.Hash, receipt.BlockHash) {
+			return true, nil
+		}
+		mismatch = true
+		if i+1 == attempts {
+			observeTransaction(chain, hash, reasonCanonicalMismatch, "block", block,
+				"receipt_block_hash", receipt.BlockHash, "canonical_block_hash", header.Hash)
+		}
+	}
+	if mismatch {
+		return false, errNotCanonical
+	}
+	return false, nil
+}
+
 // No polling loops: a pending job returns control to the rest of the group.
 // Missing confirmation policy permits observation, never finalization.
 func checkReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string, required uint64) (receiptState, error) {
-	result, err := pool.Call(ctx, "eth_getTransactionReceipt", []any{hash})
+	receipt, found, absent, err := readReceipt(ctx, pool, chain, hash)
 	if err != nil {
 		logRPCFailure(chain, hash, reasonRPCFailure, err)
 		return receiptWaiting, err
 	}
-	if len(result) == 0 || string(result) == "null" {
-		observeTransaction(chain, hash, reasonReceiptAbsent)
-		return receiptAbsent, nil
+	if !found {
+		if absent {
+			observeTransaction(chain, hash, reasonReceiptAbsent, "attempts", observationAttempts(pool))
+			return receiptAbsent, nil
+		}
+		// Only malformed answers: no endpoint proved absence and none supplied
+		// a usable receipt, so the outcome is inconclusive rather than missing.
+		logRPCFailure(chain, hash, reasonReceiptIncomplete, fmt.Errorf("no usable receipt from any endpoint"))
+		return receiptWaiting, errReceiptIncomplete
 	}
-	var r struct {
-		Hash        string `json:"transactionHash"`
-		Status      string `json:"status"`
-		BlockNumber string `json:"blockNumber"`
-		BlockHash   string `json:"blockHash"`
-	}
-	if err := json.Unmarshal(result, &r); err != nil {
-		observeTransaction(chain, hash, reasonReceiptIncomplete, "cause", "undecodable receipt")
-		return receiptWaiting, err
-	}
-	if !strings.EqualFold(r.Hash, hash) || len(r.BlockHash) != 66 ||
-		(r.Status != "0x1" && r.Status != "0x0") {
-		observeTransaction(chain, hash, reasonReceiptIncomplete, "cause", "hash or status mismatch")
-		return receiptWaiting, fmt.Errorf("incomplete or mismatched receipt")
-	}
-	block, err := strconv.ParseUint(strings.TrimPrefix(r.BlockNumber, "0x"), 16, 64)
+	block, err := strconv.ParseUint(strings.TrimPrefix(receipt.BlockNumber, "0x"), 16, 64)
 	if err != nil {
 		observeTransaction(chain, hash, reasonReceiptIncomplete, "cause", "undecodable block number")
 		return receiptWaiting, err
 	}
-	canonical, err := pool.Call(ctx, "eth_getBlockByNumber", []any{r.BlockNumber, false})
+	agreed, err := canonicalBlock(ctx, pool, chain, hash, receipt, block)
 	if err != nil {
+		if errors.Is(err, errNotCanonical) {
+			return receiptWaiting, err
+		}
 		logRPCFailure(chain, hash, reasonRPCFailure, err)
 		return receiptWaiting, err
 	}
-	var header struct {
-		Hash string `json:"hash"`
-	}
-	if err := json.Unmarshal(canonical, &header); err != nil {
-		observeTransaction(chain, hash, reasonCanonicalUnread, "block", block)
-		return receiptWaiting, err
-	}
-	if !strings.EqualFold(header.Hash, r.BlockHash) {
-		observeTransaction(chain, hash, reasonCanonicalMismatch, "block", block,
-			"receipt_block_hash", r.BlockHash, "canonical_block_hash", header.Hash)
-		return receiptWaiting, fmt.Errorf("receipt block is no longer canonical")
+	if !agreed {
+		// Every allowed endpoint failed to return a block header at this
+		// height. Nothing proved the receipt wrong; say the read was empty.
+		logRPCFailure(chain, hash, reasonCanonicalUnread, fmt.Errorf("no canonical header for block"))
+		return receiptWaiting, errReceiptIncomplete
 	}
 	head, err := pool.MaxBlockNumber(ctx)
 	if err != nil {
@@ -284,7 +379,7 @@ func checkReceipt(ctx context.Context, pool *rpc.Pool, chain, hash string, requi
 			"finality_tag", finality.Tag, "finality_height", finality.Height)
 		return receiptWaiting, nil
 	}
-	if r.Status == "0x0" {
+	if receipt.Status == "0x0" {
 		observeTransaction(chain, hash, reasonReceiptReverted, "block", block)
 		return receiptReverted, nil
 	}
