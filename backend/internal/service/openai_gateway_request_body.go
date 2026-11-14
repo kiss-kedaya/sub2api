@@ -196,7 +196,11 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 	// Do not apply assumptions learned from older third-party Chat relays to a
 	// native Responses request: retain state intent, opaque ids and tool media.
 	if account != nil && account.Platform == PlatformDeepseek && account.UsesNativeCNResponses() {
-		return body
+		// Native DeepSeek keeps every other option as sent, but the reasoning
+		// repair below still applies: an item replayed without an id is rejected
+		// here exactly as it is on a relay, so returning early left the error in
+		// place for this whole class of account.
+		return normalizeDeepSeekReasoningOnly(account, body)
 	}
 	native := account != nil && account.UsesNativeCNResponses()
 	dedupe := deepSeekDuplicateCallIDRewrite(account, body)
@@ -2686,4 +2690,36 @@ func servedByDeepSeek(account *Account, requestBody map[string]any) bool {
 	}
 	model, _ := requestBody["model"].(string)
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
+}
+
+// normalizeDeepSeekReasoningOnly applies the two DeepSeek shape repairs without
+// touching anything else in the body. Used for native accounts, which must keep
+// their request otherwise byte-identical.
+func normalizeDeepSeekReasoningOnly(account *Account, body []byte) []byte {
+	if len(body) == 0 || !gjson.GetBytes(body, "input").Exists() {
+		return stripUnsupportedDeepSeekResponseFormat(body)
+	}
+	var requestBody map[string]any
+	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
+		return body
+	}
+	changed := false
+	if input, exists := requestBody["input"]; exists && servedByDeepSeek(account, requestBody) {
+		// Only the reasoning items themselves are repaired here. A native upstream
+		// accepts a tool turn that carries no reasoning at all (verified), so the
+		// placeholder that relays need would be an unnecessary edit to a body that
+		// must otherwise stay byte-identical.
+		if fixed, did := apicompat.NormalizeResponsesReasoningForDeepSeek(input); did {
+			requestBody["input"] = fixed
+			changed = true
+		}
+	}
+	if !changed {
+		return stripUnsupportedDeepSeekResponseFormat(body)
+	}
+	out, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body
+	}
+	return stripUnsupportedDeepSeekResponseFormat(out)
 }

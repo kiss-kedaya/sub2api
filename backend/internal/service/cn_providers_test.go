@@ -990,3 +990,24 @@ func TestNormalizeResponsesBodyInjectsReasoningPlaceholderForRelayDeepSeekModel(
 	other := []byte(`{"model":"gpt-5.1","input":[{"type":"function_call","call_id":"call_a","name":"do"}]}`)
 	require.Equal(t, string(other), string(normalizeDeepSeekResponsesRequestBody(relay, other)))
 }
+
+// A native DeepSeek account returns early, which used to skip the reasoning
+// repair entirely and keep failing on the same relay contract.
+func TestNormalizeDeepSeekResponsesRequestBodyRepairsReasoningOnNativeAccount(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"model":"deepseek-flash","store":true,"input":[` +
+		`{"type":"reasoning","summary":[],"content":[{"type":"reasoning_text","text":"t"}],"encrypted_content":"gAAAA"},` +
+		`{"type":"function_call","call_id":"call_a","name":"do"},` +
+		`{"type":"function_call_output","call_id":"call_a","output":"ok"}]}`)
+	account := &Account{
+		Platform: PlatformDeepseek, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
+	}
+	normalized := normalizeDeepSeekResponsesRequestBody(account, body)
+
+	require.NotEmpty(t, gjson.GetBytes(normalized, "input.0.id").String(), "native path must add the missing reasoning id")
+	require.False(t, gjson.GetBytes(normalized, "input.0.encrypted_content").Exists(), "encrypted_content must be removed")
+	require.Equal(t, "t", gjson.GetBytes(normalized, "input.0.content.0.text").String(), "the reasoning text itself stays")
+	// Everything else about a native request stays untouched.
+	require.True(t, gjson.GetBytes(normalized, "store").Bool())
+}
