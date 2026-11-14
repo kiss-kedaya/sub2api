@@ -86,6 +86,13 @@ func WriteUpstreamFailureDump(
 		}
 	}
 
+	if inbound, ok := c.Get(debugInboundBodyKey); ok {
+		if raw, ok := inbound.([]byte); ok && len(raw) > 0 {
+			fmt.Fprintf(&b, "\n## inbound body (what the client sent, %d bytes)\n", len(raw))
+			fmt.Fprintf(&b, "%s\n", truncateDumpBody(string(raw)))
+		}
+	}
+
 	fmt.Fprintf(&b, "\n## outbound body (what sub2api sent, %d bytes)\n", len(outboundBody))
 	_, _ = b.WriteString(truncateDumpBody(string(outboundBody)))
 	fmt.Fprintf(&b, "\n\n## upstream response body (%d bytes)\n", len(responseBody))
@@ -315,3 +322,16 @@ func IsDeepSeekDiagnosticError(body []byte) bool {
 // DefaultDebugDumpDir is the fallback location used when a diagnostic error is
 // forced to disk on an instance without SUB2API_DEBUG_DUMP_DIR configured.
 const DefaultDebugDumpDir = "/opt/sub2api/debug-dumps"
+
+// debugInboundBodyKey stores the untouched client body for one request. Without
+// it a dump cannot tell whether a field was dropped by the gateway or never
+// arrived, which is exactly the question the DeepSeek reasoning failures ask.
+const debugInboundBodyKey = "__sub2api_debug_inbound_body"
+
+// RememberInboundBody keeps a copy of the client body for later diagnosis.
+func RememberInboundBody(c *gin.Context, body []byte) {
+	if c == nil || len(body) == 0 {
+		return
+	}
+	c.Set(debugInboundBodyKey, body)
+}
