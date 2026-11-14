@@ -890,9 +890,12 @@ func TestNormalizeDeepSeekResponsesRequestBodyKeepsOtherProviderCallIDDedupe(t *
 	byModel := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	modelBody := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call_output","call_id":"call_a","output":"1"}]}`)
 	modelNormalized := normalizeDeepSeekResponsesRequestBody(byModel, modelBody)
-	require.Equal(t, 2, len(gjson.GetBytes(modelNormalized, "input").Array()))
-	require.Equal(t, "call_a", gjson.GetBytes(modelNormalized, "input.0.call_id").String())
-	require.Equal(t, "1", gjson.GetBytes(modelNormalized, "input.1.output").String())
+	// Dedupe still collapses the two identical calls, and the DeepSeek model now
+	// also gains one placeholder reasoning ahead of the surviving call.
+	require.Equal(t, 3, len(gjson.GetBytes(modelNormalized, "input").Array()))
+	require.Equal(t, "reasoning", gjson.GetBytes(modelNormalized, "input.0.type").String())
+	require.Equal(t, "call_a", gjson.GetBytes(modelNormalized, "input.1.call_id").String())
+	require.Equal(t, "1", gjson.GetBytes(modelNormalized, "input.2.output").String())
 	require.True(t, gjson.GetBytes(modelNormalized, "store").Exists() == false || gjson.GetBytes(modelNormalized, "store").Raw == "")
 
 	kimi := &Account{
@@ -969,4 +972,21 @@ func TestGetAnthropicAPIKeyAuthScheme_CNProvider(t *testing.T) {
 
 	zhipu.Extra = map[string]any{"anthropic_apikey_auth_scheme": "authorization_bearer"}
 	require.Equal(t, AnthropicAPIKeyAuthSchemeAuthorizationBearer, zhipu.GetAnthropicAPIKeyAuthScheme())
+}
+
+// A relay registered as an openai account still enforces DeepSeek's
+// thinking-mode contract, so the placeholder must key off the model too.
+func TestNormalizeResponsesBodyInjectsReasoningPlaceholderForRelayDeepSeekModel(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"model":"deepseek-flash","store":true,"input":[` +
+		`{"type":"function_call","call_id":"call_a","name":"do"},` +
+		`{"type":"function_call_output","call_id":"call_a","output":"ok"}]}`)
+	relay := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	normalized := normalizeDeepSeekResponsesRequestBody(relay, body)
+	require.Equal(t, "reasoning", gjson.GetBytes(normalized, "input.0.type").String())
+	require.Equal(t, "function_call", gjson.GetBytes(normalized, "input.1.type").String())
+
+	// A non-DeepSeek model on the same relay is left untouched.
+	other := []byte(`{"model":"gpt-5.1","input":[{"type":"function_call","call_id":"call_a","name":"do"}]}`)
+	require.Equal(t, string(other), string(normalizeDeepSeekResponsesRequestBody(relay, other)))
 }

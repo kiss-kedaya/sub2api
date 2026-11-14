@@ -244,16 +244,6 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 		return normalized
 	}
 	changed := false
-	if input, exists := requestBody["input"]; exists && account != nil && account.Platform == PlatformDeepseek {
-		// DeepSeek's thinking mode rejects any replayed tool conversation whose
-		// reasoning was not echoed back. Placeholders keep the turn alive; a real
-		// reasoning item, when the client has one, is never touched.
-		if injected, did := apicompat.InjectResponsesReasoningPlaceholders(input); did {
-			input = injected
-			requestBody["input"] = input
-			changed = true
-		}
-	}
 	if input, exists := requestBody["input"]; exists {
 		if native {
 			if lifted, did := apicompat.LiftResponsesToolOutputMedia(input); did {
@@ -274,6 +264,17 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 		}
 		if changed {
 			requestBody["input"] = input
+		}
+	}
+	// Runs after the call-id rewrite so the dedupe keeps seeing the shape the
+	// client sent; the placeholder only pads what is finally forwarded.
+	// Which upstream enforces the rule is decided by the model, not by the
+	// account's platform: DeepSeek is very often reached through an openai-type
+	// relay, and gating on PlatformDeepseek left exactly those accounts failing.
+	if input, exists := requestBody["input"]; exists && servedByDeepSeek(account, requestBody) {
+		if injected, did := apicompat.InjectResponsesReasoningPlaceholders(input); did {
+			requestBody["input"] = injected
+			changed = true
 		}
 	}
 	if dedupe {
@@ -2669,4 +2670,15 @@ func validateGPT61SolCompatRequest(body []byte, model string) error {
 		}
 	}
 	return nil
+}
+
+// servedByDeepSeek reports whether this request is answered by a DeepSeek
+// backend. A relay registered as an openai account still enforces DeepSeek's
+// thinking-mode contract, so the model name has to count too.
+func servedByDeepSeek(account *Account, requestBody map[string]any) bool {
+	if account != nil && account.Platform == PlatformDeepseek {
+		return true
+	}
+	model, _ := requestBody["model"].(string)
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
 }
