@@ -714,6 +714,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		RecordDebugStep(c, "normalize.in", fmt.Sprintf("bytes=%d reasoning_items=%d reasoning_text=%d native=%t",
 			len(body), items, withText, account != nil && account.UsesNativeCNResponses()))
 	}
+	RememberInboundBody(c, body)
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
 	if DebugDumpEnabled() {
 		items, withText := countReasoningItems(body)

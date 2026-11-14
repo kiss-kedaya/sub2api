@@ -244,6 +244,16 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 		return normalized
 	}
 	changed := false
+	if input, exists := requestBody["input"]; exists && account != nil && account.Platform == PlatformDeepseek {
+		// DeepSeek's thinking mode rejects any replayed tool conversation whose
+		// reasoning was not echoed back. Placeholders keep the turn alive; a real
+		// reasoning item, when the client has one, is never touched.
+		if injected, did := apicompat.InjectResponsesReasoningPlaceholders(input); did {
+			input = injected
+			requestBody["input"] = input
+			changed = true
+		}
+	}
 	if input, exists := requestBody["input"]; exists {
 		if native {
 			if lifted, did := apicompat.LiftResponsesToolOutputMedia(input); did {
