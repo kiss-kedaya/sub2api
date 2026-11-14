@@ -139,6 +139,7 @@ func automaticRPCEndpoint(endpoint string) bool {
 		return false
 	}
 	return err == nil && parsed.Scheme == "https" && parsed.Hostname() != "" &&
+		!rpc.IsDeniedRPCEndpoint(endpoint) &&
 		parsed.User == nil && parsed.Opaque == "" && parsed.Fragment == "" &&
 		(parsed.Port() == "" || parsed.Port() == "443") &&
 		!strings.ContainsAny(endpoint, "${}<>\\\r\n\x00") &&

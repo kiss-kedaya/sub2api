@@ -97,14 +97,10 @@ func (p *Pool) ChainID() uint64 { return p.chainID.Load() }
 
 // SetEndpoints replaces the endpoint list (admin config change).
 func (p *Pool) SetEndpoints(endpoints string) {
-	var list []string
-	for _, raw := range strings.Split(endpoints, ",") {
-		if trimmed := strings.TrimSpace(raw); trimmed != "" {
-			list = append(list, trimmed)
-		}
-	}
+	// Denied hosts are dropped here so every path — the operator's configured
+	// list, automatic chainlist discovery and any reload — obeys one rule.
 	p.mu.Lock()
-	p.endpoints = list
+	p.endpoints = filterRPCList(endpoints)
 	p.mu.Unlock()
 }
 
