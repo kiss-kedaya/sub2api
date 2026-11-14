@@ -607,7 +607,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	// Opt-in forensic dump. This is the handler the Responses gateway uses, so
 	// the passthrough hook alone missed every /v1/responses failure — the exact
 	// requests being diagnosed never produced a file.
-	if DebugDumpEnabled() {
+	if DebugDumpEnabled() || IsDeepSeekDiagnosticError(body) {
 		WriteUpstreamFailureDump(c, account, requestBody, resp, body)
 	}
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()

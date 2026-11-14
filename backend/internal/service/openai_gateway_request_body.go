@@ -138,7 +138,60 @@ func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body m
 // 强制 store=false 并清除 previous_response_id（DeepSeek / Kimi 官方
 // Responses 均不支持服务端状态存储，携带这些字段会被拒绝）。
 // 非原生 Responses 协议账号原样返回。
+// stripUnsupportedDeepSeekResponseFormat removes a response_format DeepSeek
+// refuses outright. Upstream answers json_schema with
+// "This response_format type is unavailable now"; sending it costs the user a
+// retry for a feature the model simply does not have.
+func stripUnsupportedDeepSeekResponseFormat(body []byte) []byte {
+	if gjson.GetBytes(body, "response_format.type").String() != "json_schema" {
+		return body
+	}
+	if stripped, err := sjson.DeleteBytes(body, "response_format"); err == nil {
+		return stripped
+	}
+	return body
+}
+
+// responsesCallPairsIntact reports whether every tool call still has its output.
+// DeepSeek rejects the whole turn with "No tool output found for tool call X"
+// when a rewrite drops one, so a rewrite that breaks the pairing is not applied.
+func responsesCallPairsIntact(input any) bool {
+	items, ok := input.([]any)
+	if !ok {
+		return true
+	}
+	calls := make(map[string]struct{})
+	outputs := make(map[string]struct{})
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := item["type"].(string)
+		callID, _ := item["call_id"].(string)
+		switch typ {
+		case "function_call", "custom_tool_call", "local_shell_call":
+			if callID != "" {
+				calls[callID] = struct{}{}
+			}
+		case "function_call_output", "custom_tool_call_output", "local_shell_call_output":
+			if callID != "" {
+				outputs[callID] = struct{}{}
+			}
+		}
+	}
+	for id := range calls {
+		if _, ok := outputs[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte {
+	if account != nil && account.Platform == PlatformDeepseek {
+		body = stripUnsupportedDeepSeekResponseFormat(body)
+	}
 	// Native DeepSeek accepts these fields itself (including reasoning.summary).
 	// Do not apply assumptions learned from older third-party Chat relays to a
 	// native Responses request: retain state intent, opaque ids and tool media.
@@ -200,8 +253,13 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 		}
 		if dedupe {
 			if deduped, did := apicompat.DedupeResponsesCallIDs(input); did {
-				input = deduped
-				changed = true
+				// Only refuse the rewrite when it is what broke the pairing: an
+				// input that already carried a call without its output is left to
+				// upstream validation, exactly as before this guard existed.
+				if !responsesCallPairsIntact(input) || responsesCallPairsIntact(deduped) {
+					input = deduped
+					changed = true
+				}
 			}
 		}
 		if changed {

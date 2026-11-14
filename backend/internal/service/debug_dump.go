@@ -43,6 +43,12 @@ func WriteUpstreamFailureDump(
 	responseBody []byte,
 ) {
 	dir := DebugDumpDir()
+	if dir == "" && IsDeepSeekDiagnosticError(responseBody) {
+		// These failures are rare, unreproducible by hand, and carry the only
+		// evidence we get: keep them even when the instance was never pointed at
+		// a dump directory.
+		dir = DefaultDebugDumpDir
+	}
 	if dir == "" || c == nil {
 		return
 	}
@@ -277,3 +283,35 @@ func countReasoningItems(body []byte) (items, withText int) {
 	}
 	return items, withText
 }
+
+// --- always-capture DeepSeek diagnostics -------------------------------------
+
+// deepSeekDiagnosticMarkers are the upstream rejections that keep coming back
+// from DeepSeek official keys and cannot be reproduced by hand. Whenever one of
+// them is seen the request body is worth keeping, even on an instance that was
+// never started with SUB2API_DEBUG_DUMP_DIR set.
+var deepSeekDiagnosticMarkers = []string{
+	"reasoning_text",
+	"must be passed back",
+	"No tool output found for tool call",
+	"response_format type is unavailable",
+}
+
+// IsDeepSeekDiagnosticError reports whether an upstream body carries one of the
+// known DeepSeek contract errors.
+func IsDeepSeekDiagnosticError(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	text := string(body)
+	for _, marker := range deepSeekDiagnosticMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultDebugDumpDir is the fallback location used when a diagnostic error is
+// forced to disk on an instance without SUB2API_DEBUG_DUMP_DIR configured.
+const DefaultDebugDumpDir = "/opt/sub2api/debug-dumps"

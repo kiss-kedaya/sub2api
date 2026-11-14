@@ -1092,7 +1092,7 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	// an earlier version of this hook skipped exactly those rows and captured
 	// nothing. The dump is temporary diagnostic output, so catching every
 	// upstream failure is the right default when it is switched on.
-	if DebugDumpEnabled() {
+	if DebugDumpEnabled() || IsDeepSeekDiagnosticError(responseBody) {
 		WriteUpstreamFailureDump(c, account, requestBody, resp, responseBody)
 	}
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, responseBody)()

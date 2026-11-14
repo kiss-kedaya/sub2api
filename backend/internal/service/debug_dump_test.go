@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestWriteUpstreamFailureDumpCapturesBodiesAndHeaders(t *testing.T) {
@@ -112,4 +113,27 @@ func TestRecordDebugStepAppearsInTheDump(t *testing.T) {
 	require.Contains(t, string(body), "## request path")
 	require.Contains(t, string(body), "normalize.out")
 	require.Contains(t, string(body), "reasoning_items=0")
+}
+
+func TestIsDeepSeekDiagnosticErrorMatchesTheKnownRejections(t *testing.T) {
+	cases := []string{
+		`{"error":{"message":"The ` + "`reasoning_text`" + ` in the thinking mode must be passed back to the API."}}`,
+		`{"error":{"message":"No tool output found for tool call call_00_UlpFvY8TpjzuH2dMc5UB2418."}}`,
+		`{"error":{"message":"This response_format type is unavailable now"}}`,
+	}
+	for _, body := range cases {
+		require.True(t, IsDeepSeekDiagnosticError([]byte(body)), body)
+	}
+	require.False(t, IsDeepSeekDiagnosticError(nil))
+	require.False(t, IsDeepSeekDiagnosticError([]byte(`{"error":{"message":"rate limit"}}`)))
+}
+
+func TestStripUnsupportedDeepSeekResponseFormat(t *testing.T) {
+	body := []byte(`{"model":"deepseek-flash","response_format":{"type":"json_schema","json_schema":{"name":"x"}},"input":[]}`)
+	stripped := stripUnsupportedDeepSeekResponseFormat(body)
+	require.False(t, gjson.GetBytes(stripped, "response_format").Exists())
+
+	// json_object is supported and must survive.
+	keep := []byte(`{"model":"deepseek-flash","response_format":{"type":"json_object"},"input":[]}`)
+	require.True(t, gjson.GetBytes(stripUnsupportedDeepSeekResponseFormat(keep), "response_format").Exists())
 }
