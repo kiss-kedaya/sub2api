@@ -76,3 +76,24 @@ func itemType(t *testing.T, raw any) string {
 	typ, _ := m["type"].(string)
 	return typ
 }
+
+func TestNormalizeResponsesReasoningForDeepSeekFillsIDsAndDropsEncryptedContent(t *testing.T) {
+	input := []any{
+		map[string]any{"type": "reasoning", "summary": []any{}, "content": []any{}, "encrypted_content": "gAAAA"},
+		map[string]any{"type": "reasoning", "id": "rs_real", "content": []any{}},
+	}
+	out, changed := NormalizeResponsesReasoningForDeepSeek(input)
+	require.True(t, changed)
+	items, ok := out.([]any)
+	require.True(t, ok)
+
+	first, ok := items[0].(map[string]any)
+	require.True(t, ok)
+	require.NotEmpty(t, first["id"], "a reasoning item without an id breaks the upstream match")
+	_, kept := first["encrypted_content"]
+	require.False(t, kept, "encrypted_content is an OpenAI-only field")
+
+	second, ok := items[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "rs_real", second["id"], "an upstream-issued id must be preserved")
+}

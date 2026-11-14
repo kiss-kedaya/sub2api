@@ -1,5 +1,7 @@
 package apicompat
 
+import "strings"
+
 // InjectResponsesReasoningPlaceholders makes a replayed tool conversation
 // acceptable to DeepSeek's thinking-mode validator.
 //
@@ -77,4 +79,48 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// NormalizeResponsesReasoningForDeepSeek makes reasoning input items acceptable
+// to DeepSeek's strict validator.
+//
+// Observed on a live relay: clients replay reasoning items that carry
+// content[].reasoning_text and OpenAI's encrypted_content, but no id. DeepSeek
+// then rejects the whole turn with
+//
+//	The `reasoning_text` in the thinking mode must be passed back to the API.
+//
+// even though the text is right there. Two things fix it: give every reasoning
+// item a stable id (the upstream needs one to line the item up with the turn it
+// produced) and drop encrypted_content, which is an OpenAI-only field the
+// upstream never issued.
+func NormalizeResponsesReasoningForDeepSeek(input any) (any, bool) {
+	items, ok := input.([]any)
+	if !ok || len(items) == 0 {
+		return input, false
+	}
+	changed := false
+	seq := 0
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if item["type"] != "reasoning" {
+			continue
+		}
+		if _, has := item["encrypted_content"]; has {
+			delete(item, "encrypted_content")
+			changed = true
+		}
+		if id, _ := item["id"].(string); strings.TrimSpace(id) == "" {
+			seq++
+			item["id"] = "rs_sub2api_" + itoa(seq)
+			changed = true
+		}
+	}
+	if !changed {
+		return input, false
+	}
+	return items, true
 }
