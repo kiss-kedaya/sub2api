@@ -272,6 +272,11 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 	// account's platform: DeepSeek is very often reached through an openai-type
 	// relay, and gating on PlatformDeepseek left exactly those accounts failing.
 	if input, exists := requestBody["input"]; exists && servedByDeepSeek(account, requestBody) {
+		if fixed, did := apicompat.NormalizeResponsesReasoningForDeepSeek(input); did {
+			input = fixed
+			requestBody["input"] = input
+			changed = true
+		}
 		if injected, did := apicompat.InjectResponsesReasoningPlaceholders(input); did {
 			requestBody["input"] = injected
 			changed = true
