@@ -17,14 +17,15 @@ func TestInjectResponsesReasoningPlaceholdersAddsOnePerCall(t *testing.T) {
 	}
 	out, changed := InjectResponsesReasoningPlaceholders(input)
 	require.True(t, changed)
-	items := out.([]any)
+	items, ok := out.([]any)
+	require.True(t, ok)
 	require.Len(t, items, 7)
 
 	// Each call is preceded by exactly one placeholder, right before the call.
-	require.Equal(t, "reasoning", items[1].(map[string]any)["type"])
-	require.Equal(t, "function_call", items[2].(map[string]any)["type"])
-	require.Equal(t, "reasoning", items[4].(map[string]any)["type"])
-	require.Equal(t, "function_call", items[5].(map[string]any)["type"])
+	require.Equal(t, "reasoning", itemType(t, items[1]))
+	require.Equal(t, "function_call", itemType(t, items[2]))
+	require.Equal(t, "reasoning", itemType(t, items[4]))
+	require.Equal(t, "function_call", itemType(t, items[5]))
 }
 
 func TestInjectResponsesReasoningPlaceholdersLeavesRealReasoningAlone(t *testing.T) {
@@ -34,7 +35,9 @@ func TestInjectResponsesReasoningPlaceholdersLeavesRealReasoningAlone(t *testing
 	}
 	out, changed := InjectResponsesReasoningPlaceholders(input)
 	require.False(t, changed)
-	require.Len(t, out.([]any), 2)
+	items, ok := out.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 2)
 }
 
 func TestInjectResponsesReasoningPlaceholdersSkipsPlainConversations(t *testing.T) {
@@ -49,7 +52,8 @@ func TestInjectResponsesReasoningPlaceholdersIDsAreUnique(t *testing.T) {
 		map[string]any{"type": "function_call", "call_id": "b"},
 	}
 	out, _ := InjectResponsesReasoningPlaceholders(input)
-	raw := out.([]any)
+	raw, ok := out.([]any)
+	require.True(t, ok)
 	seen := map[string]bool{}
 	for _, item := range raw {
 		m, ok := item.(map[string]any)
@@ -64,3 +68,11 @@ func TestInjectResponsesReasoningPlaceholdersIDsAreUnique(t *testing.T) {
 }
 
 var _ = gjson.Get
+
+func itemType(t *testing.T, raw any) string {
+	t.Helper()
+	m, ok := raw.(map[string]any)
+	require.True(t, ok, "item must be an object")
+	typ, _ := m["type"].(string)
+	return typ
+}
