@@ -990,3 +990,19 @@ func TestNormalizeResponsesBodyInjectsReasoningPlaceholderForRelayDeepSeekModel(
 	other := []byte(`{"model":"gpt-5.1","input":[{"type":"function_call","call_id":"call_a","name":"do"}]}`)
 	require.Equal(t, string(other), string(normalizeDeepSeekResponsesRequestBody(relay, other)))
 }
+
+// A relay body with unique call ids used to return early, before the reasoning
+// repair could run, so tool-heavy DeepSeek requests kept being rejected.
+func TestNormalizeResponsesBodyRepairsReasoningWithoutDuplicateCallIDs(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"model":"deepseek-v4.1-flash","input":[` +
+		`{"type":"function_call","call_id":"call_a","name":"do"},` +
+		`{"type":"function_call_output","call_id":"call_a","output":"ok"},` +
+		`{"type":"function_call","call_id":"call_b","name":"do"},` +
+		`{"type":"function_call_output","call_id":"call_b","output":"ok"}]}`)
+	relay := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	normalized := normalizeDeepSeekResponsesRequestBody(relay, body)
+
+	require.Equal(t, "reasoning", gjson.GetBytes(normalized, "input.0.type").String())
+	require.Equal(t, 6, len(gjson.GetBytes(normalized, "input").Array()), "one placeholder per call, nothing dropped")
+}
