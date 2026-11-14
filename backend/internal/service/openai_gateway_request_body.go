@@ -200,7 +200,12 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 	}
 	native := account != nil && account.UsesNativeCNResponses()
 	dedupe := deepSeekDuplicateCallIDRewrite(account, body)
-	if !native && !dedupe {
+	// The reasoning repair below is not part of "duplicate call id" cleanup, so
+	// it must survive this early return: a relay body with unique call ids used
+	// to skip normalisation entirely, which is why tool-heavy DeepSeek requests
+	// kept failing after the placeholder work landed.
+	repairReasoning := servedByDeepSeekBody(account, body)
+	if !native && !dedupe && !repairReasoning {
 		return body
 	}
 	normalized := body
@@ -2686,4 +2691,14 @@ func servedByDeepSeek(account *Account, requestBody map[string]any) bool {
 	}
 	model, _ := requestBody["model"].(string)
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek")
+}
+
+// servedByDeepSeekBody is servedByDeepSeek for the raw body, used before the
+// request is decoded.
+func servedByDeepSeekBody(account *Account, body []byte) bool {
+	if account != nil && account.Platform == PlatformDeepseek {
+		return true
+	}
+	model := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+	return strings.HasPrefix(model, "deepseek")
 }
