@@ -83,6 +83,12 @@ type PaymentConfig struct {
 	AlipayForceQRCode bool `json:"alipay_force_qrcode"`
 	// Use Alipay face-to-face precreate and an app deep link on mobile clients.
 	AlipayMobilePrecreateDeepLink bool `json:"alipay_mobile_precreate_deep_link"`
+
+	// Recharge-centre tab layout (administrator-managed, global for all users).
+	// TabOrder is always a complete permutation of the known tabs and DefaultTab
+	// is always one of them.
+	TabOrder   []string `json:"payment_tab_order"`
+	DefaultTab string   `json:"payment_default_tab"`
 }
 
 // UpdatePaymentConfigRequest contains fields to update payment configuration.
@@ -116,6 +122,12 @@ type UpdatePaymentConfigRequest struct {
 	AlipayForceQRCode *bool `json:"alipay_force_qrcode"`
 	// Use Alipay face-to-face precreate and an app deep link on mobile clients.
 	AlipayMobilePrecreateDeepLink *bool `json:"alipay_mobile_precreate_deep_link"`
+
+	// Recharge-centre tab layout. Pointer semantics: omitting both fields keeps
+	// the stored layout untouched, providing only TabDefault keeps the stored
+	// order.
+	TabOrder   *[]string `json:"payment_tab_order"`
+	TabDefault *string   `json:"payment_default_tab"`
 
 	VisibleMethodAlipaySource  *string `json:"payment_visible_method_alipay_source"`
 	VisibleMethodWxpaySource   *string `json:"payment_visible_method_wxpay_source"`
@@ -286,6 +298,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 		SettingAlipayForceQRCode, SettingAlipayMobilePrecreateDeepLink,
 		SettingPaymentVisibleMethodAlipayEnabled, SettingPaymentVisibleMethodAlipaySource,
 		SettingPaymentVisibleMethodWxpayEnabled, SettingPaymentVisibleMethodWxpaySource,
+		SettingPaymentTabOrder,
 	}
 	vals, err := s.settingRepo.GetMultiple(ctx, keys)
 	if err != nil {
@@ -332,6 +345,9 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 	if cfg.LoadBalanceStrategy == "" {
 		cfg.LoadBalanceStrategy = payment.DefaultLoadBalanceStrategy
 	}
+	tabOrder := sanitizePaymentTabOrder(vals[SettingPaymentTabOrder])
+	cfg.TabOrder = tabOrder.Order
+	cfg.DefaultTab = tabOrder.Default
 	if raw := vals[SettingEnabledPaymentTypes]; raw != "" {
 		types := make([]string, 0, len(strings.Split(raw, ",")))
 		for _, t := range strings.Split(raw, ",") {
@@ -488,7 +504,42 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	if req.VisibleMethodWxpayEnabled != nil {
 		m[SettingPaymentVisibleMethodWxpayEnabled] = formatBoolOrEmpty(req.VisibleMethodWxpayEnabled)
 	}
+	if req.TabOrder != nil || req.TabDefault != nil {
+		payload, err := s.resolvePaymentTabOrderInput(ctx, req)
+		if err != nil {
+			return err
+		}
+		m[SettingPaymentTabOrder] = payload
+	}
 	return s.settingRepo.SetMultiple(ctx, m)
+}
+
+// resolvePaymentTabOrderInput validates a tab layout patch and serialises it for
+// storage. A default-only patch reuses the stored order.
+func (s *PaymentConfigService) resolvePaymentTabOrderInput(ctx context.Context, req UpdatePaymentConfigRequest) (string, error) {
+	var order []string
+	if req.TabOrder != nil {
+		order = *req.TabOrder
+	} else {
+		current, err := s.GetPaymentTabOrder(ctx)
+		if err != nil {
+			return "", err
+		}
+		order = current.Order
+	}
+	def := ""
+	if req.TabDefault != nil {
+		def = *req.TabDefault
+	}
+	normalized, err := normalizePaymentTabOrderInput(order, def)
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("marshal payment tab order: %w", err)
+	}
+	return string(payload), nil
 }
 
 func formatBoolOrEmpty(v *bool) string {

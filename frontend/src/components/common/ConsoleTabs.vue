@@ -8,27 +8,67 @@
     role="tablist"
     :aria-label="label"
   >
-    <UButton
+    <div
       v-for="(item, index) in items"
-      :id="`${id}-tab-${item.key}`"
       :key="item.key"
-      type="button"
-      role="tab"
-      :color="modelValue === item.key ? 'primary' : 'neutral'"
-      :variant="modelValue === item.key ? 'solid' : 'ghost'"
-      size="md"
-      :class="[
-        'min-w-0 justify-center rounded-md px-3 py-1.5 font-medium',
-        modelValue !== item.key && 'text-muted hover:bg-transparent hover:text-default'
-      ]"
-      :aria-selected="modelValue === item.key ? 'true' : 'false'"
-      :aria-controls="`${id}-panel-${item.key}`"
-      :tabindex="modelValue === item.key ? 0 : -1"
-      @click="emit('update:modelValue', item.key)"
-      @keydown="onKeydown($event, index)"
+      class="group relative inline-flex"
+      :draggable="reorderable"
+      :data-tab-key="item.key"
+      @dragstart="onDragStart($event, item.key)"
+      @dragover="onDragOver($event, item.key)"
+      @drop="onDrop($event, item.key)"
+      @dragend="resetDrag"
     >
-      <span class="truncate">{{ item.label }}</span>
-    </UButton>
+      <UButton
+        :id="`${id}-tab-${item.key}`"
+        type="button"
+        role="tab"
+        :color="modelValue === item.key ? 'primary' : 'neutral'"
+        :variant="modelValue === item.key ? 'solid' : 'ghost'"
+        size="md"
+        :class="[
+          'min-w-0 justify-center rounded-md px-3 py-1.5 font-medium',
+          modelValue !== item.key && 'text-muted hover:bg-transparent hover:text-default',
+          reorderable && 'cursor-grab active:cursor-grabbing',
+          dragOverKey === item.key && draggingKey !== item.key && 'ring-2 ring-primary-400',
+          draggingKey === item.key && 'opacity-50'
+        ]"
+        :aria-selected="modelValue === item.key ? 'true' : 'false'"
+        :aria-controls="`${id}-panel-${item.key}`"
+        :tabindex="modelValue === item.key ? 0 : -1"
+        :draggable="reorderable ? 'true' : undefined"
+        @click="emit('update:modelValue', item.key)"
+        @keydown="onKeydown($event, index)"
+      >
+        <span class="flex min-w-0 items-center justify-center gap-1">
+          <span
+            v-if="defaultKey === item.key"
+            class="flex shrink-0 items-center"
+            data-test="console-tabs-default-star"
+            :aria-label="defaultLabel"
+            :title="defaultLabel"
+          >
+            <UIcon name="i-lucide-star" class="size-3 text-amber-400" />
+          </span>
+          <span class="truncate">{{ item.label }}</span>
+        </span>
+      </UButton>
+      <!-- Every user sees the star on the default tab; an administrator can
+           hover any other tab to promote it. -->
+      <button
+        v-if="reorderable && defaultKey !== item.key"
+        type="button"
+        data-test="console-tabs-set-default"
+        :data-default-tab-key="item.key"
+        class="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-elevated text-dimmed opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+        :aria-label="setDefaultLabel"
+        :title="setDefaultLabel"
+        aria-pressed="false"
+        @click.stop="onSetDefault(item.key)"
+      >
+        <UIcon name="i-lucide-star-off" class="size-3" />
+      </button>
+    </div>
   </div>
 </template>
 
@@ -40,9 +80,21 @@ const props = defineProps<{
   label: string
   modelValue: string
   items: { key: string; label: string }[]
+  /** Enables HTML5 drag reordering and the interactive default-star overlay. */
+  reorderable?: boolean
+  /** Key of the tab marked as the default landing tab. */
+  defaultKey?: string
+  defaultLabel?: string
+  setDefaultLabel?: string
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+  reorder: [keys: string[]]
+  'set-default': [key: string]
+}>()
 const tablist = ref<HTMLElement | null>(null)
+const draggingKey = ref<string | null>(null)
+const dragOverKey = ref<string | null>(null)
 
 function onKeydown(event: KeyboardEvent, index: number) {
   const last = props.items.length - 1
@@ -53,5 +105,46 @@ function onKeydown(event: KeyboardEvent, index: number) {
   event.preventDefault()
   emit('update:modelValue', props.items[next].key)
   nextTick(() => tablist.value?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus())
+}
+
+function onDragStart(event: DragEvent, key: string) {
+  if (!props.reorderable) return
+  draggingKey.value = key
+  dragOverKey.value = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    // Firefox refuses to start a drag unless some data is attached.
+    event.dataTransfer.setData('text/plain', key)
+  }
+}
+
+function onDragOver(event: DragEvent, key: string) {
+  if (!props.reorderable || draggingKey.value === null) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  dragOverKey.value = key
+}
+
+function onDrop(event: DragEvent, targetKey: string) {
+  if (!props.reorderable || draggingKey.value === null) return
+  event.preventDefault()
+  const from = props.items.findIndex((item) => item.key === draggingKey.value)
+  const to = props.items.findIndex((item) => item.key === targetKey)
+  resetDrag()
+  if (from < 0 || to < 0 || from === to) return
+  const keys = props.items.map((item) => item.key)
+  const [moved] = keys.splice(from, 1)
+  keys.splice(to, 0, moved)
+  emit('reorder', keys)
+}
+
+function onSetDefault(key: string) {
+  if (!props.reorderable) return
+  emit('set-default', key)
+}
+
+function resetDrag() {
+  draggingKey.value = null
+  dragOverKey.value = null
 }
 </script>

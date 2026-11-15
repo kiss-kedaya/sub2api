@@ -155,6 +155,8 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		StripePublishableKey:          cfg.StripePublishableKey,
 		AlipayForceQRCode:             cfg.AlipayForceQRCode,
 		AlipayMobilePrecreateDeepLink: alipayMobilePrecreateDeepLink,
+		PaymentTabOrder:               cfg.TabOrder,
+		PaymentDefaultTab:             cfg.DefaultTab,
 	})
 }
 
@@ -173,6 +175,8 @@ type checkoutInfoResponse struct {
 	StripePublishableKey          string                          `json:"stripe_publishable_key"`
 	AlipayForceQRCode             bool                            `json:"alipay_force_qrcode"`
 	AlipayMobilePrecreateDeepLink bool                            `json:"alipay_mobile_precreate_deep_link"`
+	PaymentTabOrder               []string                        `json:"payment_tab_order"`
+	PaymentDefaultTab             string                          `json:"payment_default_tab"`
 }
 
 type checkoutPlan struct {
