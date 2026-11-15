@@ -667,6 +667,32 @@ func TestBuildAuthorizationURL_特殊字符编码(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// BuildUserAgent
+// ---------------------------------------------------------------------------
+
+func TestBuildUserAgent_使用官方Hub路径(t *testing.T) {
+	defaultUA := "antigravity/hub/" + defaultUserAgentVersion + " windows/amd64"
+	cases := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{name: "自定义版本", version: " 3.4.5 ", want: "antigravity/hub/3.4.5 windows/amd64"},
+		{name: "空版本回退默认值", version: "", want: defaultUA},
+		{name: "非法版本回退默认值", version: "hub/3.4.5", want: defaultUA},
+		{name: "换行注入回退默认值", version: "3.4.5\r\nX-Injected: 1", want: defaultUA},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BuildUserAgent(tc.version); got != tc.want {
+				t.Errorf("BuildUserAgent(%q) 不匹配: got %q, want %q", tc.version, got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 常量值验证
 // ---------------------------------------------------------------------------
 
@@ -693,7 +719,7 @@ func TestConstants_值正确(t *testing.T) {
 	if RedirectURI != "http://localhost:8085/callback" {
 		t.Errorf("RedirectURI 不匹配: got %s", RedirectURI)
 	}
-	if GetUserAgent() != "antigravity/2.9.1 windows/amd64" {
+	if GetUserAgent() != "antigravity/hub/2.9.1 windows/amd64" {
 		t.Errorf("UserAgent 不匹配: got %s", GetUserAgent())
 	}
 	if SessionTTL != 30*time.Minute {
