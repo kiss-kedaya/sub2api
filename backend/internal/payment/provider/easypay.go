@@ -305,7 +305,12 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		"act": "order", "pid": e.config["pid"],
 		"key": e.config["pkey"], "out_trade_no": tradeNo,
 	}
-	body, httpStatus, err := e.postRaw(ctx, e.apiBase()+"/api.php", params)
+	// The documented order query is a GET with query-string parameters
+	// (api.php?act=order&pid=..&key=..&out_trade_no=..). Sending it as a form
+	// POST made the upstream ignore act/out_trade_no and answer a failure, which
+	// surfaced as "easypay verification: upstream query failed" on every paid
+	// callback -- money in, credit never granted.
+	body, httpStatus, err := e.getRaw(ctx, e.apiBase()+"/api.php", params)
 	if err != nil {
 		return nil, fmt.Errorf("easypay query: %w", err)
 	}
@@ -582,6 +587,33 @@ func (e *EasyPay) postRaw(ctx context.Context, endpoint string, params map[strin
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	client := e.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: easypayHTTPTimeout}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEasypayResponseSize))
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return body, resp.StatusCode, nil
+}
+
+// getRaw issues a GET with the parameters encoded in the query string. EasyPay's
+// merchant APIs are documented that way and do not read a POST body.
+func (e *EasyPay) getRaw(ctx context.Context, endpoint string, params map[string]string) ([]byte, int, error) {
+	q := url.Values{}
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+q.Encode(), nil)
+	if err != nil {
+		return nil, 0, err
+	}
 	client := e.httpClient
 	if client == nil {
 		client = &http.Client{Timeout: easypayHTTPTimeout}

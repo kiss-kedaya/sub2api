@@ -87,8 +87,10 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 
 			var gotForm url.Values
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost {
-					t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
+				// Documented as a GET with query-string parameters; a POST was
+				// silently ignored upstream and broke every paid callback.
+				if r.Method != http.MethodGet {
+					t.Errorf("method = %q, want %q", r.Method, http.MethodGet)
 				}
 				if r.URL.Path != "/api.php" {
 					t.Errorf("path = %q, want /api.php", r.URL.Path)
@@ -96,8 +98,8 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 				if err := r.ParseForm(); err != nil {
 					t.Errorf("ParseForm: %v", err)
 				}
-				gotForm = make(url.Values, len(r.PostForm))
-				for key, values := range r.PostForm {
+				gotForm = make(url.Values, len(r.URL.Query()))
+				for key, values := range r.URL.Query() {
 					gotForm[key] = append([]string(nil), values...)
 				}
 				w.Header().Set("Content-Type", "application/json")
