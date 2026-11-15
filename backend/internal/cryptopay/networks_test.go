@@ -179,7 +179,7 @@ func TestChainScanConfigWiresNativeScanning(t *testing.T) {
 	}{
 		ChainEthereum: {native: true, symbol: "ETH", contract: 2},
 		ChainBSC:      {native: true, symbol: "BNB", contract: 2},
-		ChainPolygon:  {native: false, contract: 2},
+		ChainPolygon:  {native: false, contract: 3},
 	} {
 		config, ok := chainScanConfig(chain, 7, 1234)
 		if !ok {
