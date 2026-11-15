@@ -89,7 +89,7 @@ func (r *usageLogRepository) writeConnectionTrace(ctx context.Context, v service
 	_, err = r.db.ExecContext(ctx, `INSERT INTO request_connection_traces
   (trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error)
   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22)
-  ON CONFLICT (trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.ClientRequestID, v.UserID, v.APIKeyID, v.AccountID, v.GroupID, v.Model, v.Path, v.ClientIP, v.UserAgent, v.Stream, string(raw), v.Source, v.Host, v.Scheme, v.Method, v.HTTPVersion, v.TLSVersion, v.UpstreamStatus, v.NetworkError)
+  ON CONFLICT (trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.ClientRequestID, v.UserID, v.APIKeyID, v.AccountID, v.GroupID, v.Model, v.Path, v.ClientIP, v.UserAgent, v.Stream, string(raw), v.Source, v.Host, connectionTraceProtocolScheme(v.Scheme), v.Method, connectionTraceProtocolVersion(v.HTTPVersion), connectionTraceProtocolVersion(v.TLSVersion), v.UpstreamStatus, v.NetworkError)
 	return err
 }
 
@@ -263,7 +263,7 @@ func (r *usageLogRepository) ImportEdgeConnections(ctx context.Context, records 
 		if e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `INSERT INTO request_connection_traces(trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error) VALUES($1,$2,$3,'',0,0,0,0,'',$4,$5,'',false,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.Path, v.ClientIP, string(raw), v.Source, v.Host, v.Scheme, v.Method, v.HTTPVersion, v.TLSVersion, v.UpstreamStatus, v.NetworkError)
+		_, e = tx.ExecContext(ctx, `INSERT INTO request_connection_traces(trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error) VALUES($1,$2,$3,'',0,0,0,0,'',$4,$5,'',false,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.Path, v.ClientIP, string(raw), v.Source, v.Host, connectionTraceProtocolScheme(v.Scheme), v.Method, connectionTraceProtocolVersion(v.HTTPVersion), connectionTraceProtocolVersion(v.TLSVersion), v.UpstreamStatus, v.NetworkError)
 		if e != nil {
 			return e
 		}
@@ -282,3 +282,10 @@ const (
 	connectionTracePruneBatch    = 200000
 	connectionTracePrunePasses   = 20
 )
+
+// Protocol metadata carries no diagnostic value per row and repeats the same
+// two or three values millions of times, so it is not stored: user_agent,
+// method, host, upstream_status and network_error stay because they are what
+// an operator actually reads when a request is slow or failing.
+func connectionTraceProtocolScheme(string) string  { return "" }
+func connectionTraceProtocolVersion(string) string { return "" }
