@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -55,13 +56,24 @@ func (r *usageLogRepository) runConnectionWriter() {
 				}
 			}
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
-    (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '30 days' LIMIT 10000)`)
-			cancel()
-			if err != nil {
-				logger.LegacyPrintf("connection_diagnostics", "retention failed")
+			// The run interval is one hour, so a small per-run batch can never
+			// outpace ingestion: the table writes millions of rows a day while
+			// this deleted ten thousand an hour, which is why a 30-day policy
+			// still left 157GB on disk. Hold a 14-day window and prune several
+			// batches per run instead of one.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			for pass := 0; pass < connectionTracePrunePasses; pass++ {
+				res, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
+    (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '14 days' LIMIT `+strconv.Itoa(connectionTracePruneBatch)+`)`)
+				if err != nil {
+					logger.LegacyPrintf("connection_diagnostics", "retention failed")
+					break
+				}
+				if n, err := res.RowsAffected(); err == nil && n < int64(connectionTracePruneBatch) {
+					break
+				}
 			}
+			cancel()
 		}
 	}
 }
@@ -263,3 +275,10 @@ func (r *usageLogRepository) StopConnectionDiagnostics() {
 	r.startConnectionWriter()
 	r.connectionStop.Do(func() { close(r.connectionDone) })
 }
+
+// Retention window and pruning budget for request_connection_traces.
+const (
+	connectionTraceRetentionDays = 14
+	connectionTracePruneBatch    = 200000
+	connectionTracePrunePasses   = 20
+)
