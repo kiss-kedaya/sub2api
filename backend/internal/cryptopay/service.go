@@ -150,8 +150,9 @@ var watchedTokens = map[string][]TokenConfig{
 		{Contract: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", Decimals: 18, Symbol: "USDC"}, // USD Coin (Circle)
 	},
 	ChainPolygon: {
-		{Contract: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", Decimals: 6, Symbol: "USDT"}, // Tether USD (PoS)
-		{Contract: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", Decimals: 6, Symbol: "USDC"}, // USD Coin (native)
+		{Contract: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", Decimals: 6, Symbol: "USDT"},   // Tether USD (PoS)
+		{Contract: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", Decimals: 6, Symbol: "USDC"},   // USD Coin (native)
+		{Contract: "0x2791bca1f2de4661ed88a30c99a7a9449aa84174", Decimals: 6, Symbol: "USDC.e"}, // Bridged USDC stays accepted: exchanges and bridges still send it, and ignoring it silently drops real deposits.
 	},
 	ChainPlasma: {
 		{Contract: "0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb", Decimals: 6, Symbol: "USDT"}, // USDT0 on Plasma
