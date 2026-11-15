@@ -290,3 +290,87 @@ describe('RegisterView invitation layout', () => {
     expect(wrapper.get('#email').classes()).toContain('input-error')
   })
 })
+
+describe('RegisterView login agreement gate', () => {
+  const agreementSettings = {
+    ...publicSettings,
+    affiliate_enabled: false,
+    turnstile_enabled: false,
+    login_agreement_enabled: true,
+    login_agreement_mode: 'checkbox',
+    login_agreement_updated_at: '2026-03-31',
+    login_agreement_documents: [
+      { id: 'terms', title: 'Terms of Service', content_md: '# Terms' }
+    ]
+  }
+
+  beforeEach(() => {
+    getPublicSettingsMock.mockReset()
+    registerMock.mockReset()
+    showErrorMock.mockReset()
+    pushMock.mockReset()
+    appStoreMock.cachedPublicSettings = null
+    localStorage.removeItem('sub2api_login_agreement_consent')
+    getPublicSettingsMock.mockResolvedValue(publicSettings)
+  })
+
+  // 回归 issue #328：同意条款只在登录页勾选时，注册页账号步骤也必须能正常输入。
+  it.each(['checkbox', 'modal'])(
+    'keeps the account fields editable while the login agreement is unaccepted (%s mode)',
+    async (mode) => {
+      getPublicSettingsMock.mockResolvedValueOnce({
+        ...agreementSettings,
+        login_agreement_mode: mode
+      })
+
+      const wrapper = mountRegister()
+      await flushPromises()
+
+      expect(wrapper.get('#email').attributes('disabled')).toBeUndefined()
+      expect(wrapper.get('#password').attributes('disabled')).toBeUndefined()
+
+      await wrapper.get('#email').setValue('user@example.com')
+      await wrapper.get('#password').setValue('secret-123')
+
+      expect((wrapper.get('#email').element as HTMLInputElement).value).toBe('user@example.com')
+      expect((wrapper.get('#password').element as HTMLInputElement).value).toBe('secret-123')
+      wrapper.unmount()
+    }
+  )
+
+  // 条款门禁仍然归属于最终注册动作：账号可持续填写，但未同意前不能提交注册。
+  it('still blocks the final registration action until the agreement is accepted', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce(agreementSettings)
+
+    const wrapper = mountRegister()
+    await flushPromises()
+
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('.auth-step-footer .btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    expect(registerMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('unlocks the final registration action once the stored agreement matches', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce(agreementSettings)
+    localStorage.setItem(
+      'sub2api_login_agreement_consent',
+      JSON.stringify({ revision: '2026-03-31:terms:Terms of Service' })
+    )
+
+    const wrapper = mountRegister()
+    await flushPromises()
+
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('.auth-step-footer .btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
