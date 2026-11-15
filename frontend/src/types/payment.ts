@@ -89,6 +89,10 @@ export interface CheckoutInfoResponse {
   alipay_force_qrcode?: boolean
   /** When true, official Alipay mobile orders use precreate plus an Alipay app deep link */
   alipay_mobile_precreate_deep_link?: boolean
+  /** Administrator-managed recharge-centre tab order (global for all users) */
+  payment_tab_order?: string[]
+  /** Tab selected when the recharge centre opens; always one of payment_tab_order */
+  payment_default_tab?: string
 }
 
 // ==================== Orders ====================

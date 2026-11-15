@@ -30,6 +30,10 @@ export interface AdminPaymentConfig {
   product_name_suffix: string
   help_image_url: string
   help_text: string
+  /** Administrator-managed recharge-centre tab order */
+  payment_tab_order?: string[]
+  /** Default recharge-centre tab; always one of payment_tab_order */
+  payment_default_tab?: string
 }
 
 /** Fields accepted by PUT /admin/payment/config (all optional via pointer semantics) */
@@ -50,6 +54,10 @@ export interface UpdatePaymentConfigRequest {
   product_name_suffix?: string
   help_image_url?: string
   help_text?: string
+  /** Persisted recharge-centre tab order; omitted leaves the stored layout untouched */
+  payment_tab_order?: string[]
+  /** Default recharge-centre tab; omitted keeps the stored default */
+  payment_default_tab?: string
 }
 
 export interface RefundResult {

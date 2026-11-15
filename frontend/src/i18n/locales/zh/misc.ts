@@ -430,6 +430,12 @@ export default {
     tabTopUp: '充值',
     tabSubscribe: '充值中心',
     tabRechargeCenter: '支付宝 / 微信',
+    tabAdmin: {
+      dragHint: '可拖拽调整页签顺序',
+      defaultBadge: '默认页签',
+      setDefault: '设为默认页签',
+      saveFailed: '页签设置保存失败',
+    },
     rechargeCenterTitle: '支付宝 / 微信',
     usdtExchangeAccounts: 'USDT 交易所账户',
     registerOkx: '注册 OKX',

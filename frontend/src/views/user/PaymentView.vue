@@ -11,9 +11,22 @@
           </template>
         </UserPageHeader>
         <!-- Tab Switcher (hide during payment and subscription confirm) -->
+        <p
+          v-if="isAdmin && tabs.length > 1 && paymentPhase === 'select' && !selectedPlan"
+          class="mb-2 text-xs text-muted"
+          data-test="payment-tabs-admin-hint"
+        >
+          {{ t('payment.tabAdmin.dragHint') }}
+        </p>
         <ConsoleTabs v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan"
           id="payment-view" class="signal-payment-tabs" :label="t('payment.title')"
           :model-value="activeTab" :items="tabs"
+          :reorderable="isAdmin"
+          :default-key="defaultTab"
+          :default-label="t('payment.tabAdmin.defaultBadge')"
+          :set-default-label="t('payment.tabAdmin.setDefault')"
+          @reorder="onTabsReorder"
+          @set-default="onSetDefaultTab"
           @update:model-value="activeTab = $event === 'rechargeCenter' ? 'rechargeCenter' : 'recharge'"
         />
         <!-- Payment in progress (shared by recharge and subscription) -->
@@ -357,6 +370,7 @@ import { usePaymentStore } from '@/stores/payment'
 import { useSubscriptionStore } from '@/stores/subscriptions'
 import { useAppStore } from '@/stores'
 import { paymentAPI } from '@/api/payment'
+import { adminPaymentAPI } from '@/api/admin/payment'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { isMobileDevice } from '@/utils/device'
 import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel, type PeakRateFields } from '@/utils/peak-rate'
@@ -398,6 +412,7 @@ const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
 
 const user = computed(() => authStore.user)
+const isAdmin = computed(() => authStore.isAdmin)
 const activeSubscriptions = computed(() => subscriptionStore.activeSubscriptions)
 
 function getDaysRemaining(expiresAt: string): number {
@@ -418,6 +433,12 @@ const submitting = ref(false)
 const errorMessage = ref('')
 const errorHintMessage = ref('')
 const activeTab = ref<'recharge' | 'rechargeCenter' | 'subscription'>('recharge')
+// Administrator-managed tab layout. Local overrides are applied optimistically so
+// a drag or "set default" takes effect immediately, then persisted server-side.
+const PAYMENT_TAB_KEYS = ['rechargeCenter', 'recharge'] as const
+type PaymentTabKey = typeof PAYMENT_TAB_KEYS[number]
+const tabOrderOverride = ref<string[] | null>(null)
+const defaultTabOverride = ref<string | null>(null)
 const rechargeCenterFrameRef = ref<HTMLElement | null>(null)
 const isRechargeCenterFullscreen = ref(false)
 const RECHARGE_CENTER_LOAD_TIMEOUT_MS = 5000
@@ -620,14 +641,83 @@ const enabledMethods = computed(() => Object.keys(visibleMethods.value))
 // The balance top-up tab is only offered when it can actually do something: with every payment
 // method switched off the panel would only ever say "not available", so the tab is hidden
 // instead of parking an empty page behind it.
-const tabs = computed(() => {
-  const result: { key: 'recharge' | 'rechargeCenter'; label: string }[] = []
-  if (rechargeCenterEnabled.value) result.push({ key: 'rechargeCenter', label: t('payment.tabRechargeCenter') })
-  if (!checkout.value.balance_disabled && enabledMethods.value.length > 0) {
-    result.push({ key: 'recharge', label: t('payment.tabTopUp') })
+//
+// The order and the landing tab are administrator-managed (settings key
+// `payment.tabs.order.v1`, exposed by checkout-info). Missing configuration falls
+// back to the historical order and its first tab, and a configured tab that is no
+// longer available falls back to the first available one — there is never an
+// "unset default" state.
+const paymentTabOrder = computed<PaymentTabKey[]>(() => {
+  const configured = tabOrderOverride.value ?? checkout.value.payment_tab_order ?? []
+  const order: PaymentTabKey[] = []
+  for (const key of configured) {
+    if (PAYMENT_TAB_KEYS.includes(key as PaymentTabKey) && !order.includes(key as PaymentTabKey)) {
+      order.push(key as PaymentTabKey)
+    }
   }
-  return result
+  for (const key of PAYMENT_TAB_KEYS) {
+    if (!order.includes(key)) order.push(key)
+  }
+  return order
 })
+
+const availableTabKeys = computed<PaymentTabKey[]>(() => {
+  const keys: PaymentTabKey[] = []
+  if (rechargeCenterEnabled.value) keys.push('rechargeCenter')
+  if (!checkout.value.balance_disabled && enabledMethods.value.length > 0) keys.push('recharge')
+  return keys
+})
+
+const defaultTab = computed<PaymentTabKey | ''>(() => {
+  const configured = defaultTabOverride.value ?? checkout.value.payment_default_tab ?? ''
+  if ((availableTabKeys.value as string[]).includes(configured)) return configured as PaymentTabKey
+  return paymentTabOrder.value.find(key => availableTabKeys.value.includes(key)) ?? ''
+})
+
+const tabs = computed(() => {
+  const labels: Record<PaymentTabKey, string> = {
+    rechargeCenter: t('payment.tabRechargeCenter'),
+    recharge: t('payment.tabTopUp'),
+  }
+  return paymentTabOrder.value
+    .filter((key): key is PaymentTabKey => availableTabKeys.value.includes(key))
+    .map((key) => ({ key, label: labels[key] }))
+})
+
+async function persistTabLayout(nextOrder: string[], nextDefault: string) {
+  const previousOrder = tabOrderOverride.value
+  const previousDefault = defaultTabOverride.value
+  // Optimistic local update: the page reflects the administrator's choice
+  // without waiting for the round trip or a reload.
+  tabOrderOverride.value = nextOrder
+  defaultTabOverride.value = nextDefault
+  try {
+    await adminPaymentAPI.updateConfig({
+      payment_tab_order: nextOrder,
+      payment_default_tab: nextDefault,
+    })
+  } catch (err: unknown) {
+    tabOrderOverride.value = previousOrder
+    defaultTabOverride.value = previousDefault
+    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('payment.tabAdmin.saveFailed')))
+  }
+}
+
+function onTabsReorder(keys: string[]) {
+  if (!isAdmin.value) return
+  // Only visible tabs can be dragged; keep tabs hidden right now at the end of
+  // the persisted order instead of dropping them.
+  const order = [...keys]
+  for (const key of paymentTabOrder.value) {
+    if (!order.includes(key)) order.push(key)
+  }
+  void persistTabLayout(order, defaultTab.value || order[0])
+}
+
+function onSetDefaultTab(key: string) {
+  if (!isAdmin.value) return
+  void persistTabLayout([...paymentTabOrder.value], key)
+}
 const validAmount = computed(() => amount.value ?? 0)
 
 function inheritRechargeFeeRate(override: number | null | undefined, fallback: number): number {
@@ -1335,11 +1425,18 @@ onMounted(async () => {
       }
     }
     await resumeWechatPaymentFromQuery()
-    // Alipay / WeChat (recharge centre) is the first tab and opens by default. Stay on balance
-    // top-up while a balance payment is being resumed, or when a link asks for it (?tab=recharge).
-    const wantsBalance = route.query.tab === 'recharge' || paymentPhase.value === 'paying'
-    if (rechargeCenterEnabled.value && (checkout.value.balance_disabled || !wantsBalance)) {
-      activeTab.value = 'rechargeCenter'
+    // The administrator-managed default tab decides where the page lands. An
+    // explicit balance deep link (?tab=recharge) or a resumed balance payment
+    // still wins, as does the legacy subscription deep link below.
+    const wantsBalance = (route.query.tab === 'recharge' || paymentPhase.value === 'paying')
+      && !checkout.value.balance_disabled
+      && enabledMethods.value.length > 0
+    if (wantsBalance) {
+      activeTab.value = 'recharge'
+    } else if (defaultTab.value) {
+      activeTab.value = defaultTab.value
+    } else if (availableTabKeys.value.length > 0) {
+      activeTab.value = availableTabKeys.value[0]
     }
     // Preserve legacy subscription deep links for payment callbacks and old renewal URLs.
     // The visible navigation no longer exposes this tab; normal users use Recharge Center.

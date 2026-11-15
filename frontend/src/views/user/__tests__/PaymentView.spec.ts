@@ -25,6 +25,8 @@ const showError = vi.hoisted(() => vi.fn())
 const showInfo = vi.hoisted(() => vi.fn())
 const showWarning = vi.hoisted(() => vi.fn())
 const getCheckoutInfo = vi.hoisted(() => vi.fn())
+const updatePaymentConfig = vi.hoisted(() => vi.fn())
+const authState = vi.hoisted(() => ({ isAdmin: false }))
 const bridgeInvoke = vi.hoisted(() => vi.fn())
 const translate = vi.hoisted(() => vi.fn((key: string) => key))
 
@@ -58,7 +60,19 @@ vi.mock('@/stores/auth', () => ({
       balance: 0,
     },
     refreshUser,
+    get isAdmin() {
+      return authState.isAdmin
+    },
   }),
+}))
+
+vi.mock('@/api/admin/payment', () => ({
+  adminPaymentAPI: {
+    updateConfig: updatePaymentConfig,
+  },
+  default: {
+    updateConfig: updatePaymentConfig,
+  },
 }))
 
 vi.mock('@/stores/payment', () => ({
@@ -603,6 +617,111 @@ describe('PaymentView recharge center visibility', () => {
     expect(wrapper.text()).toContain('payment.notAvailable')
     expect(wrapper.find('iframe').exists()).toBe(false)
     wrapper.unmount()
+  })
+})
+
+describe('PaymentView administrator tab layout', () => {
+  const wrappers: ReturnType<typeof shallowMount>[] = []
+
+  beforeEach(() => {
+    authState.isAdmin = false
+    vi.useRealTimers()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    window.localStorage.clear()
+    createOrder.mockReset()
+    updatePaymentConfig.mockReset().mockResolvedValue({})
+  })
+
+  afterEach(() => {
+    authState.isAdmin = false
+    wrappers.splice(0).forEach(wrapper => wrapper.unmount())
+  })
+
+  async function mountLayout(overrides: Partial<CheckoutInfoResponse> = {}) {
+    const method = checkoutInfoFixture().data.methods.wxpay
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      methods: { wxpay: method, alipay: { ...method } },
+      recharge_center_enabled: true,
+      ...overrides,
+    }))
+    const wrapper = shallowMount(PaymentView, { global: { stubs: {
+      AppLayout: { template: '<div><slot /></div>' }, Teleport: true, Transition: false,
+    } } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    return wrapper
+  }
+
+  function tabKeys(wrapper: ReturnType<typeof shallowMount>) {
+    return wrapper.getComponent(ConsoleTabs).props('items').map((item: { key: string }) => item.key)
+  }
+
+  it('shows the drag hint and reordering only to administrators', async () => {
+    const userWrapper = await mountLayout()
+    expect(userWrapper.find('[data-test="payment-tabs-admin-hint"]').exists()).toBe(false)
+    expect(userWrapper.getComponent(ConsoleTabs).props('reorderable')).toBe(false)
+    // The default star is still rendered for ordinary users.
+    expect(userWrapper.getComponent(ConsoleTabs).props('defaultKey')).toBe('rechargeCenter')
+
+    authState.isAdmin = true
+    const adminWrapper = await mountLayout()
+    expect(adminWrapper.get('[data-test="payment-tabs-admin-hint"]').text()).toContain('payment.tabAdmin.dragHint')
+    expect(adminWrapper.getComponent(ConsoleTabs).props('reorderable')).toBe(true)
+  })
+
+  it('lands on the administrator default tab and follows the configured order', async () => {
+    const wrapper = await mountLayout({
+      payment_tab_order: ['recharge', 'rechargeCenter'],
+      payment_default_tab: 'recharge',
+    })
+    expect(tabKeys(wrapper)).toEqual(['recharge', 'rechargeCenter'])
+    const tabs = wrapper.getComponent(ConsoleTabs)
+    expect(tabs.props('modelValue')).toBe('recharge')
+    expect(tabs.props('defaultKey')).toBe('recharge')
+    expect(wrapper.find('iframe').exists()).toBe(false)
+  })
+
+  it('falls back to the first tab when no configuration was saved yet', async () => {
+    const wrapper = await mountLayout()
+    expect(tabKeys(wrapper)).toEqual(['rechargeCenter', 'recharge'])
+    expect(wrapper.getComponent(ConsoleTabs).props('modelValue')).toBe('rechargeCenter')
+    expect(wrapper.getComponent(ConsoleTabs).props('defaultKey')).toBe('rechargeCenter')
+  })
+
+  it('persists a dragged order immediately and keeps the default tab identity', async () => {
+    authState.isAdmin = true
+    const wrapper = await mountLayout()
+    wrapper.getComponent(ConsoleTabs).vm.$emit('reorder', ['recharge', 'rechargeCenter'])
+    await flushPromises()
+    expect(updatePaymentConfig).toHaveBeenCalledWith({
+      payment_tab_order: ['recharge', 'rechargeCenter'],
+      payment_default_tab: 'rechargeCenter',
+    })
+    // The layout updates locally without a reload and the default follows its tab.
+    expect(tabKeys(wrapper)).toEqual(['recharge', 'rechargeCenter'])
+    expect(wrapper.getComponent(ConsoleTabs).props('defaultKey')).toBe('rechargeCenter')
+  })
+
+  it('persists a new default tab for administrators', async () => {
+    authState.isAdmin = true
+    const wrapper = await mountLayout()
+    wrapper.getComponent(ConsoleTabs).vm.$emit('set-default', 'recharge')
+    await flushPromises()
+    expect(updatePaymentConfig).toHaveBeenCalledWith({
+      payment_tab_order: ['rechargeCenter', 'recharge'],
+      payment_default_tab: 'recharge',
+    })
+    expect(wrapper.getComponent(ConsoleTabs).props('defaultKey')).toBe('recharge')
+  })
+
+  it('ignores layout events from ordinary users', async () => {
+    const wrapper = await mountLayout()
+    wrapper.getComponent(ConsoleTabs).vm.$emit('reorder', ['recharge', 'rechargeCenter'])
+    wrapper.getComponent(ConsoleTabs).vm.$emit('set-default', 'recharge')
+    await flushPromises()
+    expect(updatePaymentConfig).not.toHaveBeenCalled()
+    expect(tabKeys(wrapper)).toEqual(['rechargeCenter', 'recharge'])
   })
 })
 

@@ -406,6 +406,12 @@ export default {
     tabTopUp: 'Top Up',
     tabSubscribe: 'Recharge Center',
     tabRechargeCenter: 'Alipay / WeChat',
+    tabAdmin: {
+      dragHint: 'Drag the tabs to change their order',
+      defaultBadge: 'Default tab',
+      setDefault: 'Set as default tab',
+      saveFailed: 'Failed to save tab settings',
+    },
     rechargeCenterTitle: 'Alipay / WeChat',
     usdtExchangeAccounts: 'USDT exchange accounts',
     registerOkx: 'Register OKX',
