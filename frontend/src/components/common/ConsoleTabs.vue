@@ -3,7 +3,7 @@
        `${id}-tab-${key}` ids, which UTabs generates itself. -->
   <div
     ref="tablist"
-    class="relative inline-flex max-w-full flex-wrap gap-1 rounded-lg bg-elevated p-1"
+    class="relative inline-flex max-w-full flex-wrap gap-1 rounded-xl bg-elevated/80 p-1 ring-1 ring-black/5 backdrop-blur dark:bg-white/5 dark:ring-white/10"
     data-test="console-tabs"
     role="tablist"
     :aria-label="label"
@@ -23,12 +23,14 @@
         :id="`${id}-tab-${item.key}`"
         type="button"
         role="tab"
-        :color="modelValue === item.key ? 'primary' : 'neutral'"
-        :variant="modelValue === item.key ? 'solid' : 'ghost'"
+        :color="'neutral'"
+        :variant="'ghost'"
         size="md"
         :class="[
-          'min-w-0 justify-center rounded-md px-3 py-1.5 font-medium',
-          modelValue !== item.key && 'text-muted hover:bg-transparent hover:text-default',
+          'min-w-0 justify-center rounded-lg px-3 py-1.5 font-medium transition-all duration-200 ease-out',
+          modelValue === item.key
+            ? 'bg-white text-highlighted shadow-sm ring-1 ring-black/5 dark:bg-white/15 dark:text-white dark:ring-white/15 dark:shadow-[0_1px_2px_rgba(0,0,0,0.4)]'
+            : 'text-muted hover:bg-transparent hover:text-default',
           reorderable && 'cursor-grab active:cursor-grabbing',
           dragOverKey === item.key && draggingKey !== item.key && 'ring-2 ring-primary-400',
           draggingKey === item.key && 'opacity-50'
@@ -41,6 +43,9 @@
         @keydown="onKeydown($event, index)"
       >
         <span class="flex min-w-0 items-center justify-center gap-1">
+          <!-- The star marks the landing tab. It has to read on both the light
+               selected pill and the dark track, so the colour follows the state
+               instead of a single amber that disappears on the pink fill. -->
           <span
             v-if="defaultKey === item.key"
             class="flex shrink-0 items-center"
@@ -48,7 +53,11 @@
             :aria-label="defaultLabel"
             :title="defaultLabel"
           >
-            <UIcon name="i-lucide-star" class="size-3 text-amber-400" />
+            <UIcon
+              name="i-lucide-star"
+              class="size-3.5 fill-current"
+              :class="modelValue === item.key ? 'text-amber-500 dark:text-amber-300' : 'text-amber-400'"
+            />
           </span>
           <span class="truncate">{{ item.label }}</span>
         </span>
@@ -60,7 +69,7 @@
         type="button"
         data-test="console-tabs-set-default"
         :data-default-tab-key="item.key"
-        class="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-elevated text-dimmed opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+        class="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-default text-muted opacity-0 shadow-sm ring-1 ring-black/10 transition-opacity hover:text-default focus-visible:opacity-100 group-hover:opacity-100 dark:bg-white/15 dark:text-white/80 dark:ring-white/20"
         :aria-label="setDefaultLabel"
         :title="setDefaultLabel"
         aria-pressed="false"
