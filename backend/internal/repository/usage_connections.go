@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -55,13 +56,24 @@ func (r *usageLogRepository) runConnectionWriter() {
 				}
 			}
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
-    (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '30 days' LIMIT 10000)`)
-			cancel()
-			if err != nil {
-				logger.LegacyPrintf("connection_diagnostics", "retention failed")
+			// The run interval is one hour, so a small per-run batch can never
+			// outpace ingestion: the table writes millions of rows a day while
+			// this deleted ten thousand an hour, which is why a 30-day policy
+			// still left 157GB on disk. Hold a 14-day window and prune several
+			// batches per run instead of one.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			for pass := 0; pass < connectionTracePrunePasses; pass++ {
+				res, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
+    (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '14 days' LIMIT `+strconv.Itoa(connectionTracePruneBatch)+`)`)
+				if err != nil {
+					logger.LegacyPrintf("connection_diagnostics", "retention failed")
+					break
+				}
+				if n, err := res.RowsAffected(); err == nil && n < int64(connectionTracePruneBatch) {
+					break
+				}
 			}
+			cancel()
 		}
 	}
 }
@@ -77,7 +89,7 @@ func (r *usageLogRepository) writeConnectionTrace(ctx context.Context, v service
 	_, err = r.db.ExecContext(ctx, `INSERT INTO request_connection_traces
   (trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error)
   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22)
-  ON CONFLICT (trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.ClientRequestID, v.UserID, v.APIKeyID, v.AccountID, v.GroupID, v.Model, v.Path, v.ClientIP, v.UserAgent, v.Stream, string(raw), v.Source, v.Host, v.Scheme, v.Method, v.HTTPVersion, v.TLSVersion, v.UpstreamStatus, v.NetworkError)
+  ON CONFLICT (trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.ClientRequestID, v.UserID, v.APIKeyID, v.AccountID, v.GroupID, v.Model, v.Path, v.ClientIP, v.UserAgent, v.Stream, string(raw), v.Source, v.Host, connectionTraceProtocolScheme(v.Scheme), v.Method, connectionTraceProtocolVersion(v.HTTPVersion), connectionTraceProtocolVersion(v.TLSVersion), v.UpstreamStatus, v.NetworkError)
 	return err
 }
 
@@ -251,7 +263,7 @@ func (r *usageLogRepository) ImportEdgeConnections(ctx context.Context, records 
 		if e != nil {
 			return e
 		}
-		_, e = tx.ExecContext(ctx, `INSERT INTO request_connection_traces(trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error) VALUES($1,$2,$3,'',0,0,0,0,'',$4,$5,'',false,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.Path, v.ClientIP, string(raw), v.Source, v.Host, v.Scheme, v.Method, v.HTTPVersion, v.TLSVersion, v.UpstreamStatus, v.NetworkError)
+		_, e = tx.ExecContext(ctx, `INSERT INTO request_connection_traces(trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error) VALUES($1,$2,$3,'',0,0,0,0,'',$4,$5,'',false,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.Path, v.ClientIP, string(raw), v.Source, v.Host, connectionTraceProtocolScheme(v.Scheme), v.Method, connectionTraceProtocolVersion(v.HTTPVersion), connectionTraceProtocolVersion(v.TLSVersion), v.UpstreamStatus, v.NetworkError)
 		if e != nil {
 			return e
 		}
@@ -263,3 +275,17 @@ func (r *usageLogRepository) StopConnectionDiagnostics() {
 	r.startConnectionWriter()
 	r.connectionStop.Do(func() { close(r.connectionDone) })
 }
+
+// Retention window and pruning budget for request_connection_traces.
+const (
+	connectionTraceRetentionDays = 14
+	connectionTracePruneBatch    = 200000
+	connectionTracePrunePasses   = 20
+)
+
+// Protocol metadata carries no diagnostic value per row and repeats the same
+// two or three values millions of times, so it is not stored: user_agent,
+// method, host, upstream_status and network_error stay because they are what
+// an operator actually reads when a request is slow or failing.
+func connectionTraceProtocolScheme(string) string  { return "" }
+func connectionTraceProtocolVersion(string) string { return "" }
