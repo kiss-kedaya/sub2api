@@ -41,13 +41,13 @@ func TestEasyPaySignedSuccessRequiresProviderSettlement(t *testing.T) {
 			queries := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				queries++
-				require.Equal(t, http.MethodPost, r.Method)
+				require.Equal(t, http.MethodGet, r.Method)
 				require.Equal(t, "/api.php", r.URL.Path)
 				require.NoError(t, r.ParseForm())
-				require.Equal(t, "order", r.PostForm.Get("act"))
-				require.Equal(t, "fixture-merchant", r.PostForm.Get("pid"))
-				require.Equal(t, "fixture-only-secret", r.PostForm.Get("key"))
-				require.Equal(t, order.OutTradeNo, r.PostForm.Get("out_trade_no"))
+				require.Equal(t, "order", r.URL.Query().Get("act"))
+				require.Equal(t, "fixture-merchant", r.URL.Query().Get("pid"))
+				require.Equal(t, "fixture-only-secret", r.URL.Query().Get("key"))
+				require.Equal(t, order.OutTradeNo, r.URL.Query().Get("out_trade_no"))
 				w.WriteHeader(tc.httpStatus)
 				_, _ = fmt.Fprint(w, strings.ReplaceAll(tc.queryBody, "ORDER", order.OutTradeNo))
 			}))
