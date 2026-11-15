@@ -1261,3 +1261,24 @@ html[data-theme-switching]::view-transition-new(root) {
     -moz-appearance: textfield;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   iOS-style continuous curvature.
+
+   `corner-shape: squircle` swaps the circular arc of border-radius for a
+   superellipse — the corner Apple actually draws — while leaving the box model
+   alone, so borders, shadows, focus rings and floating layers keep working.
+   A clip-path would break all of those. Support is progressive: browsers
+   without it keep the plain circular radii, so nothing regresses.
+--------------------------------------------------------------------------- */
+@supports (corner-shape: squircle) {
+  /* Only surfaces that opted into rounding; `rounded-full` must stay a circle
+     so avatars, dots and pills do not turn into squares. */
+  [class*='rounded-']:not([class*='rounded-full']):not([class*='rounded-none']),
+  button:not([class*='rounded-full']),
+  input:not([class*='rounded-full']),
+  textarea:not([class*='rounded-full']),
+  select:not([class*='rounded-full']) {
+    corner-shape: squircle;
+  }
+}
