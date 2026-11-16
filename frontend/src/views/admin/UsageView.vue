@@ -94,7 +94,7 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel()" @export-csv="exportToExcel('csv')">
           <template #after-reset>
             <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
               <button
@@ -727,7 +727,7 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
     throw lastError instanceof Error ? lastError : new Error('Export page failed')
   }
 
-const exportToExcel = async () => {
+const exportToExcel = async (format: 'xlsx' | 'csv' = 'xlsx') => {
   if (isObserver.value) return
   if (exporting.value) return; exporting.value = true; exportProgress.show = true
   const c = new AbortController(); exportAbortController = c
@@ -784,7 +784,15 @@ const exportToExcel = async () => {
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Usage')
       const filename = `usage_${filters.value.start_date}_to_${filters.value.end_date}.xlsx`.replace(/:/g, '-')
-      saveAs(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename)
+      if (format === 'csv') {
+        // BOM keeps Excel from mangling UTF-8 (Chinese columns would turn into
+        // mojibake otherwise).
+        const csv = XLSX.utils.sheet_to_csv(ws)
+        const csvName = filename.replace(/\.xlsx$/, '.csv')
+        saveAs(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }), csvName)
+      } else {
+        saveAs(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename)
+      }
       appStore.showSuccess(t('usage.exportSuccess'))
     }
   } catch (error) { console.error('Failed to export:', error); appStore.showError('Export Failed') }
