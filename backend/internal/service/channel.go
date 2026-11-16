@@ -99,6 +99,7 @@ type ChannelModelPricing struct {
 	CacheReadPrice               *float64            `json:"cache_read_price"`
 	FastMultiplier               *float64            `json:"fast_multiplier"`
 	FlexMultiplier               *float64            `json:"flex_multiplier"`
+	UltrafastMultiplier          *float64            `json:"ultrafast_multiplier"` // Ultrafast 档位倍率；nil 沿用模型自有值
 	MaxReasoningEffortMultiplier *float64            `json:"max_reasoning_effort_multiplier"`
 	ImageInputPrice              *float64            `json:"image_input_price"`
 	ImageOutputPrice             *float64            `json:"image_output_price"`

@@ -67,6 +67,7 @@ type channelModelPricingRequest struct {
 	CacheReadPrice               *float64                   `json:"cache_read_price" binding:"omitempty,min=0"`
 	FastMultiplier               *float64                   `json:"fast_multiplier" binding:"omitempty,gt=0"`
 	FlexMultiplier               *float64                   `json:"flex_multiplier" binding:"omitempty,gt=0"`
+	UltrafastMultiplier          *float64                   `json:"ultrafast_multiplier" binding:"omitempty,gt=0"`
 	MaxReasoningEffortMultiplier *float64                   `json:"max_reasoning_effort_multiplier" binding:"omitempty,gt=0"`
 	ImageInputPrice              *float64                   `json:"image_input_price" binding:"omitempty,min=0"`
 	ImageOutputPrice             *float64                   `json:"image_output_price" binding:"omitempty,min=0"`
@@ -141,6 +142,7 @@ type channelModelPricingResponse struct {
 	CacheReadPrice               *float64                    `json:"cache_read_price"`
 	FastMultiplier               *float64                    `json:"fast_multiplier"`
 	FlexMultiplier               *float64                    `json:"flex_multiplier"`
+	UltrafastMultiplier          *float64                    `json:"ultrafast_multiplier"`
 	MaxReasoningEffortMultiplier *float64                    `json:"max_reasoning_effort_multiplier"`
 	ImageInputPrice              *float64                    `json:"image_input_price"`
 	ImageOutputPrice             *float64                    `json:"image_output_price"`
@@ -271,6 +273,7 @@ func pricingToResponse(p *service.ChannelModelPricing) channelModelPricingRespon
 		CacheReadPrice:               p.CacheReadPrice,
 		FastMultiplier:               p.FastMultiplier,
 		FlexMultiplier:               p.FlexMultiplier,
+		UltrafastMultiplier:          p.UltrafastMultiplier,
 		MaxReasoningEffortMultiplier: p.MaxReasoningEffortMultiplier,
 		ImageInputPrice:              p.ImageInputPrice,
 		ImageOutputPrice:             p.ImageOutputPrice,
