@@ -219,6 +219,9 @@
           <button type="button" @click="$emit('export')" :disabled="exporting" class="btn btn-primary">
             {{ t('usage.exportExcel') }}
           </button>
+          <button type="button" @click="$emit('export-csv')" :disabled="exporting" class="btn btn-secondary">
+            {{ t('usage.exportCsv') }}
+          </button>
         </template>
       </div>
     </div>
@@ -269,6 +272,7 @@ const emit = defineEmits([
   'refresh',
   'reset',
   'export',
+  'export-csv',
   'cleanup'
 ])
 

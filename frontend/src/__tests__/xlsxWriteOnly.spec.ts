@@ -10,6 +10,8 @@ const SRC_DIR = join(process.cwd(), 'src')
 const ALLOWED_CALLS = [
   'utils.aoa_to_sheet',
   'utils.sheet_add_aoa',
+  // CSV is another serialisation of the sheet we just built, not a parser.
+  'utils.sheet_to_csv',
   'utils.book_new',
   'utils.book_append_sheet',
   'write'
@@ -81,3 +83,4 @@ describe('xlsx stays an isolated export-only dependency', () => {
     expect(eager.map((f) => relative(process.cwd(), f))).toEqual([])
   })
 })
+
