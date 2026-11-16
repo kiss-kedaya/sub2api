@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go.uber.org/zap"
 	"io"
 	"log/slog"
 	"net/http"
@@ -792,6 +793,14 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 	if failoverErr.RequestScopedTransient {
 		return
 	}
+	if !s.hasAlternativeSchedulableAccount(ctx, accountID) {
+		// 组里没有别的可用号时，封禁只会把「上游 502」换成「无可用账号 503」，
+		// 用户侧更糟。这种情况下保持账号可调度，让请求继续走它。
+		logger.FromContext(ctx).Warn("gateway.cooldown_skipped_no_alternative",
+			zap.Int64("account_id", accountID),
+			zap.Int("upstream_status", failoverErr.StatusCode))
+		return
+	}
 	// 根据状态码选择封禁策略
 	switch failoverErr.StatusCode {
 	case http.StatusBadRequest:
@@ -799,6 +808,45 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 	case http.StatusBadGateway:
 		tempUnscheduleEmptyResponse(ctx, s.accountRepo, accountID, "[handler]")
 	}
+}
+
+// hasAlternativeAccount is the pure decision behind the cooldown guard: cooling
+// down is only useful when some other account can take the traffic.
+func hasAlternativeAccount(candidateIDs []int64, accountID int64) bool {
+	for _, id := range candidateIDs {
+		if id != accountID {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAlternativeSchedulableAccount reports whether the account's groups still
+// contain another schedulable account on the same platform. Cooldown is only
+// worth it when the request has somewhere else to go.
+func (s *GatewayService) hasAlternativeSchedulableAccount(ctx context.Context, accountID int64) bool {
+	if s.schedulerSnapshot == nil {
+		return true // 无法判断时保持旧行为
+	}
+	account, err := s.schedulerSnapshot.GetAccount(ctx, accountID)
+	if err != nil || account == nil {
+		return true
+	}
+	for _, groupID := range account.GroupIDs {
+		gid := groupID
+		candidates, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, &gid, account.Platform, false)
+		if err != nil {
+			continue
+		}
+		ids := make([]int64, 0, len(candidates))
+		for i := range candidates {
+			ids = append(ids, candidates[i].ID)
+		}
+		if hasAlternativeAccount(ids, accountID) {
+			return true
+		}
+	}
+	return false
 }
 
 // GatewayService handles API gateway operations
