@@ -2081,9 +2081,12 @@ const (
 
 	// Generic realtime defaults to think-fast-1.0; think-fast-2.0 can be
 	// configured independently through per-model group/channel pricing.
-	defaultAudioRealtimePricePerMin     = 0.05
-	defaultAudioTTSPricePerMillionChars = 300.0 // DeepSeek 官方 3 / 万字符 = 300 / 百万字符
-	defaultAudioSTTPricePerHour         = 0.78  // DeepSeek 官方 0.78 / 小时
+	defaultAudioRealtimePricePerMin = 0.05
+	// xAI Voice official price (USD): TTS 15 per million chars, STT 0.10 per hour.
+	// 这两个默认值服务 /v1/tts 与 /v1/stt（Grok 平台），不能拿 DeepSeek 的
+	// 官方价覆盖，否则会把 xAI 语音的价格抬到 20 倍 / 7.8 倍。
+	defaultAudioTTSPricePerMillionChars = 15.0
+	defaultAudioSTTPricePerHour         = 0.10
 )
 
 // CalculateWebSearchCost 计算 Codex alpha/search 网页搜索按次费用。
@@ -2431,3 +2434,4 @@ func getDefaultGrokImagineVideoPrice(model string, resolution string) (float64, 
 		return 0, false
 	}
 }
+

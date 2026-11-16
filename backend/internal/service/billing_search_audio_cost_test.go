@@ -32,11 +32,12 @@ func TestCalculateAudioCost(t *testing.T) {
 	require.Equal(t, 0.0, s.CalculateAudioCost("unknown", 1, cfg, 1).ActualCost)
 	// nil config -> official defaults (think-fast-1 0.05/min, TTS 300 per 1M chars = 3 per 10k, ASR 0.78/hr)
 	require.InDelta(t, 0.05, s.CalculateAudioCost("realtime", 1, nil, 1).ActualCost, 1e-9)
-	require.InDelta(t, 300.0, s.CalculateAudioCost("tts", 1, nil, 1).ActualCost, 1e-9)
-	require.InDelta(t, 0.78, s.CalculateAudioCost("stt", 1, nil, 1).ActualCost, 1e-9)
+	require.InDelta(t, 15.0, s.CalculateAudioCost("tts", 1, nil, 1).ActualCost, 1e-9)
+	require.InDelta(t, 0.10, s.CalculateAudioCost("stt", 1, nil, 1).ActualCost, 1e-9)
 	// explicit 0 → free
 	zero := 0.0
 	require.Equal(t, 0.0, s.CalculateAudioCost("realtime", 1, &audioPriceConfig{RealtimePerMin: &zero}, 1).ActualCost)
 }
 
 func floatPtr(v float64) *float64 { return &v }
+

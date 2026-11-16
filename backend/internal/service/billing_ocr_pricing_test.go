@@ -54,11 +54,11 @@ func TestCalculateOCRCostUsesOfficialDefault(t *testing.T) {
 }
 
 func TestOfficialSpeechDefaults(t *testing.T) {
-	if defaultAudioTTSPricePerMillionChars != 300 {
-		t.Fatalf("TTS default = %v, want 300 per million chars (3 per 10k)", defaultAudioTTSPricePerMillionChars)
+	if defaultAudioTTSPricePerMillionChars != 15 {
+		t.Fatalf("TTS default = %v, want 15 (xAI voice)", defaultAudioTTSPricePerMillionChars)
 	}
-	if defaultAudioSTTPricePerHour != 0.78 {
-		t.Fatalf("ASR default = %v, want 0.78 per hour", defaultAudioSTTPricePerHour)
+	if defaultAudioSTTPricePerHour != 0.10 {
+		t.Fatalf("STT default = %v, want 0.10 (xAI voice)", defaultAudioSTTPricePerHour)
 	}
 	if defaultOCRPricePer1kPages != 1.5 {
 		t.Fatalf("OCR default = %v, want 1.5 per 1k pages", defaultOCRPricePer1kPages)
@@ -67,3 +67,4 @@ func TestOfficialSpeechDefaults(t *testing.T) {
 		t.Fatalf("search default = %v, want 5 per 1k", defaultSearchPricePer1k)
 	}
 }
+
