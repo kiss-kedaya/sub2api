@@ -2076,11 +2076,14 @@ const (
 	// xAI server-side web/X search and code execution are $5/1000 calls.
 	defaultSearchPricePer1k = 5.0
 
+	// DeepSeek 官方「文件解析 / OCR」= 1.5 / 1,000 页。本站 1 余额 = 1 元，不做汇率换算。
+	defaultOCRPricePer1kPages = 1.5
+
 	// Generic realtime defaults to think-fast-1.0; think-fast-2.0 can be
 	// configured independently through per-model group/channel pricing.
 	defaultAudioRealtimePricePerMin     = 0.05
-	defaultAudioTTSPricePerMillionChars = 15.0
-	defaultAudioSTTPricePerHour         = 0.10
+	defaultAudioTTSPricePerMillionChars = 300.0 // DeepSeek 官方 3 / 万字符 = 300 / 百万字符
+	defaultAudioSTTPricePerHour         = 0.78  // DeepSeek 官方 0.78 / 小时
 )
 
 // CalculateWebSearchCost 计算 Codex alpha/search 网页搜索按次费用。
@@ -2104,6 +2107,35 @@ func (s *BillingService) CalculateWebSearchCost(callCount int, groupPrice *float
 	return &CostBreakdown{
 		TotalCost:   totalCost,
 		ActualCost:  totalCost * rateMultiplier,
+		BillingMode: string(BillingModePerRequest),
+	}
+}
+
+// CalculateOCRCost bills document parsing / OCR by page count, per 1,000 pages.
+// groupPricePer1kPages: nil -> defaultOCRPricePer1kPages; explicit 0 -> free;
+// >0 -> that rate. Negative values are treated as free rather than as a credit.
+func (s *BillingService) CalculateOCRCost(pages int, groupPricePer1kPages *float64, rateMultiplier float64) *CostBreakdown {
+	if pages <= 0 {
+		return &CostBreakdown{}
+	}
+	pricePer1k := defaultOCRPricePer1kPages
+	if groupPricePer1kPages != nil {
+		if *groupPricePer1kPages < 0 {
+			return &CostBreakdown{}
+		}
+		pricePer1k = *groupPricePer1kPages
+	}
+	if pricePer1k == 0 {
+		return &CostBreakdown{}
+	}
+	if rateMultiplier < 0 {
+		rateMultiplier = 0
+	}
+	unit := pricePer1k / 1000.0
+	total := unit * float64(pages)
+	return &CostBreakdown{
+		TotalCost:   total,
+		ActualCost:  total * rateMultiplier,
 		BillingMode: string(BillingModePerRequest),
 	}
 }
