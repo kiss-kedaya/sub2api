@@ -1279,9 +1279,16 @@ func (w *Worker) processScanRangeWithSplit(ctx context.Context, scanner *EVMScan
 				return nil
 			}
 		}
-		// One block keeps failing on its own. Advancing past it is the only way
-		// the chain moves again, so name the block that needs reconciling
-		// instead of freezing every later deposit silently.
+		// An RPC-level failure is not a poison block: a node that answers with
+		// an invalid result must never be read as "this block has no logs", or a
+		// deposit would be silently skipped. Those keep the cursor where it is.
+		var rpcFailure *rpc.Failure
+		if errors.As(err, &rpcFailure) {
+			return err
+		}
+		// The block itself cannot be processed (ledger/handler-level failure).
+		// Advancing is the only way the chain moves again, so name the block
+		// that needs reconciling instead of freezing later deposits silently.
 		slog.Error("[cryptopay] scan block skipped; MANUAL RECONCILE REQUIRED",
 			"chain", chain.Chain, "block", from, "cause", err)
 		return nil
