@@ -48,6 +48,7 @@ export default {
       model: '模型',
       group: '分组',
       noGroup: '无分组',
+    deletedGroup: '已删除',
       requests: '请求',
       tokens: 'Token',
       cache: '缓存',

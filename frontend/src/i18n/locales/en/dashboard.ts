@@ -132,7 +132,6 @@ export default {
     currentConcurrencyHint: 'Live concurrent requests / this key concurrency limit. Above the limit, new requests queue.',
     currentConcurrencyNoLimitHint: 'Live concurrent requests; this key has no concurrency limit set.',
     noGroup: 'No group',
-    deletedGroup: 'Deleted',
     searchGroup: 'Search groups...',
     noGroupFound: 'No groups found',
     created: 'Created',

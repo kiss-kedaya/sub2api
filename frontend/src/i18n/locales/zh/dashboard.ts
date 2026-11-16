@@ -132,7 +132,6 @@ export default {
     currentConcurrencyHint: '当前并发请求数 / 该密钥的并发上限；达到上限后新请求排队',
     currentConcurrencyNoLimitHint: '当前并发请求数；该密钥未设置并发上限',
     noGroup: '无分组',
-    deletedGroup: '已删除',
     searchGroup: '搜索分组...',
     noGroupFound: '未找到匹配的分组',
     created: '创建时间',

@@ -44,6 +44,7 @@ export default {
       model: 'Model',
       group: 'Group',
       noGroup: 'No Group',
+    deletedGroup: 'Deleted',
       requests: 'Requests',
       tokens: 'Tokens',
       cache: 'Cache',
