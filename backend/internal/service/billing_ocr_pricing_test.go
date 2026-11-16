@@ -6,9 +6,10 @@ import (
 )
 
 // Official DeepSeek pricing, 1 balance unit = 1 CNY (no FX conversion):
-//   OCR / document parsing: 1.5 per 1,000 pages
-//   TTS:                    3   per 10,000 chars  = 300 per million chars
-//   ASR:                    0.78 per hour of audio
+//
+//	OCR / document parsing: 1.5 per 1,000 pages
+//	TTS:                    3   per 10,000 chars  = 300 per million chars
+//	ASR:                    0.78 per hour of audio
 func TestCalculateOCRCostUsesOfficialDefault(t *testing.T) {
 	svc := &BillingService{}
 
