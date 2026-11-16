@@ -141,6 +141,7 @@ export default {
         pricePlaceholder: 'Default',
         fastMultiplier: 'Fast Multiplier',
         flexMultiplier: 'Flex Multiplier',
+        ultrafastMultiplier: 'Ultrafast multiplier',
         maxReasoningEffortMultiplier: 'Max Effort Multiplier',
         fable51DefaultMaxReasoningMultiplier: 'Default: 3',
         multiplierPlaceholder: 'Not set',

@@ -1395,6 +1395,12 @@ func (s *BillingService) GetModelPricingWithChannel(model string, channelPricing
 	applyChannelTokenPriceOverrides(pricing, channelPricing)
 	pricing.FastMultiplier = channelPricing.FastMultiplier
 	pricing.FlexMultiplier = channelPricing.FlexMultiplier
+	// Ultrafast is normally model-owned, but an operator may override it per
+	// channel: providers price the tier differently and a fixed 6x is wrong for
+	// some upstreams. A nil or non-positive override keeps the model default.
+	if channelPricing.UltrafastMultiplier != nil && *channelPricing.UltrafastMultiplier > 0 {
+		pricing.UltrafastMultiplier = *channelPricing.UltrafastMultiplier
+	}
 	if channelPricing.MaxReasoningEffortMultiplier != nil {
 		pricing.ReasoningEffortMultipliers = map[string]float64{"max": *channelPricing.MaxReasoningEffortMultiplier}
 	}

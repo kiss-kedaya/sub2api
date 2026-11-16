@@ -141,6 +141,7 @@ export default {
         pricePlaceholder: '默认',
         fastMultiplier: 'Fast 倍率',
         flexMultiplier: 'Flex 倍率',
+        ultrafastMultiplier: 'Ultrafast 倍率',
         maxReasoningEffortMultiplier: 'Max 推理倍率',
         fable51DefaultMaxReasoningMultiplier: '默认 3',
         multiplierPlaceholder: '未配置',

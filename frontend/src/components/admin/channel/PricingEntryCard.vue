@@ -115,13 +115,17 @@
             </UFormField>
           </div>
 
-          <div v-if="enableTierMultipliers" class="mt-3 grid max-w-2xl grid-cols-1 gap-2 sm:grid-cols-3">
+          <div v-if="enableTierMultipliers" class="mt-3 grid max-w-2xl grid-cols-1 gap-2 sm:grid-cols-4">
             <UFormField :label="t('admin.channels.form.fastMultiplier')" size="xs" :ui="fieldUi">
               <UInput :model-value="String(entry.fast_multiplier ?? '')" @input="emitField('fast_multiplier', ($event.target as HTMLInputElement).value)"
                 type="number" step="any" min="0.000001" size="sm" class="w-full" :placeholder="t('admin.channels.form.multiplierPlaceholder')" />
             </UFormField>
             <UFormField :label="t('admin.channels.form.flexMultiplier')" size="xs" :ui="fieldUi">
               <UInput :model-value="String(entry.flex_multiplier ?? '')" @input="emitField('flex_multiplier', ($event.target as HTMLInputElement).value)"
+                type="number" step="any" min="0.000001" size="sm" class="w-full" :placeholder="t('admin.channels.form.multiplierPlaceholder')" />
+            </UFormField>
+            <UFormField :label="t('admin.channels.form.ultrafastMultiplier')" size="xs" :ui="fieldUi">
+              <UInput :model-value="String(entry.ultrafast_multiplier ?? '')" @input="emitField('ultrafast_multiplier', ($event.target as HTMLInputElement).value)"
                 type="number" step="any" min="0.000001" size="sm" class="w-full" :placeholder="t('admin.channels.form.multiplierPlaceholder')" />
             </UFormField>
             <UFormField :label="t('admin.channels.form.maxReasoningEffortMultiplier')" size="xs" :ui="fieldUi">
