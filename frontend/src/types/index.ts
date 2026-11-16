@@ -2139,6 +2139,8 @@ export interface ModelStat {
   cost: number // 标准计费
   actual_cost: number // 实际扣除
   account_cost?: number // 账号成本（仅管理员接口返回）
+  // 分组已被删除，但历史用量必须继续显示，否则总量对不上账。
+  deleted?: boolean
 }
 
 export interface EndpointStat {
@@ -2157,6 +2159,8 @@ export interface GroupStat {
   cost: number // 标准计费
   actual_cost: number // 实际扣除
   account_cost?: number // 账号成本（仅管理员接口返回）
+  // 分组已被删除，但历史用量必须继续显示，否则总量对不上账。
+  deleted?: boolean
 }
 
 export interface UserBreakdownItem {
@@ -2669,3 +2673,4 @@ export type {
   PlatformQuotaWindow,
   PlatformQuotasResponse,
 } from '@/api/admin/users'
+

@@ -33,7 +33,7 @@
       <template #group-cell="{ row }">
         <span
           class="inline-flex max-w-[100px] items-center gap-1 truncate font-medium"
-          :class="enableBreakdown && row.original.group_id > 0 ? 'text-primary' : 'text-highlighted'"
+          :class="row.original.deleted ? 'text-dimmed line-through' : enableBreakdown && row.original.group_id > 0 ? 'text-primary' : 'text-highlighted'"
           :title="row.original.group_name || String(row.original.group_id)"
         >
           <UIcon
@@ -42,6 +42,9 @@
             class="size-3 shrink-0"
           />
           <span class="truncate">{{ row.original.group_name || t('admin.dashboard.noGroup') }}</span>
+          <UBadge v-if="row.original.deleted" color="neutral" variant="subtle" size="sm" class="shrink-0">
+            {{ t('admin.dashboard.deletedGroup') }}
+          </UBadge>
         </span>
       </template>
       <!-- User breakdown sub-rows -->
@@ -231,3 +234,4 @@ const formatCost = (value: number | null | undefined): string => {
   return safeValue.toFixed(4)
 }
 </script>
+

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -204,12 +205,26 @@ func (s *DashboardService) GetModelStatsWithUsageFiltersBySource(ctx context.Con
 	return s.GetModelStatsWithFiltersBySource(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.RequestType, filters.Stream, filters.BillingType, normalizedSource)
 }
 
+// normalizeDeletedGroups keeps usage that belongs to a group no longer present
+// in the groups table. Without it the row carries requests but shows an empty
+// name, the chart drops it, and the visible rows no longer add up to the real
+// total - which is exactly what makes downstream reconciliation fail.
+func normalizeDeletedGroups(stats []usagestats.GroupStat) []usagestats.GroupStat {
+	for i := range stats {
+		if stats[i].GroupID <= 0 || strings.TrimSpace(stats[i].GroupName) != "" {
+			continue
+		}
+		stats[i].Deleted = true
+		stats[i].GroupName = fmt.Sprintf("已删除分组 #%d", stats[i].GroupID)
+	}
+	return stats
+}
 func (s *DashboardService) GetGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]usagestats.GroupStat, error) {
 	stats, err := s.usageRepo.GetGroupStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType)
 	if err != nil {
 		return nil, fmt.Errorf("get group stats with filters: %w", err)
 	}
-	return stats, nil
+	return normalizeDeletedGroups(stats), nil
 }
 
 func (s *DashboardService) GetGroupStatsWithUsageFilters(ctx context.Context, startTime, endTime time.Time, filters usagestats.UsageLogFilters) ([]usagestats.GroupStat, error) {
@@ -221,7 +236,7 @@ func (s *DashboardService) GetGroupStatsWithUsageFilters(ctx context.Context, st
 		if err != nil {
 			return nil, fmt.Errorf("get group stats with usage filters: %w", err)
 		}
-		return stats, nil
+		return normalizeDeletedGroups(stats), nil
 	}
 	return s.GetGroupStatsWithFilters(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.RequestType, filters.Stream, filters.BillingType)
 }

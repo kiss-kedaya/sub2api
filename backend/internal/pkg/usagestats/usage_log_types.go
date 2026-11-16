@@ -135,6 +135,10 @@ type GroupStat struct {
 	Cost        float64 `json:"cost"`         // 标准计费
 	ActualCost  float64 `json:"actual_cost"`  // 实际扣除
 	AccountCost float64 `json:"account_cost"` // 账号成本
+	// Deleted marks usage that belongs to a group that no longer exists. The
+	// rows must stay visible (otherwise totals stop reconciling) but need to be
+	// distinguishable from live groups in the UI.
+	Deleted bool `json:"deleted"`
 }
 
 // UserUsageTrendPoint represents user usage trend data point
@@ -414,3 +418,4 @@ type AccountUsageStatsResponse struct {
 	Endpoints         []EndpointStat        `json:"endpoints"`
 	UpstreamEndpoints []EndpointStat        `json:"upstream_endpoints"`
 }
+
