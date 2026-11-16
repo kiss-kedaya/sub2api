@@ -967,8 +967,11 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 			return errors.Join(liveErr, stageErr(chain.Chain, "deposit", from, to, err))
 		}
 		// The cursor only ever moves to the end of a fully scanned chunk, so a
-		// failure here resumes from exactly this chunk on the next pass.
-		if err := w.processScanRange(ctx, scanner, pool, chain, from, to, recipients); err != nil {
+		// failure here resumes from exactly this chunk on the next pass. Halving
+		// the chunk on failure keeps one poison block from freezing the whole
+		// chain: the good prefix is still committed, and a single block that
+		// keeps failing is reported with its range instead of blocking forever.
+		if err := w.processScanRangeWithSplit(ctx, scanner, pool, chain, from, to, recipients); err != nil {
 			return errors.Join(liveErr, stageErr(chain.Chain, "deposit", from, to, err))
 		}
 		if err := w.cursor.Save(ctx, chain.Chain, to); err != nil {
@@ -1246,4 +1249,61 @@ func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainCon
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// processScanRangeWithSplit scans [from,to] and, when a chunk fails, halves it
+// and retries so one bad block cannot stall every later block. A single block
+// that still fails after the split is logged with its range and skipped: the
+// cursor has to move, otherwise the chain never advances again. Skipped ranges
+// are reported at ERROR level so the deposit can be checked by hand.
+func (w *Worker) processScanRangeWithSplit(ctx context.Context, scanner *EVMScanner, pool *rpc.Pool, chain ChainConfig, from, to uint64, recipients []string) error {
+	err := w.processScanRange(ctx, scanner, pool, chain, from, to, recipients)
+	if err == nil {
+		return nil
+	}
+	// A cancelled/timed-out pass must not be mistaken for a poison range: give
+	// up (the cursor keeps its last committed chunk) instead of skipping work.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return err
+	}
+	if to <= from {
+		// Retry a single block a couple of times before giving up: a transient
+		// node error must not be recorded as a skipped deposit.
+		for attempt, wait := 1, 200*time.Millisecond; attempt <= 3; attempt, wait = attempt+1, wait*2 {
+			select {
+			case <-ctx.Done():
+				return err
+			case <-time.After(wait):
+			}
+			if retryErr := w.processScanRange(ctx, scanner, pool, chain, from, to, recipients); retryErr == nil {
+				return nil
+			}
+		}
+		// One block keeps failing on its own. Advancing past it is the only way
+		// the chain moves again, so name the block that needs reconciling
+		// instead of freezing every later deposit silently.
+		slog.Error("[cryptopay] scan block skipped; MANUAL RECONCILE REQUIRED",
+			"chain", chain.Chain, "block", from, "cause", err)
+		return nil
+	}
+	mid := from + (to-from)/2
+	if leftErr := w.processScanRangeWithSplit(ctx, scanner, pool, chain, from, mid, recipients); leftErr != nil {
+		return leftErr
+	}
+	if rightErr := w.processScanRangeWithSplit(ctx, scanner, pool, chain, mid+1, to, recipients); rightErr != nil {
+		return rightErr
+	}
+	slog.Warn("[cryptopay] scan chunk recovered by splitting",
+		"chain", chain.Chain, "from", from, "to", to, "cause", err)
+	return nil
+}
+
+// halveRange splits an inclusive block range for the split-retry path. It
+// reports false when the range is a single block and cannot be halved.
+func halveRange(from, to uint64) (uint64, uint64, bool) {
+	if to <= from {
+		return 0, 0, false
+	}
+	mid := from + (to-from)/2
+	return mid, mid + 1, true
 }
