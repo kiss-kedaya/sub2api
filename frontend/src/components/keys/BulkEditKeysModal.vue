@@ -21,7 +21,7 @@
               :items="groupOptions"
               class="mt-2 w-full"
               data-test="bulk-edit-group"
-              @update:model-value="(value) => (form.groupId = typeof value === 'number' ? value : '')"
+              @update:model-value="(value: unknown) => (form.groupId = typeof value === 'number' ? value : '')"
             />
           </section>
 
