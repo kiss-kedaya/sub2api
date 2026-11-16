@@ -1,13 +1,13 @@
 name: Release
 
 on:
+  # Only one trigger may start a release. Listening on both `push: tags` and
+  # `create:` makes GitHub start TWO runs for the same tag; they share the
+  # concurrency group below with cancel-in-progress=true, so they cancel each
+  # other and nothing gets published (v2.3.92 had to be dispatched by hand).
   push:
     tags:
       - 'v*'
-  # A tag created alongside a branch push can be coalesced into one PushEvent
-  # by GitHub. The create event is emitted for the tag itself, so it reliably
-  # starts the release even when both refs are pushed in one command.
-  create:
   workflow_dispatch:
     inputs:
       tag:
@@ -45,7 +45,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event_name == 'create' && github.event.ref || github.ref_name }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
