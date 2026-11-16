@@ -67,4 +67,3 @@ func TestOfficialSpeechDefaults(t *testing.T) {
 		t.Fatalf("search default = %v, want 5 per 1k", defaultSearchPricePer1k)
 	}
 }
-

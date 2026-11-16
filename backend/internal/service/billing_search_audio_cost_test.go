@@ -40,4 +40,3 @@ func TestCalculateAudioCost(t *testing.T) {
 }
 
 func floatPtr(v float64) *float64 { return &v }
-
