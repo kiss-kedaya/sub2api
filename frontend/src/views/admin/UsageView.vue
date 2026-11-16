@@ -707,12 +707,32 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
   return t('usage.unknown')
 }
 
+  // One page of the export with bounded retries. The loop below refuses to
+  // abort on the first hiccup: exports of ~10k rows used to fail at 2% because a
+  // single transient request error ended the whole run.
+  const fetchExportPage = async (page: number, size: number, signal: AbortSignal) => {
+    let lastError: unknown = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await adminUsageAPI.list(
+          buildUsageListParams(page, size, true, false),
+          { signal }
+        )
+      } catch (error) {
+        if (signal.aborted) throw error
+        lastError = error
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)))
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('Export page failed')
+  }
+
 const exportToExcel = async () => {
   if (isObserver.value) return
   if (exporting.value) return; exporting.value = true; exportProgress.show = true
   const c = new AbortController(); exportAbortController = c
   try {
-    let p = 1; let total = pagination.total; let exportedCount = 0; let pageSize = 100
+    let p = 1; let total = pagination.total; let exportedCount = 0; let pageSize = 1000
     const XLSX = await import('xlsx')
     const headers = [
       t('usage.time'), t('admin.usage.user'), t('usage.apiKeyFilter'),
@@ -729,10 +749,12 @@ const exportToExcel = async () => {
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
     while (true) {
-      const res = await adminUsageAPI.list(
-        buildUsageListParams(p, pageSize, true, false),
-        { signal: c.signal }
-      )
+      const res = await fetchExportPage(p, pageSize, c.signal)
+
+      // Transient failures (timeout, 502, rate limit) are the reason exports
+      // died at 2%: one bad page aborted everything. Retry with backoff and
+      // only give up after the third attempt.
+
       if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
       if (p > 1 && res.page_size && res.page_size !== pageSize) throw new Error('Pagination size changed during export')
       pageSize = res.page_size || pageSize
