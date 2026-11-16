@@ -418,4 +418,3 @@ type AccountUsageStatsResponse struct {
 	Endpoints         []EndpointStat        `json:"endpoints"`
 	UpstreamEndpoints []EndpointStat        `json:"upstream_endpoints"`
 }
-
