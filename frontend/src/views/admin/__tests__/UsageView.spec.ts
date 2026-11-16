@@ -928,7 +928,7 @@ describe('admin UsageView model audit export', () => {
 		}))
 		await (wrapper.vm as any).exportToExcel()
 		expect(exportList.mock.calls.map(([params]) => [params.page, params.page_size])).toEqual([
-			[1, 100], [2, 50], [3, 50],
+			[1, 1000], [2, 50], [3, 50],
 		])
 		expect(sheetAddAoa.mock.calls.reduce((total, [, rows]) => total + rows.length, 0)).toBe(101)
 		expect(saveAs).toHaveBeenCalledTimes(1)
