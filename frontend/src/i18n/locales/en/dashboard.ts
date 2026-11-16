@@ -77,6 +77,32 @@ export default {
 
   // API Keys
   keys: {
+    bulkEdit: {
+      entry: 'Bulk edit',
+      title: '{count} keys selected',
+      hint: 'Tick the fields to change; unticked fields keep their current value.',
+      fields: {
+        group: 'Group',
+        status: 'Status',
+        quota: 'Quota (USD)',
+        rateLimit5h: '5-hour limit (USD)',
+        rateLimit1d: 'Daily limit (USD)',
+        rateLimit7d: '7-day limit (USD)',
+        expiresAt: 'Expiry',
+        ipWhitelist: 'IP allowlist'
+      },
+      statusActive: 'Active',
+      statusInactive: 'Disabled',
+      quotaPlaceholder: '0 means unlimited',
+      limitPlaceholder: '0 means unlimited',
+      expiresHint: 'Leaving it empty clears the expiry, making the key permanent.',
+      ipPlaceholder: 'One per line, or comma/space separated; empty clears the list',
+      ipHint: 'Submitting an empty value clears the allowlist.',
+      apply: 'Apply to {count} keys',
+      emptySelection: 'Tick at least one field.',
+      appliedOk: 'Updated {count} keys',
+      appliedPartial: '{updated} updated, {failed} failed'
+    },
     queueWaiting: 'Waiting',
     concurrencyLimit: 'Key concurrency limit',
     concurrencyLimitHint: '0 adds no key limit; the user limit still applies. Busy keys wait under the server queue policy or return 429.',
