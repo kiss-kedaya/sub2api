@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -313,7 +314,29 @@ func (e *scanStageError) logAttrs() []any {
 	if detail := rpc.DetailOf(e.err); detail != "" {
 		attrs = append(attrs, "detail", detail)
 	}
-	return append(attrs, "cause", rpc.SafeError(e.err))
+	// SafeError collapses unknown causes into one generic sentence, which hid a
+	// real scan failure for hours. Keep the sanitized sentence for anything that
+	// reads it, and carry the underlying text for diagnosis.
+	return append(attrs, "cause", rpc.SafeError(e.err), "raw_cause", rawScanCause(e.err))
+}
+
+// rawScanCause keeps the underlying error text so a stuck chain can be
+// diagnosed. Only endpoint credentials are removed: an RPC key lives in the URL
+// path, and journald may travel farther than the machine it was written on.
+var scanURLKeyPattern = regexp.MustCompile(`(?i)(/rpc/)[A-Za-z0-9_-]{8,}`)
+var scanQueryKeyPattern = regexp.MustCompile(`(?i)(apikey=)[A-Za-z0-9_-]+`)
+
+func rawScanCause(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := err.Error()
+	text = scanURLKeyPattern.ReplaceAllString(text, "${1}<redacted>")
+	text = scanQueryKeyPattern.ReplaceAllString(text, "${1}<redacted>")
+	if len(text) > 600 {
+		text = text[:600] + "…"
+	}
+	return text
 }
 
 // collectScanFailures splits a pass error into tagged per-chain failures and
@@ -576,7 +599,7 @@ func (w *Worker) reportScanFailure(err error) {
 		}
 	}
 	if reportOther {
-		slog.Error("[cryptopay] payment scan incomplete; retrying without skipping blocks", "cause", rpc.SafeError(errors.Join(other...)))
+		slog.Error("[cryptopay] payment scan incomplete; retrying without skipping blocks", "cause", rpc.SafeError(errors.Join(other...)), "raw_cause", rawScanCause(errors.Join(other...)))
 	}
 }
 
