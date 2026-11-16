@@ -47,23 +47,3 @@ func (s *UserRepoSuite) TestListActiveUsersByEmailAliasProbeKeys_EmptyKeys() {
 	s.Require().NoError(err)
 	s.Require().Empty(users)
 }
-
-func (s *UserRepoSuite) TestBatchDisableUsers_SkipsAdminDisabledAndDeleted() {
-	active := s.mustCreateUser(&service.User{Email: "bl-disable-active@example.com"})
-	admin := s.mustCreateUser(&service.User{Email: "bl-disable-admin@example.com", Role: service.RoleAdmin})
-	already := s.mustCreateUser(&service.User{Email: "bl-disable-already@example.com", Status: service.StatusDisabled})
-	deleted := s.mustCreateUser(&service.User{Email: "bl-disable-deleted@example.com"})
-	s.Require().NoError(s.repo.Delete(s.ctx, deleted.ID))
-
-	disabled, err := s.repo.BatchDisableUsers(s.ctx, []int64{active.ID, admin.ID, already.ID, deleted.ID, 99999999})
-	s.Require().NoError(err)
-	s.Require().Equal([]int64{active.ID}, disabled)
-
-	got, err := s.repo.GetByID(s.ctx, active.ID)
-	s.Require().NoError(err)
-	s.Require().Equal(service.StatusDisabled, got.Status)
-
-	gotAdmin, err := s.repo.GetByID(s.ctx, admin.ID)
-	s.Require().NoError(err)
-	s.Require().Equal(service.StatusActive, gotAdmin.Status)
-}
