@@ -50,6 +50,17 @@
               <span class="ml-1 tabular-nums opacity-70">{{ selectedKeyCount }}</span>
             </UButton>
             <UButton
+              v-if="selectedKeyCount > 0"
+              color="primary"
+              variant="outline"
+              icon="i-lucide-pencil"
+              data-test="keys-bulk-edit"
+              @click="showBulkEditDialog = true"
+            >
+              {{ t('keys.bulkEdit.entry') }}
+              <span class="ml-1 tabular-nums opacity-70">{{ selectedKeyCount }}</span>
+            </UButton>
+            <UButton
               color="neutral"
               variant="outline"
               icon="i-lucide-refresh-cw"
@@ -1035,6 +1046,15 @@
       @cancel="showBulkDeleteDialog = false"
     />
 
+    <!-- Bulk Edit: applies only the ticked fields to every selected key. -->
+    <BulkEditKeysModal
+      :open="showBulkEditDialog"
+      :selected-ids="selectedKeyIds.map((id) => Number(id))"
+      :group-options="groupOptions"
+      @close="showBulkEditDialog = false"
+      @applied="handleBulkEditApplied"
+    />
+
     <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
       :show="showResetQuotaDialog"
@@ -1212,6 +1232,7 @@ import '@/styles/console-workspace.css'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
+import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
@@ -1391,6 +1412,19 @@ const apiKeys = ref<ApiKey[]>([])
 // every local removal, so a bulk delete can never touch a row the user cannot see.
 const selectedKeyIds = ref<Array<string | number>>([])
 const showBulkDeleteDialog = ref(false)
+const showBulkEditDialog = ref(false)
+
+// A bulk edit never touches a row we cannot see: reload the current page after
+// the modal reports back, so group moves and status flips are visible at once.
+const handleBulkEditApplied = async (result: { updated: number; failed: number }) => {
+  showBulkEditDialog.value = false
+  if (result.failed === 0) {
+    appStore.showSuccess(t('keys.bulkEdit.appliedOk', { count: result.updated }))
+  } else {
+    appStore.showError(t('keys.bulkEdit.appliedPartial', { updated: result.updated, failed: result.failed }))
+  }
+  await loadApiKeys()
+}
 const keyRowId = (row: ApiKey) => row.id
 const groups = ref<Group[]>([])
 const availableGroupsById = computed(() => new Map(groups.value.map((group) => [group.id, group])))
