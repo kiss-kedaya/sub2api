@@ -271,6 +271,7 @@ export default {
     errors: {
       USER_NOT_ACTIVE: 'Account has been disabled.',
       EMAIL_FORMAT_INVALID: 'Invalid email address: check the length or special characters.',
+      EMAIL_BLOCKED: 'This email address is not allowed. Please use a different one.',
     },
     registrationFailed: 'Registration failed. Please try again.',
     emailDomainRegistrationLimit:
