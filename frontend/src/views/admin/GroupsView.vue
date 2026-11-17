@@ -1152,6 +1152,49 @@
                   />
                 </UFormField>
               </div>
+              <template v-if="createForm.platform === 'deepseek'">
+                <h4 class="mt-4 mb-1 text-sm font-medium text-default">
+                  {{ t("admin.groups.explicitPricing.deepseekToolsTitle") }}
+                </h4>
+                <p class="mb-3 text-xs text-muted">
+                  {{ t("admin.groups.explicitPricing.deepseekToolsHint") }}
+                </p>
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <UFormField :label="t('admin.groups.explicitPricing.ocrPricePer1kPages')">
+                    <UInput
+                      v-model.number="createForm.ocr_price_per_1k_pages"
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      :placeholder="t('admin.groups.explicitPricing.ocrPricePlaceholder')"
+                      data-testid="create-ocr-price"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField :label="t('admin.groups.explicitPricing.deepseekTtsPerMillionChars')">
+                    <UInput
+                      v-model.number="createForm.audio_tts_price_per_million_chars"
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      :placeholder="t('admin.groups.explicitPricing.deepseekTtsPlaceholder')"
+                      data-testid="create-deepseek-tts-price"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField :label="t('admin.groups.explicitPricing.deepseekAsrPerHour')">
+                    <UInput
+                      v-model.number="createForm.audio_stt_price_per_hour"
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      :placeholder="t('admin.groups.explicitPricing.deepseekAsrPlaceholder')"
+                      data-testid="create-deepseek-asr-price"
+                      class="w-full"
+                    />
+                  </UFormField>
+                </div>
+              </template>
             </div>
             <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
             <div
@@ -2474,6 +2517,49 @@
                   />
                 </div>
               </div>
+              <template v-if="editForm.platform === 'deepseek'">
+                <h4 class="mt-4 mb-1 text-sm font-medium text-default">
+                  {{ t("admin.groups.explicitPricing.deepseekToolsTitle") }}
+                </h4>
+                <p class="mb-3 text-xs text-muted">
+                  {{ t("admin.groups.explicitPricing.deepseekToolsHint") }}
+                </p>
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <UFormField :label="t('admin.groups.explicitPricing.ocrPricePer1kPages')">
+                    <UInput
+                      v-model.number="editForm.ocr_price_per_1k_pages"
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      :placeholder="t('admin.groups.explicitPricing.ocrPricePlaceholder')"
+                      data-testid="edit-ocr-price"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField :label="t('admin.groups.explicitPricing.deepseekTtsPerMillionChars')">
+                    <UInput
+                      v-model.number="editForm.audio_tts_price_per_million_chars"
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      :placeholder="t('admin.groups.explicitPricing.deepseekTtsPlaceholder')"
+                      data-testid="edit-deepseek-tts-price"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField :label="t('admin.groups.explicitPricing.deepseekAsrPerHour')">
+                    <UInput
+                      v-model.number="editForm.audio_stt_price_per_hour"
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      :placeholder="t('admin.groups.explicitPricing.deepseekAsrPlaceholder')"
+                      data-testid="edit-deepseek-asr-price"
+                      class="w-full"
+                    />
+                  </UFormField>
+                </div>
+              </template>
             </div>
             <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
             <div
@@ -4188,6 +4274,7 @@ const createForm = reactive({
   grok_moderation_refusal_price: null as number | null,
   web_search_price_per_call: null as number | null,
   search_price_per_1k: null as number | null,
+  ocr_price_per_1k_pages: null as number | null,
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
   clearSearchProviderKey: false,
@@ -4600,6 +4687,7 @@ const editForm = reactive({
   grok_moderation_refusal_price: null as number | null,
   web_search_price_per_call: null as number | null,
   search_price_per_1k: null as number | null,
+  ocr_price_per_1k_pages: null as number | null,
   audio_realtime_price_per_min: null as number | null,
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
@@ -5101,6 +5189,7 @@ const closeCreateModal = () => {
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
+  createForm.ocr_price_per_1k_pages = null;
   createForm.grok_moderation_refusal_price = null;
   createForm.search_provider_base_url = '';
   createForm.search_provider_api_key = '';
@@ -5176,6 +5265,21 @@ const validateProfitControlForm = (form: ProfitControlFormState): boolean => {
   return true;
 };
 
+const validateDeepseekToolPrices = (form: {
+  platform: string;
+  ocr_price_per_1k_pages: number | string | null;
+  audio_tts_price_per_million_chars: number | string | null;
+  audio_stt_price_per_hour: number | string | null;
+}): boolean => {
+  if (form.platform !== "deepseek") return true;
+  const prices = [form.ocr_price_per_1k_pages, form.audio_tts_price_per_million_chars, form.audio_stt_price_per_hour];
+  if (prices.some(price => price !== null && price !== "" && (!Number.isFinite(Number(price)) || Number(price) < 0))) {
+    appStore.showError(t("admin.groups.explicitPricing.invalidDeepseekToolPrice"));
+    return false;
+  }
+  return true;
+};
+
 const handleCreateGroup = async () => {
   if (!createForm.name.trim()) {
     appStore.showError(t("admin.groups.nameRequired"));
@@ -5188,7 +5292,7 @@ const handleCreateGroup = async () => {
   ) {
     return;
   }
-  if (!validateProfitControlForm(createForm)) {
+  if (!validateProfitControlForm(createForm) || !validateDeepseekToolPrices(createForm)) {
     return;
   }
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
@@ -5303,6 +5407,9 @@ const handleCreateGroup = async () => {
     requestData.search_price_per_1k = emptyToNull(
       requestData.search_price_per_1k,
     );
+    requestData.ocr_price_per_1k_pages = emptyToNull(
+      requestData.ocr_price_per_1k_pages,
+    );
     requestData.audio_realtime_price_per_min = emptyToNull(
       requestData.audio_realtime_price_per_min,
     );
@@ -5388,6 +5495,7 @@ const handleEdit = async (group: AdminGroup) => {
   );
   editForm.web_search_price_per_call = group.web_search_price_per_call ?? null;
   editForm.search_price_per_1k = group.search_price_per_1k ?? null;
+  editForm.ocr_price_per_1k_pages = group.ocr_price_per_1k_pages ?? null;
   editForm.grok_moderation_refusal_price = group.grok_moderation_refusal_price ?? null;
   editForm.search_provider_base_url = group.search_provider_base_url ?? '';
   editForm.search_provider_api_key = '';
@@ -5559,7 +5667,7 @@ const handleUpdateGroup = async () => {
   ) {
     return;
   }
-  if (!validateProfitControlForm(editForm)) {
+  if (!validateProfitControlForm(editForm) || !validateDeepseekToolPrices(editForm)) {
     return;
   }
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
@@ -5707,6 +5815,10 @@ const handleUpdateGroup = async () => {
     }
     payload.audio_realtime_price_per_min = emptyPriceToClear(
       payload.audio_realtime_price_per_min,
+    );
+    // 与其它分组价一致：清空后发送 -1，后端 normalizePrice 归一为 NULL（恢复默认价）；0 保留为免费。
+    payload.ocr_price_per_1k_pages = emptyPriceToClear(
+      payload.ocr_price_per_1k_pages,
     );
     payload.audio_tts_price_per_million_chars = emptyPriceToClear(
       payload.audio_tts_price_per_million_chars,
