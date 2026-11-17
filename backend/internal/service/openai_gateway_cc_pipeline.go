@@ -420,7 +420,11 @@ func (s *OpenAIGatewayService) readCCUpstreamJSONResponse(
 		message := extractOpenAISSEErrorMessage(respBody)
 		status, errType, _, clientMessage := WrapUpstreamErrorForClient(openAIStreamFailureStatus(respBody, message), respBody)
 		writeError(c, status, errType, clientMessage)
-		return &ccResp, usage, openAIExplicitUpstreamError(root, ""), fmt.Errorf("upstream chat completions response failed: %s", sanitizeUpstreamErrorMessage(message))
+		// The response is complete. Mark it committed and return the error in the
+		// form the handlers recognise as already communicated, or their fallback
+		// appends a second error after this JSON body.
+		MarkResponseCommitted(c)
+		return &ccResp, usage, openAIExplicitUpstreamError(root, ""), fmt.Errorf("upstream response failed: %s", sanitizeUpstreamErrorMessage(message))
 	}
 	return &ccResp, usage, false, nil
 }

@@ -295,11 +295,30 @@ func openAIExplicitUpstreamError(root gjson.Result, eventType string) bool {
 		return true
 	}
 	for _, path := range []string{"error", "response.error"} {
-		if value := root.Get(path); (value.IsObject() && value.Raw != "{}") || (value.Type == gjson.String && strings.TrimSpace(value.String()) != "") {
+		if openAIErrorValuePresent(root.Get(path)) {
 			return true
 		}
 	}
 	return false
+}
+
+// openAIErrorValuePresent reports whether an "error" field carries anything: a
+// non-blank string, or an object with at least one member. Relays attach
+// placeholders such as {}, { } or null to successful answers, and how the empty
+// object is spelled must not decide whether the answer is free.
+func openAIErrorValuePresent(value gjson.Result) bool {
+	if value.Type == gjson.String {
+		return strings.TrimSpace(value.String()) != ""
+	}
+	if !value.IsObject() {
+		return false
+	}
+	present := false
+	value.ForEach(func(_, _ gjson.Result) bool {
+		present = true
+		return false
+	})
+	return present
 }
 
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
