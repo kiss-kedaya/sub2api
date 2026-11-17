@@ -224,9 +224,10 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-		if event.Type == "error" {
+		switch event.Type {
+		case "error":
 			nonBillableUpstreamError = true
-		} else if event.Type == "message_stop" {
+		case "message_stop":
 			nonBillableUpstreamError = false
 		}
 		if event.Type == "message_start" && event.Message != nil {
@@ -409,9 +410,10 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			firstTokenMs = &ms
 		}
 
-		if event.Type == "error" {
+		switch event.Type {
+		case "error":
 			nonBillableUpstreamError = true
-		} else if event.Type == "message_stop" {
+		case "message_stop":
 			nonBillableUpstreamError = false
 		}
 		// usage 恒累计（含客户端断开后的排水阶段，payg 上游照常计费）。

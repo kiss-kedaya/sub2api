@@ -230,9 +230,10 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-		if event.Type == "error" {
+		switch event.Type {
+		case "error":
 			nonBillableUpstreamError = true
-		} else if event.Type == "message_stop" {
+		case "message_stop":
 			nonBillableUpstreamError = false
 		}
 		if event.Type == "message_start" && event.Message != nil {
@@ -399,9 +400,10 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			firstTokenMs = &ms
 		}
 
-		if event.Type == "error" {
+		switch event.Type {
+		case "error":
 			nonBillableUpstreamError = true
-		} else if event.Type == "message_stop" {
+		case "message_stop":
 			nonBillableUpstreamError = false
 		}
 		if event.Type == "message_delta" && event.Usage != nil {

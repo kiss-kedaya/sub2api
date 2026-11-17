@@ -590,13 +590,9 @@ func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {
 	return choices.Exists() && choices.IsArray() && len(choices.Array()) == 0
 }
 
-// extractCCStreamUsage 从单个 CC 流式 chunk 的 payload 中提取 usage 字段。
+// extractCCStreamUsageFromRoot 从单个 CC 流式 chunk（已解析）中提取 usage 字段。
 // CC 协议中 usage 仅出现在末尾 chunk（且仅当 include_usage 生效时），
 // 但上游可能在多个 chunk 中重复——总是用最新值。
-func extractCCStreamUsage(payload string, headers http.Header) *OpenAIUsage {
-	return extractCCStreamUsageFromRoot(gjson.Parse(payload), headers)
-}
-
 func extractCCStreamUsageFromRoot(root gjson.Result, headers http.Header) *OpenAIUsage {
 	usageResult := root.Get("usage")
 	if !usageResult.Exists() || !usageResult.IsObject() {
