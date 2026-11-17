@@ -59,6 +59,12 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	return withModelTransientFallback(ctx, func(ctx context.Context) (*Account, error) {
+		return s.selectAccountForModelWithExclusionsOnce(ctx, groupID, sessionHash, requestedModel, excludedIDs)
+	})
+}
+
+func (s *GatewayService) selectAccountForModelWithExclusionsOnce(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
 	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
 		return nil, err
 	}
@@ -130,6 +136,12 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
+	return withModelTransientFallback(ctx, func(ctx context.Context) (*AccountSelectionResult, error) {
+		return s.selectAccountWithLoadAwarenessOnce(ctx, groupID, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
+	})
+}
+
+func (s *GatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
 	if err := CheckSecurityPenaltySchedulingGroup(ctx, groupID); err != nil {
 		return nil, err
 	}
@@ -1277,7 +1289,13 @@ func (s *GatewayService) isAccountSchedulableForModelSelection(ctx context.Conte
 		return false
 	}
 	if s.rateLimitService != nil && !s.rateLimitService.ModelTransientAllowed(account.ID, requestedModel) {
-		return false
+		probe, _ := ctx.Value(modelTransientFallbackContextKey{}).(*modelTransientFallbackProbe)
+		if probe == nil || !probe.bypass {
+			if probe != nil {
+				probe.blocked.Store(true)
+			}
+			return false
+		}
 	}
 	return account.IsSchedulableForModelWithContext(ctx, requestedModel)
 }
