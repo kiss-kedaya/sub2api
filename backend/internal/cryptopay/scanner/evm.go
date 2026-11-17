@@ -56,6 +56,9 @@ var scanBatchesPerEndpoint = 4
 
 // scanWorkers is how many address batches of one scanRange may be in flight.
 func (s *EVMScanner) scanWorkers() int {
+	if s.concurrency != 0 {
+		return min(max(s.concurrency, 1), 64)
+	}
 	workers := scanBatchConcurrency
 	if s.pool != nil {
 		if nodes := len(s.pool.Endpoints()); nodes > 0 {
@@ -72,7 +75,14 @@ const evmFirstRunLookback = 200
 
 // EVMScanner scans ERC20 transfers for a set of watched addresses.
 type EVMScanner struct {
-	pool *rpc.Pool
+	pool        *rpc.Pool
+	concurrency int
+}
+
+// evmScanner carries the same per-chain override into security, observation and
+// durable scans, including both logs and native blocks.
+func (c ChainConfig) evmScanner(pool *rpc.Pool) *EVMScanner {
+	return &EVMScanner{pool: pool, concurrency: c.ScanConcurrency}
 }
 
 func NewEVMScanner(pool *rpc.Pool) *EVMScanner {

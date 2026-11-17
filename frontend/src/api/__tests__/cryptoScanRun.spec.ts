@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: client }))
-import { cancelScanRun, getScanRun, listScanRuns, startCryptoScan, waitForScanRun, type ScanRun } from '@/api/admin/crypto'
+import { cancelScanRun, getChainStatus, getScanRun, listScanRuns, startCryptoScan, waitForScanRun, type ScanRun } from '@/api/admin/crypto'
 
 const running: ScanRun = {
   id: 'scan-1', status: 'running', started_at: '', from_block: 0, rounds: 0, busy_retries: 0, stalled_rounds: 0,
@@ -18,6 +18,14 @@ describe('background catch-up scan client', () => {
     expect(client.post).toHaveBeenCalledWith('/admin/crypto/scan/run', { from_block: 0 }, {
       headers: {}, _retry: true, timeout: 30000, params: { async: '1' }
     })
+  })
+
+  it('restricts a catch-up scan to the requested chain', async () => {
+    client.post.mockResolvedValue({ data: { data: { ...running, chain_scope: ['bsc'] } }, status: 202 })
+    expect(await startCryptoScan(0, undefined, ['bsc'])).toMatchObject({ chain_scope: ['bsc'] })
+    expect(client.post).toHaveBeenCalledWith('/admin/crypto/scan/run', { from_block: 0 }, expect.objectContaining({
+      params: { async: '1', chain: 'bsc' }
+    }))
   })
 
   it('sends the rewind block and a payment grant only when the caller supplies them', async () => {
@@ -84,6 +92,13 @@ describe('background catch-up scan client', () => {
     expect(client.post).toHaveBeenCalledWith('/admin/crypto/scan/runs/scan%2F1/cancel', null, {
       headers: { 'X-Crypto-Grant': 'test-payment-grant' }, _retry: true, timeout: 30000
     })
+  })
+
+  it('passes the node-status abort signal alongside its probe timeout', async () => {
+    client.get.mockResolvedValue({ data: { data: {} } })
+    const signal = new AbortController().signal
+    await getChainStatus(signal)
+    expect(client.get).toHaveBeenCalledWith('/admin/crypto/chains/status', { timeout: 12_000, signal })
   })
 
   it('reads one run and the list, and never returns a non-array list', async () => {

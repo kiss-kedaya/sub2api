@@ -83,7 +83,7 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 			continue
 		}
 		tokens := evmContracts(chain)
-		chains = append(chains, scanner.ChainConfig{Chain: chain, Tokens: tokens, MaxRange: uint64(cfg.ScanRange[chain])})
+		chains = append(chains, scanner.ChainConfig{Chain: chain, Tokens: tokens, MaxRange: uint64(cfg.ScanRange[chain]), ScanConcurrency: cfg.ScanConcurrency[chain]})
 	}
 	if len(chains) == 0 {
 		return nil
@@ -332,6 +332,17 @@ func (s *Service) RecoverWalletSecurity(ctx context.Context) (wallet.SecuritySta
 func (s *Service) Close() {
 	if s == nil {
 		return
+	}
+	s.mu.Lock()
+	s.closed = true
+	if s.configCancel != nil {
+		s.configCancel()
+	}
+	configDone := s.configDone
+	s.mu.Unlock()
+	// Never wait while holding mu: the watcher may be inside reload.
+	if configDone != nil {
+		<-configDone
 	}
 	s.mu.Lock()
 	if s.discoveryCancel != nil {

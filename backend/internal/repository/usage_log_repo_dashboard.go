@@ -614,6 +614,25 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 		return nil, err
 	}
 
+	usage, err := loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "user_dashboard_usage", UserID: userID,
+		Start: today.UTC().Format(time.RFC3339Nano),
+	}, func(ctx context.Context) (*UserDashboardStats, error) {
+		return r.getUserDashboardUsageUncached(ctx, userID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Key counts/status stay live; only usage_logs aggregates are cached.
+	result := *usage
+	result.TotalAPIKeys = stats.TotalAPIKeys
+	result.ActiveAPIKeys = stats.ActiveAPIKeys
+	return &result, nil
+}
+
+func (r *usageLogRepository) getUserDashboardUsageUncached(ctx context.Context, userID int64) (*UserDashboardStats, error) {
+	stats := &UserDashboardStats{}
+	today := timezone.Today()
 	now := timezone.Now()
 	hourStart := now.In(timezone.Location()).Truncate(time.Hour)
 	windowStart := dashboardSubjectWindowStart(now, today)
@@ -705,6 +724,15 @@ func (r *usageLogRepository) getPerformanceStatsByAPIKey(ctx context.Context, ap
 
 // GetAPIKeyDashboardStats 获取指定 API Key 的仪表盘统计（按 api_key_id 过滤）
 func (r *usageLogRepository) GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int64) (*UserDashboardStats, error) {
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "api_key_dashboard", APIKeyID: apiKeyID,
+		Start: timezone.Today().UTC().Format(time.RFC3339Nano),
+	}, func(ctx context.Context) (*UserDashboardStats, error) {
+		return r.getAPIKeyDashboardStatsUncached(ctx, apiKeyID)
+	})
+}
+
+func (r *usageLogRepository) getAPIKeyDashboardStatsUncached(ctx context.Context, apiKeyID int64) (*UserDashboardStats, error) {
 	stats := &UserDashboardStats{}
 	today := timezone.Today()
 

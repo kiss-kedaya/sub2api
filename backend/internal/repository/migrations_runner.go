@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -67,6 +68,9 @@ const usageLogsGroupRollupCoveringIndexRepairMigration = "237_repair_usage_logs_
 const usageLogsGroupRollupCoveringIndex = "idx_usage_logs_rollup_created_group_cost"
 const usageLogsUpstreamRequestIDIndexMigration = "233_add_usage_log_upstream_request_id_index_notx.sql"
 const usageLogsUpstreamRequestIDIndex = "idx_usage_logs_upstream_request_id"
+const usageLogsDashboardCoveringIndexesMigration = "317_usage_logs_dashboard_covering_indexes_notx.sql"
+const usageLogsUserCreatedDimsIndex = "idx_usage_logs_user_created_dims"
+const usageLogsAPIKeyCreatedStatsIndex = "idx_usage_logs_api_key_created_stats"
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -304,24 +308,8 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 		}
 
 		if nonTx {
-			if err := prepareNonTransactionalMigration(ctx, lockConn, name); err != nil {
-				return fmt.Errorf("prepare migration %s: %w", name, err)
-			}
-
-			// *_notx.sql：用于 CREATE/DROP INDEX CONCURRENTLY 场景，必须非事务执行。
-			// 逐条语句执行，避免将多条 CONCURRENTLY 语句放入同一个隐式事务块。
-			statements := splitSQLStatements(content)
-			for i, stmt := range statements {
-				trimmed := strings.TrimSpace(stmt)
-				if trimmed == "" {
-					continue
-				}
-				if stripSQLLineComment(trimmed) == "" {
-					continue
-				}
-				if _, err := lockConn.ExecContext(ctx, trimmed); err != nil {
-					return fmt.Errorf("apply migration %s (non-tx statement %d): %w", name, i+1, err)
-				}
+			if err := applyNonTransactionalMigration(ctx, lockConn, name, content); err != nil {
+				return err
 			}
 			if _, err := lockConn.ExecContext(ctx, "INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)", name, checksum); err != nil {
 				return fmt.Errorf("record migration %s (non-tx): %w", name, err)
@@ -357,6 +345,48 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	return nil
 }
 
+func applyNonTransactionalMigration(ctx context.Context, lockConn *sql.Conn, name, content string) (err error) {
+	// Large concurrent builds (including invalid-index cleanup) must not inherit
+	// the application's short query/lock timeouts. Keep this on the lock session.
+	defer func() {
+		resetCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var resetErr error
+		for _, setting := range []string{"statement_timeout", "lock_timeout"} {
+			if _, reset := lockConn.ExecContext(resetCtx, "RESET "+setting); reset != nil {
+				resetErr = errors.Join(resetErr, fmt.Errorf("reset %s after migration %s: %w", setting, name, reset))
+			}
+		}
+		if resetErr != nil {
+			err = errors.Join(err, resetErr)
+			// A session whose settings could not be restored must not reenter the
+			// application pool. ErrBadConn closes it, also releasing its advisory lock.
+			_ = lockConn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+	for _, setting := range []string{"statement_timeout", "lock_timeout"} {
+		if _, err := lockConn.ExecContext(ctx, "SET "+setting+" = 0"); err != nil {
+			return fmt.Errorf("set %s for migration %s: %w", setting, name, err)
+		}
+	}
+	if err := prepareNonTransactionalMigration(ctx, lockConn, name); err != nil {
+		return fmt.Errorf("prepare migration %s: %w", name, err)
+	}
+
+	// Execute separately: multiple CONCURRENTLY statements in one Exec would
+	// share an implicit transaction and PostgreSQL would reject them.
+	for i, stmt := range splitSQLStatements(content) {
+		trimmed := strings.TrimSpace(stmt)
+		if stripSQLLineComment(trimmed) == "" {
+			continue
+		}
+		if _, err := lockConn.ExecContext(ctx, trimmed); err != nil {
+			return fmt.Errorf("apply migration %s (non-tx statement %d): %w", name, i+1, err)
+		}
+	}
+	return nil
+}
+
 type migrationConnection interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -385,6 +415,13 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 		return dropInvalidIndexIfPresent(ctx, db, usageLogsGroupRollupCoveringIndex)
 	case usageLogsUpstreamRequestIDIndexMigration:
 		return dropInvalidIndexIfPresent(ctx, db, usageLogsUpstreamRequestIDIndex)
+	case usageLogsDashboardCoveringIndexesMigration:
+		for _, indexName := range []string{usageLogsUserCreatedDimsIndex, usageLogsAPIKeyCreatedStatsIndex} {
+			if err := dropInvalidIndexIfPresent(ctx, db, indexName); err != nil {
+				return err
+			}
+		}
+		return nil
 	default:
 		return nil
 	}

@@ -289,7 +289,7 @@ func (r *usageLogRepository) GetUserUsageTrendByUserID(ctx context.Context, user
 
 // GetUserModelStats 获取指定用户的模型统计
 func (r *usageLogRepository) GetUserModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) (results []ModelStat, err error) {
-	return r.getModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, 0, 0, 0, "", nil, nil, nil, usagestats.ModelSourceRequested, "", nil, nil)
+	return r.GetModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, 0, 0, 0, nil, nil, nil, usagestats.ModelSourceRequested)
 }
 
 // GetUsageTrendWithFilters returns usage trend data with optional filters
@@ -299,7 +299,7 @@ func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, start
 		Model: model, Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
 		Extra:   granularity,
 		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
-	}, func() ([]TrendDataPoint, error) {
+	}, func(ctx context.Context) ([]TrendDataPoint, error) {
 		return r.getUsageTrendWithFiltersResolved(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
 	})
 }
@@ -315,12 +315,18 @@ func (r *usageLogRepository) getUsageTrendWithFiltersResolved(ctx context.Contex
 }
 
 func (r *usageLogRepository) GetUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters UsageLogFilters) (results []TrendDataPoint, err error) {
-	if r.rollupReadEnabled.Load() {
-		if trend, covered, rollupErr := r.GetUsageTrendWithRollups(ctx, startTime, endTime, granularity, filters); rollupErr == nil && covered {
-			return trend, nil
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "usage_trend_usage_filters", Timezone: resolveUsageStatsTimezone(),
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+		Extra: granularity, Filters: usageFiltersFingerprintOf(filters),
+	}, func(ctx context.Context) ([]TrendDataPoint, error) {
+		if r.rollupReadEnabled.Load() {
+			if trend, covered, rollupErr := r.GetUsageTrendWithRollups(ctx, startTime, endTime, granularity, filters); rollupErr == nil && covered {
+				return trend, nil
+			}
 		}
-	}
-	return r.getUsageTrendWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
+		return r.getUsageTrendWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
+	})
 }
 
 func (r *usageLogRepository) getUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, upstreamModelMismatch *bool, nativeCompactionV2 *bool) (results []TrendDataPoint, err error) {
@@ -494,13 +500,11 @@ func (r *usageLogRepository) getUsageTrendFromAggregates(ctx context.Context, st
 
 // GetModelStatsWithFilters returns model statistics with optional filters
 func (r *usageLogRepository) GetModelStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) (results []ModelStat, err error) {
-	if r.rollupReadEnabled.Load() {
-		filters := UsageLogFilters{UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID, RequestType: requestType, Stream: stream, BillingType: billingType}
-		if stats, covered, rollupErr := r.GetModelStatsWithRollups(ctx, startTime, endTime, filters, usagestats.ModelSourceRequested); rollupErr == nil && covered {
-			return stats, nil
-		}
+	// Account-only model totals also drive rate-limit admission: keep them live.
+	if accountID > 0 && userID == 0 && apiKeyID == 0 {
+		return r.getModelStatsWithFiltersBySourceResolved(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, usagestats.ModelSourceRequested)
 	}
-	return r.getModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, "", requestType, stream, billingType, usagestats.ModelSourceRequested, "", nil, nil)
+	return r.GetModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, usagestats.ModelSourceRequested)
 }
 
 // GetModelStatsWithFiltersBySource returns model statistics with optional filters and model source dimension.
@@ -511,7 +515,7 @@ func (r *usageLogRepository) GetModelStatsWithFiltersBySource(ctx context.Contex
 		ModelSource: usagestats.NormalizeModelSource(source),
 		Start:       startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
 		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
-	}, func() ([]ModelStat, error) {
+	}, func(ctx context.Context) ([]ModelStat, error) {
 		return r.getModelStatsWithFiltersBySourceResolved(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, source)
 	})
 }
@@ -531,7 +535,7 @@ func (r *usageLogRepository) GetModelStatsWithUsageFiltersBySource(ctx context.C
 		Query: "model_stats_usage_filters", ModelSource: usagestats.NormalizeModelSource(source),
 		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
 		Filters: usageFiltersFingerprintOf(filters),
-	}, func() ([]ModelStat, error) {
+	}, func(ctx context.Context) ([]ModelStat, error) {
 		return r.getModelStatsWithUsageFiltersBySourceResolved(ctx, startTime, endTime, filters, source)
 	})
 }

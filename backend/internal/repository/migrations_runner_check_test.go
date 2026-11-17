@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Wei-Shaw/sub2api/migrations"
+
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 )
@@ -87,6 +89,33 @@ func TestCheckMigrationsFSHistoryReadFailure(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "run migrations before starting in validate mode")
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCheckMigrationsFSNonTransactional317IsReadOnly(t *testing.T) {
+	content, err := migrations.FS.ReadFile(usageLogsDashboardCoveringIndexesMigration)
+	require.NoError(t, err)
+	for _, applied := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pending", true: "applied"}[applied], func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			rows := sqlmock.NewRows([]string{"filename", "checksum"})
+			if applied {
+				rows.AddRow(usageLogsDashboardCoveringIndexesMigration, migrationChecksum(string(content)))
+			}
+			// No SET, RESET, invalid-index repair, DDL or migration writes allowed.
+			mock.ExpectQuery("SELECT filename, checksum FROM schema_migrations").WillReturnRows(rows)
+			err = checkMigrationsFS(context.Background(), db, fstest.MapFS{
+				usageLogsDashboardCoveringIndexesMigration: &fstest.MapFile{Data: content},
+			})
+			if applied {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "1 pending migration(s): "+usageLogsDashboardCoveringIndexesMigration)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func migrationTestChecksum(content string) string {

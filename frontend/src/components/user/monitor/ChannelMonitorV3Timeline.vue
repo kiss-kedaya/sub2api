@@ -66,6 +66,8 @@ const props = withDefaults(defineProps<{
   buckets?: MonitorMatrixBucket[]
   countdownSeconds: number
   length?: number
+  anchorBucketStart?: string
+  bucketSeconds?: number
 }>(), {
   buckets: () => [],
   length: 18,
@@ -150,15 +152,24 @@ function formatBucketTime(value: string) {
 
 const displayBars = computed<TimelineBar[]>(() => {
   const real = [...props.buckets]
+    .filter(bucket => Number.isFinite(Date.parse(bucket.bucket_start)))
     .sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
-    .slice(-props.length)
-  // Missing slots sit at the right (NOW) end: the window is bucket-aligned so the
-  // trailing slot is the current partial bucket, which is the one that can be
-  // empty right after a refresh. Padding at the front would wrongly show the gap
-  // as old history and shift every real bar one slot to the past.
-  const bars: TimelineBar[] = []
+  const anchor = Date.parse(props.anchorBucketStart ?? '')
+  const step = (props.bucketSeconds ?? 0) * 1000
+  const aligned = Number.isFinite(anchor) && anchor > 0 && Number.isFinite(step) && step > 0
+  // All groups share the latest known bucket at NOW. Keep each bucket in its
+  // time slot, including gaps before a new group and missing interior/current buckets.
+  // Older callers without valid timing fall back to right-aligned history.
+  const bars: TimelineBar[] = Array.from({ length: props.length }, (_, index) => ({
+    key: `empty-${index}`, colorClass: '', heightPct: 0, title: '',
+  }))
 
-  for (const bucket of real) {
+  for (const [offset, bucket] of real.entries()) {
+    const index = aligned
+      ? props.length - 1 - Math.round((anchor - Date.parse(bucket.bucket_start)) / step)
+      : props.length - real.length + offset
+    if (index < 0 || index >= props.length) continue
+    // Ascending traversal lets the newer bucket win any slot collision.
     const state = bucket.health.overall === 'healthy' || bucket.health.overall === 'warning' || bucket.health.overall === 'critical'
       ? bucket.health.overall
       : 'unknown'
@@ -169,7 +180,7 @@ const displayBars = computed<TimelineBar[]>(() => {
           ...(STATUS_STYLE[state]),
           colorClass: availabilityBarClass(availabilityPercent),
         }
-    bars.push({
+    bars[index] = {
       key: bucket.bucket_start,
       ...style,
       title: t('channelMonitorV3.timelineTooltip', {
@@ -178,16 +189,11 @@ const displayBars = computed<TimelineBar[]>(() => {
         cache: formatMonitorPercent(bucket.metrics.cache_rate, locale.value || 'zh-CN'),
         ttft: formatMonitorMs(bucket.metrics.ttft.p50_ms),
       }),
-    })
+    }
   }
 
-  // Slots the window has not aggregated yet stay empty: they keep the grid
-  // rhythm but draw nothing. A grey bar now means one thing only — the bucket
-  // exists and nobody used this group during it.
-  const missing = Math.max(0, props.length - real.length)
-  for (let index = 0; index < missing; index += 1) {
-    bars.push({ key: `empty-${index}`, colorClass: '', heightPct: 0, title: '' })
-  }
+  // Empty slots draw nothing and have no tooltip; grey still means an existing
+  // bucket with insufficient samples, never missing history.
   return bars
 })
 

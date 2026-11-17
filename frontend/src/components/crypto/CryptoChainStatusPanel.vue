@@ -14,6 +14,7 @@
       </span>
     </div>
 
+    <CryptoScanProgress v-if="scan" />
     <div v-if="loading && !report" class="flex justify-center py-12"><LoadingSpinner /></div>
     <UAlert
       v-else-if="failed && !report"
@@ -39,6 +40,14 @@
           <h3 class="text-base font-semibold text-highlighted">{{ chainName(chain.chain) }}</h3>
           <UBadge :color="stateColor(chain.state)" variant="subtle" data-testid="chain-state">{{ stateLabel(chain.state) }}</UBadge>
           <span class="ms-auto text-xs" :class="chain.state === 'stalled' ? 'text-warning' : 'text-muted'" data-testid="chain-cursor-age">{{ cursorAge(chain) }}</span>
+          <UButton
+            v-if="scan"
+            color="neutral" variant="outline" size="xs"
+            :data-testid="`chain-scan-${chain.chain}`"
+            :aria-label="t('admin.crypto.scanChainAction', { chain: chainName(chain.chain) })"
+            :disabled="!chain.enabled || chain.state === 'no_rpc' || scan.running.value"
+            @click="scan.start([chain.chain])"
+          >{{ scan.running.value ? t('admin.crypto.scanChainBusy') : t('admin.crypto.scanChain') }}</UButton>
         </div>
 
         <UAlert
@@ -110,9 +119,11 @@
   </section>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import CryptoScanProgress from './CryptoScanProgress.vue'
+import { cryptoScanKey } from '@/composables/useCryptoScan'
 import { getChainStatus, type ChainNodeStatus, type ChainState, type ChainStatus, type ChainStatusReport } from '@/api/admin/crypto'
 
 // Polls only while the tab is the active one AND the page is visible. Leaving either
@@ -121,6 +132,7 @@ import { getChainStatus, type ChainNodeStatus, type ChainState, type ChainStatus
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true })
 const emit = defineEmits<{ (event: 'open-config'): void }>()
 const { t } = useI18n()
+const scan = inject(cryptoScanKey, null)
 
 const POLL_MS = 3000
 const report = ref<ChainStatusReport | null>(null)
@@ -131,14 +143,17 @@ const pageVisible = ref(typeof document === 'undefined' || document.visibilitySt
 let timer: ReturnType<typeof setInterval> | undefined
 let generation = 0
 let inFlight = false
+let request: AbortController | undefined
 
 async function load() {
   if (inFlight) return
   inFlight = true
   const mine = generation
+  const controller = new AbortController()
+  request = controller
   loading.value = true
   try {
-    const next = await getChainStatus()
+    const next = await getChainStatus(controller.signal)
     if (mine !== generation) return
     report.value = next
     failed.value = false
@@ -147,6 +162,7 @@ async function load() {
     if (mine === generation) failed.value = true
   } finally {
     if (mine === generation) {
+      request = undefined
       inFlight = false
       loading.value = false
     }
@@ -159,12 +175,15 @@ function stopPolling() {
     timer = undefined
   }
   generation++
+  request?.abort()
+  request = undefined
   inFlight = false
   loading.value = false
 }
 
 function startPolling() {
   if (timer !== undefined) return
+  void scan?.resume()
   void load()
   timer = setInterval(() => { void load() }, POLL_MS)
 }

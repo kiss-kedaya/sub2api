@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CC_SWITCH_APPS,
   CLAUDE_CC_SWITCH_MODEL,
@@ -7,6 +7,7 @@ import {
   OPENAI_CC_SWITCH_CODEX_MODEL,
   buildCcSwitchImportDeeplink,
   ccSwitchProviderDeeplinkSupported,
+  fetchCcSwitchModels,
   parseCcSwitchModelsList,
   pickCcSwitchModel
 } from '@/utils/ccswitchImport'
@@ -18,6 +19,60 @@ function paramsFromDeeplink(deeplink: string): URLSearchParams {
 }
 
 describe('ccswitchImport utils', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it.each([
+    'https://api.example.com',
+    'https://api.example.com/v1',
+    'https://api.example.com/',
+    'https://api.example.com/v1/'
+  ])('fetches models with one /v1 suffix for base URL %s', async (baseUrl) => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'catalog-model' }] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const signal = new AbortController().signal
+
+    await expect(fetchCcSwitchModels(baseUrl, '', signal)).resolves.toEqual(['catalog-model'])
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.com/v1/models',
+      { headers: { Authorization: 'Bearer ' }, signal }
+    )
+  })
+
+  it.each([
+    ['https://api.example.com/prefix', 'https://api.example.com/prefix/v1/models'],
+    ['https://api.example.com/prefix/v1///', 'https://api.example.com/prefix/v1/models'],
+    ['https://api.example.com/prefix/v1?tenant=one', 'https://api.example.com/prefix/v1/models?tenant=one'],
+    ['https://api.example.com/prefix///?tenant=one#section', 'https://api.example.com/prefix/v1/models?tenant=one'],
+    ['https://api.example.com/prefix/v1#section', 'https://api.example.com/prefix/v1/models']
+  ])('appends the models path without moving the query or fragment for %s', async (baseUrl, expected) => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    await fetchCcSwitchModels(baseUrl, '')
+    expect(fetchMock).toHaveBeenCalledWith(expected, expect.any(Object))
+  })
+
+  it('uses the same query-safe /v1 endpoint for Grok imports', () => {
+    const params = paramsFromDeeplink(buildCcSwitchImportDeeplink({
+      baseUrl: 'https://api.example.com/prefix///?tenant=one#section',
+      providerName: 'Sub2API', apiKey: '', usageScript: '', platform: 'grok'
+    }))
+    expect(params.get('endpoint')).toBe('https://api.example.com/prefix/v1?tenant=one')
+  })
+
+  it('preserves the /v1 endpoint and homepage in provider deeplinks', () => {
+    const baseUrl = 'https://api.example.com/v1'
+    const params = paramsFromDeeplink(buildCcSwitchImportDeeplink({
+      baseUrl, providerName: 'Sub2API', apiKey: '', usageScript: '', platform: 'openai'
+    }))
+
+    expect(params.get('endpoint')).toBe(baseUrl)
+    expect(params.get('homepage')).toBe(baseUrl)
+  })
+
   it('defaults OpenAI CC Switch imports to the current Codex model', () => {
     expect(OPENAI_CC_SWITCH_CODEX_MODEL).toBe('gpt-5.6-sol')
   })

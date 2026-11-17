@@ -17,8 +17,6 @@ import (
 	"maps"
 	"net/url"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -103,6 +101,10 @@ type CryptoConfig struct {
 	// at 100 blocks); missing key = use the built-in default (2000).
 	ScanRange map[string]int `json:"scan_range"`
 
+	// ScanConcurrency overrides the log-batch and native-block worker count per
+	// chain. Missing or zero keeps the automatic public-node limit; 1..64 is explicit.
+	ScanConcurrency map[string]int `json:"scan_concurrency"`
+
 	// Crediting.
 	CreditMinAmount  float64 `json:"credit_min_amount"`
 	CreditMaxAmount  float64 `json:"credit_max_amount"`
@@ -171,6 +173,7 @@ func DefaultCryptoConfig() CryptoConfig {
 			ChainBSC: 2000, ChainEthereum: 2000, ChainPolygon: 2000, ChainPlasma: 2000,
 			ChainArbitrum: 2000, ChainBase: 2000, ChainXLayer: 100,
 		},
+		ScanConcurrency: map[string]int{},
 		// 0.001 keeps probe deposits creditable; 10000 caps one transfer so a
 		// fat-fingered amount cannot mint an absurd balance in one go.
 		CreditMinAmount: 0.001,
@@ -320,6 +323,7 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	cfg.RPCLimits = maps.Clone(cfg.RPCLimits)
 	cfg.Confirmations = maps.Clone(cfg.Confirmations)
 	cfg.ScanRange = maps.Clone(cfg.ScanRange)
+	cfg.ScanConcurrency = maps.Clone(cfg.ScanConcurrency)
 	cfg.SweepMinPerAddress = maps.Clone(cfg.SweepMinPerAddress)
 	cfg.GasTopUp = maps.Clone(cfg.GasTopUp)
 	def := DefaultCryptoConfig()
@@ -366,6 +370,9 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	if cfg.ScanRange == nil {
 		cfg.ScanRange = def.ScanRange
+	}
+	if cfg.ScanConcurrency == nil {
+		cfg.ScanConcurrency = def.ScanConcurrency
 	}
 	for _, chain := range cfg.Chains {
 		if _, ok := cfg.SweepMinPerAddress[chain]; !ok {
@@ -417,6 +424,11 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	}
 	for chain, value := range cfg.ScanRange {
 		cfg.ScanRange[chain] = clampInt(value, 1, 100000)
+	}
+	for chain, value := range cfg.ScanConcurrency {
+		if value != 0 {
+			cfg.ScanConcurrency[chain] = clampInt(value, 1, 64)
+		}
 	}
 	for chain, value := range cfg.SweepMinPerAddress {
 		if value < 0 {
@@ -583,6 +595,7 @@ type CryptoConfigPatch struct {
 	HotWalletSolana      *string                       `json:"hot_wallet_solana"`
 	Confirmations        *map[string]int               `json:"confirmations"`
 	ScanRange            *map[string]int               `json:"scan_range"`
+	ScanConcurrency      *map[string]int               `json:"scan_concurrency"`
 	CreditMinAmount      *float64                      `json:"credit_min_amount"`
 	CreditMaxAmount      *float64                      `json:"credit_max_amount"`
 	CreditMultiplier     *float64                      `json:"credit_multiplier"`
@@ -634,6 +647,9 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	if p.ScanRange != nil {
 		out.ScanRange = *p.ScanRange
 	}
+	if p.ScanConcurrency != nil {
+		out.ScanConcurrency = *p.ScanConcurrency
+	}
 	if p.CreditMinAmount != nil {
 		out.CreditMinAmount = *p.CreditMinAmount
 	}
@@ -667,84 +683,17 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	return out
 }
 
-// configFingerprint renders the parts of a config that change runtime
-// behaviour into a stable string. It deliberately covers the fields an operator
-// edits to unblock a chain — endpoints, ranges, confirmations, chain list — and
-// ignores fields that only affect the next scheduled sweep, because reloading
-// for those would churn RPC pools for no reason.
-func configFingerprint(cfg CryptoConfig) string {
-	var b strings.Builder
-	_, _ = b.WriteString("enabled=")
-	_, _ = b.WriteString(strconv.FormatBool(cfg.Enabled))
-	_, _ = b.WriteString("|chains=")
-	_, _ = b.WriteString(strings.Join(cfg.Chains, ","))
-	_, _ = b.WriteString("|throttle_ms=")
-	_, _ = b.WriteString(strconv.Itoa(cfg.RPCThrottleMs))
-	_, _ = b.WriteString("|native_price_url=")
-	_, _ = b.WriteString(cfg.NativePriceURL)
-	for _, chain := range sortedKeys(cfg.RPC) {
-		_, _ = b.WriteString("|rpc.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(cfg.RPC[chain])
+// configFingerprint hashes the entire normalized persisted snapshot. Every
+// CryptoConfig field affects runtime configuration; none is a timestamp, nonce
+// or display-only value. JSON sorts map keys, so identical snapshots stay stable
+// and new persisted fields are covered automatically. Never log it or the JSON.
+func configFingerprint(cfg CryptoConfig) (string, error) {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return "", errors.New("crypto config: cannot serialize configuration fingerprint")
 	}
-	for _, endpoint := range sortedKeys(cfg.RPCLimits) {
-		limit := cfg.RPCLimits[endpoint]
-		_, _ = b.WriteString("|limit.")
-		_, _ = b.WriteString(endpoint)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(strconv.FormatUint(limit.MaxBlocks, 10))
-		_, _ = b.WriteString("/")
-		_, _ = b.WriteString(strconv.Itoa(limit.MaxAddresses))
-	}
-	for _, chain := range sortedKeys(cfg.ScanRange) {
-		_, _ = b.WriteString("|range.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(strconv.Itoa(cfg.ScanRange[chain]))
-	}
-	for _, chain := range sortedKeys(cfg.Confirmations) {
-		_, _ = b.WriteString("|conf.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(strconv.Itoa(cfg.Confirmations[chain]))
-	}
-	// The native source changes which loop touches the chain, so it must
-	// reload; rotating only the provider key must reload too, without putting
-	// the key itself into a fingerprint string.
-	_, _ = b.WriteString("|native=")
-	_, _ = b.WriteString(cfg.NativeScan)
-	_, _ = b.WriteString("|native_poll_s=")
-	_, _ = b.WriteString(strconv.Itoa(cfg.NativePollSeconds))
-	for _, chain := range sortedKeys(cfg.ExplorerAPIURL) {
-		_, _ = b.WriteString("|explorer.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(cfg.ExplorerAPIURL[chain])
-	}
-	_, _ = b.WriteString("|explorer_key=")
-	_, _ = b.WriteString(secretFingerprint(cfg.ExplorerAPIKey))
-	return b.String()
-}
-
-// secretFingerprint is a short, non-reversible marker of a credential: enough
-// to notice a rotation, not enough to recover the value from a fingerprint.
-func secretFingerprint(secret string) string {
-	secret = strings.TrimSpace(secret)
-	if secret == "" {
-		return "-"
-	}
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:8])
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // RPCEndpointLimits is the per-endpoint eth_getLogs capability an operator can

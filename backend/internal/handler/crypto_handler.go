@@ -226,10 +226,11 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 
 func cryptoConfigRequiresRisk(before, after cryptopay.CryptoConfig) bool {
 	// This explicit exemption keeps every future configuration field protected
-	// by default. Only these five operational thresholds need no fresh code.
+	// by default. Only these operational thresholds need no fresh code.
 	after.SweepGlobalThreshold = before.SweepGlobalThreshold
 	after.SweepMinPerAddress = before.SweepMinPerAddress
 	after.ScanRange = before.ScanRange
+	after.ScanConcurrency = before.ScanConcurrency
 	after.CreditMinAmount = before.CreditMinAmount
 	after.CreditMaxAmount = before.CreditMaxAmount
 	before.HotWalletEVM = strings.ToLower(strings.TrimSpace(before.HotWalletEVM))

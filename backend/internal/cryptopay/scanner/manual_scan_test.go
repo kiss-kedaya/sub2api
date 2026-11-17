@@ -6,7 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
+	"github.com/stretchr/testify/require"
 )
 
 func TestManualBackfillRejectsUnconfirmedAndUnboundedRanges(t *testing.T) {
@@ -89,6 +92,53 @@ func TestManualScanReturnsFailuresAndAlwaysUnlocks(t *testing.T) {
 	}
 	scannerAssertSteps(t, pg, "acquire", "load cursor", "save cursor", "pending", "recheck", "release")
 	scannerAssertIdle(t, w, pg, false)
+}
+
+func TestManualScanOnlyScansSelectedChain(t *testing.T) {
+	pg := &scannerMockPG{}
+	w, selected := scannerLockFixture(t, pg)
+	other := newRPCFixture(testTransfer())
+	w.pools["ethereum"] = other.pool(t)
+	w.chains = append(w.chains, ChainConfig{Chain: "ethereum", Confirmations: 5})
+
+	require.NoError(t, w.RunOnceFrom(t.Context(), 0, "bsc"))
+	require.Positive(t, selected.callCount("eth_blockNumber"))
+	require.Zero(t, other.callCount("eth_chainId"))
+	scannerAssertSteps(t, pg, "acquire", "load cursor", "save cursor", "pending", "recheck", "release")
+	_, _, events, _ := pg.snapshot()
+	for _, event := range events {
+		if event.step == "pending" || event.step == "recheck" {
+			require.Contains(t, event.query, "chain = ANY($1)", "maintenance must also stay within the selected chain")
+		}
+	}
+	scannerAssertIdle(t, w, pg, false)
+}
+
+func TestScopedScanMaintenanceUsesOnlySelectedChain(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	mock.ExpectQuery(`(?s)status = 'pending'.*AND chain = ANY\(\$1\).*LIMIT 50`).
+		WithArgs(`{"bsc"}`).WillReturnRows(observationRows())
+	mock.ExpectQuery(`(?s)d.status = 'credited'.*AND d.chain = ANY\(\$1\).*LIMIT 200`).
+		WithArgs(`{"bsc"}`).WillReturnRows(observationRows())
+	w := &Worker{db: db}
+	require.NoError(t, w.retryPending(t.Context(), "bsc"))
+	require.NoError(t, w.recheckCredited(t.Context(), "bsc"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestManualScanRejectsUnknownOrDisabledChainBeforeWork(t *testing.T) {
+	for _, chain := range []string{"ethereum", "solana", "unknown"} {
+		t.Run(chain, func(t *testing.T) {
+			pg := &scannerMockPG{}
+			w, fixture := scannerLockFixture(t, pg)
+			w.pools["ethereum"] = rpc.NewPool("http://127.0.0.1:1") // Configured RPC alone does not enable scanning.
+			require.ErrorIs(t, w.RunOnceFrom(t.Context(), 0, "bsc", chain), ErrInvalidScanChain)
+			scannerAssertSteps(t, pg)
+			require.Zero(t, fixture.callCount("eth_chainId"))
+		})
+	}
 }
 
 func TestManualScanRejectsReadOnlyBeforeAcquiringLock(t *testing.T) {

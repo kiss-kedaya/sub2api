@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	gocache "github.com/patrickmn/go-cache"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -29,15 +30,19 @@ const (
 	// a Redis outage costs one failed round trip per window instead of one per
 	// request.
 	usageStatsCacheRetryAfter = time.Second
+	// Shared aggregates outlive individual callers, but never wait indefinitely.
+	usageStatsCacheLoadTimeout = 15 * time.Second
+	usageStatsCacheFailureTTL  = 5 * time.Second
 )
 
 // usageStatsCache is a best-effort, short-TTL Redis cache in front of the
 // dashboard and usage aggregation queries. Every method is safe to call on a
 // nil receiver via the helpers below: a nil cache means "query the database".
 type usageStatsCache struct {
-	rdb *redis.Client
-	ttl time.Duration
-	sf  singleflight.Group
+	rdb      *redis.Client
+	ttl      time.Duration
+	sf       singleflight.Group
+	failures *gocache.Cache // Short process-local backoff; never publish database errors in Redis.
 	// skipUntil is the Unix-nano deadline observed after a Redis failure. It is
 	// written from request goroutines, so it uses atomics.
 	skipUntil atomic.Int64
@@ -49,22 +54,26 @@ func newUsageStatsCache(rdb *redis.Client, cfg *config.Config) *usageStatsCache 
 	if rdb == nil || cfg == nil || !cfg.UsageStatsCache.Enabled || cfg.UsageStatsCache.TTL <= 0 {
 		return nil
 	}
-	return &usageStatsCache{rdb: rdb, ttl: cfg.UsageStatsCache.TTL}
+	return &usageStatsCache{
+		rdb: rdb, ttl: cfg.UsageStatsCache.TTL,
+		failures: gocache.New(usageStatsCacheFailureTTL, time.Minute),
+	}
 }
 
 // usageStatsCacheKey is the canonical identity of one cached aggregate. Fields
-// are strings/ints (never pointers) so JSON marshalling is deterministic.
+// contain only JSON-safe values, so marshalling is deterministic.
 type usageStatsCacheKey struct {
-	Query       string `json:"query"`
-	UserID      int64  `json:"user_id,omitempty"`
-	APIKeyID    int64  `json:"api_key_id,omitempty"`
-	AccountID   int64  `json:"account_id,omitempty"`
-	GroupID     int64  `json:"group_id,omitempty"`
-	Model       string `json:"model,omitempty"`
-	ModelSource string `json:"model_source,omitempty"`
-	Timezone    string `json:"timezone,omitempty"`
-	Start       string `json:"start,omitempty"`
-	End         string `json:"end,omitempty"`
+	Query       string  `json:"query"`
+	UserID      int64   `json:"user_id,omitempty"`
+	APIKeyID    int64   `json:"api_key_id,omitempty"`
+	APIKeyIDs   []int64 `json:"api_key_ids,omitempty"`
+	AccountID   int64   `json:"account_id,omitempty"`
+	GroupID     int64   `json:"group_id,omitempty"`
+	Model       string  `json:"model,omitempty"`
+	ModelSource string  `json:"model_source,omitempty"`
+	Timezone    string  `json:"timezone,omitempty"`
+	Start       string  `json:"start,omitempty"`
+	End         string  `json:"end,omitempty"`
 	// Filters carries the full usage filter set for queries that accept one.
 	// It is a value (not a pointer) so nil optionals stay nil in the hash.
 	Filters *usageFiltersFingerprint `json:"filters,omitempty"`
@@ -131,6 +140,7 @@ func usageStatsRedisKey(key usageStatsCacheKey) string {
 // usageStatsCacheResult keeps the singleflight payload typed by caller.
 type usageStatsCacheResult[T any] struct {
 	value T
+	raw   []byte
 }
 
 // loadUsageStatsCached serves one aggregate from Redis when possible, otherwise
@@ -140,42 +150,73 @@ func loadUsageStatsCached[T any](
 	cache *usageStatsCache,
 	ctx context.Context,
 	key usageStatsCacheKey,
-	load func() (T, error),
+	load func(context.Context) (T, error),
 ) (T, error) {
-	if cache == nil {
-		return load()
-	}
-	redisKey := usageStatsRedisKey(key)
-	if redisKey == "" {
-		return load()
-	}
-	// Collapse concurrent misses for the same key inside this process; the Redis
-	// entry then serves every other replica.
-	payload, err, _ := cache.sf.Do(redisKey, func() (any, error) {
-		if raw, ok := cache.get(ctx, redisKey); ok {
-			var value T
-			if json.Unmarshal(raw, &value) == nil {
-				return usageStatsCacheResult[T]{value: value}, nil
-			}
-			// A corrupt or older payload is treated as a miss, never as an error.
-		}
-		value, loadErr := load()
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		cache.set(ctx, redisKey, value)
-		return usageStatsCacheResult[T]{value: value}, nil
-	})
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		var zero T
 		return zero, err
 	}
-	result, ok := payload.(usageStatsCacheResult[T])
-	if !ok {
-		var zero T
-		return zero, errors.New("usage stats cache: unexpected payload type")
+	if cache == nil {
+		return load(ctx)
 	}
-	return result.value, nil
+	redisKey := usageStatsRedisKey(key)
+	if redisKey == "" {
+		return load(ctx)
+	}
+	// Only the waiter uses the request deadline. Disconnecting one caller must
+	// neither cancel the shared database query nor prevent populating Redis.
+	ch := cache.sf.DoChan(redisKey, func() (any, error) {
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageStatsCacheLoadTimeout)
+		defer cancel()
+		if raw, ok := cache.get(loadCtx, redisKey); ok {
+			var value T
+			if json.Unmarshal(raw, &value) == nil {
+				return usageStatsCacheResult[T]{raw: raw}, nil
+			}
+			// A corrupt or older payload is treated as a miss, never as an error.
+		}
+		if failure, ok := cache.failures.Get(redisKey); ok {
+			if err, valid := failure.(error); valid {
+				return nil, err
+			}
+		}
+		value, loadErr := load(loadCtx)
+		if loadErr != nil {
+			cache.failures.SetDefault(redisKey, loadErr)
+			return nil, loadErr
+		}
+		// Publish bytes, not shared pointers: user handlers redact admin-only
+		// fields in place, and each waiter must own its result.
+		raw, marshalErr := json.Marshal(value)
+		if marshalErr != nil {
+			return usageStatsCacheResult[T]{value: value}, nil
+		}
+		cache.set(loadCtx, redisKey, raw)
+		return usageStatsCacheResult[T]{raw: raw}, nil
+	})
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	case result := <-ch:
+		if result.Err != nil {
+			var zero T
+			return zero, result.Err
+		}
+		payload, ok := result.Val.(usageStatsCacheResult[T])
+		if !ok {
+			var zero T
+			return zero, errors.New("usage stats cache: unexpected payload type")
+		}
+		if payload.raw != nil {
+			var value T
+			if err := json.Unmarshal(payload.raw, &value); err != nil {
+				return value, err
+			}
+			return value, nil
+		}
+		return payload.value, nil
+	}
 }
 
 func (c *usageStatsCache) paused() bool {
@@ -203,12 +244,8 @@ func (c *usageStatsCache) get(ctx context.Context, key string) ([]byte, bool) {
 	return raw, true
 }
 
-func (c *usageStatsCache) set(ctx context.Context, key string, value any) {
+func (c *usageStatsCache) set(ctx context.Context, key string, raw []byte) {
 	if c.paused() || ctx.Err() != nil {
-		return
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
 		return
 	}
 	opCtx, cancel := context.WithTimeout(ctx, usageStatsCacheOpTimeout)
