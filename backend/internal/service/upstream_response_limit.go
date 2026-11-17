@@ -33,6 +33,9 @@ func readUpstreamResponseBodyLimited(reader io.Reader, maxBytes int64) ([]byte, 
 
 	body, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			return body, err
+		}
 		return nil, err
 	}
 	if int64(len(body)) > maxBytes {
@@ -56,7 +59,7 @@ func ReadUpstreamResponseBody(reader io.Reader, cfg *config.Config, c *gin.Conte
 				onTooLarge(c)
 			}
 		}
-		return nil, err
+		return body, err
 	}
 	return body, nil
 }

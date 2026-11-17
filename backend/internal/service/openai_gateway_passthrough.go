@@ -588,6 +588,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		} else {
 			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
+				if result != nil && errors.Is(handleErr, errOpenAIUpstreamWaitLimit) {
+					usage, nonBillableUpstreamError = result.usage, true
+					return buildForwardResult(), handleErr
+				}
 				if clientErr := clientCtx.Err(); clientErr != nil {
 					// Headers arrived and the body read was cut by the client leaving: the
 					// buffered body was closed with it. The request had been accepted, so
@@ -2759,6 +2763,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	ensureResponseFailedTerminal()
 	if err := documentScanner.Err(); err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) && !clientDisconnected && !((sawDone || sawTerminalEvent) && !sawFailedEvent) {
+			nonBillableUpstreamError = true
+			stopKeepalive()
+			flushPendingOutput()
+			writeOpenAIStreamSilenceError(c, true)
+			return resultWithUsage(), openAIStreamSilenceError(err)
+		}
 		if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
 			return resultWithUsage(), nil
@@ -2843,6 +2854,11 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 ) (*openaiNonStreamingResultPassthrough, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			writeOpenAIStreamSilenceError(c, false)
+			usage := s.openAIStreamSilenceUsage(body)
+			return &openaiNonStreamingResultPassthrough{OpenAIUsage: &usage, usage: &usage, nonBillableUpstreamError: true}, openAIStreamSilenceError(err)
+		}
 		return nil, err
 	}
 	s.cacheDeepSeekNativeReasoningBody(c, account, body)

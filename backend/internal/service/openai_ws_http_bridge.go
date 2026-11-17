@@ -1015,6 +1015,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			return resultWithUsage(), nil
 		}
 	}
+	if err := scanner.Err(); errors.Is(err, errOpenAIUpstreamWaitLimit) {
+		result := resultWithUsage()
+		result.NonBillableUpstreamError = true
+		if writeErr := writeClientMessage(buildOpenAIWSHTTPBridgeErrorEvent(http.StatusGatewayTimeout, "Upstream did not respond in time")); writeErr != nil {
+			return result, errors.Join(openAIStreamSilenceError(err), writeErr)
+		}
+		return result, openAIStreamSilenceError(err)
+	}
 	if bareErrorPending {
 		if finalizeErr := finalizeBareError(); finalizeErr != nil {
 			return resultWithUsage(), finalizeErr

@@ -624,6 +624,10 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, c, "openai messages buffered", requestID)
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			writeOpenAIStreamSilenceError(c, false)
+			return openAIStreamSilenceResult(resp, usage, originalModel, billingModel, upstreamModel, false, startTime), openAIStreamSilenceError(err)
+		}
 		var gone *compatClientGoneError
 		if errors.As(err, &gone) {
 			// The client left and the upstream is closed. Bill what was produced and
@@ -1592,6 +1596,11 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	// still billed.
 	finishIncomplete := func(cause error) (*OpenAIForwardResult, error) {
 		gone := clientDisconnected || watch.Gone()
+		if errors.Is(cause, errOpenAIUpstreamWaitLimit) && !gone {
+			nonBillableUpstreamError = true
+			writeOpenAIStreamSilenceError(c, true)
+			return resultWithUsage(), openAIStreamSilenceError(cause)
+		}
 		applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
 			Path: "messages_stream", Account: account, Model: originalModel, RequestID: requestID,
 			ClientGone: gone, Cause: cause, OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),

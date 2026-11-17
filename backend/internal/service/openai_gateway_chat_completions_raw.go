@@ -503,6 +503,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	scanErr := scanner.Err()
 	clientGone := clientDisconnected || watch.Gone()
+	if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) && !clientGone && !terminal.sawDone && !terminal.sawFinishReason {
+		nonBillableUpstreamError = true
+		writeOpenAIStreamSilenceError(c, true)
+		return resultWithUsage(), openAIStreamSilenceError(scanErr)
+	}
 	if scanErr != nil && !clientGone && !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
 		logger.L().Warn("openai chat_completions raw: stream read error",
 			zap.Error(scanErr),
@@ -712,6 +717,10 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	defer watch.Stop()
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) && !watch.Gone() {
+			writeOpenAIStreamSilenceError(c, false)
+			return openAIStreamSilenceResult(resp, s.openAIStreamSilenceUsage(respBody), originalModel, billingModel, upstreamModel, false, startTime), openAIStreamSilenceError(err)
+		}
 		if watch.Gone() && !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
 			base := &OpenAIForwardResult{
 				RequestID:                     requestID,

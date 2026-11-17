@@ -173,6 +173,9 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 			!state.clientDisconnected && (state.result == nil || !state.result.ClientDisconnect) {
 			_ = state.writeFailure()
 		}
+		if errors.Is(cause, errOpenAIStreamSilenceLimit) {
+			return state.finishResult(), true, cause
+		}
 		if state.attempted > 0 || c.Writer.Written() {
 			// Do not expose provider diagnostics or retain a retryable error type
 			// after this logical response has become visible or executed a search.
@@ -197,6 +200,7 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		writer := &deepSeekHostedRoundWriter{ResponseWriter: c.Writer, state: state, header: make(http.Header), status: http.StatusOK, size: -1, indices: make(map[int]int), owned: make(map[string]*deepSeekHostedCall)}
 		innerCtx := context.WithValue(ctx, deepSeekHostedSearchSkipContextKey{}, true)
 		innerCtx = context.WithValue(innerCtx, deepSeekHostedRoundContextKey{}, writer)
+		innerCtx = WithOpsGinContext(innerCtx, shadow)
 		shadow.Request = c.Request.Clone(innerCtx)
 		shadow.Writer = writer
 		result, forwardErr := s.Forward(innerCtx, shadow, account, request)
@@ -251,6 +255,9 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 				(writer.terminal == "response.failed" || writer.terminal == "response.incomplete") {
 				if writeErr := state.writeFinal(writer); writeErr != nil {
 					return fail(writeErr)
+				}
+				if errors.Is(forwardErr, errOpenAIStreamSilenceLimit) {
+					return state.finishResult(), true, forwardErr
 				}
 				return state.finishResult(), true, errors.New("deepseek upstream response did not complete")
 			}

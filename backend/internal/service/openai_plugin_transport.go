@@ -10,9 +10,14 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
 	if limit := openAIUpstreamWaitLimitFor(request, account); limit > 0 {
+		var onSilence func()
+		if request.ContentLength > deepSeekLargeRequestBytes {
+			requestCtx := request.Context()
+			onSilence = func() { recordOpenAIStreamSilenceLimit(requestCtx, account) }
+		}
 		return doWithUpstreamWaitLimit(request, limit, func(req *http.Request) (*http.Response, error) {
 			return s.doOpenAIUpstreamOnce(req, proxyURL, account)
-		})
+		}, onSilence)
 	}
 	return s.doOpenAIUpstreamOnce(request, proxyURL, account)
 }

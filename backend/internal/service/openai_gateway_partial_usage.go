@@ -28,6 +28,9 @@ func preserveOpenAIStreamingResultOnError(result *OpenAIForwardResult, err error
 	if err == nil {
 		return result, nil
 	}
+	if result != nil && result.NonBillableUpstreamError && errors.Is(err, errOpenAIStreamSilenceLimit) {
+		return result, err
+	}
 	var failoverErr *UpstreamFailoverError
 	if errors.As(err, &failoverErr) {
 		return nil, err

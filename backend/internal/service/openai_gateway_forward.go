@@ -1477,6 +1477,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
+				if nonStreamResult != nil && errors.Is(err, errOpenAIUpstreamWaitLimit) {
+					usage, nonBillableUpstreamError = nonStreamResult.usage, true
+					return buildForwardResult(), err
+				}
 				if clientErr := clientCtx.Err(); clientErr != nil {
 					// Headers arrived and the body read was cut by the client leaving.
 					return clientGone(nil, clientErr)

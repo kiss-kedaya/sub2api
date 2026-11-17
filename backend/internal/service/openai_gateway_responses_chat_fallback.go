@@ -178,6 +178,9 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		}
 	})
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			return openAIStreamSilenceResult(resp, usage, originalModel, billingModel, upstreamModel, false, startTime), err
+		}
 		if watch.Gone() && errors.Is(err, context.Canceled) {
 			base := &OpenAIForwardResult{
 				RequestID:                   requestID,

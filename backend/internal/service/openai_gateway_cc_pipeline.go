@@ -292,6 +292,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 ) ccStreamScanState {
 	var st ccStreamScanState
 	pendingEventType := ""
+	sawSuccessfulFinish := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 	for scanner.Scan() {
@@ -341,6 +342,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 		for _, choice := range chunk.Choices {
 			if choice.FinishReason != nil && *choice.FinishReason != "" {
 				st.NonBillableUpstreamError = false
+				sawSuccessfulFinish = true
 				break
 			}
 		}
@@ -352,6 +354,9 @@ func (s *OpenAIGatewayService) scanCCStream(
 	}
 
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) && sawSuccessfulFinish && !st.NonBillableUpstreamError {
+			return st
+		}
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			logger.L().Warn(logPrefix+": stream read error",
 				zap.Error(err),
@@ -359,6 +364,10 @@ func (s *OpenAIGatewayService) scanCCStream(
 			)
 		}
 		st.Err = err
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			st.NonBillableUpstreamError, st.Err = true, openAIStreamSilenceError(err)
+			writeOpenAIStreamSilenceError(c, true)
+		}
 	}
 	return st
 }
@@ -379,6 +388,10 @@ func (s *OpenAIGatewayService) readCCUpstreamJSONResponse(
 ) (*apicompat.ChatCompletionsResponse, OpenAIUsage, error) {
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			writeOpenAIStreamSilenceError(c, false)
+			return nil, s.openAIStreamSilenceUsage(respBody), openAIStreamSilenceError(err)
+		}
 		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
 			writeError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
 		}

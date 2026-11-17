@@ -531,6 +531,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if scanErr == nil {
 			return nil, nil, false
 		}
+		if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) && !clientDisconnected {
+			nonBillableUpstreamError = true
+			flushPending("Client disconnected during silence-limit flush")
+			writeOpenAIStreamSilenceError(c, true)
+			return resultWithUsage(), openAIStreamSilenceError(scanErr), true
+		}
 		if clientDisconnected {
 			if sawTerminalEvent {
 				result, err := finalizeStream()
@@ -1856,6 +1862,11 @@ func openAICacheCreationTokensFromUsage(value gjson.Result) int {
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			writeOpenAIStreamSilenceError(c, false)
+			usage := s.openAIStreamSilenceUsage(body)
+			return &openaiNonStreamingResult{OpenAIUsage: &usage, usage: &usage, nonBillableUpstreamError: true}, openAIStreamSilenceError(err)
+		}
 		return nil, err
 	}
 	s.cacheDeepSeekNativeReasoningBody(c, account, body)
