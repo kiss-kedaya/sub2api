@@ -179,21 +179,24 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
-	ccResp, usage, err := s.readCCUpstreamJSONResponse(c, resp, writeAnthropicError)
-	if err != nil {
+	ccResp, usage, nonBillableUpstreamError, err := s.readCCUpstreamJSONResponse(c, resp, writeAnthropicError)
+	if err != nil && ccResp == nil {
 		return nil, err
 	}
-	anthropicResp := apicompat.ChatCompletionsResponseToAnthropic(ccResp, originalModel)
+	if err == nil {
+		anthropicResp := apicompat.ChatCompletionsResponseToAnthropic(ccResp, originalModel)
 
-	if s.responseHeaderFilter != nil {
-		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		if s.responseHeaderFilter != nil {
+			responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		}
+		c.JSON(http.StatusOK, anthropicResp)
 	}
-	c.JSON(http.StatusOK, anthropicResp)
 
 	return &OpenAIForwardResult{
 		RequestID:                   requestID,
 		UpstreamHeaders:             resp.Header,
 		Usage:                       usage,
+		NonBillableUpstreamError:    nonBillableUpstreamError,
 		Model:                       originalModel,
 		BillingModel:                billingModel,
 		UpstreamModel:               upstreamModel,
@@ -202,7 +205,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 		ServiceTier:                 resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 		Stream:                      false,
 		Duration:                    time.Since(startTime),
-	}, nil
+	}, err
 }
 
 func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(

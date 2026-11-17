@@ -571,9 +571,12 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					return buildResult(), nil
 				}
 				observer.ObserveAnthropic([]byte(trimmed))
-				if anthropicStreamEventIsTerminal("", trimmed) {
+				if trimmed == "[DONE]" || root.Get("type").String() == "message_stop" {
 					sawTerminalEvent = true
-					nonBillableUpstreamError = false
+					// A sentinel ends reading but cannot overturn a provider error.
+					if root.Get("type").String() == "message_stop" {
+						nonBillableUpstreamError = false
+					}
 				}
 				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
 					ms := int(time.Since(startTime).Milliseconds())
