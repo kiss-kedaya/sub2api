@@ -91,6 +91,20 @@ afterEach(() => {
 })
 
 describe('ChannelMonitorV3Card freshness and rate signals', () => {
+  it('passes the shared bucket anchor and step to its timeline', () => {
+    const wrapper = mount(ChannelMonitorV3Card, {
+      props: {
+        row: row('healthy'), countdownSeconds: 0, timelineLength: 18,
+        anchorBucketStart: '2026-11-17T12:00:00Z', bucketSeconds: 300,
+      },
+      global: { stubs: { ProviderIcon: true, ChannelMonitorV3Timeline: true } },
+    })
+    const timeline = wrapper.getComponent({ name: 'ChannelMonitorV3Timeline' })
+    expect(timeline.props('anchorBucketStart')).toBe('2026-11-17T12:00:00Z')
+    expect(timeline.props('bucketSeconds')).toBe(300)
+    wrapper.unmount()
+  })
+
   it('never renders the retired 样本不足 copy', () => {
     for (const overall of ['healthy', 'warning', 'critical', 'unknown'] as const) {
       const wrapper = mountCard({ overall })
