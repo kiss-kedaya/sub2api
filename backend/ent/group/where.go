@@ -230,6 +230,11 @@ func SearchPricePer1k(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldSearchPricePer1k, v))
 }
 
+// OcrPricePer1kPages applies equality check predicate on the "ocr_price_per_1k_pages" field. It's identical to OcrPricePer1kPagesEQ.
+func OcrPricePer1kPages(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOcrPricePer1kPages, v))
+}
+
 // SearchProviderBaseURL applies equality check predicate on the "search_provider_base_url" field. It's identical to SearchProviderBaseURLEQ.
 func SearchProviderBaseURL(v string) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldSearchProviderBaseURL, v))
@@ -1938,6 +1943,56 @@ func SearchPricePer1kIsNil() predicate.Group {
 // SearchPricePer1kNotNil applies the NotNil predicate on the "search_price_per_1k" field.
 func SearchPricePer1kNotNil() predicate.Group {
 	return predicate.Group(sql.FieldNotNull(FieldSearchPricePer1k))
+}
+
+// OcrPricePer1kPagesEQ applies the EQ predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOcrPricePer1kPages, v))
+}
+
+// OcrPricePer1kPagesNEQ applies the NEQ predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOcrPricePer1kPages, v))
+}
+
+// OcrPricePer1kPagesIn applies the In predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOcrPricePer1kPages, vs...))
+}
+
+// OcrPricePer1kPagesNotIn applies the NotIn predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOcrPricePer1kPages, vs...))
+}
+
+// OcrPricePer1kPagesGT applies the GT predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOcrPricePer1kPages, v))
+}
+
+// OcrPricePer1kPagesGTE applies the GTE predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOcrPricePer1kPages, v))
+}
+
+// OcrPricePer1kPagesLT applies the LT predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOcrPricePer1kPages, v))
+}
+
+// OcrPricePer1kPagesLTE applies the LTE predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOcrPricePer1kPages, v))
+}
+
+// OcrPricePer1kPagesIsNil applies the IsNil predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOcrPricePer1kPages))
+}
+
+// OcrPricePer1kPagesNotNil applies the NotNil predicate on the "ocr_price_per_1k_pages" field.
+func OcrPricePer1kPagesNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOcrPricePer1kPages))
 }
 
 // SearchProviderBaseURLEQ applies the EQ predicate on the "search_provider_base_url" field.

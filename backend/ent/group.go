@@ -91,6 +91,8 @@ type Group struct {
 	WebSearchPricePerCall *float64 `json:"web_search_price_per_call,omitempty"`
 	// 搜索工具价格 per 1000 calls（web_search 等）
 	SearchPricePer1k *float64 `json:"search_price_per_1k,omitempty"`
+	// OCR 价格（每 1,000 页，单位与本组其它价格一致）；NULL 使用默认价，0 免费，正数覆盖
+	OcrPricePer1kPages *float64 `json:"ocr_price_per_1k_pages,omitempty"`
 	// 搜索专用服务地址；空表示使用账号自带的 base_url
 	SearchProviderBaseURL *string `json:"search_provider_base_url,omitempty"`
 	// 搜索专用 API key；空表示使用账号自带的 api_key
@@ -271,7 +273,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldCrossProtocolConversionEnabled, group.FieldReturnRequestedModel, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
-		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldGrokModerationRefusalPrice, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
+		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldOcrPricePer1kPages, group.FieldGrokModerationRefusalPrice, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
 			values[i] = new(sql.NullFloat64)
 		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
 			values[i] = new(sql.NullInt64)
@@ -531,6 +533,13 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.SearchPricePer1k = new(float64)
 				*_m.SearchPricePer1k = value.Float64
+			}
+		case group.FieldOcrPricePer1kPages:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field ocr_price_per_1k_pages", values[i])
+			} else if value.Valid {
+				_m.OcrPricePer1kPages = new(float64)
+				*_m.OcrPricePer1kPages = value.Float64
 			}
 		case group.FieldSearchProviderBaseURL:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -973,6 +982,11 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	if v := _m.SearchPricePer1k; v != nil {
 		builder.WriteString("search_price_per_1k=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.OcrPricePer1kPages; v != nil {
+		builder.WriteString("ocr_price_per_1k_pages=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")

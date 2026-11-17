@@ -54,12 +54,15 @@ func TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage(t *testing.T) {
 		"/systemone":                  {"gateway_systemone.go"},
 		"/tools/search":               {"openai_deepseek_tools.go"},
 		"/tools/fetch":                {"openai_deepseek_tools.go"},
+		"/tools/tts":                  {"openai_deepseek_tools.go"},
 	}
 	excluded := map[string]string{
 		"/messages/count_tokens":     "tokenization only; it does not execute a model request",
 		"/images/batches/:id/cancel": "control-plane cancellation with no user prompt",
 		"/stt":                       "speech transcription is not a text-generation prompt",
 		"/custom-voices":             "voice profile management has no model prompt",
+		"/tools/asr":                 "speech transcription uploads audio; there is no text-generation prompt",
+		"/tools/ocr":                 "document recognition uploads a file; there is no text-generation prompt",
 	}
 
 	unclassified := make([]string, 0)

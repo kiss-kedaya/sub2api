@@ -707,6 +707,33 @@ func (_u *GroupUpdate) ClearSearchPricePer1k() *GroupUpdate {
 	return _u
 }
 
+// SetOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field.
+func (_u *GroupUpdate) SetOcrPricePer1kPages(v float64) *GroupUpdate {
+	_u.mutation.ResetOcrPricePer1kPages()
+	_u.mutation.SetOcrPricePer1kPages(v)
+	return _u
+}
+
+// SetNillableOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOcrPricePer1kPages(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetOcrPricePer1kPages(*v)
+	}
+	return _u
+}
+
+// AddOcrPricePer1kPages adds value to the "ocr_price_per_1k_pages" field.
+func (_u *GroupUpdate) AddOcrPricePer1kPages(v float64) *GroupUpdate {
+	_u.mutation.AddOcrPricePer1kPages(v)
+	return _u
+}
+
+// ClearOcrPricePer1kPages clears the value of the "ocr_price_per_1k_pages" field.
+func (_u *GroupUpdate) ClearOcrPricePer1kPages() *GroupUpdate {
+	_u.mutation.ClearOcrPricePer1kPages()
+	return _u
+}
+
 // SetSearchProviderBaseURL sets the "search_provider_base_url" field.
 func (_u *GroupUpdate) SetSearchProviderBaseURL(v string) *GroupUpdate {
 	_u.mutation.SetSearchProviderBaseURL(v)
@@ -1613,6 +1640,11 @@ func (_u *GroupUpdate) check() error {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.OcrPricePer1kPages(); ok {
+		if err := group.OcrPricePer1kPagesValidator(v); err != nil {
+			return &ValidationError{Name: "ocr_price_per_1k_pages", err: fmt.Errorf(`ent: validator failed for field "Group.ocr_price_per_1k_pages": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.GrokModerationRefusalPrice(); ok {
 		if err := group.GrokModerationRefusalPriceValidator(v); err != nil {
 			return &ValidationError{Name: "grok_moderation_refusal_price", err: fmt.Errorf(`ent: validator failed for field "Group.grok_moderation_refusal_price": %w`, err)}
@@ -1863,6 +1895,15 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.SearchPricePer1kCleared() {
 		_spec.ClearField(group.FieldSearchPricePer1k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.OcrPricePer1kPages(); ok {
+		_spec.SetField(group.FieldOcrPricePer1kPages, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedOcrPricePer1kPages(); ok {
+		_spec.AddField(group.FieldOcrPricePer1kPages, field.TypeFloat64, value)
+	}
+	if _u.mutation.OcrPricePer1kPagesCleared() {
+		_spec.ClearField(group.FieldOcrPricePer1kPages, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.SearchProviderBaseURL(); ok {
 		_spec.SetField(group.FieldSearchProviderBaseURL, field.TypeString, value)
@@ -3028,6 +3069,33 @@ func (_u *GroupUpdateOne) ClearSearchPricePer1k() *GroupUpdateOne {
 	return _u
 }
 
+// SetOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field.
+func (_u *GroupUpdateOne) SetOcrPricePer1kPages(v float64) *GroupUpdateOne {
+	_u.mutation.ResetOcrPricePer1kPages()
+	_u.mutation.SetOcrPricePer1kPages(v)
+	return _u
+}
+
+// SetNillableOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOcrPricePer1kPages(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOcrPricePer1kPages(*v)
+	}
+	return _u
+}
+
+// AddOcrPricePer1kPages adds value to the "ocr_price_per_1k_pages" field.
+func (_u *GroupUpdateOne) AddOcrPricePer1kPages(v float64) *GroupUpdateOne {
+	_u.mutation.AddOcrPricePer1kPages(v)
+	return _u
+}
+
+// ClearOcrPricePer1kPages clears the value of the "ocr_price_per_1k_pages" field.
+func (_u *GroupUpdateOne) ClearOcrPricePer1kPages() *GroupUpdateOne {
+	_u.mutation.ClearOcrPricePer1kPages()
+	return _u
+}
+
 // SetSearchProviderBaseURL sets the "search_provider_base_url" field.
 func (_u *GroupUpdateOne) SetSearchProviderBaseURL(v string) *GroupUpdateOne {
 	_u.mutation.SetSearchProviderBaseURL(v)
@@ -3947,6 +4015,11 @@ func (_u *GroupUpdateOne) check() error {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.OcrPricePer1kPages(); ok {
+		if err := group.OcrPricePer1kPagesValidator(v); err != nil {
+			return &ValidationError{Name: "ocr_price_per_1k_pages", err: fmt.Errorf(`ent: validator failed for field "Group.ocr_price_per_1k_pages": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.GrokModerationRefusalPrice(); ok {
 		if err := group.GrokModerationRefusalPriceValidator(v); err != nil {
 			return &ValidationError{Name: "grok_moderation_refusal_price", err: fmt.Errorf(`ent: validator failed for field "Group.grok_moderation_refusal_price": %w`, err)}
@@ -4214,6 +4287,15 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.SearchPricePer1kCleared() {
 		_spec.ClearField(group.FieldSearchPricePer1k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.OcrPricePer1kPages(); ok {
+		_spec.SetField(group.FieldOcrPricePer1kPages, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedOcrPricePer1kPages(); ok {
+		_spec.AddField(group.FieldOcrPricePer1kPages, field.TypeFloat64, value)
+	}
+	if _u.mutation.OcrPricePer1kPagesCleared() {
+		_spec.ClearField(group.FieldOcrPricePer1kPages, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.SearchProviderBaseURL(); ok {
 		_spec.SetField(group.FieldSearchProviderBaseURL, field.TypeString, value)

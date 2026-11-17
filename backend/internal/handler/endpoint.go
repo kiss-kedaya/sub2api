@@ -399,5 +399,6 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 		SearchCount:                   result.SearchCount,
 		FixedToolBilling:              result.FixedToolBilling,
 		AudioUsage:                    result.AudioUsage,
+		OCRPages:                      result.OCRPages,
 	}
 }

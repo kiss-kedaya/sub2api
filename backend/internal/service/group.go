@@ -65,6 +65,8 @@ type Group struct {
 
 	// 搜索工具显式定价（per 1k calls）。
 	SearchPricePer1k *float64
+	// OCR 单价（每 1,000 页，计价单位与本组其它价格一致）；nil 使用默认价，0 免费。
+	OCRPricePer1kPages *float64
 	// 搜索专用凭据：分组可以单独指定一套搜索服务地址与 key，
 	// 不必与模型账号共用额度。为空时回落到账号自带值。
 	SearchProviderBaseURL *string

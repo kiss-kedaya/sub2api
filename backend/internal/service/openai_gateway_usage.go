@@ -297,7 +297,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		result.UpstreamResponseModel,
 		result.UpstreamResponseModelConflict,
 		result.ImageCount > 0 || result.VideoCount > 0 || result.WebSearchCalls > 0 ||
-			result.AudioUsage != nil || result.SearchCount > 0,
+			result.AudioUsage != nil || result.SearchCount > 0 || result.OCRPages > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, baselineBillingModel) {
 		if identified, responseChannelPriced := s.hasIdentifiedOpenAIResponsePricing(ctx, responseModel, apiKey); identified {
 			responseModels := s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, usageBillingModelCandidates(responseModel))
@@ -464,8 +464,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.ActualCost = canonicalUsageActualCost(cost)
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
 	}
-	if result.FixedToolBilling && result.WebSearchCalls > 0 {
-		// Standalone DeepSeek Search/Fetch contains only fixed tool charges.
+	if result.FixedToolBilling && (result.WebSearchCalls > 0 || result.AudioUsage != nil || result.OCRPages > 0) {
+		// Standalone tools contain only fixed charges, not model tokens.
 		// Keep mixed hosted requests on their token multiplier below.
 		usageLog.RateMultiplier = 1
 	} else if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
@@ -645,7 +645,13 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 			return s.calculateOpenAIVideoCost(ctx, billingModel, apiKey, result, videoMultiplier), nil
 		}
 	}
+	if result != nil && result.OCRPages > 0 {
+		return s.billingService.CalculateOCRCost(result.OCRPages, groupOCRPriceFromAPIKey(apiKey), toolMultiplier), nil
+	}
 	if result != nil && result.AudioUsage != nil {
+		if result.FixedToolBilling && isDeepSeekSpeechLabel(result.Model) {
+			return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, deepSeekAudioPriceConfig(apiKey), 1), nil
+		}
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
 			(resolved.Mode == BillingModePerRequest) {
 			gid := apiKey.Group.ID
@@ -976,7 +982,7 @@ func groupMediaPricingLooksIncomplete(group *Group) bool {
 	if len(group.ModelPricing) > 0 || group.LongContextPricingEnabled {
 		return false
 	}
-	if group.SearchPricePer1k != nil ||
+	if group.OCRPricePer1kPages != nil || group.SearchPricePer1k != nil ||
 		group.AudioRealtimePricePerMin != nil ||
 		group.AudioTTSPricePerMillionChars != nil ||
 		group.AudioSTTPricePerHour != nil ||

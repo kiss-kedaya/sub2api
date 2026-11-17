@@ -674,6 +674,7 @@ type ForwardResult struct {
 	SearchCount        int
 	FixedToolBilling   bool // only the tool surcharge is fixed; model tokens retain their multiplier
 	AudioUsage         *AudioUsage
+	OCRPages           int
 }
 
 // GatewayFailureStage identifies which request stage failed. The zero value is

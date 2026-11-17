@@ -2076,8 +2076,15 @@ const (
 	// xAI server-side web/X search and code execution are $5/1000 calls.
 	defaultSearchPricePer1k = 5.0
 
-	// DeepSeek 官方「文件解析 / OCR」= 1.5 / 1,000 页。本站 1 余额 = 1 元，不做汇率换算。
-	defaultOCRPricePer1kPages = 1.5
+	// DeepSeek 官方刊例价（人民币面值）：文件解析 / OCR 1.5 / 1,000 页，语音合成 3 / 万计费字符
+	//（= 300 / 百万），语音识别 0.78 / 小时。DeepSeek 分组在本站按官方人民币价配置
+	//（2026-11-17 用生产账单核实），所以这里不换算成美元。这些是固定工具价，不乘分组倍率；
+	// 分组可分别用 ocr_price_per_1k_pages、audio_tts_price_per_million_chars、
+	// audio_stt_price_per_hour 覆盖（0 = 免费）。只用于 /v1/tools/{ocr,tts,asr}，
+	// 与下面的 xAI 语音默认价互不影响。
+	defaultOCRPricePer1kPages              = 1.5
+	defaultDeepSeekTTSPricePerMillionChars = 300.0
+	defaultDeepSeekASRPricePerHour         = 0.78
 
 	// Generic realtime defaults to think-fast-1.0; think-fast-2.0 can be
 	// configured independently through per-model group/channel pricing.

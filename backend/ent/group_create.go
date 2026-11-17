@@ -518,6 +518,20 @@ func (_c *GroupCreate) SetNillableSearchPricePer1k(v *float64) *GroupCreate {
 	return _c
 }
 
+// SetOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field.
+func (_c *GroupCreate) SetOcrPricePer1kPages(v float64) *GroupCreate {
+	_c.mutation.SetOcrPricePer1kPages(v)
+	return _c
+}
+
+// SetNillableOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOcrPricePer1kPages(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetOcrPricePer1kPages(*v)
+	}
+	return _c
+}
+
 // SetSearchProviderBaseURL sets the "search_provider_base_url" field.
 func (_c *GroupCreate) SetSearchProviderBaseURL(v string) *GroupCreate {
 	_c.mutation.SetSearchProviderBaseURL(v)
@@ -1397,6 +1411,11 @@ func (_c *GroupCreate) check() error {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.OcrPricePer1kPages(); ok {
+		if err := group.OcrPricePer1kPagesValidator(v); err != nil {
+			return &ValidationError{Name: "ocr_price_per_1k_pages", err: fmt.Errorf(`ent: validator failed for field "Group.ocr_price_per_1k_pages": %w`, err)}
+		}
+	}
 	if v, ok := _c.mutation.GrokModerationRefusalPrice(); ok {
 		if err := group.GrokModerationRefusalPriceValidator(v); err != nil {
 			return &ValidationError{Name: "grok_moderation_refusal_price", err: fmt.Errorf(`ent: validator failed for field "Group.grok_moderation_refusal_price": %w`, err)}
@@ -1677,6 +1696,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.SearchPricePer1k(); ok {
 		_spec.SetField(group.FieldSearchPricePer1k, field.TypeFloat64, value)
 		_node.SearchPricePer1k = &value
+	}
+	if value, ok := _c.mutation.OcrPricePer1kPages(); ok {
+		_spec.SetField(group.FieldOcrPricePer1kPages, field.TypeFloat64, value)
+		_node.OcrPricePer1kPages = &value
 	}
 	if value, ok := _c.mutation.SearchProviderBaseURL(); ok {
 		_spec.SetField(group.FieldSearchProviderBaseURL, field.TypeString, value)
@@ -2571,6 +2594,30 @@ func (u *GroupUpsert) AddSearchPricePer1k(v float64) *GroupUpsert {
 // ClearSearchPricePer1k clears the value of the "search_price_per_1k" field.
 func (u *GroupUpsert) ClearSearchPricePer1k() *GroupUpsert {
 	u.SetNull(group.FieldSearchPricePer1k)
+	return u
+}
+
+// SetOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsert) SetOcrPricePer1kPages(v float64) *GroupUpsert {
+	u.Set(group.FieldOcrPricePer1kPages, v)
+	return u
+}
+
+// UpdateOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOcrPricePer1kPages() *GroupUpsert {
+	u.SetExcluded(group.FieldOcrPricePer1kPages)
+	return u
+}
+
+// AddOcrPricePer1kPages adds v to the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsert) AddOcrPricePer1kPages(v float64) *GroupUpsert {
+	u.Add(group.FieldOcrPricePer1kPages, v)
+	return u
+}
+
+// ClearOcrPricePer1kPages clears the value of the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsert) ClearOcrPricePer1kPages() *GroupUpsert {
+	u.SetNull(group.FieldOcrPricePer1kPages)
 	return u
 }
 
@@ -3859,6 +3906,34 @@ func (u *GroupUpsertOne) UpdateSearchPricePer1k() *GroupUpsertOne {
 func (u *GroupUpsertOne) ClearSearchPricePer1k() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearSearchPricePer1k()
+	})
+}
+
+// SetOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsertOne) SetOcrPricePer1kPages(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOcrPricePer1kPages(v)
+	})
+}
+
+// AddOcrPricePer1kPages adds v to the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsertOne) AddOcrPricePer1kPages(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOcrPricePer1kPages(v)
+	})
+}
+
+// UpdateOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOcrPricePer1kPages() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOcrPricePer1kPages()
+	})
+}
+
+// ClearOcrPricePer1kPages clears the value of the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsertOne) ClearOcrPricePer1kPages() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOcrPricePer1kPages()
 	})
 }
 
@@ -5403,6 +5478,34 @@ func (u *GroupUpsertBulk) UpdateSearchPricePer1k() *GroupUpsertBulk {
 func (u *GroupUpsertBulk) ClearSearchPricePer1k() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearSearchPricePer1k()
+	})
+}
+
+// SetOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsertBulk) SetOcrPricePer1kPages(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOcrPricePer1kPages(v)
+	})
+}
+
+// AddOcrPricePer1kPages adds v to the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsertBulk) AddOcrPricePer1kPages(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOcrPricePer1kPages(v)
+	})
+}
+
+// UpdateOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOcrPricePer1kPages() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOcrPricePer1kPages()
+	})
+}
+
+// ClearOcrPricePer1kPages clears the value of the "ocr_price_per_1k_pages" field.
+func (u *GroupUpsertBulk) ClearOcrPricePer1kPages() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOcrPricePer1kPages()
 	})
 }
 

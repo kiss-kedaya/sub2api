@@ -990,6 +990,7 @@ func cloneSchedulerGroup(group *Group) *Group {
 	cp.VideoPrice1080P = cloneGroupValuePointer(group.VideoPrice1080P)
 	cp.WebSearchPricePerCall = cloneGroupValuePointer(group.WebSearchPricePerCall)
 	cp.SearchPricePer1k = cloneGroupValuePointer(group.SearchPricePer1k)
+	cp.OCRPricePer1kPages = cloneGroupValuePointer(group.OCRPricePer1kPages)
 	cp.AudioRealtimePricePerMin = cloneGroupValuePointer(group.AudioRealtimePricePerMin)
 	cp.AudioTTSPricePerMillionChars = cloneGroupValuePointer(group.AudioTTSPricePerMillionChars)
 	cp.AudioSTTPricePerHour = cloneGroupValuePointer(group.AudioSTTPricePerHour)

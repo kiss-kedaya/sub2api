@@ -602,6 +602,14 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 		// 非计量请求（媒体状态查询、custom-voices 等）：无需预留，也不算「无法定价」。
 		return 0, true
 	}
+	if apiKey.Group != nil && apiKey.Group.Platform == PlatformDeepseek && d.billing != nil {
+		switch req.Model {
+		case DeepSeekToolsLabelOCR:
+			return d.billing.CalculateOCRCost(1000, groupOCRPriceFromAPIKey(apiKey), 1).ActualCost, true
+		case DeepSeekToolsLabelASR, DeepSeekToolsLabelTTS:
+			return d.billing.CalculateAudioCost(req.AudioMode, req.AudioUnits, deepSeekAudioPriceConfig(apiKey), 1).ActualCost, true
+		}
+	}
 	textRate, imageRate := d.rates(ctx, apiKey)
 	if textRate <= 0 && imageRate <= 0 {
 		// 免费分组：不计费，也无需预留。
