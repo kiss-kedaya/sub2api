@@ -229,12 +229,16 @@
                   </UFormField>
                   <template v-for="chain in config.chains" :key="`scan-limits-${chain}`">
                     <USeparator />
-                    <div class="crypto-view__network-limits grid gap-4 sm:grid-cols-2">
+                    <div class="crypto-view__network-limits grid gap-4 sm:grid-cols-3">
                       <UFormField :label="`${chain} · ${t('admin.crypto.sweepMinPerAddress')}`">
                         <UInput v-model.number="config.sweep_min_per_address[chain]" :data-testid="`crypto-sweep-min-${chain}`" type="number" min="0" step="0.001" class="mt-1 w-full" />
                       </UFormField>
                       <UFormField :label="`${chain} · ${t('admin.crypto.scanRange')}`">
                         <UInput v-model.number="config.scan_range[chain]" :data-testid="`crypto-scan-range-${chain}`" type="number" min="1" step="1" class="mt-1 w-full" />
+                      </UFormField>
+                      <UFormField :label="`${chain} · ${t('admin.crypto.scanConcurrency')}`">
+                        <UInput v-model.number="config.scan_concurrency[chain]" :data-testid="`crypto-scan-concurrency-${chain}`" type="number" min="0" max="64" step="1" placeholder="0" class="mt-1 w-full" />
+                        <p class="mt-1 text-xs text-muted">{{ t('admin.crypto.scanConcurrencyHint') }}</p>
                       </UFormField>
                     </div>
                   </template>
@@ -1308,6 +1312,7 @@ async function loadConfig() {
       gas_topup: loaded.gas_topup ?? {},
       confirmations: loaded.confirmations ?? {},
       scan_range: loaded.scan_range ?? {},
+      scan_concurrency: loaded.scan_concurrency ?? {},
       hot_wallet_evm: loaded.hot_wallet_evm ?? '',
       hot_wallet_solana: loaded.hot_wallet_solana ?? '',
       hot_index: 0,
@@ -1355,7 +1360,7 @@ async function manageRPC() {
 // Keep this strict allowlist aligned with the server. Any other changed field
 // requires payment verification, including fields added in the future.
 const LOW_RISK_CONFIG_FIELDS = new Set<keyof CryptoConfigPatch>([
-  'sweep_global_threshold', 'sweep_min_per_address', 'scan_range',
+  'sweep_global_threshold', 'sweep_min_per_address', 'scan_range', 'scan_concurrency',
   'credit_min_amount', 'credit_max_amount'
 ])
 

@@ -218,14 +218,14 @@ func nativeToken(chain string) (TokenConfig, bool) {
 // block-level scan is the only way to see it) while staying out of Tokens,
 // which is the eth_getLogs address filter and cannot contain a non-address
 // sentinel. ok is false for a chain with nothing to watch.
-func chainScanConfig(chain string, confirmations, maxRange int) (scanner.ChainConfig, bool) {
+func chainScanConfig(chain string, confirmations, maxRange, concurrency int) (scanner.ChainConfig, bool) {
 	tokens := watchedTokens[chain]
 	if len(tokens) == 0 {
 		return scanner.ChainConfig{}, false
 	}
 	contracts := make([]string, 0, len(tokens))
 	decimals := make(map[string]int, len(tokens))
-	config := scanner.ChainConfig{Chain: chain, MaxRange: uint64(maxRange)}
+	config := scanner.ChainConfig{Chain: chain, MaxRange: uint64(maxRange), ScanConcurrency: concurrency}
 	for _, token := range tokens {
 		decimals[token.Contract] = token.Decimals
 		if token.Native {
@@ -338,8 +338,7 @@ type Service struct {
 	nativeGuardAt  time.Time
 	securityPaused atomic.Bool
 	// push delivers operator alerts (unmatched deposits). Optional.
-	// Keep its lock separate: reload holds mu while waiting for worker.Stop,
-	// and the worker can still deliver an alert before it exits.
+	// Keep notification delivery independent of configuration publication.
 	pushMu sync.RWMutex
 	push   PushNotifier
 	// sweepMu serialises sweep runs: the manual admin trigger and the
@@ -418,6 +417,10 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		return context.Canceled
 	}
 	cfg, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
+	var fingerprint string
+	if err == nil {
+		fingerprint, err = configFingerprint(cfg)
+	}
 	if err != nil {
 		s.mu.Lock()
 		s.reloadFailed = true
@@ -425,7 +428,12 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		slog.Error("[cryptopay] config load failed", "error", rpc.SanitizeNodeMessage(err.Error()))
 		return err
 	}
-	fingerprint := configFingerprint(cfg)
+	return s.applyConfigLocked(ctx, cfg, fingerprint)
+}
+
+// applyConfigLocked applies the already normalized snapshot with sweepMu held,
+// never mu. Stop still completes before the replacement config is published.
+func (s *Service) applyConfigLocked(ctx context.Context, cfg CryptoConfig, fingerprint string) error {
 	var guardErr error
 	// Two independent decisions share one stored row:
 	//   channelEnabled - the admin switch customers see and the user API serves.
@@ -452,16 +460,38 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 	// The feed is cheap to build; its quote cache lives inside the provider.
 	priceProvider := nativeprice.New(cfg.NativePriceURL)
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	// Retire the old runtime before publishing new configuration. Its final
+	// own-wallet callback still reads Config/HotAddresses, so Stop must never
+	// wait with mu held. sweepMu continues to serialize reloads and sweeps.
+	oldWorker := s.worker
+	s.worker = nil
+	discoveryCancel, nativeCancel, maintCancel := s.discoveryCancel, s.nativeCancel, s.maintCancel
+	s.discoveryCancel, s.nativeCancel, s.maintCancel = nil, nil, nil
+	s.reloadFailed = true // An interrupted replacement must retry the same config.
+	s.mu.Unlock()
+	for _, cancel := range []context.CancelFunc{discoveryCancel, nativeCancel, maintCancel} {
+		if cancel != nil {
+			cancel()
+		}
+	}
+	if oldWorker != nil {
+		oldWorker.Stop()
+	}
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return context.Canceled
 	}
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if s.discoveryCancel != nil {
-		s.discoveryCancel()
-		s.discoveryCancel = nil
 	}
 	s.config = cfg
 	s.configFingerprint = fingerprint
@@ -496,15 +526,6 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 	s.startRPCDiscoveryLocked()
 
 	if !scanEnabled {
-		if s.worker != nil {
-			s.worker.Stop()
-			s.worker = nil
-		}
-		s.stopNativePollerLocked()
-		if s.maintCancel != nil {
-			s.maintCancel()
-			s.maintCancel = nil
-		}
 		s.executor = nil
 		s.planner = nil
 		return guardErr
@@ -520,7 +541,7 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		if !IsEVMChain(chain) {
 			continue
 		}
-		chainConfig, ok := chainScanConfig(chain, cfg.Confirmations[chain], cfg.ScanRange[chain])
+		chainConfig, ok := chainScanConfig(chain, cfg.Confirmations[chain], cfg.ScanRange[chain], cfg.ScanConcurrency[chain])
 		if !ok {
 			continue
 		}
@@ -559,12 +580,6 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		return s.addresses.ActiveAddresses(ctx, family)
 	}
 
-	if s.worker != nil {
-		s.worker.Stop()
-	}
-	// The previous poller writes through the previous worker; retire it before
-	// publishing the replacement.
-	s.stopNativePollerLocked()
 	// 5s poll: finality is decided by the chain's safe tag, so a tighter
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
@@ -666,9 +681,6 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		HotWalletEVM:    cfg.HotWalletEVM,
 	}, sweepTokens, newBalanceReader(s.db, sweepDecimals), cfg.HotIndex)
 
-	if s.maintCancel != nil {
-		s.maintCancel()
-	}
 	if cryptoWorkersAllowed() {
 		maintCtx, maintCancel := context.WithCancel(context.Background())
 		s.maintCancel = maintCancel
@@ -759,6 +771,7 @@ func (s *Service) Config() CryptoConfig {
 	cfg.RPC = maps.Clone(cfg.RPC)
 	cfg.Confirmations = maps.Clone(cfg.Confirmations)
 	cfg.ScanRange = maps.Clone(cfg.ScanRange)
+	cfg.ScanConcurrency = maps.Clone(cfg.ScanConcurrency)
 	cfg.SweepMinPerAddress = maps.Clone(cfg.SweepMinPerAddress)
 	cfg.GasTopUp = maps.Clone(cfg.GasTopUp)
 	return cfg
@@ -1580,7 +1593,8 @@ func buildDepositInfo(cfg CryptoConfig, assigned map[string]string) *DepositInfo
 // chain, no configured feed or an exhausted time budget all leave the field
 // absent. The deposit page must render with or without a market quote.
 func (s *Service) attachNativeReferencePrices(parent context.Context, info *DepositInfo) {
-	if info == nil || s.nativePrice == nil {
+	pricer := s.liveNativePricer()
+	if info == nil || pricer == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, nativeReferencePriceTimeout)
@@ -1597,7 +1611,7 @@ func (s *Service) attachNativeReferencePrices(parent context.Context, info *Depo
 				// rather than making the page wait for another exchange call.
 				return
 			}
-			quote, err := s.nativePrice.Quote(ctx, chain)
+			quote, err := pricer.Quote(ctx, chain)
 			if err != nil || !quote.Usable(time.Now()) {
 				continue
 			}
@@ -1836,16 +1850,20 @@ func (s *Service) reloadIfConfigChanged(ctx context.Context) (bool, error) {
 		return false, context.Canceled
 	}
 	stored, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
+	var fingerprint string
+	if err == nil {
+		fingerprint, err = configFingerprint(stored)
+	}
 	if err != nil {
 		s.mu.Lock()
 		s.reloadFailed = true
 		s.mu.Unlock()
 		return false, err
 	}
-	if configFingerprint(stored) == last && !retry {
+	if fingerprint == last && !retry {
 		return false, nil
 	}
-	if err := s.reloadLocked(ctx); err != nil {
+	if err := s.applyConfigLocked(ctx, stored, fingerprint); err != nil {
 		return false, err
 	}
 	return true, nil

@@ -181,14 +181,14 @@ func TestChainScanConfigWiresNativeScanning(t *testing.T) {
 		ChainBSC:      {native: true, symbol: "BNB", contract: 2},
 		ChainPolygon:  {native: false, contract: 3},
 	} {
-		config, ok := chainScanConfig(chain, 7, 1234)
+		config, ok := chainScanConfig(chain, 7, 1234, 32)
 		if !ok {
 			t.Fatalf("%s produced no scan config", chain)
 		}
 		if config.Native != want.native {
 			t.Fatalf("%s Native = %v, want %v", chain, config.Native, want.native)
 		}
-		if config.Confirmations != 7 || config.MaxRange != 1234 {
+		if config.Confirmations != 7 || config.MaxRange != 1234 || config.ScanConcurrency != 32 {
 			t.Fatalf("%s scan config dropped chain settings: %+v", chain, config)
 		}
 		if len(config.Tokens) != want.contract {

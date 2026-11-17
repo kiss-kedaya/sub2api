@@ -18,6 +18,7 @@ export interface CryptoConfig {
   sweep_auto: boolean
   confirmations: Record<string, number>
   scan_range: Record<string, number>
+  scan_concurrency: Record<string, number>
   credit_min_amount: number
   credit_max_amount: number
   credit_multiplier: number
