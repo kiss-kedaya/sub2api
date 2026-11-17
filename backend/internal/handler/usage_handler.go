@@ -154,7 +154,9 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 	}
 
 	userTZ := c.Query("timezone")
-	now := timezone.NowInUserLocation(userTZ)
+	// Rolling presets share one short aggregate snapshot instead of producing
+	// a unique cache key on every refresh; explicit dates remain exact.
+	now := timezone.NowInUserLocation(userTZ).Truncate(time.Minute)
 	var startTime, endTime time.Time
 	var startPtr, endPtr *time.Time
 	startDateStr := strings.TrimSpace(c.Query("start_date"))

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"runtime"
@@ -28,9 +29,10 @@ const (
 )
 
 var (
-	errOpenAIFirstOutputStageLimit   = errors.New("openai first-output staging limit exceeded")
-	errOpenAIFirstOutputScannerLimit = errors.New("openai pre-output scanner token limit exceeded")
-	errOpenAIFirstOutputClientWrite  = errors.New("openai first-output client write failed")
+	errOpenAIFirstOutputStageLimit     = errors.New("openai first-output staging limit exceeded")
+	errOpenAIFirstOutputScannerLimit   = errors.New("openai pre-output scanner token limit exceeded")
+	errOpenAIFirstOutputClientWrite    = errors.New("openai first-output client write failed")
+	openAIFirstOutputSpoolFallbackOnce sync.Once
 )
 
 type openAIFirstOutputStage struct {
@@ -152,7 +154,14 @@ func (s *openAIFirstOutputStage) prepareWrite(incoming int) error {
 	}
 	file, err := s.createTemp()
 	if err != nil {
-		return fmt.Errorf("create first-output spool: %w", err)
+		openAIFirstOutputSpoolFallbackOnce.Do(func() {
+			slog.Error("OpenAI first-output preferred spool directory unavailable; falling back to system temp directory",
+				"component", "service.openai_gateway", "directory", "/var/tmp/sub2api", "error", err)
+		})
+		file, err = os.CreateTemp("", "sub2api-openai-first-output-*")
+		if err != nil {
+			return fmt.Errorf("create first-output spool: %w", err)
+		}
 	}
 	path := file.Name()
 	// Unlink before writing any request data. Unix keeps the file descriptor

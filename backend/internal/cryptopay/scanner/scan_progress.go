@@ -38,12 +38,16 @@ func (p ChainScanProgress) CaughtUp() bool {
 // from the per-pass record that noteHead already maintains, cursors from the
 // same CursorStore the scan itself uses. Chains without an RPC pool are
 // skipped because a pass skips them too, so they could never advance.
-func (w *Worker) ScanProgress(ctx context.Context) ([]ChainScanProgress, error) {
+func (w *Worker) ScanProgress(ctx context.Context, scope ...string) ([]ChainScanProgress, error) {
 	if w == nil || w.cursor == nil {
 		return nil, fmt.Errorf("scanner progress is unavailable")
 	}
-	out := make([]ChainScanProgress, 0, len(w.chains))
-	for _, chain := range w.chains {
+	chains, err := w.ScanChains(scope...)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ChainScanProgress, 0, len(chains))
+	for _, chain := range chains {
 		if w.pools[chain.Chain] == nil {
 			continue
 		}

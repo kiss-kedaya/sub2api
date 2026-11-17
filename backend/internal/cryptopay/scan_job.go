@@ -68,6 +68,7 @@ type ScanRunState struct {
 	StartedAt     time.Time        `json:"started_at"`
 	FinishedAt    *time.Time       `json:"finished_at,omitempty"`
 	FromBlock     uint64           `json:"from_block"`
+	ChainScope    []string         `json:"chain_scope"` // empty means all enabled chains
 	Rounds        int              `json:"rounds"`
 	BusyRetries   int              `json:"busy_retries"`
 	StalledRounds int              `json:"stalled_rounds"`
@@ -80,6 +81,7 @@ type ScanRunState struct {
 
 func (s *ScanRunState) clone() *ScanRunState {
 	out := *s
+	out.ChainScope = append([]string{}, s.ChainScope...)
 	out.Chains = append([]ScanChainState{}, s.Chains...)
 	if s.FinishedAt != nil {
 		finished := *s.FinishedAt
@@ -145,7 +147,7 @@ var scanJobs = &scanRegistry{jobs: map[string]*scanJob{}}
 // run. parent only supplies values (trace ids); cancellation of the request
 // that started the run is deliberately dropped so a closed browser tab cannot
 // stop it.
-func (r *scanRegistry) start(parent context.Context, runner scanRunner, cfg scanLoopConfig, fromBlock uint64) (*ScanRunState, error) {
+func (r *scanRegistry) start(parent context.Context, runner scanRunner, cfg scanLoopConfig, fromBlock uint64, chains ...string) (*ScanRunState, error) {
 	r.mu.Lock()
 	if r.active != nil {
 		r.mu.Unlock()
@@ -158,7 +160,8 @@ func (r *scanRegistry) start(parent context.Context, runner scanRunner, cfg scan
 		state: &ScanRunState{
 			ID: "scan-" + uuid.NewString(), Status: ScanRunRunning,
 			StartedAt: time.Now().UTC(), FromBlock: fromBlock,
-			Chains: []ScanChainState{}, seq: r.seq,
+			ChainScope: append([]string{}, chains...),
+			Chains:     []ScanChainState{}, seq: r.seq,
 		},
 		cancel: cancelCause,
 		done:   make(chan struct{}),
@@ -493,7 +496,7 @@ func summarizeScan(progress []scanner.ChainScanProgress) string {
 
 // isTerminalScanError marks failures a retry cannot fix inside this run.
 func isTerminalScanError(err error) bool {
-	return errors.Is(err, mode.ErrReadOnly) || errors.Is(err, ErrScanUnavailable)
+	return errors.Is(err, mode.ErrReadOnly) || errors.Is(err, ErrScanUnavailable) || errors.Is(err, ErrInvalidScanChain)
 }
 
 // scanSafeError is the only error-string boundary for a run's last_error. It
@@ -509,6 +512,8 @@ func scanSafeError(err error) string {
 		return "Payment scanning is read-only on this instance"
 	case errors.Is(err, ErrScanUnavailable):
 		return ErrScanUnavailable.Error()
+	case errors.Is(err, ErrInvalidScanChain):
+		return ErrInvalidScanChain.Error()
 	case errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &failure):
 		return "Chain scan budget exceeded; progress so far is kept"
 	}
@@ -531,7 +536,10 @@ func (s *Service) scanWorker() (*scanner.Worker, error) {
 
 // serviceScanRunner adapts Service to the loop. It re-resolves the worker on
 // every call because a config save replaces the worker mid-run.
-type serviceScanRunner struct{ s *Service }
+type serviceScanRunner struct {
+	s      *Service
+	chains []string
+}
 
 func (r serviceScanRunner) Round(ctx context.Context, fromBlock uint64) error {
 	if err := mode.CheckWritable(); err != nil {
@@ -542,7 +550,7 @@ func (r serviceScanRunner) Round(ctx context.Context, fromBlock uint64) error {
 	}
 	// RunScan takes sweepMu for this one round only, so sweeps and config
 	// reloads are never blocked for the whole job.
-	return r.s.RunScan(ctx, fromBlock)
+	return r.s.RunScan(ctx, fromBlock, r.chains...)
 }
 
 func (r serviceScanRunner) Progress(ctx context.Context) ([]scanner.ChainScanProgress, error) {
@@ -550,7 +558,7 @@ func (r serviceScanRunner) Progress(ctx context.Context) ([]scanner.ChainScanPro
 	if err != nil {
 		return nil, err
 	}
-	return worker.ScanProgress(ctx)
+	return worker.ScanProgress(ctx, r.chains...)
 }
 
 // StartScanAsync launches a catch-up scan in the background and returns a
@@ -558,17 +566,33 @@ func (r serviceScanRunner) Progress(ctx context.Context) ([]scanner.ChainScanPro
 // chain's cursor reaches its confirmed head, so one click is enough to follow
 // a long backlog. fromBlock follows RunOnceFrom: non-zero is an explicit
 // rewind and only the first executed pass uses it.
-func (s *Service) StartScanAsync(ctx context.Context, fromBlock uint64) (*ScanRunState, error) {
+func (s *Service) StartScanAsync(ctx context.Context, fromBlock uint64, scope ...string) (*ScanRunState, error) {
 	if err := mode.CheckWritable(); err != nil {
 		return nil, err
 	}
-	if _, err := s.scanWorker(); err != nil {
+	if err := s.validateScanChains(scope); err != nil {
 		return nil, err
+	}
+	worker, err := s.scanWorker()
+	if err != nil {
+		return nil, err
+	}
+	selected, err := worker.ScanChains(scope...)
+	if err != nil {
+		return nil, err
+	}
+	// An empty scope keeps the historical all-enabled-chains behaviour, including
+	// maintenance for observations whose chain was removed from configuration.
+	chains := make([]string, 0, len(scope))
+	if len(scope) > 0 {
+		for _, chain := range selected {
+			chains = append(chains, chain.Chain)
+		}
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return scanJobs.start(ctx, serviceScanRunner{s: s}, defaultScanLoopConfig(), fromBlock)
+	return scanJobs.start(ctx, serviceScanRunner{s: s, chains: chains}, defaultScanLoopConfig(), fromBlock, chains...)
 }
 
 // ScanRun returns the current state of an asynchronous scan, or nil.

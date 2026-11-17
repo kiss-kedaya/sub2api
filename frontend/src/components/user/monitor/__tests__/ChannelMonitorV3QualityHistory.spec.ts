@@ -93,15 +93,20 @@ describe('ChannelMonitorV3QualityHistory', () => {
     expect(wrapper.find('[data-testid="channel-quality-history"]').exists()).toBe(false)
   })
 
-  it('renders one chip per completed check and marks degraded ones', async () => {
-    mockedEvents.mockResolvedValue([event(2, 'degraded'), event(1, 'success')])
+  it('right-aligns completed checks from oldest to newest and marks degraded ones', async () => {
+    mockedEvents.mockResolvedValue([
+      { ...event(2, 'degraded'), created_at: '2026-11-17T12:00:00Z' },
+      { ...event(1, 'success'), created_at: '2026-11-17T11:55:00Z' },
+    ])
     const wrapper = mountHistory()
     await flushPromises()
     expect(mockedEvents).toHaveBeenCalledWith(43, 30)
+    expect(wrapper.get('.quality-history-strip').classes()).toContain('justify-end')
     const chips = wrapper.findAll('.quality-history-chip')
     expect(chips).toHaveLength(2)
-    expect(chips[0].classes()).toContain('is-degraded')
-    expect(chips[1].classes()).toContain('is-pass')
+    expect(chips.map(chip => chip.attributes('data-testid'))).toEqual(['quality-history-chip-1', 'quality-history-chip-2'])
+    expect(chips[0].classes()).toContain('is-pass')
+    expect(chips[1].classes()).toContain('is-degraded')
   })
 
   it('shows the empty state when no completed checks exist', async () => {

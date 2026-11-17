@@ -21,7 +21,7 @@ func (r *usageLogRepository) GetUserStatsAggregated(ctx context.Context, userID 
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "user_stats_aggregated", UserID: userID,
 		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-	}, func() (*usagestats.UsageStats, error) {
+	}, func(ctx context.Context) (*usagestats.UsageStats, error) {
 		return r.getUserStatsAggregatedUncached(ctx, userID, startTime, endTime)
 	})
 }
@@ -69,7 +69,7 @@ func (r *usageLogRepository) GetAPIKeyStatsAggregated(ctx context.Context, apiKe
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "api_key_stats_aggregated", APIKeyID: apiKeyID,
 		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-	}, func() (*usagestats.UsageStats, error) {
+	}, func(ctx context.Context) (*usagestats.UsageStats, error) {
 		return r.getAPIKeyStatsAggregatedUncached(ctx, apiKeyID, startTime, endTime)
 	})
 }
@@ -127,7 +127,7 @@ func (r *usageLogRepository) GetAccountStatsAggregated(ctx context.Context, acco
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "account_stats_aggregated", AccountID: accountID,
 		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-	}, func() (*usagestats.UsageStats, error) {
+	}, func(ctx context.Context) (*usagestats.UsageStats, error) {
 		return r.getAccountStatsAggregatedUncached(ctx, accountID, startTime, endTime)
 	})
 }
@@ -176,7 +176,7 @@ func (r *usageLogRepository) GetModelStatsAggregated(ctx context.Context, modelN
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "model_stats_aggregated", Model: modelName,
 		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-	}, func() (*usagestats.UsageStats, error) {
+	}, func(ctx context.Context) (*usagestats.UsageStats, error) {
 		return r.getModelStatsAggregatedUncached(ctx, modelName, startTime, endTime)
 	})
 }
@@ -225,7 +225,7 @@ func (r *usageLogRepository) GetDailyStatsAggregated(ctx context.Context, userID
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "daily_stats_aggregated", UserID: userID, Timezone: resolveUsageStatsTimezone(),
 		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-	}, func() ([]map[string]any, error) {
+	}, func(ctx context.Context) ([]map[string]any, error) {
 		return r.getDailyStatsAggregatedUncached(ctx, userID, startTime, endTime)
 	})
 }
@@ -758,12 +758,24 @@ type BatchAPIKeyUsageStats = usagestats.BatchAPIKeyUsageStats
 // GetBatchAPIKeyUsageStats gets today and total actual_cost for multiple API keys within a time range.
 // If startTime is zero, defaults to 30 days ago.
 func (r *usageLogRepository) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
-	result := make(map[int64]*BatchAPIKeyUsageStats)
 	normalizedAPIKeyIDs := normalizePositiveInt64IDs(apiKeyIDs)
 	if len(normalizedAPIKeyIDs) == 0 {
-		return result, nil
+		return map[int64]*BatchAPIKeyUsageStats{}, nil
 	}
+	sort.Slice(normalizedAPIKeyIDs, func(i, j int) bool { return normalizedAPIKeyIDs[i] < normalizedAPIKeyIDs[j] })
+	// Preserve zero (rolling-range) defaults in the identity instead of putting
+	// time.Now() nanoseconds in every key. Explicit ranges remain exact.
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "batch_api_key_usage", APIKeyIDs: normalizedAPIKeyIDs,
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+		Timezone: resolveUsageStatsTimezone(), Extra: timezone.Today().UTC().Format(time.RFC3339Nano),
+	}, func(ctx context.Context) (map[int64]*BatchAPIKeyUsageStats, error) {
+		return r.getBatchAPIKeyUsageStatsUncached(ctx, normalizedAPIKeyIDs, startTime, endTime)
+	})
+}
 
+func (r *usageLogRepository) getBatchAPIKeyUsageStatsUncached(ctx context.Context, normalizedAPIKeyIDs []int64, startTime, endTime time.Time) (map[int64]*BatchAPIKeyUsageStats, error) {
+	result := make(map[int64]*BatchAPIKeyUsageStats, len(normalizedAPIKeyIDs))
 	// 默认最近 30 天
 	if startTime.IsZero() {
 		startTime = time.Now().AddDate(0, 0, -30)
@@ -865,7 +877,7 @@ func (r *usageLogRepository) GetGlobalStats(ctx context.Context, startTime, endT
 func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters UsageLogFilters) (*UsageStats, error) {
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "stats_with_filters", Filters: usageFiltersFingerprintOf(filters),
-	}, func() (*UsageStats, error) {
+	}, func(ctx context.Context) (*UsageStats, error) {
 		if r.rollupReadEnabled.Load() {
 			if stats, covered, err := r.GetStatsWithRollups(ctx, filters); err == nil && covered {
 				return stats, nil

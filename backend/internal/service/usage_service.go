@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
-	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -62,20 +60,6 @@ type UsageService struct {
 	userRepo             UserRepository
 	entClient            *dbent.Client
 	authCacheInvalidator APIKeyAuthCacheInvalidator
-
-	// API-key usage is displayed by clients that poll /v1/usage frequently.
-	// Keep a short process-local snapshot so those polls do not repeatedly scan
-	// the (potentially tens-of-millions-row) usage_logs table. Usage is
-	// intentionally eventually consistent here; billing writes remain durable.
-	apiKeyDashboardCache sync.Map // int64 -> usageDashboardCacheEntry
-	apiKeyDashboardSF    singleflight.Group
-}
-
-const apiKeyDashboardCacheTTL = 10 * time.Second
-
-type usageDashboardCacheEntry struct {
-	stats     *usagestats.UserDashboardStats
-	expiresAt time.Time
 }
 
 // NewUsageService 创建使用统计服务实例
@@ -327,44 +311,11 @@ func (s *UsageService) GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int
 	if s == nil || s.usageRepo == nil || apiKeyID <= 0 {
 		return nil, fmt.Errorf("get api key dashboard stats: invalid api key")
 	}
-	now := time.Now()
-	if raw, ok := s.apiKeyDashboardCache.Load(apiKeyID); ok {
-		if entry, valid := raw.(usageDashboardCacheEntry); valid && entry.stats != nil && now.Before(entry.expiresAt) {
-			return cloneUserDashboardStats(entry.stats), nil
-		}
-	}
-	value, err, _ := s.apiKeyDashboardSF.Do(fmt.Sprintf("%d", apiKeyID), func() (any, error) {
-		if raw, ok := s.apiKeyDashboardCache.Load(apiKeyID); ok {
-			if entry, valid := raw.(usageDashboardCacheEntry); valid && entry.stats != nil && time.Now().Before(entry.expiresAt) {
-				return entry.stats, nil
-			}
-		}
-		stats, loadErr := s.usageRepo.GetAPIKeyDashboardStats(ctx, apiKeyID)
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		if stats != nil {
-			s.apiKeyDashboardCache.Store(apiKeyID, usageDashboardCacheEntry{stats: cloneUserDashboardStats(stats), expiresAt: time.Now().Add(apiKeyDashboardCacheTTL)})
-		}
-		return stats, nil
-	})
+	stats, err := s.usageRepo.GetAPIKeyDashboardStats(ctx, apiKeyID)
 	if err != nil {
 		return nil, fmt.Errorf("get api key dashboard stats: %w", err)
 	}
-	stats, ok := value.(*usagestats.UserDashboardStats)
-	if !ok || stats == nil {
-		return nil, fmt.Errorf("get api key dashboard stats: invalid result")
-	}
-	return cloneUserDashboardStats(stats), nil
-}
-
-func cloneUserDashboardStats(stats *usagestats.UserDashboardStats) *usagestats.UserDashboardStats {
-	if stats == nil {
-		return nil
-	}
-	cp := *stats
-	cp.ByPlatform = append([]usagestats.PlatformDashboardStats(nil), stats.ByPlatform...)
-	return &cp
+	return stats, nil
 }
 
 // GetUserUsageTrendByUserID returns per-user usage trend.
