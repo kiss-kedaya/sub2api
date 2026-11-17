@@ -294,7 +294,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 		RequestID:                   requestID,
 		UpstreamHeaders:             resp.Header,
 		Usage:                       usage,
-		NonBillableUpstreamError:     scan.NonBillableUpstreamError,
+		NonBillableUpstreamError:    scan.NonBillableUpstreamError,
 		Model:                       originalModel,
 		BillingModel:                billingModel,
 		UpstreamModel:               upstreamModel,
