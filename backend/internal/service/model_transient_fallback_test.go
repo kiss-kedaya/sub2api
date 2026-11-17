@@ -168,7 +168,8 @@ func TestModelTransientFallbackOnlyRetriesNoAvailableErrors(t *testing.T) {
 			calls := 0
 			_, err := withModelTransientFallback(context.Background(), func(ctx context.Context) (int, error) {
 				calls++
-				probe := ctx.Value(modelTransientFallbackContextKey{}).(*modelTransientFallbackProbe)
+				probe, ok := ctx.Value(modelTransientFallbackContextKey{}).(*modelTransientFallbackProbe)
+				require.True(t, ok)
 				probe.blocked.Store(true)
 				if calls == 2 {
 					require.True(t, probe.bypass)
