@@ -20,6 +20,14 @@ describe('background catch-up scan client', () => {
     })
   })
 
+  it('restricts a catch-up scan to the requested chain', async () => {
+    client.post.mockResolvedValue({ data: { data: { ...running, chain_scope: ['bsc'] } }, status: 202 })
+    expect(await startCryptoScan(0, undefined, ['bsc'])).toMatchObject({ chain_scope: ['bsc'] })
+    expect(client.post).toHaveBeenCalledWith('/admin/crypto/scan/run', { from_block: 0 }, expect.objectContaining({
+      params: { async: '1', chain: 'bsc' }
+    }))
+  })
+
   it('sends the rewind block and a payment grant only when the caller supplies them', async () => {
     client.post.mockResolvedValue({ data: { data: running }, status: 202 })
     await startCryptoScan(12345, { credential: 'test-payment-grant' })
