@@ -42,6 +42,27 @@ describe('ccswitchImport utils', () => {
     )
   })
 
+  it.each([
+    ['https://api.example.com/prefix', 'https://api.example.com/prefix/v1/models'],
+    ['https://api.example.com/prefix/v1///', 'https://api.example.com/prefix/v1/models'],
+    ['https://api.example.com/prefix/v1?tenant=one', 'https://api.example.com/prefix/v1/models?tenant=one'],
+    ['https://api.example.com/prefix///?tenant=one#section', 'https://api.example.com/prefix/v1/models?tenant=one'],
+    ['https://api.example.com/prefix/v1#section', 'https://api.example.com/prefix/v1/models']
+  ])('appends the models path without moving the query or fragment for %s', async (baseUrl, expected) => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) })
+    vi.stubGlobal('fetch', fetchMock)
+    await fetchCcSwitchModels(baseUrl, '')
+    expect(fetchMock).toHaveBeenCalledWith(expected, expect.any(Object))
+  })
+
+  it('uses the same query-safe /v1 endpoint for Grok imports', () => {
+    const params = paramsFromDeeplink(buildCcSwitchImportDeeplink({
+      baseUrl: 'https://api.example.com/prefix///?tenant=one#section',
+      providerName: 'Sub2API', apiKey: '', usageScript: '', platform: 'grok'
+    }))
+    expect(params.get('endpoint')).toBe('https://api.example.com/prefix/v1?tenant=one')
+  })
+
   it('preserves the /v1 endpoint and homepage in provider deeplinks', () => {
     const baseUrl = 'https://api.example.com/v1'
     const params = paramsFromDeeplink(buildCcSwitchImportDeeplink({
