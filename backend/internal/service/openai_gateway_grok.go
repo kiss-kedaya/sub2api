@@ -1693,14 +1693,30 @@ func grokComposerTextFromPart(part any) string {
 	}
 }
 
+func normalizeOpenAICacheCreationUsage(usage *OpenAIUsage) {
+	if usage.CacheCreationInputTokens <= 0 {
+		usage.CacheCreationInputTokens = 0
+		usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = 0, 0
+		return
+	}
+	usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = apicompat.NormalizeCacheCreationBreakdown(
+		usage.CacheCreationInputTokens, usage.CacheCreation5mTokens, usage.CacheCreation1hTokens,
+	)
+}
+
 func addOpenAIUsage(dst *OpenAIUsage, usage OpenAIUsage) {
 	if dst == nil {
 		return
 	}
+	// Each turn's aggregate must bound its own buckets before turns are joined.
+	normalizeOpenAICacheCreationUsage(dst)
+	normalizeOpenAICacheCreationUsage(&usage)
 	dst.InputTokens += usage.InputTokens
 	dst.ImageInputTokens += usage.ImageInputTokens
 	dst.OutputTokens += usage.OutputTokens
 	dst.CacheCreationInputTokens += usage.CacheCreationInputTokens
+	dst.CacheCreation5mTokens += usage.CacheCreation5mTokens
+	dst.CacheCreation1hTokens += usage.CacheCreation1hTokens
 	dst.CacheReadInputTokens += usage.CacheReadInputTokens
 	dst.ImageOutputTokens += usage.ImageOutputTokens
 	dst.CacheReadEstimated = dst.CacheReadEstimated || usage.CacheReadEstimated

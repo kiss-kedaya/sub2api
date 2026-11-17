@@ -311,7 +311,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 			observer.ObserveOpenAI([]byte(payload), "")
 		}
 
-		if u := extractCCStreamUsage(payload); u != nil {
+		if u := extractCCStreamUsage(payload, resp.Header); u != nil {
 			st.Usage = *u
 		}
 
@@ -376,7 +376,7 @@ func (s *OpenAIGatewayService) readCCUpstreamJSONResponse(
 	}
 
 	usage := OpenAIUsage{}
-	if parsed, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
+	if parsed, ok := extractOpenAIUsageFromJSONBytes(InjectChatCompletionCacheCreation(respBody, resp.Header)); ok {
 		usage = parsed
 	}
 	return &ccResp, usage, nil
