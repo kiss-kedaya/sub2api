@@ -473,7 +473,7 @@ func TestOpenAIFirstOutputStageSpoolReprobesAndLogsEachUnavailableWindow(t *test
 	writeStage()
 	deadline := openAIFirstOutputSpoolRetryAfter.Load()
 	require.Greater(t, deadline, time.Now().UnixNano())
-	require.LessOrEqual(t, time.Unix(0, deadline).Sub(time.Now()), time.Minute)
+	require.LessOrEqual(t, time.Until(time.Unix(0, deadline)), time.Minute)
 	writeStage()
 	require.Equal(t, 1, createCalls)
 	require.Equal(t, 1, strings.Count(logs.String(), "preferred spool directory unavailable"))
