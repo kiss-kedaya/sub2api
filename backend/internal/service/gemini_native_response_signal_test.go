@@ -17,8 +17,9 @@ import (
 
 // ---------------------------------------------------------------------------
 // Gemini 原生路径带内信号契约：
-//   - 上游 2xx 里的 finishReason / promptFeedback.blockReason / 错误信封 / 空流只登记 ops，
-//     wire 状态与客户端字节原样不变，用量照常从 usageMetadata 提取（计费不受影响）；
+//   - 上游 2xx 里的 finishReason / promptFeedback.blockReason / 错误信封 / 空流登记 ops，
+//     wire 状态与客户端字节原样不变，用量照常从 usageMetadata 提取；
+//   - 明确错误信封整条免单；内容策略、空流的现有计费不变；
 //   - 内容策略类不归因上游账号、不计入 SLA；错误信封与空流按上游失败归因并计入 SLA。
 // ---------------------------------------------------------------------------
 
@@ -97,6 +98,8 @@ func TestGeminiForwardNative_StreamProhibitedContentMarksInBandErrorAndKeepsBill
 	// 用量照常提取：input=promptTokenCount，output=candidates+thoughts。
 	require.Equal(t, 21775, result.Usage.InputTokens)
 	require.Equal(t, 1289+606, result.Usage.OutputTokens)
+	require.False(t, result.NonBillableUpstreamError, "content policy billing is unchanged")
+	requireGeminiSignalBilling(t, result, false)
 	require.NotNil(t, result.FirstTokenMs)
 
 	// 带内错误登记为请求级内容策略：不计 SLA、不归因上游账号。
@@ -133,6 +136,8 @@ data: {"error":{"code":429,"message":"Resource has been exhausted (e.g. check qu
 	require.Equal(t, body, rec.Body.String(), "错误信封也原样透传，交给 SDK 客户端按错误处理")
 	require.Equal(t, 10, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
+	require.True(t, result.NonBillableUpstreamError)
+	requireGeminiSignalBilling(t, result, true)
 
 	streamErrs := GetOpsStreamErrors(c)
 	require.Len(t, streamErrs, 1)
@@ -170,6 +175,8 @@ func TestGeminiForwardNative_StreamPromptBlockedMarksContentPolicy(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, body, rec.Body.String())
 	require.Equal(t, 10, result.Usage.InputTokens)
+	require.False(t, result.NonBillableUpstreamError)
+	requireGeminiSignalBilling(t, result, false)
 
 	streamErrs := GetOpsStreamErrors(c)
 	require.Len(t, streamErrs, 1)
@@ -249,7 +256,7 @@ func TestGeminiForwardNative_NonStreamProhibitedContentMarksInBandError(t *testi
 
 func TestGeminiForwardNative_NonStreamErrorEnvelopeOn200MarksUpstreamFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := `{"error":{"code":500,"message":"Internal error encountered.","status":"INTERNAL"}}`
+	body := `{"error":{"code":500,"message":"Internal error encountered.","status":"INTERNAL"},"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}`
 	svc := newGeminiSignalService("application/json", body)
 	c, rec := newGeminiNativeTestContext(t)
 
@@ -258,6 +265,8 @@ func TestGeminiForwardNative_NonStreamErrorEnvelopeOn200MarksUpstreamFailure(t *
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, body, rec.Body.String())
+	require.True(t, result.NonBillableUpstreamError)
+	requireGeminiSignalBilling(t, result, true)
 
 	streamErrs := GetOpsStreamErrors(c)
 	require.Len(t, streamErrs, 1)

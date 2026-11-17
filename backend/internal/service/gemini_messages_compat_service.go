@@ -34,6 +34,7 @@ import (
 )
 
 const geminiStickySessionTTL = time.Hour
+const geminiNativeNonBillableErrorKey = "gemini_native_non_billable_upstream_error"
 
 const (
 	geminiMaxRetries     = 5
@@ -1730,6 +1731,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
+	nonBillableUpstreamError := false
 	// clientGone: the client left after the upstream accepted the request. The upstream
 	// body is closed by the deferred close above, with no drain window, and the request
 	// is billed from what was observed plus the estimates (gemini_family_incomplete_usage.go).
@@ -1745,14 +1747,21 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		firstTokenMs = streamRes.firstTokenMs
 		clientGone = streamRes.clientDisconnect
 		goneOutputTokens = streamRes.outputTokens
+		nonBillableUpstreamError = streamRes.nonBillableUpstreamError
 	} else {
 		if useUpstreamStream {
 			var best geminiResponseSignal
 			collected, usageObj, stats, err := collectGeminiSSEObserved(resp.Body, isOAuth, func(rawBytes []byte) {
-				if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
+				sig, ok := detectGeminiResponseSignal(rawBytes)
+				nonBillableUpstreamError = geminiNativeErrorBillingSignal(nonBillableUpstreamError, sig)
+				if ok && sig.Kind > best.Kind {
 					best = sig
 				}
 			})
+			if stats.dataEvents == 0 && !stats.fallback.Truncated() {
+				sig, _ := detectGeminiResponseSignalInBody(stats.fallback.Bytes())
+				nonBillableUpstreamError = sig.Kind == geminiSignalError
+			}
 			if err != nil {
 				if !geminiClientGoneCtx(ctx, c) {
 					return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to read upstream stream")
@@ -1776,7 +1785,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				usage = usageObj
 			}
 		} else {
+			c.Set(geminiNativeNonBillableErrorKey, false)
 			usageResp, err := s.handleNativeNonStreamingResponse(c, resp, isOAuth, account, requestID)
+			nonBillableUpstreamError = c.GetBool(geminiNativeNonBillableErrorKey)
 			if err != nil {
 				if errors.Is(err, ErrUpstreamResponseBodyTooLarge) || !geminiClientGoneCtx(ctx, c) {
 					return nil, err
@@ -1817,6 +1828,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientGone,
+		NonBillableUpstreamError:      nonBillableUpstreamError,
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
@@ -2822,13 +2834,27 @@ func mergeCollectedTextParts(response map[string]any, textParts []string) map[st
 	return result
 }
 
+// geminiNativeErrorBillingSignal uses the already inspected response signal.
+// A later successful terminal supersedes a preceding upstream error prelude;
+// content-policy signals alone never grant a billing waiver.
+func geminiNativeErrorBillingSignal(previous bool, signal geminiResponseSignal) bool {
+	if signal.Kind == geminiSignalError {
+		return true
+	}
+	if signal.Kind == geminiSignalNone && (signal.Reason == "STOP" || signal.Reason == "MAX_TOKENS") {
+		return false
+	}
+	return previous
+}
+
 type geminiNativeStreamResult struct {
 	usage        *ClaudeUsage
 	firstTokenMs *int
 	// clientDisconnect: the client left mid stream; usage then covers only what the
 	// upstream reported before that, and outputTokens estimates the content relayed.
-	clientDisconnect bool
-	outputTokens     int
+	clientDisconnect         bool
+	outputTokens             int
+	nonBillableUpstreamError bool
 }
 
 func isGeminiInsufficientScope(headers http.Header, body []byte) bool {
@@ -2929,6 +2955,7 @@ func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Co
 	observer.ObserveGemini(respBody)
 	observeGeminiImageOutputs(c, respBody)
 	if sig, ok := detectGeminiResponseSignalInBody(respBody); ok {
+		c.Set(geminiNativeNonBillableErrorKey, sig.Kind == geminiSignalError)
 		s.markGeminiResponseSignal(c, account, sig, false, upstreamRequestID)
 		if sig.Kind == geminiSignalError && WriteUpstreamFinancialError(c, sig.Status, respBody) {
 			usage := extractGeminiUsage(respBody)
@@ -2996,6 +3023,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	}
 	var firstTokenMs *int
 	var best geminiResponseSignal
+	nonBillableUpstreamError := false
 	sawDataEvent := false
 	fallback := &geminiSSEFallbackBody{}
 	pendingErrorHeader := ""
@@ -3020,7 +3048,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 		if best.Kind == geminiSignalError && !geminiUsageReported(usage) && meter.tokens() == 0 {
 			return nil, errGeminiClientGone
 		}
-		return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+		return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens(), nonBillableUpstreamError: nonBillableUpstreamError}, nil
 	}
 
 	for {
@@ -3061,7 +3089,9 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					}
 
 					sawDataEvent = true
-					if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
+					sig, ok := detectGeminiResponseSignal(rawBytes)
+					nonBillableUpstreamError = geminiNativeErrorBillingSignal(nonBillableUpstreamError, sig)
+					if ok && sig.Kind > best.Kind {
 						best = sig
 					}
 					if u := extractGeminiUsage(rawBytes); u != nil {
@@ -3073,7 +3103,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					if upstreamFinancialFailureEnvelope(rawBytes) {
 						s.markGeminiResponseSignal(c, account, best, true, upstreamRequestID)
 						WriteUpstreamFinancialError(c, best.Status, rawBytes)
-						return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+						return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs, nonBillableUpstreamError: true}, nil
 					}
 
 					if firstTokenMs == nil {
@@ -3112,8 +3142,12 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	}
 
 	s.finalizeGeminiSSESignal(c, account, true, upstreamRequestID, best, sawDataEvent, fallback)
+	if !sawDataEvent && !fallback.Truncated() {
+		sig, _ := detectGeminiResponseSignalInBody(fallback.Bytes())
+		nonBillableUpstreamError = sig.Kind == geminiSignalError
+	}
 
-	return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+	return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs, nonBillableUpstreamError: nonBillableUpstreamError}, nil
 }
 
 // ForwardAIStudioGET forwards a GET request to AI Studio (generativelanguage.googleapis.com) for
