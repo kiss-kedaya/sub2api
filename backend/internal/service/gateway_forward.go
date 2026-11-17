@@ -808,6 +808,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var nonBillableUpstreamError bool
 	if reqStream {
 		writerSizeBeforeStream := c.Writer.Size()
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, reqModel, shouldMimicClaudeCode)
@@ -877,8 +878,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
+		nonBillableUpstreamError = streamResult.nonBillableUpstreamError
 	} else {
-		usage, err = s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, reqModel)
+		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, reqModel)
 		if err != nil {
 			// 上游已受理，客户端在最终 JSON 读完前离开：没有 usage 可读，输入按估算计费。
 			if upstream.departedClient(err) {
@@ -886,6 +888,8 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			}
 			return nil, err
 		}
+		usage = nonStreamResult.ClaudeUsage
+		nonBillableUpstreamError = nonStreamResult.nonBillableUpstreamError
 	}
 	if reqStream && !clientDisconnect {
 		s.rateLimitService.observeModelTransientSuccess(ctx, c, account, reqModel)
@@ -904,6 +908,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnect,
+		NonBillableUpstreamError:      nonBillableUpstreamError,
 	}, nil
 }
 

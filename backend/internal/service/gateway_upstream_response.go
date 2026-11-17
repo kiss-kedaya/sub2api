@@ -718,6 +718,8 @@ type streamingResult struct {
 	usage            *ClaudeUsage
 	firstTokenMs     *int
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
+	// Only errors received from the upstream waive billing; local stream failures do not.
+	nonBillableUpstreamError bool
 	// incompleteStream 表示流在没有终帧的情况下结束，上游不会再报 usage。
 	incompleteStream bool
 	// progress 记录上游已产出的内容，供无 usage 时估算输出。
@@ -758,7 +760,10 @@ func partialStreamUsageResult(c *gin.Context, resp *http.Response, streamResult 
 	if !streamResult.usage.hasObservedTokens() && !errors.Is(err, ErrBalanceWithholdingFailed) {
 		return nil
 	}
+	var streamErr *AnthropicPassthroughStreamError
+	nonBillable := streamResult.nonBillableUpstreamError || errors.As(err, &streamErr)
 	return &ForwardResult{
+		NonBillableUpstreamError:      nonBillable,
 		RequestID:                     resp.Header.Get("x-request-id"),
 		UpstreamHeaders:               resp.Header,
 		Usage:                         *streamResult.usage,
@@ -1005,7 +1010,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		eventType, _ := event["type"].(string)
-		if upstreamFinancialFailureEnvelope([]byte(dataLine)) {
+		if eventType == "error" || upstreamFinancialFailureEnvelope([]byte(dataLine)) {
 			return nil, dataLine, nil, &sseStreamErrorEventError{RawData: dataLine}
 		}
 		observer.ObserveAnthropic([]byte(dataLine))
@@ -1200,7 +1205,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				pendingEventLines = pendingEventLines[:0]
 				if err != nil {
 					if clientDisconnected {
-						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
+						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, nonBillableUpstreamError: true}, nil
 					}
 					return nil, err
 				}
@@ -1575,7 +1580,19 @@ func (s *GatewayService) resolveCacheTTLUsageOverrideTarget(ctx context.Context,
 	return "", false
 }
 
-func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*ClaudeUsage, error) {
+type anthropicNonStreamingResult struct {
+	*ClaudeUsage
+	nonBillableUpstreamError bool
+}
+
+// Only inspect the response envelope, never model output or tool arguments.
+func anthropicNonStreamingUpstreamError(body []byte) bool {
+	root := gjson.ParseBytes(body)
+	upstreamError := root.Get("error")
+	return root.Get("type").String() == "error" || upstreamError.Exists() && upstreamError.Type != gjson.Null
+}
+
+func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*anthropicNonStreamingResult, error) {
 	// 更新5h窗口状态
 	s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 
@@ -1656,7 +1673,7 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	c.Data(resp.StatusCode, contentType, sanitizeClientUpstreamErrorBody(resp.StatusCode, body))
 	s.rateLimitService.observeModelTransientSuccess(ctx, c, account, mappedModel, body)
 
-	return &response.Usage, nil
+	return &anthropicNonStreamingResult{ClaudeUsage: &response.Usage, nonBillableUpstreamError: anthropicNonStreamingUpstreamError(body)}, nil
 }
 
 // replaceModelInResponseBody 替换响应体中的model字段

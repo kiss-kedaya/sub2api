@@ -453,7 +453,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		}
 
 		if upstreamFinancialFailureEnvelope([]byte(payload)) && WriteUpstreamFinancialError(c, 0, []byte(payload)) {
-			return &ForwardResult{Usage: usage}, fmt.Errorf("anthropic upstream financial error")
+			return &ForwardResult{Usage: usage, NonBillableUpstreamError: true}, fmt.Errorf("anthropic upstream financial error")
 		}
 
 		var event apicompat.AnthropicStreamEvent
@@ -515,15 +515,16 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		clientWatch.markGone()
 		estimate.fill(&usage, progress, requestID, true, scanErr)
 		return &ForwardResult{
-			RequestID:        requestID,
-			UpstreamHeaders:  resp.Header,
-			Usage:            usage,
-			Model:            originalModel,
-			UpstreamModel:    mappedModel,
-			ReasoningEffort:  reasoningEffort,
-			Stream:           false,
-			Duration:         time.Since(startTime),
-			ClientDisconnect: true,
+			RequestID:                requestID,
+			UpstreamHeaders:          resp.Header,
+			Usage:                    usage,
+			Model:                    originalModel,
+			UpstreamModel:            mappedModel,
+			ReasoningEffort:          reasoningEffort,
+			Stream:                   false,
+			Duration:                 time.Since(startTime),
+			ClientDisconnect:         true,
+			NonBillableUpstreamError: sawError && !sawStop,
 		}, newAnthropicClientGoneError(anthropicGoneStream, scanErr)
 	}
 	if scanErr != nil {
@@ -578,14 +579,15 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		s.rateLimitService.observeModelTransientSuccess(context.Background(), c, estimate.account, mappedModel)
 	}
 	return &ForwardResult{
-		RequestID:       requestID,
-		UpstreamHeaders: resp.Header,
-		Usage:           billedUsage,
-		Model:           originalModel,
-		UpstreamModel:   mappedModel,
-		ReasoningEffort: reasoningEffort,
-		Stream:          false,
-		Duration:        time.Since(startTime),
+		RequestID:                requestID,
+		UpstreamHeaders:          resp.Header,
+		Usage:                    billedUsage,
+		NonBillableUpstreamError: sawError && !sawStop,
+		Model:                    originalModel,
+		UpstreamModel:            mappedModel,
+		ReasoningEffort:          reasoningEffort,
+		Stream:                   false,
+		Duration:                 time.Since(startTime),
 	}, nil
 }
 
@@ -654,16 +656,17 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
-			RequestID:        requestID,
-			UpstreamHeaders:  resp.Header,
-			Usage:            usage,
-			Model:            originalModel,
-			UpstreamModel:    mappedModel,
-			ReasoningEffort:  reasoningEffort,
-			Stream:           true,
-			Duration:         time.Since(startTime),
-			FirstTokenMs:     firstTokenMs,
-			ClientDisconnect: clientDisconnected,
+			RequestID:                requestID,
+			UpstreamHeaders:          resp.Header,
+			Usage:                    usage,
+			Model:                    originalModel,
+			UpstreamModel:            mappedModel,
+			ReasoningEffort:          reasoningEffort,
+			Stream:                   true,
+			Duration:                 time.Since(startTime),
+			FirstTokenMs:             firstTokenMs,
+			ClientDisconnect:         clientDisconnected,
+			NonBillableUpstreamError: sawError && !sawStop,
 		}
 	}
 
@@ -776,6 +779,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 
 		if upstreamFinancialFailureEnvelope([]byte(payload)) && (clientDisconnected || WriteUpstreamFinancialError(c, 0, []byte(payload))) {
+			sawError = true
 			return resultWithUsage(), fmt.Errorf("anthropic upstream financial error")
 		}
 
