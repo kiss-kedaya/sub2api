@@ -185,8 +185,7 @@ export async function fetchCcSwitchModels(
   apiKey: string,
   signal?: AbortSignal
 ): Promise<string[]> {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
-  const response = await fetch(`${normalizedBaseUrl}/v1/models`, {
+  const response = await fetch(`${withV1Endpoint(baseUrl)}/models`, {
     headers: { Authorization: `Bearer ${apiKey}` },
     signal
   })

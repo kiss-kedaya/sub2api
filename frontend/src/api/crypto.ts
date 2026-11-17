@@ -57,7 +57,7 @@ export interface DepositRecord {
 
 export async function getDepositInfo(): Promise<DepositInfo> {
   const { data } = await apiClient.get('/crypto/deposit-info')
-  return data.data
+  return { ...data.data, chains: Array.isArray(data.data.chains) ? data.data.chains : [] }
 }
 
 export async function getDepositHistory(): Promise<DepositRecord[]> {

@@ -3,8 +3,9 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import DepositView from '../DepositView.vue'
 
 const mocks = vi.hoisted(() => ({
-  getDepositInfo: vi.fn(), getDepositHistory: vi.fn(), copy: vi.fn(), refreshUser: vi.fn(), showSuccess: vi.fn()
+  getDepositInfo: vi.fn(), getDepositHistory: vi.fn(), apiGet: vi.fn(), copy: vi.fn(), refreshUser: vi.fn(), showSuccess: vi.fn()
 }))
+vi.mock('@/api/client', () => ({ apiClient: { get: mocks.apiGet } }))
 vi.mock('@/api/crypto', () => ({ getDepositInfo: mocks.getDepositInfo, getDepositHistory: mocks.getDepositHistory }))
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: mocks.copy }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ refreshUser: mocks.refreshUser }) }))
@@ -60,6 +61,25 @@ beforeEach(() => {
     { chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'credited', credited: 67, created_at: '2026-01-01T00:00:00Z' },
     { chain: 'base', tx_hash: otherHash, token: 'USDC', amount: '20', status: 'pending', credited: 0, created_at: '2026-01-02T00:00:00Z' }
   ])
+})
+
+describe('user deposit availability', () => {
+  it.each([null, undefined])('shows disabled deposits instead of a load error when chains is %s', async (chains) => {
+    const payload = { enabled: false, chains, min_amount: 0, max_amount: 0 }
+    mocks.apiGet.mockResolvedValue({ data: { data: payload } })
+    const { getDepositInfo } = await vi.importActual<typeof import('@/api/crypto')>('@/api/crypto')
+    mocks.getDepositInfo.mockImplementationOnce(getDepositInfo)
+
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('deposit.disabled')
+    expect(wrapper.text()).toContain('deposit.disabledHint')
+    expect(wrapper.text()).not.toContain('deposit.loadFailed')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(mocks.getDepositHistory).not.toHaveBeenCalled()
+    await expect(getDepositInfo()).resolves.toEqual({ ...payload, chains: [] })
+  })
 })
 
 describe('user deposit history transaction hashes', () => {
