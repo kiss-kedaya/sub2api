@@ -609,6 +609,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
 			nativeReasoning.ObserveFrame(frame)
 			eventType := frame.eventType
+			switch eventType {
+			case "error", "response.failed", "response.completed", "response.done":
+				// Raw upstream terminal events only; gateway-made frames never pass here.
+				observeDeepSeekHostedUpstreamEvent(ctx, eventType)
+			}
 			if sawResponseFailed && (eventType == "response.failed" || eventType == "error") {
 				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 				return

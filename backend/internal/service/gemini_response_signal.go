@@ -110,7 +110,9 @@ func detectGeminiResponseSignal(payload []byte) (geminiResponseSignal, bool) {
 	candidate := geminiPrimaryCandidate(payload)
 	finishReason := strings.ToUpper(strings.TrimSpace(candidate.Get("finishReason").String()))
 	if !isGeminiContentFilterFinishReason(finishReason) {
-		return geminiResponseSignal{}, false
+		// Not a signal, but the caller needs the parsed finish reason to tell a
+		// normal ending that follows an earlier error frame.
+		return geminiResponseSignal{Reason: finishReason}, false
 	}
 	detail := strings.TrimSpace(candidate.Get("finishMessage").String())
 	if detail == "" {

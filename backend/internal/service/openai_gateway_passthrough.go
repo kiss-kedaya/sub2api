@@ -2421,6 +2421,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
 			nativeReasoning.ObserveFrame(frame)
 			rawEventType := frame.eventType
+			switch rawEventType {
+			case "error", "response.failed", "response.completed", "response.done":
+				// Raw upstream terminal events only; gateway-made frames never pass here.
+				observeDeepSeekHostedUpstreamEvent(ctx, rawEventType)
+			}
 			observer.ObserveOpenAIFrame(frame)
 			if refusalErr := grokModerationRefusalProtocolError(account, dataBytes); refusalErr != nil &&
 				(rawEventType == "response.failed" || rawEventType == "error") {
