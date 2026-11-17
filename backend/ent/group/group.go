@@ -88,6 +88,8 @@ const (
 	FieldWebSearchPricePerCall = "web_search_price_per_call"
 	// FieldSearchPricePer1k holds the string denoting the search_price_per_1k field in the database.
 	FieldSearchPricePer1k = "search_price_per_1k"
+	// FieldOcrPricePer1kPages holds the string denoting the ocr_price_per_1k_pages field in the database.
+	FieldOcrPricePer1kPages = "ocr_price_per_1k_pages"
 	// FieldSearchProviderBaseURL holds the string denoting the search_provider_base_url field in the database.
 	FieldSearchProviderBaseURL = "search_provider_base_url"
 	// FieldSearchProviderAPIKey holds the string denoting the search_provider_api_key field in the database.
@@ -269,6 +271,7 @@ var Columns = []string{
 	FieldVideoModelPrices,
 	FieldWebSearchPricePerCall,
 	FieldSearchPricePer1k,
+	FieldOcrPricePer1kPages,
 	FieldSearchProviderBaseURL,
 	FieldSearchProviderAPIKey,
 	FieldGrokModerationRefusalPrice,
@@ -391,6 +394,8 @@ var (
 	DefaultVideoRateMultiplier float64
 	// SearchPricePer1kValidator is a validator for the "search_price_per_1k" field. It is called by the builders before save.
 	SearchPricePer1kValidator func(float64) error
+	// OcrPricePer1kPagesValidator is a validator for the "ocr_price_per_1k_pages" field. It is called by the builders before save.
+	OcrPricePer1kPagesValidator func(float64) error
 	// GrokModerationRefusalPriceValidator is a validator for the "grok_moderation_refusal_price" field. It is called by the builders before save.
 	GrokModerationRefusalPriceValidator func(float64) error
 	// AudioRealtimePricePerMinValidator is a validator for the "audio_realtime_price_per_min" field. It is called by the builders before save.
@@ -638,6 +643,11 @@ func ByWebSearchPricePerCall(opts ...sql.OrderTermOption) OrderOption {
 // BySearchPricePer1k orders the results by the search_price_per_1k field.
 func BySearchPricePer1k(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSearchPricePer1k, opts...).ToFunc()
+}
+
+// ByOcrPricePer1kPages orders the results by the ocr_price_per_1k_pages field.
+func ByOcrPricePer1kPages(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOcrPricePer1kPages, opts...).ToFunc()
 }
 
 // BySearchProviderBaseURL orders the results by the search_provider_base_url field.

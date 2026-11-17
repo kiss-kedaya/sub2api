@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -394,6 +395,9 @@ func normalizeUpdateGroupInputForSimpleMode(input *UpdateGroupInput) {
 }
 
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
+	if err := validateOCRPrice(input.OCRPricePer1kPages); err != nil {
+		return nil, err
+	}
 	if err := validateGroupLimitValues(input.DailyLimitUSD, input.WeeklyLimitUSD, input.MonthlyLimitUSD); err != nil {
 		return nil, err
 	}
@@ -402,6 +406,11 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		normalizeCreateGroupInputForSimpleMode(input)
+	}
+	if NormalizeGroupPlatform(input.Platform) == PlatformDeepseek {
+		if err := validateDeepSeekAudioPrices(input.AudioTTSPricePerMillionChars, input.AudioSTTPricePerHour); err != nil {
+			return nil, err
+		}
 	}
 	if input.RateMultiplier <= 0 {
 		return nil, errors.New("rate_multiplier must be > 0")
@@ -612,6 +621,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		VideoModelPrices:                NormalizeVideoModelPrices(input.VideoModelPrices),
 		WebSearchPricePerCall:           webSearchPricePerCall,
 		SearchPricePer1k:                searchPricePer1k,
+		OCRPricePer1kPages:              normalizePrice(input.OCRPricePer1kPages),
 		GrokModerationRefusalPrice:      grokModerationRefusalPrice,
 		SearchProviderBaseURL:           trimOptionalString(input.SearchProviderBaseURL),
 		SearchProviderAPIKey:            trimOptionalString(input.SearchProviderAPIKey),
@@ -794,7 +804,29 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 	return nil
 }
 
+func validateOCRPrice(price *float64) error {
+	// A negative value is the existing "clear this price" signal of the admin
+	// form (normalizePrice turns it into NULL), so only non-finite input fails.
+	if price != nil && (math.IsNaN(*price) || math.IsInf(*price, 0)) {
+		return infraerrors.BadRequest("INVALID_OCR_PRICE", "ocr_price_per_1k_pages must be a finite number")
+	}
+	return nil
+}
+
+func validateDeepSeekAudioPrices(tts, asr *float64) error {
+	for _, price := range []*float64{tts, asr} {
+		// Negative keeps meaning "clear" (see normalizePrice), as for every other group price.
+		if price != nil && (math.IsNaN(*price) || math.IsInf(*price, 0)) {
+			return infraerrors.BadRequest("INVALID_DEEPSEEK_AUDIO_PRICE", "DeepSeek audio prices must be finite numbers")
+		}
+	}
+	return nil
+}
+
 func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
+	if err := validateOCRPrice(input.OCRPricePer1kPages); err != nil {
+		return nil, err
+	}
 	if err := validateGroupLimitValues(input.DailyLimitUSD, input.WeeklyLimitUSD, input.MonthlyLimitUSD); err != nil {
 		return nil, err
 	}
@@ -815,6 +847,11 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	// 渠道缓存里存了 groupID → platform 的映射，改了平台要让它失效（见函数末尾）
 	previousPlatform := group.Platform
 
+	if group.Platform == PlatformDeepseek || NormalizeGroupPlatform(input.Platform) == PlatformDeepseek {
+		if err := validateDeepSeekAudioPrices(input.AudioTTSPricePerMillionChars, input.AudioSTTPricePerHour); err != nil {
+			return nil, err
+		}
+	}
 	if input.Name != "" {
 		group.Name = input.Name
 	}
@@ -966,6 +1003,10 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.WebSearchPricePerCall != nil {
 		group.WebSearchPricePerCall = normalizePrice(input.WebSearchPricePerCall)
 	}
+	if input.OCRPricePer1kPagesSet || input.OCRPricePer1kPages != nil {
+		// Explicit null and a negative value both restore the default price.
+		group.OCRPricePer1kPages = normalizePrice(input.OCRPricePer1kPages)
+	}
 	if input.SearchPricePer1k != nil {
 		group.SearchPricePer1k = normalizePrice(input.SearchPricePer1k)
 	}
@@ -981,10 +1022,14 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.AudioRealtimePricePerMin != nil {
 		group.AudioRealtimePricePerMin = normalizePrice(input.AudioRealtimePricePerMin)
 	}
-	if input.AudioTTSPricePerMillionChars != nil {
+	if group.Platform == PlatformDeepseek && input.AudioTTSPricePerMillionCharsSet {
+		group.AudioTTSPricePerMillionChars = normalizePrice(input.AudioTTSPricePerMillionChars)
+	} else if input.AudioTTSPricePerMillionChars != nil {
 		group.AudioTTSPricePerMillionChars = normalizePrice(input.AudioTTSPricePerMillionChars)
 	}
-	if input.AudioSTTPricePerHour != nil {
+	if group.Platform == PlatformDeepseek && input.AudioSTTPricePerHourSet {
+		group.AudioSTTPricePerHour = normalizePrice(input.AudioSTTPricePerHour)
+	} else if input.AudioSTTPricePerHour != nil {
 		group.AudioSTTPricePerHour = normalizePrice(input.AudioSTTPricePerHour)
 	}
 

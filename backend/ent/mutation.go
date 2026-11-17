@@ -22384,6 +22384,8 @@ type GroupMutation struct {
 	addweb_search_price_per_call            *float64
 	search_price_per_1k                     *float64
 	addsearch_price_per_1k                  *float64
+	ocr_price_per_1k_pages                  *float64
+	addocr_price_per_1k_pages               *float64
 	search_provider_base_url                *string
 	search_provider_api_key                 *string
 	grok_moderation_refusal_price           *float64
@@ -24416,6 +24418,76 @@ func (m *GroupMutation) ResetSearchPricePer1k() {
 	delete(m.clearedFields, group.FieldSearchPricePer1k)
 }
 
+// SetOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field.
+func (m *GroupMutation) SetOcrPricePer1kPages(f float64) {
+	m.ocr_price_per_1k_pages = &f
+	m.addocr_price_per_1k_pages = nil
+}
+
+// OcrPricePer1kPages returns the value of the "ocr_price_per_1k_pages" field in the mutation.
+func (m *GroupMutation) OcrPricePer1kPages() (r float64, exists bool) {
+	v := m.ocr_price_per_1k_pages
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOcrPricePer1kPages returns the old "ocr_price_per_1k_pages" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOcrPricePer1kPages(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOcrPricePer1kPages is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOcrPricePer1kPages requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOcrPricePer1kPages: %w", err)
+	}
+	return oldValue.OcrPricePer1kPages, nil
+}
+
+// AddOcrPricePer1kPages adds f to the "ocr_price_per_1k_pages" field.
+func (m *GroupMutation) AddOcrPricePer1kPages(f float64) {
+	if m.addocr_price_per_1k_pages != nil {
+		*m.addocr_price_per_1k_pages += f
+	} else {
+		m.addocr_price_per_1k_pages = &f
+	}
+}
+
+// AddedOcrPricePer1kPages returns the value that was added to the "ocr_price_per_1k_pages" field in this mutation.
+func (m *GroupMutation) AddedOcrPricePer1kPages() (r float64, exists bool) {
+	v := m.addocr_price_per_1k_pages
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearOcrPricePer1kPages clears the value of the "ocr_price_per_1k_pages" field.
+func (m *GroupMutation) ClearOcrPricePer1kPages() {
+	m.ocr_price_per_1k_pages = nil
+	m.addocr_price_per_1k_pages = nil
+	m.clearedFields[group.FieldOcrPricePer1kPages] = struct{}{}
+}
+
+// OcrPricePer1kPagesCleared returns if the "ocr_price_per_1k_pages" field was cleared in this mutation.
+func (m *GroupMutation) OcrPricePer1kPagesCleared() bool {
+	_, ok := m.clearedFields[group.FieldOcrPricePer1kPages]
+	return ok
+}
+
+// ResetOcrPricePer1kPages resets all changes to the "ocr_price_per_1k_pages" field.
+func (m *GroupMutation) ResetOcrPricePer1kPages() {
+	m.ocr_price_per_1k_pages = nil
+	m.addocr_price_per_1k_pages = nil
+	delete(m.clearedFields, group.FieldOcrPricePer1kPages)
+}
+
 // SetSearchProviderBaseURL sets the "search_provider_base_url" field.
 func (m *GroupMutation) SetSearchProviderBaseURL(s string) {
 	m.search_provider_base_url = &s
@@ -26416,7 +26488,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 71)
+	fields := make([]string, 0, 72)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26524,6 +26596,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.search_price_per_1k != nil {
 		fields = append(fields, group.FieldSearchPricePer1k)
+	}
+	if m.ocr_price_per_1k_pages != nil {
+		fields = append(fields, group.FieldOcrPricePer1kPages)
 	}
 	if m.search_provider_base_url != nil {
 		fields = append(fields, group.FieldSearchProviderBaseURL)
@@ -26710,6 +26785,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.WebSearchPricePerCall()
 	case group.FieldSearchPricePer1k:
 		return m.SearchPricePer1k()
+	case group.FieldOcrPricePer1kPages:
+		return m.OcrPricePer1kPages()
 	case group.FieldSearchProviderBaseURL:
 		return m.SearchProviderBaseURL()
 	case group.FieldSearchProviderAPIKey:
@@ -26861,6 +26938,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldWebSearchPricePerCall(ctx)
 	case group.FieldSearchPricePer1k:
 		return m.OldSearchPricePer1k(ctx)
+	case group.FieldOcrPricePer1kPages:
+		return m.OldOcrPricePer1kPages(ctx)
 	case group.FieldSearchProviderBaseURL:
 		return m.OldSearchProviderBaseURL(ctx)
 	case group.FieldSearchProviderAPIKey:
@@ -27192,6 +27271,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetSearchPricePer1k(v)
 		return nil
+	case group.FieldOcrPricePer1kPages:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOcrPricePer1kPages(v)
+		return nil
 	case group.FieldSearchProviderBaseURL:
 		v, ok := value.(string)
 		if !ok {
@@ -27499,6 +27585,9 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addsearch_price_per_1k != nil {
 		fields = append(fields, group.FieldSearchPricePer1k)
 	}
+	if m.addocr_price_per_1k_pages != nil {
+		fields = append(fields, group.FieldOcrPricePer1kPages)
+	}
 	if m.addgrok_moderation_refusal_price != nil {
 		fields = append(fields, group.FieldGrokModerationRefusalPrice)
 	}
@@ -27573,6 +27662,8 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedWebSearchPricePerCall()
 	case group.FieldSearchPricePer1k:
 		return m.AddedSearchPricePer1k()
+	case group.FieldOcrPricePer1kPages:
+		return m.AddedOcrPricePer1kPages()
 	case group.FieldGrokModerationRefusalPrice:
 		return m.AddedGrokModerationRefusalPrice()
 	case group.FieldAudioRealtimePricePerMin:
@@ -27728,6 +27819,13 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddSearchPricePer1k(v)
 		return nil
+	case group.FieldOcrPricePer1kPages:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOcrPricePer1kPages(v)
+		return nil
 	case group.FieldGrokModerationRefusalPrice:
 		v, ok := value.(float64)
 		if !ok {
@@ -27851,6 +27949,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldSearchPricePer1k) {
 		fields = append(fields, group.FieldSearchPricePer1k)
 	}
+	if m.FieldCleared(group.FieldOcrPricePer1kPages) {
+		fields = append(fields, group.FieldOcrPricePer1kPages)
+	}
 	if m.FieldCleared(group.FieldSearchProviderBaseURL) {
 		fields = append(fields, group.FieldSearchProviderBaseURL)
 	}
@@ -27939,6 +28040,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldSearchPricePer1k:
 		m.ClearSearchPricePer1k()
+		return nil
+	case group.FieldOcrPricePer1kPages:
+		m.ClearOcrPricePer1kPages()
 		return nil
 	case group.FieldSearchProviderBaseURL:
 		m.ClearSearchProviderBaseURL()
@@ -28085,6 +28189,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldSearchPricePer1k:
 		m.ResetSearchPricePer1k()
+		return nil
+	case group.FieldOcrPricePer1kPages:
+		m.ResetOcrPricePer1kPages()
 		return nil
 	case group.FieldSearchProviderBaseURL:
 		m.ResetSearchProviderBaseURL()

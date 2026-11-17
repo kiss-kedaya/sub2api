@@ -2,8 +2,11 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,6 +34,22 @@ func (h *OpenAIGatewayHandler) DeepSeekToolsFetch(c *gin.Context) {
 	h.deepSeekTools(c, service.DeepSeekToolsPathFetch, service.DeepSeekToolsLabelFetch)
 }
 
+// DeepSeekToolsASR forwards native speech recognition uploads.
+func (h *OpenAIGatewayHandler) DeepSeekToolsASR(c *gin.Context) {
+	h.deepSeekTools(c, service.DeepSeekToolsPathASR, service.DeepSeekToolsLabelASR)
+}
+
+// DeepSeekToolsTTS forwards native streaming speech synthesis.
+func (h *OpenAIGatewayHandler) DeepSeekToolsTTS(c *gin.Context) {
+	h.deepSeekTools(c, service.DeepSeekToolsPathTTS, service.DeepSeekToolsLabelTTS)
+}
+
+// DeepSeekToolsOCR forwards native document recognition uploads.
+func (h *OpenAIGatewayHandler) DeepSeekToolsOCR(c *gin.Context) {
+	h.deepSeekTools(c, service.DeepSeekToolsPathOCR, service.DeepSeekToolsLabelOCR)
+}
+
+// All standalone tools share authentication, eligibility, slots, selection and settlement.
 func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, modelLabel string) {
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
@@ -65,20 +84,28 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		return
 	}
 
-	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
+	mediaTool := toolPath == service.DeepSeekToolsPathASR || toolPath == service.DeepSeekToolsPathTTS || toolPath == service.DeepSeekToolsPathOCR
+	body, err := readDeepSeekToolBody(c, toolPath)
 	if err != nil {
 		if maxErr, ok := extractMaxBytesError(err); ok {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+		// Validation failures carry a client-facing message; transport read
+		// errors keep the generic text instead of exposing internals.
+		message := "Failed to read request body"
+		var invalid *deepSeekToolBodyError
+		if errors.As(err, &invalid) {
+			message = invalid.message
+		}
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", message)
 		return
 	}
 	if len(body) == 0 {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
-	if !gjson.ValidBytes(body) {
+	if !mediaTool && !gjson.ValidBytes(body) {
 		logRequestBodyParseFailure(reqLog, body, nil)
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
@@ -89,18 +116,35 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 	if toolPath == service.DeepSeekToolsPathFetch {
 		requiredField = "url"
 	}
-	if strings.TrimSpace(gjson.GetBytes(body, requiredField).String()) == "" {
+	if !mediaTool && strings.TrimSpace(gjson.GetBytes(body, requiredField).String()) == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", requiredField+" is required")
 		return
 	}
 
 	setOpsRequestContext(c, modelLabel, false)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
-	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, modelLabel, body); decision != nil && !decision.AllowNextStage {
-		h.openAISecurityAuditError(c, decision)
-		return
+	auditBody := body
+	if toolPath == service.DeepSeekToolsPathTTS {
+		auditBody, err = json.Marshal(map[string]any{"messages": []map[string]string{{"role": "user", "content": gjson.GetBytes(body, "text").String()}}})
+		if err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to prepare text moderation")
+			return
+		}
+	}
+	if !mediaTool || toolPath == service.DeepSeekToolsPathTTS {
+		if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, modelLabel, auditBody); decision != nil && !decision.AllowNextStage {
+			h.openAISecurityAuditError(c, decision)
+			return
+		}
 	}
 
+	if toolPath == service.DeepSeekToolsPathASR || toolPath == service.DeepSeekToolsPathOCR {
+		// Uploaded recognition continues after disconnect. Slot leases must live
+		// with that work too, not be released early by the client context.
+		processingCtx, cancel := context.WithCancel(context.WithoutCancel(c.Request.Context()))
+		defer cancel()
+		c.Request = c.Request.WithContext(processingCtx)
+	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	asPricingCtx, asPricingAt := h.attachTextPricingContext(c, apiKey.GroupID)
@@ -123,10 +167,17 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		return
 	}
 
-	// 余额模式在途预留：上游按次计费，这里同样按一次调用估算。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{
-		Model: modelLabel, BodyBytes: len(body), Kind: service.InflightEstimatePerRequest, SearchCalls: 1,
-	})
+	// Recognition reserves the official maximum units; synthesis uses the original text.
+	estimate := service.InflightEstimateRequest{Model: modelLabel, BodyBytes: len(body), Kind: service.InflightEstimatePerRequest, SearchCalls: 1}
+	switch toolPath {
+	case service.DeepSeekToolsPathASR:
+		estimate.Kind, estimate.SearchCalls, estimate.AudioMode, estimate.AudioUnits = service.InflightEstimateAudio, 0, "stt", 120.0/3600
+	case service.DeepSeekToolsPathTTS:
+		estimate.Kind, estimate.SearchCalls, estimate.AudioMode, estimate.AudioUnits = service.InflightEstimateAudio, 0, "tts", float64(service.DeepSeekTTSBillableCharacters(gjson.GetBytes(body, "text").String()))/1_000_000
+	case service.DeepSeekToolsPathOCR:
+		estimate.SearchCalls, estimate.Units = 0, 1000
+	}
+	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, estimate)
 	if inflightErr != nil {
 		status, code, message, retryAfter := billingErrorDetails(inflightErr)
 		if retryAfter > 0 {
@@ -139,6 +190,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 
 	sessionHash := h.gatewayService.GenerateSessionHashWithFallback(c, nil, "")
 	failedAccountIDs := make(map[int64]struct{})
+	sameAccountRetries := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
 	profitVetoCount := 0
 	accountSlotBusySeen := false
@@ -148,7 +200,10 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 
 	// 选号必须按真实模型名匹配（分组白名单 / 账号 model_mapping 都是按模型名配的），
 	// 但计费标签用工具名，两者不能混用。
-	routingModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	routingModel := ""
+	if toolPath != service.DeepSeekToolsPathASR && toolPath != service.DeepSeekToolsPathOCR {
+		routingModel = strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	}
 	if routingModel == "" {
 		routingModel = strings.TrimSpace(c.Query("model"))
 	}
@@ -156,7 +211,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 	// groups and their current catalog rather than a stale hard-coded alias.
 	toolsKey, routingModels, routingErr := h.gatewayService.PrepareDeepSeekToolsRouting(c.Request.Context(), apiKey, routingModel)
 	if routingErr != nil {
-		h.errorResponse(c, http.StatusBadGateway, "upstream_error", "No available DeepSeek search accounts")
+		h.errorResponse(c, http.StatusBadGateway, "upstream_error", "No available DeepSeek tool accounts")
 		return
 	}
 	modelIndex := 0
@@ -207,6 +262,8 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 			)
 			if lastFailoverErr != nil {
 				h.handleFailoverExhausted(c, lastFailoverErr, false)
+			} else if accountSlotBusySeen {
+				h.handleOpenAIAccountSlotBusyExhausted(c, false, reqLog)
 			} else {
 				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 			}
@@ -229,10 +286,13 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 			if accountRelease != nil {
 				defer accountRelease()
 			}
+			if mediaTool {
+				return h.gatewayService.ForwardDeepSeekMedia(c.Request.Context(), c, account, toolPath, modelLabel, body)
+			}
 			return h.gatewayService.ForwardDeepSeekTools(c.Request.Context(), c, account, apiKey.Group, toolPath, modelLabel, body)
 		}()
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, time.Since(forwardStart).Milliseconds())
-		independentProvider := service.HasIndependentDeepSeekSearchProvider(apiKey.Group)
+		independentProvider := !mediaTool && service.HasIndependentDeepSeekSearchProvider(apiKey.Group)
 
 		if err == nil {
 			if !independentProvider {
@@ -250,10 +310,29 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, modelLabel, false, result), false, nil, err)
 			}
 			reqLog.Warn("deepseek_tools.forward_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			if mediaTool && c.Writer.Written() && !failoverClientGone(c) {
+				_ = c.Error(http.ErrAbortHandler) // Recovery closes raw streams without logging a platform panic
+				c.Abort()
+				return
+			}
 			if !c.Writer.Written() && !failoverClientGone(c) {
-				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "DeepSeek search provider request failed")
+				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "DeepSeek tool provider request failed")
 			}
 			return
+		}
+		if c.Writer.Written() || failoverClientGone(c) {
+			return // response bytes must never be replayed on another account
+		}
+		if mediaTool {
+			if count, delay, retry := poolModeSameAccountRetry(account, failoverErr, sameAccountRetries[account.ID]); retry {
+				sameAccountRetries[account.ID] = count
+				select {
+				case <-c.Request.Context().Done():
+					return
+				case <-time.After(delay):
+				}
+				continue
+			}
 		}
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, modelLabel, false, result), false, nil, err)
 		h.gatewayService.RecordOpenAIAccountSwitch()
@@ -272,8 +351,70 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 	}
 }
 
-// recordDeepSeekToolsUsage 为一次成功的 Search/Fetch 落按次计费用量行。
-// 上游不返回 usage/token 字段，WebSearchCalls=1 按分组搜索单价计费。
+// deepSeekToolBodyError is a request validation failure whose message is
+// returned to the client verbatim.
+type deepSeekToolBodyError struct{ message string }
+
+func (e *deepSeekToolBodyError) Error() string { return e.message }
+
+func readDeepSeekToolBody(c *gin.Context, path string) ([]byte, error) {
+	limit := int64(0)
+	switch path {
+	case service.DeepSeekToolsPathASR, service.DeepSeekToolsPathOCR:
+		mediaType, params, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+		if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+			return nil, &deepSeekToolBodyError{"Content-Type must be multipart/form-data with a boundary"}
+		}
+		limit = 9 << 20 // 8 MiB file plus 1 MiB multipart envelope
+		if path == service.DeepSeekToolsPathOCR {
+			limit = 101 << 20
+		}
+	case service.DeepSeekToolsPathTTS:
+		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+		if err != nil || mediaType != "application/json" {
+			return nil, &deepSeekToolBodyError{"Content-Type must be application/json"}
+		}
+		limit = 64 << 10
+	}
+	var body []byte
+	var err error
+	if limit > 0 {
+		body, err = io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, limit))
+	} else {
+		body, err = pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		return nil, &deepSeekToolBodyError{"Request body is empty"}
+	}
+	if path == service.DeepSeekToolsPathTTS {
+		if !gjson.ValidBytes(body) {
+			return nil, &deepSeekToolBodyError{"Invalid JSON request body"}
+		}
+		textFields := 0
+		gjson.ParseBytes(body).ForEach(func(key, _ gjson.Result) bool {
+			if strings.EqualFold(key.String(), "text") {
+				textFields++
+			}
+			return true
+		})
+		if textFields != 1 {
+			return nil, &deepSeekToolBodyError{"text must occur exactly once"}
+		}
+		text := gjson.GetBytes(body, "text")
+		if text.Type != gjson.String || strings.TrimSpace(text.String()) == "" {
+			return nil, &deepSeekToolBodyError{"text is required and must not be empty"}
+		}
+		if service.DeepSeekTTSBillableCharacters(text.String()) > 10_000 {
+			return nil, &deepSeekToolBodyError{"text exceeds the 10,000 billable character limit"}
+		}
+	}
+	return body, nil
+}
+
+// recordDeepSeekToolsUsage settles only provider-confirmed standalone tool units.
 func (h *OpenAIGatewayHandler) recordDeepSeekToolsUsage(
 	c *gin.Context,
 	reqLog *zap.Logger,
@@ -291,6 +432,9 @@ func (h *OpenAIGatewayHandler) recordDeepSeekToolsUsage(
 	requestPayloadHash := service.HashUsageRequestPayload(body)
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+	if result.UpstreamEndpoint != "" {
+		upstreamEndpoint = result.UpstreamEndpoint
+	}
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {

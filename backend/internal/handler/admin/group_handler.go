@@ -226,6 +226,7 @@ type CreateGroupRequest struct {
 	VideoModelPrices             map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	WebSearchPricePerCall        *float64                      `json:"web_search_price_per_call"`
 	SearchPricePer1k             *float64                      `json:"search_price_per_1k"`
+	OCRPricePer1kPages           *float64                      `json:"ocr_price_per_1k_pages"`
 	GrokModerationRefusalPrice   *float64                      `json:"grok_moderation_refusal_price"`
 	// 搜索专用凭据：为空表示回落到账号自带值。
 	SearchProviderBaseURL *string `json:"search_provider_base_url"`
@@ -308,12 +309,13 @@ type UpdateGroupRequest struct {
 	VideoModelPrices                map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	WebSearchPricePerCall           *float64                      `json:"web_search_price_per_call"`
 	SearchPricePer1k                *float64                      `json:"search_price_per_1k"`
+	OCRPricePer1kPages              optionalLimitField            `json:"ocr_price_per_1k_pages"`
 	GrokModerationRefusalPrice      *float64                      `json:"grok_moderation_refusal_price"`
 	SearchProviderBaseURL           *string                       `json:"search_provider_base_url"`
 	SearchProviderAPIKey            *string                       `json:"search_provider_api_key"`
 	AudioRealtimePricePerMin        *float64                      `json:"audio_realtime_price_per_min"`
-	AudioTtsPricePerMillionChars    *float64                      `json:"audio_tts_price_per_million_chars"`
-	AudioSttPricePerHour            *float64                      `json:"audio_stt_price_per_hour"`
+	AudioTtsPricePerMillionChars    optionalLimitField            `json:"audio_tts_price_per_million_chars"`
+	AudioSttPricePerHour            optionalLimitField            `json:"audio_stt_price_per_hour"`
 	ClaudeCodeOnly                  *bool                         `json:"claude_code_only"`
 	FallbackGroupID                 *int64                        `json:"fallback_group_id"`
 	FallbackGroupIDOnInvalidRequest *int64                        `json:"fallback_group_id_on_invalid_request"`
@@ -717,6 +719,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		VideoModelPrices:                req.VideoModelPrices,
 		WebSearchPricePerCall:           req.WebSearchPricePerCall,
 		SearchPricePer1k:                req.SearchPricePer1k,
+		OCRPricePer1kPages:              req.OCRPricePer1kPages,
 		GrokModerationRefusalPrice:      req.GrokModerationRefusalPrice,
 		SearchProviderBaseURL:           req.SearchProviderBaseURL,
 		SearchProviderAPIKey:            req.SearchProviderAPIKey,
@@ -868,12 +871,16 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		VideoModelPrices:                req.VideoModelPrices,
 		WebSearchPricePerCall:           req.WebSearchPricePerCall,
 		SearchPricePer1k:                req.SearchPricePer1k,
+		OCRPricePer1kPages:              req.OCRPricePer1kPages.value,
+		OCRPricePer1kPagesSet:           req.OCRPricePer1kPages.set,
+		AudioTTSPricePerMillionCharsSet: req.AudioTtsPricePerMillionChars.set,
+		AudioSTTPricePerHourSet:         req.AudioSttPricePerHour.set,
 		GrokModerationRefusalPrice:      req.GrokModerationRefusalPrice,
 		SearchProviderBaseURL:           req.SearchProviderBaseURL,
 		SearchProviderAPIKey:            req.SearchProviderAPIKey,
 		AudioRealtimePricePerMin:        req.AudioRealtimePricePerMin,
-		AudioTTSPricePerMillionChars:    req.AudioTtsPricePerMillionChars,
-		AudioSTTPricePerHour:            req.AudioSttPricePerHour,
+		AudioTTSPricePerMillionChars:    req.AudioTtsPricePerMillionChars.value,
+		AudioSTTPricePerHour:            req.AudioSttPricePerHour.value,
 		ClaudeCodeOnly:                  req.ClaudeCodeOnly,
 		FallbackGroupID:                 req.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: req.FallbackGroupIDOnInvalidRequest,

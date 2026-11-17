@@ -275,7 +275,8 @@ type CreateGroupInput struct {
 	// Codex alpha/search 网页搜索单次价格（USD/次，仅 openai 平台使用）；nil/负数按默认价 0.01 处理
 	WebSearchPricePerCall *float64
 	// 搜索工具单价 per 1k
-	SearchPricePer1k *float64
+	SearchPricePer1k   *float64
+	OCRPricePer1kPages *float64
 	// 搜索专用凭据；空表示回落到账号自带值
 	SearchProviderBaseURL *string
 	SearchProviderAPIKey  *string
@@ -364,10 +365,17 @@ type UpdateGroupInput struct {
 	// Codex alpha/search 网页搜索单次价格（USD/次）；nil 表示不修改，负数表示清除回默认价 0.01
 	WebSearchPricePerCall *float64
 	// 搜索工具单价；nil 不修改，负数清除
-	SearchPricePer1k *float64
+	SearchPricePer1k   *float64
+	OCRPricePer1kPages *float64
+	// Set distinguishes an explicit null (reset to default) from an omitted price.
+	OCRPricePer1kPagesSet bool
 	// 搜索专用凭据；nil 不修改，空字符串清除
 	SearchProviderBaseURL *string
 	SearchProviderAPIKey  *string
+	// DeepSeek groups also accept an explicit null as "reset"; a negative value
+	// resets on every platform (the existing convention of the admin form).
+	AudioTTSPricePerMillionCharsSet bool
+	AudioSTTPricePerHourSet         bool
 	// Grok Voice 显式定价；nil 表示不修改，负数表示清除
 	AudioRealtimePricePerMin     *float64
 	AudioTTSPricePerMillionChars *float64

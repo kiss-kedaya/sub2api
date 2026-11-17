@@ -3486,7 +3486,7 @@ func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, tas
 func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTask(parent context.Context, result *service.OpenAIForwardResult, task service.UsageRecordTask) {
 	// Money-critical bills never drop on pool overflow: media, search surcharge, voice.
 	if result != nil && (result.ImageCount > 0 || result.VideoCount > 0 ||
-		result.SearchCount > 0 || result.WebSearchCalls > 0 || result.AudioUsage != nil) {
+		result.SearchCount > 0 || result.WebSearchCalls > 0 || result.AudioUsage != nil || result.OCRPages > 0) {
 		h.submitMandatoryUsageRecordTask(parent, task)
 		return
 	}

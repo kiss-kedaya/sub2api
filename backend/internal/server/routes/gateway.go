@@ -284,6 +284,9 @@ func RegisterGatewayRoutes(
 		// DeepSeek standalone tools (Search / Fetch)：原始 JSON，透传到 deepseek 账号。
 		gateway.POST("/tools/search", h.OpenAIGateway.DeepSeekToolsSearch)
 		gateway.POST("/tools/fetch", h.OpenAIGateway.DeepSeekToolsFetch)
+		gateway.POST("/tools/asr", h.OpenAIGateway.DeepSeekToolsASR)
+		gateway.POST("/tools/tts", h.OpenAIGateway.DeepSeekToolsTTS)
+		gateway.POST("/tools/ocr", h.OpenAIGateway.DeepSeekToolsOCR)
 		gateway.GET("/responses", func(c *gin.Context) {
 			h.OpenAIGateway.ResponsesWebSocket(c)
 		})

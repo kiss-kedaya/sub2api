@@ -13,6 +13,8 @@ const (
 	HTTPUpstreamProfileOpenAIHarvest HTTPUpstreamProfile = "openai_harvest"
 	HTTPUpstreamProfileGrok          HTTPUpstreamProfile = "grok"
 	HTTPUpstreamProfileLongStream    HTTPUpstreamProfile = "long_stream"
+	// DeepSeek tools have their own request deadlines; never add a shorter header timer.
+	HTTPUpstreamProfileDeepSeekTools HTTPUpstreamProfile = "deepseek_tools"
 )
 
 type httpUpstreamProfileContextKey struct{}
@@ -40,7 +42,7 @@ func HTTPUpstreamProfileFromContext(ctx context.Context) HTTPUpstreamProfile {
 		return HTTPUpstreamProfileDefault
 	}
 	switch profile {
-	case HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileOpenAIImages, HTTPUpstreamProfileOpenAIHarvest, HTTPUpstreamProfileGrok, HTTPUpstreamProfileLongStream:
+	case HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileOpenAIImages, HTTPUpstreamProfileOpenAIHarvest, HTTPUpstreamProfileGrok, HTTPUpstreamProfileLongStream, HTTPUpstreamProfileDeepSeekTools:
 		return profile
 	default:
 		return HTTPUpstreamProfileDefault

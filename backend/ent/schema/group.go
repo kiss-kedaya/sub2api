@@ -168,6 +168,13 @@ func (Group) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Comment("搜索工具价格 per 1000 calls（web_search 等）"),
 
+		field.Float("ocr_price_per_1k_pages").
+			Optional().
+			Nillable().
+			Min(0).
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Comment("OCR 价格（每 1,000 页，单位与本组其它价格一致）；NULL 使用默认价，0 免费，正数覆盖"),
+
 		// 搜索专用凭据：为空时回落到账号自带的 base_url / api_key。
 		// 用于 DeepSeek /v1/tools/search 这类按次计费的独立搜索接口，
 		// 让分组可以单独指定一个搜索服务，而不必与模型账号共用额度。

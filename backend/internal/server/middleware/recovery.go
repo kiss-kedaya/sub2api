@@ -49,6 +49,12 @@ func Recovery() gin.HandlerFunc {
 		defer finishTrafficAfterRecovery(c)
 		defer finishTimingAfterRecovery(c)
 		recoverRequest(c)
+		// Raw audio/document truncation is an upstream I/O failure, not a
+		// platform panic. Abort outside Gin's panic logger so net/http sends an
+		// incomplete response rather than a successful final chunk.
+		if last := c.Errors.Last(); last != nil && errors.Is(last.Err, http.ErrAbortHandler) {
+			panic(http.ErrAbortHandler)
+		}
 	}
 }
 

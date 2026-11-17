@@ -329,6 +329,8 @@ type OpenAIForwardResult struct {
 	FixedToolBilling bool
 	// AudioUsage carries Voice billing units when present.
 	AudioUsage *AudioUsage
+	// OCRPages is the number of successfully recognized pages, never estimated.
+	OCRPages int
 
 	wsReplayInput                []json.RawMessage
 	wsReplayInputExists          bool

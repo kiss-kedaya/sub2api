@@ -881,7 +881,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		input.BillingModelSource,
 		result.UpstreamResponseModel,
 		result.UpstreamResponseModelConflict,
-		result.ImageCount > 0 || result.AudioUsage != nil || result.SearchCount > 0 || result.CacheStorageTokenHours > 0,
+		result.ImageCount > 0 || result.AudioUsage != nil || result.OCRPages > 0 || result.SearchCount > 0 || result.CacheStorageTokenHours > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, strings.TrimSpace(billingModel)) {
 		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(ctx, responseModel, apiKey); identified {
 			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
@@ -1003,8 +1003,14 @@ func (s *GatewayService) calculateRecordUsageCost(
 		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier)
 	}
 
+	if result.OCRPages > 0 {
+		return s.billingService.CalculateOCRCost(result.OCRPages, groupOCRPriceFromAPIKey(apiKey), 1)
+	}
 	// Voice audio (TTS / STT / realtime) when present on the forward result.
 	if result.AudioUsage != nil {
+		if result.FixedToolBilling && isDeepSeekSpeechLabel(result.Model) {
+			return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, deepSeekAudioPriceConfig(apiKey), 1)
+		}
 		if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
 			resolved.Mode == BillingModePerRequest {
 			gid := apiKey.Group.ID
@@ -1313,6 +1319,9 @@ func (s *GatewayService) buildRecordUsageLog(
 	}
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
+	}
+	if result.FixedToolBilling && (result.OCRPages > 0 || result.AudioUsage != nil) {
+		usageLog.RateMultiplier = 1
 	}
 	if cost != nil {
 		usageLog.InputCost = cost.InputCost
