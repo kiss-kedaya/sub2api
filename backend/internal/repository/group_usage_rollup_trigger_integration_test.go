@@ -518,6 +518,114 @@ func TestGroupUsageSummarySnapshotSurvivesConcurrentHistoryCleanup(t *testing.T)
 	require.InDelta(t, 3, after[0].YesterdayCost, 0.0000001)
 }
 
+func TestGroupUsageRollupRetentionCutoffCrossesDayWithoutRewind(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	useGroupUsageRepositoryTestTimezone(t, "Asia/Shanghai")
+	todayStart := time.Date(2026, 11, 16, 16, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 11, 1, 16, 1, 0, 0, time.UTC)
+	schema := createGroupUsageRollupTriggerTestSchema(t, ctx, false)
+	seed := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
+	defer func() { _ = seed.Rollback() }()
+	_, err := seed.ExecContext(ctx, `
+		INSERT INTO groups (id) VALUES (10);
+		INSERT INTO users (id) VALUES (1);
+		INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at) VALUES
+			(1, 1, 10, 1, TIMESTAMPTZ '2026-11-01 23:59:50+08'),
+			(2, 1, 10, 2, TIMESTAMPTZ '2026-11-02 00:00:30+08'),
+			(3, 1, 10, 4, TIMESTAMPTZ '2026-11-02 12:00:00+08'),
+			(4, 1, 10, 3, TIMESTAMPTZ '2026-11-16 12:00:00+08'),
+			(5, 1, 10, 5, TIMESTAMPTZ '2026-11-17 12:00:00+08');
+		INSERT INTO usage_group_daily_rollups (bucket_date, group_id, actual_cost) VALUES
+			('2026-11-01', 10, 1), ('2026-11-02', 10, 6), ('2026-11-16', 10, 3);
+		UPDATE usage_group_rollup_state
+		SET closed_before = DATE '2026-11-17',
+			retained_from = TIMESTAMPTZ '2026-11-01 23:59:50+08',
+			timezone_name = 'Asia/Shanghai'
+		WHERE id = 1;
+	`)
+	require.NoError(t, err)
+	require.NoError(t, seed.Commit())
+
+	// Reuse the real cleanup transaction on an isolated schema/connection, never
+	// changing the integration pool's session defaults or public usage tables.
+	conn, err := integrationDB.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	defer func() {
+		_, resetErr := conn.ExecContext(context.Background(), "RESET search_path; RESET TIME ZONE")
+		require.NoError(t, resetErr)
+	}()
+	_, err = conn.ExecContext(ctx, "SET search_path TO "+pq.QuoteIdentifier(schema)+"; SET TIME ZONE 'Asia/Shanghai'")
+	require.NoError(t, err)
+	deleted, err := cleanupUsageLogsBatchWithRollupInvalidation(ctx, conn, cutoff)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, deleted)
+	// A peer with an older cutoff must not move the retained boundary backwards.
+	deleted, err = cleanupUsageLogsBatchWithRollupInvalidation(ctx, conn, cutoff.Add(-time.Minute))
+	require.NoError(t, err)
+	require.Zero(t, deleted)
+	var closedBefore string
+	var retainedFrom time.Time
+	require.NoError(t, conn.QueryRowContext(ctx, `
+		SELECT closed_before::text, retained_from FROM usage_group_rollup_state WHERE id = 1
+	`).Scan(&closedBefore, &retainedFrom))
+	require.Equal(t, "2026-11-17", closedBefore)
+	require.True(t, cutoff.Equal(retainedFrom))
+
+	syncTx, err := conn.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = syncTx.Rollback() }()
+	require.NoError(t, newDashboardAggregationRepositoryWithSQL(syncTx).SyncGroupUsageRollups(ctx, todayStart))
+	require.NoError(t, syncTx.Commit())
+	result, err := newUsageLogRepositoryWithSQL(nil, conn).GetAllGroupUsageSummary(ctx, todayStart)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	// Historical totals retain the whole first day, not a partial-day raw sum:
+	// drop Nov 1, retain Nov 2's bucket once, and leave today/yesterday unchanged.
+	require.InDelta(t, 14, result[0].TotalCost, 0.0000001)
+	require.InDelta(t, 5, result[0].TodayCost, 0.0000001)
+	require.InDelta(t, 3, result[0].YesterdayCost, 0.0000001)
+}
+
+func TestGroupUsageRollupRetainedHistoryStillInvalidates(t *testing.T) {
+	ctx := context.Background()
+	useGroupUsageRepositoryTestTimezone(t, "Asia/Shanghai")
+	schema := createGroupUsageRollupTriggerTestSchema(t, ctx, false)
+	for _, operation := range []string{"update", "delete", "go_invalidation"} {
+		t.Run(operation, func(t *testing.T) {
+			tx := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
+			defer func() { _ = tx.Rollback() }()
+			require.NoError(t, setGroupUsageRollupTriggerTimeZone(ctx, tx, "Asia/Shanghai"))
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO groups (id) VALUES (10);
+				INSERT INTO users (id) VALUES (1);
+				INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at)
+				VALUES (1, 1, 10, 3, TIMESTAMPTZ '2026-11-16 12:00:00+08');
+				UPDATE usage_group_rollup_state
+				SET closed_before = DATE '2026-11-17',
+					retained_from = TIMESTAMPTZ '2026-11-02 00:01:00+08'
+				WHERE id = 1;
+			`)
+			require.NoError(t, err)
+			switch operation {
+			case "update":
+				_, err = tx.ExecContext(ctx, "UPDATE usage_logs SET actual_cost = 5 WHERE id = 1")
+			case "delete":
+				_, err = tx.ExecContext(ctx, "DELETE FROM usage_logs WHERE id = 1")
+			case "go_invalidation":
+				err = invalidateGroupUsageRollupsAt(ctx, tx, time.Date(2026, 11, 16, 4, 0, 0, 0, time.UTC))
+			}
+			require.NoError(t, err)
+			var closedBefore string
+			require.NoError(t, tx.QueryRowContext(ctx, `
+				SELECT closed_before::text FROM usage_group_rollup_state WHERE id = 1
+			`).Scan(&closedBefore))
+			require.Equal(t, "2026-11-16", closedBefore)
+		})
+	}
+}
+
 func createGroupUsageRollupTriggerTestSchema(t *testing.T, ctx context.Context, partitioned bool) string {
 	t.Helper()
 
