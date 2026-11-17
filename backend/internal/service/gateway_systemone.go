@@ -85,6 +85,7 @@ func (s *GatewayService) ForwardSystemOne(ctx context.Context, c *gin.Context, a
 		})
 		return nil, err
 	}
+	s.rateLimitService.observeModelTransientSuccess(ctx, c, account, typesafe.JevLatestModel)
 	return &SystemOneForwardResult{
 		ForwardResult: ForwardResult{
 			RequestID:             resp.Header.Get("x-request-id"),

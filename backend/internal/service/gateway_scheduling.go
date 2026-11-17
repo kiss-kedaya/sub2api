@@ -600,7 +600,7 @@ func (s *GatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context,
 				profitOK := s.isGatewayAccountProfitEligible(ctx, account)
 				modelSupported := requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)
 				channelOK := !isChannelRestricted(account)
-				modelSchedulable := s.isAccountSchedulableForModelSelection(ctx, account, requestedModel)
+				modelSchedulable := platformOK && profitOK && modelSupported && channelOK && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel)
 				quotaOK := s.isAccountSchedulableForQuota(account)
 				windowCostOK := s.isAccountSchedulableForWindowCost(ctx, account, true)
 				rpmOK := s.isAccountSchedulableForRPM(ctx, account, true)
@@ -1285,7 +1285,7 @@ func (s *GatewayService) isAccountSchedulableForSelection(account *Account) bool
 }
 
 func (s *GatewayService) isAccountSchedulableForModelSelection(ctx context.Context, account *Account, requestedModel string) bool {
-	if account == nil {
+	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 		return false
 	}
 	if s.rateLimitService != nil && !s.rateLimitService.ModelTransientAllowed(account.ID, requestedModel) {
@@ -1297,7 +1297,7 @@ func (s *GatewayService) isAccountSchedulableForModelSelection(ctx context.Conte
 			return false
 		}
 	}
-	return account.IsSchedulableForModelWithContext(ctx, requestedModel)
+	return true
 }
 
 // isAccountInGroup checks if the account belongs to the specified group.
@@ -3026,7 +3026,7 @@ func (s *GatewayService) diagnoseSelectionFailure(
 			Detail:   fmt.Sprintf("model=%s", requestedModel),
 		}
 	}
-	if !s.isAccountSchedulableForModelSelection(ctx, acc, requestedModel) {
+	if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) || (s.rateLimitService != nil && s.rateLimitService.modelTransient.isCooling(acc.ID, requestedModel)) {
 		remaining := acc.GetRateLimitRemainingTimeWithContext(ctx, requestedModel).Truncate(time.Second)
 		return selectionFailureDiagnosis{
 			Category: "model_rate_limited",

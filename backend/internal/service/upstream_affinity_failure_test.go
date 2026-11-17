@@ -55,6 +55,40 @@ func TestUpstreamPreferencesTriesUnusedBeforeBoundedFallback(t *testing.T) {
 	require.Contains(t, excluded, int64(3), "profit/busy exclusions must not be changed")
 }
 
+func TestUpstreamPreferencesFallbackReservation(t *testing.T) {
+	ctx := withUpstreamAttempts(context.Background())
+	state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	require.True(t, ok)
+	state.failed[1] = true
+	entered, resume, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		_, _, _, err := selectWithUpstreamPreferences(ctx, nil, nil, nil, func(ids map[int64]struct{}) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
+			if _, excluded := ids[1]; excluded {
+				return nil, OpenAIAccountScheduleDecision{}, nil, ErrNoAvailableAccounts
+			}
+			// Selection can take the attempt lock: the caller must release it first.
+			state.mu.Lock()
+			state.mu.Unlock()
+			close(entered)
+			<-resume
+			return nil, OpenAIAccountScheduleDecision{}, nil, ErrNoAvailableAccounts
+		})
+		done <- err
+	}()
+	<-entered
+	_, _, _, err := selectWithUpstreamPreferences(ctx, nil, nil, nil, func(ids map[int64]struct{}) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
+		require.Contains(t, ids, int64(1), "another selector cannot spend an in-flight reservation")
+		return nil, OpenAIAccountScheduleDecision{}, nil, ErrNoAvailableAccounts
+	})
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	close(resume)
+	require.ErrorIs(t, <-done, ErrNoAvailableAccounts)
+	state.mu.Lock()
+	used := state.fallbackUsed
+	state.mu.Unlock()
+	require.False(t, used, "failed selection must restore only its own reservation")
+}
+
 func TestUpstreamPreferencesHistoricalFailureIsSoft(t *testing.T) {
 	ctx := withUpstreamAttempts(context.WithValue(context.Background(), ctxkey.UserID, int64(8)))
 	cache := &failedAffinityCacheStub{ids: []int64{1}}

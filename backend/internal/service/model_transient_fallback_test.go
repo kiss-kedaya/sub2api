@@ -223,9 +223,35 @@ func TestModelTransientFallbackDoesNotReviveHardBlockedAccounts(t *testing.T) {
 			}
 			svc, cache, ctx, group := newModelTransientFallbackFixture(account)
 			recordModelTransientFailures(svc, account)
-			_, err := svc.SelectAccountWithLoadAwareness(ctx, &group.ID, "", "model-a", tc.excluded, "", 0)
+			passes := 0
+			_, err := withModelTransientFallback(ctx, func(ctx context.Context) (*AccountSelectionResult, error) {
+				passes++
+				return svc.SelectAccountWithLoadAwareness(ctx, &group.ID, "", "model-a", tc.excluded, "", 0)
+			})
 			require.ErrorIs(t, err, ErrNoAvailableAccounts)
 			require.Zero(t, cache.accountReads)
+			require.Equal(t, 1, passes, "hard rejections must not trigger a cooldown retry")
 		})
 	}
+}
+
+func TestModelTransientFallbackDiagnosticsDoNotAdmit(t *testing.T) {
+	account := modelTransientFallbackAccount(1, 10)
+	rate := 1.0
+	account.RateMultiplier = &rate
+	svc, cache, ctx, group := newModelTransientFallbackFixture(account)
+	recordModelTransientFailures(svc, account)
+	ctx = context.WithValue(ctx, openAIProfitControlGateCtxKey{}, &openAIProfitControlGate{threshold: 0.5})
+	probe := &modelTransientFallbackProbe{}
+	diagnosticCtx := context.WithValue(ctx, modelTransientFallbackContextKey{}, probe)
+	require.False(t, svc.isGatewayAccountProfitEligible(ctx, account))
+	cooldown := svc.rateLimitService.modelTransient
+	previous := *cooldown.entries[modelTransientKey(account.ID, "model-a")]
+	cooldown.now = func() time.Time { return previous.lastSeen.Add(time.Second) }
+	svc.diagnoseSelectionFailure(diagnosticCtx, account, "model-a", PlatformAnthropic, nil, false)
+	require.False(t, probe.blocked.Load(), "diagnostics must not record an admission attempt")
+	require.Equal(t, previous, *cooldown.entries[modelTransientKey(account.ID, "model-a")], "diagnostics must not refresh or mutate cooldown state")
+	_, err := svc.SelectAccountWithLoadAwareness(ctx, &group.ID, "", "model-a", nil, "", 0)
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	require.Equal(t, 1, cache.snapshotReads, "a profit-vetoed account must not cause a second pool scan")
 }
