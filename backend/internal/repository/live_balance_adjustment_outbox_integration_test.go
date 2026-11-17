@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -143,4 +144,146 @@ func TestLiveBalanceAdjustmentOutboxClaimReturnsContiguousPerUserPrefix(t *testi
 	require.NoError(t, err)
 	require.Equal(t, LiveBalanceOutcomeIdempotent, replay.Outcome)
 	require.Equal(t, result.AvailableBalance, replay.AvailableBalance)
+}
+
+func TestLiveBalanceAdjustmentOutboxClaimPlanSurvivesEmptyPendingStats(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	conn, err := integrationDB.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	// A pinned session keeps the fixture isolated from the migrated public tables.
+	_, err = conn.ExecContext(ctx, `
+		CREATE TEMP TABLE live_balance_adjustment_heads
+			(LIKE public.live_balance_adjustment_heads INCLUDING ALL);
+		CREATE TEMP TABLE live_balance_adjustment_outbox
+			(LIKE public.live_balance_adjustment_outbox INCLUDING DEFAULTS INCLUDING CONSTRAINTS);
+		ALTER TABLE pg_temp.live_balance_adjustment_outbox ADD PRIMARY KEY (id);
+		CREATE INDEX idx_live_balance_adjustment_outbox_pending
+			ON pg_temp.live_balance_adjustment_outbox (available_at, id) WHERE delivered_at IS NULL;
+		CREATE INDEX idx_live_balance_adjustment_outbox_user_order
+			ON pg_temp.live_balance_adjustment_outbox (user_id, id) WHERE delivered_at IS NULL;
+		INSERT INTO pg_temp.live_balance_adjustment_heads (user_id, last_event_id)
+			SELECT u, u * 50 FROM generate_series(1, 4000) AS u;
+		INSERT INTO pg_temp.live_balance_adjustment_outbox (id, user_id, predecessor_id, delta, delivered_at)
+			SELECT i, (i - 1) / 50 + 1, CASE WHEN (i - 1) % 50 = 0 THEN 0 ELSE i - 1 END, 0.01, NOW()
+			FROM generate_series(1, 200000) AS i;
+		ANALYZE pg_temp.live_balance_adjustment_heads;
+		ANALYZE pg_temp.live_balance_adjustment_outbox;
+	`)
+	require.NoError(t, err)
+	defer func() {
+		_, err := conn.ExecContext(context.Background(),
+			"DROP TABLE pg_temp.live_balance_adjustment_outbox, pg_temp.live_balance_adjustment_heads")
+		require.NoError(t, err)
+	}()
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO pg_temp.live_balance_adjustment_outbox
+			(id, user_id, predecessor_id, delta, available_at)
+			SELECT 200000 + (u - 1) * 256 + n, u,
+				CASE WHEN n = 1 THEN u * 50 ELSE 200000 + (u - 1) * 256 + n - 1 END,
+				0.01, TIMESTAMPTZ '2000-01-01'
+			FROM generate_series(1, 256) AS u CROSS JOIN generate_series(1, 256) AS n;
+		UPDATE pg_temp.live_balance_adjustment_heads SET last_event_id = 200000 + user_id * 256
+			WHERE user_id <= 256;
+		-- Block a pending predecessor, a delayed head, and a live lease.
+		UPDATE pg_temp.live_balance_adjustment_outbox SET predecessor_id = 200257 WHERE id = 200001;
+		UPDATE pg_temp.live_balance_adjustment_outbox SET available_at = NOW() + INTERVAL '1 hour' WHERE id = 200257;
+		UPDATE pg_temp.live_balance_adjustment_outbox SET claimed_at = NOW(), claimed_by = 'leased' WHERE id = 200513;
+		-- An expired lease, a pruned predecessor, and a root must remain eligible.
+		UPDATE pg_temp.live_balance_adjustment_outbox SET claimed_at = NOW() - INTERVAL '1 minute' WHERE id = 200769;
+		UPDATE pg_temp.live_balance_adjustment_outbox SET predecessor_id = 999999 WHERE id = 201025;
+		UPDATE pg_temp.live_balance_adjustment_outbox SET predecessor_id = 0 WHERE id = 201281;
+	`)
+	require.NoError(t, err)
+	var nullFraction float64
+	require.NoError(t, conn.QueryRowContext(ctx, `
+		SELECT null_frac FROM pg_stats
+		WHERE schemaname = (SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema())
+			AND tablename = 'live_balance_adjustment_outbox' AND attname = 'delivered_at'
+	`).Scan(&nullFraction))
+	require.Zero(t, nullFraction, "pending rows must remain invisible to the sampled statistics")
+	var sortBefore, jitBefore string
+	require.NoError(t, conn.QueryRowContext(ctx, "SELECT current_setting('enable_sort'), current_setting('jit')").
+		Scan(&sortBefore, &jitBefore))
+
+	for _, name := range []string{"empty_pending_stats", "fresh_pending_stats"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "fresh_pending_stats" {
+				_, err := conn.ExecContext(ctx, "ANALYZE pg_temp.live_balance_adjustment_outbox")
+				require.NoError(t, err)
+			}
+			claimCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			tx, err := conn.BeginTx(claimCtx, nil)
+			require.NoError(t, err)
+			defer func() { _ = tx.Rollback() }()
+			_, err = tx.ExecContext(claimCtx, liveBalanceOutboxClaimPlannerSQL)
+			require.NoError(t, err)
+			var encoded []byte
+			started := time.Now()
+			require.NoError(t, tx.QueryRowContext(claimCtx,
+				"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+liveBalanceOutboxClaimSQL,
+				"plan-test", service.LiveBalanceOutboxMaxBatchSize, int64(30), service.LiveBalanceOutboxPerUserMaxBatchSize).
+				Scan(&encoded))
+			require.Less(t, time.Since(started), 5*time.Second)
+			var plans []map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &plans))
+			require.Len(t, plans, 1)
+			t.Logf("execution_ms=%v planning_ms=%v", plans[0]["Execution Time"], plans[0]["Planning Time"])
+			require.NotContains(t, plans[0], "JIT", "disabled sorts must not trigger JIT compilation")
+			userProbes, predecessorProbes := 0, 0
+			var visit func(map[string]any)
+			visit = func(node map[string]any) {
+				require.NotEqual(t, "idx_live_balance_adjustment_outbox_pending", node["Index Name"], string(encoded))
+				if node["Index Name"] == "idx_live_balance_adjustment_outbox_user_order" {
+					userProbes++
+					require.Contains(t, fmt.Sprint(node["Index Cond"]), "user_id", string(encoded))
+				}
+				if node["Alias"] == "predecessor" {
+					predecessorProbes++
+					require.Equal(t, "live_balance_adjustment_outbox_pkey", node["Index Name"], string(encoded))
+				}
+				if children, ok := node["Plans"].([]any); ok {
+					for _, child := range children {
+						visit(child.(map[string]any))
+					}
+				}
+			}
+			plan := plans[0]["Plan"].(map[string]any)
+			visit(plan)
+			require.Equal(t, 2, userProbes, "both LATERAL lookups must be keyed by user")
+			require.Equal(t, 1, predecessorProbes)
+			require.Equal(t, float64(service.LiveBalanceOutboxMaxBatchSize), plan["Actual Rows"])
+			rows, err := tx.QueryContext(claimCtx, `
+				SELECT user_id, MIN(id), MAX(id), COUNT(*)
+				FROM pg_temp.live_balance_adjustment_outbox WHERE claimed_by = 'plan-test'
+				GROUP BY user_id ORDER BY user_id
+			`)
+			require.NoError(t, err)
+			users := 0
+			for rows.Next() {
+				var userID, firstID, lastID, count int64
+				require.NoError(t, rows.Scan(&userID, &firstID, &lastID, &count))
+				require.Equal(t, int64(4+users), userID, "blocked users must not be claimed")
+				require.Equal(t, int64(128), count, "round-robin batch must retain eight contiguous prefixes")
+				require.Equal(t, 200000+(userID-1)*256+1, firstID)
+				require.Equal(t, firstID+count-1, lastID)
+				users++
+			}
+			require.NoError(t, rows.Err())
+			require.NoError(t, rows.Close())
+			require.Equal(t, 8, users)
+			if name == "fresh_pending_stats" {
+				require.NoError(t, tx.Commit())
+			} else {
+				require.NoError(t, tx.Rollback())
+			}
+			var sortAfter, jitAfter string
+			require.NoError(t, conn.QueryRowContext(ctx, "SELECT current_setting('enable_sort'), current_setting('jit')").
+				Scan(&sortAfter, &jitAfter))
+			require.Equal(t, sortBefore, sortAfter, "planner settings must not escape the transaction")
+			require.Equal(t, jitBefore, jitAfter)
+		})
+	}
 }
