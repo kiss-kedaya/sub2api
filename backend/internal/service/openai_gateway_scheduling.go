@@ -266,7 +266,13 @@ func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupI
 // SelectAccountForModelWithExclusions 选择支持指定模型的账号，同时排除指定的账号。
 func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
-	return s.selectAccountForModelWithExclusions(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, 0, "", false)
+	return withModelTransientFallback(ctx, func(ctx context.Context) (*Account, error) {
+		account, err := s.selectAccountForModelWithExclusions(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, 0, "", false)
+		if err == nil {
+			s.logOpenAIModelTransientFallback(ctx, account, groupID, requestedModel)
+		}
+		return account, err
+	})
 }
 
 // SelectAccountForTokenCount selects an account for a non-billable token-count
@@ -283,18 +289,15 @@ func (s *OpenAIGatewayService) SelectAccountForTokenCount(
 	ctx = withSchedulerRequestMode(ctx, s.accountRepo, s.schedulerSnapshot)
 	ctx = WithOpenAIProfitControlSuppressed(ctx)
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
-	return s.selectAccountForModelWithExclusions(
-		ctx,
-		groupID,
-		platform,
-		sessionHash,
-		requestedModel,
-		nil,
-		false,
-		0,
-		requiredCapability,
-		false,
-	)
+	return withModelTransientFallback(ctx, func(ctx context.Context) (*Account, error) {
+		account, err := s.selectAccountForModelWithExclusions(
+			ctx, groupID, platform, sessionHash, requestedModel, nil, false, 0, requiredCapability, false,
+		)
+		if err == nil {
+			s.logOpenAIModelTransientFallback(ctx, account, groupID, requestedModel)
+		}
+		return account, err
+	})
 }
 
 // NormalizeOpenAICompatiblePlatform 保留 grok 与国产 OpenAI 兼容供应商（kimi/zhipu/
@@ -1058,7 +1061,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
-	if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel, requireCompact) {
+	if s.isOpenAIAccountRequestRuntimeBlocked(ctx, account, requestedModel, requireCompact) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
@@ -1217,7 +1220,13 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 	// 分组利润控制：legacy 公共入口同样装门，保证不经
 	// selectAccountWithScheduler 的调用方也无法绕过利润准入。
 	ctx = s.withOpenAIProfitControlGate(ctx, groupID)
-	return s.selectAccountWithLoadAwareness(ctx, groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, "", true)
+	return withModelTransientFallback(ctx, func(ctx context.Context) (*AccountSelectionResult, error) {
+		selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, "", true)
+		if err == nil && selection != nil {
+			s.logOpenAIModelTransientFallback(ctx, selection.Account, groupID, requestedModel)
+		}
+		return selection, err
+	})
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
@@ -1310,7 +1319,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				} else if !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-				} else if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel, requireCompact) {
+				} else if s.isOpenAIAccountRequestRuntimeBlocked(ctx, account, requestedModel, requireCompact) {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				} else if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel, requireCompact) {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1399,7 +1408,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			filterStats.exclude("shadow_parent_unhealthy")
 			continue
 		}
-		if s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel, requireCompact) {
+		if s.isOpenAIAccountRequestRuntimeBlocked(ctx, acc, requestedModel, requireCompact) {
 			filterStats.exclude("runtime_blocked")
 			continue
 		}
@@ -1420,7 +1429,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if isExcluded(acc.ID) ||
 					!isOpenAICompatibleAccountEligibleForRequest(ctx, acc, platform, requestedModel, false, requiredCapability) ||
 					!parentHealthyForShadow(acc, parentLookupL2) ||
-					s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel, requireCompact) ||
+					s.isOpenAIAccountRequestRuntimeBlocked(ctx, acc, requestedModel, requireCompact) ||
 					(needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel, requireCompact)) {
 					continue
 				}
@@ -1731,7 +1740,7 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountBeforeProfit(
 	if !parentHealthyForShadow(fresh, s.parentAccountLookup(ctx)) {
 		return nil
 	}
-	if s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel, requireCompact) {
+	if s.isOpenAIAccountRequestRuntimeBlocked(ctx, fresh, requestedModel, requireCompact) {
 		return nil
 	}
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
@@ -1840,7 +1849,7 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBBeforeProfit(ct
 	if !parentHealthyForShadow(latest, s.parentAccountLookup(ctx)) {
 		return nil
 	}
-	if s.isOpenAIAccountRequestRuntimeBlocked(latest, requestedModel, requireCompact) {
+	if s.isOpenAIAccountRequestRuntimeBlocked(ctx, latest, requestedModel, requireCompact) {
 		return nil
 	}
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, latest) {

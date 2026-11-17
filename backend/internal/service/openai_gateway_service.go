@@ -511,6 +511,8 @@ type OpenAIGatewayService struct {
 	openaiWSSessionPreemptions          openAIWSSessionPreemptRegistry
 	openaiAccountStats                  *openAIAccountRuntimeStats
 	openaiModelTransient                *openAIAccountModelTransientState
+	openaiModelTransientFailOpenLogAt   atomic.Int64
+	openaiModelTransientFailOpenCount   atomic.Int64
 	openaiProxyStreamCircuit            *openAIProxyStreamCircuit
 	openaiProxyStreamFailOpenLogAt      atomic.Int64
 	codexQuotaOverdraftOnce             sync.Once
