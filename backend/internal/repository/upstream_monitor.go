@@ -614,10 +614,10 @@ func (r *upstreamMonitorRepository) RecordAlerts(ctx context.Context, alerts []s
 	for _, alert := range alerts {
 		result, err := tx.ExecContext(ctx, `
 INSERT INTO upstream_monitor_alerts(account_id, kind, level, balance, threshold, unit, old_rate, new_rate, message, created_at)
-SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+SELECT $1::bigint, $2::varchar, $3, $4, $5, $6, $7, $8, $9, $10
 WHERE NOT EXISTS (
   SELECT 1 FROM upstream_monitor_alerts
-  WHERE account_id = $1 AND kind = $2 AND created_at >= $11
+  WHERE account_id = $1::bigint AND kind = $2::varchar AND created_at >= $11::timestamptz
 )`,
 			alert.AccountID, alert.Kind, alert.Level,
 			nullableUpstreamFloat(alert.Balance != nil, floatValue(alert.Balance)),
